@@ -11,13 +11,13 @@ Xynigo Sourcing 是一套面向跨境电商团队的开源代采协同系统，�
 ## 当前模块
 
 - 墨西哥站和美国站订单及物流查询，包括限定隐私范围的物流截图。
-- 买家账号注册，包含条款确认，以及遇到无法识别的验证流程时转交人工处理。
-- 批量创建 HubStudio 环境，支持预演、写入确认、断点续作及不含凭证的映射结果导出。
+- 墨西哥站和美国站买家账号注册任务，包含条款确认，以及遇到无法识别的验证流程时转交人工处理。
+- 批量创建墨西哥站和美国站 HubStudio 环境，支持按站点记忆采购分组、预演、写入确认、断点续作及不含凭证的映射结果导出。采购员名单写死四人（新刚-XG / 志恒-ZH / 康德-KD / 宇航-YH），环境名使用英文代号（如 `XG-MX-0819-001`）；另有备用/测试环境模式，只建环境并写备注，不导 Cookie、不绑号、不写台账。
 - 可选的 Lark Base 台账集成，相关参数全部在运行时配置。
 
-当前稳定版为 `v0.6.3`。项目正在持续开发，暂未提供托管式 SaaS 服务。
+当前稳定版为 `v0.7.0`。项目正在持续开发，暂未提供托管式 SaaS 服务。
 
-v0.6.3 为订单及物流查询补齐 SHEIN 美国站能力，支持美国站路由、英文订单状态、承运商商业名称、物流单号、轨迹截图、风险验证订单和环境浏览器当地时间；同时保留墨西哥站兼容性，并在站点与环境命名不一致时阻止误查。
+v0.7.0 为买家号建环境模块带来采购员名单与备用环境体系：采购员写死四人并使用英文代号命名环境（如 XG-MX-0819-001），新增备用/测试环境模式（不绑号、只建环境写备注），建环境并行执行，内置默认代理提取链接实现同事端零配置，并以 Cookie 登录域自动校验账号站点，错文件错站整批拒收。
 
 ## 环境要求
 
@@ -45,12 +45,19 @@ python -m purchase_tool
 
 | 环境变量 | 用途 |
 |---|---|
-| `XYNIGO_PROXY_LINK` | 创建新环境时使用的 HubStudio 动态代理提取链接 |
+| `XYNIGO_PROXY_LINK` | 可选：首次运行默认值。工具已内置默认动态代理提取链接，无需配置即可使用；设置页可保存自定义链接覆盖，清除即恢复内置默认 |
 | `XYNIGO_PURCHASE_TAG` | HubStudio 采购环境分组 |
+| `XYNIGO_PURCHASE_TAG_MX` / `XYNIGO_PURCHASE_TAG_US` | 可选：按 MX/US 站点分别指定采购环境分组 |
 | `XYNIGO_REGISTER_TAG` | HubStudio 注册环境分组 |
+| `XYNIGO_REGISTER_TAG_MX` / `XYNIGO_REGISTER_TAG_US` | 可选：按 MX/US 站点分别指定注册环境分组 |
 | `XYNIGO_LARK_BASE_TOKEN` | 可选的 Lark Base Token |
-| `XYNIGO_LARK_TABLE_ID` | 可选的 Lark Base 数据表 ID |
+| `XYNIGO_LARK_TABLE_ID` | 可选：旧版 MX 站 Lark Base 数据表 ID |
+| `XYNIGO_LARK_TABLE_ID_MX` / `XYNIGO_LARK_TABLE_ID_US` | 可选：按 MX/US 站点分别指定 Lark Base 数据表；US 不回退到旧版 MX 配置 |
 | `XYNIGO_LARK_OPERATOR_OPEN_ID` | 台账回填命令使用的可选操作人 ID |
+
+模块三 Mac 补账命令必须显式核对站点；美国站使用
+`python -m purchase_tool backfill --site US ...`，并要求独立配置
+`XYNIGO_LARK_TABLE_ID_US`。默认 `--site MX` 仅为兼容既有流程。
 
 本地界面偏好保存在 `config.json` 中，该文件已被 Git 忽略。包含敏感信息的输入工作簿必须放在仓库之外。
 

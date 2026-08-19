@@ -17,20 +17,21 @@ workflows contributed by **Samforo**.
 
 - Mexico and United States order and shipment lookup, including
   privacy-scoped tracking screenshots.
-- Buyer-account registration with explicit terms acknowledgement and manual
-  takeover for unrecognized verification flows.
-- Batch HubStudio environment creation with dry-run, explicit write
-  confirmation, resumable state, and credential-free mapping exports.
+- Mexico and United States buyer-account registration tasks with explicit
+  terms acknowledgement and manual takeover for unrecognized verification flows.
+- Batch HubStudio environment creation for Mexico and the United States, with
+  per-site purchasing groups, dry-run, explicit write confirmation, resumable
+  state, and credential-free mapping exports. The buyer roster is fixed
+  (新刚-XG / 志恒-ZH / 康德-KD / 宇航-YH) and environments are named with
+  English codes (for example `XG-MX-0819-001`). A backup/test mode creates
+  remark-only environments without cookie imports, account binding, or
+  ledger writes.
 - Optional Lark Base ledger integration configured entirely at runtime.
 
-The current stable release is `v0.6.3`. The project is under active
+The current stable release is `v0.7.0`. The project is under active
 development and is not yet a hosted SaaS product.
 
-v0.6.3 adds United States support to order and shipment lookup, including the
-US routes, English order states, commercial carrier names, tracking numbers,
-privacy-scoped screenshots, risk-verification orders, and each HubStudio
-environment's local browser time. Mexico behavior remains compatible, and
-site/environment mismatches are rejected before a browser is opened.
+v0.7.0 brings the buyer roster and backup-environment workflow to environment creation: a fixed four-person roster with English-code environment naming (for example XG-MX-0819-001), a backup/test mode that creates remark-only environments without binding, parallel creation, a builtin default proxy URL for zero-config onboarding, and automatic account-site validation based on cookie login domains.
 
 ## Requirements
 
@@ -60,12 +61,20 @@ URLs, or Lark record IDs are stored in this repository.
 
 | Environment variable | Purpose |
 |---|---|
-| `XYNIGO_PROXY_LINK` | HubStudio dynamic-proxy extraction URL used only when creating a new environment |
+| `XYNIGO_PROXY_LINK` | Optional first-run default. A builtin default dynamic-proxy extraction URL ships with the tool; a custom link can be saved in settings to override it, and clearing restores the builtin default |
 | `XYNIGO_PURCHASE_TAG` | HubStudio group for purchasing environments |
+| `XYNIGO_PURCHASE_TAG_MX` / `XYNIGO_PURCHASE_TAG_US` | Optional per-site purchasing environment groups |
 | `XYNIGO_REGISTER_TAG` | HubStudio group for registration environments |
+| `XYNIGO_REGISTER_TAG_MX` / `XYNIGO_REGISTER_TAG_US` | Optional per-site registration environment groups |
 | `XYNIGO_LARK_BASE_TOKEN` | Optional Lark Base token |
-| `XYNIGO_LARK_TABLE_ID` | Optional Lark Base table ID |
+| `XYNIGO_LARK_TABLE_ID` | Optional legacy MX Lark Base table ID |
+| `XYNIGO_LARK_TABLE_ID_MX` / `XYNIGO_LARK_TABLE_ID_US` | Optional per-site Lark Base tables; US never falls back to the legacy MX setting |
 | `XYNIGO_LARK_OPERATOR_OPEN_ID` | Optional operator ID used by the ledger backfill command |
+
+The module-three macOS backfill command validates its site explicitly. Use
+`python -m purchase_tool backfill --site US ...` together with a separate
+`XYNIGO_LARK_TABLE_ID_US`; the default `--site MX` only preserves the existing
+workflow.
 
 Local UI preferences are stored in `config.json`, which is ignored by Git.
 Sensitive input workbooks must remain outside the repository.

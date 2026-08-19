@@ -21,6 +21,14 @@ class CouponTests(unittest.TestCase):
         self.assertEqual(
             parse_coupon_cards([]).remark_fragment(), '优惠券0张')
 
+    def test_parse_us_coupon_card(self):
+        result = parse_coupon_cards([
+            'NEW\n25% OFF\nNo minimum purchase\nExpires on 09/17/2026'
+        ], site='US')
+        self.assertEqual(result.items[0].discount_percent, 25)
+        self.assertTrue(result.items[0].no_minimum)
+        self.assertEqual(result.items[0].expiry, '2026-09-17')
+
 
 if __name__ == '__main__':
     unittest.main()

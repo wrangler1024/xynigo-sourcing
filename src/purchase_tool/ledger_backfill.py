@@ -17,13 +17,15 @@ import time
 
 from .env_batch import (EMAIL_RE, EnvBatchError, MAPPING_HEADERS,
                         load_vendor_xlsx, parse_vendor_workbook,
-                        project_root, validate_input_path)
-from .lark_ledger import BASE_TOKEN, TABLE_MX
+                        normalize_env_site, project_root,
+                        validate_input_path)
+from .lark_ledger import BASE_TOKEN, TABLE_MX, TABLE_US
 from .redaction import mask_email, scrub_text
 
 
 DEFAULT_OPERATOR_OPEN_ID = os.environ.get(
     'XYNIGO_LARK_OPERATOR_OPEN_ID', '')
+SITE_TABLES = {'MX': TABLE_MX, 'US': TABLE_US}
 BATCH_SIZE = 200
 RETRYABLE_CODES = {1254291}
 CREATE_FIELDS = (
@@ -370,13 +372,13 @@ def _record_index(records):
 
 class LedgerBackfillService(object):
     def __init__(self, client, operator_open_id=DEFAULT_OPERATOR_OPEN_ID,
-                 remark='模块三补账'):
+                 remark='模块三补账', site='MX'):
         self.client = client
         self.operator_open_id = operator_open_id
         self.remark = remark
+        self.site = normalize_env_site(site)
 
-    @staticmethod
-    def _validate_inputs(accounts, mapping_rows):
+    def _validate_inputs(self, accounts, mapping_rows):
         account_keys = {account.email.casefold() for account in accounts}
         mapping_keys = {row.email.casefold() for row in mapping_rows}
         if account_keys != mapping_keys:
@@ -390,6 +392,13 @@ class LedgerBackfillService(object):
             raise LedgerBackfillError('原始 xlsx 与映射清单邮箱集合不一致：%s' %
                                       '，'.join(detail))
         mapping = {row.email.casefold(): row for row in mapping_rows}
+        site_marker = '-%s-' % self.site
+        mismatched = [row for row in mapping.values()
+                      if row.complete and site_marker not in row.env_name]
+        if mismatched:
+            raise LedgerBackfillError(
+                '映射清单第 %d 行环境名与 %s 站不一致' %
+                (mismatched[0].row_number, self.site))
         for account in accounts:
             row = mapping[account.email.casefold()]
             if row.buyer:
@@ -399,6 +408,7 @@ class LedgerBackfillService(object):
     def dry_run(self, accounts, mapping_rows):
         mapping = self._validate_inputs(accounts, mapping_rows)
         return {
+            'site': self.site,
             'total': len(accounts),
             'complete': sum(row.complete for row in mapping.values()),
             'failed': sum(not row.complete for row in mapping.values()),
@@ -498,6 +508,8 @@ def build_parser():
         description='模块三 Mac 补账：默认 dry-run，--apply 才写飞书')
     parser.add_argument('--xlsx', required=True, help='仓库外原始号商 xlsx')
     parser.add_argument('--mapping', required=True, help='仓库外绑定映射清单')
+    parser.add_argument('--site', choices=('MX', 'US'), default='MX',
+                        help='台账与映射清单所属站点（默认 MX）')
     parser.add_argument('--operator-open-id', default=DEFAULT_OPERATOR_OPEN_ID)
     parser.add_argument('--remark', default='模块三补账')
     parser.add_argument('--profile')
@@ -517,13 +529,15 @@ def main(argv=None):
         with original_path.open('rb') as handle:
             accounts = parse_vendor_workbook(BytesIO(handle.read()))
         mapping_rows = parse_mapping_workbook(str(mapping_path))
+        site = normalize_env_site(args.site)
         service = LedgerBackfillService(
-            LarkBaseClient(profile=args.profile),
+            LarkBaseClient(table_id=SITE_TABLES[site], profile=args.profile),
             operator_open_id=args.operator_open_id,
-            remark=args.remark)
+            remark=args.remark, site=site)
         if not args.apply:
             summary = service.dry_run(accounts, mapping_rows)
-            print('补账 dry-run：总数 %(total)d，完成映射 %(complete)d，失败映射 %(failed)d' % summary)
+            print('%(site)s 站补账 dry-run：总数 %(total)d，完成映射 '
+                  '%(complete)d，失败映射 %(failed)d' % summary)
             print('未连接飞书、未写入任何数据；采购员：%s' %
                   ','.join(summary['buyers']))
             return 0

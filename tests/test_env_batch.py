@@ -5,19 +5,25 @@ import os
 from pathlib import Path
 import random
 import tempfile
+import threading
 import unittest
 import zipfile
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 os.environ.setdefault(
     'XYNIGO_PROXY_LINK', 'https://proxy.example.test/{region}')
 
 from purchase_tool.env_batch import (
-    BatchEnvOrchestrator, EnvBatchError, RES_POOL, ResumeStateStore,
+    BUYER_ROSTER, BatchEnvOrchestrator, BackupEnvOrchestrator,
+    EnvBatchError, RES_POOL, ResumeStateStore,
+    VENDOR_TEMPLATE_HEADERS,
+    backup_env_names, backup_result_tsv_bytes,
     batch_fingerprint, build_batch_plan, build_env_create_body,
     choose_resolution, envbatch_preflight, format_remark, load_vendor_xlsx,
-    mapping_workbook_bytes, parse_vendor_workbook, validate_purchase_tag)
+    mapping_workbook_bytes, normalize_buyer, normalize_env_site,
+    parse_assignment, parse_vendor_workbook,
+    validate_assignment_template, validate_purchase_tag)
 from purchase_tool.hub_api import HubStudioApi
 
 
@@ -50,25 +56,30 @@ class FakeHub(object):
     def __init__(self, fail_cookie_once=False, fail_create_with_link=False):
         self.envs = []
         self.calls = []
+        self.lock = threading.Lock()
         self.fail_cookie_once = fail_cookie_once
         self.fail_create_with_link = fail_create_with_link
 
     def group_list(self):
         return [TEST_TAG]
 
-    def env_list(self, _tag):
-        return [dict(item) for item in self.envs]
+    def env_list(self, tag=None):
+        with self.lock:
+            return [dict(item) for item in self.envs
+                    if not tag or item.get('tagName', TEST_TAG) == tag]
 
     def env_create(self, body):
-        self.calls.append(('create', dict(body)))
-        if self.fail_create_with_link:
-            raise RuntimeError('proxy rejected: ' + body['linkCode'])
-        self.envs.append({
-            'containerName': body['containerName'],
-            'containerCode': str(9000 + len(self.envs)),
-            'serialNumber': 1100 + len(self.envs),
-            'remark': '',
-        })
+        with self.lock:
+            self.calls.append(('create', dict(body)))
+            if self.fail_create_with_link:
+                raise RuntimeError('proxy rejected: ' + body['linkCode'])
+            self.envs.append({
+                'containerName': body['containerName'],
+                'containerCode': str(9000 + len(self.envs)),
+                'serialNumber': 1100 + len(self.envs),
+                'tagName': body['tagName'],
+                'remark': '',
+            })
         return {}
 
     def env_import_cookie(self, code, cookie_text):
@@ -93,18 +104,48 @@ class FakeHub(object):
 class EnvBatchTests(unittest.TestCase):
     def test_repository_sample_matches_contract(self):
         repo = Path(__file__).resolve().parents[1]
-        sample = repo / 'examples' / 'buyer-import-template.xlsx'
-        _path, accounts = load_vendor_xlsx(sample, allow_repo_sample=True)
-        self.assertEqual(len(accounts), 5)
-        self.assertTrue(all(account.cookie_text.startswith('[')
-                            for account in accounts))
-        self.assertTrue(all(account.order_no for account in accounts))
+        samples = (
+            repo / 'examples' / 'buyer-import-template.xlsx',
+            repo / 'src' / 'purchase_tool' / 'web' /
+            '采购工具买家号入库模板.xlsx',
+        )
+        for sample in samples:
+            workbook = load_workbook(sample, read_only=True, data_only=True)
+            try:
+                header = tuple(
+                    cell.value for cell in workbook.worksheets[0][1][:4])
+            finally:
+                workbook.close()
+            self.assertEqual(header, VENDOR_TEMPLATE_HEADERS)
+            accounts = parse_vendor_workbook(str(sample))
+            self.assertEqual(len(accounts), 5)
+            self.assertTrue(all(account.cookie_text.startswith('[')
+                                for account in accounts))
+            self.assertTrue(all(account.order_no for account in accounts))
 
-    def test_strict_parser_rejects_header_and_extra_business_column(self):
-        with self.assertRaises(EnvBatchError):
+    def test_parser_accepts_recognized_header_or_no_header(self):
+        for header in (
+                list(VENDOR_TEMPLATE_HEADERS),
+                ['Email', 'Password', 'Verification URL', 'Cookie JSON']):
+            accounts = parse_vendor_workbook(BytesIO(workbook_bytes(
+                [header] + demo_rows())))
+            self.assertEqual(len(accounts), 2)
+            self.assertEqual(accounts[0].row_number, 2)
+        accounts = parse_vendor_workbook(
+            BytesIO(workbook_bytes(demo_rows())))
+        self.assertEqual(len(accounts), 2)
+        self.assertEqual(accounts[0].row_number, 1)
+
+        rows = demo_rows()
+        rows[0][1] = 'password'
+        accounts = parse_vendor_workbook(BytesIO(workbook_bytes(rows)))
+        self.assertEqual(accounts[0].password, 'password')
+
+    def test_parser_rejects_mismatched_header_and_extra_business_column(self):
+        with self.assertRaisesRegex(EnvBatchError, '表头.*列序'):
             parse_vendor_workbook(BytesIO(workbook_bytes([
-                ['邮箱', '密码', '接码Key', 'Cookie']
-            ])))
+                ['邮箱账号', 'Cookie', '接码Key链接', '密码']
+            ] + demo_rows())))
         row = demo_rows()[0] + ['unexpected']
         with self.assertRaises(EnvBatchError):
             parse_vendor_workbook(BytesIO(workbook_bytes([row])))
@@ -120,28 +161,97 @@ class EnvBatchTests(unittest.TestCase):
     def test_assignment_and_daily_continuation_are_per_buyer(self):
         accounts = parse_vendor_workbook(BytesIO(workbook_bytes(demo_rows())))
         existing = [
-            {'containerName': '采购-甲-MX-0819-003'},
-            {'containerName': '采购-乙-MX-0819-009'},
+            {'containerName': 'XG-MX-0819-003'},
+            {'containerName': 'ZH-MX-0819-009'},
         ]
         plan = build_batch_plan(
-            accounts, '1:甲,1:乙', existing, purchase_date='20260819')
-        self.assertEqual(plan[0].env_name, '采购-甲-MX-0819-004')
-        self.assertEqual(plan[1].env_name, '采购-乙-MX-0819-010')
+            accounts, '1:新刚,1:志恒', existing, purchase_date='20260819')
+        self.assertEqual(plan[0].env_name, 'XG-MX-0819-004')
+        self.assertEqual(plan[1].env_name, 'ZH-MX-0819-010')
+
+        # 旧「采购-」格式不参与新代号续排
+        us_plan = build_batch_plan(
+            accounts, '1:新刚,1:志恒',
+            [{'containerName': 'XG-US-0819-006'},
+             {'containerName': '采购-熊-US-0819-099'}],
+            site='US', purchase_date='20260819')
+        self.assertEqual(us_plan[0].env_name, 'XG-US-0819-007')
+        self.assertEqual(us_plan[1].env_name, 'ZH-US-0819-001')
+
+    def test_assignment_roster_validation_and_code_normalization(self):
+        self.assertEqual(parse_assignment('2:XG,1:志恒', 3),
+                         [(2, '新刚'), (1, '志恒')])
+        self.assertEqual(parse_assignment('1:xg', 1), [(1, '新刚')])
+        self.assertEqual(normalize_buyer('kd'), '康德')
+        with self.assertRaisesRegex(EnvBatchError, '不在名单内'):
+            parse_assignment('1:甲', 1)
+        with self.assertRaisesRegex(EnvBatchError, '重复'):
+            parse_assignment('1:XG,1:新刚', 2)
+        self.assertEqual(validate_assignment_template('2:XG,1:志恒'),
+                         '2:XG,1:志恒')
+        with self.assertRaises(EnvBatchError):
+            validate_assignment_template('1:Operator-A')
+        roster_codes = {code for _name, code in BUYER_ROSTER}
+        self.assertEqual(roster_codes, {'XG', 'ZH', 'KD', 'YH'})
 
     def test_existing_order_remark_makes_completed_rerun_idempotent(self):
         accounts = parse_vendor_workbook(BytesIO(workbook_bytes(demo_rows()[:1])))
         existing = [{
-            'containerName': '采购-甲-MX-0819-007',
+            'containerName': 'XG-MX-0819-007',
             'containerCode': '7007', 'serialNumber': 1006,
-            'remark': '邮箱接码:https://redacted | 单号:a1b2c3 | 采购员:甲 | 购买:20260819',
+            'remark': '邮箱接码:https://redacted | 单号:a1b2c3 | 采购员:新刚 | 购买:20260819',
         }]
         plan = build_batch_plan(
-            accounts, '1:甲', existing, purchase_date='20260819')
+            accounts, '1:新刚', existing, purchase_date='20260819')
         self.assertEqual(plan[0].state, 'done')
-        self.assertEqual(plan[0].env_name, '采购-甲-MX-0819-007')
+        self.assertEqual(plan[0].env_name, 'XG-MX-0819-007')
         self.assertEqual(plan[0].completed_steps,
                          {'env_created', 'cookie_imported', 'account_bound',
                           'remarked', 'done'})
+        with self.assertRaisesRegex(EnvBatchError, '另一站点'):
+            build_batch_plan(
+                accounts, '1:新刚', existing, site='US',
+                purchase_date='20260819')
+
+    def test_global_guard_keeps_same_group_idempotent_recovery(self):
+        hub = FakeHub()
+        hub.envs.append({
+            'containerName': 'XG-MX-0820-007',
+            'containerCode': 'same-1', 'serialNumber': 2007,
+            'tagName': TEST_TAG,
+            'remark': ('邮箱接码:https://redacted | 单号:a1b2c3 | '
+                       '采购员:新刚 | 购买:20260820'),
+        })
+        accounts = parse_vendor_workbook(
+            BytesIO(workbook_bytes(demo_rows()[:1])))
+        runner = BatchEnvOrchestrator(
+            hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY,
+            purchase_date='20260820', sleep_fn=lambda _seconds: None)
+        rows = runner.prepare(accounts, '1:新刚')
+        self.assertTrue(rows[0].recovered_existing)
+        self.assertEqual(rows[0].state, 'done')
+        runner.run()
+        self.assertFalse(any(call[0] in {
+            'create', 'cookie', 'account', 'remark'} for call in hub.calls))
+
+    def test_prepare_rejects_order_already_present_in_other_group(self):
+        hub = FakeHub()
+        hub.envs.append({
+            'containerName': 'XG-MX-0820-001',
+            'containerCode': 'other-1', 'serialNumber': 2001,
+            'tagName': 'Other-Purchase',
+            'remark': ('邮箱接码:https://redacted | 单号:a1b2c3 | '
+                       '采购员:新刚 | 购买:20260820'),
+        })
+        accounts = parse_vendor_workbook(
+            BytesIO(workbook_bytes(demo_rows()[:1])))
+        runner = BatchEnvOrchestrator(
+            hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY,
+            purchase_date='20260820', sleep_fn=lambda _seconds: None)
+        with self.assertRaisesRegex(EnvBatchError, '其他分组'):
+            runner.prepare(accounts, '1:新刚')
+        self.assertFalse(any(call[0] in {
+            'create', 'cookie', 'account', 'remark'} for call in hub.calls))
 
     def test_resolution_pool_tracks_weights_and_caps_size(self):
         rng = random.Random(20260819)
@@ -155,13 +265,37 @@ class EnvBatchTests(unittest.TestCase):
             observed = counts[(width, height)] / 10000.0
             self.assertLess(abs(observed - weight), 0.025)
         body = build_env_create_body(
-            '采购-甲-MX-0819-001', rng=rng,
+            'XG-MX-0819-001', rng=rng,
             proxy_link=TEST_PROXY, purchase_tag=TEST_TAG)
         self.assertEqual(body['coreVersion'], 148)
         self.assertEqual(body['advancedBo']['languageType'], 0)
         self.assertEqual(body['tagName'], TEST_TAG)
         self.assertEqual(body['linkCode'],
                          'https://proxy.example.test/MX')
+        us_body = build_env_create_body(
+            'XG-US-0819-001', site='US', rng=rng,
+            proxy_link=TEST_PROXY, purchase_tag=TEST_TAG)
+        self.assertEqual(us_body['linkCode'],
+                         'https://proxy.example.test/US')
+        self.assertEqual(normalize_env_site('us'), 'US')
+        with self.assertRaisesRegex(EnvBatchError, 'MX.*US'):
+            normalize_env_site('CA')
+
+    def test_us_orchestrator_captures_site_for_proxy_name_and_binding(self):
+        hub = FakeHub()
+        accounts = parse_vendor_workbook(
+            BytesIO(workbook_bytes(demo_rows()[:1])))
+        runner = BatchEnvOrchestrator(
+            hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY,
+            site='US', purchase_date='20260819',
+            sleep_fn=lambda _seconds: None)
+        runner.prepare(accounts, '1:新刚')
+        runner.run()
+        self.assertEqual(runner.rows[0].env_name, 'XG-US-0819-001')
+        create = next(call[1] for call in hub.calls if call[0] == 'create')
+        account = next(call for call in hub.calls if call[0] == 'account')
+        self.assertEqual(create['linkCode'], 'https://proxy.example.test/US')
+        self.assertEqual(account[-1], 'US')
 
     def test_preflight_requires_exact_group_and_never_returns_proxy(self):
         hub = FakeHub()
@@ -169,6 +303,10 @@ class EnvBatchTests(unittest.TestCase):
         self.assertTrue(ready['ready'])
         self.assertTrue(ready['groupFound'])
         self.assertNotIn(TEST_PROXY, json.dumps(ready))
+        us_ready = envbatch_preflight(
+            hub, TEST_TAG, TEST_PROXY, site='US')
+        self.assertTrue(us_ready['ready'])
+        self.assertEqual(us_ready['site'], 'US')
 
         no_proxy = envbatch_preflight(hub, TEST_TAG, '')
         self.assertFalse(no_proxy['ready'])
@@ -196,7 +334,7 @@ class EnvBatchTests(unittest.TestCase):
         runner = BatchEnvOrchestrator(
             hub, purchase_tag=TEST_TAG, proxy_link=secret_proxy,
             purchase_date='20260819', sleep_fn=lambda _seconds: None)
-        rows = runner.prepare(accounts, '1:甲')
+        rows = runner.prepare(accounts, '1:新刚')
         runner.run()
         rendered = json.dumps(rows[0].public_dict(), ensure_ascii=False)
         self.assertEqual(rows[0].state, 'failed')
@@ -215,6 +353,35 @@ class EnvBatchTests(unittest.TestCase):
             {'containerCode': '123', 'cookie': cookie}))
         with self.assertRaises(TypeError):
             api.env_import_cookie(123, [])
+        api.container_add_account(
+            123, 'us@example.com', 'secret-pass', site='US')
+        us_body = calls[-1][1]
+        self.assertEqual(us_body['siteAlias'], '希音美国站')
+        self.assertEqual(us_body['domainName'], 'https://us.shein.com')
+        with self.assertRaisesRegex(ValueError, 'MX.*US'):
+            api.container_add_account(
+                123, 'ca@example.com', 'secret-pass', site='CA')
+
+    def test_hub_unfiltered_env_list_paginates_across_all_groups(self):
+        api = HubStudioApi()
+        calls = []
+
+        def fake_post(path, body):
+            calls.append((path, dict(body)))
+            current = body['current']
+            return {
+                'total': 201,
+                'list': ([{'containerCode': str(index)}
+                          for index in range(200)]
+                         if current == 1 else [{'containerCode': '200'}]),
+            }
+
+        api._post = fake_post
+        rows = api.env_list()
+        self.assertEqual(len(rows), 201)
+        self.assertEqual([body['current'] for _path, body in calls], [1, 2])
+        self.assertTrue(all('tagNames' not in body
+                            for _path, body in calls))
 
     def test_failed_step_resumes_without_repeating_completed_steps(self):
         source = workbook_bytes(demo_rows()[:1])
@@ -222,12 +389,12 @@ class EnvBatchTests(unittest.TestCase):
         hub = FakeHub(fail_cookie_once=True)
         with tempfile.TemporaryDirectory() as tmp:
             store = ResumeStateStore(
-                batch_fingerprint(source, '1:甲', 'MX', '20260819'), tmp)
+                batch_fingerprint(source, '1:新刚', 'MX', '20260819'), tmp)
             first = BatchEnvOrchestrator(
                 hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY,
                 purchase_date='20260819', state_store=store,
                 sleep_fn=lambda _seconds: None)
-            first.prepare(accounts, '1:甲')
+            first.prepare(accounts, '1:新刚')
             first.run()
             self.assertEqual(first.rows[0].state, 'failed')
             self.assertEqual(first.rows[0].error_step, 'cookie_imported')
@@ -243,7 +410,7 @@ class EnvBatchTests(unittest.TestCase):
                 hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY,
                 purchase_date='20260819', state_store=store,
                 sleep_fn=lambda _seconds: None)
-            second.prepare(accounts, '1:甲')
+            second.prepare(accounts, '1:新刚')
             second.run()
             self.assertEqual(second.rows[0].state, 'done')
             self.assertEqual(sum(call[0] == 'create' for call in hub.calls), 1)
@@ -260,7 +427,7 @@ class EnvBatchTests(unittest.TestCase):
     def test_remark_and_mapping_export_contract(self):
         accounts = parse_vendor_workbook(BytesIO(workbook_bytes(demo_rows()[:1])))
         plan = build_batch_plan(
-            accounts, '1:甲', purchase_date='20260819')
+            accounts, '1:新刚', purchase_date='20260819')
         row = plan[0]
         row.serial_number = 1004
         row.binding_time = '2026-08-19 10:00:00'
@@ -268,7 +435,7 @@ class EnvBatchTests(unittest.TestCase):
         remark = format_remark(row.account, '20260819')
         self.assertIn('邮箱接码:', remark)
         self.assertIn('单号:a1b2c3', remark)
-        self.assertIn('采购员:甲', remark)
+        self.assertIn('采购员:新刚', remark)
         self.assertIn('购买:20260819', remark)
 
         output = mapping_workbook_bytes(plan)
@@ -281,6 +448,170 @@ class EnvBatchTests(unittest.TestCase):
         for secret in ('secret-pass-a', 'secret-cookie-a',
                        'codes.example.test'):
             self.assertNotIn(secret, text)
+
+    def test_cookie_domain_validates_account_site(self):
+        def rows_with_cookie(cookie):
+            row = ['site@example.com', 'pass',
+                   'https://codes.example.test/?orderNo=abc123', cookie]
+            return workbook_bytes([row])
+        mx_cookie = '[{"name":"sid","domain":".shein.com.mx"}]'
+        us_cookie = '[{"name":"sid","domain":".us.shein.com"}]'
+        from purchase_tool.env_batch import detect_cookie_site
+        self.assertEqual(detect_cookie_site(mx_cookie), 'MX')
+        self.assertEqual(detect_cookie_site(us_cookie), 'US')
+        self.assertIsNone(detect_cookie_site('[{"name":"sid"}]'))
+        self.assertEqual(
+            detect_cookie_site(mx_cookie + us_cookie), 'CONFLICT')
+
+        # 站点一致放行；冲突整批拒收（无 Cookie 标记不拦截）
+        accounts = parse_vendor_workbook(
+            BytesIO(rows_with_cookie(mx_cookie)))
+        plan = build_batch_plan(accounts, '1:新刚', purchase_date='20260819')
+        self.assertTrue(plan[0].env_name.startswith('XG-MX-'))
+        with self.assertRaisesRegex(EnvBatchError, 'MX.*US.*不一致'):
+            build_batch_plan(accounts, '1:新刚', site='US',
+                             purchase_date='20260819')
+        us_accounts = parse_vendor_workbook(
+            BytesIO(rows_with_cookie(us_cookie)))
+        build_batch_plan(us_accounts, '1:新刚', site='US',
+                         purchase_date='20260819')
+        plain = parse_vendor_workbook(
+            BytesIO(rows_with_cookie('[{"name":"sid"}]')))
+        build_batch_plan(plain, '1:新刚', site='US', purchase_date='20260819')
+        both = parse_vendor_workbook(BytesIO(rows_with_cookie(
+            '[{"name":"a","domain":".shein.com.mx"},'
+            '{"name":"b","domain":".us.shein.com"}]')))
+        with self.assertRaisesRegex(EnvBatchError, '数据异常'):
+            build_batch_plan(both, '1:新刚', purchase_date='20260819')
+
+    def test_bound_parallel_run_creates_all_rows(self):
+        rows = []
+        for i in range(5):
+            rows.append([
+                'par%d@example.com' % i, 'secret-pass',
+                'https://codes.example.test/get?orderNo=%s' % ('a' * 13 + '%02x' % i),
+                '[{"name":"sid"}]'])
+        accounts = parse_vendor_workbook(BytesIO(workbook_bytes(rows)))
+        hub = FakeHub()
+        runner = BatchEnvOrchestrator(
+            hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY,
+            purchase_date='20260819', sleep_fn=lambda _s: None,
+            max_workers=3)
+        runner.prepare(accounts, '5:新刚')
+        runner.run()
+        self.assertEqual({row.state for row in runner.rows}, {'done'})
+        self.assertEqual(len(hub.envs), 5)
+        self.assertEqual(len({env['containerCode'] for env in hub.envs}), 5)
+        self.assertEqual(
+            [row.env_name for row in runner.rows],
+            ['XG-MX-0819-%03d' % n for n in range(1, 6)])
+
+    def test_backup_names_share_daily_serial_and_skip_existing(self):
+        existing = [
+            {'containerName': 'XG-MX-0819-003'},
+            {'containerName': 'XG-MX-0819-004'},
+            {'containerName': '采购-熊-MX-0819-099'},   # 旧格式不参与续排
+        ]
+        names = backup_env_names(
+            existing, '新刚', 2, '备用', 'MX', '20260819')
+        self.assertEqual(names, ['XG-MX-0819-005', 'XG-MX-0819-006'])
+        test_names = backup_env_names(
+            [{'containerName': 'ZH-US-测试-02'}], '志恒', 2, '测试', 'US',
+            '20260819')
+        self.assertEqual(test_names, ['ZH-US-测试-03', 'ZH-US-测试-04'])
+        with self.assertRaisesRegex(EnvBatchError, '1-25'):
+            backup_env_names([], '新刚', 26, '备用', 'MX', '20260819')
+        with self.assertRaisesRegex(EnvBatchError, '备用 或 测试'):
+            backup_env_names([], '新刚', 1, '临时', 'MX', '20260819')
+        with self.assertRaisesRegex(EnvBatchError, '不在名单内'):
+            backup_env_names([], '甲', 1, '备用', 'MX', '20260819')
+        with self.assertRaisesRegex(EnvBatchError, 'YYYYMMDD'):
+            backup_env_names([], '新刚', 1, '备用', 'MX', '0819')
+
+    def test_backup_orchestrator_creates_and_remarks_without_binding(self):
+        hub = FakeHub()
+        runner = BackupEnvOrchestrator(
+            hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY, site='MX',
+            sleep_fn=lambda _seconds: None)
+        runner.prepare('新刚', 2, '备用', '20260819')
+        rows = runner.run()
+        self.assertEqual([row.env_name for row in rows],
+                         ['XG-MX-0819-001', 'XG-MX-0819-002'])
+        self.assertEqual({row.state for row in rows}, {'done'})
+        create_calls = [call for call in hub.calls if call[0] == 'create']
+        self.assertEqual(len(create_calls), 2)
+        self.assertEqual(create_calls[0][1]['linkCode'],
+                         'https://proxy.example.test/MX')
+        self.assertEqual(create_calls[0][1]['coreVersion'], 148)
+        remark_calls = [call for call in hub.calls if call[0] == 'remark']
+        self.assertEqual(len(remark_calls), 2)
+        self.assertEqual({call[3] for call in remark_calls}, {'备用环境'})
+        # 备用模式零 Cookie、零绑号
+        self.assertEqual(sum(call[0] == 'cookie' for call in hub.calls), 0)
+        self.assertEqual(sum(call[0] == 'account' for call in hub.calls), 0)
+        # 重跑按名幂等：已存在的环境不再重复创建
+        runner2 = BackupEnvOrchestrator(
+            hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY, site='MX',
+            sleep_fn=lambda _seconds: None)
+        runner2.prepare('新刚', 2, '备用', '20260819')
+        self.assertEqual([row.env_name for row in runner2.rows],
+                         ['XG-MX-0819-003', 'XG-MX-0819-004'])
+
+    def test_bound_adoption_refuses_nonempty_remark_env(self):
+        # 模拟计划后、执行前另一机器/批次占用同名环境（同步延迟或并发撞名）
+        for occupied_remark in ('备用环境', '测试环境',
+                                '邮箱接码:https://x | 单号:abc | 采购员:新刚'):
+            hub = FakeHub()
+            accounts = parse_vendor_workbook(
+                BytesIO(workbook_bytes(demo_rows()[:1])))
+            runner = BatchEnvOrchestrator(
+                hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY,
+                purchase_date='20260819', sleep_fn=lambda _s: None)
+            runner.prepare(accounts, '1:新刚')   # 计划 XG-MX-0819-001
+            hub.envs.append({
+                'containerName': 'XG-MX-0819-001',
+                'containerCode': '8001', 'serialNumber': 2001,
+                'remark': occupied_remark})
+            runner.run()
+            self.assertEqual(runner.rows[0].state, 'failed')
+            self.assertIn('拒绝收养', runner.rows[0].error)
+            # 拒绝收养 = 零写入（不建、不导 Cookie、不绑号、不改备注）
+            self.assertEqual(sum(call[0] in {
+                'create', 'cookie', 'account', 'remark'}
+                for call in hub.calls), 0)
+
+    def test_bound_adoption_allows_empty_remark_env(self):
+        # 合法收养：本批次建环境后中断（备注为空、未绑号），重跑同名收养续做
+        hub = FakeHub()
+        accounts = parse_vendor_workbook(
+            BytesIO(workbook_bytes(demo_rows()[:1])))
+        runner = BatchEnvOrchestrator(
+            hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY,
+            purchase_date='20260819', sleep_fn=lambda _s: None)
+        runner.prepare(accounts, '1:新刚')   # 计划 XG-MX-0819-001
+        hub.envs.append({
+            'containerName': 'XG-MX-0819-001',
+            'containerCode': '8001', 'serialNumber': 2001, 'remark': ''})
+        runner.run()
+        self.assertEqual(runner.rows[0].state, 'done')
+        self.assertEqual(sum(call[0] == 'create' for call in hub.calls), 0)
+        self.assertEqual(sum(call[0] == 'cookie' for call in hub.calls), 1)
+        self.assertEqual(sum(call[0] == 'account' for call in hub.calls), 1)
+
+    def test_backup_result_tsv_contains_no_credentials(self):
+        hub = FakeHub()
+        runner = BackupEnvOrchestrator(
+            hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY, site='US',
+            sleep_fn=lambda _seconds: None)
+        runner.prepare('志恒', 1, '测试', '20260819')
+        rows = runner.run()
+        text = backup_result_tsv_bytes(rows, 'US').decode('utf-8-sig')
+        self.assertIn('环境名', text)
+        self.assertIn('ZH-US-测试-01', text)
+        self.assertIn('完成', text)
+        self.assertNotIn(TEST_PROXY, text)
+        self.assertNotIn('proxy.example.test', text)
+        self.assertNotIn('secret', text.lower())
 
 
 if __name__ == '__main__':

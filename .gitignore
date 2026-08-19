@@ -18,3 +18,4 @@ config.json
 查询日志/
 运行数据/
 *.local.json
+.playwright-cli/

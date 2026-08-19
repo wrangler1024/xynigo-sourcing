@@ -12,7 +12,9 @@ import time
 
 
 BASE_TOKEN = os.environ.get('XYNIGO_LARK_BASE_TOKEN', '')
-TABLE_MX = os.environ.get('XYNIGO_LARK_TABLE_ID', '')
+TABLE_MX = (os.environ.get('XYNIGO_LARK_TABLE_ID_MX') or
+            os.environ.get('XYNIGO_LARK_TABLE_ID', ''))
+TABLE_US = os.environ.get('XYNIGO_LARK_TABLE_ID_US', '')
 REQUIRED_FIELDS = {
     '账号状态': 'select', '绑定环境': 'text', '环境序号': 'number',
     '绑定时间': 'datetime', 'Cookie': 'text',
@@ -25,12 +27,21 @@ class LarkLedgerError(Exception):
 
 class LarkLedgerSink(object):
     def __init__(self, lark_bin='lark-cli', base_token=BASE_TOKEN,
-                 table_id=TABLE_MX, profile=None):
+                 table_id=None, table_ids=None, profile=None):
         self.lark_bin = lark_bin
         self.base_token = base_token
-        self.table_id = table_id
+        self.table_ids = {'MX': TABLE_MX, 'US': TABLE_US}
+        if table_id is not None:
+            # 旧的单表参数只兼容 MX，避免 US 任务误写到墨西哥台账。
+            self.table_ids['MX'] = table_id
+        if table_ids:
+            unknown = set(table_ids) - {'MX', 'US'}
+            if unknown:
+                raise LarkLedgerError(
+                    '不支持的台账站点：%s' % ', '.join(sorted(unknown)))
+            self.table_ids.update(table_ids)
         self.profile = profile
-        self._schema_validated = False
+        self._schema_validated = set()
 
     @staticmethod
     def _cookie_text(cookie):
@@ -57,14 +68,25 @@ class LarkLedgerSink(object):
             payload['采购员'] = task.buyer
         return payload
 
-    def _argv(self, command):
-        if not self.base_token or not self.table_id:
+    def _table_id(self, task):
+        site = getattr(task, 'site', 'MX') or 'MX'
+        site = str(site).strip().upper()
+        if site not in self.table_ids:
+            raise LarkLedgerError('不支持的飞书台账站点：%s' % site)
+        table_id = self.table_ids.get(site)
+        if not table_id:
             raise LarkLedgerError(
-                '未配置飞书台账；请设置 XYNIGO_LARK_BASE_TOKEN 和 '
-                'XYNIGO_LARK_TABLE_ID')
+                '未配置 %s 站飞书台账；请设置 XYNIGO_LARK_TABLE_ID_%s' %
+                (site, site))
+        return table_id
+
+    def _argv(self, command, table_id):
+        if not self.base_token:
+            raise LarkLedgerError(
+                '未配置飞书台账；请设置 XYNIGO_LARK_BASE_TOKEN')
         argv = [self.lark_bin, 'base', command,
                 '--base-token', self.base_token,
-                '--table-id', self.table_id, '--as', 'user',
+                '--table-id', table_id, '--as', 'user',
                 '--format', 'json']
         if self.profile:
             argv += ['--profile', self.profile]
@@ -84,11 +106,12 @@ class LarkLedgerSink(object):
                 (error.get('message') or error.get('subtype') or '未知错误'))
         return result
 
-    def _validate_schema(self):
-        if self._schema_validated:
+    def _validate_schema(self, table_id):
+        if table_id in self._schema_validated:
             return
         proc = subprocess.run(
-            self._argv('+field-list'), capture_output=True, text=True,
+            self._argv('+field-list', table_id),
+            capture_output=True, text=True,
             env=dict(os.environ,
                      LARKSUITE_CLI_NO_UPDATE_NOTIFIER='1',
                      LARKSUITE_CLI_NO_SKILLS_NOTIFIER='1'))
@@ -99,12 +122,13 @@ class LarkLedgerSink(object):
                if actual.get(name) != kind]
         if bad:
             raise LarkLedgerError('飞书台账字段不匹配：%s' % ', '.join(bad))
-        self._schema_validated = True
+        self._schema_validated.add(table_id)
 
     def __call__(self, task, env, cookie):
         if not task.record_id:
             raise LarkLedgerError('缺少 record_id，不自动创建或猜测台账记录')
-        self._validate_schema()
+        table_id = self._table_id(task)
+        self._validate_schema(table_id)
         payload = self.build_payload(task, env, cookie)
         with tempfile.TemporaryDirectory(prefix='purchase-ledger-') as tmp:
             path = os.path.join(tmp, 'payload.json')
@@ -114,7 +138,7 @@ class LarkLedgerSink(object):
                 os.chmod(path, 0o600)
             except OSError:
                 pass
-            argv = self._argv('+record-upsert')
+            argv = self._argv('+record-upsert', table_id)
             argv += ['--record-id', task.record_id,
                      '--json', '@payload.json']
             proc = subprocess.run(

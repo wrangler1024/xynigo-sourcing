@@ -26,6 +26,7 @@ import csv
 from io import BytesIO, StringIO
 import json
 import os
+import re
 import secrets
 import shutil
 import sys
@@ -39,11 +40,21 @@ from urllib.parse import urlparse, parse_qs
 from . import __version__
 from .buyer_register import BuyerRegistrationTask, RegistrationOrchestrator
 from .excel_export import EXPORT_HEAD, export_bytes
-from .env_batch import (BatchEnvOrchestrator, ResumeStateStore,
+from .env_batch import (BACKUP_MAX_COUNT, BACKUP_REMARK, BUYER_CODES,
+                        BUYER_ROSTER, BatchEnvOrchestrator,
+                        BackupEnvOrchestrator, DEFAULT_PROXY_LINK,
+                        DEFAULT_SPLIT_BUYERS,
+                        ResumeStateStore, backup_env_names,
+                        backup_result_tsv_bytes,
                         batch_fingerprint, build_batch_plan,
                         envbatch_preflight,
-                        mapping_workbook_bytes, parse_assignment,
+                        mapping_workbook_bytes, normalize_backup_type,
+                        normalize_buyer, parse_assignment,
+                        normalize_env_site,
                         parse_vendor_workbook, require_envbatch_ready,
+                        validate_accounts_site,
+                        validate_assignment_template,
+                        validate_backup_count,
                         validate_proxy_link, validate_purchase_tag)
 from .hub_api import HubStudioApi, DEFAULT_PORT
 from .lark_ledger import LarkLedgerSink
@@ -63,24 +74,55 @@ LOG_DIR = os.path.join(os.getcwd(), '查询日志')
 
 CONFIG_FIELDS = frozenset({
     'hubPort', 'serverPort', 'concurrency', 'importBuyerPlan',
-    'verifySampleCount', 'hiddenQueryColumns', 'purchaseTag', 'proxyLink',
+    'verifySampleCount', 'hiddenQueryColumns', 'purchaseSite',
+    'purchaseTag', 'purchaseTags', 'proxyLink', 'envCreateWorkers',
 })
 CONFIG_REQUEST_FIELDS = CONFIG_FIELDS | {'proxyClear'}
 
 
 def default_config():
+    legacy_tag = os.environ.get('XYNIGO_PURCHASE_TAG', '')
+    mx_tag = os.environ.get('XYNIGO_PURCHASE_TAG_MX', legacy_tag)
+    us_tag = os.environ.get('XYNIGO_PURCHASE_TAG_US', '')
     return {
         'hubPort': DEFAULT_PORT,
         'serverPort': 8765,
         'concurrency': 2,
-        'importBuyerPlan': '1:Operator-A',
+        'importBuyerPlan': '1:新刚',
         'verifySampleCount': 3,
         'hiddenQueryColumns': ['envName', 'ip'],
         # Environment variables are migration/first-run defaults only. Once
         # saved, the local config file is the runtime source of truth.
-        'purchaseTag': os.environ.get('XYNIGO_PURCHASE_TAG', ''),
+        'purchaseSite': 'MX',
+        'purchaseTag': mx_tag,
+        'purchaseTags': {'MX': mx_tag, 'US': us_tag},
         'proxyLink': os.environ.get('XYNIGO_PROXY_LINK', ''),
+        'envCreateWorkers': 5,
     }
+
+
+def purchase_tags_from_config(cfg):
+    """Return the MX/US group map, migrating the legacy MX-only field."""
+    cfg = cfg if isinstance(cfg, dict) else {}
+    result = {'MX': '', 'US': ''}
+    raw = cfg.get('purchaseTags')
+    if isinstance(raw, dict):
+        for site in result:
+            result[site] = str(raw.get(site) or '').strip()
+    legacy = str(cfg.get('purchaseTag') or '').strip()
+    if legacy and not result['MX']:
+        result['MX'] = legacy
+    return result
+
+
+def purchase_tag_for_site(cfg, site):
+    site = normalize_env_site(site)
+    return purchase_tags_from_config(cfg).get(site, '')
+
+
+def effective_proxy_link(cfg):
+    """代理提取链接：自定义优先，未配置/已清除回落到内置默认（前期写死决策）。"""
+    return str((cfg or {}).get('proxyLink') or '').strip() or DEFAULT_PROXY_LINK
 
 
 def load_config():
@@ -133,7 +175,21 @@ def save_config(cfg):
 def public_config(cfg):
     result = {key: value for key, value in cfg.items()
               if key in CONFIG_FIELDS and key != 'proxyLink'}
-    result['proxyConfigured'] = bool(str(cfg.get('proxyLink') or '').strip())
+    result['proxyConfigured'] = bool(effective_proxy_link(cfg))
+    result['proxySource'] = ('custom' if str(
+        (cfg or {}).get('proxyLink') or '').strip() else 'default')
+    try:
+        site = normalize_env_site(cfg.get('purchaseSite') or 'MX')
+    except ValueError:
+        site = 'MX'
+    tags = purchase_tags_from_config(cfg)
+    result['purchaseSite'] = site
+    result['purchaseTags'] = tags
+    result['purchaseTag'] = tags[site]
+    result['buyers'] = [{'name': name, 'code': code}
+                        for name, code in BUYER_ROSTER]
+    result['buyerDefaultSplit'] = list(DEFAULT_SPLIT_BUYERS)
+    result['backupMaxCount'] = BACKUP_MAX_COUNT
     return result
 
 
@@ -146,7 +202,8 @@ def updated_config(old_cfg, body):
     cfg = dict(default_config())
     cfg.update({key: value for key, value in old_cfg.items()
                 if key in CONFIG_FIELDS})
-    for key in CONFIG_FIELDS - {'proxyLink'}:
+    for key in CONFIG_FIELDS - {
+            'proxyLink', 'purchaseSite', 'purchaseTag', 'purchaseTags'}:
         if key in body:
             cfg[key] = body[key]
 
@@ -166,14 +223,45 @@ def updated_config(old_cfg, body):
             0, min(10, int(cfg.get('verifySampleCount', 3))))
     except (TypeError, ValueError):
         cfg['verifySampleCount'] = 3
-    cfg['importBuyerPlan'] = str(
-        cfg.get('importBuyerPlan') or '1:Operator-A')[:200]
+    if 'envCreateWorkers' in body:
+        try:
+            workers = int(body.get('envCreateWorkers'))
+        except (TypeError, ValueError) as exc:
+            raise ValueError('模块三建环境并发数必须是 1-10 的整数') from exc
+        if not 1 <= workers <= 10:
+            raise ValueError('模块三建环境并发数必须是 1-10 的整数')
+        cfg['envCreateWorkers'] = workers
+    if 'importBuyerPlan' in body:
+        cfg['importBuyerPlan'] = validate_assignment_template(
+            body.get('importBuyerPlan'))
+    else:
+        cfg['importBuyerPlan'] = str(
+            cfg.get('importBuyerPlan') or '1:新刚')[:200]
     hidden = cfg.get('hiddenQueryColumns') or []
     if not isinstance(hidden, list):
         hidden = []
     cfg['hiddenQueryColumns'] = [
         name for name in ('envName', 'ip') if name in hidden]
-    cfg['purchaseTag'] = validate_purchase_tag(cfg.get('purchaseTag'))
+    purchase_site = normalize_env_site(
+        body.get('purchaseSite', old_cfg.get('purchaseSite') or 'MX'))
+    purchase_tags = purchase_tags_from_config(old_cfg)
+    submitted_tags = body.get('purchaseTags')
+    if submitted_tags is not None:
+        if not isinstance(submitted_tags, dict):
+            raise ValueError('purchaseTags 必须是 MX/US 分组对象')
+        unknown_sites = set(submitted_tags) - {'MX', 'US'}
+        if unknown_sites:
+            raise ValueError('采购分组包含不支持的站点')
+        for site, value in submitted_tags.items():
+            purchase_tags[site] = str(value or '').strip()
+    if 'purchaseTag' in body:
+        purchase_tags[purchase_site] = str(body.get('purchaseTag') or '').strip()
+    for site, tag in tuple(purchase_tags.items()):
+        purchase_tags[site] = validate_purchase_tag(tag) if tag else ''
+    cfg['purchaseSite'] = purchase_site
+    cfg['purchaseTags'] = purchase_tags
+    # Keep the legacy field synchronized for older packages/config readers.
+    cfg['purchaseTag'] = purchase_tags[purchase_site]
 
     if 'proxyClear' in body and not isinstance(body['proxyClear'], bool):
         raise ValueError('显式清除代理配置必须是布尔值')
@@ -237,6 +325,7 @@ class AppState(object):
             concurrency=cfg.get('concurrency', 2))
         self.reg_job = RegistrationJob(lambda: self.hub)
         self.env_job = EnvBatchJob(lambda: self.hub, lambda: self.cfg)
+        self.backup_job = BackupEnvJob(lambda: self.hub, lambda: self.cfg)
         self.updates = UpdateCoordinator(
             os.environ.get('XYNIGO_INSTALL_DIR'), __version__)
 
@@ -280,7 +369,8 @@ class RegistrationJob(object):
     def validate(self, raw_tasks):
         tasks = self.parse_tasks(raw_tasks)
         return [{'emailMasked': t.safe_name,
-                 'env': t.env_serial or t.env_name} for t in tasks]
+                 'env': t.env_serial or t.env_name,
+                 'site': t.site} for t in tasks]
 
     def snapshot(self):
         with self.lock:
@@ -313,6 +403,7 @@ class RegistrationJob(object):
             self.rows = [{
                 'emailMasked': t.safe_name,
                 'state': 'pending',
+                'site': t.site,
                 'envSerial': t.env_serial,
                 'envName': t.env_name,
                 'message': '', 'manualCode': ''} for t in tasks]
@@ -332,6 +423,7 @@ class RegistrationJob(object):
                         self.rows[index] = {
                             'emailMasked': result.email_masked,
                             'state': result.state,
+                            'site': result.site,
                             'envSerial': result.env_serial,
                             'envName': result.env_name,
                             'message': result.message,
@@ -408,17 +500,25 @@ class EnvBatchJob(object):
         self._sensitive_timer = None
         self._sensitive_generation = 0
 
-    def _runtime_config(self):
+    def _runtime_config(self, site='MX'):
+        site = normalize_env_site(site)
         cfg = dict(self.config_getter() or {})
+        try:
+            workers = max(1, min(10, int(cfg.get('envCreateWorkers') or 5)))
+        except (TypeError, ValueError):
+            workers = 5
         return {
-            'purchaseTag': str(cfg.get('purchaseTag') or '').strip(),
-            'proxyLink': str(cfg.get('proxyLink') or '').strip(),
+            'site': site,
+            'purchaseTag': purchase_tag_for_site(cfg, site),
+            'proxyLink': effective_proxy_link(cfg),
+            'workers': workers,
         }
 
-    def preflight(self):
-        runtime = self._runtime_config()
+    def preflight(self, site='MX'):
+        runtime = self._runtime_config(site)
         return envbatch_preflight(
-            self.hub_getter(), runtime['purchaseTag'], runtime['proxyLink'])
+            self.hub_getter(), runtime['purchaseTag'], runtime['proxyLink'],
+            site=runtime['site'])
 
     def _clean_pending(self):
         cutoff = time.time() - self.PENDING_TTL_SECONDS
@@ -485,21 +585,24 @@ class EnvBatchJob(object):
             } for item in accounts[:5]],
         }
 
-    def preview(self, plan_id, assignment, purchase_date):
+    def preview(self, plan_id, assignment, purchase_date, site='MX'):
         with self.lock:
             self._clean_pending()
             pending = self.pending.get(plan_id)
         if not pending:
             raise ValueError('解析计划已过期，请重新选择 xlsx')
         parse_assignment(assignment, len(pending['accounts']))
-        runtime = self._runtime_config()
+        runtime = self._runtime_config(site)
         hub = self.hub_getter()
         require_envbatch_ready(
-            hub, runtime['purchaseTag'], runtime['proxyLink'])
+            hub, runtime['purchaseTag'], runtime['proxyLink'],
+            site=runtime['site'])
         existing = hub.env_list(runtime['purchaseTag'])
+        all_existing = hub.env_list()
         plan = build_batch_plan(
             pending['accounts'], assignment, existing_envs=existing,
-            purchase_date=purchase_date)
+            site=runtime['site'], purchase_date=purchase_date,
+            all_existing_envs=all_existing)
         return [{
             'emailMasked': row.account.safe_email,
             'buyer': row.account.buyer,
@@ -564,7 +667,7 @@ class EnvBatchJob(object):
         timer.start()
 
     def start(self, plan_id, assignment, purchase_date,
-              verify_sample_count=3, confirm_write=False):
+              verify_sample_count=3, confirm_write=False, site='MX'):
         if not confirm_write:
             raise ValueError('正式执行必须二次确认 HubStudio 写入')
         try:
@@ -580,12 +683,24 @@ class EnvBatchJob(object):
                 raise ValueError('解析计划已过期，请重新选择 xlsx')
             account_count = len(pending['accounts'])
         parse_assignment(assignment, account_count)
-        runtime = self._runtime_config()
+        runtime = self._runtime_config(site)
+        # 正式执行同步校验：站点与账号 Cookie 域冲突在消费计划前整批拒收
+        validate_accounts_site(pending['accounts'], runtime['site'])
         hub = self.hub_getter()
         # Must finish every read-only prerequisite before consuming planId or
         # launching a worker that can issue HubStudio writes.
         require_envbatch_ready(
-            hub, runtime['purchaseTag'], runtime['proxyLink'])
+            hub, runtime['purchaseTag'], runtime['proxyLink'],
+            site=runtime['site'])
+        # 全 HubStudio 严格查重必须在消费 planId 和启动写线程前完成。
+        # 目标分组列表用于同组幂等恢复；无过滤列表用于发现其他分组。
+        selected_existing = hub.env_list(runtime['purchaseTag'])
+        all_existing = hub.env_list()
+        build_batch_plan(
+            pending['accounts'], assignment,
+            existing_envs=selected_existing,
+            site=runtime['site'], purchase_date=purchase_date,
+            all_existing_envs=all_existing)
         with self.lock:
             if self.running:
                 raise RuntimeError('已有模块三任务在进行')
@@ -607,7 +722,8 @@ class EnvBatchJob(object):
             self.tsv_data = None
         source = pending['source']
         accounts = pending['accounts']
-        batch_id = batch_fingerprint(source, assignment, 'MX', purchase_date)
+        batch_id = batch_fingerprint(
+            source, assignment, runtime['site'], purchase_date)
         pending['source'] = b''
 
         def worker():
@@ -615,10 +731,11 @@ class EnvBatchJob(object):
             try:
                 runner = BatchEnvOrchestrator(
                     hub, purchase_tag=runtime['purchaseTag'],
-                    proxy_link=runtime['proxyLink'], site='MX',
+                    proxy_link=runtime['proxyLink'], site=runtime['site'],
                     purchase_date=purchase_date,
                     state_store=ResumeStateStore(batch_id),
-                    on_progress=self._set_rows)
+                    on_progress=self._set_rows,
+                    max_workers=runtime['workers'])
                 with self.lock:
                     self.runner = runner
                 runner.prepare(accounts, assignment)
@@ -645,7 +762,8 @@ class EnvBatchJob(object):
                 with self.lock:
                     proxy_secrets = (
                         runtime['proxyLink'],
-                        runtime['proxyLink'].replace('{region}', 'MX'))
+                        runtime['proxyLink'].replace(
+                            '{region}', runtime['site']))
                     self.fatal_error = self._safe_error(
                         exc, accounts, proxy_secrets)
             finally:
@@ -729,6 +847,169 @@ class EnvBatchJob(object):
             self.tsv_data = None
         self._clear_sensitive()
         return data, name
+
+
+class BackupEnvJob(object):
+    """备用/测试环境后台任务：只建环境+写备注，无凭证流转。"""
+
+    def __init__(self, hub_getter, config_getter=load_config):
+        self.hub_getter = hub_getter
+        self.config_getter = config_getter
+        self.lock = threading.Lock()
+        self.running = False
+        self.started_at = None
+        self.finished_at = None
+        self.rows = []
+        self.summary = {}
+        self.ip_checks = []
+        self.fatal_error = ''
+        self.result_data = None
+        self.result_name = ''
+
+    def _runtime_config(self, site='MX'):
+        site = normalize_env_site(site)
+        cfg = dict(self.config_getter() or {})
+        try:
+            workers = max(1, min(10, int(cfg.get('envCreateWorkers') or 5)))
+        except (TypeError, ValueError):
+            workers = 5
+        return {
+            'site': site,
+            'purchaseTag': purchase_tag_for_site(cfg, site),
+            'proxyLink': effective_proxy_link(cfg),
+            'workers': workers,
+        }
+
+    @staticmethod
+    def _validate_params(buyer, count, backup_type, purchase_date):
+        buyer = normalize_buyer(buyer)
+        count = validate_backup_count(count)
+        backup_type = normalize_backup_type(backup_type)
+        purchase_date = str(purchase_date or '').strip()
+        if not re.fullmatch(r'20\d{6}', purchase_date):
+            raise ValueError('购买日期必须是 YYYYMMDD')
+        return buyer, count, backup_type, purchase_date
+
+    def preview(self, buyer, count, backup_type, purchase_date, site='MX'):
+        buyer, count, backup_type, purchase_date = self._validate_params(
+            buyer, count, backup_type, purchase_date)
+        runtime = self._runtime_config(site)
+        hub = self.hub_getter()
+        require_envbatch_ready(
+            hub, runtime['purchaseTag'], runtime['proxyLink'],
+            site=runtime['site'])
+        existing = hub.env_list(runtime['purchaseTag'])
+        names = backup_env_names(
+            existing, buyer, count, backup_type, runtime['site'],
+            purchase_date)
+        return {
+            'site': runtime['site'],
+            'buyer': buyer,
+            'buyerCode': BUYER_CODES[buyer],
+            'type': backup_type,
+            'count': len(names),
+            'names': names,
+            'remark': BACKUP_REMARK[backup_type],
+        }
+
+    def _set_rows(self, rows):
+        with self.lock:
+            self.rows = [dict(row) for row in rows]
+
+    def start(self, buyer, count, backup_type, purchase_date,
+              verify_sample_count=1, confirm_write=False, site='MX'):
+        if not confirm_write:
+            raise ValueError('正式执行必须二次确认 HubStudio 写入')
+        try:
+            verify_sample_count = max(0, min(10, int(verify_sample_count)))
+        except (TypeError, ValueError) as exc:
+            raise ValueError('出口 IP 抽查数必须是 0-10 的整数') from exc
+        buyer, count, backup_type, purchase_date = self._validate_params(
+            buyer, count, backup_type, purchase_date)
+        with self.lock:
+            if self.running:
+                raise RuntimeError('已有备用环境任务在进行')
+        runtime = self._runtime_config(site)
+        hub = self.hub_getter()
+        # 预检先于启动线程：预检失败零写入。
+        require_envbatch_ready(
+            hub, runtime['purchaseTag'], runtime['proxyLink'],
+            site=runtime['site'])
+        with self.lock:
+            if self.running:
+                raise RuntimeError('已有备用环境任务在进行')
+            self.running = True
+            self.started_at = time.time()
+            self.finished_at = None
+            self.rows = []
+            self.summary = {}
+            self.ip_checks = []
+            self.fatal_error = ''
+            self.result_data = None
+            self.result_name = ''
+
+        def worker():
+            try:
+                runner = BackupEnvOrchestrator(
+                    hub, purchase_tag=runtime['purchaseTag'],
+                    proxy_link=runtime['proxyLink'], site=runtime['site'],
+                    on_progress=self._set_rows,
+                    max_workers=runtime['workers'])
+                runner.prepare(buyer, count, backup_type, purchase_date)
+                result_rows = runner.run()
+                checks = runner.verify_ips(verify_sample_count)
+                done = sum(row.state == 'done' for row in result_rows)
+                with self.lock:
+                    self.ip_checks = checks
+                    self.summary = {
+                        'total': len(result_rows),
+                        'done': done,
+                        'failed': len(result_rows) - done,
+                        'ipOk': sum(bool(item.get('ok')) for item in checks),
+                        'ipTotal': len(checks),
+                    }
+                    self.result_data = backup_result_tsv_bytes(
+                        result_rows, runtime['site'])
+                    self.result_name = '%s结果_%s.tsv' % (
+                        BACKUP_REMARK[backup_type], purchase_date)
+            except Exception as exc:
+                text = str(exc)
+                for secret in (runtime['proxyLink'],
+                               runtime['proxyLink'].replace(
+                                   '{region}', runtime['site'])):
+                    if secret:
+                        text = text.replace(secret, '<redacted>')
+                from .redaction import scrub_text
+                with self.lock:
+                    self.fatal_error = scrub_text(text)[:300]
+            finally:
+                with self.lock:
+                    self.finished_at = time.time()
+                    self.running = False
+
+        threading.Thread(target=worker, daemon=True).start()
+        return count
+
+    def snapshot(self):
+        with self.lock:
+            end_at = time.time() if self.running else self.finished_at
+            elapsed = int(max(0, end_at - self.started_at)) \
+                if self.started_at and end_at else 0
+            return {
+                'running': self.running,
+                'elapsedSec': elapsed,
+                'rows': [dict(row) for row in self.rows],
+                'summary': dict(self.summary),
+                'ipChecks': [dict(item) for item in self.ip_checks],
+                'fatalError': self.fatal_error,
+                'resultReady': self.result_data is not None,
+            }
+
+    def result_export(self):
+        with self.lock:
+            if self.result_data is None:
+                raise ValueError('备用/测试环境结果清单尚未生成')
+            return self.result_data, self.result_name
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -824,7 +1105,8 @@ class Handler(BaseHTTPRequestHandler):
                 snap['hubConnected'] = STATE.hub_status()[0]
                 self._json(snap)
             elif path == '/api/envbatch/preflight':
-                self._json(STATE.env_job.preflight())
+                site = (query.get('site') or ['MX'])[0]
+                self._json(STATE.env_job.preflight(site))
             elif path == '/api/envbatch/template':
                 if not os.path.isfile(ENV_TEMPLATE_XLSX):
                     return self._json({'error': '填写模板未打包'}, 404)
@@ -843,6 +1125,23 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/envbatch/export-tsv':
                 data, name = STATE.env_job.tsv_export()
                 self._download(data, name, 'text/tab-separated-values; charset=utf-8')
+            elif path == '/api/envbatch/backup/preview':
+                result = STATE.backup_job.preview(
+                    (query.get('buyer') or [''])[0],
+                    (query.get('count') or [''])[0],
+                    (query.get('type') or [''])[0],
+                    (query.get('purchaseDate') or
+                     [time.strftime('%Y%m%d')])[0],
+                    site=(query.get('site') or ['MX'])[0])
+                self._json(result)
+            elif path == '/api/envbatch/backup/progress':
+                snap = STATE.backup_job.snapshot()
+                snap['hubConnected'] = STATE.hub_status()[0]
+                self._json(snap)
+            elif path == '/api/envbatch/backup/result':
+                data, name = STATE.backup_job.result_export()
+                self._download(data, name,
+                               'text/tab-separated-values; charset=utf-8')
             elif path == '/api/export':
                 fmt = (query.get('format') or ['xlsx'])[0]
                 rows = STATE.orch.snapshot()['rows']
@@ -875,6 +1174,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({'error': 'not found'}, 404)
         except ConnectionError as e:
             self._json({'error': 'HubStudio 未连接：%s' % e}, 503)
+        except ValueError as e:
+            self._json({'error': str(e)}, 400)
         except Exception as e:
             self._json({'error': str(e)}, 500)
 
@@ -887,7 +1188,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/query':
                 if STATE.orch.running:
                     return self._json({'error': '已有查询在进行中'}, 409)
-                if STATE.env_job.running:
+                if STATE.env_job.running or STATE.backup_job.running:
                     return self._json({'error': '模块三建环境正在进行'}, 409)
                 serials = body.get('serials')
                 group = body.get('group')
@@ -939,7 +1240,7 @@ class Handler(BaseHTTPRequestHandler):
                 if STATE.orch.running:
                     return self._json({
                         'error': '物流查询正在进行，请结束后再注册'}, 409)
-                if STATE.env_job.running:
+                if STATE.env_job.running or STATE.backup_job.running:
                     return self._json({
                         'error': '模块三建环境正在进行，请结束后再注册'}, 409)
                 count = STATE.reg_job.start(
@@ -957,21 +1258,36 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/envbatch/preview':
                 rows = STATE.env_job.preview(
                     body.get('planId'), body.get('assignment'),
-                    body.get('purchaseDate') or time.strftime('%Y%m%d'))
+                    body.get('purchaseDate') or time.strftime('%Y%m%d'),
+                    site=body.get('site') or 'MX')
                 self._json({'valid': True, 'count': len(rows), 'rows': rows})
             elif path == '/api/envbatch/start':
-                if STATE.orch.running or STATE.reg_job.running:
+                if (STATE.orch.running or STATE.reg_job.running
+                        or STATE.backup_job.running):
                     return self._json({
-                        'error': '模块一/二任务正在进行，请结束后再建环境'}, 409)
+                        'error': '模块一/二或备用环境任务正在进行，请结束后再建环境'}, 409)
                 count = STATE.env_job.start(
                     body.get('planId'), body.get('assignment'),
                     body.get('purchaseDate') or time.strftime('%Y%m%d'),
                     verify_sample_count=body.get('verifySampleCount', 3),
-                    confirm_write=bool(body.get('confirmWrite')))
+                    confirm_write=bool(body.get('confirmWrite')),
+                    site=body.get('site') or 'MX')
                 self._json({'started': True, 'count': count})
             elif path == '/api/envbatch/retry-row':
                 STATE.env_job.retry_row(str(body.get('accountId') or ''))
                 self._json({'started': True})
+            elif path == '/api/envbatch/backup/start':
+                if (STATE.orch.running or STATE.reg_job.running
+                        or STATE.env_job.running):
+                    return self._json({
+                        'error': '模块一/二/三任务正在进行，请结束后再执行'}, 409)
+                count = STATE.backup_job.start(
+                    body.get('buyer'), body.get('count'), body.get('type'),
+                    body.get('purchaseDate') or time.strftime('%Y%m%d'),
+                    verify_sample_count=body.get('verifySampleCount', 1),
+                    confirm_write=bool(body.get('confirmWrite')),
+                    site=body.get('site') or 'MX')
+                self._json({'started': True, 'count': count})
             elif path == '/api/config':
                 old_cfg = load_config()
                 cfg = updated_config(old_cfg, body)

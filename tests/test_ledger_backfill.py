@@ -167,6 +167,26 @@ class LedgerBackfillTests(unittest.TestCase):
         with self.assertRaises(LedgerBackfillError):
             service.dry_run(accounts(), mapping_rows()[:1])
 
+    def test_site_rejects_mapping_from_other_site_before_writes(self):
+        client = FakeClient()
+        service = LedgerBackfillService(
+            client, operator_open_id='ou_test', site='US')
+        with self.assertRaisesRegex(LedgerBackfillError,
+                                    '环境名与 US 站不一致'):
+            service.apply(accounts(), mapping_rows())
+        self.assertEqual(client.created_payloads, [])
+        self.assertEqual(client.updated_payloads, [])
+
+    def test_us_dry_run_accepts_us_environment_names(self):
+        rows = mapping_rows()
+        for row in rows:
+            row.env_name = row.env_name.replace('-MX-', '-US-')
+        summary = LedgerBackfillService(
+            FakeClient(), operator_open_id='ou_test', site='US').dry_run(
+                accounts(), rows)
+        self.assertEqual(summary['site'], 'US')
+        self.assertEqual(summary['complete'], 2)
+
 
 if __name__ == '__main__':
     unittest.main()

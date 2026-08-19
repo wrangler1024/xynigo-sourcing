@@ -5,9 +5,11 @@
 ``--confirm-env-write``。凭证只驻内存；断点文件只保存脱敏状态。
 """
 import argparse
+import csv
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from io import BytesIO
+from io import BytesIO, StringIO
 import hashlib
 import json
 import os
@@ -16,6 +18,7 @@ import random
 import re
 import sys
 import tempfile
+import threading
 import time
 import urllib.request
 
@@ -23,8 +26,11 @@ from .hub_api import DEFAULT_PORT, HubStudioApi
 from .redaction import mask_email, scrub_text
 
 
-SITE_ALIASES = {'MX': '希音墨西哥站'}
-DOMAINS = {'MX': 'https://www.shein.com.mx'}
+SITE_ALIASES = {'MX': '希音墨西哥站', 'US': '希音美国站'}
+DOMAINS = {
+    'MX': 'https://www.shein.com.mx',
+    'US': 'https://us.shein.com',
+}
 SUPPORTED_SITES = frozenset(SITE_ALIASES)
 
 # (width, height, weight)。创建后不得再改指纹。
@@ -45,11 +51,116 @@ MAPPING_HEADERS = ('邮箱', '环境名', 'HUB序号', '采购员', '绑定时�
 EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 ORDER_RE = re.compile(r'(?:[?&])orderNo=([0-9a-f]+)(?:[&#]|$)', re.I)
 REMARK_ORDER_RE = re.compile(r'(?:^|\|\s*)单号:([0-9a-f]+)', re.I)
-ENV_NAME_RE = r'^采购-{buyer}-{site}-{mmdd}-(\d{{3}})$'
+ENV_NAME_RE = r'^{code}-{site}-{mmdd}-(\d{{3}})$'
+TEST_ENV_NAME_RE = r'^{code}-{site}-测试-(\d{{2}})$'
+
+# 采购员名单写死（Jeff 2026-08-19 确认）：(姓名, 英文代号)。
+# HUB 环境名统一用英文代号；页面显示「姓名-代号」。变更需改代码随版本发布。
+BUYER_ROSTER = (
+    ('新刚', 'XG'),
+    ('志恒', 'ZH'),
+    ('康德', 'KD'),
+    ('宇航', 'YH'),
+)
+BUYER_NAMES = tuple(name for name, _code in BUYER_ROSTER)
+BUYER_CODES = dict(BUYER_ROSTER)
+BUYER_NAME_BY_CODE = {code: name for name, code in BUYER_ROSTER}
+# 默认均分范围（Jeff 确认）：宇航暂未正式加入采购团队，不参与默认均分。
+DEFAULT_SPLIT_BUYERS = ('新刚', '志恒', '康德')
+
+# 备用/测试环境（不绑号）：单批上限 Jeff 确认为 25；备注与存量批次一致。
+BACKUP_MAX_COUNT = 25
+BACKUP_TYPES = ('备用', '测试')
+BACKUP_REMARK = {'备用': '备用环境', '测试': '测试环境'}
+BACKUP_RESULT_HEADERS = ('环境名', 'HUB序号', 'containerCode', '站点', '状态')
+VENDOR_TEMPLATE_HEADERS = ('邮箱账号', '密码', '接码Key链接', 'Cookie')
+VENDOR_HEADER_ALIASES = (
+    frozenset({'邮箱', '邮箱账号', '邮箱地址', '账号邮箱', '账号',
+               'email', 'emailaddress', 'buyeremail',
+               'buyeremailaddress', 'accountemail'}),
+    frozenset({'密码', '账号密码', '登录密码', 'password',
+               'accountpassword'}),
+    frozenset({'接码key', '接码key链接', '接码链接', '接码url',
+               '验证码链接', '邮箱接码key', 'verificationurl',
+               'verificationcodeurl', 'keyurl'}),
+    frozenset({'cookie', 'cookies', 'cookiejson', '登录cookie',
+               '登录cookies'}),
+)
+VENDOR_HEADER_TOKENS = frozenset().union(*VENDOR_HEADER_ALIASES)
 
 
 class EnvBatchError(ValueError):
     pass
+
+
+def normalize_env_site(value):
+    site = str(value or 'MX').strip().upper()
+    if site not in SUPPORTED_SITES:
+        raise EnvBatchError('建环境站点仅支持 MX（墨西哥）或 US（美国）')
+    return site
+
+
+def normalize_buyer(value):
+    """采购员名单校验：姓名或英文代号均可，统一规范化为姓名。"""
+    token = str(value or '').strip()
+    if token in BUYER_CODES:
+        return token
+    code = token.upper()
+    if code in BUYER_NAME_BY_CODE:
+        return BUYER_NAME_BY_CODE[code]
+    raise EnvBatchError(
+        '采购员不在名单内：%s（可用：%s）' % (
+            scrub_text(token)[:20],
+            ' / '.join('%s-%s' % (name, code)
+                       for name, code in BUYER_ROSTER)))
+
+
+# Cookie 登录域是账号站点的可靠标记（2026-08-20 台账实测：墨表含 Cookie 记录
+# 全部为 shein.com.mx，美表全部为 us.shein.com，零交叉；无 Cookie 交付无标记）。
+COOKIE_SITE_MARKERS = {'MX': 'shein.com.mx', 'US': 'us.shein.com'}
+
+
+def detect_cookie_site(cookie_text):
+    """从 Cookie 域名识别账号站点；无标记返回 None，双标记返回 'CONFLICT'。"""
+    text = str(cookie_text or '')
+    hits = {site for site, marker in COOKIE_SITE_MARKERS.items()
+            if re.search(re.escape(marker), text, re.I)}
+    if len(hits) > 1:
+        return 'CONFLICT'
+    return next(iter(hits)) if hits else None
+
+
+def validate_accounts_site(accounts, site):
+    """所选站点与账号 Cookie 域标记冲突时整批拒收（无标记不拦截）。"""
+    site = normalize_env_site(site)
+    for account in accounts:
+        detected = detect_cookie_site(account.cookie_text)
+        if detected == 'CONFLICT':
+            raise EnvBatchError(
+                '第 %d 行 Cookie 同时包含墨西哥与美国登录域，数据异常，'
+                '整批拒收：%s' % (account.row_number, account.safe_email))
+        if detected is not None and detected != site:
+            raise EnvBatchError(
+                '第 %d 行账号 Cookie 属于%s站，与所选%s站不一致，整批拒收：%s' %
+                (account.row_number, detected, site, account.safe_email))
+
+
+def normalize_backup_type(value):
+    kind = str(value or '').strip()
+    if kind not in BACKUP_TYPES:
+        raise EnvBatchError('备用模式类型仅支持 备用 或 测试')
+    return kind
+
+
+def validate_backup_count(value):
+    try:
+        count = int(str(value).strip())
+    except (TypeError, ValueError) as exc:
+        raise EnvBatchError('备用/测试环境数量必须是整数') from exc
+    if not 1 <= count <= BACKUP_MAX_COUNT:
+        raise EnvBatchError(
+            '备用/测试环境单批数量必须是 1-%d 的整数' % BACKUP_MAX_COUNT)
+    return count
 
 
 def validate_purchase_tag(value):
@@ -63,6 +174,14 @@ def validate_purchase_tag(value):
     if len(tag) > 12:
         raise EnvBatchError('采购分组不能超过 12 个字符')
     return tag
+
+
+# 内置默认动态代理提取链接（Jeff 2026-08-20 决策：前期写死，降低同事端配置成本；
+# 运行时可在设置页用自定义链接覆盖，清除配置即回落到本默认值）。
+DEFAULT_PROXY_LINK = (
+    'http://global.rotgbapi.711proxy.com:8089/gen?zone=custom&ptype=1'
+    '&region={region}&count=1&proto=socks5&stype=text&split=\\r\\n'
+    '&sessType=sticky&sessTime=60&sessAuto=1')
 
 
 def validate_proxy_link(value):
@@ -87,10 +206,12 @@ def validate_proxy_link(value):
     return link
 
 
-def envbatch_preflight(hub, purchase_tag, proxy_link):
+def envbatch_preflight(hub, purchase_tag, proxy_link, site='MX'):
     """Return a non-sensitive readiness summary for module three."""
+    site = normalize_env_site(site)
     result = {
         'ready': False,
+        'site': site,
         'hubConnected': False,
         'purchaseTag': '',
         'proxyConfigured': bool(str(proxy_link or '').strip()),
@@ -122,8 +243,8 @@ def envbatch_preflight(hub, purchase_tag, proxy_link):
     return result
 
 
-def require_envbatch_ready(hub, purchase_tag, proxy_link):
-    result = envbatch_preflight(hub, purchase_tag, proxy_link)
+def require_envbatch_ready(hub, purchase_tag, proxy_link, site='MX'):
+    result = envbatch_preflight(hub, purchase_tag, proxy_link, site=site)
     if not result['ready']:
         raise EnvBatchError(result['message'])
     return result
@@ -215,8 +336,26 @@ def _cell_text(value):
     return value if isinstance(value, str) else str(value)
 
 
+def _header_token(value):
+    return re.sub(r'[\s_-]+', '', str(value or '').strip().casefold())
+
+
+def _is_vendor_header(values, row_number):
+    tokens = tuple(_header_token(value) for value in values[:4])
+    if all(token in aliases for token, aliases in
+           zip(tokens, VENDOR_HEADER_ALIASES)):
+        return True
+    recognized_count = sum(
+        token in VENDOR_HEADER_TOKENS for token in tokens)
+    if (tokens[0] in VENDOR_HEADER_TOKENS or recognized_count >= 2):
+        raise EnvBatchError(
+            '第 %d 行疑似表头但名称或列序不匹配，必须为：%s' %
+            (row_number, ' / '.join(VENDOR_TEMPLATE_HEADERS)))
+    return False
+
+
 def parse_vendor_workbook(source):
-    """严格解析第一张工作表；Cookie 字符串原样保留。"""
+    """解析第一张工作表固定四列，兼容有表头或无表头。"""
     try:
         from openpyxl import load_workbook
     except ImportError as exc:
@@ -230,6 +369,7 @@ def parse_vendor_workbook(source):
         sheet = workbook.worksheets[0]
         accounts = []
         seen_emails, seen_orders = set(), set()
+        first_content_row = True
         for row_number, raw_row in enumerate(
                 sheet.iter_rows(values_only=True), start=1):
             values = list(raw_row)
@@ -240,9 +380,10 @@ def parse_vendor_workbook(source):
                 raise EnvBatchError('第 %d 行第 5 列后存在非空数据，严格模式拒收' % row_number)
             values += [None] * max(0, 4 - len(values))
             email_raw, password_raw, key_raw, cookie_raw = values[:4]
-            if row_number == 1 and str(email_raw or '').strip().casefold() in {
-                    '邮箱', '邮箱账号', 'email'}:
-                raise EnvBatchError('检测到表头；v1 只接受 Sheet1 无表头固定 4 列')
+            if first_content_row:
+                first_content_row = False
+                if _is_vendor_header(values[:4], row_number):
+                    continue
             if any(value in (None, '') for value in
                    (email_raw, password_raw, key_raw, cookie_raw)):
                 raise EnvBatchError('第 %d 行缺少邮箱/密码/接码Key/Cookie 字段' % row_number)
@@ -311,7 +452,8 @@ def parse_assignment(spec, total):
         match = re.fullmatch(r'(\d+)\s*[:：]\s*([^\s:/\\]+)', chunk)
         if not match:
             raise EnvBatchError('采购员分配格式错误：%s' % scrub_text(chunk))
-        count, buyer = int(match.group(1)), match.group(2).strip()
+        count = int(match.group(1))
+        buyer = normalize_buyer(match.group(2))
         if count < 1:
             raise EnvBatchError('采购员分配数量必须大于 0')
         if buyer in seen:
@@ -334,6 +476,21 @@ def assign_buyers(accounts, assignment_spec):
     return assignments
 
 
+def validate_assignment_template(spec):
+    """设置页分配模板：校验格式与采购员名单，不校验合计。"""
+    text = str(spec or '').strip()
+    if not text:
+        raise EnvBatchError('采购员分配模板不能为空')
+    for chunk in re.split(r'[,，]', text):
+        chunk = chunk.strip()
+        match = re.fullmatch(r'(\d+)\s*[:：]\s*([^\s:/\\]+)', chunk)
+        if not match or int(match.group(1)) < 1:
+            raise EnvBatchError(
+                '采购员分配模板格式错误：%s' % scrub_text(chunk))
+        normalize_buyer(match.group(2))
+    return text
+
+
 def choose_resolution(rng=None):
     rng = rng or random
     choices = [(width, height) for width, height, _weight in RES_POOL]
@@ -343,9 +500,7 @@ def choose_resolution(rng=None):
 
 def build_env_create_body(name, site='MX', rng=None, proxy_link=None,
                           purchase_tag=None):
-    site = site.upper()
-    if site not in SUPPORTED_SITES:
-        raise EnvBatchError('v1 仅支持 MX 站点')
+    site = normalize_env_site(site)
     tag = validate_purchase_tag(purchase_tag)
     link_code = validate_proxy_link(proxy_link)
     width, height = choose_resolution(rng)
@@ -385,30 +540,95 @@ def batch_fingerprint(source_bytes, assignment_spec, site, purchase_date):
     return digest.hexdigest()
 
 
-def _existing_by_order(existing_envs):
+def _existing_by_order(existing_envs, site, target_orders):
     result = {}
     for env in existing_envs:
         match = REMARK_ORDER_RE.search(str(env.get('remark') or ''))
         if not match:
             continue
         order_key = match.group(1).casefold()
+        if order_key not in target_orders:
+            continue
+        env_name = str(env.get('containerName') or '')
+        env_site = re.search(r'-(MX|US)-', env_name, re.I)
+        if env_site and env_site.group(1).upper() != site:
+            raise EnvBatchError(
+                'HubStudio 中同一号商单号已绑定到另一站点环境，需人工处理')
         if order_key in result:
             raise EnvBatchError('HubStudio 中同一号商单号对应多个环境，需人工处理')
         result[order_key] = env
     return result
 
 
+def _env_identity(env):
+    """Return a stable, non-sensitive identity for cross-list membership."""
+    code = str(env.get('containerCode') or '').strip()
+    if code:
+        return ('containerCode', code)
+    serial = str(env.get('serialNumber') or '').strip()
+    if serial:
+        return ('serialNumber', serial)
+    name = str(env.get('containerName') or '').strip()
+    if name:
+        return ('containerName', name)
+    return None
+
+
+def validate_global_order_dedup(accounts, selected_envs, all_envs):
+    """Reject target order numbers that already exist outside target group.
+
+    ``selected_envs`` remains the authority for same-group idempotent recovery;
+    ``all_envs`` is an unfiltered, fully paginated HubStudio snapshot used only
+    as a global duplicate guard.  Error text intentionally omits order, group,
+    environment and account values.
+    """
+    target_orders = {account.order_no.casefold() for account in accounts}
+    selected_ids = {
+        identity for identity in (_env_identity(env) for env in selected_envs)
+        if identity is not None
+    }
+    matches = {}
+    # Include selected rows in case the unfiltered API snapshot is briefly
+    # incomplete; identities collapse the normal duplicate representation.
+    for env in list(all_envs or []) + list(selected_envs or []):
+        match = REMARK_ORDER_RE.search(str(env.get('remark') or ''))
+        if not match:
+            continue
+        order_key = match.group(1).casefold()
+        if order_key not in target_orders:
+            continue
+        identity = _env_identity(env)
+        if identity is None:
+            raise EnvBatchError(
+                'HubStudio 已有号商单号记录缺少环境标识，无法安全查重')
+        matches.setdefault(order_key, {})[identity] = env
+
+    for identities in matches.values():
+        if any(identity not in selected_ids for identity in identities):
+            raise EnvBatchError(
+                'HubStudio 中同一号商单号已存在于其他分组，'
+                '已阻止重复建环境，请人工核对')
+        if len(identities) > 1:
+            raise EnvBatchError(
+                'HubStudio 中同一号商单号对应多个环境，需人工处理')
+
+
 def build_batch_plan(accounts, assignment_spec, existing_envs=None,
-                     site='MX', purchase_date=None, resume_state=None):
-    site = site.upper()
-    if site not in SUPPORTED_SITES:
-        raise EnvBatchError('v1 仅支持 MX 站点')
+                     site='MX', purchase_date=None, resume_state=None,
+                     all_existing_envs=None):
+    site = normalize_env_site(site)
     purchase_date = purchase_date or date.today().strftime('%Y%m%d')
     if not re.fullmatch(r'20\d{6}', purchase_date):
         raise EnvBatchError('购买日期必须是 YYYYMMDD')
     assignments = assign_buyers(accounts, assignment_spec)
+    validate_accounts_site(accounts, site)
     existing_envs = list(existing_envs or [])
-    existing_orders = _existing_by_order(existing_envs)
+    if all_existing_envs is not None:
+        validate_global_order_dedup(
+            accounts, existing_envs, list(all_existing_envs))
+    existing_orders = _existing_by_order(
+        existing_envs, site,
+        {account.order_no.casefold() for account in accounts})
     resume_rows = {
         row.get('accountId'): row
         for row in ((resume_state or {}).get('rows') or [])
@@ -418,7 +638,8 @@ def build_batch_plan(accounts, assignment_spec, existing_envs=None,
     max_suffix = {buyer: 0 for _count, buyer in assignments}
     for buyer in max_suffix:
         pattern = re.compile(ENV_NAME_RE.format(
-            buyer=re.escape(buyer), site=re.escape(site), mmdd=mmdd))
+            code=re.escape(BUYER_CODES[buyer]), site=re.escape(site),
+            mmdd=mmdd))
         for env in existing_envs:
             match = pattern.fullmatch(str(env.get('containerName') or ''))
             if match:
@@ -462,8 +683,9 @@ def build_batch_plan(accounts, assignment_spec, existing_envs=None,
                 raise EnvBatchError('续跑状态缺少环境名，拒绝恢复')
         else:
             max_suffix[account.buyer] += 1
-            env_name = '采购-%s-%s-%s-%03d' % (
-                account.buyer, site, mmdd, max_suffix[account.buyer])
+            env_name = '%s-%s-%s-%03d' % (
+                BUYER_CODES[account.buyer], site, mmdd,
+                max_suffix[account.buyer])
             item = BatchPlanItem(account=account, env_name=env_name)
         plan.append(item)
     return plan
@@ -557,9 +779,9 @@ class BatchEnvOrchestrator(object):
     def __init__(self, hub, purchase_tag, proxy_link, site='MX',
                  purchase_date=None, state_store=None,
                  write_interval=0.3, sleep_fn=time.sleep, rng=None,
-                 on_progress=None):
+                 on_progress=None, max_workers=5):
         self.hub = hub
-        self.site = site.upper()
+        self.site = normalize_env_site(site)
         self.purchase_tag = validate_purchase_tag(purchase_tag)
         self.proxy_link = validate_proxy_link(proxy_link)
         self.purchase_date = purchase_date or date.today().strftime('%Y%m%d')
@@ -568,23 +790,30 @@ class BatchEnvOrchestrator(object):
         self.sleep = sleep_fn
         self.rng = rng or random
         self.on_progress = on_progress
+        # 并行建环境：纯 Local API 路径（不开浏览器窗口），默认 5、
+        # 1-10 可调；模块一开窗口场景的并发结论不适用于此处。
+        self.max_workers = max(1, min(10, int(max_workers)))
+        self._persist_lock = threading.Lock()
         self.rows = []
 
     def prepare(self, accounts, assignment_spec):
         existing = self.hub.env_list(self.purchase_tag)
+        all_existing = self.hub.env_list()
         saved = self.state_store.load() if self.state_store else None
         self.rows = build_batch_plan(
             accounts, assignment_spec, existing_envs=existing,
             site=self.site, purchase_date=self.purchase_date,
-            resume_state=saved)
+            resume_state=saved, all_existing_envs=all_existing)
         self._persist()
         return self.rows
 
     def _persist(self):
-        if self.state_store:
-            self.state_store.save(self.rows, self.site, self.purchase_date)
-        if self.on_progress:
-            self.on_progress([row.public_dict() for row in self.rows])
+        with self._persist_lock:
+            if self.state_store:
+                self.state_store.save(self.rows, self.site,
+                                      self.purchase_date)
+            if self.on_progress:
+                self.on_progress([row.public_dict() for row in self.rows])
 
     def _mark(self, row, step):
         row.completed_steps.add(step)
@@ -623,6 +852,13 @@ class BatchEnvOrchestrator(object):
                         purchase_tag=self.purchase_tag))
                     self.sleep(self.write_interval)
                     existing = self._find_env(row.env_name)
+                elif str(existing.get('remark') or '').strip():
+                    # 收养防护：同名但备注非空 = 其他批次/机器的成品
+                    # （备用/测试/已绑号），拒绝收养防错绑与备注覆盖；
+                    # 合法收养只有本批次断点续跑（备注必为空）。
+                    raise EnvBatchError(
+                        '同名环境 %s 已存在且备注非空，可能被其他批次或'
+                        '机器占用，拒绝收养，请人工核对' % row.env_name)
                 row.container_code = str(existing.get('containerCode') or '')
                 row.serial_number = existing.get('serialNumber')
                 if not row.container_code or row.serial_number is None:
@@ -669,8 +905,12 @@ class BatchEnvOrchestrator(object):
             self._persist()
 
     def run(self):
-        for row in self.rows:
-            self._run_one(row)
+        if self.max_workers > 1 and len(self.rows) > 1:
+            with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
+                list(pool.map(self._run_one, self.rows))
+        else:
+            for row in self.rows:
+                self._run_one(row)
         if self.state_store and all(row.state == 'done' for row in self.rows):
             self.state_store.remove()
         return self.rows
@@ -711,35 +951,227 @@ class BatchEnvOrchestrator(object):
         geo_lookup = geo_lookup or lookup_ip_country
         results = []
         for row in self._verification_sample(self.rows, count):
-            started = False
-            try:
-                data = self.hub.browser_start(row.container_code) or {}
-                started = True
-                ip = str(data.get('ip') or '')
-                geo = geo_lookup(ip) if ip else {}
-                country_code = str(geo.get('countryCode') or '').upper()
-                results.append({
-                    'envName': row.env_name,
-                    'ip': ip,
-                    'country': geo.get('country') or '',
-                    'city': geo.get('city') or '',
-                    'isp': geo.get('isp') or '',
-                    'ok': country_code == self.site,
-                    'error': '' if country_code == self.site else '出口 IP 国家不匹配',
-                })
-            except Exception as exc:
-                results.append({
-                    'envName': row.env_name, 'ip': '', 'country': '',
-                    'city': '', 'isp': '', 'ok': False,
-                    'error': scrub_text(exc)[:200],
-                })
-            finally:
-                if started:
-                    try:
-                        self.hub.browser_stop(row.container_code)
-                    except Exception:
-                        pass
+            results.append(probe_env_ip(
+                self.hub, self.site, row.env_name, row.container_code,
+                geo_lookup))
         return results
+
+
+def probe_env_ip(hub, site, env_name, container_code, geo_lookup):
+    """启动环境读取出口 IP 并核对国家，随后立即关闭浏览器。"""
+    started = False
+    try:
+        data = hub.browser_start(container_code) or {}
+        started = True
+        ip = str(data.get('ip') or '')
+        geo = geo_lookup(ip) if ip else {}
+        country_code = str(geo.get('countryCode') or '').upper()
+        return {
+            'envName': env_name,
+            'ip': ip,
+            'country': geo.get('country') or '',
+            'city': geo.get('city') or '',
+            'isp': geo.get('isp') or '',
+            'ok': country_code == site,
+            'error': '' if country_code == site else '出口 IP 国家不匹配',
+        }
+    except Exception as exc:
+        return {
+            'envName': env_name, 'ip': '', 'country': '',
+            'city': '', 'isp': '', 'ok': False,
+            'error': scrub_text(exc)[:200],
+        }
+    finally:
+        if started:
+            try:
+                hub.browser_stop(container_code)
+            except Exception:
+                pass
+
+
+def backup_env_names(existing_envs, buyer, count, backup_type, site,
+                     purchase_date):
+    """备用/测试环境命名与续排（只读、按名幂等）。
+
+    备用环境与绑号环境共享该采购员当日代号序号段并续排错开；
+    测试环境走 `{code}-{site}-测试-{NN}` 独立命名空间，序号上限 99。
+    """
+    site = normalize_env_site(site)
+    buyer = normalize_buyer(buyer)
+    count = validate_backup_count(count)
+    backup_type = normalize_backup_type(backup_type)
+    purchase_date = str(purchase_date or '').strip()
+    if not re.fullmatch(r'20\d{6}', purchase_date):
+        raise EnvBatchError('购买日期必须是 YYYYMMDD')
+    code = BUYER_CODES[buyer]
+    existing = list(existing_envs or [])
+    taken = {str(env.get('containerName') or '') for env in existing}
+    if backup_type == '备用':
+        pattern = re.compile(ENV_NAME_RE.format(
+            code=re.escape(code), site=re.escape(site),
+            mmdd=purchase_date[-4:]))
+
+        def make(serial):
+            return '%s-%s-%s-%03d' % (code, site, purchase_date[-4:], serial)
+    else:
+        pattern = re.compile(TEST_ENV_NAME_RE.format(
+            code=re.escape(code), site=re.escape(site)))
+
+        def make(serial):
+            return '%s-%s-测试-%02d' % (code, site, serial)
+
+    serial = 0
+    for env in existing:
+        match = pattern.fullmatch(str(env.get('containerName') or ''))
+        if match:
+            serial = max(serial, int(match.group(1)))
+    names = []
+    while len(names) < count:
+        serial += 1
+        if backup_type == '测试' and serial > 99:
+            raise EnvBatchError('测试环境序号已达 99 上限，需人工处理')
+        name = make(serial)
+        if name in taken:
+            continue
+        names.append(name)
+    return names
+
+
+@dataclass
+class BackupPlanItem:
+    env_name: str
+    container_code: str = ''
+    serial_number: object = None
+    state: str = 'pending'
+    error: str = ''
+
+    def public_dict(self):
+        return {
+            'envName': self.env_name,
+            'containerCode': self.container_code,
+            'serialNumber': self.serial_number,
+            'state': self.state,
+            'error': scrub_text(self.error)[:300],
+        }
+
+
+class BackupEnvOrchestrator(object):
+    """备用/测试环境：只建环境+写固定备注。
+
+    不导 Cookie、不绑号、不写飞书台账；无凭证流转。
+    """
+
+    def __init__(self, hub, purchase_tag, proxy_link, site='MX',
+                 write_interval=0.3, sleep_fn=time.sleep, rng=None,
+                 on_progress=None, max_workers=5):
+        self.hub = hub
+        self.site = normalize_env_site(site)
+        self.purchase_tag = validate_purchase_tag(purchase_tag)
+        self.proxy_link = validate_proxy_link(proxy_link)
+        self.write_interval = write_interval
+        self.sleep = sleep_fn
+        self.rng = rng or random
+        self.on_progress = on_progress
+        self.max_workers = max(1, min(10, int(max_workers)))
+        self._persist_lock = threading.Lock()
+        self.rows = []
+        self.remark = ''
+
+    def prepare(self, buyer, count, backup_type, purchase_date):
+        backup_type = normalize_backup_type(backup_type)
+        self.remark = BACKUP_REMARK[backup_type]
+        existing = self.hub.env_list(self.purchase_tag)
+        names = backup_env_names(
+            existing, buyer, count, backup_type, self.site, purchase_date)
+        self.rows = [BackupPlanItem(env_name=name) for name in names]
+        self._persist()
+        return self.rows
+
+    def _persist(self):
+        with self._persist_lock:
+            if self.on_progress:
+                self.on_progress([row.public_dict() for row in self.rows])
+
+    def _find_env(self, env_name, attempts=25):
+        for attempt in range(attempts):
+            for env in self.hub.env_list(self.purchase_tag):
+                if env.get('containerName') == env_name:
+                    return env
+            if attempt + 1 < attempts:
+                self.sleep(1)
+        raise EnvBatchError('新建环境后回读超时')
+
+    def _run_one(self, row):
+        if row.state == 'done':
+            return
+        row.state = 'running'
+        self._persist()
+        try:
+            existing = None
+            for env in self.hub.env_list(self.purchase_tag):
+                if env.get('containerName') == row.env_name:
+                    existing = env
+                    break
+            if existing is None:
+                self.hub.env_create(build_env_create_body(
+                    row.env_name, self.site, self.rng,
+                    proxy_link=self.proxy_link,
+                    purchase_tag=self.purchase_tag))
+                self.sleep(self.write_interval)
+                existing = self._find_env(row.env_name)
+            row.container_code = str(existing.get('containerCode') or '')
+            row.serial_number = existing.get('serialNumber')
+            if not row.container_code or row.serial_number is None:
+                raise EnvBatchError('环境回读缺少 containerCode 或 HUB 序号')
+            self.hub.env_update(
+                row.container_code, row.env_name, self.remark)
+            self.sleep(self.write_interval)
+            row.state = 'done'
+        except Exception as exc:
+            row.state = 'failed'
+            error_text = str(exc)
+            for secret in (self.proxy_link,
+                           self.proxy_link.replace('{region}', self.site)):
+                if secret:
+                    error_text = error_text.replace(secret, '<redacted>')
+            row.error = scrub_text(error_text)[:300]
+        self._persist()
+
+    def run(self):
+        if self.max_workers > 1 and len(self.rows) > 1:
+            with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
+                list(pool.map(self._run_one, self.rows))
+        else:
+            for row in self.rows:
+                self._run_one(row)
+        return self.rows
+
+    def verify_ips(self, count=1, geo_lookup=None):
+        geo_lookup = geo_lookup or lookup_ip_country
+        done = [row for row in self.rows
+                if row.state == 'done' and row.container_code]
+        results = []
+        for row in done[:max(0, int(count))]:
+            results.append(probe_env_ip(
+                self.hub, self.site, row.env_name, row.container_code,
+                geo_lookup))
+        return results
+
+
+def backup_result_tsv_bytes(rows, site):
+    """备用/测试结果清单：只含环境名/HUB 序号/containerCode，无凭证。"""
+    output = StringIO(newline='')
+    writer = csv.writer(output, dialect='excel-tab', lineterminator='\r\n')
+    writer.writerow(list(BACKUP_RESULT_HEADERS))
+    for row in rows:
+        writer.writerow([
+            row.env_name,
+            row.serial_number if row.serial_number is not None else '',
+            row.container_code,
+            site,
+            '完成' if row.state == 'done' else '失败',
+        ])
+    return output.getvalue().encode('utf-8-sig')
 
 
 def lookup_ip_country(ip):
@@ -806,10 +1238,10 @@ def build_parser():
         prog='python -m purchase_tool env-batch',
         description='模块三：号商买家号批量创建 HubStudio 采购环境')
     parser.add_argument('--xlsx', '--input', dest='xlsx', required=True,
-                        help='号商无表头 4 列 xlsx（真实文件必须在项目外）')
+                        help='号商固定 4 列 xlsx，可有表头或无表头（真实文件必须在项目外）')
     parser.add_argument('--assign', required=True,
                         help='按文件顺序分配，如 3:Operator-A,2:Operator-B')
-    parser.add_argument('--site', default='MX', choices=['MX'])
+    parser.add_argument('--site', default='MX', choices=['MX', 'US'])
     parser.add_argument('--purchase-date',
                         default=date.today().strftime('%Y%m%d'))
     parser.add_argument('--hub-port', type=int, default=DEFAULT_PORT)
@@ -864,9 +1296,13 @@ def main(argv=None):
             source_bytes, args.assign, args.site, args.purchase_date)
         state_store = ResumeStateStore(batch_id, args.resume_dir)
         hub = HubStudioApi(port=args.hub_port)
-        purchase_tag = os.environ.get('XYNIGO_PURCHASE_TAG', '')
-        proxy_link = os.environ.get('XYNIGO_PROXY_LINK', '')
-        require_envbatch_ready(hub, purchase_tag, proxy_link)
+        purchase_tag = os.environ.get(
+            'XYNIGO_PURCHASE_TAG_%s' % args.site,
+            os.environ.get('XYNIGO_PURCHASE_TAG', '')
+            if args.site == 'MX' else '')
+        proxy_link = os.environ.get('XYNIGO_PROXY_LINK', '') or DEFAULT_PROXY_LINK
+        require_envbatch_ready(
+            hub, purchase_tag, proxy_link, site=args.site)
         runner = BatchEnvOrchestrator(
             hub, purchase_tag=purchase_tag, proxy_link=proxy_link,
             site=args.site, purchase_date=args.purchase_date,

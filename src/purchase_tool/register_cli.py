@@ -34,7 +34,7 @@ def load_tasks(path):
 def build_parser():
     parser = argparse.ArgumentParser(
         prog='python -m purchase_tool register',
-        description='SHEIN 墨西哥买家号低并发注册')
+        description='SHEIN 墨西哥/美国买家号低并发注册')
     parser.add_argument('--input', required=True,
                         help='项目目录外的运行时凭证 JSON')
     parser.add_argument('--apply', action='store_true',
@@ -61,8 +61,9 @@ def main(argv=None):
 
     print('计划校验通过：%d 个账号（串行，账号已脱敏）' % len(tasks))
     for task in tasks:
-        print('  - %s -> %s' %
-              (task.safe_name, task.env_serial or task.env_name))
+        print('  - %s [%s] -> %s' %
+              (task.safe_name, task.site,
+               task.env_serial or task.env_name))
     if not args.apply:
         print('dry-run 完成；未调用 HubStudio/SHEIN/Outlook。')
         return 0

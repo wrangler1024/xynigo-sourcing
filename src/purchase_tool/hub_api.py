@@ -134,7 +134,10 @@ class HubStudioApi(object):
 
     def container_add_account(self, container_code, email, password,
                               site='MX'):
-        is_mx = str(site).upper() == 'MX'
+        site = str(site or 'MX').strip().upper()
+        if site not in ('MX', 'US'):
+            raise ValueError('绑号站点仅支持 MX 或 US')
+        is_mx = site == 'MX'
         body = {
             'containerCode': str(container_code),
             'siteName': '自定义平台',

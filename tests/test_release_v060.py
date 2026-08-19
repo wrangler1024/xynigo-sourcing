@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Release contract tests for Xynigo Sourcing v0.6.3."""
+"""Release contract tests for Xynigo Sourcing v0.7.0."""
 
 from pathlib import Path
 import unittest
@@ -10,7 +10,7 @@ from purchase_tool import __version__
 class ReleaseV063Tests(unittest.TestCase):
     def test_version_and_packaging_are_aligned(self):
         root = Path(__file__).resolve().parents[1]
-        self.assertEqual(__version__, '0.6.3')
+        self.assertEqual(__version__, '0.7.0')
         script = (root / '组装Windows绿色包.sh').read_text(encoding='utf-8')
         self.assertIn('v${VERSION}.zip', script)
         self.assertIn('Xynigo Sourcing v%s 启动中', script)
@@ -36,9 +36,61 @@ class ReleaseV063Tests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         html = (root / 'src' / 'purchase_tool' / 'web' / 'index.html').read_text(
             encoding='utf-8')
+        self.assertIn('订单物流查询', html)
+        self.assertNotIn('物流订单查询', html)
         self.assertIn('买家号建环境', html)
         self.assertIn('/api/envbatch/start', html)
         self.assertIn('/api/envbatch/preflight', html)
+        self.assertIn('id="envSiteGroup"', html)
+        self.assertNotIn('id="envSiteGroup" disabled', html)
+        self.assertIn('async function loadEnvGroups()', html)
+        self.assertIn('id="envSite"', html)
+        self.assertIn('purchaseTags:{[$(\'envSite\').value]:selected}', html)
+        self.assertIn('site:$(\'envSite\').value', html)
+        self.assertIn('option.textContent = group', html)
+        self.assertNotIn('option.textContent = `墨西哥站 · ${group}`', html)
+        # 模块三：模式切换 + 采购员卡片 + 备用·测试环境（2026-08-19 设计定稿）
+        self.assertIn('id="envModeBar"', html)
+        self.assertIn('data-mode="bound"', html)
+        self.assertIn('data-mode="backup"', html)
+        self.assertIn('id="envCardParse"', html)
+        self.assertIn('id="envAssignBound"', html)
+        self.assertIn('id="envAssignBackup"', html)
+        self.assertIn('id="envBuyerGrid"', html)
+        self.assertIn('id="envBackupBuyerGrid"', html)
+        self.assertIn('id="envAssignSum"', html)
+        self.assertIn('id="envSpecOut"', html)
+        self.assertIn('id="btnEnvEven"', html)
+        self.assertIn('id="envBackupCount"', html)
+        self.assertIn('name="envBackupType"', html)
+        self.assertIn('id="envBackupPattern"', html)
+        self.assertIn('id="envBoundExports"', html)
+        self.assertIn('id="envBackupExports"', html)
+        self.assertIn('id="btnEnvBackupResult"', html)
+        self.assertIn('composeAssignmentSpec()', html)
+        self.assertIn('/api/envbatch/backup/preview', html)
+        self.assertIn('/api/envbatch/backup/start', html)
+        self.assertIn('/api/envbatch/backup/progress', html)
+        self.assertIn('/api/envbatch/backup/result', html)
+        self.assertIn('function setEnvMode(next)', html)
+        self.assertIn('function renderBackupBatch(snap)', html)
+        # 分组默认选中站点标准分组 + 日期控件（2026-08-19 Jeff 指示）
+        self.assertIn('type="date" id="envDate"', html)
+        self.assertIn('SITE_DEFAULT_GROUPS', html)
+        self.assertIn("MX: '希音墨西哥采购'", html)
+        self.assertIn("US: '美国采购分组'", html)
+        self.assertIn('function envPurchaseDate()', html)
+        # 采购分组下拉过滤店铺分组（2026-08-20 Jeff 指示）
+        self.assertIn('BUYER_GROUP_PATTERN', html)
+        self.assertIn('/采购|买家号|Registration/i', html)
+        self.assertIn(".filter(name => BUYER_GROUP_PATTERN.test(name));", html)
+        self.assertIn('— 暂无采购/买家号环境分组 —', html)
+        self.assertNotIn('id="envAssign"', html)
+        self.assertNotIn('assignmentTotal', html)
+        # ④ 批量进度：限高内部滚动 + 吸顶表头（大批量不拉长页面）
+        self.assertIn('id="envTableWrap"', html)
+        self.assertIn('#envTableWrap { max-height: 480px; overflow-y: auto; }', html)
+        self.assertIn('#envThead th { position: sticky; top: 0;', html)
         self.assertIn('id="querySite"', html)
         self.assertIn('<option value="US">美国站 · us.shein.com</option>', html)
         self.assertIn('JSON.stringify({ serials, site })', html)
@@ -51,14 +103,17 @@ class ReleaseV063Tests(unittest.TestCase):
         self.assertIn("else cnt.ok++;", html)
         self.assertIn("r.state === 'ok' && !r.riskOrder", html)
         self.assertIn("r.state === 'ok' && r.riskOrder", html)
-        self.assertIn('id="cfgPurchaseTag"', html)
+        self.assertIn('id="cfgPurchaseTagMX"', html)
+        self.assertIn('id="cfgPurchaseTagUS"', html)
         self.assertIn('id="cfgProxyLink"', html)
         self.assertIn('type="password" id="cfgProxyLink"', html)
         self.assertIn('id="cfgProxyClear"', html)
         self.assertIn('proxyLink, proxyClear', html)
-        self.assertIn('留空保留已有配置', html)
+        self.assertIn('可选：自定义链接；留空保持现状', html)
+        self.assertIn("cfg.proxySource === 'custom'", html)
+        self.assertIn('系统模板固定带表头', html)
         self.assertNotIn('https://proxy.example.test', html)
-        self.assertIn('Xynigo Sourcing v0.6.3', html)
+        self.assertIn('Xynigo Sourcing v0.7.0', html)
         self.assertIn('Xyni, GO!', html)
         self.assertIn('Xynigo 品牌字标', html)
         self.assertIn('小犀与 Xynigo 完整品牌一体图形', html)

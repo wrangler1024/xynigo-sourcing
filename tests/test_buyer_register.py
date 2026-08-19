@@ -3,15 +3,16 @@ import unittest
 
 from purchase_tool.buyer_register import (
     BuyerRegistrationTask, ManualActionRequired,
-    RegistrationOrchestrator, SheinRegistrationFlow,
+    RegistrationError, RegistrationOrchestrator, SheinRegistrationFlow,
     REGISTER_EMAIL_SELECTOR, REGISTER_PASSWORD_SELECTOR,
     PHONE_VERIFY_TEXT, SECURITY_CODE_LABEL, SECURITY_EMAIL_VERIFY_TEXT,
-    SECURITY_SUBMIT_TEXT, SUCCESS_TEXT, VERIFY_TEXT)
+    SECURITY_SUBMIT_TEXT, SHEIN_LOGIN_URLS, SUCCESS_TEXT, VERIFY_TEXT)
 
 
 class FakePage(object):
     def __init__(self, verification=False, security_verification=False,
-                 phone_verification=False, persistent_phone=False):
+                 phone_verification=False, persistent_phone=False,
+                 site='MX'):
         self.text = ''
         self.values = {}
         self.submit_count = 0
@@ -22,10 +23,14 @@ class FakePage(object):
         self.phone_close_count = 0
         self.typed_code = ''
         self.security_submit_count = 0
+        self.site = site
+        self.url = ''
 
-    def goto(self, _url, settle_seconds=0):
-        self.text = (
-            'Identifícate/Regístrate\nTérminos y condiciones')
+    def goto(self, url, settle_seconds=0):
+        self.url = url
+        self.text = ('Sign In/Register\nTerms and Conditions'
+                     if self.site == 'US' else
+                     'Identifícate/Regístrate\nTérminos y condiciones')
 
     def wait_selector(self, _selector, timeout=0):
         return True
@@ -46,9 +51,9 @@ class FakePage(object):
         return {'total': 7, 'checked': 7}
 
     def click_text(self, text, exact=True):
-        if text == 'CONTINUAR':
+        if text in ('CONTINUAR', 'CONTINUE'):
             self.text = '注册面板'
-        elif text.startswith('Regístrate'):
+        elif text.startswith(('Regístrate', 'Register')):
             self.submit_count += 1
             if (self.phone_verification and
                     (self.persistent_phone or self.submit_count == 1)):
@@ -60,10 +65,12 @@ class FakePage(object):
                              SECURITY_CODE_LABEL + '\n' +
                              SECURITY_SUBMIT_TEXT)
             elif self.submit_count >= 2:
-                self.text = SUCCESS_TEXT
-        elif text == SECURITY_SUBMIT_TEXT:
+                self.text = (SUCCESS_TEXT if self.site == 'MX'
+                             else 'After login and verify the mobile number')
+        elif text in (SECURITY_SUBMIT_TEXT, 'SUBMIT'):
             self.security_submit_count += 1
-            self.text = SUCCESS_TEXT
+            self.text = (SUCCESS_TEXT if self.site == 'MX'
+                         else 'After login and verify the mobile number')
 
     def focus_code_input(self):
         pass
@@ -82,7 +89,8 @@ class FakePage(object):
     def type_keys(self, value):
         self.typed_code = value
         if not self.security_verification:
-            self.text = SUCCESS_TEXT
+            self.text = (SUCCESS_TEXT if self.site == 'MX'
+                         else 'After login and verify the mobile number')
 
 
 class FakeOutlook(object):
@@ -90,11 +98,12 @@ class FakeOutlook(object):
         return '654321'
 
 
-def task():
+def task(site='MX'):
     return BuyerRegistrationTask(
         email='buyer123@outlook.com', shein_password='shein-pass',
         outlook_password='mail-pass', auxiliary_email='aux@example.test',
-        code_api_url='https://example.test/get?key=secret', env_serial='1002')
+        code_api_url='https://example.test/get?key=secret', env_serial='1002',
+        site=site)
 
 
 class RegistrationFlowTests(unittest.TestCase):
@@ -157,6 +166,26 @@ class RegistrationFlowTests(unittest.TestCase):
         body = RegistrationOrchestrator.env_create_body('safe-env')
         self.assertEqual(body['tagName'], 'SHEIN Mexico Registration')
         self.assertEqual(body['advancedBo']['width'], 1920)
+
+    def test_us_registration_contract_uses_us_url_group_and_site(self):
+        page = FakePage(site='US')
+        result = SheinRegistrationFlow(
+            accept_terms=True, state_timeout=0.01,
+            sleep=lambda _: None, site='US').run(page, task('US'))
+        self.assertEqual(result, 'success')
+        self.assertEqual(page.url, SHEIN_LOGIN_URLS['US'])
+        body = RegistrationOrchestrator.env_create_body('safe-US-env', 'US')
+        self.assertEqual(body['tagName'], 'SHEIN US Registration')
+        inferred = BuyerRegistrationTask.from_dict({
+            'email': 'us@example.com',
+            'shein_password': 'secret-pass',
+            'outlook_password': 'mail-pass',
+            'env_name': '采购-甲-US-0819-001',
+        })
+        self.assertEqual(inferred.site, 'US')
+        with self.assertRaisesRegex(RegistrationError, '站点.*不一致'):
+            SheinRegistrationFlow(
+                accept_terms=True, site='US').run(FakePage(site='US'), task())
 
 
 if __name__ == '__main__':

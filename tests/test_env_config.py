@@ -12,8 +12,8 @@ from unittest.mock import patch
 
 import purchase_tool.main as main_module
 from purchase_tool.main import (
-    Handler, default_config, load_config, public_config, save_config,
-    updated_config)
+    Handler, default_config, effective_proxy_link, load_config,
+    public_config, save_config, purchase_tag_for_site, updated_config)
 
 
 TEST_TAG = 'MX-Purchase'
@@ -56,6 +56,17 @@ class ConfigTests(unittest.TestCase):
     def test_blank_proxy_preserves_and_clear_is_explicit(self):
         old = default_config()
         old.update({'purchaseTag': TEST_TAG, 'proxyLink': TEST_PROXY})
+        group_only = updated_config(old, {'purchaseTag': 'MX-Other'})
+        self.assertEqual(group_only['purchaseTag'], 'MX-Other')
+        self.assertEqual(group_only['purchaseTags']['MX'], 'MX-Other')
+        self.assertEqual(group_only['proxyLink'], TEST_PROXY)
+        us_group = updated_config(group_only, {
+            'purchaseSite': 'US',
+            'purchaseTags': {'US': 'US-Purchase'},
+        })
+        self.assertEqual(purchase_tag_for_site(us_group, 'MX'), 'MX-Other')
+        self.assertEqual(purchase_tag_for_site(us_group, 'US'), 'US-Purchase')
+        self.assertEqual(us_group['proxyLink'], TEST_PROXY)
         kept = updated_config(old, {
             'purchaseTag': TEST_TAG,
             'proxyLink': '',
@@ -94,16 +105,68 @@ class ConfigTests(unittest.TestCase):
         })
         rendered = json.dumps(public)
         self.assertTrue(public['proxyConfigured'])
+        self.assertEqual(public['purchaseTags']['MX'], TEST_TAG)
+        self.assertEqual(public['purchaseTags']['US'], '')
         self.assertNotIn('proxyLink', public)
         self.assertNotIn(TEST_PROXY, rendered)
+
+    def test_buyer_roster_public_and_template_validation(self):
+        public = public_config(default_config())
+        self.assertEqual([b['code'] for b in public['buyers']],
+                         ['XG', 'ZH', 'KD', 'YH'])
+        self.assertEqual([b['name'] for b in public['buyers']],
+                         ['新刚', '志恒', '康德', '宇航'])
+        self.assertEqual(public['buyerDefaultSplit'], ['新刚', '志恒', '康德'])
+        self.assertEqual(public['backupMaxCount'], 25)
+        ok = updated_config(default_config(), {'importBuyerPlan': '2:XG,1:志恒'})
+        self.assertEqual(ok['importBuyerPlan'], '2:XG,1:志恒')
+        kept = updated_config(default_config(), {'concurrency': 3})
+        self.assertEqual(kept['importBuyerPlan'], '1:新刚')
+        with self.assertRaisesRegex(ValueError, '不在名单内'):
+            updated_config(default_config(), {'importBuyerPlan': '1:Operator-A'})
+        with self.assertRaises(ValueError):
+            updated_config(default_config(), {'importBuyerPlan': '新刚'})
+
+    def test_env_create_workers_setting(self):
+        # 模块三建环境并发：纯 API 路径，默认 5、1-10 可调
+        self.assertEqual(default_config()['envCreateWorkers'], 5)
+        cfg = updated_config(default_config(), {'envCreateWorkers': 8})
+        self.assertEqual(cfg['envCreateWorkers'], 8)
+        for bad in (0, 11, 'x'):
+            with self.assertRaisesRegex(ValueError, '1-10'):
+                updated_config(default_config(), {'envCreateWorkers': bad})
+        public = public_config(default_config())
+        self.assertEqual(public['envCreateWorkers'], 5)
+
+    def test_proxy_link_falls_back_to_builtin_default(self):
+        # 前期写死：未配置/已清除 → 内置默认；自定义 → 覆盖默认
+        from purchase_tool.env_batch import (DEFAULT_PROXY_LINK,
+                                              validate_proxy_link)
+        validate_proxy_link(DEFAULT_PROXY_LINK)   # 内置默认必须通过校验
+        self.assertEqual(effective_proxy_link({}), DEFAULT_PROXY_LINK)
+        self.assertEqual(effective_proxy_link({'proxyLink': ''}),
+                         DEFAULT_PROXY_LINK)
+        self.assertEqual(effective_proxy_link({'proxyLink': TEST_PROXY}),
+                         TEST_PROXY)
+        public = public_config({'hubPort': 6873})
+        self.assertTrue(public['proxyConfigured'])
+        self.assertEqual(public['proxySource'], 'default')
+        self.assertNotIn('proxyLink', public)
+
+        custom = updated_config(default_config(), {'proxyLink': TEST_PROXY})
+        self.assertEqual(custom['proxyLink'], TEST_PROXY)
+        cleared = updated_config(custom, {'proxyLink': '', 'proxyClear': True})
+        self.assertEqual(cleared['proxyLink'], '')
+        self.assertEqual(effective_proxy_link(cleared), DEFAULT_PROXY_LINK)
 
 
 class ConfigRouteTests(unittest.TestCase):
     def setUp(self):
         self.original_state = main_module.STATE
-        env_job = SimpleNamespace(preflight=lambda: {
+        env_job = SimpleNamespace(preflight=lambda site='MX': {
             'ready': True,
             'hubConnected': True,
+            'site': site,
             'purchaseTag': TEST_TAG,
             'proxyConfigured': True,
             'groupFound': True,
@@ -133,11 +196,14 @@ class ConfigRouteTests(unittest.TestCase):
     def test_get_config_and_preflight_do_not_leak_proxy(self):
         config_text = self._get_json('/api/config')
         preflight_text = self._get_json('/api/envbatch/preflight')
+        preflight_us_text = self._get_json(
+            '/api/envbatch/preflight?site=US')
         self.assertNotIn(TEST_PROXY, config_text)
         self.assertNotIn('proxyLink', config_text)
         self.assertTrue(json.loads(config_text)['proxyConfigured'])
         self.assertNotIn(TEST_PROXY, preflight_text)
         self.assertTrue(json.loads(preflight_text)['ready'])
+        self.assertEqual(json.loads(preflight_us_text)['site'], 'US')
 
 
 if __name__ == '__main__':
