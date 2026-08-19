@@ -1,0 +1,813 @@
+# -*- coding: utf-8 -*-
+"""模块三：号商 xlsx → HubStudio 批量采购环境。
+
+默认 CLI 只做离线 dry-run。真实创建必须同时给出 ``--apply`` 和
+``--confirm-env-write``。凭证只驻内存；断点文件只保存脱敏状态。
+"""
+import argparse
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from io import BytesIO
+import hashlib
+import json
+import os
+from pathlib import Path
+import random
+import re
+import sys
+import tempfile
+import time
+import urllib.request
+
+from .hub_api import DEFAULT_PORT, HubStudioApi
+from .redaction import mask_email, scrub_text
+
+
+TAGS = {'MX': os.environ.get(
+    'XYNIGO_PURCHASE_TAG', 'SHEIN Mexico Purchasing')}
+SITE_ALIASES = {'MX': '希音墨西哥站'}
+DOMAINS = {'MX': 'https://www.shein.com.mx'}
+PROXY_LINK = os.environ.get('XYNIGO_PROXY_LINK', '')
+
+# (width, height, weight)。创建后不得再改指纹。
+RES_POOL = (
+    (2560, 1440, 0.20),
+    (1920, 1080, 0.30),
+    (1920, 1200, 0.12),
+    (1680, 1050, 0.10),
+    (1600, 900, 0.08),
+    (1536, 864, 0.08),
+    (1440, 900, 0.06),
+    (1366, 768, 0.06),
+)
+
+STEPS = ('env_created', 'cookie_imported', 'account_bound', 'remarked',
+         'done')
+MAPPING_HEADERS = ('邮箱', '环境名', 'HUB序号', '采购员', '绑定时间', '状态')
+EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+ORDER_RE = re.compile(r'(?:[?&])orderNo=([0-9a-f]+)(?:[&#]|$)', re.I)
+REMARK_ORDER_RE = re.compile(r'(?:^|\|\s*)单号:([0-9a-f]+)', re.I)
+ENV_NAME_RE = r'^采购-{buyer}-{site}-{mmdd}-(\d{{3}})$'
+
+
+class EnvBatchError(Exception):
+    pass
+
+
+def project_root():
+    return Path(__file__).resolve().parents[2]
+
+
+def _inside(path, root):
+    try:
+        return os.path.commonpath([str(path), str(root)]) == str(root)
+    except ValueError:
+        return False
+
+
+def _sample_dir():
+    return (project_root() / 'examples').resolve()
+
+
+def validate_input_path(path, allow_repo_sample=False):
+    resolved = Path(path).expanduser().resolve()
+    root = project_root().resolve()
+    if _inside(resolved, root):
+        if not (allow_repo_sample and _inside(resolved, _sample_dir())):
+            raise EnvBatchError('真实凭证 xlsx 不得放在项目目录内')
+    if not resolved.is_file():
+        raise EnvBatchError('找不到输入 xlsx')
+    return resolved
+
+
+def validate_output_path(path):
+    resolved = Path(path).expanduser().resolve()
+    if _inside(resolved, project_root().resolve()):
+        raise EnvBatchError('运行产物不得写入项目目录，请选择仓库外路径')
+    return resolved
+
+
+@dataclass
+class BuyerAccount:
+    row_number: int
+    email: str
+    password: str
+    key_url: str
+    cookie_text: str
+    order_no: str
+    buyer: str = ''
+
+    @property
+    def safe_email(self):
+        return mask_email(self.email)
+
+    @property
+    def account_id(self):
+        return hashlib.sha256(self.email.strip().casefold().encode('utf-8')).hexdigest()
+
+
+@dataclass
+class BatchPlanItem:
+    account: BuyerAccount
+    env_name: str
+    container_code: str = ''
+    serial_number: object = None
+    completed_steps: set = field(default_factory=set)
+    state: str = 'pending'
+    error_step: str = ''
+    error: str = ''
+    binding_time: str = ''
+    recovered_existing: bool = False
+
+    def public_dict(self):
+        return {
+            'accountId': self.account.account_id,
+            'emailMasked': self.account.safe_email,
+            'buyer': self.account.buyer,
+            'envName': self.env_name,
+            'containerCode': self.container_code,
+            'serialNumber': self.serial_number,
+            'completedSteps': [x for x in STEPS if x in self.completed_steps],
+            'state': self.state,
+            'errorStep': self.error_step,
+            'error': scrub_text(self.error)[:300],
+            'bindingTime': self.binding_time,
+            'recoveredExisting': self.recovered_existing,
+        }
+
+
+def _cell_text(value):
+    return value if isinstance(value, str) else str(value)
+
+
+def parse_vendor_workbook(source):
+    """严格解析第一张工作表；Cookie 字符串原样保留。"""
+    try:
+        from openpyxl import load_workbook
+    except ImportError as exc:
+        raise EnvBatchError('缺少 openpyxl，无法读取 xlsx') from exc
+
+    try:
+        workbook = load_workbook(source, read_only=True, data_only=True)
+    except Exception as exc:
+        raise EnvBatchError('xlsx 无法打开：%s' % scrub_text(exc)) from exc
+    try:
+        sheet = workbook.worksheets[0]
+        accounts = []
+        seen_emails, seen_orders = set(), set()
+        for row_number, raw_row in enumerate(
+                sheet.iter_rows(values_only=True), start=1):
+            values = list(raw_row)
+            if not any(value not in (None, '') for value in values):
+                continue
+            extras = values[4:]
+            if any(value not in (None, '') for value in extras):
+                raise EnvBatchError('第 %d 行第 5 列后存在非空数据，严格模式拒收' % row_number)
+            values += [None] * max(0, 4 - len(values))
+            email_raw, password_raw, key_raw, cookie_raw = values[:4]
+            if row_number == 1 and str(email_raw or '').strip().casefold() in {
+                    '邮箱', '邮箱账号', 'email'}:
+                raise EnvBatchError('检测到表头；v1 只接受 Sheet1 无表头固定 4 列')
+            if any(value in (None, '') for value in
+                   (email_raw, password_raw, key_raw, cookie_raw)):
+                raise EnvBatchError('第 %d 行缺少邮箱/密码/接码Key/Cookie 字段' % row_number)
+
+            email = _cell_text(email_raw).strip()
+            if not EMAIL_RE.fullmatch(email):
+                raise EnvBatchError('第 %d 行邮箱格式错误：%s' %
+                                    (row_number, mask_email(email)))
+            email_key = email.casefold()
+            if email_key in seen_emails:
+                raise EnvBatchError('第 %d 行邮箱重复：%s' %
+                                    (row_number, mask_email(email)))
+            seen_emails.add(email_key)
+
+            key_url = _cell_text(key_raw).strip()
+            if not re.match(r'^https?://', key_url, re.I):
+                raise EnvBatchError('第 %d 行接码Key不是 http(s) URL：%s' %
+                                    (row_number, mask_email(email)))
+            order_match = ORDER_RE.search(key_url)
+            if not order_match:
+                raise EnvBatchError('第 %d 行接码Key无法提取 orderNo：%s' %
+                                    (row_number, mask_email(email)))
+            order_no = order_match.group(1)
+            if order_no.casefold() in seen_orders:
+                raise EnvBatchError('第 %d 行号商单号重复：%s' %
+                                    (row_number, mask_email(email)))
+            seen_orders.add(order_no.casefold())
+
+            cookie_text = _cell_text(cookie_raw)
+            try:
+                parsed_cookie = json.loads(cookie_text)
+            except Exception as exc:
+                raise EnvBatchError('第 %d 行 Cookie 不是合法 JSON：%s' %
+                                    (row_number, mask_email(email))) from exc
+            if not isinstance(parsed_cookie, (list, dict)):
+                raise EnvBatchError('第 %d 行 Cookie JSON 必须是数组或对象：%s' %
+                                    (row_number, mask_email(email)))
+
+            accounts.append(BuyerAccount(
+                row_number=row_number,
+                email=email,
+                password=_cell_text(password_raw),
+                key_url=key_url,
+                cookie_text=cookie_text,
+                order_no=order_no,
+            ))
+        if not accounts:
+            raise EnvBatchError('Sheet1 没有有效账号行')
+        return accounts
+    finally:
+        workbook.close()
+
+
+def load_vendor_xlsx(path, allow_repo_sample=False):
+    resolved = validate_input_path(path, allow_repo_sample=allow_repo_sample)
+    accounts = parse_vendor_workbook(str(resolved))
+    return resolved, accounts
+
+
+def parse_assignment(spec, total):
+    if not isinstance(spec, str) or not spec.strip():
+        raise EnvBatchError('采购员分配不能为空')
+    result, seen = [], set()
+    for chunk in re.split(r'[,，]', spec):
+        chunk = chunk.strip()
+        match = re.fullmatch(r'(\d+)\s*[:：]\s*([^\s:/\\]+)', chunk)
+        if not match:
+            raise EnvBatchError('采购员分配格式错误：%s' % scrub_text(chunk))
+        count, buyer = int(match.group(1)), match.group(2).strip()
+        if count < 1:
+            raise EnvBatchError('采购员分配数量必须大于 0')
+        if buyer in seen:
+            raise EnvBatchError('采购员重复：%s' % buyer)
+        seen.add(buyer)
+        result.append((count, buyer))
+    if sum(count for count, _buyer in result) != total:
+        raise EnvBatchError('分配数量合计 %d 与账号数 %d 不一致' %
+                            (sum(count for count, _buyer in result), total))
+    return result
+
+
+def assign_buyers(accounts, assignment_spec):
+    assignments = parse_assignment(assignment_spec, len(accounts))
+    offset = 0
+    for count, buyer in assignments:
+        for account in accounts[offset:offset + count]:
+            account.buyer = buyer
+        offset += count
+    return assignments
+
+
+def choose_resolution(rng=None):
+    rng = rng or random
+    choices = [(width, height) for width, height, _weight in RES_POOL]
+    weights = [weight for _width, _height, weight in RES_POOL]
+    return rng.choices(choices, weights=weights, k=1)[0]
+
+
+def build_env_create_body(name, site='MX', rng=None, proxy_link=None):
+    site = site.upper()
+    if site not in TAGS:
+        raise EnvBatchError('v1 仅支持 MX 站点')
+    link_code = PROXY_LINK if proxy_link is None else proxy_link
+    if not link_code:
+        raise EnvBatchError('新建环境前必须设置 XYNIGO_PROXY_LINK')
+    width, height = choose_resolution(rng)
+    return {
+        'containerName': name,
+        'tagName': TAGS[site],
+        'asDynamicType': 0,
+        'proxyTypeName': 'Socks5_通用api',
+        'linkCode': link_code.format(region=site),
+        'ipGetRuleType': 1,
+        'coreVersion': 148,
+        'advancedBo': {
+            'width': width,
+            'height': height,
+            'languageType': 0,
+            'webgl': 0,
+            'canvas': 0,
+            'audioContext': 0,
+        },
+    }
+
+
+def format_remark(account, purchase_date):
+    return ('邮箱接码:%s | 单号:%s | 采购员:%s | 购买:%s' %
+            (account.key_url, account.order_no, account.buyer,
+             purchase_date))
+
+
+def batch_fingerprint(source_bytes, assignment_spec, site, purchase_date):
+    digest = hashlib.sha256()
+    digest.update(source_bytes)
+    digest.update(json.dumps({
+        'assignment': assignment_spec,
+        'site': site,
+        'purchaseDate': purchase_date,
+    }, sort_keys=True, ensure_ascii=False).encode('utf-8'))
+    return digest.hexdigest()
+
+
+def _existing_by_order(existing_envs):
+    result = {}
+    for env in existing_envs:
+        match = REMARK_ORDER_RE.search(str(env.get('remark') or ''))
+        if not match:
+            continue
+        order_key = match.group(1).casefold()
+        if order_key in result:
+            raise EnvBatchError('HubStudio 中同一号商单号对应多个环境，需人工处理')
+        result[order_key] = env
+    return result
+
+
+def build_batch_plan(accounts, assignment_spec, existing_envs=None,
+                     site='MX', purchase_date=None, resume_state=None):
+    site = site.upper()
+    if site not in TAGS:
+        raise EnvBatchError('v1 仅支持 MX 站点')
+    purchase_date = purchase_date or date.today().strftime('%Y%m%d')
+    if not re.fullmatch(r'20\d{6}', purchase_date):
+        raise EnvBatchError('购买日期必须是 YYYYMMDD')
+    assignments = assign_buyers(accounts, assignment_spec)
+    existing_envs = list(existing_envs or [])
+    existing_orders = _existing_by_order(existing_envs)
+    resume_rows = {
+        row.get('accountId'): row
+        for row in ((resume_state or {}).get('rows') or [])
+        if row.get('accountId')
+    }
+    mmdd = purchase_date[-4:]
+    max_suffix = {buyer: 0 for _count, buyer in assignments}
+    for buyer in max_suffix:
+        pattern = re.compile(ENV_NAME_RE.format(
+            buyer=re.escape(buyer), site=re.escape(site), mmdd=mmdd))
+        for env in existing_envs:
+            match = pattern.fullmatch(str(env.get('containerName') or ''))
+            if match:
+                max_suffix[buyer] = max(max_suffix[buyer], int(match.group(1)))
+        for row in resume_rows.values():
+            match = pattern.fullmatch(str(row.get('envName') or ''))
+            if match:
+                max_suffix[buyer] = max(max_suffix[buyer], int(match.group(1)))
+
+    plan = []
+    for account in accounts:
+        recovered = existing_orders.get(account.order_no.casefold())
+        saved = resume_rows.get(account.account_id) or {}
+        if recovered:
+            env_name = str(recovered.get('containerName') or '')
+            if not env_name:
+                raise EnvBatchError('已存在环境缺少名称，无法安全恢复')
+            item = BatchPlanItem(
+                account=account,
+                env_name=env_name,
+                container_code=str(recovered.get('containerCode') or ''),
+                serial_number=recovered.get('serialNumber'),
+                completed_steps=set(STEPS),
+                state='done',
+                binding_time=str(saved.get('bindingTime') or ''),
+                recovered_existing=True,
+            )
+        elif saved:
+            item = BatchPlanItem(
+                account=account,
+                env_name=str(saved.get('envName') or ''),
+                container_code=str(saved.get('containerCode') or ''),
+                serial_number=saved.get('serialNumber'),
+                completed_steps=set(saved.get('completedSteps') or []),
+                state=str(saved.get('state') or 'pending'),
+                error_step=str(saved.get('errorStep') or ''),
+                error=str(saved.get('error') or ''),
+                binding_time=str(saved.get('bindingTime') or ''),
+            )
+            if not item.env_name:
+                raise EnvBatchError('续跑状态缺少环境名，拒绝恢复')
+        else:
+            max_suffix[account.buyer] += 1
+            env_name = '采购-%s-%s-%s-%03d' % (
+                account.buyer, site, mmdd, max_suffix[account.buyer])
+            item = BatchPlanItem(account=account, env_name=env_name)
+        plan.append(item)
+    return plan
+
+
+def default_resume_dir():
+    if os.name == 'nt':
+        base = os.environ.get('LOCALAPPDATA') or tempfile.gettempdir()
+        return Path(base) / 'PurchaseTool' / 'resume'
+    if sys.platform == 'darwin':
+        return Path.home() / 'Library' / 'Application Support' / '采购工具' / 'resume'
+    return Path.home() / '.local' / 'state' / 'purchase-tool' / 'resume'
+
+
+def _write_private_json(path, payload):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix='.envbatch-', suffix='.tmp',
+                                    dir=str(path.parent))
+    try:
+        try:
+            os.fchmod(fd, 0o600)
+        except OSError:
+            pass
+        with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+class ResumeStateStore(object):
+    def __init__(self, batch_id, state_dir=None):
+        self.batch_id = batch_id
+        self.state_dir = Path(state_dir or default_resume_dir()).expanduser().resolve()
+        if _inside(self.state_dir, project_root().resolve()):
+            raise EnvBatchError('续跑目录必须位于项目目录外')
+        self.path = self.state_dir / ('envbatch-%s.json' % batch_id[:20])
+
+    def load(self):
+        if not self.path.exists():
+            return None
+        try:
+            with self.path.open(encoding='utf-8') as handle:
+                payload = json.load(handle)
+        except Exception as exc:
+            raise EnvBatchError('续跑状态文件损坏，拒绝猜测恢复') from exc
+        if payload.get('batchId') != self.batch_id:
+            raise EnvBatchError('续跑状态与当前 xlsx/分配不匹配')
+        return payload
+
+    def save(self, rows, site, purchase_date):
+        payload = {
+            'version': 1,
+            'batchId': self.batch_id,
+            'site': site,
+            'purchaseDate': purchase_date,
+            'updatedAt': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'rows': [row.public_dict() for row in rows],
+        }
+        raw = json.dumps(payload, ensure_ascii=False).casefold()
+        for forbidden in ('password', 'cookietext', 'keyurl'):
+            if forbidden in raw:
+                raise EnvBatchError('续跑状态意外包含凭证字段，已拒绝写入')
+        _write_private_json(self.path, payload)
+
+    def remove(self):
+        try:
+            self.path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+class BatchEnvOrchestrator(object):
+    """HubStudio 写链路串行执行；每步落脱敏状态后再进入下一步。"""
+
+    def __init__(self, hub, site='MX', purchase_date=None, state_store=None,
+                 write_interval=0.3, sleep_fn=time.sleep, rng=None,
+                 on_progress=None):
+        self.hub = hub
+        self.site = site.upper()
+        self.purchase_date = purchase_date or date.today().strftime('%Y%m%d')
+        self.state_store = state_store
+        self.write_interval = write_interval
+        self.sleep = sleep_fn
+        self.rng = rng or random
+        self.on_progress = on_progress
+        self.rows = []
+
+    def prepare(self, accounts, assignment_spec):
+        existing = self.hub.env_list(TAGS[self.site])
+        saved = self.state_store.load() if self.state_store else None
+        self.rows = build_batch_plan(
+            accounts, assignment_spec, existing_envs=existing,
+            site=self.site, purchase_date=self.purchase_date,
+            resume_state=saved)
+        self._persist()
+        return self.rows
+
+    def _persist(self):
+        if self.state_store:
+            self.state_store.save(self.rows, self.site, self.purchase_date)
+        if self.on_progress:
+            self.on_progress([row.public_dict() for row in self.rows])
+
+    def _mark(self, row, step):
+        row.completed_steps.add(step)
+        row.error = ''
+        row.error_step = ''
+        row.state = 'done' if step == 'done' else step
+        self._persist()
+
+    def _find_env(self, env_name, attempts=25):
+        for attempt in range(attempts):
+            for env in self.hub.env_list(TAGS[self.site]):
+                if env.get('containerName') == env_name:
+                    return env
+            if attempt + 1 < attempts:
+                self.sleep(1)
+        raise EnvBatchError('新建环境后回读超时')
+
+    def _run_one(self, row):
+        if 'done' in row.completed_steps:
+            row.state = 'done'
+            return
+        current_step = 'env_created'
+        try:
+            row.state = 'running'
+            self._persist()
+            if 'env_created' not in row.completed_steps:
+                existing = None
+                for env in self.hub.env_list(TAGS[self.site]):
+                    if env.get('containerName') == row.env_name:
+                        existing = env
+                        break
+                if existing is None:
+                    self.hub.env_create(build_env_create_body(
+                        row.env_name, self.site, self.rng))
+                    self.sleep(self.write_interval)
+                    existing = self._find_env(row.env_name)
+                row.container_code = str(existing.get('containerCode') or '')
+                row.serial_number = existing.get('serialNumber')
+                if not row.container_code or row.serial_number is None:
+                    raise EnvBatchError('环境回读缺少 containerCode 或 HUB 序号')
+                self._mark(row, 'env_created')
+
+            current_step = 'cookie_imported'
+            if 'cookie_imported' not in row.completed_steps:
+                self.hub.env_import_cookie(
+                    row.container_code, row.account.cookie_text)
+                self.sleep(self.write_interval)
+                self._mark(row, 'cookie_imported')
+
+            current_step = 'account_bound'
+            if 'account_bound' not in row.completed_steps:
+                self.hub.container_add_account(
+                    row.container_code, row.account.email,
+                    row.account.password, self.site)
+                self.sleep(self.write_interval)
+                self._mark(row, 'account_bound')
+
+            current_step = 'remarked'
+            if 'remarked' not in row.completed_steps:
+                self.hub.env_update(
+                    row.container_code, row.env_name,
+                    format_remark(row.account, self.purchase_date))
+                self.sleep(self.write_interval)
+                self._mark(row, 'remarked')
+
+            current_step = 'done'
+            row.binding_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            self._mark(row, 'done')
+        except Exception as exc:
+            row.state = 'failed'
+            row.error_step = current_step
+            error_text = str(exc)
+            for secret in (row.account.email, row.account.password,
+                           row.account.key_url, row.account.cookie_text):
+                if secret:
+                    error_text = error_text.replace(secret, '<redacted>')
+            row.error = scrub_text(error_text)[:300]
+            self._persist()
+
+    def run(self):
+        for row in self.rows:
+            self._run_one(row)
+        if self.state_store and all(row.state == 'done' for row in self.rows):
+            self.state_store.remove()
+        return self.rows
+
+    def retry_one(self, account_id):
+        row = next((item for item in self.rows
+                    if item.account.account_id == account_id), None)
+        if row is None:
+            raise EnvBatchError('找不到待重试账号')
+        if row.state == 'done':
+            return row
+        self._run_one(row)
+        if self.state_store and all(item.state == 'done' for item in self.rows):
+            self.state_store.remove()
+        return row
+
+    @staticmethod
+    def _verification_sample(rows, count):
+        done = [row for row in rows if row.state == 'done' and row.container_code]
+        if count <= 0 or not done:
+            return []
+        chosen = []
+        for buyer in dict.fromkeys(row.account.buyer for row in done):
+            candidate = next(row for row in done if row.account.buyer == buyer)
+            if candidate not in chosen:
+                chosen.append(candidate)
+            if len(chosen) >= count:
+                return chosen
+        for index in (0, len(done) // 2, len(done) - 1):
+            candidate = done[index]
+            if candidate not in chosen:
+                chosen.append(candidate)
+            if len(chosen) >= count:
+                break
+        return chosen[:count]
+
+    def verify_ips(self, count=3, geo_lookup=None):
+        geo_lookup = geo_lookup or lookup_ip_country
+        results = []
+        for row in self._verification_sample(self.rows, count):
+            started = False
+            try:
+                data = self.hub.browser_start(row.container_code) or {}
+                started = True
+                ip = str(data.get('ip') or '')
+                geo = geo_lookup(ip) if ip else {}
+                country_code = str(geo.get('countryCode') or '').upper()
+                results.append({
+                    'envName': row.env_name,
+                    'ip': ip,
+                    'country': geo.get('country') or '',
+                    'city': geo.get('city') or '',
+                    'isp': geo.get('isp') or '',
+                    'ok': country_code == self.site,
+                    'error': '' if country_code == self.site else '出口 IP 国家不匹配',
+                })
+            except Exception as exc:
+                results.append({
+                    'envName': row.env_name, 'ip': '', 'country': '',
+                    'city': '', 'isp': '', 'ok': False,
+                    'error': scrub_text(exc)[:200],
+                })
+            finally:
+                if started:
+                    try:
+                        self.hub.browser_stop(row.container_code)
+                    except Exception:
+                        pass
+        return results
+
+
+def lookup_ip_country(ip):
+    if not re.fullmatch(r'[0-9a-fA-F:.]+', str(ip or '')):
+        raise EnvBatchError('HubStudio 未返回有效出口 IP')
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    url = ('http://ip-api.com/json/%s?fields=status,message,country,'
+           'countryCode,city,isp' % ip)
+    with opener.open(url, timeout=10) as response:
+        data = json.loads(response.read().decode('utf-8'))
+    if data.get('status') != 'success':
+        raise EnvBatchError('IP 归属地查询失败')
+    return data
+
+
+def mapping_workbook_bytes(rows):
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Font, PatternFill
+    except ImportError as exc:
+        raise EnvBatchError('缺少 openpyxl，无法导出映射清单') from exc
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = '绑定映射清单'
+    sheet.append(list(MAPPING_HEADERS))
+    for row in rows:
+        sheet.append([
+            row.account.email,
+            row.env_name,
+            row.serial_number,
+            row.account.buyer,
+            row.binding_time,
+            '完成' if row.state == 'done' else '失败:%s' % row.error_step,
+        ])
+    for cell in sheet[1]:
+        cell.font = Font(bold=True, color='FFFFFF')
+        cell.fill = PatternFill('solid', fgColor='1F4E78')
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+    widths = (30, 30, 12, 12, 22, 20)
+    for index, width in enumerate(widths, start=1):
+        sheet.column_dimensions[chr(64 + index)].width = width
+    sheet.freeze_panes = 'A2'
+    sheet.auto_filter.ref = 'A1:F%d' % max(1, len(rows) + 1)
+    sheet.sheet_view.showGridLines = False
+    stream = BytesIO()
+    workbook.save(stream)
+    return stream.getvalue()
+
+
+def write_private_bytes(path, data):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'wb') as handle:
+        handle.write(data)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        prog='python -m purchase_tool env-batch',
+        description='模块三：号商买家号批量创建 HubStudio 采购环境')
+    parser.add_argument('--xlsx', '--input', dest='xlsx', required=True,
+                        help='号商无表头 4 列 xlsx（真实文件必须在项目外）')
+    parser.add_argument('--assign', required=True,
+                        help='按文件顺序分配，如 3:Operator-A,2:Operator-B')
+    parser.add_argument('--site', default='MX', choices=['MX'])
+    parser.add_argument('--purchase-date',
+                        default=date.today().strftime('%Y%m%d'))
+    parser.add_argument('--hub-port', type=int, default=DEFAULT_PORT)
+    parser.add_argument('--verify-sample-count', type=int, default=3)
+    parser.add_argument('--mapping-output', help='仓库外的绑定映射清单路径')
+    parser.add_argument('--resume-dir', help='仓库外的脱敏续跑状态目录')
+    parser.add_argument('--apply', action='store_true',
+                        help='真实创建环境；不加时仅离线 dry-run')
+    parser.add_argument('--confirm-env-write', action='store_true',
+                        help='确认执行 HubStudio 创建/导Cookie/绑号/备注写入')
+    parser.add_argument('--no-verify-ip', action='store_true',
+                        help='跳过批末出口 IP 抽查')
+    return parser
+
+
+def _print_dry_run(accounts, plan, assignments):
+    print('计划校验通过：%d 个账号；Cookie 覆盖 %d/%d' %
+          (len(accounts), len(accounts), len(accounts)))
+    print('采购员分配：%s' % ', '.join(
+        '%s×%d' % (buyer, count) for count, buyer in assignments))
+    for row in plan[:5]:
+        print('  - %s -> %s' % (row.account.safe_email, row.env_name))
+    if len(plan) > 5:
+        print('  ... 其余 %d 行已省略' % (len(plan) - 5))
+    print('dry-run 完成；未连接 HubStudio，未写入任何数据。')
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    try:
+        input_path = validate_input_path(
+            args.xlsx, allow_repo_sample=not args.apply)
+        with input_path.open('rb') as handle:
+            source_bytes = handle.read()
+        accounts = parse_vendor_workbook(BytesIO(source_bytes))
+        assignments = parse_assignment(args.assign, len(accounts))
+        if not args.apply:
+            plan = build_batch_plan(
+                accounts, args.assign, existing_envs=[], site=args.site,
+                purchase_date=args.purchase_date)
+            _print_dry_run(accounts, plan, assignments)
+            return 0
+        if not args.confirm_env_write:
+            print('拒绝执行：真实写入必须同时传 --confirm-env-write。')
+            return 2
+
+        output = (Path(args.mapping_output).expanduser() if args.mapping_output
+                  else input_path.with_name(
+                      '绑定映射清单_%s.xlsx' % args.purchase_date))
+        output = validate_output_path(output)
+        batch_id = batch_fingerprint(
+            source_bytes, args.assign, args.site, args.purchase_date)
+        state_store = ResumeStateStore(batch_id, args.resume_dir)
+        hub = HubStudioApi(port=args.hub_port)
+        if not hub.ping():
+            raise EnvBatchError('HubStudio 未连接')
+        runner = BatchEnvOrchestrator(
+            hub, site=args.site, purchase_date=args.purchase_date,
+            state_store=state_store)
+        runner.prepare(accounts, args.assign)
+        rows = runner.run()
+        write_private_bytes(output, mapping_workbook_bytes(rows))
+        done = sum(row.state == 'done' for row in rows)
+        failed = len(rows) - done
+        print('主链路结束：完成 %d，失败 %d；映射清单：%s' %
+              (done, failed, output))
+        if not args.no_verify_ip and done:
+            checks = runner.verify_ips(max(0, args.verify_sample_count))
+            ok = sum(item.get('ok') for item in checks)
+            print('出口 IP 抽查：%d/%d 国家匹配' % (ok, len(checks)))
+            if ok != len(checks):
+                failed += 1
+        return 2 if failed else 0
+    except EnvBatchError as exc:
+        print('执行失败：%s' % scrub_text(exc))
+        return 2
+    except Exception as exc:
+        print('执行失败：%s' % scrub_text(exc))
+        return 2
+
+
+if __name__ == '__main__':
+    sys.exit(main())

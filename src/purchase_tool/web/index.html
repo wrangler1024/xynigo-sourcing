@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Xynigo Sourcing v0.4.2</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --primary: #2563eb; --primary-dark: #1d4ed8;
+    --green: #16a34a; --green-bg: #f0fdf4;
+    --red: #dc2626; --red-bg: #fef2f2;
+    --amber: #d97706; --amber-bg: #fffbeb;
+    --blue: #2563eb; --blue-bg: #eff6ff;
+    --gray: #6b7280; --gray-bg: #f3f4f6; --border: #e5e7eb;
+  }
+  body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif; background: #f5f7fa; color: #1f2937; font-size: 14px; }
+  .topbar { background: #fff; border-bottom: 1px solid var(--border); padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 10; }
+  .brand { font-size: 18px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+  .brand .module { font-size: 13px; font-weight: 500; color: var(--primary); background: var(--blue-bg); padding: 3px 10px; border-radius: 999px; }
+  .brand .ver { font-size: 12px; color: var(--amber); background: var(--amber-bg); padding: 3px 10px; border-radius: 999px; }
+  .topbar-right { display: flex; align-items: center; gap: 12px; }
+  .pill { font-size: 12px; padding: 4px 12px; border-radius: 999px; cursor: pointer; user-select: none; white-space: nowrap; }
+  .pill.ok { background: var(--green-bg); color: var(--green); }
+  .pill.bad { background: var(--red-bg); color: var(--red); }
+  .pill.checking { background: var(--gray-bg); color: var(--gray); cursor: wait; }
+  main { max-width: 1320px; margin: 20px auto; padding: 0 20px 40px; display: flex; flex-direction: column; gap: 16px; }
+  .card { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; }
+  .card-title { font-size: 15px; font-weight: 600; margin-bottom: 14px; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .legend { font-size: 12px; font-weight: 400; color: var(--gray); }
+  .input-row { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+  .field label { display: block; font-size: 13px; color: var(--gray); margin-bottom: 6px; }
+  .field.grow { flex: 1; min-width: 320px; }
+  textarea { width: 100%; height: 120px; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 14px; font-family: inherit; resize: vertical; outline: none; }
+  textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
+  select { width: 220px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 14px; background: #fff; outline: none; }
+  .side-col { display: flex; flex-direction: column; gap: 10px; }
+  .hint { font-size: 12px; color: var(--gray); line-height: 1.6; }
+  .btn { border: 1px solid var(--border); background: #fff; color: #1f2937; padding: 9px 18px; border-radius: 8px; font-size: 14px; cursor: pointer; transition: all .15s; white-space: nowrap; }
+  .btn:hover:not(:disabled) { background: var(--gray-bg); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 600; }
+  .btn.primary:hover:not(:disabled) { background: var(--primary-dark); }
+  .btn.danger { background: #fff; border-color: var(--red); color: var(--red); }
+  .btn.danger:hover:not(:disabled) { background: var(--red-bg); }
+  .action-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .progress-wrap { flex: 1; min-width: 240px; display: flex; align-items: center; gap: 10px; }
+  .progress { flex: 1; height: 10px; background: var(--gray-bg); border-radius: 999px; overflow: hidden; }
+  .progress .bar { height: 100%; width: 0%; background: var(--primary); border-radius: 999px; transition: width .4s ease; }
+  #progressText { font-size: 13px; color: var(--gray); min-width: 56px; text-align: right; }
+  #currentEnv { font-size: 13px; color: var(--blue); min-width: 170px; }
+  #elapsed { font-size: 13px; color: var(--gray); min-width: 90px; text-align: right; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; padding: 9px 10px; background: #f9fafb; color: var(--gray); font-weight: 600; border-bottom: 1px solid var(--border); white-space: nowrap; position: sticky; top: 0; }
+  td { padding: 9px 10px; border-bottom: 1px solid #f3f4f6; white-space: nowrap; vertical-align: middle; }
+  tr.row-success td { background: #fcfdfd; }
+  tr.row-login td { background: var(--red-bg); }
+  tr.row-inuse td { background: var(--amber-bg); }
+  tr.row-fail td { background: var(--red-bg); }
+  tr.row-running td { background: var(--blue-bg); }
+  tr.row-pending td { color: #9ca3af; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 500; }
+  .badge.ok { background: var(--green-bg); color: var(--green); }
+  .badge.login { background: #fee2e2; color: var(--red); }
+  .badge.inuse { background: #fef3c7; color: var(--amber); }
+  .badge.fail { background: #fee2e2; color: var(--red); }
+  .st-enviado { background: var(--blue-bg); color: var(--blue); }
+  .st-procesando { background: var(--gray-bg); color: var(--gray); }
+  .st-entregado { background: var(--green-bg); color: var(--green); }
+  .st-completado { background: var(--green-bg); color: var(--green); }
+  .st-cancelado { background: #fee2e2; color: var(--red); }
+  .st-reembolsando { background: #fee2e2; color: var(--red); }
+  .btn-mini { border: 1px solid var(--border); background: #fff; color: var(--primary); padding: 3px 10px; font-size: 12px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
+  .btn-mini:hover { background: var(--blue-bg); border-color: var(--primary); }
+  .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid rgba(37,99,235,.25); border-top-color: var(--blue); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .footer-card { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  #stats { font-size: 13px; color: var(--gray); display: flex; gap: 14px; flex-wrap: wrap; }
+  #stats b { font-weight: 700; }
+  #stats .s-ok b { color: var(--green); }
+  #stats .s-kandan b { color: var(--red); }
+  #stats .s-login b { color: var(--red); }
+  #stats .s-inuse b { color: var(--amber); }
+  #stats .s-fail b { color: var(--red); }
+  .empty-tip { text-align: center; color: #9ca3af; padding: 36px 0; font-size: 13px; }
+  .modal-mask { display: none; position: fixed; inset: 0; background: rgba(17,24,39,.4); z-index: 100; align-items: center; justify-content: center; }
+  .modal-mask.show { display: flex; }
+  .modal { background: #fff; border-radius: 12px; padding: 22px 24px; width: 420px; max-width: calc(100vw - 40px); box-shadow: 0 20px 50px rgba(0,0,0,.18); }
+  .modal h3 { font-size: 15px; margin-bottom: 16px; }
+  .modal .field { margin-bottom: 14px; }
+  .modal input[type=text] { width: 100%; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 14px; outline: none; }
+  .modal .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+  .image-modal { width: min(1100px, calc(100vw - 40px)); padding: 16px; }
+  .image-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+  .image-modal-head h3 { margin: 0; }
+  .image-modal-close { width: 34px; height: 34px; padding: 0; border: 0; border-radius: 8px; background: var(--gray-bg); color: #374151; font-size: 24px; line-height: 1; cursor: pointer; }
+  .image-modal-close:hover { background: #e5e7eb; }
+  .image-stage { min-height: 220px; max-height: calc(100vh - 130px); overflow: auto; display: flex; align-items: center; justify-content: center; border-radius: 8px; background: #f3f4f6; }
+  .image-stage img { display: block; max-width: 100%; max-height: calc(100vh - 150px); object-fit: contain; }
+  .image-loading { color: var(--gray); padding: 40px; }
+  .toast { position: fixed; left: 50%; bottom: 36px; transform: translateX(-50%) translateY(20px); background: #111827; color: #fff; padding: 10px 20px; border-radius: 8px; font-size: 13px; opacity: 0; pointer-events: none; transition: all .25s; z-index: 200; max-width: 80vw; }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .module-tabs { display: flex; gap: 8px; }
+  .module-tab { border: 1px solid var(--border); background: #fff; color: var(--gray); padding: 9px 16px; border-radius: 8px; cursor: pointer; font-weight: 600; }
+  .module-tab.active { color: var(--primary); border-color: var(--primary); background: var(--blue-bg); }
+  .module-panel { display: flex; flex-direction: column; gap: 16px; }
+  .module-panel.hidden { display: none; }
+  .file-box { border: 1px dashed #93c5fd; background: #f8fbff; border-radius: 10px; padding: 16px; }
+  .file-box input[type=file] { display: block; margin: 10px 0; max-width: 100%; }
+  .check-row { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
+  .check-row label { display: flex; gap: 8px; align-items: flex-start; line-height: 1.5; }
+  .reg-plan { margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: var(--gray-bg); color: var(--gray); white-space: pre-line; }
+  .env-text { width: 100%; border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; font-size: 14px; outline: none; }
+  .env-text:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
+  .stat-grid { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+  .stat-chip { background: var(--gray-bg); border-radius: 8px; padding: 8px 14px; font-size: 13px; }
+  .stat-chip b { display: block; font-size: 15px; }
+  .stat-chip.ok b { color: var(--green); } .stat-chip.bad b { color: var(--red); } .stat-chip.blue b { color: var(--blue); }
+  .dots { display: inline-flex; gap: 4px; align-items: center; vertical-align: middle; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--gray-bg); border: 1px solid var(--border); }
+  .dot.done { background: var(--green); border-color: var(--green); }
+  .dot.run { background: var(--blue); border-color: var(--blue); animation: pulse 1s infinite alternate; }
+  .dot.err { background: var(--red); border-color: var(--red); }
+  @keyframes pulse { from { opacity: .45; } to { opacity: 1; } }
+  .note-card { border-left: 3px solid var(--primary); background: var(--blue-bg); border-radius: 0 8px 8px 0; padding: 10px 14px; font-size: 13px; color: #1e40af; line-height: 1.7; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">🛒 Xynigo Sourcing <span class="module" id="moduleLabel">模块一 · 批量查询物流单号</span><span class="ver">v0.4.2</span></div>
+  <div class="topbar-right">
+    <span class="pill checking" id="hubStatus" title="点击重新检测连接">⏳ 正在检测 HubStudio…</span>
+    <button class="btn" id="btnSettings">⚙ 设置</button>
+  </div>
+</header>
+
+<main>
+  <nav class="module-tabs">
+    <button class="module-tab active" data-module="query">模块一 · 物流单号查询</button>
+    <button class="module-tab" data-module="register">模块二 · 买家号注册</button>
+    <button class="module-tab" data-module="envbatch">模块三 · 买家号建环境</button>
+  </nav>
+
+  <div class="module-panel" id="queryPanel">
+  <section class="card">
+    <div class="card-title">① 选择查询范围</div>
+    <div class="input-row">
+      <div class="field grow">
+        <label>环境序号（每行一个，也可用逗号 / 空格分隔）</label>
+        <textarea id="serialsInput" placeholder="例如：&#10;1001&#10;1002, 1003&#10;1004"></textarea>
+      </div>
+      <div class="side-col">
+        <div class="field">
+          <label>HubStudio 分组</label>
+          <select id="groupSelect"><option>加载中…</option></select>
+        </div>
+        <button class="btn" id="btnGroupAll">查全部分组</button>
+        <div class="hint">分组列表由本机 HubStudio<br>实时读取；序号可在 HubStudio<br>环境列表中查看。</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="action-row">
+      <button class="btn primary" id="btnStart">▶ 开始查询</button>
+      <button class="btn danger" id="btnStop" disabled>⏹ 停止</button>
+      <div class="progress-wrap">
+        <div class="progress"><div class="bar" id="bar"></div></div>
+        <span id="progressText">0 / 0</span>
+      </div>
+      <span id="currentEnv">待开始</span>
+      <span id="elapsed">已用 00:00</span>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-title">
+      ② 查询结果
+      <span class="legend">状态说明：Enviado=已发货 · Empacando=打包中 · Procesando=备货中 · Entregado=已送达 · Reembolsando=砍单退款中（5-15个工作日到账）</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>序号</th><th>环境名</th><th>订单号</th><th>下单时间</th><th>金额</th><th>状态</th>
+            <th>物流单号</th><th>承运商</th><th>物流轨迹截图</th><th>出口IP</th><th>结果</th><th>查询时间（墨西哥）</th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          <tr><td colspan="13" class="empty-tip">粘贴环境序号后点「开始查询」，结果将逐行显示在这里</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card footer-card">
+    <div style="display:flex; gap:12px;">
+      <button class="btn" id="btnRetryFail" title="对所有失败 / 使用中 / 未查询的行重新查询；登录失效行需先手动登录后单独重查">🔄 重查异常行</button>
+      <button class="btn" id="btnExport">📥 导出 Excel（含轨迹截图）</button>
+    </div>
+    <div id="stats">
+      <span class="s-ok">成功 <b id="cntOk">0</b></span>
+      <span class="s-kandan">其中砍单 <b id="cntKan">0</b></span>
+      <span class="s-login">登录失效 <b id="cntLogin">0</b></span>
+      <span class="s-inuse">使用中 <b id="cntInuse">0</b></span>
+      <span class="s-fail">失败 <b id="cntFail">0</b></span>
+      <span>未查询 <b id="cntPending">0</b></span>
+    </div>
+  </section>
+  </div>
+
+  <div class="module-panel hidden" id="registerPanel">
+    <section class="card">
+      <div class="card-title">① 载入注册任务 <span class="legend">默认串行，账号间隔 10 秒；只支持项目目录外的临时 JSON</span></div>
+      <div class="file-box">
+        <b>选择运行时凭证 JSON</b>
+        <input type="file" id="regFile" accept="application/json,.json">
+        <div class="hint">字段：email / shein_password / outlook_password / auxiliary_email / code_api_url / env_serial（或 env_name）。<br>
+          可选 reuse_open=true，仅用于明确无人操作的已打开环境。密码、Cookie、接码 Key 不显示、不写入 config.json。</div>
+        <div class="reg-plan" id="regPlan">尚未选择文件</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-title">② 执行确认</div>
+      <div class="check-row">
+        <label><input type="checkbox" id="regAcceptTerms"> <span>我确认继续即接受 SHEIN 页面展示的隐私政策、Cookie 政策和条款条件。</span></label>
+        <label><input type="checkbox" id="regMsPrivacy"> <span>如果微软首次登录展示隐私通知，允许确认该通知（不创建通行密钥，不选“保持登录”）。</span></label>
+        <label><input type="checkbox" id="regKeepOpen"> <span>成功后保持环境打开（默认关闭并归档登录态）。</span></label>
+        <label><input type="checkbox" id="regWriteLedger"> <span>成功后回写飞书「希音采购买家号台账」（每个任务必须已有 record_id；不自动创建/猜测记录）。</span></label>
+      </div>
+      <div class="action-row">
+        <button class="btn primary" id="btnRegStart" disabled>▶ 开始注册</button>
+        <span class="hint" id="regStatusText">待加载任务</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-title">③ 脱敏进度 <span class="legend">需人工接管时会保留 HubStudio 窗口和页面状态</span></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>账号</th><th>环境序号</th><th>环境名</th><th>状态</th><th>说明</th></tr></thead>
+          <tbody id="regTbody"><tr><td colspan="5" class="empty-tip">尚未开始注册</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <div class="module-panel hidden" id="envPanel">
+    <section class="card">
+      <div class="card-title">① 载入号商名单 <span class="legend">Sheet1 无表头固定 4 列：邮箱 / 密码 / 接码Key / Cookie；严格模式拒收表头和列序变化</span></div>
+      <div class="file-box">
+        <b>选择号商交付 xlsx</b>
+        <input type="file" id="envFile" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+        <div class="hint">文件只传给本机 127.0.0.1 服务并在内存解析；页面收到脱敏计划后立即清空文件内容。真实凭证文件必须放在项目目录外。</div>
+        <div style="margin-top:8px"><a class="btn-mini" href="/api/envbatch/template" style="text-decoration:none;display:inline-block;padding:6px 12px">📥 下载填写模板</a></div>
+        <div class="stat-grid" id="envStats"><div class="stat-chip"><b>—</b>尚未解析</div></div>
+        <div class="reg-plan" id="envPlan">尚未选择文件</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-title">② 采购员分配 <span class="legend">按文件顺序切分；每人每日独立续排</span></div>
+      <div class="input-row">
+        <div class="field" style="min-width:280px;flex:1">
+          <label>分配模板（数量:姓名，逗号分隔）</label>
+          <input class="env-text" type="text" id="envAssign" value="1:Operator-A">
+        </div>
+        <div class="field" style="min-width:180px">
+          <label>购买日期（YYYYMMDD）</label>
+          <input class="env-text" type="text" id="envDate">
+        </div>
+        <div class="field">
+          <label>站点 / 分组</label>
+          <select disabled><option>墨西哥站 · SHEIN Mexico Purchasing</option></select>
+        </div>
+      </div>
+      <div class="reg-plan" id="envPreviewText">解析后点“干跑预览”，将只读 HubStudio 全量环境并核对续排序号，不做任何写入。</div>
+    </section>
+
+    <section class="card">
+      <div class="card-title">③ 执行确认</div>
+      <div class="check-row">
+        <label><input type="checkbox" id="envVerify" checked> <span>批末逐个抽查 <input class="env-text" type="text" id="envVerifyCount" value="3" style="width:42px;padding:2px 5px"> 个环境出口 IP，检测后立即关闭。</span></label>
+        <label><input type="checkbox" checked disabled> <span>台账入库/回写不在本机主链路执行；映射清单交由管理员在受控设备补账。</span></label>
+      </div>
+      <div class="action-row">
+        <button class="btn" id="btnEnvPreview" disabled>👁 干跑预览（只读）</button>
+        <button class="btn primary" id="btnEnvStart" disabled>▶ 正式执行</button>
+        <div class="progress-wrap"><div class="progress"><div class="bar" id="envBar"></div></div><span class="hint" id="envProgressText">0 / 0</span></div>
+        <span class="hint" id="envElapsed">已用 00:00</span>
+      </div>
+      <div class="note-card" style="margin-top:12px">五步状态机：<b>建环境（coreVersion=148 + 加权指纹）→ 导 Cookie 原文 → 绑账号 → 写完整备注 → 完成</b>。断点文件不保存密码/Cookie/接码Key；重启后重新选择同一原始 xlsx 即可按内容指纹恢复。</div>
+    </section>
+
+    <section class="card">
+      <div class="card-title">④ 批量进度</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>邮箱</th><th>采购员</th><th>环境名</th><th>HUB序号</th><th>五步进度</th><th>当前状态</th><th>留档</th><th>操作</th></tr></thead>
+          <tbody id="envTbody"><tr><td colspan="8" class="empty-tip">尚未开始</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-title">⑤ 批次摘要与留档</div>
+      <div class="stat-grid" id="envSummary"><div class="stat-chip"><b>0</b>完成</div><div class="stat-chip"><b>0</b>失败</div></div>
+      <div class="reg-plan" id="envIpList">尚无出口 IP 抽查结果</div>
+      <div class="action-row" style="margin-top:12px">
+        <button class="btn primary" id="btnEnvMapping" disabled>📥 导出绑定映射清单（不含凭证）</button>
+        <button class="btn" id="btnEnvTsv" disabled>📋 下载台账直贴 TSV（含凭证）</button>
+        <span class="hint">TSV 是应急选项，首次下载后服务端立即清理；映射清单 + 原始 xlsx 用于 Mac 补账，补账完成才算闭环。</span>
+      </div>
+      <div class="reg-plan">Mac 补账命令：<span class="mono">python3 -m purchase_tool backfill --xlsx 原始号商.xlsx --mapping 绑定映射清单.xlsx --apply</span></div>
+    </section>
+  </div>
+</main>
+
+<div class="modal-mask" id="settingsMask">
+  <div class="modal">
+    <h3>⚙ 设置</h3>
+    <div class="field">
+      <label>HubStudio Local API 端口（默认 6873，一般不用改）</label>
+      <input type="text" id="cfgPort" value="6873">
+    </div>
+    <div class="field">
+      <label>并发查询数（1-5，同时打开的环境窗口数；越高越快但占资源，建议 2-3）</label>
+      <input type="text" id="cfgConcurrency" value="2">
+    </div>
+    <div class="field">
+      <label>模块三 · 验证抽查数（0-10）</label>
+      <input type="text" id="cfgEnvVerify" value="3">
+    </div>
+    <div class="field">
+      <label>模块三 · 采购员分配模板</label>
+      <input type="text" id="cfgEnvAssign" value="1:Operator-A">
+    </div>
+    <div class="field">
+      <label>站点</label>
+      <input type="text" value="墨西哥站 shein.com.mx" disabled>
+    </div>
+    <div class="actions">
+      <button class="btn" id="btnCfgCancel">取消</button>
+      <button class="btn primary" id="btnCfgSave">保存</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-mask" id="screenshotMask" aria-hidden="true">
+  <div class="modal image-modal" role="dialog" aria-modal="true" aria-labelledby="screenshotTitle">
+    <div class="image-modal-head">
+      <h3 id="screenshotTitle">物流轨迹截图</h3>
+      <button class="image-modal-close" id="btnScreenshotClose" type="button" aria-label="关闭">×</button>
+    </div>
+    <div class="image-stage">
+      <div class="image-loading" id="screenshotLoading">正在加载截图…</div>
+      <img id="screenshotImage" alt="物流轨迹截图" hidden>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const tbody = $('tbody');
+let hubConnected = null;
+let isRunning = false;
+let stopRequested = false;
+let lastRows = [];
+let toastTimer = null;
+let regTasks = null;
+let regRunning = false;
+let envPlanId = null;
+let envAccountCount = 0;
+let envRunning = false;
+
+function localYmd() {
+  const now = new Date();
+  return String(now.getFullYear()) + String(now.getMonth() + 1).padStart(2, '0') + String(now.getDate()).padStart(2, '0');
+}
+$('envDate').value = localYmd();
+
+function toast(msg) {
+  const el = $('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3600);
+}
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  let j = {};
+  try { j = await res.json(); } catch (e) {}
+  if (!res.ok) throw new Error(j.error || ('请求失败 HTTP ' + res.status));
+  return j;
+}
+
+function setHubStatus(connected) {
+  if (connected === hubConnected && $('hubStatus').className !== 'pill checking') {
+    if (connected === null) return;
+    if ((connected && $('hubStatus').className === 'pill ok')
+        || (!connected && $('hubStatus').className === 'pill bad')) return;
+  }
+  hubConnected = connected;
+  const pill = $('hubStatus');
+  if (connected === null) { pill.className = 'pill checking'; pill.textContent = '⏳ 正在检测 HubStudio…'; }
+  else if (connected) { pill.className = 'pill ok'; pill.textContent = '🟢 HubStudio 已连接'; }
+  else { pill.className = 'pill bad'; pill.textContent = '🔴 HubStudio 未连接，点此重试'; }
+}
+
+/* ---------- 渲染 ---------- */
+
+const ST_CLS = { 'Enviado': 'st-enviado', 'Procesando': 'st-procesando', 'Empacando': 'st-procesando', 'Entregado': 'st-entregado',
+  'Completado': 'st-completado', 'Cancelado': 'st-cancelado', 'Reembolsando': 'st-reembolsando' };
+
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function renderRows(rows) {
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="13" class="empty-tip">粘贴环境序号后点「开始查询」，结果将逐行显示在这里</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(r => {
+    const s = r.state;
+    const serial = esc(r.serial), name = esc(r.envName);
+    if (s === 'pending') {
+      const label = (!isRunning && stopRequested) ? '已停止' : '未查询';
+      return `<tr class="row-pending"><td class="mono">${serial}</td><td>${name}</td><td colspan="11">${label}</td></tr>`;
+    }
+    if (s === 'running') return `<tr class="row-running"><td class="mono">${serial}</td><td>${name}</td><td colspan="11"><span class="spinner"></span>正在查询并生成轨迹截图…</td></tr>`;
+    const tip = s === 'login' ? '（先在 HubStudio 中手动登录该买家号，再来点此重查）' : '';
+    const inuseBtn = s === 'inuse'
+      ? `<button class="btn-mini" data-req="${serial}" data-force="1" title="该环境浏览器处于打开状态。确认是查询残留窗口才可关闭重查；若有人正在使用该环境请勿点击">🔌 关闭并重查</button>`
+      : `<button class="btn-mini" data-req="${serial}" title="重新查询该环境${tip}">🔄 重新查询</button>`;
+    const act = inuseBtn;
+    const finish = () => `<td class="mono">${r.time || '—'}</td><td>${act}</td>`;
+    if (s === 'login') return `<tr class="row-login"><td class="mono">${serial}</td><td>${name}</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="mono">${esc(r.ip) || '—'}</td><td><span class="badge login">🔴 登录失效</span></td>${finish()}</tr>`;
+    if (s === 'inuse') return `<tr class="row-inuse"><td class="mono">${serial}</td><td>${name}</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td><span class="badge inuse">🟡 环境使用中，已跳过</span></td>${finish()}</tr>`;
+    if (s === 'fail') return `<tr class="row-fail"><td class="mono">${serial}</td><td>${name}</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="mono">${esc(r.ip) || '—'}</td><td><span class="badge fail">⚠ ${esc(r.error) || '失败'}</span></td>${finish()}</tr>`;
+    // ok
+    const st = (r.status || '') + (r.statusCn ? ' ' + r.statusCn : '');
+    const stBadge = r.status ? `<span class="badge ${ST_CLS[r.status] || 'st-procesando'}">${esc(st)}</span>` : '—';
+    const tracks = (r.tracks || []).length
+      ? r.tracks.map(x => `<span class="mono">${esc(x)}</span>`).join('；')
+      : (r.kanDan ? '—（砍单退款，无物流）' : '（待揽收，暂无单号）');
+    const shot = r.screenshotState === 'ok'
+      ? `<button class="btn-mini" type="button" data-shot="${serial}" data-shot-order="${esc(r.orderNo)}">🖼 查看（${esc(r.screenshotSizeKb)}KB）</button>`
+      : (r.screenshotState === 'fail'
+        ? `<span title="${esc(r.screenshotError)}">⚠ 截图失败</span>`
+        : '—（暂无物流）');
+    return `<tr class="row-success"><td class="mono">${serial}</td><td>${name}</td><td class="mono">${esc(r.orderNo)}</td><td class="mono">${esc(r.orderTime) || '—'}</td><td>${esc(r.amount)}</td><td>${stBadge}</td><td>${tracks}</td><td>${esc(r.carrier) || '—'}</td><td>${shot}</td><td class="mono">${esc(r.ip)}</td><td><span class="badge ok">✔ 成功</span></td>${finish()}</tr>`;
+  }).join('');
+}
+
+function renderStats(rows) {
+  const cnt = { ok: 0, login: 0, inuse: 0, fail: 0, pending: 0, kan: 0 };
+  rows.forEach(r => {
+    if (r.state === 'pending' || r.state === 'running') cnt.pending++;
+    else if (r.state === 'ok') { cnt.ok++; if (r.kanDan) cnt.kan++; }
+    else cnt[r.state] !== undefined && cnt[r.state]++;
+  });
+  $('cntOk').textContent = cnt.ok; $('cntKan').textContent = cnt.kan;
+  $('cntLogin').textContent = cnt.login; $('cntInuse').textContent = cnt.inuse;
+  $('cntFail').textContent = cnt.fail; $('cntPending').textContent = cnt.pending;
+  const done = rows.filter(r => !['pending', 'running'].includes(r.state)).length;
+  $('progressText').textContent = `${done} / ${rows.length}`;
+  $('bar').style.width = (rows.length ? done / rows.length * 100 : 0) + '%';
+}
+
+function render(snap) {
+  const wasRunning = isRunning;
+  isRunning = snap.running;
+  lastRows = snap.rows || [];
+  setHubStatus(snap.hubConnected);
+  renderRows(lastRows);
+  renderStats(lastRows);
+  $('btnStart').disabled = isRunning;
+  $('btnStop').disabled = !isRunning;
+  const retryable = lastRows.filter(r => ['fail', 'inuse', 'pending', 'stopped'].includes(r.state)).length;
+  $('btnRetryFail').disabled = isRunning || !retryable;
+  $('btnRetryFail').textContent = retryable ? `🔄 重查异常行（${retryable}）` : '🔄 重查异常行';
+  $('currentEnv').textContent = isRunning
+    ? '正在查询：' + (snap.current || '') + ' …'
+    : (snap.rows && snap.rows.length ? '查询结束' : '待开始');
+  const sec = snap.elapsedSec || 0;
+  $('elapsed').textContent = '已用 ' + String(Math.floor(sec / 60)).padStart(2, '0') + ':' + String(sec % 60).padStart(2, '0');
+  if (wasRunning && !isRunning && snap.rows && snap.rows.length) {
+    const ok = snap.rows.filter(r => r.state === 'ok').length;
+    toast(stopRequested ? '已停止查询' : `查询完成：成功 ${ok} / ${snap.rows.length}，可点击「导出 Excel（含轨迹截图）」保存结果`);
+  }
+}
+
+/* ---------- 轮询 ---------- */
+
+async function poll() {
+  try { render(await api('/api/progress')); }
+  catch (e) {
+    if (hubConnected !== false) {
+      setHubStatus(false);
+      $('hubStatus').textContent = '🔴 工具服务无响应（请重启 启动.bat）';
+    }
+  }
+}
+setInterval(poll, 1500);
+poll();
+
+async function pollRegister() {
+  try {
+    const snap = await api('/api/register/progress');
+    regRunning = snap.running;
+    const rows = snap.rows || [];
+    $('btnRegStart').disabled = regRunning || !regTasks || !$('regAcceptTerms').checked;
+    $('regStatusText').textContent = regRunning ? `注册进行中，已用 ${snap.elapsedSec || 0} 秒` : (rows.length ? '本批次已结束' : '待加载任务');
+    if (!rows.length) return;
+    $('regTbody').innerHTML = rows.map(r => {
+      const labels = {pending:'未开始',running:'注册中',success:'成功',partial:'部分完成',manual:'需接管',failed:'失败'};
+      const cls = r.state === 'success' ? 'ok' : (['manual','partial'].includes(r.state) ? 'inuse' : (r.state === 'failed' ? 'fail' : 'st-procesando'));
+      const msg = r.message + (r.manualCode ? `（${r.manualCode}）` : '');
+      return `<tr><td>${esc(r.emailMasked)}</td><td class="mono">${esc(r.envSerial) || '—'}</td><td>${esc(r.envName) || '—'}</td><td><span class="badge ${cls}">${labels[r.state] || esc(r.state)}</span></td><td>${esc(msg)}</td></tr>`;
+    }).join('');
+  } catch (e) {}
+}
+setInterval(pollRegister, 1500);
+pollRegister();
+
+/* ---------- 模块三轮询与渲染 ---------- */
+
+const ENV_STEPS = ['env_created', 'cookie_imported', 'account_bound', 'remarked', 'done'];
+const ENV_STEP_LABEL = {env_created:'环境已建',cookie_imported:'Cookie已导',account_bound:'账号已绑',remarked:'备注已写',done:'完成'};
+
+function renderEnvBatch(snap) {
+  envRunning = !!snap.running;
+  const rows = snap.rows || [];
+  const done = rows.filter(r => r.state === 'done').length;
+  $('envBar').style.width = (rows.length ? done / rows.length * 100 : 0) + '%';
+  $('envProgressText').textContent = `${done} / ${rows.length || envAccountCount}`;
+  const sec = snap.elapsedSec || 0;
+  $('envElapsed').textContent = '已用 ' + String(Math.floor(sec / 60)).padStart(2, '0') + ':' + String(sec % 60).padStart(2, '0');
+  $('btnEnvStart').disabled = envRunning || !envPlanId;
+  $('btnEnvPreview').disabled = envRunning || !envPlanId;
+  $('btnEnvMapping').disabled = !snap.mappingReady;
+  $('btnEnvTsv').disabled = !snap.tsvReady;
+  if (snap.fatalError) $('envPreviewText').textContent = '执行错误：' + snap.fatalError;
+  if (!rows.length) return;
+  $('envTbody').innerHTML = rows.map(r => {
+    const completed = new Set(r.completedSteps || []);
+    const dots = ENV_STEPS.map(step => {
+      let cls = 'dot';
+      if (completed.has(step)) cls += ' done';
+      else if (r.state === 'failed' && r.errorStep === step) cls += ' err';
+      else if (r.state === 'running') cls += ' run';
+      return `<span class="${cls}" title="${ENV_STEP_LABEL[step]}"></span>`;
+    }).join('');
+    let state = '<span class="badge st-procesando">排队中</span>';
+    if (r.state === 'done') state = '<span class="badge ok">✔ 完成</span>';
+    else if (r.state === 'failed') state = `<span class="badge fail">⚠ ${esc(ENV_STEP_LABEL[r.errorStep] || r.errorStep)}：${esc(r.error)}</span>`;
+    else if (r.state === 'running' || ENV_STEPS.includes(r.state)) state = `<span class="spinner"></span>${esc(ENV_STEP_LABEL[r.state] || '执行中')}…`;
+    const retry = r.state === 'failed' ? `<button class="btn-mini" data-env-retry="${esc(r.accountId)}">🔄 重试此步</button>` : '';
+    const archived = completed.has('remarked') ? '已写入 HubStudio（敏感内容不回传页面）' : '—';
+    return `<tr class="${r.state === 'done' ? 'row-success' : (r.state === 'failed' ? 'row-fail' : 'row-running')}">
+      <td>${esc(r.emailMasked)}</td><td>${esc(r.buyer)}</td><td class="mono">${esc(r.envName)}</td><td class="mono">${esc(r.serialNumber) || '—'}</td>
+      <td><span class="dots">${dots}</span> ${completed.size}/5</td><td>${state}</td><td>${archived}</td><td>${retry}</td></tr>`;
+  }).join('');
+  const summary = snap.summary || {};
+  $('envSummary').innerHTML = `<div class="stat-chip ok"><b>${summary.done || done}</b>完成</div><div class="stat-chip bad"><b>${summary.failed || rows.filter(r => r.state === 'failed').length}</b>失败</div><div class="stat-chip blue"><b>${summary.ipOk || 0}/${summary.ipTotal || 0}</b>出口 IP 国家匹配</div>`;
+  const checks = snap.ipChecks || [];
+  $('envIpList').textContent = checks.length ? '抽查明细：\n' + checks.map(x => `${x.envName} → ${x.ip || '—'} · ${x.country || x.error || '未知'} ${x.ok ? '✓' : '⚠'}`).join('\n') : '尚无出口 IP 抽查结果';
+}
+
+async function pollEnvBatch() {
+  try { renderEnvBatch(await api('/api/envbatch/progress')); } catch (e) {}
+}
+setInterval(pollEnvBatch, 1500);
+pollEnvBatch();
+
+/* ---------- 操作 ---------- */
+
+function parseSerials() {
+  const raw = $('serialsInput').value.trim();
+  if (!raw) { toast('请先粘贴环境序号'); return null; }
+  const list = raw.split(/[\n,，、\s]+/).map(s => s.trim()).filter(Boolean);
+  const seen = new Set(), out = [];
+  for (const s of list) if (!seen.has(s)) { seen.add(s); out.push(s); }
+  return out;
+}
+
+$('btnStart').onclick = async () => {
+  if (!hubConnected) { toast('未检测到 HubStudio：请先启动 HubStudio 客户端并登录，然后点右上角状态标签重新检测'); return; }
+  const serials = parseSerials();
+  if (!serials) return;
+  try {
+    const j = await api('/api/query', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serials })
+    });
+    stopRequested = false;
+    toast(`开始查询，共 ${j.total} 个环境。每个环境约 30-60 秒，请耐心等待`);
+  } catch (e) { toast(e.message); }
+};
+
+$('btnStop').onclick = async () => {
+  stopRequested = true;
+  try { await api('/api/stop', { method: 'POST' }); toast('停止中，当前环境查询完成后结束…'); } catch (e) { toast(e.message); }
+};
+
+tbody.addEventListener('click', async e => {
+  const shotBtn = e.target.closest('[data-shot]');
+  if (shotBtn) {
+    openScreenshot(shotBtn.dataset.shot, shotBtn.dataset.shotOrder);
+    return;
+  }
+  const btn = e.target.closest('[data-req]');
+  if (!btn) return;
+  if (isRunning) { toast('批量查询进行中，请等本批次结束后再对单个环境重新查询'); return; }
+  const force = btn.dataset.force === '1';
+  if (force && !confirm('将关闭该环境当前打开的浏览器并重新查询。\n\n请确认这是上次查询中断的残留窗口——如果采购同事正在使用该环境，关闭可能影响其登录状态！')) return;
+  try {
+    await api('/api/requery', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serial: btn.dataset.req, force })
+    });
+    stopRequested = false;
+    toast(force ? '正在关闭残留窗口并重查环境 ' + btn.dataset.req : '开始重查环境 ' + btn.dataset.req);
+  } catch (err) { toast(err.message); }
+});
+
+function openScreenshot(serial, orderNo) {
+  const mask = $('screenshotMask');
+  const image = $('screenshotImage');
+  const loading = $('screenshotLoading');
+  $('screenshotTitle').textContent = `物流轨迹截图｜环境 ${serial}` + (orderNo ? `｜订单 ${orderNo}` : '');
+  image.hidden = true;
+  image.removeAttribute('src');
+  loading.hidden = false;
+  loading.textContent = '正在加载截图…';
+  image.onload = () => { loading.hidden = true; image.hidden = false; };
+  image.onerror = () => {
+    image.hidden = true;
+    loading.hidden = false;
+    loading.textContent = '截图加载失败，可重新查询该环境后再试。';
+  };
+  image.src = '/api/screenshot?serial=' + encodeURIComponent(serial) + '&t=' + Date.now();
+  mask.classList.add('show');
+  mask.setAttribute('aria-hidden', 'false');
+}
+
+function closeScreenshot() {
+  const mask = $('screenshotMask');
+  const image = $('screenshotImage');
+  mask.classList.remove('show');
+  mask.setAttribute('aria-hidden', 'true');
+  image.removeAttribute('src');
+  image.hidden = true;
+}
+
+$('btnScreenshotClose').onclick = closeScreenshot;
+$('screenshotMask').onclick = e => {
+  if (e.target === e.currentTarget) closeScreenshot();
+};
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && $('screenshotMask').classList.contains('show')) {
+    closeScreenshot();
+  }
+});
+
+$('btnExport').onclick = () => { location.href = '/api/export?format=xlsx'; };
+
+$('btnRetryFail').onclick = async () => {
+  if (isRunning) { toast('查询进行中，请等本批次结束后再批量重查'); return; }
+  try {
+    const j = await api('/api/requery-failed', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: '{}'
+    });
+    stopRequested = false;
+    const loginCnt = lastRows.filter(r => r.state === 'login').length;
+    toast(`开始重查 ${j.count} 个异常行` +
+      (loginCnt ? `；另有 ${loginCnt} 行登录失效，需手动登录后单独重查` : ''));
+  } catch (e) { toast(e.message); }
+};
+
+/* ---------- 模块切换与注册 ---------- */
+
+document.querySelectorAll('[data-module]').forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll('[data-module]').forEach(x => x.classList.toggle('active', x === btn));
+    const module = btn.dataset.module;
+    $('queryPanel').classList.toggle('hidden', module !== 'query');
+    $('registerPanel').classList.toggle('hidden', module !== 'register');
+    $('envPanel').classList.toggle('hidden', module !== 'envbatch');
+    const labels = {query:'模块一 · 批量查询物流单号',register:'模块二 · 买家号注册',envbatch:'模块三 · 买家号批量建环境'};
+    $('moduleLabel').textContent = labels[module];
+  };
+});
+
+$('regFile').onchange = async e => {
+  regTasks = null;
+  $('btnRegStart').disabled = true;
+  const file = e.target.files[0];
+  if (!file) { $('regPlan').textContent = '尚未选择文件'; return; }
+  try {
+    const parsed = JSON.parse(await file.text());
+    const j = await api('/api/register/validate', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({tasks: parsed})
+    });
+    regTasks = parsed;
+    $('regPlan').textContent = `已校验 ${j.count} 个任务：\n` + j.plan.map(x => `${x.emailMasked}  →  ${x.env}`).join('\n');
+    $('btnRegStart').disabled = !$('regAcceptTerms').checked;
+  } catch (err) {
+    $('regPlan').textContent = '文件校验失败：' + err.message;
+  }
+};
+
+$('regAcceptTerms').onchange = () => {
+  $('btnRegStart').disabled = regRunning || !regTasks || !$('regAcceptTerms').checked;
+};
+
+$('btnRegStart').onclick = async () => {
+  if (!hubConnected) { toast('未检测到 HubStudio'); return; }
+  if (!regTasks || !$('regAcceptTerms').checked) { toast('请加载任务并确认 SHEIN 条款'); return; }
+  const payload = {
+    tasks: regTasks,
+    acceptTerms: true,
+    acknowledgeMsPrivacy: $('regMsPrivacy').checked,
+    keepOpen: $('regKeepOpen').checked,
+    writeLarkLedger: $('regWriteLedger').checked
+  };
+  try {
+    const j = await api('/api/register/start', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload)
+    });
+    regTasks = null;
+    payload.tasks = null;
+    $('regFile').value = '';
+    $('regPlan').textContent = `已启动 ${j.count} 个任务；凭证已从页面变量清除。`;
+    regRunning = true;
+    $('btnRegStart').disabled = true;
+    toast(`已开始注册 ${j.count} 个买家号`);
+  } catch (err) { toast(err.message); }
+};
+
+function bytesToBase64(bytes) {
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+function assignmentTotal(value) {
+  return value.split(/[,，]/).reduce((total, part) => {
+    const match = part.trim().match(/^(\d+)\s*[:：]/);
+    return total + (match ? parseInt(match[1], 10) : 0);
+  }, 0);
+}
+
+$('envFile').onchange = async e => {
+  envPlanId = null;
+  envAccountCount = 0;
+  $('btnEnvPreview').disabled = true;
+  $('btnEnvStart').disabled = true;
+  const file = e.target.files[0];
+  if (!file) return;
+  $('envPlan').textContent = '正在本机解析并校验…';
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const contentBase64 = bytesToBase64(bytes);
+    const result = await api('/api/envbatch/parse', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({filename:file.name, contentBase64})
+    });
+    envPlanId = result.planId;
+    envAccountCount = result.count;
+    if (assignmentTotal($('envAssign').value) !== result.count) $('envAssign').value = `${result.count}:Operator-A`;
+    $('envStats').innerHTML = `<div class="stat-chip blue"><b>${result.count}</b>账号总数</div><div class="stat-chip ok"><b>${result.cookieCount}/${result.count}</b>Cookie 覆盖</div><div class="stat-chip"><b>${result.passwordKindCount}</b>密码种类</div><div class="stat-chip ok"><b>${result.duplicateCount}</b>文件内重复</div><div class="stat-chip ok"><b>${result.issueCount}</b>格式问题</div><div class="stat-chip"><b>${result.orderCount}</b>单号已提取</div>`;
+    $('envPlan').textContent = `已校验 ${result.count} 行（仅显示脱敏信息）：\n` + result.preview.map(x => `${x.emailMasked} · 单号 ${x.orderMasked} · Cookie ${Math.ceil(x.cookieBytes / 1024)}KB`).join('\n') + (result.count > result.preview.length ? `\n…… 共 ${result.count} 行` : '') + '\n\n页面已清空文件内容；服务端等待确认期间仅短时保存在内存。';
+    $('btnEnvPreview').disabled = false;
+    $('btnEnvStart').disabled = false;
+    toast(`号商名单校验通过：${result.count} 行`);
+  } catch (err) {
+    $('envPlan').textContent = '文件校验失败：' + err.message;
+  } finally {
+    e.target.value = '';
+  }
+};
+
+$('btnEnvPreview').onclick = async () => {
+  if (!envPlanId) { toast('请先选择并解析 xlsx'); return; }
+  try {
+    const result = await api('/api/envbatch/preview', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({planId:envPlanId, assignment:$('envAssign').value.trim(), purchaseDate:$('envDate').value.trim()})
+    });
+    $('envPreviewText').textContent = `干跑通过，共 ${result.count} 行：\n` + result.rows.slice(0, 8).map(x => `${x.emailMasked} → ${x.envName}${x.recoveredExisting ? '（已存在，续跑将跳过）' : ''}`).join('\n') + (result.count > 8 ? `\n…… 其余 ${result.count - 8} 行已省略` : '');
+    toast('干跑预览完成：仅执行 HubStudio 只读查询');
+  } catch (err) { toast(err.message); }
+};
+
+$('btnEnvStart').onclick = async () => {
+  if (!hubConnected) { toast('未检测到 HubStudio'); return; }
+  if (!envPlanId) { toast('请先选择并解析 xlsx'); return; }
+  const assignment = $('envAssign').value.trim();
+  if (!confirm(`将串行处理 ${envAccountCount} 个账号：创建环境、导入 Cookie、绑定账号并写备注。\n\n确认正式执行？`)) return;
+  try {
+    const verifyCount = $('envVerify').checked ? parseInt($('envVerifyCount').value || '3', 10) : 0;
+    if (Number.isNaN(verifyCount) || verifyCount < 0 || verifyCount > 10) { toast('出口 IP 抽查数请填 0-10'); return; }
+    const result = await api('/api/envbatch/start', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({planId:envPlanId, assignment, purchaseDate:$('envDate').value.trim(), verifySampleCount:verifyCount, confirmWrite:true})
+    });
+    envPlanId = null;
+    $('btnEnvPreview').disabled = true;
+    $('btnEnvStart').disabled = true;
+    $('envPlan').textContent = `已启动 ${result.count} 个账号；页面不再持有原始文件内容。`;
+    toast(`模块三已开始，串行处理 ${result.count} 个账号`);
+  } catch (err) { toast(err.message); }
+};
+
+$('envTbody').addEventListener('click', async e => {
+  const button = e.target.closest('[data-env-retry]');
+  if (!button) return;
+  try {
+    await api('/api/envbatch/retry-row', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({accountId:button.dataset.envRetry})
+    });
+    toast('从失败步骤继续；已完成步骤不会重复执行');
+  } catch (err) { toast(err.message); }
+});
+
+$('btnEnvMapping').onclick = () => { location.href = '/api/envbatch/export-mapping'; };
+$('btnEnvTsv').onclick = () => {
+  if (!confirm('TSV 含邮箱、密码、接码Key和 Cookie，仅用于飞书网页应急直贴。\n\n确认下载？首次下载后服务端会立即清理该 TSV。')) return;
+  location.href = '/api/envbatch/export-tsv';
+  setTimeout(pollEnvBatch, 800);
+};
+
+$('btnGroupAll').onclick = async () => {
+  const g = $('groupSelect').value;
+  try {
+    const j = await api('/api/group-envs?group=' + encodeURIComponent(g));
+    if (!j.serials.length) { toast('该分组下没有环境'); return; }
+    $('serialsInput').value = j.serials.join('\n');
+    toast(`已填入分组「${g}」的 ${j.count} 个环境序号`);
+  } catch (e) { toast(e.message); }
+};
+
+$('hubStatus').onclick = async () => {
+  setHubStatus(null);
+  try {
+    const j = await api('/api/hub-status');
+    setHubStatus(j.connected);
+    const pill = $('hubStatus');
+    if (!j.connected && j.error) {
+      pill.title = j.error;
+      toast('连接失败原因：' + j.error);
+    } else if (j.connected) {
+      loadGroups();
+      toast('HubStudio 连接正常');
+    }
+  } catch (e) { setHubStatus(false); toast(e.message); }
+};
+
+/* ---------- 分组与设置 ---------- */
+
+async function loadGroups() {
+  try {
+    const j = await api('/api/groups');
+    const sel = $('groupSelect');
+    sel.innerHTML = '';
+    j.groups.forEach(g => {
+      const o = document.createElement('option');
+      o.textContent = g;
+      sel.appendChild(o);
+    });
+  } catch (e) { $('groupSelect').innerHTML = '<option>— 无法连接，请先启动 HubStudio —</option>'; }
+}
+loadGroups();
+
+$('btnSettings').onclick = async () => {
+  try {
+    const cfg = await api('/api/config');
+    $('cfgPort').value = cfg.hubPort || 6873;
+    $('cfgConcurrency').value = cfg.concurrency || 2;
+    $('cfgEnvVerify').value = cfg.verifySampleCount == null ? 3 : cfg.verifySampleCount;
+    $('cfgEnvAssign').value = cfg.importBuyerPlan || '1:Operator-A';
+  } catch (e) {}
+  $('settingsMask').classList.add('show');
+};
+$('btnCfgCancel').onclick = () => $('settingsMask').classList.remove('show');
+$('btnCfgSave').onclick = async () => {
+  const port = parseInt($('cfgPort').value.trim(), 10);
+  if (!port || port < 1 || port > 65535) { toast('端口无效，请输入 1-65535 的数字'); return; }
+  const conc = parseInt($('cfgConcurrency').value.trim(), 10);
+  if (!conc || conc < 1 || conc > 5) { toast('并发数请填 1-5 的整数（建议 2-3）'); return; }
+  const verifyCount = parseInt($('cfgEnvVerify').value.trim(), 10);
+  if (Number.isNaN(verifyCount) || verifyCount < 0 || verifyCount > 10) { toast('模块三抽查数请填 0-10'); return; }
+  const importBuyerPlan = $('cfgEnvAssign').value.trim();
+  if (!importBuyerPlan) { toast('模块三采购员分配模板不能为空'); return; }
+  try {
+    const j = await api('/api/config', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hubPort: port, concurrency: conc, verifySampleCount: verifyCount, importBuyerPlan })
+    });
+    $('envVerifyCount').value = verifyCount;
+    if (!envPlanId) $('envAssign').value = importBuyerPlan;
+    $('settingsMask').classList.remove('show');
+    setHubStatus(j.hubConnected);
+    if (j.hubConnected) { loadGroups(); toast('设置已保存：并发 ' + conc + '，HubStudio 连接正常'); }
+    else toast('设置已保存，但未检测到该端口上的 HubStudio');
+  } catch (e) { toast(e.message); }
+};
+$('settingsMask').onclick = e => { if (e.target === e.currentTarget) e.currentTarget.classList.remove('show'); };
+</script>
+</body>
+</html>

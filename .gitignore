@@ -1,0 +1,19 @@
+.DS_Store
+.idea/
+.vscode/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.coverage
+.pytest_cache/
+build/
+dist/
+.cache/
+
+# Local runtime state and sensitive operational outputs
+config.json
+启动日志.txt
+查询日志/
+运行数据/
+*.local.json
