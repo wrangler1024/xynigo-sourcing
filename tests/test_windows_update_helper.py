@@ -17,6 +17,7 @@ class WindowsUpdateHelperTests(unittest.TestCase):
         self.install = self.tmp / 'install'
         self.stage = self.tmp / 'stage'
         self.backup = self.tmp / 'backup'
+        self.state_dir = self.tmp / 'state'
         self.install.mkdir()
         self.stage.mkdir()
         root = Path(__file__).resolve().parents[1]
@@ -62,6 +63,7 @@ class WindowsUpdateHelperTests(unittest.TestCase):
             '-InstallDir', str(self.install),
             '-StageDir', str(self.stage),
             '-BackupDir', str(self.backup),
+            '-StateDir', str(self.state_dir),
             '-SkipWait',
             '-TestFailAfterInstall', str(fail_after),
         ]
@@ -106,7 +108,7 @@ class WindowsUpdateHelperTests(unittest.TestCase):
     def test_success_restarts_new_version_with_one_time_skip(self):
         launcher = (
             '@echo off\r\n'
-            'echo %XYNIGO_SKIP_UPDATE_ONCE%> "%~dp0restart-marker.txt"\r\n'
+            'echo restarted> "%~dp0restart-marker.txt"\r\n'
         )
         (self.stage / '启动.bat').write_text(
             launcher, encoding='ascii', newline='')
@@ -117,7 +119,12 @@ class WindowsUpdateHelperTests(unittest.TestCase):
         while time.time() < deadline and not marker.exists():
             time.sleep(0.1)
         self.assertTrue(marker.is_file(), '新版本启动器未被拉起')
-        self.assertEqual(marker.read_text(encoding='utf-8-sig').strip(), '1')
+        self.assertEqual(
+            marker.read_text(encoding='utf-8-sig').strip(), 'restarted')
+        skip_marker = self.state_dir / 'skip-update-once'
+        self.assertTrue(skip_marker.is_file())
+        self.assertEqual(
+            skip_marker.read_text(encoding='ascii').strip(), '1')
 
 
 if __name__ == '__main__':

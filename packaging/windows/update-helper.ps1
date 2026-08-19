@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory = $true)][string]$BackupDir,
     [int]$ParentPid = 0,
     [string]$WorkDir = "",
+    [string]$StateDir = "",
     [switch]$SkipWait,
     [switch]$NoRestart,
     [int]$TestFailAfterInstall = 0
@@ -47,6 +48,11 @@ function Start-Xynigo([string]$Root) {
         Write-UpdateLog "找不到启动.bat，无法自动重启。"
         return
     }
+    if ([string]::IsNullOrWhiteSpace($StateDir)) {
+        $StateDir = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "XynigoSourcing"
+    }
+    New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
+    Set-Content -LiteralPath (Join-Path $StateDir "skip-update-once") -Value "1" -Encoding ASCII
     $env:XYNIGO_SKIP_UPDATE_ONCE = "1"
     Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", ('"{0}"' -f $Launcher)) -WorkingDirectory $Root
 }

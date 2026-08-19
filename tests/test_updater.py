@@ -124,6 +124,18 @@ class UpdaterTests(unittest.TestCase):
             environ={'XYNIGO_SKIP_UPDATE_ONCE': '1'})
         self.assertFalse(launched)
 
+    def test_post_update_marker_is_consumed_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            marker = Path(tmp) / 'skip-update-once'
+            marker.write_text('1', encoding='ascii')
+            client = FakeClient(error=AssertionError('must not call network'))
+            launched = check_for_updates_at_startup(
+                '/install', '0.5.0', client=client,
+                output=lambda _line: None, environ={},
+                skip_marker_path=marker)
+            self.assertFalse(launched)
+            self.assertFalse(marker.exists())
+
     def test_interrupted_download_removes_partial_file(self):
         transport = NetworkTransport()
         transport.opener = InterruptedOpener()

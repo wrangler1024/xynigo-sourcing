@@ -24,6 +24,7 @@ LATEST_RELEASE_API = (
     'xynigo-sourcing/releases/latest')
 USER_AGENT = 'Xynigo-Sourcing-Updater'
 SKIP_ONCE_ENV = 'XYNIGO_SKIP_UPDATE_ONCE'
+SKIP_ONCE_FILE = 'skip-update-once'
 MANAGED_PATHS = (
     'app', 'deps', 'python-embed', 'run.py', '启动.bat',
     'update-helper.ps1', 'VERSION.json', '使用说明.txt',
@@ -74,6 +75,32 @@ def version_key(value):
 
 def is_newer(latest, current):
     return version_key(latest) > version_key(current)
+
+
+def default_state_dir(environ=None):
+    environ = os.environ if environ is None else environ
+    base = environ.get('LOCALAPPDATA')
+    if base:
+        return Path(base) / 'XynigoSourcing'
+    return Path.home() / 'AppData' / 'Local' / 'XynigoSourcing'
+
+
+def consume_skip_once(environ=None, marker_path=None):
+    environ = os.environ if environ is None else environ
+    if environ.get(SKIP_ONCE_ENV) == '1':
+        return True
+    if marker_path is None:
+        if os.name != 'nt':
+            return False
+        marker_path = default_state_dir(environ) / SKIP_ONCE_FILE
+    marker_path = Path(marker_path)
+    if not marker_path.is_file():
+        return False
+    try:
+        marker_path.unlink()
+    except OSError:
+        return False
+    return True
 
 
 def sha256_file(path):
@@ -291,10 +318,11 @@ class GitHubUpdateClient(object):
 
 def check_for_updates_at_startup(install_dir, current_version,
                                  client=None, input_fn=input,
-                                 output=print, environ=None):
+                                 output=print, environ=None,
+                                 skip_marker_path=None):
     """Return True only when a verified update helper has been launched."""
     environ = os.environ if environ is None else environ
-    if environ.get(SKIP_ONCE_ENV) == '1':
+    if consume_skip_once(environ, skip_marker_path):
         output('本次为更新后自动重启，跳过一次更新检查。')
         return False
     client = client or GitHubUpdateClient()
