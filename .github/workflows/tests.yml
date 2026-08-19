@@ -41,17 +41,7 @@ jobs:
       - run: python -m unittest discover -s tests -v
 
   macos-package:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-15
-            platform: macos-arm64
-            arch: arm64
-          - runner: macos-15-intel
-            platform: macos-x86_64
-            arch: x86_64
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-15
     env:
       XYNIGO_PROXY_LINK: https://proxy.example.test/{region}
     steps:
@@ -67,8 +57,7 @@ jobs:
       - run: bash 组装macOS绿色包.sh
       - name: Verify macOS package
         env:
-          EXPECTED_PLATFORM: ${{ matrix.platform }}
-          EXPECTED_ARCH: ${{ matrix.arch }}
+          EXPECTED_PLATFORM: macos-arm64
         run: |
           python - <<'PY'
           import json
@@ -102,7 +91,7 @@ jobs:
           PY
       - uses: actions/upload-artifact@v7
         with:
-          name: xynigo-sourcing-${{ matrix.platform }}
+          name: xynigo-sourcing-macos-arm64
           path: dist/*
           if-no-files-found: error
 

@@ -74,13 +74,13 @@ class WritingTransport(object):
 
 
 class UpdaterTests(unittest.TestCase):
-    def test_platform_detection_supports_windows_and_both_macos_architectures(self):
+    def test_platform_detection_supports_windows_and_apple_silicon(self):
         self.assertEqual(
             current_platform_key('win32', 'AMD64'), 'windows-x86_64')
         self.assertEqual(
             current_platform_key('darwin', 'arm64'), 'macos-arm64')
-        self.assertEqual(
-            current_platform_key('darwin', 'x86_64'), 'macos-x86_64')
+        with self.assertRaises(UpdateError):
+            current_platform_key('darwin', 'x86_64')
 
     def test_manifest_selects_current_platform_without_breaking_legacy_windows(self):
         manifest = {

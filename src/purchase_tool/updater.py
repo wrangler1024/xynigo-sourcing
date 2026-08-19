@@ -96,8 +96,6 @@ def current_platform_key(system=None, machine=None):
     if system == 'darwin':
         if machine in ('arm64', 'aarch64'):
             return 'macos-arm64'
-        if machine in ('x86_64', 'amd64'):
-            return 'macos-x86_64'
     raise UpdateError('当前系统暂无可用的绿色包更新')
 
 

@@ -78,7 +78,7 @@ bash 组装Windows绿色包.sh
 bash 组装macOS绿色包.sh
 ```
 
-构建产物会写入 `dist/`，包含对应平台的完整 ZIP、SHA-256 文件和机器可读的双平台更新清单。Windows 包含官方嵌入式 Python；macOS 包使用 PyInstaller 构建自包含运行时，分别支持 Apple Silicon `arm64` 和 Intel `x86_64`。
+构建产物会写入 `dist/`，包含对应平台的完整 ZIP、SHA-256 文件和机器可读的双平台更新清单。Windows 包含官方嵌入式 Python；macOS 包使用 PyInstaller 构建 Apple Silicon `arm64` 自包含运行时。macOS Intel 不在维护范围内。
 
 ### 双平台在线更新
 

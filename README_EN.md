@@ -96,8 +96,8 @@ bash 组装macOS绿色包.sh
 
 Builds are written to `dist/` with portable ZIPs, SHA-256 checksums, and one
 machine-readable cross-platform update manifest. Windows uses the official
-embeddable Python runtime. macOS uses a self-contained PyInstaller runtime and
-is built separately for Apple Silicon `arm64` and Intel `x86_64`.
+embeddable Python runtime. macOS uses a self-contained PyInstaller runtime for
+Apple Silicon `arm64`. macOS Intel is not maintained.
 
 ### Cross-platform online updates
 

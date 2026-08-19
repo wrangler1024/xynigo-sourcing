@@ -1,7 +1,7 @@
 {
   "notesZh": [
     "Windows 与 macOS 改为同版本双端维护，同一 Release 提供各平台绿色包。",
-    "macOS 新增 Apple Silicon arm64 和 Intel x86_64 自包含绿色包，不需要另外安装 Python。",
+    "macOS 新增 Apple Silicon arm64 自包含绿色包，不需要另外安装 Python。",
     "macOS 新增启动时在线更新、SHA-256 校验、更新前备份、失败回滚和更新后自动重启。",
     "Windows v0.5.0 客户端仍可直接识别新的双平台更新清单并更新。",
     "Windows 和 macOS 更新均保留 config.json、本地数据、日志和用户导入文件。",

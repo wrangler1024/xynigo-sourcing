@@ -8,8 +8,7 @@ VERSION="$(PYTHONPATH=src python3 -c 'from purchase_tool import __version__; pri
 RAW_ARCH="$(uname -m)"
 case "$RAW_ARCH" in
   arm64|aarch64) PLATFORM="macos-arm64"; ARCH_LABEL="arm64" ;;
-  x86_64|amd64) PLATFORM="macos-x86_64"; ARCH_LABEL="x86_64" ;;
-  *) echo "Unsupported macOS architecture: $RAW_ARCH" >&2; exit 1 ;;
+  *) echo "Only Apple Silicon arm64 is maintained: $RAW_ARCH" >&2; exit 1 ;;
 esac
 STAGE="$(mktemp -d)/Xynigo-Sourcing"
 BUILD_ROOT="$(mktemp -d)"
