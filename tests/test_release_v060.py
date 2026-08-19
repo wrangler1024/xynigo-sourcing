@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Release contract tests for Xynigo Sourcing v0.7.0."""
+"""Release contract tests for Xynigo Sourcing v0.7.1."""
 
 from pathlib import Path
 import unittest
@@ -10,7 +10,9 @@ from purchase_tool import __version__
 class ReleaseV063Tests(unittest.TestCase):
     def test_version_and_packaging_are_aligned(self):
         root = Path(__file__).resolve().parents[1]
-        self.assertEqual(__version__, '0.7.0')
+        self.assertEqual(__version__, '0.7.1')
+        pyproject = (root / 'pyproject.toml').read_text(encoding='utf-8')
+        self.assertIn('version = "0.7.1"', pyproject)
         script = (root / '组装Windows绿色包.sh').read_text(encoding='utf-8')
         self.assertIn('v${VERSION}.zip', script)
         self.assertIn('Xynigo Sourcing v%s 启动中', script)
@@ -113,7 +115,7 @@ class ReleaseV063Tests(unittest.TestCase):
         self.assertIn("cfg.proxySource === 'custom'", html)
         self.assertIn('系统模板固定带表头', html)
         self.assertNotIn('https://proxy.example.test', html)
-        self.assertIn('Xynigo Sourcing v0.7.0', html)
+        self.assertIn('Xynigo Sourcing v0.7.1', html)
         self.assertIn('Xyni, GO!', html)
         self.assertIn('Xynigo 品牌字标', html)
         self.assertIn('小犀与 Xynigo 完整品牌一体图形', html)
@@ -156,6 +158,16 @@ class ReleaseV063Tests(unittest.TestCase):
             encoding='utf-8')
         self.assertIn("self._file(X_ICON_ICO, 'image/x-icon')", main_py)
         self.assertNotIn('FAVICON_ICO', main_py)
+        export_py = (root / 'src' / 'purchase_tool' /
+                     'excel_export.py').read_text(encoding='utf-8')
+        self.assertIn('embed_cell_images', export_py)
+        self.assertNotIn('TwoCellAnchor', export_py)
+        self.assertNotIn('ws.add_image', export_py)
+        cell_images_py = (root / 'src' / 'purchase_tool' /
+                          'xlsx_cell_images.py').read_text(encoding='utf-8')
+        self.assertIn("{'n': '_rvRel:LocalImageIdentifier', 't': 'i'}",
+                      cell_images_py)
+        self.assertIn("{'n': 'CalcOrigin', 't': 'i'}", cell_images_py)
 
 
 if __name__ == '__main__':

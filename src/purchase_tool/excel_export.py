@@ -2,6 +2,8 @@
 """物流查询 Excel/CSV 导出；JPEG 截图无需 Pillow 即可内嵌。"""
 import time
 
+from .xlsx_cell_images import embed_cell_images
+
 
 EXPORT_HEAD = ['环境序号', '环境名', '订单号', '下单时间', '金额', '状态',
                '物流单号', '包裹号', '承运商', '物流轨迹截图', '出口IP',
@@ -50,30 +52,15 @@ def export_bytes(rows, fmt, screenshot_reader=None):
     if fmt == 'xlsx':
         try:
             from openpyxl import Workbook
-            from openpyxl.drawing.image import Image as OpenpyxlImage
-            from openpyxl.drawing.spreadsheet_drawing import (
-                AnchorMarker, TwoCellAnchor)
             from openpyxl.styles import (
                 Alignment, Border, Font, PatternFill, Side)
             from io import BytesIO
-
-            class EmbeddedJpeg(OpenpyxlImage):
-                """无需 Pillow 的 JPEG 嵌入对象（截图尺寸由 CDP 提供）。"""
-
-                def __init__(self, data, width, height):
-                    self.ref = BytesIO(data)
-                    self.width = width
-                    self.height = height
-                    self.format = 'jpeg'
-                    self.anchor = 'A1'
-
-                def _data(self):
-                    return self.ref.getvalue()
 
             wb = Workbook()
             ws = wb.active
             ws.title = '物流单号查询'
             ws.append(EXPORT_HEAD)
+            cell_images = []
             grid_side = Side(style='thin', color='B7C9E2')
             grid_border = Border(
                 left=grid_side, right=grid_side,
@@ -89,23 +76,18 @@ def export_bytes(rows, fmt, screenshot_reader=None):
                             1, int(source.get('screenshotWidth') or 1000))
                         source_height = max(
                             1, int(source.get('screenshotHeight') or 600))
-                        # 主表直接放入缩略图。TwoCellAnchor 将图片约束在
-                        # J 列当前行内，调整行列时会随单元格移动和缩放。
+                        # 控制 J 列缩略图单元格的显示尺寸；图片富值会自动
+                        # 在该单元格内按原比例缩放。
                         thumb_width = min(120, source_width)
                         thumb_height = max(
                             1, int(source_height * thumb_width /
                                    float(source_width)))
-                        thumb = EmbeddedJpeg(
-                            image_data, thumb_width, thumb_height)
-                        thumb.anchor = TwoCellAnchor(
-                            editAs='twoCell',
-                            _from=AnchorMarker(col=9, row=row_index - 1),
-                            to=AnchorMarker(col=10, row=row_index))
-                        ws.add_image(thumb)
+                        # Excel 365/2024 的“图片置于单元格”不是 DrawingML
+                        # 锚点；保存基础表格后统一写入 _localImage 富值。
+                        cell_images.append(
+                            ('J%d' % row_index, image_data))
                         ws.row_dimensions[row_index].height = max(
                             24, thumb_height * 0.75)
-                        cell = ws.cell(row_index, 10)
-                        cell.value = ''
             header = ws[1]
             for cell in header:
                 cell.font = Font(bold=True, color='FFFFFF')
@@ -131,7 +113,8 @@ def export_bytes(rows, fmt, screenshot_reader=None):
                     horizontal='center', vertical='center', wrap_text=True)
             buf = BytesIO()
             wb.save(buf)
-            return (buf.getvalue(),
+            xlsx_data = embed_cell_images(buf.getvalue(), cell_images)
+            return (xlsx_data,
                     '物流单号查询结果_%s.xlsx' % stamp,
                     'application/vnd.openxmlformats-officedocument'
                     '.spreadsheetml.sheet')

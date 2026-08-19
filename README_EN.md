@@ -28,8 +28,15 @@ workflows contributed by **Samforo**.
   ledger writes.
 - Optional Lark Base ledger integration configured entirely at runtime.
 
-The current stable release is `v0.7.0`. The project is under active
+The current stable release is `v0.7.1`. The project is under active
 development and is not yet a hosted SaaS product.
+
+v0.7.1 changes tracking screenshots in logistics-query Excel exports from
+floating drawing objects to true Excel pictures in cells. Colleagues can copy
+and paste a continuous range of image cells in one operation. Image bytes stay
+self-contained in the `.xlsx` file with no external file or URL dependency.
+This feature targets Microsoft 365 and Excel 2024; older Excel versions and
+WPS Office are not guaranteed to display or copy the rich image values.
 
 v0.7.0 brings the buyer roster and backup-environment workflow to environment creation: a fixed four-person roster with English-code environment naming (for example XG-MX-0819-001), a backup/test mode that creates remark-only environments without binding, parallel creation, a builtin default proxy URL for zero-config onboarding, and automatic account-site validation based on cookie login domains.
 
