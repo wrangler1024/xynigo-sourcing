@@ -4,6 +4,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 
 from purchase_tool.updater import MANAGED_PATHS
@@ -54,16 +55,20 @@ class WindowsUpdateHelperTests(unittest.TestCase):
             return (path / 'marker.txt').read_text(encoding='utf-8')
         return path.read_text(encoding='utf-8')
 
-    def _run(self, fail_after=0):
-        return subprocess.run([
+    def _run(self, fail_after=0, no_restart=True):
+        command = [
             'powershell.exe', '-NoLogo', '-NoProfile',
             '-ExecutionPolicy', 'Bypass', '-File', str(self.helper),
             '-InstallDir', str(self.install),
             '-StageDir', str(self.stage),
             '-BackupDir', str(self.backup),
-            '-SkipWait', '-NoRestart',
+            '-SkipWait',
             '-TestFailAfterInstall', str(fail_after),
-        ], capture_output=True, text=True, encoding='utf-8',
+        ]
+        if no_restart:
+            command.append('-NoRestart')
+        return subprocess.run(
+           command, capture_output=True, text=True, encoding='utf-8',
            errors='replace', timeout=90)
 
     def _assert_preserved(self):
@@ -97,6 +102,22 @@ class WindowsUpdateHelperTests(unittest.TestCase):
             self.assertEqual(self._read_managed(self.install / name),
                              'old-' + name)
         self._assert_preserved()
+
+    def test_success_restarts_new_version_with_one_time_skip(self):
+        launcher = (
+            '@echo off\r\n'
+            'echo %XYNIGO_SKIP_UPDATE_ONCE%> "%~dp0restart-marker.txt"\r\n'
+        )
+        (self.stage / '启动.bat').write_text(
+            launcher, encoding='ascii', newline='')
+        result = self._run(no_restart=False)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        marker = self.install / 'restart-marker.txt'
+        deadline = time.time() + 10
+        while time.time() < deadline and not marker.exists():
+            time.sleep(0.1)
+        self.assertTrue(marker.is_file(), '新版本启动器未被拉起')
+        self.assertEqual(marker.read_text(encoding='utf-8-sig').strip(), '1')
 
 
 if __name__ == '__main__':
