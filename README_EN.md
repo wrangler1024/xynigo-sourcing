@@ -22,13 +22,13 @@ workflows contributed by **Samforo**.
   confirmation, resumable state, and credential-free mapping exports.
 - Optional Lark Base ledger integration configured entirely at runtime.
 
-The current stable release is `v0.6.1`. The project is under active
+The current stable release is `v0.6.2`. The project is under active
 development and is not yet a hosted SaaS product.
 
-v0.6.1 refines the Xynigo brand artwork and moves update checks into the
-WebUI. Update notices no longer block application startup, while installation
-still requires explicit confirmation in the console. Existing business logic
-and local-only data boundaries remain unchanged.
+v0.6.2 standardizes every browser favicon entry on the final Xynigo X icon and
+bumps the icon cache key. It also provides a focused v0.6.1-to-v0.6.2 online
+update acceptance path. Existing business logic and local-only data boundaries
+remain unchanged.
 
 ## Requirements
 

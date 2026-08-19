@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Release contract tests for Xynigo Sourcing v0.6.1."""
+"""Release contract tests for Xynigo Sourcing v0.6.2."""
 
 from pathlib import Path
 import unittest
@@ -7,10 +7,10 @@ import unittest
 from purchase_tool import __version__
 
 
-class ReleaseV061Tests(unittest.TestCase):
+class ReleaseV062Tests(unittest.TestCase):
     def test_version_and_packaging_are_aligned(self):
         root = Path(__file__).resolve().parents[1]
-        self.assertEqual(__version__, '0.6.1')
+        self.assertEqual(__version__, '0.6.2')
         script = (root / '组装Windows绿色包.sh').read_text(encoding='utf-8')
         self.assertIn('v${VERSION}.zip', script)
         self.assertIn('Xynigo Sourcing v%s 启动中', script)
@@ -38,15 +38,15 @@ class ReleaseV061Tests(unittest.TestCase):
             encoding='utf-8')
         self.assertIn('买家号建环境', html)
         self.assertIn('/api/envbatch/start', html)
-        self.assertIn('Xynigo Sourcing v0.6.1', html)
+        self.assertIn('Xynigo Sourcing v0.6.2', html)
         self.assertIn('Xyni, GO!', html)
         self.assertIn('小犀与 X 一体图形', html)
         self.assertIn('小犀与 Xynigo 完整品牌一体图形', html)
         self.assertIn('src="xynigo-logo.png"', html)
         self.assertEqual(html.count('src="xynigo-mascot-x.png"'), 1)
         self.assertIn('src="xynigo-x.ico?v=3"', html)
-        self.assertIn('href="xynigo-x.png?v=4"', html)
-        self.assertIn('href="favicon.ico?v=4"', html)
+        self.assertIn('href="/xynigo-x.png?v=5"', html)
+        self.assertIn('href="/favicon.ico?v=5"', html)
         self.assertNotIn('class="logo-x"', html)
         self.assertIn('小犀提示', html)
         self.assertIn('品牌表达', html)
@@ -70,13 +70,14 @@ class ReleaseV061Tests(unittest.TestCase):
                          'xynigo-x.ico').is_file())
         self.assertTrue((root / 'src' / 'purchase_tool' / 'web' /
                          'xynigo-x.png').is_file())
-        self.assertTrue((root / 'src' / 'purchase_tool' / 'web' /
-                         'xynigo-favicon.png').is_file())
-        self.assertTrue((root / 'src' / 'purchase_tool' / 'web' /
-                         'xynigo-favicon.ico').is_file())
+        ico = (root / 'src' / 'purchase_tool' / 'web' /
+               'xynigo-x.ico').read_bytes()
+        self.assertEqual(ico[:4], b'\x00\x00\x01\x00')
+        self.assertGreaterEqual(int.from_bytes(ico[4:6], 'little'), 7)
         main_py = (root / 'src' / 'purchase_tool' / 'main.py').read_text(
             encoding='utf-8')
-        self.assertIn("self._file(FAVICON_ICO, 'image/x-icon')", main_py)
+        self.assertIn("self._file(X_ICON_ICO, 'image/x-icon')", main_py)
+        self.assertNotIn('FAVICON_ICO', main_py)
 
 
 if __name__ == '__main__':

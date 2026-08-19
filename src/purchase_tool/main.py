@@ -53,8 +53,6 @@ LOGO_PNG = os.path.join(BASE_DIR, 'web', 'xynigo-logo.png')
 MASCOT_X_PNG = os.path.join(BASE_DIR, 'web', 'xynigo-mascot-x.png')
 X_ICON_PNG = os.path.join(BASE_DIR, 'web', 'xynigo-x.png')
 X_ICON_ICO = os.path.join(BASE_DIR, 'web', 'xynigo-x.ico')
-FAVICON_PNG = os.path.join(BASE_DIR, 'web', 'xynigo-favicon.png')
-FAVICON_ICO = os.path.join(BASE_DIR, 'web', 'xynigo-favicon.ico')
 ENV_TEMPLATE_XLSX = os.path.join(
     BASE_DIR, 'web', '采购工具买家号入库模板.xlsx')
 CONFIG_PATH = os.path.join(os.getcwd(), 'config.json')
@@ -619,10 +617,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._file(X_ICON_PNG, 'image/png')
             elif path == '/xynigo-x.ico':
                 self._file(X_ICON_ICO, 'image/x-icon')
-            elif path == '/xynigo-favicon.png':
-                self._file(FAVICON_PNG, 'image/png')
             elif path == '/favicon.ico':
-                self._file(FAVICON_ICO, 'image/x-icon')
+                self._file(X_ICON_ICO, 'image/x-icon')
             elif path == '/api/hub-status':
                 ok, err = STATE.hub_status(force=True)
                 self._json({'connected': ok, 'error': err})

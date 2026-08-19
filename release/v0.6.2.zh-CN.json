@@ -1,0 +1,10 @@
+{
+  "notesZh": [
+    "浏览器标签页 Favicon 统一使用最终确认的 Xynigo X 图标，不再使用小犀图标。",
+    "PNG、ICO、快捷图标和 Apple Touch Icon 入口统一使用根路径并指向 X 图标。",
+    "ICO 补齐多种常用尺寸，提高 Windows Chrome 和 Edge 标签页兼容性。",
+    "提升图标资源缓存版本，更新并重启后浏览器会重新请求正确图标。",
+    "保留 WebUI 更新提示、控制台确认、SHA-256 校验、备份、回滚与自动重启机制。",
+    "Windows 与 macOS Apple Silicon 同步提供更新包。"
+  ]
+}
