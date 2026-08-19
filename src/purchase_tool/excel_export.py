@@ -5,7 +5,7 @@ import time
 
 EXPORT_HEAD = ['环境序号', '环境名', '订单号', '下单时间', '金额', '状态',
                '物流单号', '包裹号', '承运商', '物流轨迹截图', '出口IP',
-               '结果', '失败原因', '查询时间（墨西哥）']
+               '结果', '失败原因', '查询时间（站点）']
 
 STATE_CN = {'ok': '成功', 'login': '登录失效', 'inuse': '环境使用中，已跳过',
             'fail': '失败', 'running': '查询中', 'pending': '未查询',
@@ -20,6 +20,8 @@ def _screenshot_text(row):
         return '截图失败：%s' % (row.get('screenshotError') or '未知原因')
     if row.get('tracks'):
         return '未生成'
+    if row.get('riskOrder'):
+        return '—（风险订单待验证，无物流）'
     return '—（暂无物流）'
 
 
@@ -30,15 +32,19 @@ def export_bytes(rows, fmt, screenshot_reader=None):
     for r in rows:
         state = r['state']
         if state == 'ok':
-            result = '成功（砍单退款中）' if r['kanDan'] else '成功'
+            if r.get('riskOrder'):
+                result = '风险订单（待验证）'
+            else:
+                result = '成功（砍单退款中）' if r['kanDan'] else '成功'
         else:
             result = STATE_CN.get(state, state)
         lines.append([
             r['serial'], r['envName'], r['orderNo'], r['orderTime'],
             r['amount'],
             (r['status'] + ' ' + r['statusCn']).strip(),
-            '; '.join(r['tracks']) or ('—（砍单退款，无物流）'
-                                       if r['kanDan'] else ''),
+            '; '.join(r['tracks']) or (
+                '—（风险订单待验证，无物流）' if r.get('riskOrder') else
+                ('—（砍单退款，无物流）' if r['kanDan'] else '')),
             '; '.join(r['pkgs']), r['carrier'], _screenshot_text(r),
             r['ip'], result, r['error'], r['time']])
     if fmt == 'xlsx':

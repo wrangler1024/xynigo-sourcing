@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Xynigo Sourcing v0.6.2</title>
+<title>Xynigo Sourcing v0.6.3</title>
 <link rel="icon" type="image/png" sizes="260x260" href="/xynigo-x.png?v=5">
 <link rel="icon" type="image/x-icon" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256" href="/favicon.ico?v=5">
 <link rel="shortcut icon" href="/favicon.ico?v=5">
@@ -170,10 +170,12 @@
     box-shadow: 0 5px 14px rgba(8,37,72,.12); cursor: pointer;
   }
   .brand-card { padding: 2px 8px 14px; border-bottom: 1px solid var(--line); }
-  .brand-art { width: 70px; height: 52px; overflow: hidden; position: relative; }
+  .brand-art {
+    width: 118px; height: 38px; overflow: hidden; position: relative;
+  }
   .brand-art img {
-    position: absolute; width: 98px; max-width: none; height: auto;
-    transform: translate(-12px,-4px); filter: brightness(1.06);
+    position: absolute; width: 193px; max-width: none; height: auto;
+    left: -68px; top: -43px;
   }
   .brand-mini {
     display: none; width: 48px; height: 48px; overflow: hidden; position: relative;
@@ -338,8 +340,8 @@
   @media (max-width: 1100px) {
     .app-shell { grid-template-columns: 176px minmax(0,1fr); }
     .sidebar { padding-left: 10px; padding-right: 10px; }
-    .brand-art { width: 64px; height: 47px; }
-    .brand-art img { width: 88px; transform: translate(-11px,-3px); }
+    .brand-art { width: 103px; height: 34px; }
+    .brand-art img { width: 168px; left: -59px; top: -37px; }
     .hero { grid-template-columns: 1fr; }
     .hero-lockup { width: 320px; height: 128px; }
     .vi-note { grid-template-columns: 1fr; }
@@ -374,13 +376,13 @@
   <aside class="sidebar">
     <button class="sidebar-toggle" id="sidebarToggle" type="button" aria-label="收起侧栏" title="收起侧栏">‹</button>
     <div class="brand-card">
-      <div class="brand-art" role="img" aria-label="小犀与 X 一体图形">
-        <img src="xynigo-mascot-x.png" alt="">
+      <div class="brand-art" role="img" aria-label="Xynigo 品牌字标">
+        <img src="xynigo-logo.png?v=6" alt="">
       </div>
       <div class="brand-mini" title="Xynigo" role="img" aria-label="Xynigo 一体图形">
         <img src="xynigo-x.ico?v=3" alt="">
       </div>
-      <div class="brand-meta"><span class="product-type">跨境代采协同系统</span></div>
+      <div class="brand-meta"><span class="product-type">跨境采购协同系统</span></div>
     </div>
 
     <nav class="module-tabs" aria-label="功能模块">
@@ -426,7 +428,7 @@
           <div class="hero-kicker">XYNIGO SOURCING WORKSPACE</div>
           <h1>让小犀帮你把每一单稳稳带回来，<span class="hero-call">Xyni, GO!</span></h1>
           <p id="moduleSummary">批量查询订单与物流状态，异常任务集中处理，结果一键导出。</p>
-          <div class="hero-meta"><span class="hero-chip">稳定版 v0.6.2</span><span class="hero-chip">本机数据不出站</span><span class="hero-chip">在线更新已开启</span></div>
+          <div class="hero-meta"><span class="hero-chip">稳定版 v0.6.3</span><span class="hero-chip">本机数据不出站</span><span class="hero-chip">在线更新已开启</span></div>
         </div>
         <div class="hero-lockup" role="img" aria-label="小犀与 Xynigo 完整品牌一体图形">
           <img src="xynigo-logo.png" alt="">
@@ -442,6 +444,13 @@
         <textarea id="serialsInput" placeholder="例如：&#10;1001&#10;1002, 1003&#10;1004"></textarea>
       </div>
       <div class="side-col">
+        <div class="field">
+          <label>查询站点</label>
+          <select id="querySite">
+            <option value="MX">墨西哥站 · shein.com.mx</option>
+            <option value="US">美国站 · us.shein.com</option>
+          </select>
+        </div>
         <div class="field">
           <label>HubStudio 分组</label>
           <select id="groupSelect"><option>加载中…</option></select>
@@ -469,7 +478,7 @@
     <div class="card-title table-title-row">
       <div class="table-title-copy">
         <span>② 查询结果</span>
-        <span class="legend">Enviado=已发货 · Empacando=打包中 · Procesando=备货中 · Entregado=已送达 · Reembolsando=砍单退款中</span>
+        <span class="legend">Shipped / Enviado=已发货 · Processing / Procesando=备货中 · Delivered / Entregado=已送达 · Refunding / Reembolsando=退款中</span>
       </div>
       <div class="table-actions">
         <button class="btn retry" id="btnRetryFail" title="对所有失败 / 使用中 / 未查询的行重新查询；登录失效行需先手动登录后单独重查">↻ 重查异常行</button>
@@ -481,7 +490,7 @@
         <thead>
           <tr>
             <th>序号</th><th class="col-envName">环境名</th><th>订单号</th><th>下单时间</th><th>金额</th><th>状态</th>
-            <th>物流单号</th><th>承运商</th><th>物流轨迹截图</th><th class="col-ip">出口IP</th><th>结果</th><th>查询时间（墨西哥）</th><th>操作</th>
+            <th>物流单号</th><th>承运商</th><th>物流轨迹截图</th><th class="col-ip">出口IP</th><th>结果</th><th>查询时间（站点）</th><th>操作</th>
           </tr>
         </thead>
         <tbody id="tbody">
@@ -495,6 +504,7 @@
     <div id="stats">
       <span class="s-ok">成功 <b id="cntOk">0</b></span>
       <span class="s-kandan">其中砍单 <b id="cntKan">0</b></span>
+      <span class="s-fail">风险订单 <b id="cntRisk">0</b></span>
       <span class="s-login">登录失效 <b id="cntLogin">0</b></span>
       <span class="s-inuse">使用中 <b id="cntInuse">0</b></span>
       <span class="s-fail">失败 <b id="cntFail">0</b></span>
@@ -566,9 +576,10 @@
         </div>
         <div class="field">
           <label>站点 / 分组</label>
-          <select disabled><option>墨西哥站 · SHEIN Mexico Purchasing</option></select>
+          <select id="envSiteGroup" disabled><option>墨西哥站 · 待配置采购分组</option></select>
         </div>
       </div>
+      <div class="reg-plan" id="envPreflightText">正在检查 HubStudio、采购分组与代理配置…</div>
       <div class="reg-plan" id="envPreviewText">解析后点“干跑预览”，将只读 HubStudio 全量环境并核对续排序号，不做任何写入。</div>
     </section>
 
@@ -649,6 +660,18 @@
       <input type="text" id="cfgEnvVerify" value="3">
     </div>
     <div class="field">
+      <label>模块三 · HubStudio 采购分组（精确匹配，最多 12 个字符）</label>
+      <input type="text" id="cfgPurchaseTag" maxlength="12" autocomplete="off" placeholder="填写本机实际采购分组">
+    </div>
+    <div class="field">
+      <label>模块三 · 动态代理提取链接（密码框输入，不回显）</label>
+      <input type="password" id="cfgProxyLink" autocomplete="new-password" placeholder="留空保留已有配置">
+      <div class="query-col-checks">
+        <label><input type="checkbox" id="cfgProxyClear"> 显式清除本机已保存的代理链接</label>
+      </div>
+      <div class="hint" id="cfgProxyState">尚未读取配置状态；页面和 API 永不回显链接原文。</div>
+    </div>
+    <div class="field">
       <label>模块三 · 采购员分配模板</label>
       <input type="text" id="cfgEnvAssign" value="1:Operator-A">
     </div>
@@ -691,6 +714,7 @@ let regRunning = false;
 let envPlanId = null;
 let envAccountCount = 0;
 let envRunning = false;
+let envPreflightReady = false;
 let activeModule = 'query';
 let hiddenQueryColumns = new Set(['envName', 'ip']);
 let updatePollTimer = null;
@@ -861,8 +885,19 @@ loadQueryDisplayConfig();
 
 /* ---------- 渲染 ---------- */
 
-const ST_CLS = { 'Enviado': 'st-enviado', 'Procesando': 'st-procesando', 'Empacando': 'st-procesando', 'Entregado': 'st-entregado',
-  'Completado': 'st-completado', 'Cancelado': 'st-cancelado', 'Reembolsando': 'st-reembolsando' };
+const ST_CLS = {
+  'Enviado': 'st-enviado', 'Shipped': 'st-enviado',
+  'Procesando': 'st-procesando', 'Empacando': 'st-procesando',
+  'Processing': 'st-procesando', 'Packing': 'st-procesando',
+  'Paid': 'st-procesando', 'Unpaid': 'st-procesando',
+  'Entregado': 'st-entregado', 'Delivered': 'st-entregado',
+  'Completado': 'st-completado', 'Completed': 'st-completado',
+  'Cancelado': 'st-cancelado', 'Canceled': 'st-cancelado',
+  'Cancelled': 'st-cancelado',
+  'Reembolsando': 'st-reembolsando', 'Refunding': 'st-reembolsando',
+  'Refunded': 'st-reembolsando', 'Returned': 'st-reembolsando',
+  'Risk verification': 'st-reembolsando'
+};
 
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -893,24 +928,33 @@ function renderRows(rows) {
     const stBadge = r.status ? `<span class="badge ${ST_CLS[r.status] || 'st-procesando'}">${esc(st)}</span>` : '—';
     const tracks = (r.tracks || []).length
       ? r.tracks.map(x => `<span class="mono">${esc(x)}</span>`).join('；')
-      : (r.kanDan ? '—（砍单退款，无物流）' : '（待揽收，暂无单号）');
+      : (r.riskOrder ? '—（风险订单待验证，无物流）'
+        : (r.kanDan ? '—（砍单退款，无物流）' : '（待揽收，暂无单号）'));
     const shot = r.screenshotState === 'ok'
       ? `<button class="btn-mini" type="button" data-shot="${serial}" data-shot-order="${esc(r.orderNo)}">🖼 查看（${esc(r.screenshotSizeKb)}KB）</button>`
       : (r.screenshotState === 'fail'
         ? `<span title="${esc(r.screenshotError)}">⚠ 截图失败</span>`
         : '—（暂无物流）');
-    return `<tr class="row-success"><td class="mono">${serial}</td><td class="col-envName">${name}</td><td class="mono">${esc(r.orderNo)}</td><td class="mono">${esc(r.orderTime) || '—'}</td><td>${esc(r.amount)}</td><td>${stBadge}</td><td>${tracks}</td><td>${esc(r.carrier) || '—'}</td><td>${shot}</td><td class="mono col-ip">${esc(r.ip)}</td><td><span class="badge ok">✔ 成功</span></td>${finish()}</tr>`;
+    const resultBadge = r.riskOrder
+      ? '<span class="badge fail">⚠ 风险订单，待验证</span>'
+      : '<span class="badge ok">✔ 成功</span>';
+    return `<tr class="row-success"><td class="mono">${serial}</td><td class="col-envName">${name}</td><td class="mono">${esc(r.orderNo)}</td><td class="mono">${esc(r.orderTime) || '—'}</td><td>${esc(r.amount)}</td><td>${stBadge}</td><td>${tracks}</td><td>${esc(r.carrier) || '—'}</td><td>${shot}</td><td class="mono col-ip">${esc(r.ip)}</td><td>${resultBadge}</td>${finish()}</tr>`;
   }).join('');
 }
 
 function renderStats(rows) {
-  const cnt = { ok: 0, login: 0, inuse: 0, fail: 0, pending: 0, kan: 0 };
+  const cnt = { ok: 0, login: 0, inuse: 0, fail: 0, pending: 0, kan: 0, risk: 0 };
   rows.forEach(r => {
     if (r.state === 'pending' || r.state === 'running') cnt.pending++;
-    else if (r.state === 'ok') { cnt.ok++; if (r.kanDan) cnt.kan++; }
+    else if (r.state === 'ok') {
+      if (r.riskOrder) cnt.risk++;
+      else cnt.ok++;
+      if (r.kanDan) cnt.kan++;
+    }
     else cnt[r.state] !== undefined && cnt[r.state]++;
   });
   $('cntOk').textContent = cnt.ok; $('cntKan').textContent = cnt.kan;
+  $('cntRisk').textContent = cnt.risk;
   $('cntLogin').textContent = cnt.login; $('cntInuse').textContent = cnt.inuse;
   $('cntFail').textContent = cnt.fail; $('cntPending').textContent = cnt.pending;
   const done = rows.filter(r => !['pending', 'running'].includes(r.state)).length;
@@ -936,8 +980,10 @@ function render(snap) {
   const sec = snap.elapsedSec || 0;
   $('elapsed').textContent = '已用 ' + String(Math.floor(sec / 60)).padStart(2, '0') + ':' + String(sec % 60).padStart(2, '0');
   if (wasRunning && !isRunning && snap.rows && snap.rows.length) {
-    const ok = snap.rows.filter(r => r.state === 'ok').length;
-    toast(stopRequested ? '已停止查询' : `查询完成：成功 ${ok} / ${snap.rows.length}，可点击「导出 Excel（含轨迹截图）」保存结果`);
+    const ok = snap.rows.filter(r => r.state === 'ok' && !r.riskOrder).length;
+    const risk = snap.rows.filter(r => r.state === 'ok' && r.riskOrder).length;
+    const riskText = risk ? `，风险订单 ${risk}` : '';
+    toast(stopRequested ? '已停止查询' : `查询完成：成功 ${ok} / ${snap.rows.length}${riskText}，可点击「导出 Excel（含轨迹截图）」保存结果`);
   }
 }
 
@@ -983,14 +1029,15 @@ const ENV_STEP_LABEL = {env_created:'环境已建',cookie_imported:'Cookie已导
 
 function renderEnvBatch(snap) {
   envRunning = !!snap.running;
+  setHubStatus(snap.hubConnected);
   const rows = snap.rows || [];
   const done = rows.filter(r => r.state === 'done').length;
   $('envBar').style.width = (rows.length ? done / rows.length * 100 : 0) + '%';
   $('envProgressText').textContent = `${done} / ${rows.length || envAccountCount}`;
   const sec = snap.elapsedSec || 0;
   $('envElapsed').textContent = '已用 ' + String(Math.floor(sec / 60)).padStart(2, '0') + ':' + String(sec % 60).padStart(2, '0');
-  $('btnEnvStart').disabled = envRunning || !envPlanId;
-  $('btnEnvPreview').disabled = envRunning || !envPlanId;
+  $('btnEnvStart').disabled = envRunning || !envPlanId || !envPreflightReady;
+  $('btnEnvPreview').disabled = envRunning || !envPlanId || !envPreflightReady;
   $('btnEnvMapping').disabled = !snap.mappingReady;
   $('btnEnvTsv').disabled = !snap.tsvReady;
   if (snap.fatalError) $('envPreviewText').textContent = '执行错误：' + snap.fatalError;
@@ -1027,6 +1074,28 @@ async function pollEnvBatch() {
 setInterval(pollEnvBatch, 1500);
 pollEnvBatch();
 
+async function refreshEnvPreflight() {
+  try {
+    const state = await api('/api/envbatch/preflight');
+    envPreflightReady = !!state.ready;
+    setHubStatus(state.hubConnected);
+    const group = state.purchaseTag || '待配置采购分组';
+    $('envSiteGroup').innerHTML = `<option>墨西哥站 · ${esc(group)}</option>`;
+    const checks = [
+      state.hubConnected ? 'HubStudio 已连接' : 'HubStudio 未连接',
+      state.groupFound ? '采购分组精确匹配' : '采购分组未匹配',
+      state.proxyConfigured ? '代理链接已配置' : '代理链接未配置'
+    ];
+    $('envPreflightText').textContent = `${state.ready ? '预检通过' : '预检阻断'}：${checks.join(' · ')}。${state.message || ''}`;
+  } catch (e) {
+    envPreflightReady = false;
+    $('envPreflightText').textContent = '预检失败：' + e.message;
+  }
+  $('btnEnvStart').disabled = envRunning || !envPlanId || !envPreflightReady;
+  $('btnEnvPreview').disabled = envRunning || !envPlanId || !envPreflightReady;
+}
+refreshEnvPreflight();
+
 /* ---------- 操作 ---------- */
 
 function parseSerials() {
@@ -1042,13 +1111,15 @@ $('btnStart').onclick = async () => {
   if (!hubConnected) { toast('未检测到 HubStudio：请先启动 HubStudio 客户端并登录，然后点右上角状态标签重新检测'); return; }
   const serials = parseSerials();
   if (!serials) return;
+  const site = $('querySite').value;
   try {
     const j = await api('/api/query', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ serials })
+      body: JSON.stringify({ serials, site })
     });
     stopRequested = false;
-    toast(`开始查询，共 ${j.total} 个环境。每个环境约 30-60 秒，请耐心等待`);
+    const siteName = j.site === 'US' ? '美国站' : '墨西哥站';
+    toast(`开始查询${siteName}，共 ${j.total} 个环境。每个环境约 30-60 秒，请耐心等待`);
   } catch (e) { toast(e.message); }
 };
 
@@ -1153,7 +1224,7 @@ document.querySelectorAll('[data-module]').forEach(btn => {
     $('moduleSummary').textContent = summaries[module];
     if (module === 'query') poll();
     else if (module === 'register') pollRegister();
-    else pollEnvBatch();
+    else { pollEnvBatch(); refreshEnvPreflight(); }
   };
 });
 
@@ -1241,8 +1312,7 @@ $('envFile').onchange = async e => {
     if (assignmentTotal($('envAssign').value) !== result.count) $('envAssign').value = `${result.count}:Operator-A`;
     $('envStats').innerHTML = `<div class="stat-chip blue"><b>${result.count}</b>账号总数</div><div class="stat-chip ok"><b>${result.cookieCount}/${result.count}</b>Cookie 覆盖</div><div class="stat-chip"><b>${result.passwordKindCount}</b>密码种类</div><div class="stat-chip ok"><b>${result.duplicateCount}</b>文件内重复</div><div class="stat-chip ok"><b>${result.issueCount}</b>格式问题</div><div class="stat-chip"><b>${result.orderCount}</b>单号已提取</div>`;
     $('envPlan').textContent = `已校验 ${result.count} 行（仅显示脱敏信息）：\n` + result.preview.map(x => `${x.emailMasked} · 单号 ${x.orderMasked} · Cookie ${Math.ceil(x.cookieBytes / 1024)}KB`).join('\n') + (result.count > result.preview.length ? `\n…… 共 ${result.count} 行` : '') + '\n\n页面已清空文件内容；服务端等待确认期间仅短时保存在内存。';
-    $('btnEnvPreview').disabled = false;
-    $('btnEnvStart').disabled = false;
+    await refreshEnvPreflight();
     toast(`号商名单校验通过：${result.count} 行`);
   } catch (err) {
     $('envPlan').textContent = '文件校验失败：' + err.message;
@@ -1304,6 +1374,7 @@ $('btnEnvTsv').onclick = () => {
 
 $('btnGroupAll').onclick = async () => {
   const g = $('groupSelect').value;
+  inferQuerySite(g);
   try {
     const j = await api('/api/group-envs?group=' + encodeURIComponent(g));
     if (!j.serials.length) { toast('该分组下没有环境'); return; }
@@ -1340,7 +1411,15 @@ async function loadGroups() {
       o.textContent = g;
       sel.appendChild(o);
     });
+    inferQuerySite(sel.value);
   } catch (e) { $('groupSelect').innerHTML = '<option>— 无法连接，请先启动 HubStudio —</option>'; }
+}
+$('groupSelect').onchange = e => inferQuerySite(e.target.value);
+
+function inferQuerySite(groupName) {
+  const name = String(groupName || '');
+  if (/美国|\bUS\b/i.test(name)) $('querySite').value = 'US';
+  else if (/墨西哥|\bMX\b/i.test(name)) $('querySite').value = 'MX';
 }
 loadGroups();
 
@@ -1354,6 +1433,12 @@ $('btnSettings').onclick = async () => {
     $('cfgHideIp').checked = hiddenQueryColumns.has('ip');
     $('cfgEnvVerify').value = cfg.verifySampleCount == null ? 3 : cfg.verifySampleCount;
     $('cfgEnvAssign').value = cfg.importBuyerPlan || '1:Operator-A';
+    $('cfgPurchaseTag').value = cfg.purchaseTag || '';
+    $('cfgProxyLink').value = '';
+    $('cfgProxyClear').checked = false;
+    $('cfgProxyState').textContent = cfg.proxyConfigured
+      ? '已保存代理链接；密码框留空将保留原值，页面和 API 不回显。'
+      : '尚未配置代理链接；正式执行前必须保存。';
   } catch (e) {}
   $('settingsMask').classList.add('show');
 };
@@ -1367,19 +1452,25 @@ $('btnCfgSave').onclick = async () => {
   if (Number.isNaN(verifyCount) || verifyCount < 0 || verifyCount > 10) { toast('模块三抽查数请填 0-10'); return; }
   const importBuyerPlan = $('cfgEnvAssign').value.trim();
   if (!importBuyerPlan) { toast('模块三采购员分配模板不能为空'); return; }
+  const purchaseTag = $('cfgPurchaseTag').value.trim();
+  if (!purchaseTag || purchaseTag.length > 12 || /[\r\n\t]/.test(purchaseTag)) { toast('采购分组不能为空、不能含换行或制表符，且最多 12 个字符'); return; }
+  const proxyLink = $('cfgProxyLink').value.trim();
+  const proxyClear = $('cfgProxyClear').checked;
+  if (proxyClear && proxyLink) { toast('清除代理与填写新链接不能同时选择'); return; }
   try {
     const hiddenQueryColumns = [];
     if ($('cfgHideEnvName').checked) hiddenQueryColumns.push('envName');
     if ($('cfgHideIp').checked) hiddenQueryColumns.push('ip');
     const j = await api('/api/config', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ hubPort: port, concurrency: conc, verifySampleCount: verifyCount, importBuyerPlan, hiddenQueryColumns })
+      body: JSON.stringify({ hubPort: port, concurrency: conc, verifySampleCount: verifyCount, importBuyerPlan, hiddenQueryColumns, purchaseTag, proxyLink, proxyClear })
     });
     setHiddenQueryColumns(hiddenQueryColumns);
     $('envVerifyCount').value = verifyCount;
     if (!envPlanId) $('envAssign').value = importBuyerPlan;
     $('settingsMask').classList.remove('show');
     setHubStatus(j.hubConnected);
+    await refreshEnvPreflight();
     if (j.hubConnected) { loadGroups(); toast('设置已保存：并发 ' + conc + '，HubStudio 连接正常'); }
     else toast('设置已保存，但未检测到该端口上的 HubStudio');
   } catch (e) { toast(e.message); }

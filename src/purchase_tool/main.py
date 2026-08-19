@@ -7,7 +7,7 @@ API：
   GET  /api/hub-status      探测 HubStudio 是否在线
   GET  /api/groups          分组列表
   GET  /api/group-envs      指定分组的环境序号（查全部分组用）
-  POST /api/query           {serials:[...]} 或 {group:"分组名"}
+  POST /api/query           {serials:[...],site:"MX|US"} 或 {group:"分组名",site}
   GET  /api/progress        查询进度与结果行
   POST /api/stop            停止当前批次
   POST /api/requery         {serial} 单行重查
@@ -29,6 +29,7 @@ import os
 import secrets
 import shutil
 import sys
+import tempfile
 import threading
 import time
 import webbrowser
@@ -38,13 +39,15 @@ from urllib.parse import urlparse, parse_qs
 from . import __version__
 from .buyer_register import BuyerRegistrationTask, RegistrationOrchestrator
 from .excel_export import EXPORT_HEAD, export_bytes
-from .env_batch import (TAGS, BatchEnvOrchestrator, ResumeStateStore,
+from .env_batch import (BatchEnvOrchestrator, ResumeStateStore,
                         batch_fingerprint, build_batch_plan,
+                        envbatch_preflight,
                         mapping_workbook_bytes, parse_assignment,
-                        parse_vendor_workbook)
+                        parse_vendor_workbook, require_envbatch_ready,
+                        validate_proxy_link, validate_purchase_tag)
 from .hub_api import HubStudioApi, DEFAULT_PORT
 from .lark_ledger import LarkLedgerSink
-from .shein_query import QueryOrchestrator
+from .shein_query import QueryOrchestrator, normalize_site
 from .updater import UpdateCoordinator
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -58,26 +61,131 @@ ENV_TEMPLATE_XLSX = os.path.join(
 CONFIG_PATH = os.path.join(os.getcwd(), 'config.json')
 LOG_DIR = os.path.join(os.getcwd(), '查询日志')
 
-def load_config():
-    cfg = {
+CONFIG_FIELDS = frozenset({
+    'hubPort', 'serverPort', 'concurrency', 'importBuyerPlan',
+    'verifySampleCount', 'hiddenQueryColumns', 'purchaseTag', 'proxyLink',
+})
+CONFIG_REQUEST_FIELDS = CONFIG_FIELDS | {'proxyClear'}
+
+
+def default_config():
+    return {
         'hubPort': DEFAULT_PORT,
         'serverPort': 8765,
         'concurrency': 2,
         'importBuyerPlan': '1:Operator-A',
         'verifySampleCount': 3,
         'hiddenQueryColumns': ['envName', 'ip'],
+        # Environment variables are migration/first-run defaults only. Once
+        # saved, the local config file is the runtime source of truth.
+        'purchaseTag': os.environ.get('XYNIGO_PURCHASE_TAG', ''),
+        'proxyLink': os.environ.get('XYNIGO_PROXY_LINK', ''),
     }
+
+
+def load_config():
+    cfg = default_config()
     try:
         with open(CONFIG_PATH, encoding='utf-8') as f:
-            cfg.update(json.load(f))
+            saved = json.load(f)
+        if isinstance(saved, dict):
+            cfg.update({key: value for key, value in saved.items()
+                        if key in CONFIG_FIELDS})
     except Exception:
         pass
     return cfg
 
 
 def save_config(cfg):
-    with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
+    unknown = set(cfg) - CONFIG_FIELDS
+    if unknown:
+        raise ValueError('配置包含不允许保存的字段')
+    path = os.path.abspath(CONFIG_PATH)
+    parent = os.path.dirname(path)
+    os.makedirs(parent, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix='.config-', suffix='.tmp', dir=parent)
+    try:
+        try:
+            os.fchmod(fd, 0o600)
+        except (AttributeError, OSError):
+            pass
+        with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+            json.dump(cfg, handle, ensure_ascii=False, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+def public_config(cfg):
+    result = {key: value for key, value in cfg.items()
+              if key in CONFIG_FIELDS and key != 'proxyLink'}
+    result['proxyConfigured'] = bool(str(cfg.get('proxyLink') or '').strip())
+    return result
+
+
+def updated_config(old_cfg, body):
+    if not isinstance(body, dict):
+        raise ValueError('配置请求必须是 JSON 对象')
+    unknown = set(body) - CONFIG_REQUEST_FIELDS
+    if unknown:
+        raise ValueError('配置包含不允许保存的字段')
+    cfg = dict(default_config())
+    cfg.update({key: value for key, value in old_cfg.items()
+                if key in CONFIG_FIELDS})
+    for key in CONFIG_FIELDS - {'proxyLink'}:
+        if key in body:
+            cfg[key] = body[key]
+
+    try:
+        cfg['hubPort'] = int(cfg.get('hubPort', DEFAULT_PORT))
+        cfg['serverPort'] = int(cfg.get('serverPort', 8765))
+    except (TypeError, ValueError) as exc:
+        raise ValueError('端口必须是 1-65535 的整数') from exc
+    if not 1 <= cfg['hubPort'] <= 65535 or not 1 <= cfg['serverPort'] <= 65535:
+        raise ValueError('端口必须是 1-65535 的整数')
+    try:
+        cfg['concurrency'] = max(1, min(5, int(cfg.get('concurrency', 2))))
+    except (TypeError, ValueError):
+        cfg['concurrency'] = 2
+    try:
+        cfg['verifySampleCount'] = max(
+            0, min(10, int(cfg.get('verifySampleCount', 3))))
+    except (TypeError, ValueError):
+        cfg['verifySampleCount'] = 3
+    cfg['importBuyerPlan'] = str(
+        cfg.get('importBuyerPlan') or '1:Operator-A')[:200]
+    hidden = cfg.get('hiddenQueryColumns') or []
+    if not isinstance(hidden, list):
+        hidden = []
+    cfg['hiddenQueryColumns'] = [
+        name for name in ('envName', 'ip') if name in hidden]
+    cfg['purchaseTag'] = validate_purchase_tag(cfg.get('purchaseTag'))
+
+    if 'proxyClear' in body and not isinstance(body['proxyClear'], bool):
+        raise ValueError('显式清除代理配置必须是布尔值')
+    if body.get('proxyClear') is True:
+        cfg['proxyLink'] = ''
+    else:
+        submitted_proxy = str(body.get('proxyLink') or '')
+        if submitted_proxy.strip():
+            cfg['proxyLink'] = validate_proxy_link(submitted_proxy)
+        else:
+            cfg['proxyLink'] = str(old_cfg.get('proxyLink') or '').strip()
+    return cfg
 
 
 class HubStatusCache(object):
@@ -128,7 +236,7 @@ class AppState(object):
             self.hub, log_dir=LOG_DIR,
             concurrency=cfg.get('concurrency', 2))
         self.reg_job = RegistrationJob(lambda: self.hub)
-        self.env_job = EnvBatchJob(lambda: self.hub)
+        self.env_job = EnvBatchJob(lambda: self.hub, lambda: self.cfg)
         self.updates = UpdateCoordinator(
             os.environ.get('XYNIGO_INSTALL_DIR'), __version__)
 
@@ -280,8 +388,9 @@ class EnvBatchJob(object):
     PENDING_TTL_SECONDS = 30 * 60
     RESULT_CREDENTIAL_TTL_SECONDS = 15 * 60
 
-    def __init__(self, hub_getter):
+    def __init__(self, hub_getter, config_getter=load_config):
         self.hub_getter = hub_getter
+        self.config_getter = config_getter
         self.lock = threading.Lock()
         self.pending = {}
         self.running = False
@@ -297,6 +406,19 @@ class EnvBatchJob(object):
         self.tsv_data = None
         self.tsv_name = ''
         self._sensitive_timer = None
+        self._sensitive_generation = 0
+
+    def _runtime_config(self):
+        cfg = dict(self.config_getter() or {})
+        return {
+            'purchaseTag': str(cfg.get('purchaseTag') or '').strip(),
+            'proxyLink': str(cfg.get('proxyLink') or '').strip(),
+        }
+
+    def preflight(self):
+        runtime = self._runtime_config()
+        return envbatch_preflight(
+            self.hub_getter(), runtime['purchaseTag'], runtime['proxyLink'])
 
     def _clean_pending(self):
         cutoff = time.time() - self.PENDING_TTL_SECONDS
@@ -370,7 +492,11 @@ class EnvBatchJob(object):
         if not pending:
             raise ValueError('解析计划已过期，请重新选择 xlsx')
         parse_assignment(assignment, len(pending['accounts']))
-        existing = self.hub_getter().env_list(TAGS['MX'])
+        runtime = self._runtime_config()
+        hub = self.hub_getter()
+        require_envbatch_ready(
+            hub, runtime['purchaseTag'], runtime['proxyLink'])
+        existing = hub.env_list(runtime['purchaseTag'])
         plan = build_batch_plan(
             pending['accounts'], assignment, existing_envs=existing,
             purchase_date=purchase_date)
@@ -382,13 +508,16 @@ class EnvBatchJob(object):
         } for row in plan]
 
     @staticmethod
-    def _safe_error(exc, accounts):
+    def _safe_error(exc, accounts, extra_secrets=()):
         text = str(exc)
         for account in accounts:
             for value in (account.email, account.password,
                           account.key_url, account.cookie_text):
                 if value:
                     text = text.replace(value, '<redacted>')
+        for value in extra_secrets:
+            if value:
+                text = text.replace(value, '<redacted>')
         from .redaction import scrub_text
         return scrub_text(text)[:300]
 
@@ -396,22 +525,43 @@ class EnvBatchJob(object):
         with self.lock:
             self.rows = [dict(row) for row in rows]
 
-    def _clear_sensitive(self):
-        with self.lock:
-            self.tsv_data = None
-            if self.runner:
-                for row in self.runner.rows:
-                    row.account.password = ''
-                    row.account.key_url = ''
-                    row.account.cookie_text = ''
+    @staticmethod
+    def _wipe_runner_credentials(runner):
+        if runner:
+            for row in runner.rows:
+                row.account.password = ''
+                row.account.key_url = ''
+                row.account.cookie_text = ''
 
-    def _schedule_sensitive_cleanup(self):
+    def _cancel_sensitive_cleanup_locked(self):
+        self._sensitive_generation += 1
         if self._sensitive_timer:
             self._sensitive_timer.cancel()
-        self._sensitive_timer = threading.Timer(
-            self.RESULT_CREDENTIAL_TTL_SECONDS, self._clear_sensitive)
-        self._sensitive_timer.daemon = True
-        self._sensitive_timer.start()
+        self._sensitive_timer = None
+
+    def _clear_sensitive(self, expected_generation=None, runner=None):
+        with self.lock:
+            if (expected_generation is not None
+                    and expected_generation != self._sensitive_generation):
+                return
+            if expected_generation is None:
+                self._cancel_sensitive_cleanup_locked()
+            else:
+                self._sensitive_timer = None
+            self.tsv_data = None
+            self._wipe_runner_credentials(runner or self.runner)
+
+    def _schedule_sensitive_cleanup(self, runner=None):
+        with self.lock:
+            self._cancel_sensitive_cleanup_locked()
+            generation = self._sensitive_generation
+            timer = threading.Timer(
+                self.RESULT_CREDENTIAL_TTL_SECONDS,
+                self._clear_sensitive,
+                args=(generation, runner or self.runner))
+            timer.daemon = True
+            self._sensitive_timer = timer
+        timer.start()
 
     def start(self, plan_id, assignment, purchase_date,
               verify_sample_count=3, confirm_write=False):
@@ -425,10 +575,24 @@ class EnvBatchJob(object):
             if self.running:
                 raise RuntimeError('已有模块三任务在进行')
             self._clean_pending()
+            pending = self.pending.get(plan_id)
+            if not pending:
+                raise ValueError('解析计划已过期，请重新选择 xlsx')
+            account_count = len(pending['accounts'])
+        parse_assignment(assignment, account_count)
+        runtime = self._runtime_config()
+        hub = self.hub_getter()
+        # Must finish every read-only prerequisite before consuming planId or
+        # launching a worker that can issue HubStudio writes.
+        require_envbatch_ready(
+            hub, runtime['purchaseTag'], runtime['proxyLink'])
+        with self.lock:
+            if self.running:
+                raise RuntimeError('已有模块三任务在进行')
+            self._clean_pending()
             pending = self.pending.pop(plan_id, None)
             if not pending:
                 raise ValueError('解析计划已过期，请重新选择 xlsx')
-            parse_assignment(assignment, len(pending['accounts']))
             self.running = True
             self.started_at = time.time()
             self.finished_at = None
@@ -437,6 +601,9 @@ class EnvBatchJob(object):
             self.ip_checks = []
             self.fatal_error = ''
             self.mapping_data = None
+            self._cancel_sensitive_cleanup_locked()
+            self._wipe_runner_credentials(self.runner)
+            self.runner = None
             self.tsv_data = None
         source = pending['source']
         accounts = pending['accounts']
@@ -444,12 +611,16 @@ class EnvBatchJob(object):
         pending['source'] = b''
 
         def worker():
-            runner = BatchEnvOrchestrator(
-                self.hub_getter(), site='MX', purchase_date=purchase_date,
-                state_store=ResumeStateStore(batch_id),
-                on_progress=self._set_rows)
-            self.runner = runner
+            runner = None
             try:
+                runner = BatchEnvOrchestrator(
+                    hub, purchase_tag=runtime['purchaseTag'],
+                    proxy_link=runtime['proxyLink'], site='MX',
+                    purchase_date=purchase_date,
+                    state_store=ResumeStateStore(batch_id),
+                    on_progress=self._set_rows)
+                with self.lock:
+                    self.runner = runner
                 runner.prepare(accounts, assignment)
                 result_rows = runner.run()
                 mapping = mapping_workbook_bytes(result_rows)
@@ -469,13 +640,17 @@ class EnvBatchJob(object):
                         'ipOk': sum(bool(item.get('ok')) for item in checks),
                         'ipTotal': len(checks),
                     }
-                self._schedule_sensitive_cleanup()
+                self._schedule_sensitive_cleanup(runner)
             except Exception as exc:
                 with self.lock:
-                    self.fatal_error = self._safe_error(exc, accounts)
+                    proxy_secrets = (
+                        runtime['proxyLink'],
+                        runtime['proxyLink'].replace('{region}', 'MX'))
+                    self.fatal_error = self._safe_error(
+                        exc, accounts, proxy_secrets)
             finally:
                 if self.fatal_error:
-                    self._clear_sensitive()
+                    self._clear_sensitive(runner=runner)
                 with self.lock:
                     self.finished_at = time.time()
                     self.running = False
@@ -495,6 +670,7 @@ class EnvBatchJob(object):
                 raise ValueError('找不到待重试账号')
             if not row.account.password or not row.account.cookie_text:
                 raise ValueError('凭证内存已清理，请重新选择原始 xlsx 后续跑')
+            self._cancel_sensitive_cleanup_locked()
             self.running = True
             self.started_at = time.time()
             self.finished_at = None
@@ -511,7 +687,7 @@ class EnvBatchJob(object):
                         'done': sum(row.state == 'done' for row in result_rows),
                         'failed': sum(row.state != 'done' for row in result_rows),
                     })
-                self._schedule_sensitive_cleanup()
+                self._schedule_sensitive_cleanup(self.runner)
             except Exception as exc:
                 accounts = [row.account for row in self.runner.rows]
                 with self.lock:
@@ -647,6 +823,8 @@ class Handler(BaseHTTPRequestHandler):
                 snap = STATE.env_job.snapshot()
                 snap['hubConnected'] = STATE.hub_status()[0]
                 self._json(snap)
+            elif path == '/api/envbatch/preflight':
+                self._json(STATE.env_job.preflight())
             elif path == '/api/envbatch/template':
                 if not os.path.isfile(ENV_TEMPLATE_XLSX):
                     return self._json({'error': '填写模板未打包'}, 404)
@@ -692,7 +870,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(data)
             elif path == '/api/config':
-                self._json(STATE.cfg)
+                self._json(public_config(STATE.cfg))
             else:
                 self._json({'error': 'not found'}, 404)
         except ConnectionError as e:
@@ -713,6 +891,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({'error': '模块三建环境正在进行'}, 409)
                 serials = body.get('serials')
                 group = body.get('group')
+                site = normalize_site(body.get('site') or 'MX')
                 env_index = None
                 if not serials and group:
                     envs = STATE.hub.env_list(group)
@@ -724,8 +903,9 @@ class Handler(BaseHTTPRequestHandler):
                                  for e in envs}
                 if not serials:
                     return self._json({'error': '未提供环境序号'}, 400)
-                STATE.orch.start_batch(serials, env_index)
-                self._json({'started': True, 'total': len(serials)})
+                STATE.orch.start_batch(serials, env_index, site=site)
+                self._json({'started': True, 'total': len(serials),
+                            'site': site})
             elif path == '/api/stop':
                 STATE.orch.request_stop()
                 self._json({'stopped': True})
@@ -794,25 +974,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({'started': True})
             elif path == '/api/config':
                 old_cfg = load_config()
-                cfg = dict(old_cfg)
-                cfg.update(body)
-                try:
-                    cfg['concurrency'] = max(
-                        1, min(5, int(cfg.get('concurrency', 2))))
-                except (TypeError, ValueError):
-                    cfg['concurrency'] = 2
-                try:
-                    cfg['verifySampleCount'] = max(
-                        0, min(10, int(cfg.get('verifySampleCount', 3))))
-                except (TypeError, ValueError):
-                    cfg['verifySampleCount'] = 3
-                cfg['importBuyerPlan'] = str(
-                    cfg.get('importBuyerPlan') or '1:Operator-A')[:200]
-                hidden = cfg.get('hiddenQueryColumns') or []
-                if not isinstance(hidden, list):
-                    hidden = []
-                cfg['hiddenQueryColumns'] = [
-                    name for name in ('envName', 'ip') if name in hidden]
+                cfg = updated_config(old_cfg, body)
                 save_config(cfg)
                 STATE.cfg = cfg
                 reconnect_needed = (

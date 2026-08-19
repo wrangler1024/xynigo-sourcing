@@ -23,11 +23,9 @@ from .hub_api import DEFAULT_PORT, HubStudioApi
 from .redaction import mask_email, scrub_text
 
 
-TAGS = {'MX': os.environ.get(
-    'XYNIGO_PURCHASE_TAG', 'SHEIN Mexico Purchasing')}
 SITE_ALIASES = {'MX': '希音墨西哥站'}
 DOMAINS = {'MX': 'https://www.shein.com.mx'}
-PROXY_LINK = os.environ.get('XYNIGO_PROXY_LINK', '')
+SUPPORTED_SITES = frozenset(SITE_ALIASES)
 
 # (width, height, weight)。创建后不得再改指纹。
 RES_POOL = (
@@ -50,8 +48,85 @@ REMARK_ORDER_RE = re.compile(r'(?:^|\|\s*)单号:([0-9a-f]+)', re.I)
 ENV_NAME_RE = r'^采购-{buyer}-{site}-{mmdd}-(\d{{3}})$'
 
 
-class EnvBatchError(Exception):
+class EnvBatchError(ValueError):
     pass
+
+
+def validate_purchase_tag(value):
+    """Validate the exact HubStudio group name without guessing a fallback."""
+    raw_tag = str(value or '')
+    if any(char in raw_tag for char in ('\r', '\n', '\t')):
+        raise EnvBatchError('采购分组不能包含换行或制表符')
+    tag = raw_tag.strip()
+    if not tag:
+        raise EnvBatchError('请先在设置中填写采购分组')
+    if len(tag) > 12:
+        raise EnvBatchError('采购分组不能超过 12 个字符')
+    return tag
+
+
+def validate_proxy_link(value):
+    """Validate a secret proxy extraction URL without echoing it in errors."""
+    from urllib.parse import urlsplit
+
+    raw_link = str(value or '')
+    if any(char.isspace() for char in raw_link):
+        raise EnvBatchError('动态代理提取链接格式无效')
+    link = raw_link.strip()
+    if not link:
+        raise EnvBatchError('请先在设置中填写动态代理提取链接')
+    remainder = link.replace('{region}', '')
+    if '{' in remainder or '}' in remainder:
+        raise EnvBatchError('动态代理提取链接只允许 {region} 占位符')
+    try:
+        parsed = urlsplit(link.replace('{region}', 'MX'))
+    except ValueError as exc:
+        raise EnvBatchError('动态代理提取链接格式无效') from exc
+    if parsed.scheme.lower() not in ('http', 'https') or not parsed.netloc:
+        raise EnvBatchError('动态代理提取链接必须是 http(s) URL')
+    return link
+
+
+def envbatch_preflight(hub, purchase_tag, proxy_link):
+    """Return a non-sensitive readiness summary for module three."""
+    result = {
+        'ready': False,
+        'hubConnected': False,
+        'purchaseTag': '',
+        'proxyConfigured': bool(str(proxy_link or '').strip()),
+        'groupFound': False,
+        'message': '',
+    }
+    problems = []
+    tag = ''
+    try:
+        tag = validate_purchase_tag(purchase_tag)
+        result['purchaseTag'] = tag
+    except EnvBatchError as exc:
+        problems.append(str(exc))
+    try:
+        validate_proxy_link(proxy_link)
+    except EnvBatchError as exc:
+        problems.append(str(exc))
+    try:
+        groups = list(hub.group_list() or [])
+    except Exception:
+        problems.append('HubStudio 未连接，请启动客户端并检查 Local API 端口')
+    else:
+        result['hubConnected'] = True
+        result['groupFound'] = bool(tag) and tag in groups
+        if tag and not result['groupFound']:
+            problems.append('采购分组未在 HubStudio 中精确匹配，请核对设置')
+    result['ready'] = not problems
+    result['message'] = '；'.join(problems) if problems else '执行前预检通过'
+    return result
+
+
+def require_envbatch_ready(hub, purchase_tag, proxy_link):
+    result = envbatch_preflight(hub, purchase_tag, proxy_link)
+    if not result['ready']:
+        raise EnvBatchError(result['message'])
+    return result
 
 
 def project_root():
@@ -266,20 +341,20 @@ def choose_resolution(rng=None):
     return rng.choices(choices, weights=weights, k=1)[0]
 
 
-def build_env_create_body(name, site='MX', rng=None, proxy_link=None):
+def build_env_create_body(name, site='MX', rng=None, proxy_link=None,
+                          purchase_tag=None):
     site = site.upper()
-    if site not in TAGS:
+    if site not in SUPPORTED_SITES:
         raise EnvBatchError('v1 仅支持 MX 站点')
-    link_code = PROXY_LINK if proxy_link is None else proxy_link
-    if not link_code:
-        raise EnvBatchError('新建环境前必须设置 XYNIGO_PROXY_LINK')
+    tag = validate_purchase_tag(purchase_tag)
+    link_code = validate_proxy_link(proxy_link)
     width, height = choose_resolution(rng)
     return {
         'containerName': name,
-        'tagName': TAGS[site],
+        'tagName': tag,
         'asDynamicType': 0,
         'proxyTypeName': 'Socks5_通用api',
-        'linkCode': link_code.format(region=site),
+        'linkCode': link_code.replace('{region}', site),
         'ipGetRuleType': 1,
         'coreVersion': 148,
         'advancedBo': {
@@ -326,7 +401,7 @@ def _existing_by_order(existing_envs):
 def build_batch_plan(accounts, assignment_spec, existing_envs=None,
                      site='MX', purchase_date=None, resume_state=None):
     site = site.upper()
-    if site not in TAGS:
+    if site not in SUPPORTED_SITES:
         raise EnvBatchError('v1 仅支持 MX 站点')
     purchase_date = purchase_date or date.today().strftime('%Y%m%d')
     if not re.fullmatch(r'20\d{6}', purchase_date):
@@ -479,11 +554,14 @@ class ResumeStateStore(object):
 class BatchEnvOrchestrator(object):
     """HubStudio 写链路串行执行；每步落脱敏状态后再进入下一步。"""
 
-    def __init__(self, hub, site='MX', purchase_date=None, state_store=None,
+    def __init__(self, hub, purchase_tag, proxy_link, site='MX',
+                 purchase_date=None, state_store=None,
                  write_interval=0.3, sleep_fn=time.sleep, rng=None,
                  on_progress=None):
         self.hub = hub
         self.site = site.upper()
+        self.purchase_tag = validate_purchase_tag(purchase_tag)
+        self.proxy_link = validate_proxy_link(proxy_link)
         self.purchase_date = purchase_date or date.today().strftime('%Y%m%d')
         self.state_store = state_store
         self.write_interval = write_interval
@@ -493,7 +571,7 @@ class BatchEnvOrchestrator(object):
         self.rows = []
 
     def prepare(self, accounts, assignment_spec):
-        existing = self.hub.env_list(TAGS[self.site])
+        existing = self.hub.env_list(self.purchase_tag)
         saved = self.state_store.load() if self.state_store else None
         self.rows = build_batch_plan(
             accounts, assignment_spec, existing_envs=existing,
@@ -517,7 +595,7 @@ class BatchEnvOrchestrator(object):
 
     def _find_env(self, env_name, attempts=25):
         for attempt in range(attempts):
-            for env in self.hub.env_list(TAGS[self.site]):
+            for env in self.hub.env_list(self.purchase_tag):
                 if env.get('containerName') == env_name:
                     return env
             if attempt + 1 < attempts:
@@ -534,13 +612,15 @@ class BatchEnvOrchestrator(object):
             self._persist()
             if 'env_created' not in row.completed_steps:
                 existing = None
-                for env in self.hub.env_list(TAGS[self.site]):
+                for env in self.hub.env_list(self.purchase_tag):
                     if env.get('containerName') == row.env_name:
                         existing = env
                         break
                 if existing is None:
                     self.hub.env_create(build_env_create_body(
-                        row.env_name, self.site, self.rng))
+                        row.env_name, self.site, self.rng,
+                        proxy_link=self.proxy_link,
+                        purchase_tag=self.purchase_tag))
                     self.sleep(self.write_interval)
                     existing = self._find_env(row.env_name)
                 row.container_code = str(existing.get('containerCode') or '')
@@ -580,7 +660,9 @@ class BatchEnvOrchestrator(object):
             row.error_step = current_step
             error_text = str(exc)
             for secret in (row.account.email, row.account.password,
-                           row.account.key_url, row.account.cookie_text):
+                           row.account.key_url, row.account.cookie_text,
+                           self.proxy_link,
+                           self.proxy_link.replace('{region}', self.site)):
                 if secret:
                     error_text = error_text.replace(secret, '<redacted>')
             row.error = scrub_text(error_text)[:300]
@@ -782,10 +864,12 @@ def main(argv=None):
             source_bytes, args.assign, args.site, args.purchase_date)
         state_store = ResumeStateStore(batch_id, args.resume_dir)
         hub = HubStudioApi(port=args.hub_port)
-        if not hub.ping():
-            raise EnvBatchError('HubStudio 未连接')
+        purchase_tag = os.environ.get('XYNIGO_PURCHASE_TAG', '')
+        proxy_link = os.environ.get('XYNIGO_PROXY_LINK', '')
+        require_envbatch_ready(hub, purchase_tag, proxy_link)
         runner = BatchEnvOrchestrator(
-            hub, site=args.site, purchase_date=args.purchase_date,
+            hub, purchase_tag=purchase_tag, proxy_link=proxy_link,
+            site=args.site, purchase_date=args.purchase_date,
             state_store=state_store)
         runner.prepare(accounts, args.assign)
         rows = runner.run()

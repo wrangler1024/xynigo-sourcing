@@ -13,7 +13,7 @@ def result_row(**overrides):
         'orderNo': 'GSH1TEST', 'orderTime': '2026-08-18 01:05:40',
         'amount': '$MXN100.00', 'status': 'Enviado', 'statusCn': '已发货',
         'tracks': ['49350000001206'], 'pkgs': ['PKG1'], 'carrier': 'IMILE',
-        'kanDan': False, 'ip': '127.0.0.1', 'error': '',
+        'kanDan': False, 'riskOrder': False, 'ip': '127.0.0.1', 'error': '',
         'time': '2026-08-18 21:01:02',
         'screenshotState': 'ok', 'screenshotFile': '环境1975_物流尾号1206.jpg',
         'screenshotError': '', 'screenshotSizeKb': 95,
@@ -63,8 +63,8 @@ class ExportTests(unittest.TestCase):
             self.assertIn('style="thin"', styles_xml)
             self.assertIn('B7C9E2', styles_xml)
 
-    def test_query_time_header_identifies_mexico_timezone(self):
-        self.assertEqual(EXPORT_HEAD[-1], '查询时间（墨西哥）')
+    def test_query_time_header_identifies_site_timezone(self):
+        self.assertEqual(EXPORT_HEAD[-1], '查询时间（站点）')
 
     def test_csv_includes_screenshot_status_field(self):
         data, name, _mime = export_bytes([result_row()], 'csv')
@@ -72,6 +72,17 @@ class ExportTests(unittest.TestCase):
         self.assertTrue(name.endswith('.csv'))
         self.assertIn('物流轨迹截图', text)
         self.assertIn('查看截图', text)
+
+    def test_risk_order_export_is_not_reported_as_success(self):
+        data, _name, _mime = export_bytes([
+            result_row(
+                status='Risk verification', statusCn='风险订单/待验证',
+                tracks=[], carrier='', riskOrder=True,
+                screenshotState='none')
+        ], 'csv')
+        text = data.decode('utf-8-sig')
+        self.assertIn('风险订单（待验证）', text)
+        self.assertIn('风险订单待验证，无物流', text)
 
 
 if __name__ == '__main__':

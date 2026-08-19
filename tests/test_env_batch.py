@@ -16,9 +16,13 @@ os.environ.setdefault(
 from purchase_tool.env_batch import (
     BatchEnvOrchestrator, EnvBatchError, RES_POOL, ResumeStateStore,
     batch_fingerprint, build_batch_plan, build_env_create_body,
-    choose_resolution, format_remark, load_vendor_xlsx,
-    mapping_workbook_bytes, parse_vendor_workbook)
+    choose_resolution, envbatch_preflight, format_remark, load_vendor_xlsx,
+    mapping_workbook_bytes, parse_vendor_workbook, validate_purchase_tag)
 from purchase_tool.hub_api import HubStudioApi
+
+
+TEST_TAG = 'MX-Purchase'
+TEST_PROXY = 'https://proxy.example.test/{region}'
 
 
 def workbook_bytes(rows):
@@ -43,16 +47,22 @@ def demo_rows():
 
 
 class FakeHub(object):
-    def __init__(self, fail_cookie_once=False):
+    def __init__(self, fail_cookie_once=False, fail_create_with_link=False):
         self.envs = []
         self.calls = []
         self.fail_cookie_once = fail_cookie_once
+        self.fail_create_with_link = fail_create_with_link
+
+    def group_list(self):
+        return [TEST_TAG]
 
     def env_list(self, _tag):
         return [dict(item) for item in self.envs]
 
     def env_create(self, body):
-        self.calls.append(('create', body['containerName']))
+        self.calls.append(('create', dict(body)))
+        if self.fail_create_with_link:
+            raise RuntimeError('proxy rejected: ' + body['linkCode'])
         self.envs.append({
             'containerName': body['containerName'],
             'containerCode': str(9000 + len(self.envs)),
@@ -146,9 +156,53 @@ class EnvBatchTests(unittest.TestCase):
             self.assertLess(abs(observed - weight), 0.025)
         body = build_env_create_body(
             '采购-甲-MX-0819-001', rng=rng,
-            proxy_link='https://proxy.example.test/{region}')
+            proxy_link=TEST_PROXY, purchase_tag=TEST_TAG)
         self.assertEqual(body['coreVersion'], 148)
         self.assertEqual(body['advancedBo']['languageType'], 0)
+        self.assertEqual(body['tagName'], TEST_TAG)
+        self.assertEqual(body['linkCode'],
+                         'https://proxy.example.test/MX')
+
+    def test_preflight_requires_exact_group_and_never_returns_proxy(self):
+        hub = FakeHub()
+        ready = envbatch_preflight(hub, TEST_TAG, TEST_PROXY)
+        self.assertTrue(ready['ready'])
+        self.assertTrue(ready['groupFound'])
+        self.assertNotIn(TEST_PROXY, json.dumps(ready))
+
+        no_proxy = envbatch_preflight(hub, TEST_TAG, '')
+        self.assertFalse(no_proxy['ready'])
+        self.assertTrue(no_proxy['hubConnected'])
+        self.assertTrue(no_proxy['groupFound'])
+        self.assertFalse(no_proxy['proxyConfigured'])
+
+        missing = envbatch_preflight(hub, 'MX-Purchas', TEST_PROXY)
+        self.assertFalse(missing['ready'])
+        self.assertFalse(missing['groupFound'])
+        self.assertNotIn(TEST_PROXY, json.dumps(missing))
+
+        invalid = envbatch_preflight(
+            hub, TEST_TAG, 'https://proxy.example.test/{secret}')
+        self.assertFalse(invalid['ready'])
+        self.assertNotIn('proxy.example.test', json.dumps(invalid))
+        with self.assertRaisesRegex(EnvBatchError, '换行'):
+            validate_purchase_tag(TEST_TAG + '\n')
+
+    def test_create_error_never_exposes_proxy_link(self):
+        secret_proxy = 'https://secret-user:secret-pass@proxy.example.test/{region}'
+        hub = FakeHub(fail_create_with_link=True)
+        accounts = parse_vendor_workbook(
+            BytesIO(workbook_bytes([demo_rows()[0]])))
+        runner = BatchEnvOrchestrator(
+            hub, purchase_tag=TEST_TAG, proxy_link=secret_proxy,
+            purchase_date='20260819', sleep_fn=lambda _seconds: None)
+        rows = runner.prepare(accounts, '1:甲')
+        runner.run()
+        rendered = json.dumps(rows[0].public_dict(), ensure_ascii=False)
+        self.assertEqual(rows[0].state, 'failed')
+        self.assertNotIn(secret_proxy, rendered)
+        self.assertNotIn('secret-user', rendered)
+        self.assertNotIn('secret-pass', rendered)
 
     def test_hub_cookie_import_requires_and_preserves_string(self):
         api = HubStudioApi()
@@ -170,7 +224,8 @@ class EnvBatchTests(unittest.TestCase):
             store = ResumeStateStore(
                 batch_fingerprint(source, '1:甲', 'MX', '20260819'), tmp)
             first = BatchEnvOrchestrator(
-                hub, purchase_date='20260819', state_store=store,
+                hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY,
+                purchase_date='20260819', state_store=store,
                 sleep_fn=lambda _seconds: None)
             first.prepare(accounts, '1:甲')
             first.run()
@@ -185,12 +240,18 @@ class EnvBatchTests(unittest.TestCase):
                 self.assertEqual(store.path.stat().st_mode & 0o777, 0o600)
 
             second = BatchEnvOrchestrator(
-                hub, purchase_date='20260819', state_store=store,
+                hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY,
+                purchase_date='20260819', state_store=store,
                 sleep_fn=lambda _seconds: None)
             second.prepare(accounts, '1:甲')
             second.run()
             self.assertEqual(second.rows[0].state, 'done')
             self.assertEqual(sum(call[0] == 'create' for call in hub.calls), 1)
+            create_body = next(call[1] for call in hub.calls
+                               if call[0] == 'create')
+            self.assertEqual(create_body['tagName'], TEST_TAG)
+            self.assertEqual(create_body['linkCode'],
+                             'https://proxy.example.test/MX')
             self.assertEqual(sum(call[0] == 'cookie' for call in hub.calls), 2)
             self.assertEqual(sum(call[0] == 'account' for call in hub.calls), 1)
             self.assertEqual(sum(call[0] == 'remark' for call in hub.calls), 1)

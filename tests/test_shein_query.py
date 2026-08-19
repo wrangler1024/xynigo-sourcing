@@ -3,7 +3,8 @@ import unittest
 from unittest.mock import patch
 
 from purchase_tool.shein_query import (
-    QueryOrchestrator, parse_detail_page, parse_list_page)
+    QueryOrchestrator, friendly_carrier, normalize_site, parse_detail_page,
+    parse_list_page)
 
 
 class SheinQueryParserTests(unittest.TestCase):
@@ -52,9 +53,68 @@ class SheinQueryParserTests(unittest.TestCase):
         result = parse_detail_page(html, '')
         self.assertEqual(result['orderTime'], '2026-08-18 01:06:30')
 
+    def test_parse_us_list_card_without_matching_navigation_tabs(self):
+        text = (
+            'All Orders Unpaid Orders Processing Orders Shipped Orders '
+            'Return Orders Refund\n'
+            'Aug 17 2026 06:29:46Order NO. GSH1USTEST\n'
+            'Shipped\nAug 18 2026 16:48:57\nLoading complete\n'
+            'Delivery: Aug 21-31(4-10 business days.)\n$42.99\n'
+            'Track\nOrder details')
+        result = parse_list_page(text, 'US')
+        self.assertEqual(result['orderNo'], 'GSH1USTEST')
+        self.assertEqual(result['orderTime'], '2026-08-17 06:29:46')
+        self.assertEqual(result['amount'], '$42.99')
+        self.assertEqual(result['status'], 'Shipped')
+        self.assertEqual(result['statusCn'], '已发货')
+        self.assertEqual(result['stage'], 'Loading complete')
+
+    def test_us_detail_refund_navigation_is_not_kandan(self):
+        html = '<script>{"addTime":1787036740}</script>'
+        result = parse_detail_page(
+            html, 'Return Orders\nRefund\nORDER DETAILS\nShipped',
+            'US', utc_offset_minutes=-300)
+        self.assertFalse(result['kanDan'])
+        self.assertEqual(result['orderTime'], '2026-08-18 02:05:40')
+
+    def test_us_detail_explicit_refunding_is_kandan(self):
+        result = parse_detail_page('', 'Your refund is being processed', 'US')
+        self.assertTrue(result['kanDan'])
+
+    def test_us_detail_risk_verification_overrides_paid_business_state(self):
+        html = ('<script>{"is_verify":"1",'
+                '"sensitive_status":"no_submit"}</script>')
+        text = ('Paid\nYour order is detected to be at risk and needs to be '
+                'verified, please provide the supporting documents.')
+        result = parse_detail_page(html, text, 'US')
+        self.assertTrue(result['riskOrder'])
+        self.assertIn('提交证明材料', result['riskMessage'])
+
+    def test_us_internal_route_codes_map_to_commercial_carriers(self):
+        self.assertEqual(
+            friendly_carrier('AWrSPX-MIA3-HSS-PB-BBX-PJ-Na', []),
+            'SpeedX')
+        self.assertEqual(
+            friendly_carrier('ASnGOFOCL-JFK3-HSS-PB-BBX-PJ-Na', []),
+            'GOFO')
+
+    def test_parse_us_paid_order_without_tracking(self):
+        text = (
+            'Aug 18 2026 14:48:06Order NO. GSH1USPAID\n'
+            'Delivery: Aug 24-Sep 01\n$19.99\nView Invoice\n'
+            'Repurchase\nPaid\nOrder details')
+        result = parse_list_page(text, 'US')
+        self.assertEqual(result['status'], 'Paid')
+        self.assertEqual(result['statusCn'], '已支付/待备货')
+
+    def test_only_mx_and_us_are_supported(self):
+        self.assertEqual(normalize_site('us'), 'US')
+        with self.assertRaisesRegex(ValueError, 'MX.*US'):
+            normalize_site('CA')
+
 
 class QueryTimerTests(unittest.TestCase):
-    def test_row_query_time_includes_date_in_mexico_timezone(self):
+    def test_row_query_time_includes_date_in_environment_timezone(self):
         job = QueryOrchestrator(hub=None)
         row = job._blank_row('1001')
         with patch('purchase_tool.shein_query._query_timestamp',
@@ -96,6 +156,9 @@ class TrackingScreenshotTests(unittest.TestCase):
         def capture_element_union(self, *args, **kwargs):
             return b'jpeg', 1008, 535
 
+        def outer_html(self):
+            return '<script>{"carrier_name":"SpeedX"}</script>'
+
     def test_capture_tracking_uses_temp_file_and_public_metadata_only(self):
         job = QueryOrchestrator(hub=None, settle_seconds=0)
         try:
@@ -103,9 +166,22 @@ class TrackingScreenshotTests(unittest.TestCase):
                 self.FakePage(), '1001', 'GSH1TEST', ['49350000001206'])
             self.assertEqual(result['screenshotState'], 'ok')
             self.assertEqual(result['screenshotSizeKb'], 1)
+            self.assertEqual(result['carrier'], 'SpeedX')
             self.assertEqual(job.screenshot_bytes('1001'), b'jpeg')
             self.assertNotIn('GSH1TEST', result['screenshotFile'])
             self.assertTrue(result['screenshotFile'].endswith('1206.jpg'))
+        finally:
+            job.close()
+
+    def test_capture_tracking_uses_us_route(self):
+        job = QueryOrchestrator(hub=None, settle_seconds=0)
+        page = self.FakePage()
+        try:
+            job._capture_tracking(
+                page, '1002', 'GSH1USTEST', ['TRACK123'], site='US')
+            self.assertEqual(
+                page.url,
+                'https://us.shein.com/orders/track?billno=GSH1USTEST')
         finally:
             job.close()
 
@@ -115,6 +191,19 @@ class TrackingScreenshotTests(unittest.TestCase):
         updates = dict(detail)
         updates.update({k: v for k, v in info.items() if v})
         self.assertEqual(updates['orderTime'], '2026-08-18 01:05:40')
+
+    def test_site_mismatch_is_rejected_before_browser_start(self):
+        job = QueryOrchestrator(hub=None)
+        row = job._blank_row('1001', 'US')
+        job._query_one(
+            row, '1001', {
+                '1001': {
+                    'containerCode': 'fake',
+                    'containerName': '采购-甲-MX-0819-001',
+                }
+            }, set(), 'US')
+        self.assertEqual(row['state'], 'fail')
+        self.assertIn('与所选 US 站不一致', row['error'])
 
 
 if __name__ == '__main__':

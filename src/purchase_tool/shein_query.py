@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""SHEIN 墨西哥站页面解析 + 逐环境查询编排。
+"""SHEIN 墨西哥/美国站页面解析 + 逐环境查询编排。
 
 解析正则全部移植自已实战验证的 .mjs 脚本（2026-08-17 首批 10 单跑通）：
 - check_order_status.mjs：订单列表页取订单号/金额/状态/阶段
@@ -25,43 +25,104 @@ from datetime import datetime, timedelta, timezone
 from .cdp import CdpClient
 from .hub_api import HubApiError
 
-SITE = 'https://www.shein.com.mx'
-ORDERS_LIST_URL = SITE + '/user/orders/list'
-ORDER_DETAIL_URL = SITE + '/user/orders/detail/%s'
-ORDER_TRACK_URL = SITE + '/orders/track?billno=%s'
+SUPPORTED_SITES = ('MX', 'US')
+SITE_LABELS = {'MX': '墨西哥站', 'US': '美国站'}
+SITE_PROFILES = {
+    'MX': {
+        'baseUrl': 'https://www.shein.com.mx',
+        'utcOffsetMinutes': -6 * 60,
+    },
+    'US': {
+        'baseUrl': 'https://us.shein.com',
+        # 2026-08-19 实测美国采购环境为 America/Chicago（夏令时 UTC-5）。
+        # 查询时会优先读取环境浏览器的真实时区偏移，这里仅作降级值。
+        'utcOffsetMinutes': -5 * 60,
+    },
+}
 
-# 状态取值（西班牙语）→ 中文
+# 状态取值（西班牙语 / 英语）→ 中文
 STATUS_CN = {
     'Procesando': '备货中', 'Empacando': '打包中', 'Enviado': '已发货',
     'Entregado': '已送达', 'Completado': '已完成', 'Cancelado': '已取消',
     'Reembolsando': '砍单退款中', 'Devolución': '退换货', 'No pagado': '未支付',
+    'Processing': '备货中', 'Packing': '打包中', 'Shipped': '已发货',
+    'Delivered': '已送达', 'Completed': '已完成', 'Canceled': '已取消',
+    'Cancelled': '已取消', 'Refunding': '退款中', 'Refunded': '已退款',
+    'Returned': '已退货', 'Unpaid': '未支付', 'Paid': '已支付/待备货',
+    'Risk verification': '风险订单/待验证',
 }
 
-RE_ORDER_NO = re.compile(r'Núm\.?\s*de\s*pedido\s*([A-Z0-9]+)', re.I)
-# 下单时间在列表页订单号文案之前，如 "17 Ago 2026 03:14:31Núm. de pedido XXX"
-RE_ORDER_TIME = re.compile(
-    r'(\d{1,2}\s+[A-Za-z]{3,}\s+\d{4}\s+\d{2}:\d{2}(?::\d{2})?)\s*Núm', re.I)
-ES_MONTH = {'ene': '01', 'feb': '02', 'mar': '03', 'abr': '04', 'may': '05',
-            'jun': '06', 'jul': '07', 'ago': '08', 'sep': '09',
-            'oct': '10', 'nov': '11', 'dic': '12'}
-RE_AMOUNT = re.compile(r'\$MXN[\d.,]+')
-RE_STAGE = re.compile(
-    r'Almac[eé]n[^.]*\.|En tr[áa]nsito[^.]*\.|Preparaci[óo]n[^.]*\.')
+RE_ORDER_NO_BY_SITE = {
+    'MX': re.compile(r'Núm\.?\s*de\s*pedido\s*([A-Z0-9]+)', re.I),
+    'US': re.compile(r'Order\s+NO\.?\s*([A-Z0-9]+)', re.I),
+}
+# 下单时间在列表页订单号文案之前：
+# MX: "17 Ago 2026 03:14:31Núm. de pedido XXX"
+# US: "Aug 17 2026 06:29:46Order NO. XXX"
+RE_ORDER_TIME_BY_SITE = {
+    'MX': re.compile(
+        r'(\d{1,2}\s+[A-Za-z]{3,}\s+\d{4}\s+'
+        r'\d{2}:\d{2}(?::\d{2})?)\s*Núm', re.I),
+    'US': re.compile(
+        r'([A-Za-z]{3,}\s+\d{1,2},?\s+\d{4}\s+'
+        r'\d{2}:\d{2}(?::\d{2})?)\s*Order\s+NO', re.I),
+}
+MONTHS = {
+    'MX': {'ene': '01', 'feb': '02', 'mar': '03', 'abr': '04',
+           'may': '05', 'jun': '06', 'jul': '07', 'ago': '08',
+           'sep': '09', 'oct': '10', 'nov': '11', 'dic': '12'},
+    'US': {'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04',
+           'may': '05', 'jun': '06', 'jul': '07', 'aug': '08',
+           'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12'},
+}
+RE_AMOUNT_BY_SITE = {
+    'MX': re.compile(r'\$MXN[\d.,]+'),
+    'US': re.compile(r'(?<![A-Za-z])(?:US)?\$\s*[\d.,]+'),
+}
+RE_STAGE_BY_SITE = {
+    'MX': re.compile(
+        r'Almac[eé]n[^.]*\.|En tr[áa]nsito[^.]*\.|Preparaci[óo]n[^.]*\.'),
+    'US': re.compile(
+        r'International Warehouse[^.\n]*\.?|In transit[^.\n]*\.?'
+        r'|Preparing[^.\n]*\.?|Loading complete', re.I),
+}
+RE_DETAIL_MARKER_BY_SITE = {
+    'MX': re.compile(r'Detalles de Pedido', re.I),
+    'US': re.compile(r'Order details', re.I),
+}
 RE_SHIPPING_NO = re.compile(r'"shipping_no":"([^"]+)"')
 RE_PACKAGE_NO = re.compile(r'"package_no":"([^"]+)"')
 RE_CARRIER = re.compile(r'"shipping_method_real":"([^"]{2,40})"')
-RE_KANDAN_TEXT = re.compile(r'Reembolsando|reembolso est[áa] siendo procesado')
+RE_CARRIER_NAME = re.compile(r'"carrier_name":"([^"]{2,80})"')
+RE_KANDAN_TEXT_BY_SITE = {
+    'MX': re.compile(
+        r'Reembolsando|reembolso est[áa] siendo procesado', re.I),
+    # 避免把美国详情页固定导航项 "Refund" 误判成砍单。
+    'US': re.compile(
+        r'\bRefunding\b|\bRefunded\b|refund (?:is )?being processed'
+        r'|refund in progress', re.I),
+}
 # 大小写不敏感：页面出现过 EMPACANDO 大写形式（2026-08-18 实测 1007）
-RE_STATUS_WORDS = re.compile(
-    r'(Procesando|Empacando|Enviado|Reembolsando|Completado|Cancelado'
-    r'|Entregado|Devoluci[óo]n|No pagado)', re.I)
+RE_STATUS_WORDS_BY_SITE = {
+    'MX': re.compile(
+        r'(Procesando|Empacando|Enviado|Reembolsando|Completado|Cancelado'
+        r'|Entregado|Devoluci[óo]n|No pagado)', re.I),
+    'US': re.compile(
+        r'(Processing|Packing|Shipped|Delivered|Completed|Canceled|Cancelled'
+        r'|Refunding|Refunded|Returned|Unpaid|Paid)', re.I),
+}
 # 部分订单的列表卡片不渲染下单时间，但详情页 SSR 会保留 addTime。
 # 2026-08-19 用 1001 对照列表时间验证：addTime 为订单创建时间（秒），
 # paymentTime 为支付完成时间（毫秒），仅在 addTime 缺失时降级使用。
 RE_DETAIL_ADD_TIME = re.compile(r'"addTime"\s*:\s*"?(\d{10,13})"?')
 RE_DETAIL_PAYMENT_TIME = re.compile(
     r'"paymentTime"\s*:\s*"?(\d{10,13})"?')
-MX_TIMEZONE = timezone(timedelta(hours=-6))
+RE_RISK_VERIFY_TEXT = re.compile(
+    r'order is detected to be at risk and needs to be verified'
+    r'|provide the supporting documents according to the instructions', re.I)
+RE_RISK_VERIFY_FLAG = re.compile(r'"is_verify"\s*:\s*"?1"?', re.I)
+RE_RISK_NOT_SUBMITTED = re.compile(
+    r'"sensitive_status"\s*:\s*"no_submit"', re.I)
 # Chrome 网络错误页（如 ERR_CONNECTION_CLOSED，711 代理偶发波动）
 RE_ERR_PAGE = re.compile(r'(ERR_[A-Z_]+)')
 # Cloudflare 安全校验页（2026-08-18 实测 1007：验证会自动通过但需额外等待）
@@ -70,9 +131,33 @@ RE_CF = re.compile(
     r'|Attention Required|Verifica que (eres|no eres)', re.I)
 
 
-def _query_timestamp():
-    """返回墨西哥站当地时间，与 SHEIN 页面的下单时间同时区。"""
-    return datetime.now(MX_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
+def normalize_site(site):
+    value = str(site or 'MX').strip().upper()
+    if value not in SUPPORTED_SITES:
+        raise ValueError('查询站点仅支持 MX（墨西哥）或 US（美国）')
+    return value
+
+
+def _site_profile(site):
+    site = normalize_site(site)
+    base = SITE_PROFILES[site]['baseUrl']
+    return {
+        'site': site,
+        'label': SITE_LABELS[site],
+        'ordersListUrl': base + '/user/orders/list',
+        'orderDetailUrl': base + '/user/orders/detail/%s',
+        'orderTrackUrl': base + '/orders/track?billno=%s',
+        'utcOffsetMinutes': SITE_PROFILES[site]['utcOffsetMinutes'],
+    }
+
+
+def _query_timestamp(site='MX', utc_offset_minutes=None):
+    """返回环境当地时间；浏览器偏移优先，站点配置仅作降级。"""
+    site = normalize_site(site)
+    if utc_offset_minutes is None:
+        utc_offset_minutes = SITE_PROFILES[site]['utcOffsetMinutes']
+    tz = timezone(timedelta(minutes=int(utc_offset_minutes)))
+    return datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
 
 
 def _uniq(items):
@@ -84,62 +169,90 @@ def _uniq(items):
     return out
 
 
-def _norm_order_time(raw):
-    """'17 Ago 2026 03:14:31' → '2026-08-17 03:14:31'（西班牙月转数字）。"""
-    m = re.match(r'(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})\s+'
-                 r'(\d{2}:\d{2}(?::\d{2})?)', raw or '')
-    if not m:
-        return raw or ''
-    day, mon, year, hm = m.groups()
-    mm = ES_MONTH.get(mon[:3].lower())
+def _norm_order_time(raw, site='MX'):
+    """将 MX/US 页面月份文案统一为 ``YYYY-MM-DD HH:MM:SS``。"""
+    site = normalize_site(site)
+    if site == 'MX':
+        m = re.match(r'(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})\s+'
+                     r'(\d{2}:\d{2}(?::\d{2})?)', raw or '')
+        if not m:
+            return raw or ''
+        day, mon, year, hm = m.groups()
+    else:
+        m = re.match(r'([A-Za-z]{3,})\s+(\d{1,2}),?\s+(\d{4})\s+'
+                     r'(\d{2}:\d{2}(?::\d{2})?)', raw or '')
+        if not m:
+            return raw or ''
+        mon, day, year, hm = m.groups()
+    mm = MONTHS[site].get(mon[:3].lower())
     return '%s-%s-%02d %s' % (year, mm, int(day), hm) if mm else raw
 
 
-def _order_time_from_epoch(raw):
-    """SHEIN SSR Unix 时间戳 → 墨西哥站显示时间（UTC-6）。"""
+def _order_time_from_epoch(raw, site='MX', utc_offset_minutes=None):
+    """SHEIN SSR Unix 时间戳 → 当前站点/环境的显示时间。"""
     try:
+        site = normalize_site(site)
         stamp = int(raw)
         if stamp >= 10 ** 12:
             stamp /= 1000.0
+        if utc_offset_minutes is None:
+            utc_offset_minutes = SITE_PROFILES[site]['utcOffsetMinutes']
+        tz = timezone(timedelta(minutes=int(utc_offset_minutes)))
         return datetime.fromtimestamp(
-            stamp, timezone.utc).astimezone(MX_TIMEZONE).strftime(
+            stamp, timezone.utc).astimezone(tz).strftime(
                 '%Y-%m-%d %H:%M:%S')
     except (TypeError, ValueError, OverflowError):
         return ''
 
 
-def parse_list_page(text):
+def _canonical_status(word):
+    wanted = (word or '').casefold()
+    for canonical in STATUS_CN:
+        if canonical.casefold() == wanted:
+            return canonical
+    return word or ''
+
+
+def parse_list_page(text, site='MX'):
     """订单列表页解析。返回 {orderNo, orderTime, amount, status, statusCn, stage}。"""
+    site = normalize_site(site)
     out = {'orderNo': None, 'orderTime': '', 'amount': None, 'status': None,
            'statusCn': None, 'stage': None}
-    order_match = RE_ORDER_NO.search(text)
+    order_match = RE_ORDER_NO_BY_SITE[site].search(text)
     if order_match:
         out['orderNo'] = order_match.group(1)
-    m = RE_ORDER_TIME.search(text)
+    m = RE_ORDER_TIME_BY_SITE[site].search(text)
     if m:
-        out['orderTime'] = _norm_order_time(m.group(1))
-    m = RE_AMOUNT.search(text)
-    if m:
-        out['amount'] = m.group(0)
+        out['orderTime'] = _norm_order_time(m.group(1), site)
     if out['orderNo']:
         # 状态只取“当前订单号之后、详情按钮之前”的订单卡片区域。
         # 不能要求状态是区域最后一个词：1001 实测状态后还有仓库/包裹文案。
-        detail_at = text.find('Detalles de Pedido', order_match.end())
-        card_end = detail_at if detail_at >= 0 else len(text)
+        detail_match = RE_DETAIL_MARKER_BY_SITE[site].search(
+            text, order_match.end())
+        card_end = detail_match.start() if detail_match else len(text)
         card = text[order_match.end():card_end]
-        m = RE_STATUS_WORDS.search(card)
+        m = RE_AMOUNT_BY_SITE[site].search(card)
         if m:
-            word = m.group(1).capitalize()   # EMPACANDO → Empacando
+            out['amount'] = m.group(0)
+        m = RE_STATUS_WORDS_BY_SITE[site].search(card)
+        if m:
+            word = _canonical_status(m.group(1))
             out['status'] = word
             out['statusCn'] = STATUS_CN.get(word, '')
-        m = RE_STAGE.search(text)
+        m = RE_STAGE_BY_SITE[site].search(card)
         if m:
             out['stage'] = m.group(0)
     return out
 
 
-def parse_detail_page(html, text):
+def parse_detail_page(html, text, site='MX', utc_offset_minutes=None):
     """订单详情页解析。列表缺时间时可用 SSR addTime 回填。"""
+    site = normalize_site(site)
+    risk_order = bool(
+        site == 'US' and (
+            RE_RISK_VERIFY_TEXT.search(text or '') or
+            (RE_RISK_VERIFY_FLAG.search(html or '') and
+             RE_RISK_NOT_SUBMITTED.search(html or ''))))
     m = RE_CARRIER.search(html)
     carrier = m.group(1) if m else ''
     m = RE_DETAIL_ADD_TIME.search(html)
@@ -150,8 +263,12 @@ def parse_detail_page(html, text):
         'pkgs': _uniq(RE_PACKAGE_NO.findall(html)),
         'carrier': friendly_carrier(carrier,
                                     _uniq(RE_SHIPPING_NO.findall(html))),
-        'kanDan': bool(RE_KANDAN_TEXT.search(text)),
-        'orderTime': _order_time_from_epoch(m.group(1)) if m else '',
+        'kanDan': bool(RE_KANDAN_TEXT_BY_SITE[site].search(text)),
+        'riskOrder': risk_order,
+        'riskMessage': ('订单被检测为风险订单，需尽快提交证明材料完成验证'
+                        if risk_order else ''),
+        'orderTime': _order_time_from_epoch(
+            m.group(1), site, utc_offset_minutes) if m else '',
     }
 
 
@@ -164,6 +281,11 @@ def friendly_carrier(raw, tracks):
             return 'JT'
         if re.fullmatch(r'49\d{12}', t):
             return 'IMILE'
+    upper = (raw or '').upper()
+    if 'SPX' in upper:
+        return 'SpeedX'
+    if 'GOFO' in upper:
+        return 'GOFO'
     return raw[:25] if raw else ''
 
 
@@ -193,6 +315,7 @@ class QueryOrchestrator(object):
         self.settle_seconds = settle_seconds
         self.env_interval = env_interval
         self.concurrency = max(1, min(5, int(concurrency or 1)))
+        self.site = 'MX'
         # 并发 worker 的 browser/start 阶段全局串行：HubStudio 对同一/多个
         # 同时到达的 start 处理有先后，串行启动可避免 -10005 冲突
         self._start_lock = threading.Lock()
@@ -201,11 +324,15 @@ class QueryOrchestrator(object):
 
     # ---- 行状态 ----
 
-    def _blank_row(self, serial):
+    def _blank_row(self, serial, site=None):
+        site = normalize_site(site or self.site)
         return {'serial': str(serial), 'envName': '', 'state': 'pending',
+                'site': site, 'siteName': SITE_LABELS[site],
                 'orderNo': '', 'orderTime': '', 'amount': '', 'status': '',
                 'statusCn': '', 'stage': '', 'tracks': [], 'pkgs': [],
-                'carrier': '', 'kanDan': False, 'ip': '', 'time': '',
+                'carrier': '', 'kanDan': False, 'riskOrder': False,
+                'riskMessage': '', 'ip': '', 'time': '',
+                'timeZone': '', 'utcOffsetMinutes': None,
                 'error': '', 'screenshotState': 'pending',
                 'screenshotFile': '', 'screenshotError': '',
                 'screenshotSizeKb': 0, 'screenshotWidth': 0,
@@ -220,13 +347,16 @@ class QueryOrchestrator(object):
                 'running': self.running,
                 'current': ', '.join(sorted(self._inflight)),
                 'elapsedSec': elapsed,
+                'site': self.site,
+                'siteName': SITE_LABELS[self.site],
                 'rows': [dict(r) for r in self.rows],
             }
 
     def _update(self, row, **kw):
         with self.lock:
             row.update(kw)
-            row['time'] = _query_timestamp()
+            row['time'] = _query_timestamp(
+                row.get('site') or self.site, row.get('utcOffsetMinutes'))
 
     def _save_snapshot(self, serial, tag, content):
         """查询异常时留存页面快照，便于事后排查。"""
@@ -285,14 +415,17 @@ class QueryOrchestrator(object):
             except Exception:
                 pass
 
-    def _capture_tracking(self, page, serial, order_no, tracks):
+    def _capture_tracking(self, page, serial, order_no, tracks, site='MX'):
         """打开 SHEIN 轨迹页并截取无地址/商品的物流区域。"""
-        page.goto(ORDER_TRACK_URL % order_no,
+        profile = _site_profile(site)
+        page.goto(profile['orderTrackUrl'] % order_no,
                   settle_seconds=min(4.0, self.settle_seconds))
         if 'login' in page.url:
             raise RuntimeError('轨迹页登录失效')
         if not page.wait_selector('.track-steps-content', timeout=25):
             raise RuntimeError('轨迹页未加载出物流节点')
+        track_html = page.outer_html()
+        carrier_match = RE_CARRIER_NAME.search(track_html)
         data, width, height = page.capture_element_union(
             ['.logistics-container-wrapper', '.track-content-card__header',
              '.track-steps-content'],
@@ -320,21 +453,25 @@ class QueryOrchestrator(object):
             f.write(data)
         with self.lock:
             self._screenshots[str(serial)] = path
-        return {
+        result = {
             'screenshotState': 'ok', 'screenshotFile': filename,
             'screenshotError': '',
             'screenshotSizeKb': max(1, int(round(len(data) / 1024.0))),
             'screenshotWidth': width, 'screenshotHeight': height,
         }
+        if carrier_match:
+            result['carrier'] = carrier_match.group(1)
+        return result
 
     # ---- 查询入口 ----
 
-    def start_batch(self, serials, env_index=None):
+    def start_batch(self, serials, env_index=None, site='MX'):
         """启动批量查询线程。env_index: {serialNumber(str): env dict}。"""
         if self.running:
             raise RuntimeError('已有查询在进行中')
+        site = normalize_site(site)
         threading.Thread(
-            target=self._run, args=(list(serials), env_index or {}),
+            target=self._run, args=(list(serials), env_index or {}, True, site),
             daemon=True).start()
 
     def requery(self, serial, env_index=None, force=False):
@@ -353,8 +490,10 @@ class QueryOrchestrator(object):
             raise ValueError('该序号不在当前结果中，请重新发起批量查询')
         if force:
             self._force_stops.add(serial)
+        site = row.get('site') or self.site
         threading.Thread(
-            target=self._run, args=([serial], env_index or {}, False),
+            target=self._run,
+            args=([serial], env_index or {}, False, site),
             daemon=True).start()
 
     def requery_failed(self, env_index=None):
@@ -371,8 +510,11 @@ class QueryOrchestrator(object):
                                          'stopped')]
         if not serials:
             raise ValueError('没有可重查的异常行（失败 / 使用中 / 未查询）')
+        with self.lock:
+            site = next((r.get('site') for r in self.rows
+                         if r['serial'] in serials), self.site)
         threading.Thread(
-            target=self._run, args=(serials, env_index or {}, False),
+            target=self._run, args=(serials, env_index or {}, False, site),
             daemon=True).start()
         return len(serials)
 
@@ -381,9 +523,11 @@ class QueryOrchestrator(object):
 
     # ---- 主流程 ----
 
-    def _run(self, serials, env_index, fresh=True):
+    def _run(self, serials, env_index, fresh=True, site='MX'):
+        site = normalize_site(site)
         self.stop_event = threading.Event()
         with self.lock:
+            self.site = site
             self.running = True
             self.started_at = time.time()
             self.finished_at = None
@@ -392,7 +536,7 @@ class QueryOrchestrator(object):
             if fresh:
                 self._reset_screenshots()
                 with self.lock:
-                    self.rows = [self._blank_row(s) for s in serials]
+                    self.rows = [self._blank_row(s, site) for s in serials]
             if not env_index:
                 try:
                     env_index = {str(e.get('serialNumber')): e
@@ -424,7 +568,7 @@ class QueryOrchestrator(object):
                         self._inflight.add(str(serial))
                     try:
                         self._query_one(row, str(serial), env_index,
-                                        open_codes)
+                                        open_codes, site)
                     finally:
                         with self.lock:
                             self._inflight.discard(str(serial))
@@ -448,7 +592,9 @@ class QueryOrchestrator(object):
             for r in self.rows:
                 if r['state'] in ('pending', 'running'):
                     r.update(state='fail', error=reason,
-                             time=_query_timestamp())
+                             time=_query_timestamp(
+                                 r.get('site') or self.site,
+                                 r.get('utcOffsetMinutes')))
 
     def _read_text_stable(self, page, ready_re=None, cf_wait=30, step=3):
         """读页面文本。
@@ -491,7 +637,9 @@ class QueryOrchestrator(object):
                         continue
                     raise
 
-    def _query_one(self, row, serial, env_index, open_codes):
+    def _query_one(self, row, serial, env_index, open_codes, site='MX'):
+        site = normalize_site(site)
+        profile = _site_profile(site)
         self._remove_screenshot(serial)
         self._update(
             row, screenshotState='pending', screenshotFile='',
@@ -502,8 +650,16 @@ class QueryOrchestrator(object):
             self._update(row, state='fail', error='未找到该环境序号')
             return
         code = str(env.get('containerCode'))
-        self._update(row, envName=env.get('containerName') or '',
+        env_name = env.get('containerName') or ''
+        self._update(row, envName=env_name,
                      state='running')
+        env_site = re.search(r'-(MX|US)-', env_name, re.I)
+        if env_site and env_site.group(1).upper() != site:
+            self._update(
+                row, state='fail', error=(
+                    '环境名显示为 %s 站，与所选 %s 站不一致；已跳过，未打开环境'
+                    % (env_site.group(1).upper(), site)))
+            return
         if code in open_codes:
             if serial in self._force_stops:
                 # 孤儿窗口清理：上次查询中断残留的打开状态，关闭后重查
@@ -529,13 +685,27 @@ class QueryOrchestrator(object):
             ip = data.get('ip') or ''
             cdp = CdpClient(port)
             page = cdp.new_page()
+            try:
+                time_zone = page._evaluate(
+                    'Intl.DateTimeFormat().resolvedOptions().timeZone') or ''
+                # JS getTimezoneOffset 是“当地时间到 UTC”的分钟数，转换为
+                # Python timezone 需要取反，例如 Chicago 夏令时 300 → -300。
+                js_offset = page._evaluate('new Date().getTimezoneOffset()')
+                utc_offset = -int(js_offset)
+            except (TypeError, ValueError):
+                time_zone = ''
+                utc_offset = profile['utcOffsetMinutes']
+            self._update(
+                row, timeZone=time_zone, utcOffsetMinutes=utc_offset)
 
             # 1) 订单列表页：订单号 / 金额 / 状态 / 下单时间
             #    错误页与 Cloudflare 验证页均自动重试（最多 3 次）
             info, err = None, None
             for attempt in (1, 2, 3):
-                page.goto(ORDERS_LIST_URL, settle_seconds=self.settle_seconds)
-                text = self._read_text_stable(page, ready_re=RE_ORDER_NO)
+                page.goto(profile['ordersListUrl'],
+                          settle_seconds=self.settle_seconds)
+                text = self._read_text_stable(
+                    page, ready_re=RE_ORDER_NO_BY_SITE[site])
                 if 'login' in page.url:
                     self._save_snapshot(serial, 'list_login',
                                         page.outer_html())
@@ -552,7 +722,7 @@ class QueryOrchestrator(object):
                     self._save_snapshot(serial, 'list_cf%d' % attempt,
                                         page.outer_html())
                     continue
-                info = parse_list_page(text)
+                info = parse_list_page(text, site)
                 break
             if info is None:
                 self._update(row, state='fail', ip=ip,
@@ -567,7 +737,7 @@ class QueryOrchestrator(object):
                          **{k: v for k, v in info.items() if v})
 
             # 2) 详情页：物流单号 / 承运商 / 砍单
-            page.goto(ORDER_DETAIL_URL % info['orderNo'],
+            page.goto(profile['orderDetailUrl'] % info['orderNo'],
                       settle_seconds=self.settle_seconds)
             dtext = self._read_text_stable(page)
             if 'login' in page.url:
@@ -586,16 +756,26 @@ class QueryOrchestrator(object):
                              error='详情页安全验证未通过（Cloudflare），可点重查')
                 return
             html = page.outer_html()
-            detail = parse_detail_page(html, dtext)
+            detail = parse_detail_page(
+                html, dtext, site, utc_offset_minutes=utc_offset)
             # 砍单双信号：列表状态或详情文案任一命中即判定
-            if (detail['kanDan'] or info['status'] == 'Reembolsando') \
-                    and info['status'] != 'Reembolsando':
-                info = dict(info, status='Reembolsando',
-                            statusCn=STATUS_CN['Reembolsando'])
+            refund_statuses = (
+                {'Reembolsando'} if site == 'MX' else {'Refunding', 'Refunded'})
+            if detail['kanDan'] and info['status'] not in refund_statuses:
+                forced = 'Reembolsando' if site == 'MX' else 'Refunding'
+                info = dict(info, status=forced,
+                            statusCn=STATUS_CN[forced])
+            if info['status'] in refund_statuses:
+                detail['kanDan'] = True
+            # 详情页风险验证是履约阻断，优先于列表页的 Paid；若已进入
+            # 退款状态，则退款是更新、更终局的业务状态。
+            if detail['riskOrder'] and not detail['kanDan']:
+                info = dict(info, status='Risk verification',
+                            statusCn=STATUS_CN['Risk verification'])
             if detail['tracks']:
                 try:
                     screenshot = self._capture_tracking(
-                        page, serial, info['orderNo'], detail['tracks'])
+                        page, serial, info['orderNo'], detail['tracks'], site)
                 except Exception as e:
                     screenshot = {
                         'screenshotState': 'fail', 'screenshotFile': '',

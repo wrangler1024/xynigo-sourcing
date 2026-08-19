@@ -15,20 +15,22 @@ workflows contributed by **Samforo**.
 
 ## Current modules
 
-- Order and shipment lookup, including privacy-scoped tracking screenshots.
+- Mexico and United States order and shipment lookup, including
+  privacy-scoped tracking screenshots.
 - Buyer-account registration with explicit terms acknowledgement and manual
   takeover for unrecognized verification flows.
 - Batch HubStudio environment creation with dry-run, explicit write
   confirmation, resumable state, and credential-free mapping exports.
 - Optional Lark Base ledger integration configured entirely at runtime.
 
-The current stable release is `v0.6.2`. The project is under active
+The current stable release is `v0.6.3`. The project is under active
 development and is not yet a hosted SaaS product.
 
-v0.6.2 standardizes every browser favicon entry on the final Xynigo X icon and
-bumps the icon cache key. It also provides a focused v0.6.1-to-v0.6.2 online
-update acceptance path. Existing business logic and local-only data boundaries
-remain unchanged.
+v0.6.3 adds United States support to order and shipment lookup, including the
+US routes, English order states, commercial carrier names, tracking numbers,
+privacy-scoped screenshots, risk-verification orders, and each HubStudio
+environment's local browser time. Mexico behavior remains compatible, and
+site/environment mismatches are rejected before a browser is opened.
 
 ## Requirements
 
