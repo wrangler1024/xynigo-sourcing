@@ -1,36 +1,30 @@
 # Xynigo Sourcing
 
-Xynigo Sourcing is an early-stage, open-source sourcing orchestration system
-for cross-border ecommerce teams. It combines a local web interface with
-HubStudio Local API and browser automation.
+[简体中文](README.md) | [English](README_EN.md)
 
-> This project is not affiliated with or endorsed by SHEIN, HubStudio,
-> Microsoft, Feishu, or Lark. Use it only with accounts and systems you are
-> authorized to operate, and comply with applicable platform terms and laws.
+Xynigo Sourcing 是一套面向跨境电商团队的开源代采协同系统，目前处于早期开发阶段。项目通过本地 Web 界面整合 HubStudio Local API 与浏览器自动化能力，帮助团队逐步规范采购环境、买家账号、订单和物流等工作流程。
 
-Maintained by **Velane Technology**. Field-tested by **Xynigo**. Business
-workflows contributed by **Samforo**.
+> 本项目与 SHEIN、HubStudio、Microsoft、飞书或 Lark 不存在隶属、合作或官方背书关系。请仅操作你有权使用的账号和系统，并遵守适用的平台规则及法律法规。
 
-## Current modules
+项目由 **Velane Technology** 维护，由 **Xynigo** 负责实践验证，业务流程由 **Samforo** 贡献。
 
-- Order and shipment lookup, including privacy-scoped tracking screenshots.
-- Buyer-account registration with explicit terms acknowledgement and manual
-  takeover for unrecognized verification flows.
-- Batch HubStudio environment creation with dry-run, explicit write
-  confirmation, resumable state, and credential-free mapping exports.
-- Optional Lark Base ledger integration configured entirely at runtime.
+## 当前模块
 
-The current public preview is `v0.4.2`. The project is under active
-development and is not yet a hosted SaaS product.
+- 订单及物流查询，包括限定隐私范围的物流截图。
+- 买家账号注册，包含条款确认，以及遇到无法识别的验证流程时转交人工处理。
+- 批量创建 HubStudio 环境，支持预演、写入确认、断点续作及不含凭证的映射结果导出。
+- 可选的 Lark Base 台账集成，相关参数全部在运行时配置。
 
-## Requirements
+当前公开预览版本为 `v0.4.2`。项目正在持续开发，暂未提供托管式 SaaS 服务。
 
-- Python 3.9 or later.
-- A locally installed and signed-in HubStudio client.
-- `websocket-client` and `openpyxl`.
-- Optional: `lark-cli` for the Lark Base adapter.
+## 环境要求
 
-## Quick start
+- Python 3.9 或更高版本。
+- 本地已安装并登录 HubStudio 客户端。
+- `websocket-client` 和 `openpyxl`。
+- 可选：使用 Lark Base 适配器时需要 `lark-cli`。
+
+## 快速开始
 
 ```bash
 python3 -m venv .venv
@@ -39,69 +33,59 @@ python -m pip install -e .
 python -m purchase_tool
 ```
 
-The local UI opens at `http://127.0.0.1:8765`. If the port is occupied, the
-application tries the next available port.
+本地界面默认打开 `http://127.0.0.1:8765`。如果端口已被占用，程序会自动尝试下一个可用端口。
 
-On macOS, `启动-Mac.command` provides the same local development entry point.
+在 macOS 上，也可以通过 `启动-Mac.command` 启动本地开发版本。
 
-## Runtime configuration
+## 运行时配置
 
-No deployment identifiers, API keys, cookies, account credentials, proxy
-URLs, or Lark record IDs are stored in this repository.
+本仓库不保存部署标识、API Key、Cookie、账号凭证、代理链接或 Lark 记录 ID。
 
-| Environment variable | Purpose |
+| 环境变量 | 用途 |
 |---|---|
-| `XYNIGO_PROXY_LINK` | HubStudio dynamic-proxy extraction URL used only when creating a new environment |
-| `XYNIGO_PURCHASE_TAG` | HubStudio group for purchasing environments |
-| `XYNIGO_REGISTER_TAG` | HubStudio group for registration environments |
-| `XYNIGO_LARK_BASE_TOKEN` | Optional Lark Base token |
-| `XYNIGO_LARK_TABLE_ID` | Optional Lark Base table ID |
-| `XYNIGO_LARK_OPERATOR_OPEN_ID` | Optional operator ID used by the ledger backfill command |
+| `XYNIGO_PROXY_LINK` | 创建新环境时使用的 HubStudio 动态代理提取链接 |
+| `XYNIGO_PURCHASE_TAG` | HubStudio 采购环境分组 |
+| `XYNIGO_REGISTER_TAG` | HubStudio 注册环境分组 |
+| `XYNIGO_LARK_BASE_TOKEN` | 可选的 Lark Base Token |
+| `XYNIGO_LARK_TABLE_ID` | 可选的 Lark Base 数据表 ID |
+| `XYNIGO_LARK_OPERATOR_OPEN_ID` | 台账回填命令使用的可选操作人 ID |
 
-Local UI preferences are stored in `config.json`, which is ignored by Git.
-Sensitive input workbooks must remain outside the repository.
+本地界面偏好保存在 `config.json` 中，该文件已被 Git 忽略。包含敏感信息的输入工作簿必须放在仓库之外。
 
-## Security model
+## 安全设计
 
-- Real credentials are accepted only at runtime and are redacted from progress
-  responses and logs.
-- Sensitive temporary payloads use restrictive file permissions where the
-  operating system supports them.
-- Real platform writes require explicit confirmation.
-- Batch resume files contain only irreversible account identifiers and
-  non-secret progress metadata.
-- Update and release packages must never contain local `config.json`, logs, or
-  user input files.
+- 真实凭证仅在运行时接收，并在进度信息及日志中脱敏。
+- 操作系统支持时，敏感临时数据使用限制性文件权限。
+- 对真实平台执行写入操作前必须明确确认。
+- 批次续作文件仅保存不可逆的账号标识及非敏感进度信息。
+- 更新包和发行包不得包含本地 `config.json`、日志或用户输入文件。
 
-See [SECURITY.md](SECURITY.md) before deploying or reporting a vulnerability.
+部署或报告安全问题前，请先阅读 [SECURITY.md](SECURITY.md)。
 
-## Tests
+## 测试
 
 ```bash
 python -m pip install -e .
 python -m unittest discover -s tests
 ```
 
-All committed tests use synthetic accounts, example domains, and fake cookie
-values.
+仓库内所有测试均使用合成账号、示例域名和虚拟 Cookie。
 
-## Windows portable build
+## Windows 绿色包构建
 
 ```bash
 bash 组装Windows绿色包.sh
 ```
 
-The build is written to `dist/`. The script packages the application with the
-official Windows embeddable Python runtime. Online update support is planned;
-until it lands, releases remain full portable packages.
+构建产物会写入 `dist/`。脚本使用 Windows 官方嵌入式 Python 运行时打包应用。在线更新功能正在规划中；在该功能完成前，每次发布仍使用完整绿色包。
 
-## Roadmap
+## 路线图
 
-- GitHub Releases-based online updates with checksum verification and rollback.
-- Separate preview and stable update channels.
-- Centralized version metadata and automated release builds.
-- Additional sourcing, order, fulfillment, and reporting modules.
+- 基于 GitHub Releases 的在线更新，支持校验和验证及失败回滚。
+- 分离预览版和稳定版更新通道。
+- 统一版本元数据并实现自动化发行构建。
+- 持续增加代采、订单、履约和报表模块。
 
-## License
+## 开源协议
 
-Apache License 2.0. See [LICENSE](LICENSE).
+本项目采用 Apache License 2.0，详情参见 [LICENSE](LICENSE)。
