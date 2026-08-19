@@ -63,7 +63,8 @@ class WindowsUpdateHelperTests(unittest.TestCase):
             '-BackupDir', str(self.backup),
             '-SkipWait', '-NoRestart',
             '-TestFailAfterInstall', str(fail_after),
-        ], capture_output=True, text=True, timeout=90)
+        ], capture_output=True, text=True, encoding='utf-8',
+           errors='replace', timeout=90)
 
     def _assert_preserved(self):
         self.assertEqual(

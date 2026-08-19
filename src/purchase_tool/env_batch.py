@@ -411,7 +411,7 @@ def _write_private_json(path, payload):
     try:
         try:
             os.fchmod(fd, 0o600)
-        except OSError:
+        except (AttributeError, OSError):
             pass
         with os.fdopen(fd, 'w', encoding='utf-8') as handle:
             json.dump(payload, handle, ensure_ascii=False, indent=2)
