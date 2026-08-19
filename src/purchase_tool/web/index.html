@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Xynigo Sourcing v0.4.2</title>
+<title>Xynigo Sourcing v0.5.0</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   :root {
@@ -92,6 +92,9 @@
   .modal .field { margin-bottom: 14px; }
   .modal input[type=text] { width: 100%; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 14px; outline: none; }
   .modal .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+  .query-col-checks { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 8px; }
+  .query-col-checks label { display: flex; align-items: center; gap: 6px; font-weight: 400; }
+  #queryTable.hide-env-name .col-envName, #queryTable.hide-ip .col-ip { display: none; }
   .image-modal { width: min(1100px, calc(100vw - 40px)); padding: 16px; }
   .image-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
   .image-modal-head h3 { margin: 0; }
@@ -130,7 +133,7 @@
 <body>
 
 <header class="topbar">
-  <div class="brand">🛒 Xynigo Sourcing <span class="module" id="moduleLabel">模块一 · 批量查询物流单号</span><span class="ver">v0.4.2</span></div>
+  <div class="brand">🛒 Xynigo Sourcing <span class="module" id="moduleLabel">模块一 · 批量查询物流单号</span><span class="ver">v0.5.0</span></div>
   <div class="topbar-right">
     <span class="pill checking" id="hubStatus" title="点击重新检测连接">⏳ 正在检测 HubStudio…</span>
     <button class="btn" id="btnSettings">⚙ 设置</button>
@@ -182,11 +185,11 @@
       <span class="legend">状态说明：Enviado=已发货 · Empacando=打包中 · Procesando=备货中 · Entregado=已送达 · Reembolsando=砍单退款中（5-15个工作日到账）</span>
     </div>
     <div class="table-wrap">
-      <table>
+      <table id="queryTable" class="hide-env-name hide-ip">
         <thead>
           <tr>
-            <th>序号</th><th>环境名</th><th>订单号</th><th>下单时间</th><th>金额</th><th>状态</th>
-            <th>物流单号</th><th>承运商</th><th>物流轨迹截图</th><th>出口IP</th><th>结果</th><th>查询时间（墨西哥）</th><th>操作</th>
+            <th>序号</th><th class="col-envName">环境名</th><th>订单号</th><th>下单时间</th><th>金额</th><th>状态</th>
+            <th>物流单号</th><th>承运商</th><th>物流轨迹截图</th><th class="col-ip">出口IP</th><th>结果</th><th>查询时间（墨西哥）</th><th>操作</th>
           </tr>
         </thead>
         <tbody id="tbody">
@@ -230,7 +233,7 @@
         <label><input type="checkbox" id="regAcceptTerms"> <span>我确认继续即接受 SHEIN 页面展示的隐私政策、Cookie 政策和条款条件。</span></label>
         <label><input type="checkbox" id="regMsPrivacy"> <span>如果微软首次登录展示隐私通知，允许确认该通知（不创建通行密钥，不选“保持登录”）。</span></label>
         <label><input type="checkbox" id="regKeepOpen"> <span>成功后保持环境打开（默认关闭并归档登录态）。</span></label>
-        <label><input type="checkbox" id="regWriteLedger"> <span>成功后回写飞书「希音采购买家号台账」（每个任务必须已有 record_id；不自动创建/猜测记录）。</span></label>
+        <label><input type="checkbox" id="regWriteLedger"> <span>成功后回写已配置的 Lark Base 台账（每个任务必须已有 record_id；不自动创建/猜测记录）。</span></label>
       </div>
       <div class="action-row">
         <button class="btn primary" id="btnRegStart" disabled>▶ 开始注册</button>
@@ -332,6 +335,14 @@
       <input type="text" id="cfgConcurrency" value="2">
     </div>
     <div class="field">
+      <label>模块一 · 查询结果隐藏字段</label>
+      <div class="query-col-checks">
+        <label><input type="checkbox" id="cfgHideEnvName" checked> 环境名</label>
+        <label><input type="checkbox" id="cfgHideIp" checked> 出口 IP</label>
+      </div>
+      <div class="hint">仅影响 Web 页面展示，Excel 导出始终保留完整字段。</div>
+    </div>
+    <div class="field">
       <label>模块三 · 验证抽查数（0-10）</label>
       <input type="text" id="cfgEnvVerify" value="3">
     </div>
@@ -378,6 +389,8 @@ let regRunning = false;
 let envPlanId = null;
 let envAccountCount = 0;
 let envRunning = false;
+let activeModule = 'query';
+let hiddenQueryColumns = new Set(['envName', 'ip']);
 
 function localYmd() {
   const now = new Date();
@@ -414,6 +427,21 @@ function setHubStatus(connected) {
   else { pill.className = 'pill bad'; pill.textContent = '🔴 HubStudio 未连接，点此重试'; }
 }
 
+function setHiddenQueryColumns(columns) {
+  hiddenQueryColumns = new Set(Array.isArray(columns) ? columns : []);
+  const table = $('queryTable');
+  table.classList.toggle('hide-env-name', hiddenQueryColumns.has('envName'));
+  table.classList.toggle('hide-ip', hiddenQueryColumns.has('ip'));
+}
+
+async function loadQueryDisplayConfig() {
+  try {
+    const cfg = await api('/api/config');
+    setHiddenQueryColumns(cfg.hiddenQueryColumns || []);
+  } catch (e) {}
+}
+loadQueryDisplayConfig();
+
 /* ---------- 渲染 ---------- */
 
 const ST_CLS = { 'Enviado': 'st-enviado', 'Procesando': 'st-procesando', 'Empacando': 'st-procesando', 'Entregado': 'st-entregado',
@@ -431,18 +459,18 @@ function renderRows(rows) {
     const serial = esc(r.serial), name = esc(r.envName);
     if (s === 'pending') {
       const label = (!isRunning && stopRequested) ? '已停止' : '未查询';
-      return `<tr class="row-pending"><td class="mono">${serial}</td><td>${name}</td><td colspan="11">${label}</td></tr>`;
+      return `<tr class="row-pending"><td class="mono">${serial}</td><td class="col-envName">${name}</td><td colspan="11">${label}</td></tr>`;
     }
-    if (s === 'running') return `<tr class="row-running"><td class="mono">${serial}</td><td>${name}</td><td colspan="11"><span class="spinner"></span>正在查询并生成轨迹截图…</td></tr>`;
+    if (s === 'running') return `<tr class="row-running"><td class="mono">${serial}</td><td class="col-envName">${name}</td><td colspan="11"><span class="spinner"></span>正在查询并生成轨迹截图…</td></tr>`;
     const tip = s === 'login' ? '（先在 HubStudio 中手动登录该买家号，再来点此重查）' : '';
     const inuseBtn = s === 'inuse'
       ? `<button class="btn-mini" data-req="${serial}" data-force="1" title="该环境浏览器处于打开状态。确认是查询残留窗口才可关闭重查；若有人正在使用该环境请勿点击">🔌 关闭并重查</button>`
       : `<button class="btn-mini" data-req="${serial}" title="重新查询该环境${tip}">🔄 重新查询</button>`;
     const act = inuseBtn;
     const finish = () => `<td class="mono">${r.time || '—'}</td><td>${act}</td>`;
-    if (s === 'login') return `<tr class="row-login"><td class="mono">${serial}</td><td>${name}</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="mono">${esc(r.ip) || '—'}</td><td><span class="badge login">🔴 登录失效</span></td>${finish()}</tr>`;
-    if (s === 'inuse') return `<tr class="row-inuse"><td class="mono">${serial}</td><td>${name}</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td><span class="badge inuse">🟡 环境使用中，已跳过</span></td>${finish()}</tr>`;
-    if (s === 'fail') return `<tr class="row-fail"><td class="mono">${serial}</td><td>${name}</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="mono">${esc(r.ip) || '—'}</td><td><span class="badge fail">⚠ ${esc(r.error) || '失败'}</span></td>${finish()}</tr>`;
+    if (s === 'login') return `<tr class="row-login"><td class="mono">${serial}</td><td class="col-envName">${name}</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="mono col-ip">${esc(r.ip) || '—'}</td><td><span class="badge login">🔴 登录失效</span></td>${finish()}</tr>`;
+    if (s === 'inuse') return `<tr class="row-inuse"><td class="mono">${serial}</td><td class="col-envName">${name}</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="col-ip">—</td><td><span class="badge inuse">🟡 环境使用中，已跳过</span></td>${finish()}</tr>`;
+    if (s === 'fail') return `<tr class="row-fail"><td class="mono">${serial}</td><td class="col-envName">${name}</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="mono col-ip">${esc(r.ip) || '—'}</td><td><span class="badge fail">⚠ ${esc(r.error) || '失败'}</span></td>${finish()}</tr>`;
     // ok
     const st = (r.status || '') + (r.statusCn ? ' ' + r.statusCn : '');
     const stBadge = r.status ? `<span class="badge ${ST_CLS[r.status] || 'st-procesando'}">${esc(st)}</span>` : '—';
@@ -454,7 +482,7 @@ function renderRows(rows) {
       : (r.screenshotState === 'fail'
         ? `<span title="${esc(r.screenshotError)}">⚠ 截图失败</span>`
         : '—（暂无物流）');
-    return `<tr class="row-success"><td class="mono">${serial}</td><td>${name}</td><td class="mono">${esc(r.orderNo)}</td><td class="mono">${esc(r.orderTime) || '—'}</td><td>${esc(r.amount)}</td><td>${stBadge}</td><td>${tracks}</td><td>${esc(r.carrier) || '—'}</td><td>${shot}</td><td class="mono">${esc(r.ip)}</td><td><span class="badge ok">✔ 成功</span></td>${finish()}</tr>`;
+    return `<tr class="row-success"><td class="mono">${serial}</td><td class="col-envName">${name}</td><td class="mono">${esc(r.orderNo)}</td><td class="mono">${esc(r.orderTime) || '—'}</td><td>${esc(r.amount)}</td><td>${stBadge}</td><td>${tracks}</td><td>${esc(r.carrier) || '—'}</td><td>${shot}</td><td class="mono col-ip">${esc(r.ip)}</td><td><span class="badge ok">✔ 成功</span></td>${finish()}</tr>`;
   }).join('');
 }
 
@@ -499,6 +527,7 @@ function render(snap) {
 /* ---------- 轮询 ---------- */
 
 async function poll() {
+  if (activeModule !== 'query') return;
   try { render(await api('/api/progress')); }
   catch (e) {
     if (hubConnected !== false) {
@@ -511,6 +540,7 @@ setInterval(poll, 1500);
 poll();
 
 async function pollRegister() {
+  if (activeModule !== 'register') return;
   try {
     const snap = await api('/api/register/progress');
     regRunning = snap.running;
@@ -574,6 +604,7 @@ function renderEnvBatch(snap) {
 }
 
 async function pollEnvBatch() {
+  if (activeModule !== 'envbatch') return;
   try { renderEnvBatch(await api('/api/envbatch/progress')); } catch (e) {}
 }
 setInterval(pollEnvBatch, 1500);
@@ -691,11 +722,15 @@ document.querySelectorAll('[data-module]').forEach(btn => {
   btn.onclick = () => {
     document.querySelectorAll('[data-module]').forEach(x => x.classList.toggle('active', x === btn));
     const module = btn.dataset.module;
+    activeModule = module;
     $('queryPanel').classList.toggle('hidden', module !== 'query');
     $('registerPanel').classList.toggle('hidden', module !== 'register');
     $('envPanel').classList.toggle('hidden', module !== 'envbatch');
     const labels = {query:'模块一 · 批量查询物流单号',register:'模块二 · 买家号注册',envbatch:'模块三 · 买家号批量建环境'};
     $('moduleLabel').textContent = labels[module];
+    if (module === 'query') poll();
+    else if (module === 'register') pollRegister();
+    else pollEnvBatch();
   };
 });
 
@@ -891,6 +926,9 @@ $('btnSettings').onclick = async () => {
     const cfg = await api('/api/config');
     $('cfgPort').value = cfg.hubPort || 6873;
     $('cfgConcurrency').value = cfg.concurrency || 2;
+    setHiddenQueryColumns(cfg.hiddenQueryColumns || []);
+    $('cfgHideEnvName').checked = hiddenQueryColumns.has('envName');
+    $('cfgHideIp').checked = hiddenQueryColumns.has('ip');
     $('cfgEnvVerify').value = cfg.verifySampleCount == null ? 3 : cfg.verifySampleCount;
     $('cfgEnvAssign').value = cfg.importBuyerPlan || '1:Operator-A';
   } catch (e) {}
@@ -907,10 +945,14 @@ $('btnCfgSave').onclick = async () => {
   const importBuyerPlan = $('cfgEnvAssign').value.trim();
   if (!importBuyerPlan) { toast('模块三采购员分配模板不能为空'); return; }
   try {
+    const hiddenQueryColumns = [];
+    if ($('cfgHideEnvName').checked) hiddenQueryColumns.push('envName');
+    if ($('cfgHideIp').checked) hiddenQueryColumns.push('ip');
     const j = await api('/api/config', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ hubPort: port, concurrency: conc, verifySampleCount: verifyCount, importBuyerPlan })
+      body: JSON.stringify({ hubPort: port, concurrency: conc, verifySampleCount: verifyCount, importBuyerPlan, hiddenQueryColumns })
     });
+    setHiddenQueryColumns(hiddenQueryColumns);
     $('envVerifyCount').value = verifyCount;
     if (!envPlanId) $('envAssign').value = importBuyerPlan;
     $('settingsMask').classList.remove('show');

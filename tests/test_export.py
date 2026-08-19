@@ -54,11 +54,11 @@ class ExportTests(unittest.TestCase):
             screenshot_col = next(
                 col for col in sheet_root.findall('.//x:col', ns)
                 if col.attrib.get('min') == '10')
-            self.assertLessEqual(float(screenshot_col.attrib['width']), 24)
+            self.assertLessEqual(float(screenshot_col.attrib['width']), 18)
             row_two = next(
                 row for row in sheet_root.findall('.//x:row', ns)
                 if row.attrib.get('r') == '2')
-            self.assertLessEqual(float(row_two.attrib['ht']), 65)
+            self.assertLessEqual(float(row_two.attrib['ht']), 49)
             styles_xml = archive.read('xl/styles.xml').decode('utf-8')
             self.assertIn('style="thin"', styles_xml)
             self.assertIn('B7C9E2', styles_xml)

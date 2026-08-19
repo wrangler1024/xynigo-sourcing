@@ -22,7 +22,7 @@ workflows contributed by **Samforo**.
   confirmation, resumable state, and credential-free mapping exports.
 - Optional Lark Base ledger integration configured entirely at runtime.
 
-The current public preview is `v0.4.2`. The project is under active
+The current stable release is `v0.5.0`. The project is under active
 development and is not yet a hosted SaaS product.
 
 ## Requirements
@@ -93,13 +93,26 @@ values.
 bash 组装Windows绿色包.sh
 ```
 
-The build is written to `dist/`. The script packages the application with the
-official Windows embeddable Python runtime. Online update support is planned;
-until it lands, releases remain full portable packages.
+The build is written to `dist/` and includes the full portable ZIP, a SHA-256
+file, and a machine-readable update manifest. The script packages the
+application with the official Windows embeddable Python runtime.
+
+### Windows online updates
+
+- v0.5.0 must still be downloaded and fully extracted manually once.
+- Starting with v0.5.0, `启动.bat` checks the latest stable GitHub Release.
+  Enter `Y` to update or `N` to skip.
+- No GitHub account or Git installation is required. Downloads inherit the
+  Windows network configuration, including system proxies and transparent TUN
+  adapters.
+- Packages are verified with SHA-256 before replacement. The current program
+  is backed up first and automatically rolled back if replacement fails.
+- Only managed program files are replaced. `config.json`, local data, logs,
+  and user-imported files remain in place. Update-check failures never block
+  normal startup.
 
 ## Roadmap
 
-- GitHub Releases-based online updates with checksum verification and rollback.
 - Separate preview and stable update channels.
 - Centralized version metadata and automated release builds.
 - Additional sourcing, order, fulfillment, and reporting modules.

@@ -60,6 +60,7 @@ def load_config():
         'concurrency': 2,
         'importBuyerPlan': '1:Operator-A',
         'verifySampleCount': 3,
+        'hiddenQueryColumns': ['envName', 'ip'],
     }
     try:
         with open(CONFIG_PATH, encoding='utf-8') as f:
@@ -74,6 +75,42 @@ def save_config(cfg):
         json.dump(cfg, f, ensure_ascii=False, indent=2)
 
 
+class HubStatusCache(object):
+    """Cache connection state so independent UI polls cannot flood HubStudio."""
+
+    def __init__(self, hub_getter, ttl_seconds=12.0):
+        self.hub_getter = hub_getter
+        self.ttl_seconds = float(ttl_seconds)
+        self.lock = threading.Lock()
+        self.value = None
+        self.error = ''
+        self.checked_at = 0.0
+
+    def reset(self):
+        with self.lock:
+            self.value = None
+            self.error = ''
+            self.checked_at = 0.0
+
+    def check(self, force=False):
+        with self.lock:
+            now = time.monotonic()
+            if (not force and self.value is not None
+                    and now - self.checked_at < self.ttl_seconds):
+                return self.value, self.error
+            ok, err = self.hub_getter().ping_detail()
+            # E010205 is a rate-limit response, not proof that the local
+            # client disconnected. Preserve the last observed state.
+            if (not ok and 'E010205' in (err or '')
+                    and self.value is not None):
+                self.checked_at = now
+                return self.value, self.error
+            self.value = bool(ok)
+            self.error = err or ''
+            self.checked_at = now
+            return self.value, self.error
+
+
 class AppState(object):
     """进程级共享状态：配置 + HubStudio 连接 + 编排器。"""
 
@@ -81,6 +118,7 @@ class AppState(object):
         cfg = load_config()
         self.cfg = cfg
         self.hub = HubStudioApi(port=cfg['hubPort'])
+        self._hub_status = HubStatusCache(lambda: self.hub)
         self.orch = QueryOrchestrator(
             self.hub, log_dir=LOG_DIR,
             concurrency=cfg.get('concurrency', 2))
@@ -93,7 +131,11 @@ class AppState(object):
         self.orch = QueryOrchestrator(
             self.hub, log_dir=LOG_DIR,
             concurrency=self.cfg.get('concurrency', 2))
-        return self.hub.ping()
+        self._hub_status.reset()
+        return self.hub_status(force=True)[0]
+
+    def hub_status(self, force=False):
+        return self._hub_status.check(force=force)
 
 
 def build_state():
@@ -562,7 +604,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_response(204)
                 self.end_headers()
             elif path == '/api/hub-status':
-                ok, err = STATE.hub.ping_detail()
+                ok, err = STATE.hub_status(force=True)
                 self._json({'connected': ok, 'error': err})
             elif path == '/api/groups':
                 self._json({'groups': STATE.hub.group_list()})
@@ -576,15 +618,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({'serials': serials, 'count': len(serials)})
             elif path == '/api/progress':
                 snap = STATE.orch.snapshot()
-                snap['hubConnected'] = STATE.hub.ping()
+                snap['hubConnected'] = STATE.hub_status()[0]
                 self._json(snap)
             elif path == '/api/register/progress':
                 snap = STATE.reg_job.snapshot()
-                snap['hubConnected'] = STATE.hub.ping()
+                snap['hubConnected'] = STATE.hub_status()[0]
                 self._json(snap)
             elif path == '/api/envbatch/progress':
                 snap = STATE.env_job.snapshot()
-                snap['hubConnected'] = STATE.hub.ping()
+                snap['hubConnected'] = STATE.hub_status()[0]
                 self._json(snap)
             elif path == '/api/envbatch/template':
                 if not os.path.isfile(ENV_TEMPLATE_XLSX):
@@ -719,7 +761,8 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.env_job.retry_row(str(body.get('accountId') or ''))
                 self._json({'started': True})
             elif path == '/api/config':
-                cfg = load_config()
+                old_cfg = load_config()
+                cfg = dict(old_cfg)
                 cfg.update(body)
                 try:
                     cfg['concurrency'] = max(
@@ -733,9 +776,18 @@ class Handler(BaseHTTPRequestHandler):
                     cfg['verifySampleCount'] = 3
                 cfg['importBuyerPlan'] = str(
                     cfg.get('importBuyerPlan') or '1:Operator-A')[:200]
+                hidden = cfg.get('hiddenQueryColumns') or []
+                if not isinstance(hidden, list):
+                    hidden = []
+                cfg['hiddenQueryColumns'] = [
+                    name for name in ('envName', 'ip') if name in hidden]
                 save_config(cfg)
                 STATE.cfg = cfg
-                connected = STATE.reconnect_hub()
+                reconnect_needed = (
+                    cfg.get('hubPort') != old_cfg.get('hubPort')
+                    or cfg.get('concurrency') != old_cfg.get('concurrency'))
+                connected = (STATE.reconnect_hub() if reconnect_needed
+                             else STATE.hub_status()[0])
                 self._json({'saved': True, 'hubConnected': connected})
             else:
                 self._json({'error': 'not found'}, 404)
@@ -772,9 +824,9 @@ def main(argv=None):
         print('端口 %s-%s 均被占用，退出' % (port, port + 9))
         sys.exit(1)
     url = 'http://127.0.0.1:%s' % port
-    print('采购工具 v%s  服务运行中：%s' % (__version__, url))
+    print('Xynigo Sourcing v%s  服务运行中：%s' % (__version__, url))
     print('保持此窗口开启；关闭窗口即退出工具。')
-    ok, err = STATE.hub.ping_detail()
+    ok, err = STATE.hub_status(force=True)
     if ok:
         print('HubStudio 连接：正常')
     else:

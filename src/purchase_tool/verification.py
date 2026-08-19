@@ -9,7 +9,7 @@ class VerificationError(Exception):
     pass
 
 
-# cxme.cc 返回原始邮件源码，只能锚定正文，不可扫全文数字。
+# 邮件验证接口可能返回原始邮件源码；只锚定正文，不扫全文数字。
 RE_MS_CODE = re.compile(
     r'你的一次性代码为\s*[:：]\s*(\d{4,8})', re.I)
 
@@ -47,8 +47,8 @@ class VerificationProvider(object):
         raise NotImplementedError
 
 
-class CxmeCcProvider(VerificationProvider):
-    """cxme.cc getcode.php 实现；URL 只存内存，不进日志。"""
+class HttpCodeProvider(VerificationProvider):
+    """Generic HTTP verification-code endpoint; the URL is never logged."""
 
     def __init__(self, code_api_url, interval=10, opener=None):
         if not str(code_api_url or '').startswith(('http://', 'https://')):
@@ -58,7 +58,7 @@ class CxmeCcProvider(VerificationProvider):
         self._opener = opener or urllib.request.build_opener()
 
     def __repr__(self):
-        return '<CxmeCcProvider url=<redacted>>'
+        return '<HttpCodeProvider url=<redacted>>'
 
     def _fetch(self):
         req = urllib.request.Request(

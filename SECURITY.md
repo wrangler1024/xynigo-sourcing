@@ -22,3 +22,8 @@ data, cookies, tokens, proxy URLs, or customer/order records.
   platform tokens.
 - Run write operations only after reviewing a dry-run plan.
 - Treat local browser debugging ports and sessions as sensitive.
+- Release ZIP files are accepted by the Windows updater only after the
+  SHA-256 value matches the manifest attached to the same stable GitHub
+  Release.
+- The updater replaces only managed program paths. Local configuration, logs,
+  runtime data, and user imports are neither uploaded nor overwritten.

@@ -11,7 +11,7 @@ from .coupon import CouponInspector
 from .outlook_login import (OutlookCodeReader, OutlookError,
                             OutlookManualActionRequired)
 from .redaction import mask_email, scrub_text
-from .verification import CxmeCcProvider
+from .verification import HttpCodeProvider
 
 
 SHEIN_LOGIN_URL = 'https://www.shein.com.mx/user/auth/login'
@@ -303,7 +303,7 @@ class RegistrationOrchestrator(object):
                     'env_in_use', '环境已打开，为防止操作冲突不自动接管')
             start_data = self.hub.browser_start(code)
             cdp = CdpClient(int(start_data.get('debuggingPort')))
-            provider = (CxmeCcProvider(task.code_api_url)
+            provider = (HttpCodeProvider(task.code_api_url)
                         if task.code_api_url else None)
             outlook = (OutlookCodeReader(
                 cdp, provider,

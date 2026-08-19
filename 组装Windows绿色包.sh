@@ -1,17 +1,21 @@
 #!/bin/bash
-# 组装 Windows 绿色免安装包：内嵌官方 embeddable Python + 纯 Python 依赖 + 工具代码。
-# 在 Mac 上执行即可产出 zip，无需 Windows 机器：
-#   bash 组装Windows绿色包.sh
-# 产物：dist/Xynigo_Sourcing_Windows_<日期>_<版本>.zip
+# Build the complete Windows green package and its SHA-256 update manifest.
 set -euo pipefail
 cd "$(dirname "$0")"
-ROOT="$(pwd)"
-STAGE="$(mktemp -d)/Xynigo-Sourcing"
-mkdir -p "$STAGE"
-PYVER=3.11.9
 
-echo "[1/5] 下载 Windows embeddable Python ${PYVER} ..."
-mkdir -p .cache
+ROOT="$(pwd)"
+VERSION="$(PYTHONPATH=src python3 -c 'from purchase_tool import __version__; print(__version__)')"
+PYVER=3.11.9
+STAGE="$(mktemp -d)/Xynigo-Sourcing"
+STAMP="$(date +%Y%m%d)"
+ZIP_NAME="Xynigo_Sourcing_Windows_${STAMP}_v${VERSION}.zip"
+ZIP="dist/${ZIP_NAME}"
+MANIFEST="dist/Xynigo_Sourcing_v${VERSION}_update.json"
+SHA_FILE="dist/Xynigo_Sourcing_v${VERSION}_SHA256SUMS.txt"
+
+mkdir -p "$STAGE" dist .cache
+
+echo "[1/7] Download Windows embeddable Python ${PYVER} ..."
 EMB=".cache/python-${PYVER}-embed-amd64.zip"
 if [ ! -f "$EMB" ]; then
   curl -fL -o "$EMB" "https://www.python.org/ftp/python/${PYVER}/python-${PYVER}-embed-amd64.zip"
@@ -19,46 +23,55 @@ fi
 mkdir -p "$STAGE/python-embed"
 unzip -q "$EMB" -d "$STAGE/python-embed"
 
-echo "[2/5] 安装纯 Python 依赖（websocket-client / openpyxl）..."
-pip3 install --quiet --target "$STAGE/deps" websocket-client openpyxl
+echo "[2/7] Install pure-Python dependencies ..."
+python3 -m pip install --quiet --upgrade --target "$STAGE/deps" \
+  "websocket-client>=1.6,<2" "openpyxl>=3.1,<4"
 
-echo "[3/5] 拷贝工具代码 ..."
-# 必须先建 app 再往里拷：macOS cp -R 在目标不存在时会把包内容摊平成 app/
-# 本身（20260818 实测同事机器报 No module named purchase_tool 的根因）
+echo "[3/7] Copy application and updater ..."
 mkdir -p "$STAGE/app"
 cp -R src/purchase_tool "$STAGE/app/purchase_tool"
+HELPER_SOURCE="$ROOT/packaging/windows/update-helper.ps1" \
+HELPER_TARGET="$STAGE/update-helper.ps1" python3 - <<'PY'
+import os
+from pathlib import Path
 
-echo "[4/5] 配置 embeddable Python 路径与启动脚本 ..."
-# ._pth 只保留解释器自身路径；代码/依赖路径由启动命令显式注入
-# （._pth 相对路径在不同 Windows 上解析有歧义，实测 20260818 同事机器上
-#   ..\app 未生效报 No module named purchase_tool，改为 -c 显式 sys.path 最稳）
+text = Path(os.environ['HELPER_SOURCE']).read_text(encoding='utf-8')
+Path(os.environ['HELPER_TARGET']).write_text(text, encoding='utf-8-sig')
+PY
+
+echo "[4/7] Write launchers and package metadata ..."
 PTH="$STAGE/python-embed/python311._pth"
 cat > "$PTH" <<EOF
 python311.zip
 .
 
-# Uncomment to run site.main() automatically
 import site
 EOF
-# bat 必须是 GBK+CRLF（中文 Windows 的 cmd 用 GBK 解析批处理，UTF-8 中文会乱码致命令失效）
-# bat 只负责拉起 python 跑包根的 run.py；路径定位/诊断都在 run.py 里（按自身绝对路径，免疫 cwd）
-STAGE="$STAGE" python3 - <<'EOF'
+
+STAGE="$STAGE" VERSION="$VERSION" python3 - <<'PY'
+import json
 import os
 
-content = (
+stage = os.environ['STAGE']
+version = os.environ['VERSION']
+
+bat = (
     '@echo off\r\n'
-    'cd /d "%~dp0"\r\n'
-    'echo Xynigo Sourcing v0.4.2 启动中，浏览器将自动打开操作页面...\r\n'
+    'setlocal\r\n'
+    'cd /d "%%~dp0"\r\n'
+    'echo Xynigo Sourcing v%s 启动中，正在检查更新...\r\n'
     'echo 保持此窗口开启；关闭窗口即退出工具。\r\n'
     'python-embed\\python.exe run.py\r\n'
+    'set "XYNIGO_EXIT_CODE=%%ERRORLEVEL%%"\r\n'
+    'if "%%XYNIGO_EXIT_CODE%%"=="42" exit /b 0\r\n'
+    'if not "%%XYNIGO_EXIT_CODE%%"=="0" echo 启动失败，退出码：%%XYNIGO_EXIT_CODE%%\r\n'
     'pause\r\n'
-)
-path = os.path.join(os.environ['STAGE'], '启动.bat')
-with open(path, 'wb') as f:
-    f.write(content.encode('gbk'))
+) % version
+with open(os.path.join(stage, '启动.bat'), 'wb') as handle:
+    handle.write(bat.encode('gbk'))
 
 run_py = '''# -*- coding: utf-8 -*-
-"""启动入口：按本文件绝对路径定位 deps/app，导入失败时打印目录诊断。"""
+"""Windows green-package entry point."""
 import os
 import sys
 import traceback
@@ -68,44 +81,136 @@ sys.path.insert(0, os.path.join(ROOT, 'deps'))
 sys.path.insert(0, os.path.join(ROOT, 'app'))
 
 try:
+    from purchase_tool import __version__
+    from purchase_tool.updater import check_for_updates_at_startup
+    if check_for_updates_at_startup(ROOT, __version__):
+        sys.exit(42)
     from purchase_tool import bootstrap
+except SystemExit:
+    raise
 except Exception:
     app_dir = os.path.join(ROOT, 'app')
     pkg_dir = os.path.join(app_dir, 'purchase_tool')
     print('启动目录:', ROOT)
     print('app 目录存在:', os.path.isdir(app_dir))
     print('purchase_tool 目录存在:', os.path.isdir(pkg_dir))
-    if os.path.isdir(app_dir):
-        print('app 下内容:', sorted(os.listdir(app_dir)))
-    if os.path.isdir(pkg_dir):
-        print('包内文件数:', len(os.listdir(pkg_dir)))
     print('deps 目录存在:', os.path.isdir(os.path.join(ROOT, 'deps')))
     print('--- 详细报错 ---')
     traceback.print_exc()
     sys.exit(1)
 '''
-with open(os.path.join(os.environ['STAGE'], 'run.py'), 'w',
-          encoding='utf-8') as f:
-    f.write(run_py)
-EOF
+with open(os.path.join(stage, 'run.py'), 'w', encoding='utf-8') as handle:
+    handle.write(run_py)
 
-echo "[5/5] 打包 zip（Python zipfile，UTF-8 文件名，Windows 解压不乱码）..."
-mkdir -p dist
-STAMP="$(date +%Y%m%d)"
-ZIP="dist/Xynigo_Sourcing_Windows_${STAMP}_v0.4.2.zip"
-rm -f "$ZIP"
-STAGE="$STAGE" ROOT_ZIP="$ROOT/$ZIP" python3 - <<'EOF'
+version_info = {
+    'schemaVersion': 1,
+    'product': 'Xynigo Sourcing',
+    'version': version,
+    'channel': 'stable',
+    'repository': 'wrangler1024/xynigo-sourcing',
+    'managedPaths': [
+        'app', 'deps', 'python-embed', 'run.py', '启动.bat',
+        'update-helper.ps1', 'VERSION.json', '使用说明.txt',
+    ],
+    'preservedPaths': [
+        'config.json', '查询日志', '日志', 'logs', '运行数据',
+        'data', '数据', 'imports', '导入文件',
+    ],
+}
+with open(os.path.join(stage, 'VERSION.json'), 'w', encoding='utf-8') as handle:
+    json.dump(version_info, handle, ensure_ascii=False, indent=2)
+
+guide = '''Xynigo Sourcing v%s Windows 绿色包
+
+1. 必须先完整解压 ZIP，不能直接在压缩包中双击。
+2. 保持 HubStudio 已登录，双击“启动.bat”。
+3. 启动时会检查 GitHub 最新稳定版：输入 Y 更新，输入 N 跳过。
+4. 更新不需要 Git 或 GitHub 账号；校验失败或网络不可用时会继续启动当前版本。
+5. config.json、查询日志、运行数据和用户导入文件不会被更新覆盖或上传。
+6. 更新失败时程序会从本机备份自动回滚并重新启动。
+''' % version
+with open(os.path.join(stage, '使用说明.txt'), 'w', encoding='utf-8') as handle:
+    handle.write(guide)
+PY
+
+echo "[5/7] Validate package safety and structure ..."
+STAGE="$STAGE" python3 - <<'PY'
+import os
+from pathlib import Path
+
+root = Path(os.environ['STAGE'])
+required = [
+    'app/purchase_tool/main.py', 'app/purchase_tool/updater.py',
+    'python-embed/python.exe', 'deps/openpyxl', 'run.py', '启动.bat',
+    'update-helper.ps1', 'VERSION.json', '使用说明.txt',
+]
+missing = [name for name in required if not (root / name).exists()]
+if missing:
+    raise SystemExit('missing package files: ' + ', '.join(missing))
+
+forbidden_names = {
+    'config.json', '启动日志.txt', '.env', '.git', '查询日志',
+    '运行数据', 'logs', '日志', 'imports', '导入文件',
+}
+found = []
+for path in root.rglob('*'):
+    if path.name in forbidden_names:
+        found.append(str(path.relative_to(root)))
+if found:
+    raise SystemExit('forbidden runtime files in package: ' + ', '.join(found))
+PY
+
+echo "[6/7] Create Windows ZIP ..."
+rm -f "$ZIP" "$MANIFEST" "$SHA_FILE"
+STAGE="$STAGE" ROOT_ZIP="$ROOT/$ZIP" python3 - <<'PY'
 import os
 import zipfile
 
 stage = os.environ['STAGE']
-root = os.environ['ROOT_ZIP']
+target = os.environ['ROOT_ZIP']
 base = os.path.dirname(stage)
-with zipfile.ZipFile(root, 'w', zipfile.ZIP_DEFLATED) as z:
-    for dirpath, _dirs, files in os.walk(stage):
-        for f in files:
-            p = os.path.join(dirpath, f)
-            z.write(p, os.path.relpath(p, base))
-EOF
-echo "完成：$ROOT/$ZIP"
-du -sh "$ROOT/$ZIP"
+with zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED) as archive:
+    for dirpath, dirs, files in os.walk(stage):
+        dirs[:] = [name for name in dirs if name != '__pycache__']
+        for name in files:
+            if name.endswith(('.pyc', '.pyo')):
+                continue
+            path = os.path.join(dirpath, name)
+            archive.write(path, os.path.relpath(path, base))
+PY
+
+echo "[7/7] Generate SHA-256 and update manifest ..."
+ROOT="$ROOT" ZIP="$ZIP" ZIP_NAME="$ZIP_NAME" VERSION="$VERSION" \
+MANIFEST="$MANIFEST" SHA_FILE="$SHA_FILE" python3 - <<'PY'
+import hashlib
+import json
+import os
+from pathlib import Path
+
+root = Path(os.environ['ROOT'])
+zip_path = root / os.environ['ZIP']
+digest = hashlib.sha256(zip_path.read_bytes()).hexdigest()
+size = zip_path.stat().st_size
+notes_source = root / 'release' / ('v%s.zh-CN.json' % os.environ['VERSION'])
+notes = json.loads(notes_source.read_text(encoding='utf-8'))['notesZh']
+manifest = {
+    'schemaVersion': 1,
+    'product': 'Xynigo Sourcing',
+    'channel': 'stable',
+    'version': os.environ['VERSION'],
+    'assetName': os.environ['ZIP_NAME'],
+    'sha256': digest,
+    'size': size,
+    'notesZh': notes,
+}
+(root / os.environ['MANIFEST']).write_text(
+    json.dumps(manifest, ensure_ascii=False, indent=2) + '\n',
+    encoding='utf-8')
+(root / os.environ['SHA_FILE']).write_text(
+    '%s  %s\n' % (digest, os.environ['ZIP_NAME']),
+    encoding='utf-8')
+print('ZIP:', zip_path)
+print('SHA-256:', digest)
+PY
+
+du -sh "$ZIP"

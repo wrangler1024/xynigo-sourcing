@@ -85,7 +85,7 @@ def export_bytes(rows, fmt, screenshot_reader=None):
                             1, int(source.get('screenshotHeight') or 600))
                         # 主表直接放入缩略图。TwoCellAnchor 将图片约束在
                         # J 列当前行内，调整行列时会随单元格移动和缩放。
-                        thumb_width = min(160, source_width)
+                        thumb_width = min(120, source_width)
                         thumb_height = max(
                             1, int(source_height * thumb_width /
                                    float(source_width)))
@@ -107,7 +107,7 @@ def export_bytes(rows, fmt, screenshot_reader=None):
                 cell.alignment = Alignment(
                     horizontal='center', vertical='center')
                 cell.border = grid_border
-            widths = [10, 24, 22, 20, 14, 18, 28, 22, 14, 24,
+            widths = [10, 24, 22, 20, 14, 18, 28, 22, 14, 18,
                       16, 18, 32, 12]
             for index, width in enumerate(widths, start=1):
                 ws.column_dimensions[chr(64 + index)].width = width
