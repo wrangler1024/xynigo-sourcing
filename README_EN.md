@@ -22,8 +22,13 @@ workflows contributed by **Samforo**.
   confirmation, resumable state, and credential-free mapping exports.
 - Optional Lark Base ledger integration configured entirely at runtime.
 
-The current stable release is `v0.5.1`. The project is under active
+The current stable release is `v0.6.0`. The project is under active
 development and is not yet a hosted SaaS product.
+
+v0.6.0 introduces the new Xynigo visual system with a collapsible task
+sidebar, semantic module icons, the Xyni mascot, and consistent colors for
+actions, progress, and exceptions. Existing local-only data boundaries remain
+unchanged.
 
 ## Requirements
 

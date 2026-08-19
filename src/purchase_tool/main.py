@@ -48,6 +48,7 @@ from .shein_query import QueryOrchestrator
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INDEX_HTML = os.path.join(BASE_DIR, 'web', 'index.html')
+LOGO_PNG = os.path.join(BASE_DIR, 'web', 'xynigo-logo.png')
 ENV_TEMPLATE_XLSX = os.path.join(
     BASE_DIR, 'web', '采购工具买家号入库模板.xlsx')
 CONFIG_PATH = os.path.join(os.getcwd(), 'config.json')
@@ -576,7 +577,9 @@ class Handler(BaseHTTPRequestHandler):
         with open(path, 'rb') as f:
             body = f.read()
         self.send_response(200)
-        self.send_header('Content-Type', mime + '; charset=utf-8')
+        content_type = (mime + '; charset=utf-8'
+                        if mime.startswith('text/') else mime)
+        self.send_header('Content-Type', content_type)
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -600,6 +603,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == '/':
                 self._file(INDEX_HTML, 'text/html')
+            elif path == '/xynigo-logo.png':
+                self._file(LOGO_PNG, 'image/png')
             elif path == '/favicon.ico':
                 self.send_response(204)
                 self.end_headers()
