@@ -22,13 +22,13 @@ workflows contributed by **Samforo**.
   confirmation, resumable state, and credential-free mapping exports.
 - Optional Lark Base ledger integration configured entirely at runtime.
 
-The current stable release is `v0.6.0`. The project is under active
+The current stable release is `v0.6.1`. The project is under active
 development and is not yet a hosted SaaS product.
 
-v0.6.0 introduces the new Xynigo visual system with a collapsible task
-sidebar, semantic module icons, the Xyni mascot, and consistent colors for
-actions, progress, and exceptions. Existing local-only data boundaries remain
-unchanged.
+v0.6.1 refines the Xynigo brand artwork and moves update checks into the
+WebUI. Update notices no longer block application startup, while installation
+still requires explicit confirmation in the console. Existing business logic
+and local-only data boundaries remain unchanged.
 
 ## Requirements
 
@@ -109,8 +109,10 @@ Apple Silicon `arm64`. macOS Intel is not maintained.
 - v0.5.0 must still be downloaded and fully extracted manually once.
 - macOS has equivalent portable builds and online updates starting with
   v0.5.1.
-- On Windows use `启动.bat`; on macOS use `启动-Mac.command`. Enter `Y`
-  to update or `N` to skip when a newer stable release is available.
+- On Windows use `启动.bat`; on macOS use `启动-Mac.command`. After startup,
+  the WebUI checks for a newer stable release and shows a top-right notice.
+- Clicking the notice brings the console forward. Enter `Y` there to update
+  or `N` to continue; the WebUI never installs an update silently.
 - No GitHub account or Git installation is required. Downloads inherit the
   operating-system network configuration. Windows system proxies and
   transparent TUN adapters are supported.

@@ -17,6 +17,8 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import urllib.error
 import urllib.request
 import zipfile
@@ -414,6 +416,202 @@ class GitHubUpdateClient(object):
                              close_fds=True, **popen_kwargs)
         except OSError as exc:
             raise UpdateError('无法启动更新替换程序：%s' % exc) from exc
+
+
+def bring_console_to_front():
+    """Restore and activate the green-package console on Windows or macOS."""
+    if os.name == 'nt':
+        try:
+            import ctypes
+            console = ctypes.windll.kernel32.GetConsoleWindow()
+            if not console:
+                return False
+            user32 = ctypes.windll.user32
+            user32.ShowWindow(console, 9)  # SW_RESTORE
+            activated = bool(user32.SetForegroundWindow(console))
+            if not activated:
+                user32.FlashWindow(console, True)
+            return True
+        except (AttributeError, OSError):
+            return False
+    if sys.platform == 'darwin':
+        term_program = os.environ.get('TERM_PROGRAM', '')
+        app_name = {
+            'Apple_Terminal': 'Terminal',
+            'iTerm.app': 'iTerm',
+            'WarpTerminal': 'Warp',
+        }.get(term_program, 'Terminal')
+        script = (
+            'tell application "%s"\n'
+            'activate\n'
+            'try\n'
+            'set miniaturized of front window to false\n'
+            'end try\n'
+            'end tell' % app_name)
+        try:
+            completed = subprocess.run(
+                ['/usr/bin/osascript', '-e', script],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=4, check=False)
+            return completed.returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+    return False
+
+
+class UpdateCoordinator(object):
+    """Expose non-blocking update state to WebUI and prompt in the console."""
+
+    BUSY_STATES = ('checking', 'prompting', 'downloading', 'restarting')
+
+    def __init__(self, install_dir, current_version, client=None,
+                 input_fn=input, output=print, focus_fn=None, exit_fn=None,
+                 check_interval=900, environ=None, skip_marker_path=None):
+        self.install_dir = (Path(install_dir).resolve()
+                            if install_dir else None)
+        self.current_version = normalize_version(current_version)
+        self.enabled = self.install_dir is not None
+        self.client = client or (GitHubUpdateClient()
+                                 if self.enabled else None)
+        self.input_fn = input_fn
+        self.output = output
+        self.focus_fn = focus_fn or bring_console_to_front
+        self.exit_fn = exit_fn or os._exit
+        self.check_interval = max(10, int(check_interval))
+        self.lock = threading.RLock()
+        self.release = None
+        self.latest_version = ''
+        self.notes = ()
+        self.last_checked = 0.0
+        self.decision = ''
+        self.state = 'idle' if self.enabled else 'disabled'
+        self.message = ('等待检查更新' if self.enabled
+                        else '源码开发模式不执行绿色包更新')
+        if (self.enabled
+                and consume_skip_once(environ, skip_marker_path)):
+            self.state = 'current'
+            self.message = '更新完成，当前已是最新版本'
+            self.last_checked = time.monotonic()
+
+    def snapshot(self):
+        with self.lock:
+            return {
+                'enabled': self.enabled,
+                'state': self.state,
+                'currentVersion': self.current_version,
+                'latestVersion': self.latest_version,
+                'notes': list(self.notes),
+                'message': self.message,
+                'decision': self.decision,
+            }
+
+    def check_async(self, force=False):
+        with self.lock:
+            if not self.enabled or self.state in self.BUSY_STATES:
+                return False
+            if (not force and self.last_checked
+                    and time.monotonic() - self.last_checked
+                    < self.check_interval):
+                return False
+            self.state = 'checking'
+            self.message = '正在检查新版本…'
+            self.decision = ''
+        threading.Thread(target=self.check_now, daemon=True).start()
+        return True
+
+    def check_now(self):
+        if not self.enabled:
+            return self.snapshot()
+        with self.lock:
+            self.state = 'checking'
+            self.message = '正在检查新版本…'
+        try:
+            release = self.client.get_latest_release()
+            available = is_newer(release.version, self.current_version)
+            with self.lock:
+                self.release = release
+                self.latest_version = release.version
+                self.notes = tuple(release.notes_zh[:8])
+                self.last_checked = time.monotonic()
+                self.state = 'available' if available else 'current'
+                self.message = ('发现新版本 v%s' % release.version
+                                if available else '当前已是最新稳定版')
+        except Exception as exc:
+            with self.lock:
+                self.last_checked = time.monotonic()
+                self.state = 'error'
+                self.message = '更新检查失败：%s' % exc
+        return self.snapshot()
+
+    def prompt_async(self):
+        with self.lock:
+            if not self.enabled or self.state != 'available' or not self.release:
+                return False
+            self.state = 'prompting'
+            self.message = '请在运行窗口输入 Y 或 N'
+        threading.Thread(target=self._prompt_worker, daemon=True).start()
+        return True
+
+    def prompt_now(self):
+        with self.lock:
+            if not self.enabled or self.state != 'available' or not self.release:
+                return False
+            self.state = 'prompting'
+            self.message = '请在运行窗口输入 Y 或 N'
+        return self._prompt_worker()
+
+    def _prompt_worker(self):
+        release = self.release
+        try:
+            focused = self.focus_fn()
+            self.output('')
+            self.output('========== Xynigo Sourcing 在线更新 ==========')
+            self.output('当前版本：v%s' % self.current_version)
+            self.output('最新版本：v%s' % release.version)
+            self.output('中文更新介绍：')
+            if release.notes_zh:
+                for note in release.notes_zh:
+                    self.output('  - %s' % note)
+            else:
+                self.output('  - 请查看 GitHub Release 更新说明。')
+            if not focused:
+                self.output('运行窗口未能自动置前，请手动切换到启动窗口。')
+            try:
+                answer = str(self.input_fn(
+                    '输入 Y 更新，输入 N 暂不更新：') or '').strip().upper()
+            except (EOFError, KeyboardInterrupt):
+                answer = 'N'
+            if answer != 'Y':
+                with self.lock:
+                    self.state = 'available'
+                    self.decision = 'skipped'
+                    self.message = '已暂不更新，可稍后再次点击'
+                self.output('已暂不更新，程序继续正常运行。')
+                self.output('==============================================')
+                return False
+            with self.lock:
+                self.state = 'downloading'
+                self.decision = 'accepted'
+                self.message = '正在下载并校验更新包…'
+            self.output('正在下载并校验更新包，请勿关闭窗口……')
+            prepared = self.client.prepare_update(release, output=self.output)
+            self.client.launch_installer(
+                prepared, self.install_dir, self.current_version)
+            with self.lock:
+                self.state = 'restarting'
+                self.message = '更新包校验通过，正在重启…'
+            self.output('更新包校验通过，正在切换程序并自动重启。')
+            self.output('==============================================')
+            self.exit_fn(42)
+            return True
+        except Exception as exc:
+            with self.lock:
+                self.state = 'available' if self.release else 'error'
+                self.message = '更新失败：%s' % exc
+            self.output('更新失败：%s' % exc)
+            self.output('当前版本继续运行，可稍后重试。')
+            self.output('==============================================')
+            return False
 
 
 def check_for_updates_at_startup(install_dir, current_version,

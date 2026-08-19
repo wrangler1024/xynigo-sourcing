@@ -59,7 +59,7 @@ bat = (
     '@echo off\r\n'
     'setlocal\r\n'
     'cd /d "%%~dp0"\r\n'
-    'echo Xynigo Sourcing v%s 启动中，正在检查更新...\r\n'
+    'echo Xynigo Sourcing v%s 启动中...\r\n'
     'echo 保持此窗口开启；关闭窗口即退出工具。\r\n'
     'python-embed\\python.exe run.py\r\n'
     'set "XYNIGO_EXIT_CODE=%%ERRORLEVEL%%"\r\n'
@@ -81,10 +81,7 @@ sys.path.insert(0, os.path.join(ROOT, 'deps'))
 sys.path.insert(0, os.path.join(ROOT, 'app'))
 
 try:
-    from purchase_tool import __version__
-    from purchase_tool.updater import check_for_updates_at_startup
-    if check_for_updates_at_startup(ROOT, __version__):
-        sys.exit(42)
+    os.environ.setdefault('XYNIGO_INSTALL_DIR', ROOT)
     from purchase_tool import bootstrap
 except SystemExit:
     raise
@@ -125,8 +122,8 @@ guide = '''Xynigo Sourcing v%s Windows 绿色包
 
 1. 必须先完整解压 ZIP，不能直接在压缩包中双击。
 2. 保持 HubStudio 已登录，双击“启动.bat”。
-3. 启动时会检查 GitHub 最新稳定版：输入 Y 更新，输入 N 跳过。
-4. 更新不需要 Git 或 GitHub 账号；校验失败或网络不可用时会继续启动当前版本。
+3. 页面右上角会检查 GitHub 最新稳定版；发现新版本时点击提醒，回到运行窗口输入 Y 更新或 N 暂不更新。
+4. 更新不需要 Git 或 GitHub 账号；校验失败或网络不可用时当前版本会继续运行。
 5. config.json、查询日志、运行数据和用户导入文件不会被更新覆盖或上传。
 6. 更新失败时程序会从本机备份自动回滚并重新启动。
 ''' % version

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Entry point embedded in the self-contained macOS green package."""
 from pathlib import Path
+import os
 import sys
 import traceback
 
@@ -16,11 +17,7 @@ if '--package-self-test' in sys.argv:
     sys.exit(0)
 
 try:
-    from purchase_tool import __version__
-    from purchase_tool.updater import check_for_updates_at_startup
-
-    if check_for_updates_at_startup(INSTALL_ROOT, __version__):
-        sys.exit(42)
+    os.environ.setdefault('XYNIGO_INSTALL_DIR', str(INSTALL_ROOT))
     from purchase_tool import bootstrap  # noqa: F401
 except SystemExit:
     raise

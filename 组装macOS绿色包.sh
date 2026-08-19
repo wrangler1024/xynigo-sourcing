@@ -53,7 +53,7 @@ version = os.environ['VERSION']
 platform_key = os.environ['PLATFORM']
 launcher = '''#!/bin/bash
 cd "$(dirname "$0")"
-echo "Xynigo Sourcing v%s 启动中，正在检查更新..."
+echo "Xynigo Sourcing v%s 启动中..."
 echo "保持此窗口开启；关闭窗口即退出工具。"
 ./runtime/xynigo-sourcing
 XYNIGO_EXIT_CODE=$?
@@ -88,8 +88,8 @@ guide = '''Xynigo Sourcing v%s macOS %s 绿色包
 1. 必须先完整解压 ZIP，不能直接在压缩包中双击。
 2. 首次运行右键“启动-Mac.command”选择“打开”。
 3. 保持 HubStudio 已登录，启动工具后在浏览器中操作。
-4. 启动时会检查 GitHub 最新稳定版：输入 Y 更新，输入 N 跳过。
-5. 更新不需要 Git 或 GitHub 账号；校验失败或网络不可用时继续启动当前版本。
+4. 页面右上角会检查 GitHub 最新稳定版；发现新版本时点击提醒，回到运行窗口输入 Y 更新或 N 暂不更新。
+5. 更新不需要 Git 或 GitHub 账号；校验失败或网络不可用时当前版本会继续运行。
 6. config.json、查询日志、运行数据和用户导入文件不会被更新覆盖或上传。
 7. 更新失败时会从本机备份自动回滚并重新启动。
 ''' % (version, platform_key)

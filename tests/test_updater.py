@@ -10,7 +10,8 @@ import zipfile
 from purchase_tool.updater import (
     GitHubUpdateClient, MACOS_MANAGED_PATHS, MANAGED_PATHS,
     NetworkTransport, ReleaseAsset, ReleaseInfo, UpdateError,
-    check_for_updates_at_startup, current_platform_key, is_newer,
+    UpdateCoordinator, check_for_updates_at_startup,
+    current_platform_key, is_newer,
     safe_extract_zip, select_platform_manifest, sha256_file,
 )
 
@@ -172,6 +173,58 @@ class UpdaterTests(unittest.TestCase):
                 skip_marker_path=marker)
             self.assertFalse(launched)
             self.assertFalse(marker.exists())
+
+    def test_web_coordinator_reports_available_release(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = UpdateCoordinator(
+                tmp, '0.5.0', client=FakeClient(), environ={},
+                skip_marker_path=Path(tmp) / 'no-marker')
+            status = manager.check_now()
+        self.assertEqual(status['state'], 'available')
+        self.assertEqual(status['latestVersion'], '0.6.0')
+        self.assertEqual(status['notes'], ['更新说明一', '更新说明二'])
+
+    def test_web_coordinator_console_prompt_can_skip(self):
+        focus_calls = []
+        client = FakeClient()
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = UpdateCoordinator(
+                tmp, '0.5.0', client=client, input_fn=lambda _prompt: 'N',
+                output=lambda _line: None,
+                focus_fn=lambda: focus_calls.append(True) or True,
+                environ={}, skip_marker_path=Path(tmp) / 'no-marker')
+            manager.check_now()
+            launched = manager.prompt_now()
+            status = manager.snapshot()
+        self.assertFalse(launched)
+        self.assertEqual(focus_calls, [True])
+        self.assertEqual(status['state'], 'available')
+        self.assertEqual(status['decision'], 'skipped')
+        self.assertFalse(client.prepared)
+
+    def test_web_coordinator_console_prompt_can_install(self):
+        exit_codes = []
+        client = FakeClient()
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = UpdateCoordinator(
+                tmp, '0.5.0', client=client, input_fn=lambda _prompt: 'Y',
+                output=lambda _line: None, focus_fn=lambda: True,
+                exit_fn=exit_codes.append, environ={},
+                skip_marker_path=Path(tmp) / 'no-marker')
+            manager.check_now()
+            launched = manager.prompt_now()
+            status = manager.snapshot()
+        self.assertTrue(launched)
+        self.assertTrue(client.prepared)
+        self.assertTrue(client.launched)
+        self.assertEqual(exit_codes, [42])
+        self.assertEqual(status['state'], 'restarting')
+
+    def test_source_mode_keeps_green_package_update_disabled(self):
+        manager = UpdateCoordinator(None, '0.6.0')
+        self.assertEqual(manager.snapshot()['state'], 'disabled')
+        self.assertFalse(manager.check_async())
+        self.assertFalse(manager.prompt_async())
 
     def test_interrupted_download_removes_partial_file(self):
         transport = NetworkTransport()

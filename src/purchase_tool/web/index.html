@@ -3,7 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Xynigo Sourcing v0.6.0</title>
+<title>Xynigo Sourcing v0.6.1</title>
+<link rel="icon" type="image/png" href="xynigo-x.png?v=4">
+<link rel="shortcut icon" href="favicon.ico?v=4">
+<link rel="apple-touch-icon" href="xynigo-x.png?v=4">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   :root {
@@ -133,6 +136,8 @@
   :root {
     --navy-950: #082548; --navy-900: #0b315e; --navy-700: #315372;
     --navy-500: #6e879d; --rhino-600: #1698a0; --rhino-500: #20aeb3;
+    --tech-blue: #4e8ba9; --tech-blue-dark: #356f91;
+    --action-gradient: linear-gradient(135deg,#1698a0 0%,#4e8ba9 100%);
     --rhino-100: #e8f8f7; --parcel-500: #f2b747; --parcel-100: #fff6de;
     --coral-500: #ff694a; --coral-100: #fff0eb; --green-500: #34b783;
     --green-100: #eaf8f2; --surface: #fff; --canvas: #f4f7fa;
@@ -151,9 +156,9 @@
     -webkit-font-smoothing: antialiased;
   }
   button, input, textarea, select { font: inherit; }
-  .app-shell { min-height: 100vh; display: grid; grid-template-columns: 252px minmax(0,1fr); transition: grid-template-columns .24s ease; }
+  .app-shell { min-height: 100vh; display: grid; grid-template-columns: 220px minmax(0,1fr); transition: grid-template-columns .24s ease; }
   .sidebar {
-    position: sticky; top: 0; height: 100vh; padding: 20px 16px; z-index: 30;
+    position: sticky; top: 0; height: 100vh; padding: 18px 14px; z-index: 30;
     display: flex; flex-direction: column; background: var(--surface); border-right: 1px solid var(--line);
     transition: padding .24s ease;
   }
@@ -163,15 +168,21 @@
     background: #fff; color: var(--navy-700); font-size: 20px; line-height: 1;
     box-shadow: 0 5px 14px rgba(8,37,72,.12); cursor: pointer;
   }
-  .brand-card { padding: 2px 8px 20px; border-bottom: 1px solid var(--line); }
-  .brand-art { width: 208px; height: 86px; overflow: hidden; position: relative; }
-  .brand-art img { position: absolute; width: 235px; height: auto; transform: translate(-9px,-20px); }
-  .brand-mini { display: none; width: 48px; height: 48px; overflow: hidden; position: relative; border-radius: 14px; background: var(--rhino-100); }
-  .brand-mini img { position: absolute; width: 150px; height: auto; transform: translate(-7px,-13px); }
-  .brand-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .brand-card { padding: 2px 8px 14px; border-bottom: 1px solid var(--line); }
+  .brand-art { width: 70px; height: 52px; overflow: hidden; position: relative; }
+  .brand-art img {
+    position: absolute; width: 98px; max-width: none; height: auto;
+    transform: translate(-12px,-4px); filter: brightness(1.06);
+  }
+  .brand-mini {
+    display: none; width: 48px; height: 48px; overflow: hidden; position: relative;
+    border-radius: 14px; background: var(--rhino-100);
+  }
+  .brand-mini img {
+    position: absolute; inset: 7px; width: 34px; height: 34px; object-fit: contain;
+  }
+  .brand-meta { display: flex; align-items: center; }
   .product-type { color: var(--navy-700); font-size: 12px; font-weight: 800; }
-  .edition { color: var(--navy-500); font-size: 12px; font-weight: 700; }
-  .product-desc { margin-top: 5px; color: var(--navy-500); font-size: 12px; line-height: 1.5; }
   .module-tabs { display: flex; flex-direction: column; gap: 5px; margin-top: 20px; }
   .nav-label { padding: 0 12px 8px; color: #93a4b3; font-size: 11px; font-weight: 800; letter-spacing: .14em; }
   .module-tab {
@@ -180,10 +191,10 @@
     text-align: left; font-size: 14px; font-weight: 800; cursor: pointer;
   }
   .module-tab:hover { background: #f5f8fa; }
-  .module-tab.active { color: var(--navy-950); border: 0; background: var(--rhino-100); box-shadow: inset 3px 0 var(--rhino-500); }
+  .module-tab.active { color: var(--navy-950); border: 0; background: linear-gradient(90deg,var(--rhino-100),#edf3f7); box-shadow: inset 3px 0 var(--tech-blue); }
   .nav-icon { flex: 0 0 auto; width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; color: var(--navy-900); background: #eef2f6; }
   .nav-icon svg, .icon-button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
-  .module-tab.active .nav-icon { color: #fff; background: var(--rhino-500); }
+  .module-tab.active .nav-icon { color: #fff; background: var(--action-gradient); box-shadow: 0 6px 14px rgba(55,132,158,.18); }
   .nav-text { display: flex; flex-direction: column; gap: 2px; }
   .nav-text small { color: #8ca0b0; font-size: 10px; font-weight: 600; }
   .nav-spacer { flex: 1; min-height: 18px; }
@@ -201,25 +212,62 @@
   .topbar-right { display: flex; align-items: center; gap: 10px; }
   .pill { display: inline-flex; align-items: center; gap: 7px; padding: 8px 11px; font-size: 12px; font-weight: 800; }
   .pill.ok { background: var(--green-100); }
+  .update-notice {
+    min-height: 38px; padding: 7px 12px; border: 1px solid #f1d28b; border-radius: 11px;
+    display: inline-flex; align-items: center; gap: 7px; background: var(--parcel-100);
+    color: #815510; font-size: 12px; font-weight: 900; cursor: pointer;
+    box-shadow: 0 6px 16px rgba(242,183,71,.16);
+  }
+  .update-notice[hidden] { display: none; }
+  .update-notice:hover:not(:disabled) { border-color: var(--parcel-500); background: #fff1cc; }
+  .update-notice:disabled { cursor: wait; opacity: .84; }
+  .update-signal {
+    width: 21px; height: 21px; border-radius: 7px; display: grid; place-items: center;
+    background: var(--coral-500); color: #fff; font-size: 13px; line-height: 1;
+    animation: update-pulse 1.4s ease-in-out infinite;
+  }
+  .update-notice.busy { border-color: #afe1df; background: var(--rhino-100); color: #126f74; }
+  .update-notice.busy .update-signal { background: var(--rhino-500); animation: none; }
+  .update-check {
+    min-height: 38px; padding: 7px 11px; border: 1px solid #cfe0e9; border-radius: 11px;
+    display: inline-flex; align-items: center; gap: 7px; background: #fff; color: var(--navy-700);
+    font-size: 11px; font-weight: 900; white-space: nowrap; cursor: pointer;
+  }
+  .update-check svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .update-check:hover:not(:disabled) { border-color: #9bc3d3; background: #f3f9fb; color: var(--tech-blue-dark); }
+  .update-check.busy { cursor: wait; opacity: .75; }
+  .update-check.available { border-color: var(--tech-blue); background: var(--action-gradient); color: #fff; box-shadow: 0 7px 16px rgba(55,132,158,.2); }
+  @keyframes update-pulse { 50% { transform: translateY(-2px); box-shadow: 0 4px 10px rgba(255,105,74,.28); } }
   .icon-button { width: 38px; height: 38px; padding: 0; border: 1px solid var(--line); border-radius: 11px; display: grid; place-items: center; background: #fff; color: var(--navy-700); cursor: pointer; }
   main { max-width: 1500px; margin: 0 auto; padding: 24px 28px 36px; gap: 16px; }
   .hero {
     position: relative; min-height: 148px; padding: 25px 28px; overflow: hidden;
-    display: flex; align-items: center; justify-content: space-between; border-radius: 22px;
-    background: var(--navy-900); color: #fff; box-shadow: var(--shadow);
+    display: grid; grid-template-columns: minmax(0,1fr) minmax(250px,330px); align-items: center; gap: 24px; border-radius: 22px;
+    background: linear-gradient(135deg,#9bdad5 0%,#6fb8c1 56%,#8eabc9 100%);
+    color: var(--navy-950); box-shadow: var(--shadow);
   }
-  .hero::before, .hero::after { content: ""; position: absolute; border-radius: 50%; background: #fff; opacity: .12; }
+  .hero::before, .hero::after { content: ""; position: absolute; border-radius: 50%; background: var(--navy-900); opacity: .09; }
   .hero::before { width: 230px; height: 230px; right: 90px; top: -130px; }
   .hero::after { width: 150px; height: 150px; right: -50px; bottom: -90px; }
   .hero-copy { position: relative; z-index: 2; }
-  .hero-kicker { color: #8fe3df; font-weight: 900; font-size: 12px; letter-spacing: .12em; }
+  .hero-kicker { color: var(--rhino-600); font-weight: 900; font-size: 12px; letter-spacing: .12em; }
   .hero h1 { margin: 8px 0 6px; font-size: 27px; line-height: 1.25; letter-spacing: -.02em; }
-  .hero-call { color: #8fe3df; white-space: nowrap; }
-  .hero p { margin: 0; color: #bed1e0; font-size: 13px; }
+  .hero-call { color: #117f86; white-space: nowrap; }
+  .hero p { margin: 0; color: var(--navy-700); font-size: 13px; }
   .hero-meta { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 17px; }
-  .hero-chip { padding: 6px 10px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; color: #d9e7f0; font-size: 11px; font-weight: 700; }
-  .hero-mascot { position: relative; z-index: 1; flex: 0 0 auto; width: 210px; height: 128px; overflow: hidden; }
-  .hero-mascot img { position: absolute; width: 430px; max-width: none; height: auto; transform: translate(-15px,-42px); }
+  .hero-chip {
+    padding: 6px 10px; border: 1px solid rgba(8,37,72,.13); border-radius: 999px;
+    background: rgba(255,255,255,.34); color: var(--navy-700); font-size: 11px; font-weight: 700;
+  }
+  .hero-lockup {
+    --lockup-width: 350px; --lockup-x: -13px; --lockup-y: -30px;
+    position: relative; z-index: 1; justify-self: end; width: 320px; height: 128px;
+    overflow: hidden; border-radius: 0; background: transparent; box-shadow: none;
+  }
+  .hero-lockup img {
+    position: absolute; width: var(--lockup-width); max-width: none; height: auto;
+    transform: translate(var(--lockup-x),var(--lockup-y));
+  }
   .card { padding: 19px; border: 1px solid var(--line); border-radius: 20px; background: #fff; box-shadow: 0 8px 24px rgba(8,37,72,.04); }
   .card-title { margin-bottom: 14px; color: var(--navy-950); font-size: 15px; font-weight: 900; }
   .legend { color: var(--navy-500); font-size: 11px; line-height: 1.6; }
@@ -232,13 +280,13 @@
   .hint { color: #8da0b0; font-size: 11px; }
   .btn { padding: 9px 14px; border-color: var(--line); border-radius: 11px; color: var(--navy-700); font-size: 12px; font-weight: 800; }
   .btn:hover:not(:disabled) { border-color: #d3dde5; background: #f5f8fa; }
-  .btn.primary { border-color: var(--rhino-600); background: var(--rhino-600); box-shadow: 0 7px 16px rgba(22,152,160,.18); }
-  .btn.primary:hover:not(:disabled) { background: var(--primary-dark); }
+  .btn.primary { border-color: #3b839e; background: var(--action-gradient); box-shadow: 0 7px 16px rgba(55,132,158,.22); }
+  .btn.primary:hover:not(:disabled) { border-color: var(--tech-blue-dark); background: linear-gradient(135deg,#117f86 0%,#356f91 100%); }
   .btn.danger { color: var(--coral-500); border-color: #ffd2c7; }
   .btn.danger:hover:not(:disabled) { background: var(--coral-100); }
   .btn.retry { color: #94600a; border-color: #f3ddb0; background: var(--parcel-100); }
   .progress { height: 9px; background: #edf1f5; }
-  .progress .bar { background: var(--rhino-500); }
+  .progress .bar { background: var(--action-gradient); }
   .table-card { padding: 0; overflow: hidden; }
   .table-card .card-title { margin: 0; padding: 17px 19px 12px; }
   .table-title-row { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
@@ -256,6 +304,22 @@
   .reg-plan { border-radius: 10px; background: #f4f7fa; color: var(--navy-700); }
   .stat-chip { border-radius: 10px; background: #f1f5f8; }
   .note-card { border-left-color: var(--rhino-500); background: var(--rhino-100); color: #416d72; }
+  .vi-note { display: grid; grid-template-columns: 1.3fr 1fr; gap: 16px; }
+  .brand-story { padding: 20px; border-color: #d2eeee; background: var(--rhino-100); }
+  .brand-story .card-title { margin-bottom: 8px; }
+  .brand-story p { margin: 0; color: #416d72; font-size: 12px; line-height: 1.8; }
+  .brand-story p + p { margin-top: 7px; }
+  .brand-iteration { display: inline-flex; align-items: center; gap: 6px; color: var(--rhino-600); font-weight: 800; }
+  .brand-iteration::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--green-500); box-shadow: 0 0 0 4px rgba(52,183,131,.12); }
+  .swatches { padding: 18px; display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+  .swatch-copy strong { display: block; color: var(--navy-950); font-size: 13px; }
+  .swatch-copy span { display: block; margin-top: 4px; color: var(--navy-500); font-size: 10px; line-height: 1.6; }
+  .swatch-group { flex: 0 0 auto; display: flex; gap: 8px; }
+  .swatch { width: 31px; height: 31px; border: 3px solid #fff; border-radius: 10px; box-shadow: 0 0 0 1px var(--line); }
+  .swatch.navy { background: var(--navy-900); }
+  .swatch.teal { background: var(--rhino-500); }
+  .swatch.amber { background: var(--parcel-500); }
+  .swatch.coral { background: var(--coral-500); }
   .modal-mask { background: rgba(8,37,72,.46); backdrop-filter: blur(4px); }
   .modal { border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 24px 70px rgba(8,37,72,.22); }
   .toast { border-radius: 11px; background: var(--navy-950); }
@@ -263,7 +327,7 @@
   body.sidebar-collapsed .sidebar { padding: 18px 10px; }
   body.sidebar-collapsed .brand-card { padding: 2px 4px 18px; }
   body.sidebar-collapsed .brand-art, body.sidebar-collapsed .brand-meta,
-  body.sidebar-collapsed .product-desc, body.sidebar-collapsed .nav-label,
+  body.sidebar-collapsed .nav-label,
   body.sidebar-collapsed .nav-text, body.sidebar-collapsed .side-help,
   body.sidebar-collapsed .side-footer { display: none; }
   body.sidebar-collapsed .brand-mini { display: block; }
@@ -271,13 +335,16 @@
   body.sidebar-collapsed .module-tab { width: 54px; padding: 9px; justify-content: center; }
   body.sidebar-collapsed .nav-icon { width: 36px; height: 36px; }
   @media (max-width: 1100px) {
-    .app-shell { grid-template-columns: 210px minmax(0,1fr); }
+    .app-shell { grid-template-columns: 176px minmax(0,1fr); }
     .sidebar { padding-left: 10px; padding-right: 10px; }
-    .brand-art { width: 185px; }
-    .brand-art img { width: 225px; transform: translate(-27px,-18px); }
-    .hero-mascot { display: none; }
+    .brand-art { width: 64px; height: 47px; }
+    .brand-art img { width: 88px; transform: translate(-11px,-3px); }
+    .hero { grid-template-columns: 1fr; }
+    .hero-lockup { width: 320px; height: 128px; }
+    .vi-note { grid-template-columns: 1fr; }
     main { padding-left: 20px; padding-right: 20px; }
     .topbar { padding-left: 20px; padding-right: 20px; }
+    .side-footer span:last-child { display: none; }
   }
   @media (max-width: 760px) {
     main { padding: 16px 14px 28px; }
@@ -285,11 +352,19 @@
     .breadcrumb > span:first-child, .breadcrumb > span:nth-child(2) { display: none; }
     .hero { padding: 22px 20px; }
     .hero h1 { font-size: 23px; }
+    .hero-lockup {
+      --lockup-width: 328px; --lockup-x: -12px; --lockup-y: -28px;
+      justify-self: start; width: min(100%,320px); height: 118px;
+    }
+    .update-check { width: 38px; padding: 0; justify-content: center; }
+    .update-check span { display: none; }
+    .swatches { align-items: flex-start; flex-direction: column; }
     .field.grow { min-width: 100%; }
     .side-col { width: 100%; }
     .side-col select { width: 100%; }
     .table-title-row { flex-direction: column; }
     .table-actions { justify-content: flex-start; }
+    .topbar.has-update #hubStatus { display: none; }
   }
 </style>
 </head>
@@ -298,10 +373,13 @@
   <aside class="sidebar">
     <button class="sidebar-toggle" id="sidebarToggle" type="button" aria-label="收起侧栏" title="收起侧栏">‹</button>
     <div class="brand-card">
-      <div class="brand-art"><img src="/xynigo-logo.png" alt="Xynigo"></div>
-      <div class="brand-mini" title="Xynigo"><img src="/xynigo-logo.png" alt=""></div>
-      <div class="brand-meta"><span class="product-type">跨境代采协同系统</span><span class="edition">v0.6.0</span></div>
-      <div class="product-desc">稳定执行每一次采购</div>
+      <div class="brand-art" role="img" aria-label="小犀与 X 一体图形">
+        <img src="xynigo-mascot-x.png" alt="">
+      </div>
+      <div class="brand-mini" title="Xynigo" role="img" aria-label="Xynigo 一体图形">
+        <img src="xynigo-x.ico?v=3" alt="">
+      </div>
+      <div class="brand-meta"><span class="product-type">跨境代采协同系统</span></div>
     </div>
 
     <nav class="module-tabs" aria-label="功能模块">
@@ -321,7 +399,7 @@
     </nav>
 
     <div class="nav-spacer"></div>
-    <div class="side-help"><strong>Xyni 提示</strong>批量任务开始前，请确认 HubStudio 已登录并保持网络代理正常。</div>
+    <div class="side-help"><strong>小犀提示</strong>批量任务开始前，请确认 HubStudio 已登录并保持网络代理正常。</div>
     <div class="side-footer"><span>Xynigo Sourcing</span><span>本地运行</span></div>
   </aside>
 
@@ -329,6 +407,13 @@
     <header class="topbar">
       <div class="breadcrumb"><span>工作台</span><span>›</span><strong id="moduleLabel">物流订单查询</strong></div>
       <div class="topbar-right">
+        <button class="update-check" id="updateCheck" type="button" title="手动检查更新" aria-label="检查更新">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-4M4 4v5h5M4 13a8 8 0 0 0 14.9 4M20 20v-5h-5"/></svg>
+          <span id="updateCheckText">检查更新</span>
+        </button>
+        <button class="update-notice" id="updateNotice" type="button" title="发现新版本" hidden>
+          <span class="update-signal" aria-hidden="true">↑</span><span id="updateNoticeText">发现新版本</span>
+        </button>
         <span class="pill checking" id="hubStatus" title="点击重新检测连接">⏳ 正在检测 HubStudio…</span>
         <button class="icon-button" id="btnSettings" type="button" title="偏好设置" aria-label="偏好设置"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></svg></button>
       </div>
@@ -340,9 +425,11 @@
           <div class="hero-kicker">XYNIGO SOURCING WORKSPACE</div>
           <h1>让小犀帮你把每一单稳稳带回来，<span class="hero-call">Xyni, GO!</span></h1>
           <p id="moduleSummary">批量查询订单与物流状态，异常任务集中处理，结果一键导出。</p>
-          <div class="hero-meta"><span class="hero-chip">稳定版 v0.6.0</span><span class="hero-chip">本机数据不出站</span><span class="hero-chip">在线更新已开启</span></div>
+          <div class="hero-meta"><span class="hero-chip">稳定版 v0.6.1</span><span class="hero-chip">本机数据不出站</span><span class="hero-chip">在线更新已开启</span></div>
         </div>
-        <div class="hero-mascot" aria-hidden="true"><img src="/xynigo-logo.png" alt=""></div>
+        <div class="hero-lockup" role="img" aria-label="小犀与 Xynigo 完整品牌一体图形">
+          <img src="xynigo-logo.png" alt="">
+        </div>
       </section>
 
   <div class="module-panel" id="queryPanel">
@@ -521,6 +608,18 @@
       <div class="reg-plan">Mac 补账命令：<span class="mono">python3 -m purchase_tool backfill --xlsx 原始号商.xlsx --mapping 绑定映射清单.xlsx --apply</span></div>
     </section>
   </div>
+
+  <section class="vi-note" aria-label="Xynigo 品牌介绍">
+    <div class="card brand-story">
+      <div class="card-title">品牌表达</div>
+      <p><strong>Xynigo</strong> 是面向跨境团队的代采协同品牌；“小犀代采”是中文产品名，吉祥物英文名为 <strong>Xyni</strong>。小犀不代表笨重，而代表可靠、抗压、认准目标持续向前。包裹与勾号表达任务被稳稳接住并完成。</p>
+      <p><span class="brand-iteration">持续迭代中</span> 系统正在快速开发，我们会持续扩展代采、履约与团队协作能力。</p>
+    </div>
+    <div class="card swatches">
+      <div class="swatch-copy"><strong>统一品牌色</strong><span>深海军蓝负责信任，小犀青承载行动，包裹黄与珊瑚红只做重点提示</span></div>
+      <div class="swatch-group" aria-label="品牌色板"><i class="swatch navy" title="深海军蓝"></i><i class="swatch teal" title="小犀青"></i><i class="swatch amber" title="包裹黄"></i><i class="swatch coral" title="珊瑚红"></i></div>
+    </div>
+  </section>
     </main>
   </section>
 </div>
@@ -593,6 +692,10 @@ let envAccountCount = 0;
 let envRunning = false;
 let activeModule = 'query';
 let hiddenQueryColumns = new Set(['envName', 'ip']);
+let updatePollTimer = null;
+let lastUpdateDecision = '';
+let manualUpdateCheck = false;
+let currentUpdateInfo = {state: 'idle', enabled: false};
 
 const sidebarToggle = $('sidebarToggle');
 let sidebarManuallyToggled = false;
@@ -633,6 +736,99 @@ async function api(path, opts) {
   if (!res.ok) throw new Error(j.error || ('请求失败 HTTP ' + res.status));
   return j;
 }
+
+function renderUpdateStatus(info) {
+  currentUpdateInfo = info || {state: 'idle', enabled: false};
+  const notice = $('updateNotice');
+  const text = $('updateNoticeText');
+  const check = $('updateCheck');
+  const checkText = $('updateCheckText');
+  const visibleStates = new Set(['available', 'prompting', 'downloading', 'restarting']);
+  const visible = Boolean(info.enabled && visibleStates.has(info.state));
+  const busy = ['checking', 'prompting', 'downloading', 'restarting'].includes(info.state);
+  check.classList.toggle('busy', busy);
+  check.classList.toggle('available', info.state === 'available');
+  check.disabled = busy;
+  if (info.state === 'checking') checkText.textContent = '检查中…';
+  else if (info.state === 'available') checkText.textContent = `立即更新 v${info.latestVersion || ''}`;
+  else if (info.state === 'prompting') checkText.textContent = '等待确认…';
+  else if (info.state === 'downloading') checkText.textContent = '下载更新…';
+  else if (info.state === 'restarting') checkText.textContent = '正在重启…';
+  else checkText.textContent = '检查更新';
+  check.title = info.message || '手动检查更新';
+  notice.hidden = !visible;
+  document.querySelector('.topbar').classList.toggle('has-update', visible);
+  const latest = info.latestVersion ? `v${info.latestVersion}` : '新版本';
+  if (visible) {
+    notice.classList.toggle('busy', info.state !== 'available');
+    notice.disabled = info.state !== 'available';
+    if (info.state === 'available') {
+      text.textContent = info.message && info.message.startsWith('更新失败')
+        ? '更新失败，点击重试' : `发现 ${latest}`;
+    } else if (info.state === 'prompting') {
+      text.textContent = '请在运行窗口确认';
+    } else if (info.state === 'downloading') {
+      text.textContent = '正在下载更新…';
+    } else {
+      text.textContent = '正在重启…';
+    }
+    const notes = Array.isArray(info.notes) ? info.notes.slice(0, 3) : [];
+    notice.title = [info.message || '', ...notes].filter(Boolean).join('\n');
+  }
+  if (info.decision === 'skipped' && lastUpdateDecision !== 'skipped') {
+    toast('已暂不更新；需要时可再次点击右上角版本提醒');
+  }
+  if (manualUpdateCheck && ['available', 'current', 'error', 'disabled'].includes(info.state)) {
+    toast(info.message || (info.state === 'available' ? `发现 ${latest}` : '检查更新完成'));
+    manualUpdateCheck = false;
+  }
+  lastUpdateDecision = info.decision || '';
+}
+
+async function pollUpdateStatus() {
+  clearTimeout(updatePollTimer);
+  let delay = 30000;
+  try {
+    const info = await api('/api/update/status');
+    renderUpdateStatus(info);
+    if (['checking', 'prompting', 'downloading', 'restarting'].includes(info.state)) delay = 1200;
+  } catch (err) {
+    delay = 60000;
+  }
+  updatePollTimer = setTimeout(pollUpdateStatus, delay);
+}
+
+async function requestUpdatePrompt() {
+  $('updateNotice').disabled = true;
+  $('updateCheck').disabled = true;
+  try {
+    const info = await api('/api/update/prompt', {method:'POST'});
+    renderUpdateStatus(info);
+    toast('运行窗口正在置前，请在黑窗口输入 Y 更新或 N 暂不更新');
+  } catch (err) {
+    toast(err.message);
+  }
+  setTimeout(pollUpdateStatus, 500);
+}
+
+$('updateNotice').onclick = requestUpdatePrompt;
+$('updateCheck').onclick = async () => {
+  if (currentUpdateInfo.state === 'available') return requestUpdatePrompt();
+  manualUpdateCheck = true;
+  $('updateCheck').disabled = true;
+  $('updateCheckText').textContent = '检查中…';
+  try {
+    const info = await api('/api/update/check', {method:'POST'});
+    renderUpdateStatus(info);
+  } catch (err) {
+    manualUpdateCheck = false;
+    $('updateCheck').disabled = false;
+    $('updateCheckText').textContent = '检查更新';
+    toast(err.message);
+  }
+  setTimeout(pollUpdateStatus, 500);
+};
+pollUpdateStatus();
 
 function setHubStatus(connected) {
   if (connected === hubConnected && $('hubStatus').className !== 'pill checking') {

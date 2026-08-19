@@ -45,10 +45,16 @@ from .env_batch import (TAGS, BatchEnvOrchestrator, ResumeStateStore,
 from .hub_api import HubStudioApi, DEFAULT_PORT
 from .lark_ledger import LarkLedgerSink
 from .shein_query import QueryOrchestrator
+from .updater import UpdateCoordinator
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INDEX_HTML = os.path.join(BASE_DIR, 'web', 'index.html')
 LOGO_PNG = os.path.join(BASE_DIR, 'web', 'xynigo-logo.png')
+MASCOT_X_PNG = os.path.join(BASE_DIR, 'web', 'xynigo-mascot-x.png')
+X_ICON_PNG = os.path.join(BASE_DIR, 'web', 'xynigo-x.png')
+X_ICON_ICO = os.path.join(BASE_DIR, 'web', 'xynigo-x.ico')
+FAVICON_PNG = os.path.join(BASE_DIR, 'web', 'xynigo-favicon.png')
+FAVICON_ICO = os.path.join(BASE_DIR, 'web', 'xynigo-favicon.ico')
 ENV_TEMPLATE_XLSX = os.path.join(
     BASE_DIR, 'web', '采购工具买家号入库模板.xlsx')
 CONFIG_PATH = os.path.join(os.getcwd(), 'config.json')
@@ -125,6 +131,8 @@ class AppState(object):
             concurrency=cfg.get('concurrency', 2))
         self.reg_job = RegistrationJob(lambda: self.hub)
         self.env_job = EnvBatchJob(lambda: self.hub)
+        self.updates = UpdateCoordinator(
+            os.environ.get('XYNIGO_INSTALL_DIR'), __version__)
 
     def reconnect_hub(self):
         self.orch.close()
@@ -605,12 +613,22 @@ class Handler(BaseHTTPRequestHandler):
                 self._file(INDEX_HTML, 'text/html')
             elif path == '/xynigo-logo.png':
                 self._file(LOGO_PNG, 'image/png')
+            elif path == '/xynigo-mascot-x.png':
+                self._file(MASCOT_X_PNG, 'image/png')
+            elif path == '/xynigo-x.png':
+                self._file(X_ICON_PNG, 'image/png')
+            elif path == '/xynigo-x.ico':
+                self._file(X_ICON_ICO, 'image/x-icon')
+            elif path == '/xynigo-favicon.png':
+                self._file(FAVICON_PNG, 'image/png')
             elif path == '/favicon.ico':
-                self.send_response(204)
-                self.end_headers()
+                self._file(FAVICON_ICO, 'image/x-icon')
             elif path == '/api/hub-status':
                 ok, err = STATE.hub_status(force=True)
                 self._json({'connected': ok, 'error': err})
+            elif path == '/api/update/status':
+                STATE.updates.check_async()
+                self._json(STATE.updates.snapshot())
             elif path == '/api/groups':
                 self._json({'groups': STATE.hub.group_list()})
             elif path == '/api/group-envs':
@@ -724,6 +742,19 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/requery-failed':
                 count = STATE.orch.requery_failed()
                 self._json({'started': True, 'count': count})
+            elif path == '/api/update/check':
+                started = STATE.updates.check_async(force=True)
+                payload = STATE.updates.snapshot()
+                payload['started'] = started
+                self._json(payload, 202 if started else 200)
+            elif path == '/api/update/prompt':
+                accepted = STATE.updates.prompt_async()
+                payload = STATE.updates.snapshot()
+                payload['accepted'] = accepted
+                if not accepted:
+                    payload['error'] = '当前没有可确认的新版本'
+                    return self._json(payload, 409)
+                self._json(payload, 202)
             elif path == '/api/register/validate':
                 plan = STATE.reg_job.validate(body.get('tasks'))
                 self._json({'valid': True, 'count': len(plan),
@@ -836,6 +867,7 @@ def main(argv=None):
         print('HubStudio 连接：正常')
     else:
         print('HubStudio 连接：失败 —— %s' % err)
+    STATE.updates.check_async()
     if not no_browser:
         def _open():
             ok = False

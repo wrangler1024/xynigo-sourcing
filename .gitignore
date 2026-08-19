@@ -10,6 +10,7 @@ __pycache__/
 build/
 dist/
 .cache/
+.codex_tmp/
 
 # Local runtime state and sensitive operational outputs
 config.json
