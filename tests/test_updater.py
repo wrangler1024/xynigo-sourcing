@@ -204,6 +204,8 @@ class UpdaterTests(unittest.TestCase):
             with self.assertRaises(UpdateError):
                 safe_extract_zip(archive, Path(tmp) / 'out')
 
+    @unittest.skipIf(os.name == 'nt',
+                     'Windows does not expose POSIX executable bits')
     def test_safe_extract_restores_executable_permissions(self):
         with tempfile.TemporaryDirectory() as tmp:
             archive = Path(tmp) / 'executable.zip'
@@ -284,7 +286,9 @@ class UpdaterTests(unittest.TestCase):
             try:
                 self.assertTrue(
                     (prepared.package_root / 'update-helper.sh').is_file())
-                self.assertTrue(prepared.helper_path.stat().st_mode & 0o100)
+                if os.name != 'nt':
+                    self.assertTrue(
+                        prepared.helper_path.stat().st_mode & 0o100)
             finally:
                 import shutil
                 shutil.rmtree(str(prepared.work_dir), ignore_errors=True)

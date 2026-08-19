@@ -100,7 +100,7 @@ jobs:
                   [str(binary), '--package-self-test'], text=True)
               assert os.environ['EXPECTED_PLATFORM'] in output
           PY
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: xynigo-sourcing-${{ matrix.platform }}
           path: dist/*
@@ -135,7 +135,7 @@ jobs:
               assert 'Xynigo-Sourcing/update-helper.ps1' in names
               assert not any(name.endswith('/config.json') for name in names)
           PY
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: xynigo-sourcing-windows-x86_64
           path: dist/*
