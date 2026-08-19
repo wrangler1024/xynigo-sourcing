@@ -1,18 +1,21 @@
 # -*- coding: utf-8 -*-
-"""Windows green-package updater backed by public GitHub Releases.
+"""Cross-platform green-package updater backed by public GitHub Releases.
 
 The updater intentionally uses urllib's default proxy discovery. On Windows
-that means WinINET/system proxy settings are respected (including Clash Verge
-system proxy), while a TUN adapter remains transparent to the process.
+that means system proxy settings are respected (including Clash Verge), while
+a TUN adapter remains transparent to the process. macOS uses its configured
+system networking in the same way.
 """
 from dataclasses import dataclass
 import hashlib
 import json
 import os
+import platform
 from pathlib import Path
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import urllib.error
 import urllib.request
@@ -25,10 +28,16 @@ LATEST_RELEASE_API = (
 USER_AGENT = 'Xynigo-Sourcing-Updater'
 SKIP_ONCE_ENV = 'XYNIGO_SKIP_UPDATE_ONCE'
 SKIP_ONCE_FILE = 'skip-update-once'
-MANAGED_PATHS = (
+WINDOWS_MANAGED_PATHS = (
     'app', 'deps', 'python-embed', 'run.py', '启动.bat',
     'update-helper.ps1', 'VERSION.json', '使用说明.txt',
 )
+MACOS_MANAGED_PATHS = (
+    'runtime', '启动-Mac.command', 'update-helper.sh',
+    'VERSION.json', '使用说明.txt',
+)
+# Kept as a public compatibility alias for v0.5.0 callers/tests.
+MANAGED_PATHS = WINDOWS_MANAGED_PATHS
 
 
 class UpdateError(Exception):
@@ -49,6 +58,8 @@ class ReleaseInfo:
     notes_zh: tuple
     manifest: dict
     assets: tuple
+    platform_key: str = 'windows-x86_64'
+    managed_paths: tuple = WINDOWS_MANAGED_PATHS
 
 
 @dataclass(frozen=True)
@@ -77,12 +88,66 @@ def is_newer(latest, current):
     return version_key(latest) > version_key(current)
 
 
-def default_state_dir(environ=None):
+def current_platform_key(system=None, machine=None):
+    system = (system or sys.platform).lower()
+    machine = (machine or platform.machine()).lower()
+    if system.startswith('win'):
+        return 'windows-x86_64'
+    if system == 'darwin':
+        if machine in ('arm64', 'aarch64'):
+            return 'macos-arm64'
+        if machine in ('x86_64', 'amd64'):
+            return 'macos-x86_64'
+    raise UpdateError('当前系统暂无可用的绿色包更新')
+
+
+def managed_paths_for_platform(platform_key):
+    if platform_key.startswith('windows-'):
+        return WINDOWS_MANAGED_PATHS
+    if platform_key.startswith('macos-'):
+        return MACOS_MANAGED_PATHS
+    raise UpdateError('更新清单包含未知平台：%s' % platform_key)
+
+
+def select_platform_manifest(manifest, platform_key):
+    selected = dict(manifest)
+    platforms = manifest.get('platforms')
+    if platforms is None:
+        if not platform_key.startswith('windows-'):
+            raise UpdateError('Release 尚未提供 macOS 绿色包')
+        return selected
+    if not isinstance(platforms, dict):
+        raise UpdateError('更新清单 platforms 格式无效')
+    aliases = [platform_key]
+    if platform_key.startswith('windows-'):
+        aliases.append('windows')
+    elif platform_key.startswith('macos-'):
+        aliases.append('macos')
+    package = next((platforms.get(key) for key in aliases
+                    if isinstance(platforms.get(key), dict)), None)
+    if package is None:
+        raise UpdateError('Release 缺少 %s 绿色包' % platform_key)
+    selected.update(package)
+    return selected
+
+
+def default_state_dir(environ=None, platform_key=None):
     environ = os.environ if environ is None else environ
-    base = environ.get('LOCALAPPDATA')
-    if base:
-        return Path(base) / 'XynigoSourcing'
-    return Path.home() / 'AppData' / 'Local' / 'XynigoSourcing'
+    if platform_key is None:
+        try:
+            platform_key = current_platform_key()
+        except UpdateError:
+            platform_key = ''
+    if platform_key.startswith('windows-'):
+        base = environ.get('LOCALAPPDATA')
+        if base:
+            return Path(base) / 'XynigoSourcing'
+        return Path.home() / 'AppData' / 'Local' / 'XynigoSourcing'
+    if platform_key.startswith('macos-'):
+        return Path.home() / 'Library' / 'Application Support' / 'XynigoSourcing'
+    base = environ.get('XDG_STATE_HOME')
+    return Path(base) / 'xynigo-sourcing' if base else (
+        Path.home() / '.local' / 'state' / 'xynigo-sourcing')
 
 
 def consume_skip_once(environ=None, marker_path=None):
@@ -90,9 +155,10 @@ def consume_skip_once(environ=None, marker_path=None):
     if environ.get(SKIP_ONCE_ENV) == '1':
         return True
     if marker_path is None:
-        if os.name != 'nt':
+        try:
+            marker_path = default_state_dir(environ) / SKIP_ONCE_FILE
+        except UpdateError:
             return False
-        marker_path = default_state_dir(environ) / SKIP_ONCE_FILE
     marker_path = Path(marker_path)
     if not marker_path.is_file():
         return False
@@ -182,11 +248,14 @@ def safe_extract_zip(archive_path, destination):
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with archive.open(member) as source, open(target, 'wb') as out:
                     shutil.copyfileobj(source, out)
+                permissions = (member.external_attr >> 16) & 0o777
+                if permissions:
+                    target.chmod(permissions)
     except (OSError, zipfile.BadZipFile) as exc:
         raise UpdateError('更新包解压失败：%s' % exc) from exc
 
 
-def locate_package_root(extract_dir, expected_version):
+def locate_package_root(extract_dir, expected_version, managed_paths=None):
     matches = list(Path(extract_dir).glob('*/VERSION.json'))
     if len(matches) != 1:
         raise UpdateError('更新包目录结构无效')
@@ -197,16 +266,19 @@ def locate_package_root(extract_dir, expected_version):
         raise UpdateError('VERSION.json 无效') from exc
     if normalize_version(info.get('version')) != normalize_version(expected_version):
         raise UpdateError('更新包版本与 Release 不一致')
-    missing = [name for name in MANAGED_PATHS if not (root / name).exists()]
+    managed_paths = tuple(managed_paths or MANAGED_PATHS)
+    missing = [name for name in managed_paths if not (root / name).exists()]
     if missing:
         raise UpdateError('更新包缺少程序文件：%s' % ', '.join(missing))
     return root
 
 
 class GitHubUpdateClient(object):
-    def __init__(self, transport=None, latest_api=LATEST_RELEASE_API):
+    def __init__(self, transport=None, latest_api=LATEST_RELEASE_API,
+                 platform_key=None):
         self.transport = transport or NetworkTransport()
         self.latest_api = latest_api
+        self.platform_key = platform_key
 
     @staticmethod
     def _assets(payload):
@@ -217,6 +289,7 @@ class GitHubUpdateClient(object):
             for item in (payload.get('assets') or []))
 
     def get_latest_release(self):
+        platform_key = self.platform_key or current_platform_key()
         payload = self.transport.get_json(self.latest_api)
         if payload.get('draft') or payload.get('prerelease'):
             raise UpdateError('GitHub latest 返回的不是稳定版')
@@ -231,6 +304,8 @@ class GitHubUpdateClient(object):
         manifest = self.transport.get_json(manifest_asset.url)
         if normalize_version(manifest.get('version')) != version:
             raise UpdateError('更新清单版本与 Release 不一致')
+        selected_manifest = select_platform_manifest(
+            manifest, platform_key)
         notes = manifest.get('notesZh') or []
         if not isinstance(notes, list):
             notes = []
@@ -238,8 +313,10 @@ class GitHubUpdateClient(object):
             version=version,
             tag=tag,
             notes_zh=tuple(str(item) for item in notes[:8]),
-            manifest=manifest,
-            assets=assets)
+            manifest=selected_manifest,
+            assets=assets,
+            platform_key=platform_key,
+            managed_paths=managed_paths_for_platform(platform_key))
 
     def prepare_update(self, release, output=print):
         asset_name = str(release.manifest.get('assetName') or '')
@@ -251,7 +328,7 @@ class GitHubUpdateClient(object):
         asset = next((item for item in release.assets
                       if item.name == asset_name), None)
         if asset is None or not asset.url:
-            raise UpdateError('Release 缺少 Windows 更新包')
+            raise UpdateError('Release 缺少当前平台更新包')
         if expected_size and asset.size and expected_size != asset.size:
             raise UpdateError('Release 文件大小与更新清单不一致')
 
@@ -276,9 +353,15 @@ class GitHubUpdateClient(object):
                 raise UpdateError('SHA-256 校验失败，已拒绝更新')
             extract_dir = work_dir / 'extracted'
             safe_extract_zip(archive, extract_dir)
-            package_root = locate_package_root(extract_dir, release.version)
-            helper = work_dir / 'update-helper.ps1'
-            shutil.copy2(str(package_root / 'update-helper.ps1'), str(helper))
+            package_root = locate_package_root(
+                extract_dir, release.version, release.managed_paths)
+            helper_name = ('update-helper.ps1'
+                           if release.platform_key.startswith('windows-')
+                           else 'update-helper.sh')
+            helper = work_dir / helper_name
+            shutil.copy2(str(package_root / helper_name), str(helper))
+            if helper_name.endswith('.sh'):
+                helper.chmod(helper.stat().st_mode | stat.S_IXUSR)
             return PreparedUpdate(
                 release=release,
                 work_dir=work_dir,
@@ -290,28 +373,47 @@ class GitHubUpdateClient(object):
 
     @staticmethod
     def launch_installer(prepared, install_dir, current_version):
-        if os.name != 'nt':
-            raise UpdateError('自动替换仅支持 Windows 绿色包')
         install_dir = Path(install_dir).resolve()
-        local_app_data = Path(os.environ.get(
-            'LOCALAPPDATA', str(Path.home() / 'AppData' / 'Local')))
-        backup_root = local_app_data / 'XynigoSourcing' / 'backups'
+        state_dir = default_state_dir(platform_key=prepared.release.platform_key)
+        backup_root = state_dir / 'backups'
         backup_dir = backup_root / (
             'v%s-to-v%s' % (normalize_version(current_version),
                             normalize_version(prepared.release.version)))
-        command = [
-            'powershell.exe', '-NoLogo', '-NoProfile',
-            '-ExecutionPolicy', 'Bypass', '-File', str(prepared.helper_path),
-            '-InstallDir', str(install_dir),
-            '-StageDir', str(prepared.package_root),
-            '-BackupDir', str(backup_dir),
-            '-ParentPid', str(os.getpid()),
-            '-WorkDir', str(prepared.work_dir),
-        ]
-        flags = getattr(subprocess, 'CREATE_NEW_CONSOLE', 0)
+        if prepared.release.platform_key.startswith('windows-'):
+            if os.name != 'nt':
+                raise UpdateError('Windows 更新包只能在 Windows 上安装')
+            command = [
+                'powershell.exe', '-NoLogo', '-NoProfile',
+                '-ExecutionPolicy', 'Bypass', '-File',
+                str(prepared.helper_path),
+                '-InstallDir', str(install_dir),
+                '-StageDir', str(prepared.package_root),
+                '-BackupDir', str(backup_dir),
+                '-ParentPid', str(os.getpid()),
+                '-WorkDir', str(prepared.work_dir),
+                '-StateDir', str(state_dir),
+            ]
+            popen_kwargs = {
+                'creationflags': getattr(subprocess, 'CREATE_NEW_CONSOLE', 0),
+            }
+        elif prepared.release.platform_key.startswith('macos-'):
+            if sys.platform != 'darwin':
+                raise UpdateError('macOS 更新包只能在 macOS 上安装')
+            command = [
+                '/bin/bash', str(prepared.helper_path),
+                '--install-dir', str(install_dir),
+                '--stage-dir', str(prepared.package_root),
+                '--backup-dir', str(backup_dir),
+                '--parent-pid', str(os.getpid()),
+                '--work-dir', str(prepared.work_dir),
+                '--state-dir', str(state_dir),
+            ]
+            popen_kwargs = {'start_new_session': True}
+        else:
+            raise UpdateError('当前平台无法启动更新替换程序')
         try:
             subprocess.Popen(command, cwd=str(prepared.work_dir),
-                             close_fds=True, creationflags=flags)
+                             close_fds=True, **popen_kwargs)
         except OSError as exc:
             raise UpdateError('无法启动更新替换程序：%s' % exc) from exc
 

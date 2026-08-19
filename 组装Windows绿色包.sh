@@ -103,10 +103,11 @@ with open(os.path.join(stage, 'run.py'), 'w', encoding='utf-8') as handle:
     handle.write(run_py)
 
 version_info = {
-    'schemaVersion': 1,
+    'schemaVersion': 2,
     'product': 'Xynigo Sourcing',
     'version': version,
     'channel': 'stable',
+    'platform': 'windows-x86_64',
     'repository': 'wrangler1024/xynigo-sourcing',
     'managedPaths': [
         'app', 'deps', 'python-embed', 'run.py', '启动.bat',
@@ -180,37 +181,9 @@ with zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED) as archive:
 PY
 
 echo "[7/7] Generate SHA-256 and update manifest ..."
-ROOT="$ROOT" ZIP="$ZIP" ZIP_NAME="$ZIP_NAME" VERSION="$VERSION" \
-MANIFEST="$MANIFEST" SHA_FILE="$SHA_FILE" python3 - <<'PY'
-import hashlib
-import json
-import os
-from pathlib import Path
-
-root = Path(os.environ['ROOT'])
-zip_path = root / os.environ['ZIP']
-digest = hashlib.sha256(zip_path.read_bytes()).hexdigest()
-size = zip_path.stat().st_size
-notes_source = root / 'release' / ('v%s.zh-CN.json' % os.environ['VERSION'])
-notes = json.loads(notes_source.read_text(encoding='utf-8'))['notesZh']
-manifest = {
-    'schemaVersion': 1,
-    'product': 'Xynigo Sourcing',
-    'channel': 'stable',
-    'version': os.environ['VERSION'],
-    'assetName': os.environ['ZIP_NAME'],
-    'sha256': digest,
-    'size': size,
-    'notesZh': notes,
-}
-(root / os.environ['MANIFEST']).write_text(
-    json.dumps(manifest, ensure_ascii=False, indent=2) + '\n',
-    encoding='utf-8')
-(root / os.environ['SHA_FILE']).write_text(
-    '%s  %s\n' % (digest, os.environ['ZIP_NAME']),
-    encoding='utf-8')
-print('ZIP:', zip_path)
-print('SHA-256:', digest)
-PY
+python3 scripts/update_release_assets.py \
+  --version "$VERSION" --platform "windows-x86_64" --asset "$ZIP" \
+  --notes "release/v${VERSION}.zh-CN.json" \
+  --manifest "$MANIFEST" --sha-file "$SHA_FILE"
 
 du -sh "$ZIP"

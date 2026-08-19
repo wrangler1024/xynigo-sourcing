@@ -5,15 +5,20 @@ import unittest
 from purchase_tool import __version__
 
 
-class ReleaseV050Tests(unittest.TestCase):
+class ReleaseV051Tests(unittest.TestCase):
     def test_version_and_packaging_are_aligned(self):
         root = Path(__file__).resolve().parents[1]
-        self.assertEqual(__version__, '0.5.0')
+        self.assertEqual(__version__, '0.5.1')
         script = (root / '组装Windows绿色包.sh').read_text(encoding='utf-8')
         self.assertIn('v${VERSION}.zip', script)
         self.assertIn('Xynigo Sourcing v%s 启动中', script)
         self.assertTrue((root / 'packaging' / 'windows' /
                          'update-helper.ps1').is_file())
+        mac_script = (root / '组装macOS绿色包.sh').read_text(
+            encoding='utf-8')
+        self.assertIn('Xynigo_Sourcing_macOS_', mac_script)
+        self.assertTrue((root / 'packaging' / 'macos' /
+                         'update-helper.sh').is_file())
         self.assertTrue((root / 'src' / 'purchase_tool' /
                          'updater.py').is_file())
 
@@ -23,7 +28,7 @@ class ReleaseV050Tests(unittest.TestCase):
             encoding='utf-8')
         self.assertIn('模块三 · 买家号建环境', html)
         self.assertIn('/api/envbatch/start', html)
-        self.assertIn('Xynigo Sourcing v0.5.0', html)
+        self.assertIn('Xynigo Sourcing v0.5.1', html)
         self.assertIn('cfgHideEnvName', html)
         self.assertIn("activeModule !== 'query'", html)
         self.assertTrue((root / 'src' / 'purchase_tool' / 'web' /

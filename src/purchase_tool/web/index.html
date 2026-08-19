@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Xynigo Sourcing v0.5.0</title>
+<title>Xynigo Sourcing v0.5.1</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   :root {
@@ -133,7 +133,7 @@
 <body>
 
 <header class="topbar">
-  <div class="brand">🛒 Xynigo Sourcing <span class="module" id="moduleLabel">模块一 · 批量查询物流单号</span><span class="ver">v0.5.0</span></div>
+  <div class="brand">🛒 Xynigo Sourcing <span class="module" id="moduleLabel">模块一 · 批量查询物流单号</span><span class="ver">v0.5.1</span></div>
   <div class="topbar-right">
     <span class="pill checking" id="hubStatus" title="点击重新检测连接">⏳ 正在检测 HubStudio…</span>
     <button class="btn" id="btnSettings">⚙ 设置</button>
@@ -532,7 +532,7 @@ async function poll() {
   catch (e) {
     if (hubConnected !== false) {
       setHubStatus(false);
-      $('hubStatus').textContent = '🔴 工具服务无响应（请重启 启动.bat）';
+      $('hubStatus').textContent = '🔴 工具服务无响应（请重启当前系统的启动脚本）';
     }
   }
 }

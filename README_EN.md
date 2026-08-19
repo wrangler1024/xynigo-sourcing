@@ -22,7 +22,7 @@ workflows contributed by **Samforo**.
   confirmation, resumable state, and credential-free mapping exports.
 - Optional Lark Base ledger integration configured entirely at runtime.
 
-The current stable release is `v0.5.0`. The project is under active
+The current stable release is `v0.5.1`. The project is under active
 development and is not yet a hosted SaaS product.
 
 ## Requirements
@@ -87,24 +87,28 @@ python -m unittest discover -s tests
 All committed tests use synthetic accounts, example domains, and fake cookie
 values.
 
-## Windows portable build
+## Windows and macOS portable builds
 
 ```bash
 bash 组装Windows绿色包.sh
+bash 组装macOS绿色包.sh
 ```
 
-The build is written to `dist/` and includes the full portable ZIP, a SHA-256
-file, and a machine-readable update manifest. The script packages the
-application with the official Windows embeddable Python runtime.
+Builds are written to `dist/` with portable ZIPs, SHA-256 checksums, and one
+machine-readable cross-platform update manifest. Windows uses the official
+embeddable Python runtime. macOS uses a self-contained PyInstaller runtime and
+is built separately for Apple Silicon `arm64` and Intel `x86_64`.
 
-### Windows online updates
+### Cross-platform online updates
 
 - v0.5.0 must still be downloaded and fully extracted manually once.
-- Starting with v0.5.0, `启动.bat` checks the latest stable GitHub Release.
-  Enter `Y` to update or `N` to skip.
+- macOS has equivalent portable builds and online updates starting with
+  v0.5.1.
+- On Windows use `启动.bat`; on macOS use `启动-Mac.command`. Enter `Y`
+  to update or `N` to skip when a newer stable release is available.
 - No GitHub account or Git installation is required. Downloads inherit the
-  Windows network configuration, including system proxies and transparent TUN
-  adapters.
+  operating-system network configuration. Windows system proxies and
+  transparent TUN adapters are supported.
 - Packages are verified with SHA-256 before replacement. The current program
   is backed up first and automatically rolled back if replacement fails.
 - Only managed program files are replaced. `config.json`, local data, logs,
@@ -114,7 +118,7 @@ application with the official Windows embeddable Python runtime.
 ## Roadmap
 
 - Separate preview and stable update channels.
-- Centralized version metadata and automated release builds.
+- Automated dual-platform release builds.
 - Additional sourcing, order, fulfillment, and reporting modules.
 
 ## License

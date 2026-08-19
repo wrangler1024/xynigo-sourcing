@@ -8,9 +8,10 @@ import unittest
 import zipfile
 
 from purchase_tool.updater import (
-    GitHubUpdateClient, MANAGED_PATHS, NetworkTransport, ReleaseAsset,
-    ReleaseInfo, UpdateError, check_for_updates_at_startup, is_newer,
-    safe_extract_zip, sha256_file,
+    GitHubUpdateClient, MACOS_MANAGED_PATHS, MANAGED_PATHS,
+    NetworkTransport, ReleaseAsset, ReleaseInfo, UpdateError,
+    check_for_updates_at_startup, current_platform_key, is_newer,
+    safe_extract_zip, select_platform_manifest, sha256_file,
 )
 
 
@@ -73,6 +74,42 @@ class WritingTransport(object):
 
 
 class UpdaterTests(unittest.TestCase):
+    def test_platform_detection_supports_windows_and_both_macos_architectures(self):
+        self.assertEqual(
+            current_platform_key('win32', 'AMD64'), 'windows-x86_64')
+        self.assertEqual(
+            current_platform_key('darwin', 'arm64'), 'macos-arm64')
+        self.assertEqual(
+            current_platform_key('darwin', 'x86_64'), 'macos-x86_64')
+
+    def test_manifest_selects_current_platform_without_breaking_legacy_windows(self):
+        manifest = {
+            'version': '0.5.1',
+            'assetName': 'windows.zip',
+            'sha256': '1' * 64,
+            'size': 10,
+            'platforms': {
+                'windows-x86_64': {
+                    'assetName': 'windows.zip',
+                    'sha256': '1' * 64,
+                    'size': 10,
+                },
+                'macos-arm64': {
+                    'assetName': 'mac-arm64.zip',
+                    'sha256': '2' * 64,
+                    'size': 20,
+                },
+            },
+        }
+        selected = select_platform_manifest(manifest, 'macos-arm64')
+        self.assertEqual(selected['assetName'], 'mac-arm64.zip')
+        legacy = select_platform_manifest(
+            {'assetName': 'windows.zip'}, 'windows-x86_64')
+        self.assertEqual(legacy['assetName'], 'windows.zip')
+        with self.assertRaisesRegex(UpdateError, 'macOS'):
+            select_platform_manifest(
+                {'assetName': 'windows.zip'}, 'macos-arm64')
+
     def test_semantic_version_comparison(self):
         self.assertTrue(is_newer('0.5.1', '0.5.0'))
         self.assertFalse(is_newer('v0.5.0', '0.5.0'))
@@ -167,6 +204,19 @@ class UpdaterTests(unittest.TestCase):
             with self.assertRaises(UpdateError):
                 safe_extract_zip(archive, Path(tmp) / 'out')
 
+    def test_safe_extract_restores_executable_permissions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / 'executable.zip'
+            member = zipfile.ZipInfo('Xynigo-Sourcing/update-helper.sh')
+            member.create_system = 3
+            member.external_attr = (0o100755 << 16)
+            with zipfile.ZipFile(archive, 'w') as handle:
+                handle.writestr(member, '#!/bin/bash\n')
+            destination = Path(tmp) / 'out'
+            safe_extract_zip(archive, destination)
+            extracted = destination / member.filename
+            self.assertTrue(extracted.stat().st_mode & 0o100)
+
     def test_prepare_accepts_complete_verified_package(self):
         with tempfile.TemporaryDirectory() as tmp:
             archive = Path(tmp) / 'package.zip'
@@ -194,6 +244,47 @@ class UpdaterTests(unittest.TestCase):
             try:
                 self.assertEqual(prepared.release.version, '0.6.0')
                 self.assertTrue((prepared.package_root / 'run.py').is_file())
+            finally:
+                import shutil
+                shutil.rmtree(str(prepared.work_dir), ignore_errors=True)
+
+    def test_prepare_accepts_complete_macos_package(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / 'mac-package.zip'
+            with zipfile.ZipFile(archive, 'w') as handle:
+                handle.writestr(
+                    'Xynigo-Sourcing/VERSION.json',
+                    json.dumps({'version': '0.6.0'}))
+                for name in MACOS_MANAGED_PATHS:
+                    if name == 'VERSION.json':
+                        continue
+                    if '.' in Path(name).name:
+                        handle.writestr('Xynigo-Sourcing/' + name, 'content')
+                    else:
+                        handle.writestr(
+                            'Xynigo-Sourcing/' + name + '/.keep', '')
+            data = archive.read_bytes()
+            asset = ReleaseAsset(
+                archive.name, 'https://example.test/mac-package.zip',
+                len(data))
+            info = release(manifest={
+                'assetName': asset.name,
+                'sha256': sha256_file(archive),
+                'size': len(data),
+            }, assets=(asset,))
+            info = ReleaseInfo(
+                version=info.version, tag=info.tag,
+                notes_zh=info.notes_zh, manifest=info.manifest,
+                assets=info.assets, platform_key='macos-arm64',
+                managed_paths=MACOS_MANAGED_PATHS)
+            client = GitHubUpdateClient(
+                transport=WritingTransport(data),
+                platform_key='macos-arm64')
+            prepared = client.prepare_update(info, output=lambda _line: None)
+            try:
+                self.assertTrue(
+                    (prepared.package_root / 'update-helper.sh').is_file())
+                self.assertTrue(prepared.helper_path.stat().st_mode & 0o100)
             finally:
                 import shutil
                 shutil.rmtree(str(prepared.work_dir), ignore_errors=True)

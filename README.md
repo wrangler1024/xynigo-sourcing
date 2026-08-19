@@ -15,7 +15,7 @@ Xynigo Sourcing 是一套面向跨境电商团队的开源代采协同系统，�
 - 批量创建 HubStudio 环境，支持预演、写入确认、断点续作及不含凭证的映射结果导出。
 - 可选的 Lark Base 台账集成，相关参数全部在运行时配置。
 
-当前稳定版为 `v0.5.0`。项目正在持续开发，暂未提供托管式 SaaS 服务。
+当前稳定版为 `v0.5.1`。项目正在持续开发，暂未提供托管式 SaaS 服务。
 
 ## 环境要求
 
@@ -71,26 +71,28 @@ python -m unittest discover -s tests
 
 仓库内所有测试均使用合成账号、示例域名和虚拟 Cookie。
 
-## Windows 绿色包构建
+## Windows 与 macOS 绿色包
 
 ```bash
 bash 组装Windows绿色包.sh
+bash 组装macOS绿色包.sh
 ```
 
-构建产物会写入 `dist/`，包含完整绿色包 ZIP、SHA-256 文件和机器可读的更新清单。脚本使用 Windows 官方嵌入式 Python 运行时打包应用。
+构建产物会写入 `dist/`，包含对应平台的完整 ZIP、SHA-256 文件和机器可读的双平台更新清单。Windows 包含官方嵌入式 Python；macOS 包使用 PyInstaller 构建自包含运行时，分别支持 Apple Silicon `arm64` 和 Intel `x86_64`。
 
-### Windows 在线更新
+### 双平台在线更新
 
 - v0.5.0 第一次仍需人工下载绿色包并完整解压。
-- 从 v0.5.0 开始，双击 `启动.bat` 会检查 GitHub Releases 最新稳定版；输入 `Y` 更新，输入 `N` 跳过。
-- 不需要 GitHub 账号或 Git。下载使用 Windows 默认网络配置，兼容系统代理和 TUN 模式。
+- macOS 从 v0.5.1 开始提供同级别绿色包与在线更新。
+- Windows 双击 `启动.bat`，macOS 打开 `启动-Mac.command`；发现新版本时输入 `Y` 更新或 `N` 跳过。
+- 不需要 GitHub 账号或 Git。下载继承操作系统默认网络配置；Windows 兼容系统代理和 TUN 模式。
 - 更新包通过 SHA-256 校验后才替换；替换前备份当前程序，失败时自动回滚。
 - 更新只替换程序受管文件，始终保留 `config.json`、本地数据、日志和用户导入文件。更新检查失败不会阻止工具启动。
 
 ## 路线图
 
 - 分离预览版和稳定版更新通道。
-- 统一版本元数据并实现自动化发行构建。
+- 完善 Windows 与 macOS 双端自动化发行构建。
 - 持续增加代采、订单、履约和报表模块。
 
 ## 开源协议
