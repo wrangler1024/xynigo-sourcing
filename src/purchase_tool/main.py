@@ -448,29 +448,47 @@ def _mask_order(order_no):
     return value[:3] + '***' + value[-3:]
 
 
-def ledger_tsv_bytes(rows):
-    """生成显式下载用台账 TSV；返回值含凭证，禁止日志输出。"""
+LEDGER_PASTE_COLUMNS = {
+    # 飞书「希音采购买家号台账」默认 Grid View 的连续列契约。
+    # 直贴文件从「邮箱账号」列开始，不包含左侧自动编号「账号ID」。
+    # 「购买日期」是公式字段，必须保留一个空占位，后续字段才不会错位。
+    'MX': (
+        '邮箱账号', '密码', '接码Key链接', 'Cookie', '号商购买单号',
+        '购买日期', '账号状态', '绑定环境', '环境序号', '采购员', '绑定时间'),
+    'US': (
+        '邮箱账号', '密码', 'Cookie', '接码Key链接', '号商购买单号',
+        '购买日期', '账号状态', '绑定环境', '环境序号', '绑定时间', '采购员'),
+}
+
+
+def ledger_tsv_bytes(rows, site):
+    """生成按站点对齐飞书视图的无表头直贴 TSV（含凭证）。"""
+    site = normalize_env_site(site)
     output = StringIO(newline='')
     writer = csv.writer(output, dialect='excel-tab', lineterminator='\r\n')
-    writer.writerow([
-        '邮箱账号', '密码', '接码Key链接', '号商购买单号', '账号状态',
-        '采购员', 'Cookie', '备注', '绑定环境', '环境序号', '绑定时间'])
     for row in rows:
         complete = row.state == 'done'
-        writer.writerow([
-            row.account.email,
-            row.account.password,
-            row.account.key_url,
-            row.account.order_no,
-            '已绑定' if complete else '未绑定',
-            row.account.buyer,
-            row.account.cookie_text,
-            '模块三 TSV 应急直贴',
-            row.env_name if complete else '',
-            row.serial_number if complete else '',
-            row.binding_time if complete else '',
-        ])
+        values = {
+            '邮箱账号': row.account.email,
+            '密码': row.account.password,
+            '接码Key链接': row.account.key_url,
+            'Cookie': row.account.cookie_text,
+            '号商购买单号': row.account.order_no,
+            '购买日期': '',
+            '账号状态': '已绑定' if complete else '未绑定',
+            '绑定环境': row.env_name if complete else '',
+            '环境序号': row.serial_number if complete else '',
+            '采购员': row.account.buyer,
+            '绑定时间': row.binding_time if complete else '',
+        }
+        writer.writerow([values[name] for name in LEDGER_PASTE_COLUMNS[site]])
     return ('\ufeff' + output.getvalue()).encode('utf-8')
+
+
+def ledger_tsv_filename(site, purchase_date):
+    site = normalize_env_site(site)
+    return ('台账直贴_%s_%s_无表头_从邮箱账号列开始.tsv' %
+            (site, purchase_date))
 
 
 class EnvBatchJob(object):
@@ -742,13 +760,14 @@ class EnvBatchJob(object):
                 result_rows = runner.run()
                 mapping = mapping_workbook_bytes(result_rows)
                 checks = runner.verify_ips(verify_sample_count)
-                tsv = ledger_tsv_bytes(result_rows)
+                tsv = ledger_tsv_bytes(result_rows, runtime['site'])
                 done = sum(row.state == 'done' for row in result_rows)
                 with self.lock:
                     self.mapping_data = mapping
                     self.mapping_name = '绑定映射清单_%s.xlsx' % purchase_date
                     self.tsv_data = tsv
-                    self.tsv_name = '台账直贴_%s.tsv' % purchase_date
+                    self.tsv_name = ledger_tsv_filename(
+                        runtime['site'], purchase_date)
                     self.ip_checks = checks
                     self.summary = {
                         'total': len(result_rows),
@@ -799,7 +818,10 @@ class EnvBatchJob(object):
                 result_rows = self.runner.rows
                 with self.lock:
                     self.mapping_data = mapping_workbook_bytes(result_rows)
-                    self.tsv_data = ledger_tsv_bytes(result_rows)
+                    self.tsv_data = ledger_tsv_bytes(
+                        result_rows, self.runner.site)
+                    self.tsv_name = ledger_tsv_filename(
+                        self.runner.site, self.runner.purchase_date)
                     self.summary.update({
                         'total': len(result_rows),
                         'done': sum(row.state == 'done' for row in result_rows),

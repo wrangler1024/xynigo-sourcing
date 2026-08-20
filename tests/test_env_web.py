@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import base64
-from io import BytesIO
+import csv
+from io import BytesIO, StringIO
 import json
 import os
 import tempfile
@@ -17,7 +18,7 @@ os.environ.setdefault(
     'XYNIGO_PROXY_LINK', 'https://proxy.example.test/{region}')
 
 from purchase_tool.env_batch import ResumeStateStore
-from purchase_tool.main import BackupEnvJob, EnvBatchJob
+from purchase_tool.main import BackupEnvJob, EnvBatchJob, ledger_tsv_bytes
 
 
 TEST_TAG = 'MX-Purchase'
@@ -39,6 +40,45 @@ def source_bytes():
     output = BytesIO()
     workbook.save(output)
     return output.getvalue()
+
+
+def result_row(site='MX'):
+    return SimpleNamespace(
+        state='done',
+        account=SimpleNamespace(
+            email='paste@example.com', password='paste-secret',
+            key_url='https://codes.example.test/get?orderNo=paste123',
+            order_no='order-paste-001', buyer='新刚',
+            cookie_text='[{"name":"sid","value":"paste-cookie"}]'),
+        env_name='XG-%s-0820-001' % site,
+        serial_number=2001,
+        binding_time='2026-08-20 15:30:00')
+
+
+def tsv_rows(data):
+    return list(csv.reader(
+        StringIO(data.decode('utf-8-sig')), dialect='excel-tab'))
+
+
+class LedgerPasteTsvTests(unittest.TestCase):
+    def test_mx_tsv_is_headerless_and_matches_grid_view_from_email(self):
+        rows = tsv_rows(ledger_tsv_bytes([result_row('MX')], 'MX'))
+        self.assertEqual(rows, [[
+            'paste@example.com', 'paste-secret',
+            'https://codes.example.test/get?orderNo=paste123',
+            '[{"name":"sid","value":"paste-cookie"}]',
+            'order-paste-001', '', '已绑定', 'XG-MX-0820-001',
+            '2001', '新刚', '2026-08-20 15:30:00']])
+        self.assertNotIn('邮箱账号', rows[0])
+
+    def test_us_tsv_uses_us_grid_view_order(self):
+        rows = tsv_rows(ledger_tsv_bytes([result_row('US')], 'US'))
+        self.assertEqual(rows, [[
+            'paste@example.com', 'paste-secret',
+            '[{"name":"sid","value":"paste-cookie"}]',
+            'https://codes.example.test/get?orderNo=paste123',
+            'order-paste-001', '', '已绑定', 'XG-US-0820-001',
+            '2001', '2026-08-20 15:30:00', '新刚']])
 
 
 class FakeHub(object):
@@ -141,10 +181,12 @@ class EnvWebJobTests(unittest.TestCase):
         self.assertNotIn('web-secret-pass', xml)
         self.assertNotIn('web-secret-cookie', xml)
 
-        tsv, _name = job.tsv_export()
+        tsv, name = job.tsv_export()
         text = tsv.decode('utf-8-sig')
         self.assertIn('web-secret-pass', text)
         self.assertIn('web-secret-cookie', text)
+        self.assertEqual(len(tsv_rows(tsv)), 1)
+        self.assertIn('MX_20260819_无表头_从邮箱账号列开始', name)
         with self.assertRaises(ValueError):
             job.tsv_export()
 
@@ -194,6 +236,14 @@ class EnvWebJobTests(unittest.TestCase):
         self.assertEqual(
             create_body['linkCode'], 'https://proxy.example.test/US')
         self.assertEqual(account_call[-1], 'US')
+        tsv, name = job.tsv_export()
+        row = tsv_rows(tsv)[0]
+        self.assertIn('US_20260819_无表头_从邮箱账号列开始', name)
+        self.assertEqual(row[2],
+                         '[{"name":"sid","value":"web-secret-cookie"}]')
+        self.assertEqual(
+            row[3], 'https://codes.example.test/get?orderNo=abc123')
+        self.assertEqual(row[-1], '新刚')
 
     def test_preflight_failure_preserves_plan_and_makes_zero_writes(self):
         source = source_bytes()

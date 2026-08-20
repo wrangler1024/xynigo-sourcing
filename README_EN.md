@@ -28,8 +28,15 @@ workflows contributed by **Samforo**.
   ledger writes.
 - Optional Lark Base ledger integration configured entirely at runtime.
 
-The current stable release is `v0.7.1`. The project is under active
+The current stable release is `v0.7.2`. The project is under active
 development and is not yet a hosted SaaS product.
+
+v0.7.2 fixes the post-environment-creation TSV used for direct Lark Base
+pasting. It emits the current MX or US Grid View column order, omits the
+header and legacy notes column, preserves a blank position for the formula
+driven purchase-date field, and tells operators to paste from the first empty
+`Email Account` cell rather than the automatic account-ID column. The buyer
+intake xlsx template remains headered.
 
 v0.7.1 changes tracking screenshots in logistics-query Excel exports from
 floating drawing objects to true Excel pictures in cells. Colleagues can copy
@@ -142,6 +149,8 @@ Apple Silicon `arm64`. macOS Intel is not maintained.
 
 ## Roadmap
 
+- Replace credential-bearing TSV copy/paste with direct Lark Base API
+  writeback in the next feature release.
 - Separate preview and stable update channels.
 - Automated dual-platform release builds.
 - Additional sourcing, order, fulfillment, and reporting modules.

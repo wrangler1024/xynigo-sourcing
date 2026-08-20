@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Release contract tests for Xynigo Sourcing v0.7.1."""
+"""Release contract tests for Xynigo Sourcing v0.7.2."""
 
 from pathlib import Path
 import unittest
@@ -10,9 +10,9 @@ from purchase_tool import __version__
 class ReleaseV063Tests(unittest.TestCase):
     def test_version_and_packaging_are_aligned(self):
         root = Path(__file__).resolve().parents[1]
-        self.assertEqual(__version__, '0.7.1')
+        self.assertEqual(__version__, '0.7.2')
         pyproject = (root / 'pyproject.toml').read_text(encoding='utf-8')
-        self.assertIn('version = "0.7.1"', pyproject)
+        self.assertIn('version = "0.7.2"', pyproject)
         script = (root / '组装Windows绿色包.sh').read_text(encoding='utf-8')
         self.assertIn('v${VERSION}.zip', script)
         self.assertIn('Xynigo Sourcing v%s 启动中', script)
@@ -69,6 +69,9 @@ class ReleaseV063Tests(unittest.TestCase):
         self.assertIn('id="envBoundExports"', html)
         self.assertIn('id="envBackupExports"', html)
         self.assertIn('id="btnEnvBackupResult"', html)
+        self.assertIn('下载飞书直贴 TSV（无表头/含凭证）', html)
+        self.assertIn('从第一空行的「邮箱账号」列粘贴', html)
+        self.assertIn('若飞书列顺序被改动请停止粘贴', html)
         self.assertIn('composeAssignmentSpec()', html)
         self.assertIn('/api/envbatch/backup/preview', html)
         self.assertIn('/api/envbatch/backup/start', html)
@@ -115,7 +118,7 @@ class ReleaseV063Tests(unittest.TestCase):
         self.assertIn("cfg.proxySource === 'custom'", html)
         self.assertIn('系统模板固定带表头', html)
         self.assertNotIn('https://proxy.example.test', html)
-        self.assertIn('Xynigo Sourcing v0.7.1', html)
+        self.assertIn('Xynigo Sourcing v0.7.2', html)
         self.assertIn('Xyni, GO!', html)
         self.assertIn('Xynigo 品牌字标', html)
         self.assertIn('小犀与 Xynigo 完整品牌一体图形', html)
