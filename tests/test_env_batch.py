@@ -182,6 +182,43 @@ class EnvBatchTests(unittest.TestCase):
             accounts[0].order_no,
             extract_vendor_order_no(rows[0][2], 'FIRST@example.com'))
 
+    def test_vendor_email_path_format_is_normalized_for_deduplication(self):
+        cookie = '[{"name":"sid","value":"synthetic"}]'
+        query_url = (
+            'https://mail.example.test/api/boobar-graph?'
+            'email=first%40example.com')
+        path_url = (
+            'https://mail.example.test/api/mail-key/first%40example.com')
+        account = parse_vendor_workbook(BytesIO(workbook_bytes([[
+            'first@example.com', 'pass', path_url, cookie]])))[0]
+        self.assertRegex(account.order_no, r'^[0-9a-f]{64}$')
+        self.assertEqual(
+            account.order_no,
+            extract_vendor_order_no(query_url, 'FIRST@example.com'))
+
+    def test_vendor_email_path_format_rejects_unsafe_or_ambiguous_links(self):
+        cases = (
+            ('https://mail.example.test/api/mail-key/other%40example.com',
+             '邮箱与账号邮箱不一致'),
+            ('https://mail.example.test/api/mail-key/first%40example.com?x=1',
+             '不含可识别'),
+            ('https://user@mail.example.test/api/mail-key/'
+             'first%40example.com', '不含可识别'),
+            ('https://mail.example.test/first%40example.com', '不含可识别'),
+            ('https://mail.example.test/api/mail-key/first%ZZexample.com',
+             '路径编码无效'),
+        )
+        for key_url, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(EnvBatchError, message):
+                    extract_vendor_order_no(key_url, 'first@example.com')
+
+        for key_url in (
+                'https://user@mail.example.test/key?orderNo=abcdef12',
+                'https://mail.example.test/key#?orderNo=abcdef12'):
+            with self.assertRaisesRegex(EnvBatchError, '不含可识别'):
+                extract_vendor_order_no(key_url, 'first@example.com')
+
     def test_new_vendor_key_contract_rejects_mismatch_and_guessing(self):
         cookie = '[{"name":"sid","value":"synthetic"}]'
         cases = (

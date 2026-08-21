@@ -1,0 +1,9 @@
+{
+  "notesZh": [
+    "紧急兼容号商把账号邮箱放在接码链接 URL 路径末段的新交付格式。",
+    "旧 orderNo、id + email 和仅 email 查询参数格式继续支持。",
+    "query-email 与 path-email 统一生成同一稳定引用，避免格式变化绕过查重。",
+    "新增 URL user-info、fragment、异常编码、邮箱错配和路径查询混用阻断。",
+    "Windows 与 macOS Apple Silicon 同步提供更新包。"
+  ]
+}
