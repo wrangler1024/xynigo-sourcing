@@ -20,6 +20,7 @@ import sys
 import tempfile
 import threading
 import time
+from urllib.parse import parse_qsl, urlsplit
 import urllib.request
 
 from .hub_api import DEFAULT_PORT, HubStudioApi
@@ -51,6 +52,7 @@ MAPPING_HEADERS = ('邮箱', '环境名', 'HUB序号', '采购员', '绑定时�
 EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 ORDER_RE = re.compile(r'(?:[?&])orderNo=([0-9a-f]+)(?:[&#]|$)', re.I)
 REMARK_ORDER_RE = re.compile(r'(?:^|\|\s*)单号:([0-9a-f]+)', re.I)
+EMAIL_KEY_PATH = '/api/boobar-graph'
 ENV_NAME_RE = r'^{code}-{site}-{mmdd}-(\d{{3}})$'
 TEST_ENV_NAME_RE = r'^{code}-{site}-测试-(\d{{2}})$'
 
@@ -340,6 +342,55 @@ def _header_token(value):
     return re.sub(r'[\s_-]+', '', str(value or '').strip().casefold())
 
 
+def extract_vendor_order_no(key_url, account_email):
+    """Extract a vendor order number or derive a stable opaque reference.
+
+    Legacy code links expose a hexadecimal ``orderNo``.  Some vendors instead
+    deliver ``/api/boobar-graph`` links whose identity is either ``id+email``
+    or ``email`` only.  Those links do not contain a purchase order number, so
+    use a SHA-256 reference while keeping the existing hexadecimal remark and
+    cross-group deduplication contract.
+    """
+    legacy = ORDER_RE.search(key_url)
+    if legacy:
+        return legacy.group(1)
+
+    try:
+        parsed = urlsplit(key_url)
+        pairs = parse_qsl(
+            parsed.query, keep_blank_values=True, strict_parsing=True)
+    except ValueError as exc:
+        raise EnvBatchError('接码Key链接参数格式无效') from exc
+    if (parsed.scheme.lower() not in ('http', 'https') or
+            not parsed.hostname or parsed.fragment or
+            parsed.path.rstrip('/') != EMAIL_KEY_PATH):
+        raise EnvBatchError('接码Key链接不含可识别的号商单号')
+
+    values = {}
+    for name, value in pairs:
+        if name in values:
+            raise EnvBatchError('接码Key链接参数重复')
+        values[name] = value
+    if set(values) not in ({'email'}, {'id', 'email'}):
+        raise EnvBatchError('接码Key链接参数不符合新号商格式')
+
+    link_email = values['email'].strip()
+    if (not EMAIL_RE.fullmatch(link_email) or
+            link_email.casefold() != account_email.strip().casefold()):
+        raise EnvBatchError('接码Key链接邮箱与账号邮箱不一致')
+
+    if 'id' in values:
+        vendor_id = values['id'].strip()
+        if not re.fullmatch(r'[A-Za-z0-9_-]{6,128}', vendor_id):
+            raise EnvBatchError('接码Key链接 id 格式无效')
+        material = 'id\0%s\0%s' % (
+            parsed.hostname.casefold(), vendor_id)
+    else:
+        material = 'email\0%s' % link_email.casefold()
+    return hashlib.sha256(
+        ('xynigo-vendor-ref-v1\0' + material).encode('utf-8')).hexdigest()
+
+
 def _is_vendor_header(values, row_number):
     tokens = tuple(_header_token(value) for value in values[:4])
     if all(token in aliases for token, aliases in
@@ -402,11 +453,11 @@ def parse_vendor_workbook(source):
             if not re.match(r'^https?://', key_url, re.I):
                 raise EnvBatchError('第 %d 行接码Key不是 http(s) URL：%s' %
                                     (row_number, mask_email(email)))
-            order_match = ORDER_RE.search(key_url)
-            if not order_match:
-                raise EnvBatchError('第 %d 行接码Key无法提取 orderNo：%s' %
-                                    (row_number, mask_email(email)))
-            order_no = order_match.group(1)
+            try:
+                order_no = extract_vendor_order_no(key_url, email)
+            except EnvBatchError as exc:
+                raise EnvBatchError('第 %d 行%s：%s' % (
+                    row_number, str(exc), mask_email(email))) from exc
             if order_no.casefold() in seen_orders:
                 raise EnvBatchError('第 %d 行号商单号重复：%s' %
                                     (row_number, mask_email(email)))

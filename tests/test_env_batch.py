@@ -20,7 +20,8 @@ from purchase_tool.env_batch import (
     VENDOR_TEMPLATE_HEADERS,
     backup_env_names, backup_result_tsv_bytes,
     batch_fingerprint, build_batch_plan, build_env_create_body,
-    choose_resolution, envbatch_preflight, format_remark, load_vendor_xlsx,
+    choose_resolution, envbatch_preflight, extract_vendor_order_no,
+    format_remark, load_vendor_xlsx,
     mapping_workbook_bytes, normalize_buyer, normalize_env_site,
     parse_assignment, parse_vendor_workbook,
     validate_assignment_template, validate_purchase_tag)
@@ -157,6 +158,61 @@ class EnvBatchTests(unittest.TestCase):
         account = parse_vendor_workbook(
             BytesIO(workbook_bytes([row])))[0]
         self.assertEqual(account.cookie_text, cookie)
+
+    def test_parser_accepts_new_vendor_email_key_formats(self):
+        cookie = '[{"name":"sid","value":"synthetic"}]'
+        rows = [
+            ['first@example.com', 'pass-one',
+             ('https://mail.example.test/api/boobar-graph?'
+              'id=VendorKey_01&email=first%40example.com'), cookie],
+            ['second@example.com', 'pass-two',
+             ('https://mail.example.test/api/boobar-graph?'
+              'email=second%40example.com'), cookie],
+            ['third@example.com', 'pass-three',
+             'https://codes.example.test/key?orderNo=abcdef12&type=mail',
+             cookie],
+        ]
+        accounts = parse_vendor_workbook(BytesIO(workbook_bytes(rows)))
+        self.assertEqual(len(accounts), 3)
+        self.assertRegex(accounts[0].order_no, r'^[0-9a-f]{64}$')
+        self.assertRegex(accounts[1].order_no, r'^[0-9a-f]{64}$')
+        self.assertNotEqual(accounts[0].order_no, accounts[1].order_no)
+        self.assertEqual(accounts[2].order_no, 'abcdef12')
+        self.assertEqual(
+            accounts[0].order_no,
+            extract_vendor_order_no(rows[0][2], 'FIRST@example.com'))
+
+    def test_new_vendor_key_contract_rejects_mismatch_and_guessing(self):
+        cookie = '[{"name":"sid","value":"synthetic"}]'
+        cases = (
+            ('https://mail.example.test/api/boobar-graph?'
+             'email=other%40example.com', '邮箱与账号邮箱不一致'),
+            ('https://mail.example.test/api/boobar-graph?'
+             'email=first%40example.com&extra=value', '参数不符合'),
+            ('https://mail.example.test/api/boobar-graph?'
+             'email=first%40example.com&email=first%40example.com',
+             '参数重复'),
+            ('https://mail.example.test/arbitrary?email=first%40example.com',
+             '不含可识别'),
+        )
+        for key_url, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(EnvBatchError, message):
+                    parse_vendor_workbook(BytesIO(workbook_bytes([[
+                        'first@example.com', 'pass', key_url, cookie]])))
+
+    def test_new_vendor_id_remains_a_strict_duplicate_key(self):
+        cookie = '[{"name":"sid","value":"synthetic"}]'
+        rows = [
+            ['first@example.com', 'pass-one',
+             ('https://mail.example.test/api/boobar-graph?'
+              'id=SameKey_001&email=first%40example.com'), cookie],
+            ['second@example.com', 'pass-two',
+             ('https://mail.example.test/api/boobar-graph?'
+              'id=SameKey_001&email=second%40example.com'), cookie],
+        ]
+        with self.assertRaisesRegex(EnvBatchError, '号商单号重复'):
+            parse_vendor_workbook(BytesIO(workbook_bytes(rows)))
 
     def test_assignment_and_daily_continuation_are_per_buyer(self):
         accounts = parse_vendor_workbook(BytesIO(workbook_bytes(demo_rows())))

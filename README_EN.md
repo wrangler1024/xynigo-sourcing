@@ -28,8 +28,15 @@ workflows contributed by **Samforo**.
   ledger writes.
 - Optional Lark Base ledger integration configured entirely at runtime.
 
-The current stable release is `v0.7.2`. The project is under active
+The current stable release is `v0.7.3`. The project is under active
 development and is not yet a hosted SaaS product.
+
+v0.7.3 extends strict buyer-intake xlsx parsing beyond the existing
+`orderNo` links to the new vendor's `id + email` and email-only link formats.
+The new format must match the expected path and exact parameter set, and its
+email must match the account email. For rows without a business order number,
+the application derives an irreversible, stable internal reference for
+cross-group deduplication and idempotent recovery.
 
 v0.7.2 fixes the post-environment-creation TSV used for direct Lark Base
 pasting. It emits the current MX or US Grid View column order, omits the
