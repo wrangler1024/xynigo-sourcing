@@ -28,7 +28,6 @@ import json
 import os
 import re
 import secrets
-import shutil
 import sys
 import tempfile
 import threading
@@ -38,6 +37,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 from . import __version__
+from .buyer_ledger_sync import validate_unified_schema
 from .buyer_register import BuyerRegistrationTask, RegistrationOrchestrator
 from .excel_export import EXPORT_HEAD, export_bytes
 from .env_batch import (BACKUP_MAX_COUNT, BACKUP_REMARK, BUYER_CODES,
@@ -57,7 +57,15 @@ from .env_batch import (BACKUP_MAX_COUNT, BACKUP_REMARK, BUYER_CODES,
                         validate_backup_count,
                         validate_proxy_link, validate_purchase_tag)
 from .hub_api import HubStudioApi, DEFAULT_PORT
+from .lark_credentials import (LarkCredentialError, LarkCredentials,
+                               public_credential_status,
+                               system_credential_store)
+from .lark_links import (LarkLedgerTargetConfig, parse_lark_base_link,
+                         resolve_lark_ledger_link)
 from .lark_ledger import LarkLedgerSink
+from .lark_openapi import LarkOpenApiClient
+from .lark_runtime import build_buyer_ledger_service
+from .redaction import scrub_text
 from .shein_query import QueryOrchestrator, normalize_site
 from .updater import UpdateCoordinator
 
@@ -69,6 +77,8 @@ X_ICON_PNG = os.path.join(BASE_DIR, 'web', 'xynigo-x.png')
 X_ICON_ICO = os.path.join(BASE_DIR, 'web', 'xynigo-x.ico')
 ENV_TEMPLATE_XLSX = os.path.join(
     BASE_DIR, 'web', '采购工具买家号入库模板.xlsx')
+LARK_LEDGER_TEMPLATE_XLSX = os.path.join(
+    BASE_DIR, 'web', '买家号统一台账模板.xlsx')
 CONFIG_PATH = os.path.join(os.getcwd(), 'config.json')
 LOG_DIR = os.path.join(os.getcwd(), '查询日志')
 
@@ -76,8 +86,10 @@ CONFIG_FIELDS = frozenset({
     'hubPort', 'serverPort', 'concurrency', 'importBuyerPlan',
     'verifySampleCount', 'hiddenQueryColumns', 'purchaseSite',
     'purchaseTag', 'purchaseTags', 'proxyLink', 'envCreateWorkers',
+    'larkBuyerBaseToken', 'larkBuyerTableId',
 })
-CONFIG_REQUEST_FIELDS = CONFIG_FIELDS | {'proxyClear'}
+CONFIG_REQUEST_FIELDS = (CONFIG_FIELDS - {
+    'larkBuyerBaseToken', 'larkBuyerTableId'}) | {'proxyClear'}
 
 
 def default_config():
@@ -98,6 +110,11 @@ def default_config():
         'purchaseTags': {'MX': mx_tag, 'US': us_tag},
         'proxyLink': os.environ.get('XYNIGO_PROXY_LINK', ''),
         'envCreateWorkers': 5,
+        # Base/table identifiers are local routing configuration.  The App
+        # Secret lives in Keychain/DPAPI and is never written to config.json.
+        'larkBuyerBaseToken': os.environ.get('XYNIGO_LARK_BASE_TOKEN', ''),
+        'larkBuyerTableId': (os.environ.get('XYNIGO_LARK_TABLE_ID') or
+                             os.environ.get('XYNIGO_LARK_TABLE_ID_MX', '')),
     }
 
 
@@ -174,7 +191,8 @@ def save_config(cfg):
 
 def public_config(cfg):
     result = {key: value for key, value in cfg.items()
-              if key in CONFIG_FIELDS and key != 'proxyLink'}
+              if key in CONFIG_FIELDS and key not in {
+                  'proxyLink', 'larkBuyerBaseToken', 'larkBuyerTableId'}}
     result['proxyConfigured'] = bool(effective_proxy_link(cfg))
     result['proxySource'] = ('custom' if str(
         (cfg or {}).get('proxyLink') or '').strip() else 'default')
@@ -190,6 +208,9 @@ def public_config(cfg):
                         for name, code in BUYER_ROSTER]
     result['buyerDefaultSplit'] = list(DEFAULT_SPLIT_BUYERS)
     result['backupMaxCount'] = BACKUP_MAX_COUNT
+    result['larkLedgerTargetConfigured'] = bool(
+        str((cfg or {}).get('larkBuyerBaseToken') or '').strip()
+        and str((cfg or {}).get('larkBuyerTableId') or '').strip())
     return result
 
 
@@ -203,7 +224,8 @@ def updated_config(old_cfg, body):
     cfg.update({key: value for key, value in old_cfg.items()
                 if key in CONFIG_FIELDS})
     for key in CONFIG_FIELDS - {
-            'proxyLink', 'purchaseSite', 'purchaseTag', 'purchaseTags'}:
+            'proxyLink', 'purchaseSite', 'purchaseTag', 'purchaseTags',
+            'larkBuyerBaseToken', 'larkBuyerTableId'}:
         if key in body:
             cfg[key] = body[key]
 
@@ -276,6 +298,98 @@ def updated_config(old_cfg, body):
     return cfg
 
 
+def _validate_lark_target_value(value, label, table=False):
+    value = str(value or '').strip()
+    if not value or not re.fullmatch(r'[A-Za-z0-9_-]{8,160}', value):
+        raise ValueError('%s格式无效' % label)
+    if table and not value.startswith('tbl'):
+        raise ValueError('飞书数据表 ID 必须以 tbl 开头')
+    return value
+
+
+def updated_lark_config(old_cfg, body, resolved_target=None):
+    if not isinstance(body, dict):
+        raise ValueError('飞书配置请求必须是 JSON 对象')
+    allowed = {
+        'appId', 'appSecret', 'ledgerUrl',
+        'clearCredential', 'clearLedgerTarget',
+    }
+    if set(body) - allowed:
+        raise ValueError('飞书配置包含不允许保存的字段')
+    for flag in ('clearCredential', 'clearLedgerTarget'):
+        if flag in body and not isinstance(body[flag], bool):
+            raise ValueError('飞书清除配置必须是布尔值')
+    cfg = dict(old_cfg)
+    submitted_url = str(body.get('ledgerUrl') or '').strip()
+    if body.get('clearLedgerTarget') and submitted_url:
+        raise ValueError('清除台账目标与填写新链接不能同时选择')
+    if body.get('clearLedgerTarget'):
+        cfg['larkBuyerBaseToken'] = ''
+        cfg['larkBuyerTableId'] = ''
+    elif submitted_url:
+        if not isinstance(resolved_target, LarkLedgerTargetConfig):
+            raise ValueError('飞书多维表格链接尚未完成解析')
+        cfg['larkBuyerBaseToken'] = _validate_lark_target_value(
+            resolved_target.base_token, '飞书 Base Token')
+        cfg['larkBuyerTableId'] = _validate_lark_target_value(
+            resolved_target.table_id, '飞书数据表 ID', table=True)
+    return cfg
+
+
+def submitted_lark_credentials(body):
+    app_id = str((body or {}).get('appId') or '').strip()
+    app_secret = str((body or {}).get('appSecret') or '').strip()
+    if bool(app_id) != bool(app_secret):
+        raise ValueError('App ID 与 App Secret 必须同时填写')
+    if (body or {}).get('clearCredential') and app_id:
+        raise ValueError('清除应用凭证与填写新凭证不能同时选择')
+    if not app_id:
+        return None
+    try:
+        return LarkCredentials(app_id, app_secret)
+    except LarkCredentialError as exc:
+        raise ValueError(str(exc)) from exc
+
+
+def resolve_submitted_lark_target(body, credential_store,
+                                  client_factory=LarkOpenApiClient):
+    url = str((body or {}).get('ledgerUrl') or '').strip()
+    if not url:
+        return None
+    if (body or {}).get('clearCredential'):
+        raise ValueError('清除应用凭证时不能同时解析新台账链接')
+    reference = parse_lark_base_link(url)
+    if reference.kind == 'base':
+        return resolve_lark_ledger_link(url)
+    credentials = submitted_lark_credentials(body) or credential_store.load()
+    if credentials is None:
+        raise ValueError('Wiki 链接需要先配置 App ID 与 App Secret')
+    client = client_factory(
+        credential_provider=lambda: credentials,
+        base_token='', table_id='')
+    return resolve_lark_ledger_link(url, client)
+
+
+def public_lark_config(cfg, credential_store):
+    result = public_credential_status(credential_store)
+    result['ledgerTargetConfigured'] = bool(
+        str((cfg or {}).get('larkBuyerBaseToken') or '').strip()
+        and str((cfg or {}).get('larkBuyerTableId') or '').strip())
+    result['ready'] = bool(
+        result['credentialConfigured'] and result['ledgerTargetConfigured'])
+    # Identifiers stay private; blank inputs in the UI mean "preserve".
+    result['baseTokenConfigured'] = bool(
+        str((cfg or {}).get('larkBuyerBaseToken') or '').strip())
+    result['tableIdConfigured'] = bool(
+        str((cfg or {}).get('larkBuyerTableId') or '').strip())
+    return result
+
+
+def public_error(exc):
+    """Last-resort API error scrubber; domain services should redact first."""
+    return scrub_text(exc)[:300]
+
+
 class HubStatusCache(object):
     """Cache connection state so independent UI polls cannot flood HubStudio."""
 
@@ -315,16 +429,24 @@ class HubStatusCache(object):
 class AppState(object):
     """进程级共享状态：配置 + HubStudio 连接 + 编排器。"""
 
-    def __init__(self):
+    def __init__(self, credential_store=None):
         cfg = load_config()
         self.cfg = cfg
+        self.lark_credentials = credential_store or system_credential_store()
         self.hub = HubStudioApi(port=cfg['hubPort'])
         self._hub_status = HubStatusCache(lambda: self.hub)
         self.orch = QueryOrchestrator(
             self.hub, log_dir=LOG_DIR,
             concurrency=cfg.get('concurrency', 2))
-        self.reg_job = RegistrationJob(lambda: self.hub)
-        self.env_job = EnvBatchJob(lambda: self.hub, lambda: self.cfg)
+        self.reg_job = RegistrationJob(
+            lambda: self.hub,
+            ledger_sink_factory=lambda: LarkLedgerSink(
+                build_buyer_ledger_service(
+                    self.cfg, self.lark_credentials).client))
+        self.env_job = EnvBatchJob(
+            lambda: self.hub, lambda: self.cfg,
+            ledger_sync_factory=lambda: build_buyer_ledger_service(
+                self.cfg, self.lark_credentials))
         self.backup_job = BackupEnvJob(lambda: self.hub, lambda: self.cfg)
         self.updates = UpdateCoordinator(
             os.environ.get('XYNIGO_INSTALL_DIR'), __version__)
@@ -352,8 +474,9 @@ STATE = None
 class RegistrationJob(object):
     """注册模块后台任务：只保留脱敏进度，不保存原始凭证。"""
 
-    def __init__(self, hub_getter):
+    def __init__(self, hub_getter, ledger_sink_factory=None):
         self.hub_getter = hub_getter
+        self.ledger_sink_factory = ledger_sink_factory
         self.lock = threading.Lock()
         self.running = False
         self.started_at = None
@@ -385,7 +508,7 @@ class RegistrationJob(object):
 
     def start(self, raw_tasks, accept_terms=False,
               acknowledge_ms_privacy=False, keep_open=False,
-              write_lark_ledger=False):
+              write_lark_ledger=False, confirm_lark_write=False):
         if self.running:
             raise RuntimeError('已有注册任务在进行')
         if not accept_terms:
@@ -394,8 +517,14 @@ class RegistrationJob(object):
         if write_lark_ledger and any(not t.record_id for t in tasks):
             raise ValueError(
                 '勾选台账回写时，每个任务都必须提供 record_id')
-        if write_lark_ledger and not shutil.which('lark-cli'):
-            raise ValueError('本机未安装 lark-cli，不能勾选台账回写')
+        if write_lark_ledger and not confirm_lark_write:
+            raise ValueError('飞书台账回写必须单独二次确认')
+        if write_lark_ledger and self.ledger_sink_factory is None:
+            raise ValueError('飞书 OpenAPI 回写尚未配置')
+        ledger_sink = None
+        if write_lark_ledger:
+            ledger_sink = self.ledger_sink_factory()
+            ledger_sink.preflight()
         with self.lock:
             self.running = True
             self.started_at = time.time()
@@ -412,7 +541,7 @@ class RegistrationJob(object):
             runner = RegistrationOrchestrator(
                 self.hub_getter(), accept_terms=True,
                 acknowledge_ms_privacy=acknowledge_ms_privacy,
-                ledger_sink=LarkLedgerSink() if write_lark_ledger else None,
+                ledger_sink=ledger_sink,
                 close_on_success=not keep_open)
             try:
                 for index, task in enumerate(tasks):
@@ -448,46 +577,47 @@ def _mask_order(order_no):
     return value[:3] + '***' + value[-3:]
 
 
-LEDGER_PASTE_COLUMNS = {
-    # 飞书「希音采购买家号台账」默认 Grid View 的连续列契约。
-    # 直贴文件从「邮箱账号」列开始，不包含左侧自动编号「账号ID」。
-    # 「购买日期」是公式字段，必须保留一个空占位，后续字段才不会错位。
-    'MX': (
-        '邮箱账号', '密码', '接码Key链接', 'Cookie', '号商购买单号',
-        '购买日期', '账号状态', '绑定环境', '环境序号', '采购员', '绑定时间'),
-    'US': (
-        '邮箱账号', '密码', 'Cookie', '接码Key链接', '号商购买单号',
-        '购买日期', '账号状态', '绑定环境', '环境序号', '绑定时间', '采购员'),
-}
+LEDGER_PASTE_COLUMNS = (
+    # 飞书「买家号（统一）」默认「表格」视图的连续列契约。
+    # 直贴文件从「站点」列开始，不包含左侧自动编号「账号ID」。
+    '站点', '邮箱账号', '密码', '接码Key链接', 'Cookie', '号商购买单号',
+    '购买日期', '账号状态', '绑定环境', '环境序号', '采购员', '绑定时间')
 
 
-def ledger_tsv_bytes(rows, site):
-    """生成按站点对齐飞书视图的无表头直贴 TSV（含凭证）。"""
+def ledger_tsv_bytes(rows, site, purchase_date):
+    """生成对齐飞书统一台账的无表头直贴 TSV（含凭证）。"""
     site = normalize_env_site(site)
+    purchase_date = str(purchase_date or '').strip()
+    try:
+        parsed_purchase_date = time.strptime(purchase_date, '%Y%m%d')
+    except (TypeError, ValueError) as exc:
+        raise ValueError('购买日期必须是 YYYYMMDD') from exc
+    purchase_date_text = time.strftime('%Y-%m-%d', parsed_purchase_date)
     output = StringIO(newline='')
     writer = csv.writer(output, dialect='excel-tab', lineterminator='\r\n')
     for row in rows:
         complete = row.state == 'done'
         values = {
+            '站点': site,
             '邮箱账号': row.account.email,
             '密码': row.account.password,
             '接码Key链接': row.account.key_url,
             'Cookie': row.account.cookie_text,
             '号商购买单号': row.account.order_no,
-            '购买日期': '',
+            '购买日期': purchase_date_text,
             '账号状态': '已绑定' if complete else '未绑定',
             '绑定环境': row.env_name if complete else '',
             '环境序号': row.serial_number if complete else '',
             '采购员': row.account.buyer,
             '绑定时间': row.binding_time if complete else '',
         }
-        writer.writerow([values[name] for name in LEDGER_PASTE_COLUMNS[site]])
+        writer.writerow([values[name] for name in LEDGER_PASTE_COLUMNS])
     return ('\ufeff' + output.getvalue()).encode('utf-8')
 
 
 def ledger_tsv_filename(site, purchase_date):
     site = normalize_env_site(site)
-    return ('台账直贴_%s_%s_无表头_从邮箱账号列开始.tsv' %
+    return ('台账直贴_统一表_%s_%s_无表头_从站点列开始.tsv' %
             (site, purchase_date))
 
 
@@ -498,9 +628,11 @@ class EnvBatchJob(object):
     PENDING_TTL_SECONDS = 30 * 60
     RESULT_CREDENTIAL_TTL_SECONDS = 15 * 60
 
-    def __init__(self, hub_getter, config_getter=load_config):
+    def __init__(self, hub_getter, config_getter=load_config,
+                 ledger_sync_factory=None):
         self.hub_getter = hub_getter
         self.config_getter = config_getter
+        self.ledger_sync_factory = ledger_sync_factory
         self.lock = threading.Lock()
         self.pending = {}
         self.running = False
@@ -515,6 +647,13 @@ class EnvBatchJob(object):
         self.mapping_name = ''
         self.tsv_data = None
         self.tsv_name = ''
+        self.ledger_enabled = False
+        self.ledger_summary = {
+            'enabled': False, 'running': False, 'total': 0,
+            'created': 0, 'updated': 0, 'confirmed': 0,
+            'conflict': 0, 'pending': 0, 'rows': [], 'error': '',
+        }
+        self._ledger_service = None
         self._sensitive_timer = None
         self._sensitive_generation = 0
 
@@ -671,6 +810,7 @@ class EnvBatchJob(object):
                 self._sensitive_timer = None
             self.tsv_data = None
             self._wipe_runner_credentials(runner or self.runner)
+            self._ledger_service = None
 
     def _schedule_sensitive_cleanup(self, runner=None):
         with self.lock:
@@ -684,10 +824,56 @@ class EnvBatchJob(object):
             self._sensitive_timer = timer
         timer.start()
 
+    @staticmethod
+    def _ledger_failure_summary(rows, site, error):
+        done_rows = [row for row in rows if row.state == 'done']
+        return {
+            'enabled': True,
+            'running': False,
+            'total': len(done_rows),
+            'created': 0,
+            'updated': 0,
+            'confirmed': 0,
+            'conflict': 0,
+            'pending': len(done_rows),
+            'error': error,
+            'rows': [{
+                'accountId': row.account.account_id,
+                'rowNumber': row.account.row_number,
+                'emailMasked': row.account.safe_email,
+                'site': site,
+                'state': 'pending',
+                'message': error,
+            } for row in done_rows],
+        }
+
+    def _sync_ledger_rows(self, service, rows, site, purchase_date):
+        done_rows = [row for row in rows if row.state == 'done']
+        with self.lock:
+            self.ledger_summary.update({
+                'enabled': True, 'running': True, 'total': len(done_rows),
+                'error': '',
+            })
+        try:
+            result = service.sync(done_rows, site, purchase_date)
+            result.update({'enabled': True, 'running': False, 'error': ''})
+        except Exception as exc:
+            error = self._safe_error(
+                exc, [row.account for row in done_rows])
+            result = self._ledger_failure_summary(done_rows, site, error)
+        with self.lock:
+            self.ledger_summary = result
+        return result
+
     def start(self, plan_id, assignment, purchase_date,
-              verify_sample_count=3, confirm_write=False, site='MX'):
+              verify_sample_count=3, confirm_write=False, site='MX',
+              write_lark_ledger=False, confirm_lark_write=False):
         if not confirm_write:
             raise ValueError('正式执行必须二次确认 HubStudio 写入')
+        if write_lark_ledger and not confirm_lark_write:
+            raise ValueError('飞书台账回写必须单独二次确认')
+        if write_lark_ledger and self.ledger_sync_factory is None:
+            raise ValueError('飞书 OpenAPI 回写尚未配置')
         try:
             verify_sample_count = max(0, min(10, int(verify_sample_count)))
         except (TypeError, ValueError) as exc:
@@ -714,11 +900,20 @@ class EnvBatchJob(object):
         # 目标分组列表用于同组幂等恢复；无过滤列表用于发现其他分组。
         selected_existing = hub.env_list(runtime['purchaseTag'])
         all_existing = hub.env_list()
-        build_batch_plan(
+        checked_plan = build_batch_plan(
             pending['accounts'], assignment,
             existing_envs=selected_existing,
             site=runtime['site'], purchase_date=purchase_date,
             all_existing_envs=all_existing)
+        ledger_service = None
+        if write_lark_ledger:
+            ledger_service = self.ledger_sync_factory()
+            ledger_preflight = ledger_service.preflight_plan(
+                checked_plan, runtime['site'])
+            if ledger_preflight.get('conflicts'):
+                raise ValueError(
+                    '飞书统一台账发现 %d 条双键或站点冲突，已阻止建环境' %
+                    ledger_preflight['conflicts'])
         with self.lock:
             if self.running:
                 raise RuntimeError('已有模块三任务在进行')
@@ -738,6 +933,20 @@ class EnvBatchJob(object):
             self._wipe_runner_credentials(self.runner)
             self.runner = None
             self.tsv_data = None
+            self.ledger_enabled = bool(write_lark_ledger)
+            self._ledger_service = ledger_service
+            self.ledger_summary = {
+                'enabled': bool(write_lark_ledger),
+                'running': False,
+                'total': 0,
+                'created': 0,
+                'updated': 0,
+                'confirmed': 0,
+                'conflict': 0,
+                'pending': 0,
+                'rows': [],
+                'error': '',
+            }
         source = pending['source']
         accounts = pending['accounts']
         batch_id = batch_fingerprint(
@@ -760,8 +969,13 @@ class EnvBatchJob(object):
                 result_rows = runner.run()
                 mapping = mapping_workbook_bytes(result_rows)
                 checks = runner.verify_ips(verify_sample_count)
-                tsv = ledger_tsv_bytes(result_rows, runtime['site'])
+                tsv = ledger_tsv_bytes(
+                    result_rows, runtime['site'], purchase_date)
                 done = sum(row.state == 'done' for row in result_rows)
+                if write_lark_ledger:
+                    self._sync_ledger_rows(
+                        ledger_service, result_rows,
+                        runtime['site'], purchase_date)
                 with self.lock:
                     self.mapping_data = mapping
                     self.mapping_name = '绑定映射清单_%s.xlsx' % purchase_date
@@ -805,7 +1019,7 @@ class EnvBatchJob(object):
                         if item.account.account_id == account_id), None)
             if row is None:
                 raise ValueError('找不到待重试账号')
-            if not row.account.password or not row.account.cookie_text:
+            if not row.account.password:
                 raise ValueError('凭证内存已清理，请重新选择原始 xlsx 后续跑')
             self._cancel_sensitive_cleanup_locked()
             self.running = True
@@ -816,10 +1030,17 @@ class EnvBatchJob(object):
             try:
                 self.runner.retry_one(account_id)
                 result_rows = self.runner.rows
+                if self.ledger_enabled:
+                    service = (self._ledger_service or
+                               self.ledger_sync_factory())
+                    self._sync_ledger_rows(
+                        service, result_rows, self.runner.site,
+                        self.runner.purchase_date)
                 with self.lock:
                     self.mapping_data = mapping_workbook_bytes(result_rows)
                     self.tsv_data = ledger_tsv_bytes(
-                        result_rows, self.runner.site)
+                        result_rows, self.runner.site,
+                        self.runner.purchase_date)
                     self.tsv_name = ledger_tsv_filename(
                         self.runner.site, self.runner.purchase_date)
                     self.summary.update({
@@ -832,6 +1053,74 @@ class EnvBatchJob(object):
                 accounts = [row.account for row in self.runner.rows]
                 with self.lock:
                     self.fatal_error = self._safe_error(exc, accounts)
+            finally:
+                with self.lock:
+                    self.finished_at = time.time()
+                    self.running = False
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def retry_ledger(self):
+        """Retry only the Feishu close-out; never re-run HubStudio steps."""
+        with self.lock:
+            if self.running:
+                raise RuntimeError('模块三任务正在执行')
+            if not self.ledger_enabled or not self.runner:
+                raise ValueError('当前批次未启用飞书台账回写')
+            previous_rows = [dict(item) for item in
+                             self.ledger_summary.get('rows') or []]
+            pending_ids = {
+                str(item.get('accountId') or '') for item in previous_rows
+                if item.get('state') == 'pending'
+            }
+            done_rows = [
+                row for row in self.runner.rows
+                if row.state == 'done'
+                and row.account.account_id in pending_ids
+            ]
+            if not done_rows:
+                raise ValueError('没有待重试的飞书台账行')
+            if any(not row.account.password for row in done_rows):
+                raise ValueError('凭证内存已清理，请重新选择原始 xlsx 后续跑')
+            self._cancel_sensitive_cleanup_locked()
+            self.running = True
+            self.started_at = time.time()
+            self.finished_at = None
+            service = self.ledger_sync_factory()
+            self._ledger_service = service
+
+        def worker():
+            try:
+                retry_result = self._sync_ledger_rows(
+                    service, done_rows, self.runner.site,
+                    self.runner.purchase_date)
+                replacements = {
+                    str(item.get('accountId') or ''): dict(item)
+                    for item in retry_result.get('rows') or []
+                }
+                merged_rows = []
+                for item in previous_rows:
+                    account_id = str(item.get('accountId') or '')
+                    merged_rows.append(
+                        replacements.pop(account_id, dict(item))
+                        if account_id in pending_ids else dict(item))
+                merged_rows.extend(replacements.values())
+                counts = {
+                    name: sum(item.get('state') == name
+                              for item in merged_rows)
+                    for name in ('created', 'updated', 'confirmed',
+                                 'conflict', 'pending')
+                }
+                with self.lock:
+                    self.ledger_summary = {
+                        'enabled': True,
+                        'running': False,
+                        'total': len(merged_rows),
+                        **counts,
+                        'rows': merged_rows,
+                        'error': retry_result.get('error') or '',
+                    }
+                self._schedule_sensitive_cleanup(self.runner)
             finally:
                 with self.lock:
                     self.finished_at = time.time()
@@ -853,6 +1142,11 @@ class EnvBatchJob(object):
                 'fatalError': self.fatal_error,
                 'mappingReady': self.mapping_data is not None,
                 'tsvReady': self.tsv_data is not None,
+                'ledger': {
+                    key: ([dict(item) for item in value]
+                          if key == 'rows' else value)
+                    for key, value in self.ledger_summary.items()
+                },
             }
 
     def mapping_export(self):
@@ -1138,6 +1432,15 @@ class Handler(BaseHTTPRequestHandler):
                     data, '采购工具买家号入库模板.xlsx',
                     'application/vnd.openxmlformats-officedocument.'
                     'spreadsheetml.sheet')
+            elif path == '/api/lark/template':
+                if not os.path.isfile(LARK_LEDGER_TEMPLATE_XLSX):
+                    return self._json({'error': '统一台账模板未打包'}, 404)
+                with open(LARK_LEDGER_TEMPLATE_XLSX, 'rb') as handle:
+                    data = handle.read()
+                self._download(
+                    data, '买家号统一台账模板.xlsx',
+                    'application/vnd.openxmlformats-officedocument.'
+                    'spreadsheetml.sheet')
             elif path == '/api/envbatch/export-mapping':
                 data, name = STATE.env_job.mapping_export()
                 self._download(
@@ -1192,6 +1495,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(data)
             elif path == '/api/config':
                 self._json(public_config(STATE.cfg))
+            elif path == '/api/lark/config':
+                self._json(public_lark_config(
+                    STATE.cfg, STATE.lark_credentials))
             else:
                 self._json({'error': 'not found'}, 404)
         except ConnectionError as e:
@@ -1199,7 +1505,7 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as e:
             self._json({'error': str(e)}, 400)
         except Exception as e:
-            self._json({'error': str(e)}, 500)
+            self._json({'error': public_error(e)}, 500)
 
     # ---- POST ----
 
@@ -1271,7 +1577,8 @@ class Handler(BaseHTTPRequestHandler):
                     acknowledge_ms_privacy=bool(
                         body.get('acknowledgeMsPrivacy')),
                     keep_open=bool(body.get('keepOpen')),
-                    write_lark_ledger=bool(body.get('writeLarkLedger')))
+                    write_lark_ledger=bool(body.get('writeLarkLedger')),
+                    confirm_lark_write=bool(body.get('confirmLarkWrite')))
                 self._json({'started': True, 'count': count})
             elif path == '/api/envbatch/parse':
                 result = STATE.env_job.parse(
@@ -1293,10 +1600,15 @@ class Handler(BaseHTTPRequestHandler):
                     body.get('purchaseDate') or time.strftime('%Y%m%d'),
                     verify_sample_count=body.get('verifySampleCount', 3),
                     confirm_write=bool(body.get('confirmWrite')),
-                    site=body.get('site') or 'MX')
+                    site=body.get('site') or 'MX',
+                    write_lark_ledger=bool(body.get('writeLarkLedger')),
+                    confirm_lark_write=bool(body.get('confirmLarkWrite')))
                 self._json({'started': True, 'count': count})
             elif path == '/api/envbatch/retry-row':
                 STATE.env_job.retry_row(str(body.get('accountId') or ''))
+                self._json({'started': True})
+            elif path == '/api/envbatch/retry-ledger':
+                STATE.env_job.retry_ledger()
                 self._json({'started': True})
             elif path == '/api/envbatch/backup/start':
                 if (STATE.orch.running or STATE.reg_job.running
@@ -1321,6 +1633,28 @@ class Handler(BaseHTTPRequestHandler):
                 connected = (STATE.reconnect_hub() if reconnect_needed
                              else STATE.hub_status()[0])
                 self._json({'saved': True, 'hubConnected': connected})
+            elif path == '/api/lark/config':
+                credentials = submitted_lark_credentials(body)
+                resolved_target = resolve_submitted_lark_target(
+                    body, STATE.lark_credentials)
+                cfg = updated_lark_config(
+                    load_config(), body, resolved_target)
+                if body.get('clearCredential'):
+                    STATE.lark_credentials.clear()
+                elif credentials:
+                    STATE.lark_credentials.save(
+                        credentials.app_id, credentials.app_secret)
+                save_config(cfg)
+                STATE.cfg = cfg
+                self._json({
+                    'saved': True,
+                    **public_lark_config(cfg, STATE.lark_credentials),
+                })
+            elif path == '/api/lark/preflight':
+                service = build_buyer_ledger_service(
+                    STATE.cfg, STATE.lark_credentials)
+                validate_unified_schema(service.client.list_fields())
+                self._json({'ready': True, 'message': '飞书统一台账字段检查通过'})
             else:
                 self._json({'error': 'not found'}, 404)
         except RuntimeError as e:
@@ -1330,7 +1664,7 @@ class Handler(BaseHTTPRequestHandler):
         except ConnectionError as e:
             self._json({'error': 'HubStudio 未连接：%s' % e}, 503)
         except Exception as e:
-            self._json({'error': str(e)}, 500)
+            self._json({'error': public_error(e)}, 500)
 
 
 def quote(name):

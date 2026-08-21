@@ -21,6 +21,7 @@ FORBIDDEN_TOKEN_HASHES = {
     '99ad7cddd1136443b0db1f1f6b92a1551a4fb7da677ba5e9de0a4b8e26768686',
     '6a334d4591f57be51388540642b9e55880656d469fa379ce382dd694b20d3080',
 }
+ALLOWED_PUBLIC_PROVIDER_TOKENS = {'feishu.cn', 'larksuite.com'}
 TOKEN_CANDIDATE_PATTERN = re.compile(
     r'(?i)\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b|\b[a-z][a-z0-9]{7,}\b')
 CHINESE_LEGAL_ENTITY_PATTERN = re.compile(
@@ -51,6 +52,8 @@ def main():
         text = path.read_text(encoding='utf-8-sig', errors='replace')
         rel = path.relative_to(ROOT)
         for token in TOKEN_CANDIDATE_PATTERN.findall(text):
+            if token.lower() in ALLOWED_PUBLIC_PROVIDER_TOKENS:
+                continue
             digest = hashlib.sha256(token.lower().encode('utf-8')).hexdigest()
             if digest in FORBIDDEN_TOKEN_HASHES:
                 findings.append('%s: forbidden private provider marker' % rel)

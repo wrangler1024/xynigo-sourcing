@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Release contract tests for Xynigo Sourcing v0.7.3."""
+"""Release contract tests for Xynigo Sourcing v0.8.0."""
 
 from pathlib import Path
 import unittest
@@ -7,12 +7,12 @@ import unittest
 from purchase_tool import __version__
 
 
-class ReleaseV063Tests(unittest.TestCase):
+class ReleaseV080Tests(unittest.TestCase):
     def test_version_and_packaging_are_aligned(self):
         root = Path(__file__).resolve().parents[1]
-        self.assertEqual(__version__, '0.7.3')
+        self.assertEqual(__version__, '0.8.0')
         pyproject = (root / 'pyproject.toml').read_text(encoding='utf-8')
-        self.assertIn('version = "0.7.3"', pyproject)
+        self.assertIn('version = "0.8.0"', pyproject)
         script = (root / '组装Windows绿色包.sh').read_text(encoding='utf-8')
         self.assertIn('v${VERSION}.zip', script)
         self.assertIn('Xynigo Sourcing v%s 启动中', script)
@@ -70,7 +70,7 @@ class ReleaseV063Tests(unittest.TestCase):
         self.assertIn('id="envBackupExports"', html)
         self.assertIn('id="btnEnvBackupResult"', html)
         self.assertIn('下载飞书直贴 TSV（无表头/含凭证）', html)
-        self.assertIn('从第一空行的「邮箱账号」列粘贴', html)
+        self.assertIn('从第一空行的「站点」列粘贴', html)
         self.assertIn('若飞书列顺序被改动请停止粘贴', html)
         self.assertIn('composeAssignmentSpec()', html)
         self.assertIn('/api/envbatch/backup/preview', html)
@@ -118,7 +118,7 @@ class ReleaseV063Tests(unittest.TestCase):
         self.assertIn("cfg.proxySource === 'custom'", html)
         self.assertIn('系统模板固定带表头', html)
         self.assertNotIn('https://proxy.example.test', html)
-        self.assertIn('Xynigo Sourcing v0.7.3', html)
+        self.assertIn('Xynigo Sourcing v0.8.0', html)
         self.assertIn('Xyni, GO!', html)
         self.assertIn('Xynigo 品牌字标', html)
         self.assertIn('小犀与 Xynigo 完整品牌一体图形', html)
@@ -143,8 +143,55 @@ class ReleaseV063Tests(unittest.TestCase):
         self.assertIn('/api/update/prompt', html)
         self.assertIn('cfgHideEnvName', html)
         self.assertIn("activeModule !== 'query'", html)
+        self.assertIn('data-module="settings"', html)
+        self.assertIn('id="settingsPanel"', html)
+        self.assertNotIn('id="btnSettings"', html)
+        self.assertNotIn('id="settingsMask"', html)
+        self.assertIn('id="cfgLarkAppId"', html)
+        self.assertIn('id="cfgLarkAppSecret"', html)
+        self.assertIn('id="cfgLarkLedgerUrl"', html)
+        self.assertIn('id="cfgLarkAppIdState"', html)
+        self.assertIn('id="cfgLarkAppSecretState"', html)
+        self.assertIn('id="cfgLarkLedgerUrlState"', html)
+        self.assertIn('已安全保存 App Secret', html)
+        self.assertIn('台账目标已配置；留空保持不变', html)
+        self.assertIn('已支持重新配置', html)
+        self.assertIn('/api/lark/template', html)
+        self.assertIn('下载买家号统一台账完整模板', html)
+        self.assertIn('确认重新配置？', html)
+        self.assertNotIn('id="cfgLarkBaseToken"', html)
+        self.assertNotIn('id="cfgLarkTableId"', html)
+        self.assertIn('包含 table=tbl...', html)
+        self.assertIn('body:JSON.stringify({appId, appSecret, ledgerUrl, clearCredential, clearLedgerTarget})', html)
+        self.assertIn('/api/lark/config', html)
+        self.assertIn('/api/lark/preflight', html)
+        self.assertIn('id="envWriteLedger" disabled', html)
+        self.assertIn('id="btnEnvRetryLedger" disabled', html)
+        self.assertIn('writeLarkLedger, confirmLarkWrite', html)
         self.assertTrue((root / 'src' / 'purchase_tool' / 'web' /
                          '采购工具买家号入库模板.xlsx').is_file())
+        self.assertTrue((root / 'src' / 'purchase_tool' / 'web' /
+                         '买家号统一台账模板.xlsx').is_file())
+        from openpyxl import load_workbook
+        ledger_template = load_workbook(
+            root / 'src' / 'purchase_tool' / 'web' /
+            '买家号统一台账模板.xlsx', read_only=True)
+        self.assertEqual(
+            ledger_template.sheetnames,
+            ['买家号统一台账', '字段配置说明'])
+        self.assertEqual(
+            [cell.value for cell in ledger_template['买家号统一台账'][1]],
+            ['账号ID', '站点', '邮箱账号', '密码', '接码Key链接', 'Cookie',
+             '号商购买单号', '购买日期', '账号状态', '绑定环境', '环境序号',
+             '采购员', '绑定时间', '首次登录日期', '最后使用日期', '创建时间',
+             '备注', '累计下单数', '异常记录', '创建人', '迁移状态', '操作人'])
+        guide_values = [
+            cell.value for row in ledger_template['字段配置说明'].iter_rows()
+            for cell in row if cell.value]
+        self.assertIn('新刚、志恒、康德、宇航、熊、德、恒', guide_values)
+        self.assertIn('正常、待复核（源表错列）', guide_values)
+        self.assertIn('yyyy-mm-dd hh:mm', guide_values)
+        ledger_template.close()
         self.assertTrue((root / 'src' / 'purchase_tool' / 'web' /
                          'xynigo-logo.png').is_file())
         self.assertTrue((root / 'src' / 'purchase_tool' / 'web' /

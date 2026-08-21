@@ -26,10 +26,19 @@ workflows contributed by **Samforo**.
   English codes (for example `XG-MX-0819-001`). A backup/test mode creates
   remark-only environments without cookie imports, account binding, or
   ledger writes.
-- Optional Lark Base ledger integration configured entirely at runtime.
+- Optional direct Feishu/Lark Base OpenAPI integration through an enterprise
+  custom app, with unified-ledger conflict preflight and post-write readback.
+  Teammate computers do not need `lark-cli`.
 
-The current stable release is `v0.7.3`. The project is under active
+The current stable release is `v0.8.0`. The project is under active
 development and is not yet a hosted SaaS product.
+
+v0.8.0 upgrades post-environment ledger handling from manual TSV paste to an
+optional enterprise-app OpenAPI path. It performs unified-ledger dual-key and
+site conflict preflight before HubStudio writes, then writes and reads back
+each successful row. Partial failures can retry only pending ledger rows
+without repeating HubStudio steps. TSV remains an emergency manual artifact,
+not proof of API success.
 
 v0.7.3 extends strict buyer-intake xlsx parsing beyond the existing
 `orderNo` links to the new vendor's `id + email` and email-only link formats.
@@ -59,7 +68,10 @@ v0.7.0 brings the buyer roster and backup-environment workflow to environment cr
 - Python 3.9 or later.
 - A locally installed and signed-in HubStudio client.
 - `websocket-client` and `openpyxl`.
-- Optional: `lark-cli` for the Lark Base adapter.
+- Optional: an enterprise custom app authorized for the target Base. Configure
+  it from the left-side Settings page and paste one complete `/base/` or
+  `/wiki/` link containing `table=tbl...`; the system resolves the target
+  automatically and does not require `lark-cli`.
 
 ## Quick start
 
@@ -87,18 +99,39 @@ URLs, or Lark record IDs are stored in this repository.
 | `XYNIGO_PURCHASE_TAG_MX` / `XYNIGO_PURCHASE_TAG_US` | Optional per-site purchasing environment groups |
 | `XYNIGO_REGISTER_TAG` | HubStudio group for registration environments |
 | `XYNIGO_REGISTER_TAG_MX` / `XYNIGO_REGISTER_TAG_US` | Optional per-site registration environment groups |
-| `XYNIGO_LARK_BASE_TOKEN` | Optional Lark Base token |
-| `XYNIGO_LARK_TABLE_ID` | Optional legacy MX Lark Base table ID |
-| `XYNIGO_LARK_TABLE_ID_MX` / `XYNIGO_LARK_TABLE_ID_US` | Optional per-site Lark Base tables; US never falls back to the legacy MX setting |
+| `XYNIGO_LARK_BASE_TOKEN` | Optional first-run migration value for the unified buyer Base token |
+| `XYNIGO_LARK_TABLE_ID` | Optional first-run migration value for the unified buyer table ID |
+| `XYNIGO_LARK_TABLE_ID_MX` / `XYNIGO_LARK_TABLE_ID_US` | Legacy administrator backfill compatibility only; the Web OpenAPI path uses one unified table |
 | `XYNIGO_LARK_OPERATOR_OPEN_ID` | Optional operator ID used by the ledger backfill command |
 
-The module-three macOS backfill command validates its site explicitly. Use
+The legacy administrator-only macOS backfill command still requires
+`lark-cli` and validates its site explicitly. Use
 `python -m purchase_tool backfill --site US ...` together with a separate
 `XYNIGO_LARK_TABLE_ID_US`; the default `--site MX` only preserves the existing
 workflow.
 
-Local UI preferences are stored in `config.json`, which is ignored by Git.
-Sensitive input workbooks must remain outside the repository.
+The Settings page does not require users to split Base or table tokens. Direct
+`/base/` links resolve locally; `/wiki/` links use one read-only node lookup
+through the app identity, so the app also needs Wiki node-read permission and
+access to that knowledge space. The target can be reconfigured by confirming a
+new link. Settings also provides a downloadable full unified buyer-ledger
+template: the first 14 columns preserve the API/TSV contract, while eight
+additional columns mirror the existing Feishu operational fields. After
+switching tables, align system fields, types, display styles, and select options
+with the template, then run the read-only field check. The complete URL is never persisted. Local UI
+preferences and the resolved unified Base/table routing identifiers are stored
+in `config.json`, which is ignored by Git. The Feishu App ID/Secret is stored
+in the current user's macOS Keychain or Windows DPAPI-protected storage, while
+the tenant access token remains in process memory. The Web API never returns
+the Secret, complete URL, Base token, or table ID. An authorized teammate computer may store
+the App Secret locally, but it must not be committed, packaged, logged, or
+shown in screenshots. Sensitive input workbooks must remain outside the
+repository.
+
+One enterprise custom app may access multiple authorized Bases. Xynigo
+currently configures one writable target, `买家号（统一）`; future procurement
+tables can use separate routing entries while sharing the same app credential.
+Backup tables are never automatic write targets.
 
 ## Security model
 
@@ -107,6 +140,11 @@ Sensitive input workbooks must remain outside the repository.
 - Sensitive temporary payloads use restrictive file permissions where the
   operating system supports them.
 - Real platform writes require explicit confirmation.
+- Feishu writeback is off by default and confirmed separately from HubStudio
+  writes. A full-table dual-key check runs first, and partial failures never
+  repeat successful HubStudio steps.
+- A Feishu write counts as successful only after a matching readback;
+  uncertain outcomes remain retryable.
 - Batch resume files contain only irreversible account identifiers and
   non-secret progress metadata.
 - Update and release packages must never contain local `config.json`, logs, or
@@ -156,8 +194,8 @@ Apple Silicon `arm64`. macOS Intel is not maintained.
 
 ## Roadmap
 
-- Replace credential-bearing TSV copy/paste with direct Lark Base API
-  writeback in the next feature release.
+- Add independently authorized routing for more procurement Bases while
+  sharing the enterprise custom-app credential.
 - Separate preview and stable update channels.
 - Automated dual-platform release builds.
 - Additional sourcing, order, fulfillment, and reporting modules.

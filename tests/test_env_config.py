@@ -13,7 +13,10 @@ from unittest.mock import patch
 import purchase_tool.main as main_module
 from purchase_tool.main import (
     Handler, default_config, effective_proxy_link, load_config,
-    public_config, save_config, purchase_tag_for_site, updated_config)
+    public_config, public_lark_config, save_config, purchase_tag_for_site,
+    resolve_submitted_lark_target, updated_config, updated_lark_config)
+from purchase_tool.lark_credentials import MemoryCredentialStore
+from purchase_tool.lark_links import resolve_lark_ledger_link
 
 
 TEST_TAG = 'MX-Purchase'
@@ -110,6 +113,79 @@ class ConfigTests(unittest.TestCase):
         self.assertNotIn('proxyLink', public)
         self.assertNotIn(TEST_PROXY, rendered)
 
+    def test_lark_config_preserves_blanks_and_never_returns_identifiers(self):
+        old = default_config()
+        old.update({
+            'larkBuyerBaseToken': 'bascnPublicSafeExample',
+            'larkBuyerTableId': 'tblPublicSafeExample',
+        })
+        kept = updated_lark_config(old, {
+            'appId': '', 'appSecret': '', 'ledgerUrl': '',
+        })
+        self.assertEqual(
+            kept['larkBuyerBaseToken'], 'bascnPublicSafeExample')
+        self.assertEqual(
+            kept['larkBuyerTableId'], 'tblPublicSafeExample')
+
+        ledger_url = ('https://public-safe.feishu.cn/base/'
+                      'bascnAnotherSafeExample?table=tblAnotherSafeExample')
+        replaced = updated_lark_config(
+            old, {'ledgerUrl': ledger_url},
+            resolve_lark_ledger_link(ledger_url))
+        self.assertEqual(
+            replaced['larkBuyerBaseToken'], 'bascnAnotherSafeExample')
+        self.assertEqual(
+            replaced['larkBuyerTableId'], 'tblAnotherSafeExample')
+
+        cleared = updated_lark_config(old, {'clearLedgerTarget': True})
+        self.assertEqual(cleared['larkBuyerBaseToken'], '')
+        self.assertEqual(cleared['larkBuyerTableId'], '')
+        with self.assertRaisesRegex(ValueError, '尚未完成解析'):
+            updated_lark_config(old, {'ledgerUrl': ledger_url})
+        with self.assertRaisesRegex(ValueError, '不能同时选择'):
+            updated_lark_config(old, {
+                'ledgerUrl': ledger_url, 'clearLedgerTarget': True})
+
+        store = MemoryCredentialStore()
+        store.save('cli_public_safe_example', 'sanitized-secret-value')
+        public = public_lark_config(replaced, store)
+        rendered = json.dumps(public)
+        self.assertTrue(public['ready'])
+        self.assertTrue(public['credentialConfigured'])
+        self.assertTrue(public['ledgerTargetConfigured'])
+        self.assertNotIn('bascnAnotherSafeExample', rendered)
+        self.assertNotIn('tblAnotherSafeExample', rendered)
+        self.assertNotIn('sanitized-secret-value', rendered)
+
+    def test_wiki_link_resolution_uses_stored_credentials_with_fake_client(self):
+        store = MemoryCredentialStore()
+        store.save('cli_public_safe_example', 'sanitized-secret-value')
+        captured = {}
+
+        class FakeClient(object):
+            def __init__(self, credential_provider, base_token, table_id):
+                captured['credentials'] = credential_provider()
+                captured['target'] = (base_token, table_id)
+
+            def get_wiki_node(self, node_token):
+                captured['nodeToken'] = node_token
+                return {
+                    'obj_type': 'bitable',
+                    'obj_token': 'bascnPublicSafeExample',
+                }
+
+        target = resolve_submitted_lark_target({
+            'ledgerUrl': ('https://public-safe.feishu.cn/wiki/'
+                          'wikcnPublicSafeExample'
+                          '?table=tblPublicSafeExample'),
+        }, store, client_factory=FakeClient)
+        self.assertEqual(target.base_token, 'bascnPublicSafeExample')
+        self.assertEqual(target.table_id, 'tblPublicSafeExample')
+        self.assertEqual(captured['target'], ('', ''))
+        self.assertEqual(captured['nodeToken'], 'wikcnPublicSafeExample')
+        self.assertEqual(
+            captured['credentials'].app_id, 'cli_public_safe_example')
+
     def test_buyer_roster_public_and_template_validation(self):
         public = public_config(default_config())
         self.assertEqual([b['code'] for b in public['buyers']],
@@ -174,8 +250,13 @@ class ConfigRouteTests(unittest.TestCase):
         })
         main_module.STATE = SimpleNamespace(
             cfg={'hubPort': 6873, 'purchaseTag': TEST_TAG,
-                 'proxyLink': TEST_PROXY},
+                 'proxyLink': TEST_PROXY,
+                 'larkBuyerBaseToken': 'bascnPublicSafeExample',
+                 'larkBuyerTableId': 'tblPublicSafeExample'},
+            lark_credentials=MemoryCredentialStore(),
             env_job=env_job)
+        main_module.STATE.lark_credentials.save(
+            'cli_public_safe_example', 'sanitized-secret-value')
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         self.thread = threading.Thread(
             target=self.server.serve_forever, daemon=True)
@@ -193,17 +274,68 @@ class ConfigRouteTests(unittest.TestCase):
         with urllib.request.urlopen(url, timeout=3) as response:
             return response.read().decode('utf-8')
 
+    def _post_json(self, path, payload):
+        url = 'http://127.0.0.1:%d%s' % (
+            self.server.server_address[1], path)
+        request = urllib.request.Request(
+            url, data=json.dumps(payload).encode('utf-8'), method='POST',
+            headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(request, timeout=3) as response:
+            return json.loads(response.read().decode('utf-8'))
+
     def test_get_config_and_preflight_do_not_leak_proxy(self):
         config_text = self._get_json('/api/config')
+        lark_config_text = self._get_json('/api/lark/config')
         preflight_text = self._get_json('/api/envbatch/preflight')
         preflight_us_text = self._get_json(
             '/api/envbatch/preflight?site=US')
         self.assertNotIn(TEST_PROXY, config_text)
         self.assertNotIn('proxyLink', config_text)
         self.assertTrue(json.loads(config_text)['proxyConfigured'])
+        self.assertTrue(json.loads(lark_config_text)['ready'])
+        self.assertNotIn('bascnPublicSafeExample', lark_config_text)
+        self.assertNotIn('tblPublicSafeExample', lark_config_text)
+        self.assertNotIn('sanitized-secret-value', lark_config_text)
         self.assertNotIn(TEST_PROXY, preflight_text)
         self.assertTrue(json.loads(preflight_text)['ready'])
         self.assertEqual(json.loads(preflight_us_text)['site'], 'US')
+
+    def test_lark_unified_ledger_template_is_downloadable(self):
+        url = 'http://127.0.0.1:%d/api/lark/template' % (
+            self.server.server_address[1])
+        with urllib.request.urlopen(url, timeout=3) as response:
+            body = response.read()
+            self.assertEqual(
+                response.headers.get_content_type(),
+                'application/vnd.openxmlformats-officedocument.'
+                'spreadsheetml.sheet')
+            self.assertIn(
+                'attachment; filename*=UTF-8',
+                response.headers.get('Content-Disposition') or '')
+        self.assertEqual(body[:2], b'PK')
+        self.assertGreater(len(body), 1000)
+
+    def test_post_lark_config_saves_secret_outside_config_and_never_echoes_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = str(Path(tmp) / 'config.json')
+            with patch.object(main_module, 'CONFIG_PATH', config_path):
+                response = self._post_json('/api/lark/config', {
+                    'appId': 'cli_public_safe_example',
+                    'appSecret': 'sanitized-secret-value',
+                    'ledgerUrl': ('https://public-safe.feishu.cn/base/'
+                                  'bascnPublicSafeExample'
+                                  '?table=tblPublicSafeExample'),
+                })
+                persisted = Path(config_path).read_text('utf-8')
+        rendered = json.dumps(response)
+        self.assertTrue(response['ready'])
+        self.assertNotIn('sanitized-secret-value', rendered)
+        self.assertNotIn('bascnPublicSafeExample', rendered)
+        self.assertNotIn('tblPublicSafeExample', rendered)
+        self.assertNotIn('sanitized-secret-value', persisted)
+        self.assertNotIn('https://public-safe.feishu.cn', persisted)
+        self.assertIn('bascnPublicSafeExample', persisted)
+        self.assertIn('tblPublicSafeExample', persisted)
 
 
 if __name__ == '__main__':

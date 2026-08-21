@@ -17,7 +17,7 @@ from openpyxl import Workbook
 os.environ.setdefault(
     'XYNIGO_PROXY_LINK', 'https://proxy.example.test/{region}')
 
-from purchase_tool.env_batch import ResumeStateStore
+from purchase_tool.env_batch import BatchPlanItem, BuyerAccount, ResumeStateStore
 from purchase_tool.main import BackupEnvJob, EnvBatchJob, ledger_tsv_bytes
 
 
@@ -61,24 +61,30 @@ def tsv_rows(data):
 
 
 class LedgerPasteTsvTests(unittest.TestCase):
-    def test_mx_tsv_is_headerless_and_matches_grid_view_from_email(self):
-        rows = tsv_rows(ledger_tsv_bytes([result_row('MX')], 'MX'))
+    def test_mx_tsv_is_headerless_and_matches_unified_table_from_site(self):
+        rows = tsv_rows(ledger_tsv_bytes(
+            [result_row('MX')], 'MX', '20260820'))
         self.assertEqual(rows, [[
-            'paste@example.com', 'paste-secret',
+            'MX', 'paste@example.com', 'paste-secret',
             'https://codes.example.test/get?orderNo=paste123',
             '[{"name":"sid","value":"paste-cookie"}]',
-            'order-paste-001', '', '已绑定', 'XG-MX-0820-001',
+            'order-paste-001', '2026-08-20', '已绑定', 'XG-MX-0820-001',
             '2001', '新刚', '2026-08-20 15:30:00']])
-        self.assertNotIn('邮箱账号', rows[0])
+        self.assertNotIn('站点', rows[0])
 
-    def test_us_tsv_uses_us_grid_view_order(self):
-        rows = tsv_rows(ledger_tsv_bytes([result_row('US')], 'US'))
+    def test_us_tsv_uses_same_unified_table_order(self):
+        rows = tsv_rows(ledger_tsv_bytes(
+            [result_row('US')], 'US', '20260820'))
         self.assertEqual(rows, [[
-            'paste@example.com', 'paste-secret',
-            '[{"name":"sid","value":"paste-cookie"}]',
+            'US', 'paste@example.com', 'paste-secret',
             'https://codes.example.test/get?orderNo=paste123',
-            'order-paste-001', '', '已绑定', 'XG-US-0820-001',
-            '2001', '2026-08-20 15:30:00', '新刚']])
+            '[{"name":"sid","value":"paste-cookie"}]',
+            'order-paste-001', '2026-08-20', '已绑定', 'XG-US-0820-001',
+            '2001', '新刚', '2026-08-20 15:30:00']])
+
+    def test_tsv_rejects_invalid_purchase_date(self):
+        with self.assertRaisesRegex(ValueError, 'YYYYMMDD'):
+            ledger_tsv_bytes([result_row('MX')], 'MX', '20260230')
 
 
 class FakeHub(object):
@@ -123,6 +129,41 @@ class FakeHub(object):
             if env['containerCode'] == str(code):
                 env['remark'] = remark
         return {}
+
+
+class FakeLedgerService(object):
+    def __init__(self, preflight_conflicts=0, sync_states=('created',)):
+        self.preflight_conflicts = preflight_conflicts
+        self.sync_states = list(sync_states)
+        self.preflight_calls = []
+        self.sync_calls = []
+
+    def preflight_plan(self, rows, site):
+        self.preflight_calls.append((len(rows), site))
+        return {
+            'total': len(rows),
+            'conflicts': self.preflight_conflicts,
+            'rows': ([{'state': 'conflict'}]
+                     if self.preflight_conflicts else []),
+        }
+
+    def sync(self, rows, site, purchase_date):
+        self.sync_calls.append((len(rows), site, purchase_date))
+        state = self.sync_states.pop(0) if self.sync_states else 'confirmed'
+        counts = {name: int(name == state) * len(rows) for name in (
+            'created', 'updated', 'confirmed', 'conflict', 'pending')}
+        return {
+            'total': len(rows),
+            **counts,
+            'rows': [{
+                'accountId': row.account.account_id,
+                'rowNumber': row.account.row_number,
+                'emailMasked': row.account.safe_email,
+                'site': site,
+                'state': state,
+                'message': '',
+            } for row in rows],
+        }
 
 
 class EnvWebJobTests(unittest.TestCase):
@@ -186,7 +227,7 @@ class EnvWebJobTests(unittest.TestCase):
         self.assertIn('web-secret-pass', text)
         self.assertIn('web-secret-cookie', text)
         self.assertEqual(len(tsv_rows(tsv)), 1)
-        self.assertIn('MX_20260819_无表头_从邮箱账号列开始', name)
+        self.assertIn('统一表_MX_20260819_无表头_从站点列开始', name)
         with self.assertRaises(ValueError):
             job.tsv_export()
 
@@ -202,6 +243,125 @@ class EnvWebJobTests(unittest.TestCase):
             'vendor.xlsx', base64.b64encode(source_bytes()).decode('ascii'))
         with self.assertRaises(ValueError):
             job.start(parsed['planId'], '1:新刚', '20260819')
+
+    def test_lark_write_requires_separate_confirmation(self):
+        service = FakeLedgerService()
+        job = EnvBatchJob(
+            lambda: FakeHub(), runtime_config,
+            ledger_sync_factory=lambda: service)
+        parsed = job.parse(
+            'vendor.xlsx', base64.b64encode(source_bytes()).decode('ascii'))
+        with self.assertRaisesRegex(ValueError, '单独二次确认'):
+            job.start(
+                parsed['planId'], '1:新刚', '20260819',
+                verify_sample_count=0, confirm_write=True,
+                write_lark_ledger=True, confirm_lark_write=False)
+        self.assertIn(parsed['planId'], job.pending)
+        self.assertEqual(service.preflight_calls, [])
+
+    def test_lark_preflight_conflict_blocks_all_hub_writes(self):
+        hub = FakeHub()
+        service = FakeLedgerService(preflight_conflicts=1)
+        job = EnvBatchJob(
+            lambda: hub, runtime_config,
+            ledger_sync_factory=lambda: service)
+        parsed = job.parse(
+            'vendor.xlsx', base64.b64encode(source_bytes()).decode('ascii'))
+        with self.assertRaisesRegex(ValueError, '已阻止建环境'):
+            job.start(
+                parsed['planId'], '1:新刚', '20260819',
+                verify_sample_count=0, confirm_write=True,
+                write_lark_ledger=True, confirm_lark_write=True)
+        self.assertEqual(service.preflight_calls, [(1, 'MX')])
+        self.assertEqual(service.sync_calls, [])
+        self.assertIn(parsed['planId'], job.pending)
+        self.assertFalse(any(call[0] in {
+            'create', 'cookie', 'account', 'remark'} for call in hub.calls))
+
+    def test_lark_partial_failure_retries_only_ledger(self):
+        hub = FakeHub()
+        service = FakeLedgerService(sync_states=('pending', 'confirmed'))
+        job = EnvBatchJob(
+            lambda: hub, runtime_config,
+            ledger_sync_factory=lambda: service)
+        parsed = job.parse(
+            'vendor.xlsx', base64.b64encode(source_bytes()).decode('ascii'))
+        with tempfile.TemporaryDirectory() as tmp:
+            def store_factory(batch_id):
+                return ResumeStateStore(batch_id, tmp)
+
+            with patch('purchase_tool.main.ResumeStateStore', store_factory):
+                job.start(
+                    parsed['planId'], '1:新刚', '20260819',
+                    verify_sample_count=0, confirm_write=True,
+                    write_lark_ledger=True, confirm_lark_write=True)
+                deadline = time.time() + 5
+                while job.snapshot()['running'] and time.time() < deadline:
+                    time.sleep(0.05)
+                self.assertEqual(job.snapshot()['ledger']['pending'], 1)
+                hub_writes = [call for call in hub.calls if call[0] in {
+                    'create', 'cookie', 'account', 'remark'}]
+
+                job.retry_ledger()
+                deadline = time.time() + 5
+                while job.snapshot()['running'] and time.time() < deadline:
+                    time.sleep(0.05)
+
+        snap = job.snapshot()
+        self.assertEqual(snap['summary']['done'], 1)
+        self.assertEqual(snap['ledger']['confirmed'], 1)
+        self.assertEqual(len(service.sync_calls), 2)
+        self.assertEqual(
+            [call for call in hub.calls if call[0] in {
+                'create', 'cookie', 'account', 'remark'}], hub_writes)
+
+    def test_lark_retry_filters_confirmed_rows_and_preserves_totals(self):
+        service = FakeLedgerService(sync_states=('confirmed',))
+        job = EnvBatchJob(
+            lambda: FakeHub(), runtime_config,
+            ledger_sync_factory=lambda: service)
+        rows = []
+        for index in (1, 2):
+            account = BuyerAccount(
+                row_number=index,
+                email='buyer%d@example.test' % index,
+                password='public-test-password',
+                key_url='https://codes.example.test/get?orderNo=order%d' % index,
+                cookie_text='',
+                order_no='order%d' % index,
+                buyer='新刚')
+            rows.append(BatchPlanItem(
+                account=account,
+                env_name='XG-MX-0821-%03d' % index,
+                serial_number=3000 + index,
+                completed_steps={'created', 'cookie', 'bound', 'remarked'},
+                state='done', binding_time='2026-08-21 12:00:00'))
+        job.runner = SimpleNamespace(
+            rows=rows, site='MX', purchase_date='20260821')
+        job.ledger_enabled = True
+        job.ledger_summary = {
+            'enabled': True, 'running': False, 'total': 2,
+            'created': 1, 'updated': 0, 'confirmed': 0,
+            'conflict': 0, 'pending': 1, 'error': '',
+            'rows': [
+                {'accountId': rows[0].account.account_id,
+                 'rowNumber': 1, 'emailMasked': rows[0].account.safe_email,
+                 'site': 'MX', 'state': 'created', 'message': ''},
+                {'accountId': rows[1].account.account_id,
+                 'rowNumber': 2, 'emailMasked': rows[1].account.safe_email,
+                 'site': 'MX', 'state': 'pending', 'message': 'timeout'},
+            ],
+        }
+        job.retry_ledger()
+        deadline = time.time() + 5
+        while job.snapshot()['running'] and time.time() < deadline:
+            time.sleep(0.05)
+        self.assertEqual(service.sync_calls, [(1, 'MX', '20260821')])
+        ledger = job.snapshot()['ledger']
+        self.assertEqual(ledger['total'], 2)
+        self.assertEqual(ledger['created'], 1)
+        self.assertEqual(ledger['confirmed'], 1)
+        self.assertEqual(ledger['pending'], 0)
 
     def test_us_site_uses_us_group_proxy_name_and_account_binding(self):
         hub = FakeHub()
@@ -238,12 +398,13 @@ class EnvWebJobTests(unittest.TestCase):
         self.assertEqual(account_call[-1], 'US')
         tsv, name = job.tsv_export()
         row = tsv_rows(tsv)[0]
-        self.assertIn('US_20260819_无表头_从邮箱账号列开始', name)
-        self.assertEqual(row[2],
+        self.assertIn('统一表_US_20260819_无表头_从站点列开始', name)
+        self.assertEqual(row[0], 'US')
+        self.assertEqual(row[4],
                          '[{"name":"sid","value":"web-secret-cookie"}]')
         self.assertEqual(
             row[3], 'https://codes.example.test/get?orderNo=abc123')
-        self.assertEqual(row[-1], '新刚')
+        self.assertEqual(row[-2], '新刚')
 
     def test_preflight_failure_preserves_plan_and_makes_zero_writes(self):
         source = source_bytes()

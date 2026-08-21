@@ -36,4 +36,10 @@ def scrub_text(value):
     text = re.sub(
         r'(?i)(password|passwd|pwd|secret|token|cookie|api[_-]?key)'
         r'\s*[:=]\s*[^\s,;]+', r'\1=<redacted>', text)
+    # Deployment and record identifiers are not credentials by themselves,
+    # but public errors and snapshots still must not expose them.
+    text = re.sub(
+        r'\b(?:rec|bascn|tbl)[A-Za-z0-9_-]{8,}\b',
+        '<redacted-id>', text)
+    text = re.sub(r'\bcli_[A-Za-z0-9_-]{8,}\b', '<redacted-id>', text)
     return text

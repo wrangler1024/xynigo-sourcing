@@ -4,12 +4,14 @@ import argparse
 import json
 import os
 from pathlib import Path
-import shutil
 import sys
 
 from .buyer_register import BuyerRegistrationTask, RegistrationOrchestrator
 from .hub_api import DEFAULT_PORT, HubStudioApi
+from .lark_credentials import system_credential_store
 from .lark_ledger import LarkLedgerSink
+from .lark_runtime import build_buyer_ledger_service
+from .main import load_config
 
 
 def _inside(path, root):
@@ -73,9 +75,16 @@ def main(argv=None):
     if args.write_lark_ledger and any(not t.record_id for t in tasks):
         print('拒绝执行：--write-lark-ledger 要求每个任务都有 record_id。')
         return 2
-    if args.write_lark_ledger and not shutil.which('lark-cli'):
-        print('拒绝执行：本机未安装 lark-cli，无法回写台账。')
-        return 2
+    ledger_sink = None
+    if args.write_lark_ledger:
+        try:
+            service = build_buyer_ledger_service(
+                load_config(), system_credential_store())
+            ledger_sink = LarkLedgerSink(service.client)
+            ledger_sink.preflight()
+        except Exception as exc:
+            print('拒绝执行：飞书 OpenAPI 只读预检失败：%s' % exc)
+            return 2
 
     hub = HubStudioApi(port=args.hub_port)
     if not hub.ping():
@@ -84,7 +93,7 @@ def main(argv=None):
     runner = RegistrationOrchestrator(
         hub, accept_terms=True,
         acknowledge_ms_privacy=args.acknowledge_ms_privacy,
-        ledger_sink=LarkLedgerSink() if args.write_lark_ledger else None,
+        ledger_sink=ledger_sink,
         close_on_success=not args.keep_open)
     results = runner.run_batch(tasks)
     failed = False
