@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """Store the Feishu custom-app credential outside the public project.
 
-macOS uses the login Keychain through ``security`` without placing the secret
-in argv.  Windows stores a CurrentUser-DPAPI encrypted blob below LOCALAPPDATA.
+macOS uses the login Keychain through the non-interactive ``security -i``
+command channel without placing the secret in argv.  Windows stores a
+CurrentUser-DPAPI encrypted blob below LOCALAPPDATA.
 Only the App ID mask/configured state is exposed to the Web UI.
 """
 from dataclasses import dataclass
@@ -94,13 +95,21 @@ class MacKeychainCredentialStore(object):
         secret_payload = json.dumps(
             credentials.as_payload(), ensure_ascii=False,
             separators=(',', ':'))
-        # ``security`` documents that a trailing -w prompts for the password.
-        # Feed that prompt through stdin so the secret never appears in argv.
-        argv = [self.security_bin, 'add-generic-password',
-                '-a', KEYCHAIN_ACCOUNT, '-s', KEYCHAIN_SERVICE, '-U', '-w']
-        proc = self.runner(
-            argv, input=secret_payload + '\n',
-            capture_output=True, text=True)
+        # Use the interactive command channel only as a non-interactive stdin
+        # transport.  ``-X`` accepts UTF-8 bytes as hex and therefore avoids
+        # both the ``-w`` confirmation prompt and shell quoting.  The secret
+        # never appears in process argv, the public config, or logs.
+        secret_hex = secret_payload.encode('utf-8').hex()
+        command = (
+            'add-generic-password -a %s -s %s -U -X %s\n' %
+            (KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE, secret_hex))
+        try:
+            proc = self.runner(
+                [self.security_bin, '-i'], input=command,
+                capture_output=True, text=True, timeout=15)
+        except subprocess.TimeoutExpired as exc:
+            raise LarkCredentialError(
+                '保存飞书应用凭证到 macOS 钥匙串超时') from exc
         if proc.returncode != 0:
             raise LarkCredentialError('无法保存飞书应用凭证到 macOS 钥匙串')
 

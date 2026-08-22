@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Release contract tests for Xynigo Sourcing v0.8.1."""
+"""Release contract tests for Xynigo Sourcing v0.8.2."""
 
 from pathlib import Path
 import unittest
@@ -7,12 +7,12 @@ import unittest
 from purchase_tool import __version__
 
 
-class ReleaseV081Tests(unittest.TestCase):
+class ReleaseV082Tests(unittest.TestCase):
     def test_version_and_packaging_are_aligned(self):
         root = Path(__file__).resolve().parents[1]
-        self.assertEqual(__version__, '0.8.1')
+        self.assertEqual(__version__, '0.8.2')
         pyproject = (root / 'pyproject.toml').read_text(encoding='utf-8')
-        self.assertIn('version = "0.8.1"', pyproject)
+        self.assertIn('version = "0.8.2"', pyproject)
         script = (root / '组装Windows绿色包.sh').read_text(encoding='utf-8')
         self.assertIn('v${VERSION}.zip', script)
         self.assertIn('Xynigo Sourcing v%s 启动中', script)
@@ -118,7 +118,7 @@ class ReleaseV081Tests(unittest.TestCase):
         self.assertIn("cfg.proxySource === 'custom'", html)
         self.assertIn('系统模板固定带表头', html)
         self.assertNotIn('https://proxy.example.test', html)
-        self.assertIn('Xynigo Sourcing v0.8.1', html)
+        self.assertIn('Xynigo Sourcing v0.8.2', html)
         self.assertIn('Xyni, GO!', html)
         self.assertIn('Xynigo 品牌字标', html)
         self.assertIn('小犀与 Xynigo 完整品牌一体图形', html)
@@ -141,6 +141,9 @@ class ReleaseV081Tests(unittest.TestCase):
         self.assertIn('/api/update/check', html)
         self.assertIn('/api/update/status', html)
         self.assertIn('/api/update/prompt', html)
+        self.assertIn("location.protocol === 'file:'", html)
+        self.assertIn('当前页面是本地文件预览', html)
+        self.assertIn('无法连接 Xynigo 本地服务', html)
         self.assertIn('cfgHideEnvName', html)
         self.assertIn("activeModule !== 'query'", html)
         self.assertIn('data-module="settings"', html)
@@ -153,8 +156,20 @@ class ReleaseV081Tests(unittest.TestCase):
         self.assertIn('id="cfgLarkAppIdState"', html)
         self.assertIn('id="cfgLarkAppSecretState"', html)
         self.assertIn('id="cfgLarkLedgerUrlState"', html)
+        self.assertIn('id="cfgLarkConnectedTarget"', html)
+        self.assertIn('id="larkSaveFeedback"', html)
+        self.assertIn('function saveLarkConfig()', html)
+        self.assertIn("button.textContent = '保存中…'", html)
+        self.assertIn("setLarkSaveFeedback('bad', '⚠ 保存失败：'", html)
         self.assertIn('已安全保存 App Secret', html)
         self.assertIn('台账目标已配置；留空保持不变', html)
+        self.assertIn('function renderLarkConnectedTarget(', html)
+        self.assertIn('function createLarkTargetLink(text)', html)
+        self.assertIn("link.href = '/api/lark/open-target'", html)
+        self.assertIn("link.target = '_blank'", html)
+        self.assertIn("link.rel = 'noopener noreferrer'", html)
+        self.assertIn("link.className = 'config-target-link'", html)
+        self.assertIn("event => event.stopPropagation()", html)
         self.assertIn('已支持重新配置', html)
         self.assertIn('/api/lark/template', html)
         self.assertIn('下载买家号统一台账完整模板', html)
@@ -166,6 +181,31 @@ class ReleaseV081Tests(unittest.TestCase):
         self.assertIn('/api/lark/config', html)
         self.assertIn('/api/lark/preflight', html)
         self.assertIn('id="envWriteLedger" disabled', html)
+        self.assertIn('id="envExecutionState" role="status" aria-live="polite"', html)
+        self.assertIn('id="envExecutionTitle"', html)
+        self.assertIn('id="envExecutionDetail"', html)
+        self.assertIn('let envSubmitting = false', html)
+        self.assertIn('function beginEnvSubmission(title, detail)', html)
+        self.assertIn('function paintEnvSubmissionState()', html)
+        self.assertIn('function finishEnvSubmission()', html)
+        self.assertIn('function renderEnvExecutionState(snap, mode)', html)
+        self.assertIn("'⏳ 正在提交…'", html)
+        self.assertIn('执行指令已确认，正在提交买家号建环境任务', html)
+        self.assertIn('执行指令已确认，正在检查飞书台账并提交任务', html)
+        self.assertIn('await paintEnvSubmissionState()', html)
+        self.assertIn('HubStudio 已完成，正在回写飞书台账', html)
+        self.assertIn('const ledgerFailed =', html)
+        self.assertIn('${taskName}部分失败：HubStudio', html)
+        self.assertIn('任务状态暂时无法获取', html)
+        self.assertIn('页面每 1.5 秒自动刷新，请勿重复提交', html)
+        self.assertIn('id="envWriteLedgerLabel"', html)
+        self.assertIn('id="regWriteLedgerLabel"', html)
+        self.assertIn('function larkTargetDisplayName()', html)
+        self.assertIn('function renderLarkWriteTargetText()', html)
+        self.assertIn('larkTargetConfigured\n      ? createLarkTargetLink(target)', html)
+        self.assertIn('larkTargetBaseName = targetBaseName', html)
+        self.assertIn('回写${larkTargetDisplayName()}', html)
+        self.assertNotIn('回写飞书「买家号（统一）」', html)
         self.assertIn('id="btnEnvRetryLedger" disabled', html)
         self.assertIn('writeLarkLedger, confirmLarkWrite', html)
         self.assertTrue((root / 'src' / 'purchase_tool' / 'web' /

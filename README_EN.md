@@ -30,8 +30,17 @@ workflows contributed by **Samforo**.
   custom app, with unified-ledger conflict preflight and post-write readback.
   Teammate computers do not need `lark-cli`.
 
-The current stable release is `v0.8.0`. The project is under active
+The current stable release is `v0.8.2`. The project is under active
 development and is not yet a hosted SaaS product.
+
+v0.8.2 fixes a potential macOS Keychain stall while saving Feishu app
+credentials and improves visibility of the configured Base target. The UI
+shows the verified Base and table names through a safe new-tab link while the
+configuration API continues to withhold the Base token, table ID, and original
+URL. Environment creation now reports distinct submitting, background
+execution, ledger writeback, partial-failure, and temporarily-unavailable
+progress states, so pending or conflicting ledger rows are not reported as a
+fully successful batch.
 
 v0.8.0 upgrades post-environment ledger handling from manual TSV paste to an
 optional enterprise-app OpenAPI path. It performs unified-ledger dual-key and

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import json
+import http.client
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,8 +14,10 @@ from unittest.mock import patch
 import purchase_tool.main as main_module
 from purchase_tool.main import (
     Handler, default_config, effective_proxy_link, load_config,
-    public_config, public_lark_config, save_config, purchase_tag_for_site,
-    resolve_submitted_lark_target, updated_config, updated_lark_config)
+    lark_target_link, public_config, public_lark_config, save_config,
+    purchase_tag_for_site,
+    refreshed_lark_target_labels, resolve_submitted_lark_target,
+    updated_config, updated_lark_config)
 from purchase_tool.lark_credentials import MemoryCredentialStore
 from purchase_tool.lark_links import resolve_lark_ledger_link
 
@@ -118,6 +121,9 @@ class ConfigTests(unittest.TestCase):
         old.update({
             'larkBuyerBaseToken': 'bascnPublicSafeExample',
             'larkBuyerTableId': 'tblPublicSafeExample',
+            'larkBuyerBaseName': '公开脱敏测试 Base',
+            'larkBuyerTableName': '测试数据表',
+            'larkBuyerTargetVerified': True,
         })
         kept = updated_lark_config(old, {
             'appId': '', 'appSecret': '', 'ledgerUrl': '',
@@ -136,10 +142,18 @@ class ConfigTests(unittest.TestCase):
             replaced['larkBuyerBaseToken'], 'bascnAnotherSafeExample')
         self.assertEqual(
             replaced['larkBuyerTableId'], 'tblAnotherSafeExample')
+        self.assertEqual(
+            replaced['larkBuyerTargetHost'], 'public-safe.feishu.cn')
+        self.assertEqual(replaced['larkBuyerBaseName'], '')
+        self.assertEqual(replaced['larkBuyerTableName'], '')
+        self.assertFalse(replaced['larkBuyerTargetVerified'])
 
         cleared = updated_lark_config(old, {'clearLedgerTarget': True})
         self.assertEqual(cleared['larkBuyerBaseToken'], '')
         self.assertEqual(cleared['larkBuyerTableId'], '')
+        self.assertEqual(cleared['larkBuyerTargetHost'], '')
+        self.assertEqual(cleared['larkBuyerBaseName'], '')
+        self.assertEqual(cleared['larkBuyerTableName'], '')
         with self.assertRaisesRegex(ValueError, '尚未完成解析'):
             updated_lark_config(old, {'ledgerUrl': ledger_url})
         with self.assertRaisesRegex(ValueError, '不能同时选择'):
@@ -153,9 +167,45 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(public['ready'])
         self.assertTrue(public['credentialConfigured'])
         self.assertTrue(public['ledgerTargetConfigured'])
+        self.assertEqual(public['targetBaseName'], '')
+        self.assertEqual(public['targetTableName'], '')
+        self.assertFalse(public['targetVerified'])
         self.assertNotIn('bascnAnotherSafeExample', rendered)
         self.assertNotIn('tblAnotherSafeExample', rendered)
+        self.assertNotIn('public-safe.feishu.cn', rendered)
         self.assertNotIn('sanitized-secret-value', rendered)
+
+        self.assertEqual(
+            lark_target_link(replaced),
+            'https://public-safe.feishu.cn/base/'
+            'bascnAnotherSafeExample?table=tblAnotherSafeExample')
+
+    def test_refreshed_lark_target_labels_exposes_names_not_identifiers(self):
+        cfg = default_config()
+        cfg.update({
+            'larkBuyerBaseToken': 'bascnPublicSafeExample',
+            'larkBuyerTableId': 'tblPublicSafeExample',
+        })
+        store = MemoryCredentialStore()
+        store.save('cli_public_safe_example', 'sanitized-secret-value')
+
+        class FakeClient(object):
+            def get_target_metadata(self):
+                return {
+                    'base_name': '公开脱敏测试 Base',
+                    'table_name': '买家号统一台账（测试）',
+                }
+
+        with patch('purchase_tool.main.build_buyer_ledger_service') as build:
+            build.return_value.client = FakeClient()
+            refreshed = refreshed_lark_target_labels(cfg, store)
+        public = public_lark_config(refreshed, store)
+        rendered = json.dumps(public, ensure_ascii=False)
+        self.assertTrue(public['targetVerified'])
+        self.assertEqual(public['targetBaseName'], '公开脱敏测试 Base')
+        self.assertEqual(public['targetTableName'], '买家号统一台账（测试）')
+        self.assertNotIn('bascnPublicSafeExample', rendered)
+        self.assertNotIn('tblPublicSafeExample', rendered)
 
     def test_wiki_link_resolution_uses_stored_credentials_with_fake_client(self):
         store = MemoryCredentialStore()
@@ -314,6 +364,22 @@ class ConfigRouteTests(unittest.TestCase):
                 response.headers.get('Content-Disposition') or '')
         self.assertEqual(body[:2], b'PK')
         self.assertGreater(len(body), 1000)
+
+    def test_lark_target_name_link_redirects_without_public_config_leak(self):
+        connection = http.client.HTTPConnection(
+            '127.0.0.1', self.server.server_address[1], timeout=3)
+        try:
+            connection.request('GET', '/api/lark/open-target')
+            response = connection.getresponse()
+            self.assertEqual(response.status, 302)
+            self.assertEqual(
+                response.getheader('Location'),
+                'https://www.feishu.cn/base/'
+                'bascnPublicSafeExample?table=tblPublicSafeExample')
+            self.assertEqual(response.getheader('Referrer-Policy'), 'no-referrer')
+            self.assertEqual(response.read(), b'')
+        finally:
+            connection.close()
 
     def test_post_lark_config_saves_secret_outside_config_and_never_echoes_it(self):
         with tempfile.TemporaryDirectory() as tmp:

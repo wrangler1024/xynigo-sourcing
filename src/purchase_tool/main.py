@@ -60,8 +60,8 @@ from .hub_api import HubStudioApi, DEFAULT_PORT
 from .lark_credentials import (LarkCredentialError, LarkCredentials,
                                public_credential_status,
                                system_credential_store)
-from .lark_links import (LarkLedgerTargetConfig, parse_lark_base_link,
-                         resolve_lark_ledger_link)
+from .lark_links import (LarkLedgerTargetConfig, build_lark_base_link,
+                         parse_lark_base_link, resolve_lark_ledger_link)
 from .lark_ledger import LarkLedgerSink
 from .lark_openapi import LarkOpenApiClient
 from .lark_runtime import build_buyer_ledger_service
@@ -87,9 +87,15 @@ CONFIG_FIELDS = frozenset({
     'verifySampleCount', 'hiddenQueryColumns', 'purchaseSite',
     'purchaseTag', 'purchaseTags', 'proxyLink', 'envCreateWorkers',
     'larkBuyerBaseToken', 'larkBuyerTableId',
+    'larkBuyerTargetHost',
+    'larkBuyerBaseName', 'larkBuyerTableName',
+    'larkBuyerTargetVerified',
 })
 CONFIG_REQUEST_FIELDS = (CONFIG_FIELDS - {
-    'larkBuyerBaseToken', 'larkBuyerTableId'}) | {'proxyClear'}
+    'larkBuyerBaseToken', 'larkBuyerTableId',
+    'larkBuyerTargetHost',
+    'larkBuyerBaseName', 'larkBuyerTableName',
+    'larkBuyerTargetVerified'}) | {'proxyClear'}
 
 
 def default_config():
@@ -115,6 +121,10 @@ def default_config():
         'larkBuyerBaseToken': os.environ.get('XYNIGO_LARK_BASE_TOKEN', ''),
         'larkBuyerTableId': (os.environ.get('XYNIGO_LARK_TABLE_ID') or
                              os.environ.get('XYNIGO_LARK_TABLE_ID_MX', '')),
+        'larkBuyerTargetHost': '',
+        'larkBuyerBaseName': '',
+        'larkBuyerTableName': '',
+        'larkBuyerTargetVerified': False,
     }
 
 
@@ -192,7 +202,10 @@ def save_config(cfg):
 def public_config(cfg):
     result = {key: value for key, value in cfg.items()
               if key in CONFIG_FIELDS and key not in {
-                  'proxyLink', 'larkBuyerBaseToken', 'larkBuyerTableId'}}
+                  'proxyLink', 'larkBuyerBaseToken', 'larkBuyerTableId',
+                  'larkBuyerTargetHost',
+                  'larkBuyerBaseName', 'larkBuyerTableName',
+                  'larkBuyerTargetVerified'}}
     result['proxyConfigured'] = bool(effective_proxy_link(cfg))
     result['proxySource'] = ('custom' if str(
         (cfg or {}).get('proxyLink') or '').strip() else 'default')
@@ -225,7 +238,10 @@ def updated_config(old_cfg, body):
                 if key in CONFIG_FIELDS})
     for key in CONFIG_FIELDS - {
             'proxyLink', 'purchaseSite', 'purchaseTag', 'purchaseTags',
-            'larkBuyerBaseToken', 'larkBuyerTableId'}:
+            'larkBuyerBaseToken', 'larkBuyerTableId',
+            'larkBuyerTargetHost',
+            'larkBuyerBaseName', 'larkBuyerTableName',
+            'larkBuyerTargetVerified'}:
         if key in body:
             cfg[key] = body[key]
 
@@ -326,6 +342,10 @@ def updated_lark_config(old_cfg, body, resolved_target=None):
     if body.get('clearLedgerTarget'):
         cfg['larkBuyerBaseToken'] = ''
         cfg['larkBuyerTableId'] = ''
+        cfg['larkBuyerTargetHost'] = ''
+        cfg['larkBuyerBaseName'] = ''
+        cfg['larkBuyerTableName'] = ''
+        cfg['larkBuyerTargetVerified'] = False
     elif submitted_url:
         if not isinstance(resolved_target, LarkLedgerTargetConfig):
             raise ValueError('飞书多维表格链接尚未完成解析')
@@ -333,6 +353,13 @@ def updated_lark_config(old_cfg, body, resolved_target=None):
             resolved_target.base_token, '飞书 Base Token')
         cfg['larkBuyerTableId'] = _validate_lark_target_value(
             resolved_target.table_id, '飞书数据表 ID', table=True)
+        cfg['larkBuyerTargetHost'] = resolved_target.source_hostname
+        cfg['larkBuyerBaseName'] = ''
+        cfg['larkBuyerTableName'] = ''
+        cfg['larkBuyerTargetVerified'] = False
+    if (body.get('clearCredential')
+            or str(body.get('appId') or '').strip()):
+        cfg['larkBuyerTargetVerified'] = False
     return cfg
 
 
@@ -382,7 +409,44 @@ def public_lark_config(cfg, credential_store):
         str((cfg or {}).get('larkBuyerBaseToken') or '').strip())
     result['tableIdConfigured'] = bool(
         str((cfg or {}).get('larkBuyerTableId') or '').strip())
+    result['targetBaseName'] = str(
+        (cfg or {}).get('larkBuyerBaseName') or '').strip()
+    result['targetTableName'] = str(
+        (cfg or {}).get('larkBuyerTableName') or '').strip()
+    result['targetVerified'] = bool(
+        (cfg or {}).get('larkBuyerTargetVerified')
+        and result['targetBaseName'] and result['targetTableName'])
     return result
+
+
+def lark_target_link(cfg):
+    """Return the validated browser URL for the locally configured target."""
+    return build_lark_base_link(
+        (cfg or {}).get('larkBuyerBaseToken'),
+        (cfg or {}).get('larkBuyerTableId'),
+        (cfg or {}).get('larkBuyerTargetHost'))
+
+
+def _clean_lark_target_name(value, label):
+    value = ''.join(
+        char for char in str(value or '').strip()
+        if char >= ' ' and char != '\x7f')[:160]
+    if not value:
+        raise ValueError('%s为空' % label)
+    return value
+
+
+def refreshed_lark_target_labels(cfg, credential_store):
+    """Verify the configured target and persist display-only names."""
+    service = build_buyer_ledger_service(cfg, credential_store)
+    metadata = service.client.get_target_metadata()
+    refreshed = dict(cfg)
+    refreshed['larkBuyerBaseName'] = _clean_lark_target_name(
+        metadata.get('base_name'), '飞书多维表格名称')
+    refreshed['larkBuyerTableName'] = _clean_lark_target_name(
+        metadata.get('table_name'), '飞书数据表名称')
+    refreshed['larkBuyerTargetVerified'] = True
+    return refreshed
 
 
 def public_error(exc):
@@ -1374,6 +1438,14 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _redirect(self, location):
+        self.send_response(302)
+        self.send_header('Location', location)
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Referrer-Policy', 'no-referrer')
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+
     # ---- GET ----
 
     def do_GET(self):
@@ -1498,6 +1570,8 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/lark/config':
                 self._json(public_lark_config(
                     STATE.cfg, STATE.lark_credentials))
+            elif path == '/api/lark/open-target':
+                self._redirect(lark_target_link(STATE.cfg))
             else:
                 self._json({'error': 'not found'}, 404)
         except ConnectionError as e:
@@ -1644,6 +1718,14 @@ class Handler(BaseHTTPRequestHandler):
                 elif credentials:
                     STATE.lark_credentials.save(
                         credentials.app_id, credentials.app_secret)
+                if (str(cfg.get('larkBuyerBaseToken') or '').strip()
+                        and str(cfg.get('larkBuyerTableId') or '').strip()
+                        and not body.get('clearCredential')):
+                    try:
+                        cfg = refreshed_lark_target_labels(
+                            cfg, STATE.lark_credentials)
+                    except Exception:
+                        cfg['larkBuyerTargetVerified'] = False
                 save_config(cfg)
                 STATE.cfg = cfg
                 self._json({
@@ -1654,7 +1736,15 @@ class Handler(BaseHTTPRequestHandler):
                 service = build_buyer_ledger_service(
                     STATE.cfg, STATE.lark_credentials)
                 validate_unified_schema(service.client.list_fields())
-                self._json({'ready': True, 'message': '飞书统一台账字段检查通过'})
+                cfg = refreshed_lark_target_labels(
+                    STATE.cfg, STATE.lark_credentials)
+                save_config(cfg)
+                STATE.cfg = cfg
+                self._json({
+                    'ready': True,
+                    'message': '飞书统一台账字段检查通过',
+                    **public_lark_config(cfg, STATE.lark_credentials),
+                })
             else:
                 self._json({'error': 'not found'}, 404)
         except RuntimeError as e:

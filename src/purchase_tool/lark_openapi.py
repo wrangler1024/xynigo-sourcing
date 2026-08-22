@@ -200,6 +200,44 @@ class LarkOpenApiClient(object):
             raise LarkApiError('飞书 Wiki 节点返回结构无效')
         return node
 
+    def get_target_metadata(self):
+        """Return non-sensitive display names for the configured Base/table."""
+        base_path = '/open-apis/bitable/v1/apps/%s' % quote(
+            self.base_token, safe='')
+        base_result = self._request('GET', base_path)
+        base = (base_result.get('data') or {}).get('app')
+        if not isinstance(base, dict) or not str(base.get('name') or '').strip():
+            raise LarkApiError('飞书多维表格元数据返回结构无效')
+
+        tables_path = base_path + '/tables'
+        tables, page_token = [], ''
+        while True:
+            query = {'page_size': 100}
+            if page_token:
+                query['page_token'] = page_token
+            table_result = self._request(
+                'GET', tables_path, query=query)
+            data = table_result.get('data') or {}
+            page = data.get('items') or []
+            if not isinstance(page, list):
+                raise LarkApiError('飞书数据表列表返回结构无效')
+            tables.extend(page)
+            if not data.get('has_more'):
+                break
+            next_token = str(data.get('page_token') or '')
+            if not next_token or next_token == page_token:
+                raise LarkApiError('飞书数据表列表分页停滞')
+            page_token = next_token
+        table = next((item for item in tables
+                      if isinstance(item, dict)
+                      and str(item.get('table_id') or '') == self.table_id), None)
+        if not table or not str(table.get('name') or '').strip():
+            raise LarkApiError('飞书目标数据表不存在或名称为空')
+        return {
+            'base_name': str(base['name']).strip(),
+            'table_name': str(table['name']).strip(),
+        }
+
     def list_fields(self):
         items, page_token = [], ''
         while True:

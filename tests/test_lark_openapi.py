@@ -114,6 +114,28 @@ class LarkOpenApiTests(unittest.TestCase):
         self.assertIn('token=wikcnPublicSafeExample',
                       transport.calls[1]['url'])
 
+    def test_target_metadata_returns_names_without_exposing_identifiers(self):
+        client, transport = self.client([
+            response({'code': 0, 'tenant_access_token': 'tenant-secret',
+                      'expire': 7200}),
+            response({'code': 0, 'data': {'app': {
+                'name': '公开脱敏测试 Base'}}}),
+            response({'code': 0, 'data': {
+                'items': [{
+                    'table_id': 'tbl_public_demo',
+                    'name': '买家号统一台账（测试）',
+                }],
+                'has_more': False,
+            }}),
+        ])
+        self.assertEqual(client.get_target_metadata(), {
+            'base_name': '公开脱敏测试 Base',
+            'table_name': '买家号统一台账（测试）',
+        })
+        self.assertTrue(transport.calls[1]['url'].endswith(
+            '/open-apis/bitable/v1/apps/base_public_demo'))
+        self.assertIn('/tables?page_size=100', transport.calls[2]['url'])
+
     def test_rate_limit_retries_without_leaking_credentials(self):
         sleeps = []
         client, _transport = self.client([

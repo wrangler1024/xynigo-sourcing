@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Xynigo Sourcing v0.8.1</title>
+<title>Xynigo Sourcing v0.8.2</title>
 <link rel="icon" type="image/png" sizes="260x260" href="/xynigo-x.png?v=5">
 <link rel="icon" type="image/x-icon" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256" href="/favicon.ico?v=5">
 <link rel="shortcut icon" href="/favicon.ico?v=5">
@@ -419,6 +419,24 @@
   .config-field-state.ok { color: var(--green); }
   .config-field-state.bad { color: var(--red); }
   .config-field-state.checking { color: var(--gray); }
+  .config-target-link { color: inherit; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+  .config-target-link:hover { color: var(--rhino-600); }
+  .config-target-link::after { content: " ↗"; font-size: 10px; }
+  .check-row .config-target-link { color: var(--rhino-600); font-weight: 800; }
+  .execution-state { margin-top: 12px; padding: 11px 13px; display: flex; align-items: flex-start; gap: 10px; border: 1px solid var(--line); border-radius: 12px; background: #f7f9fb; color: var(--navy-700); }
+  .execution-state .state-dot { flex: 0 0 auto; width: 10px; height: 10px; margin-top: 4px; border-radius: 50%; background: #a6b3be; }
+  .execution-state .state-copy { min-width: 0; }
+  .execution-state .state-title { display: block; font-size: 12px; font-weight: 900; }
+  .execution-state .state-detail { display: block; margin-top: 2px; color: var(--navy-500); font-size: 11px; line-height: 1.55; }
+  .execution-state.submitting, .execution-state.running { border-color: #b9dfe3; background: var(--rhino-100); }
+  .execution-state.submitting .state-dot, .execution-state.running .state-dot { background: var(--rhino-500); box-shadow: 0 0 0 0 rgba(32,174,179,.32); animation: taskPulse 1.25s infinite; }
+  .execution-state.success { border-color: #bce5d2; background: #f0fbf6; }
+  .execution-state.success .state-dot { background: var(--green-500); }
+  .execution-state.warning { border-color: #f2ddb2; background: var(--parcel-100); }
+  .execution-state.warning .state-dot { background: var(--parcel-500); }
+  .execution-state.failed { border-color: #ffd2c7; background: var(--coral-100); }
+  .execution-state.failed .state-dot { background: var(--coral-500); }
+  @keyframes taskPulse { 70% { box-shadow: 0 0 0 7px rgba(32,174,179,0); } 100% { box-shadow: 0 0 0 0 rgba(32,174,179,0); } }
   .settings-status { margin-bottom: 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .settings-actions { margin-top: 16px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .ledger-summary { white-space: normal; }
@@ -494,7 +512,7 @@
           <div class="hero-kicker">XYNIGO SOURCING WORKSPACE</div>
           <h1>让小犀帮你把每一单稳稳带回来，<span class="hero-call">Xyni, GO!</span></h1>
           <p id="moduleSummary">批量查询订单与物流状态，异常任务集中处理，结果一键导出。</p>
-          <div class="hero-meta"><span class="hero-chip">稳定版 v0.8.1</span><span class="hero-chip">本机数据不出站</span><span class="hero-chip">在线更新已开启</span></div>
+          <div class="hero-meta"><span class="hero-chip">稳定版 v0.8.2</span><span class="hero-chip">本机数据不出站</span><span class="hero-chip">在线更新已开启</span></div>
         </div>
         <div class="hero-lockup" role="img" aria-label="小犀与 Xynigo 完整品牌一体图形">
           <img src="xynigo-logo.png" alt="">
@@ -597,7 +615,7 @@
         <label><input type="checkbox" id="regAcceptTerms"> <span>我确认继续即接受 SHEIN 页面展示的隐私政策、Cookie 政策和条款条件。</span></label>
         <label><input type="checkbox" id="regMsPrivacy"> <span>如果微软首次登录展示隐私通知，允许确认该通知（不创建通行密钥，不选“保持登录”）。</span></label>
         <label><input type="checkbox" id="regKeepOpen"> <span>成功后保持环境打开（默认关闭并归档登录态）。</span></label>
-        <label><input type="checkbox" id="regWriteLedger" disabled> <span>成功后通过“小犀代采”企业自建应用更新飞书统一台账（每个任务必须已有 record_id；不自动创建/猜测记录）。</span></label>
+        <label><input type="checkbox" id="regWriteLedger" disabled> <span id="regWriteLedgerLabel">成功后通过“小犀代采”企业自建应用更新当前已连接的飞书统一台账（每个任务必须已有 record_id；不自动创建/猜测记录）。</span></label>
       </div>
       <div class="action-row">
         <button class="btn primary" id="btnRegStart" disabled>▶ 开始注册</button>
@@ -689,7 +707,7 @@
       <div class="card-title">③ 执行确认</div>
       <div class="check-row">
         <label><input type="checkbox" id="envVerify" checked> <span>批末逐个抽查 <input class="env-text" type="text" id="envVerifyCount" value="3" style="width:42px;padding:2px 5px"> 个环境出口 IP，检测后立即关闭。</span></label>
-        <label><input type="checkbox" id="envWriteLedger" disabled> <span>建环境成功后通过“小犀代采”企业自建应用回写飞书「买家号（统一）」；默认关闭，正式执行时还会单独二次确认。</span></label>
+        <label><input type="checkbox" id="envWriteLedger" disabled> <span id="envWriteLedgerLabel">建环境成功后通过“小犀代采”企业自建应用回写当前已连接的飞书统一台账；默认关闭，正式执行时还会单独二次确认。</span></label>
         <div class="hint" id="envLedgerState">正在读取飞书 OpenAPI 配置状态…</div>
       </div>
       <div class="action-row">
@@ -697,6 +715,10 @@
         <button class="btn primary" id="btnEnvStart" disabled>▶ 正式执行</button>
         <div class="progress-wrap"><div class="progress"><div class="bar" id="envBar"></div></div><span class="hint" id="envProgressText">0 / 0</span></div>
         <span class="hint" id="envElapsed">已用 00:00</span>
+      </div>
+      <div class="execution-state idle" id="envExecutionState" role="status" aria-live="polite">
+        <span class="state-dot" aria-hidden="true"></span>
+        <span class="state-copy"><b class="state-title" id="envExecutionTitle">等待执行确认</b><span class="state-detail" id="envExecutionDetail">完成正式执行确认后，这里会立即显示任务提交和后台执行状态。</span></span>
       </div>
       <div class="note-card" style="margin-top:12px">五步状态机：<b>建环境（coreVersion=148 + 加权指纹）→ 导 Cookie 原文 → 绑账号 → 写完整备注 → 完成</b>。断点文件不保存密码/Cookie/接码Key；重启后重新选择同一原始 xlsx 即可按内容指纹恢复。</div>
     </section>
@@ -820,6 +842,7 @@
           <label>买家号统一台账链接</label>
           <input type="password" id="cfgLarkLedgerUrl" autocomplete="off" placeholder="正在读取配置状态…">
           <div class="config-field-state checking" id="cfgLarkLedgerUrlState">正在读取配置状态…</div>
+          <div class="config-field-state checking" id="cfgLarkConnectedTarget">当前连接：正在读取…</div>
           <div class="hint">已支持重新配置：粘贴新链接并保存后会替换旧台账目标。系统自动解析 Base Token 与 Table ID，只保存解析结果，不保存或回显完整链接。</div>
           <div style="margin-top:8px"><a class="btn-mini" href="/api/lark/template" style="text-decoration:none;display:inline-block;padding:6px 12px">📥 下载买家号统一台账完整模板</a></div>
         </div>
@@ -832,8 +855,9 @@
         </div>
       </div>
       <div class="settings-actions">
-        <button class="btn primary" id="btnLarkSave">保存飞书配置</button>
-        <button class="btn" id="btnLarkPreflight">只读检查统一台账字段</button>
+        <button class="btn primary" id="btnLarkSave" type="button">保存飞书配置</button>
+        <button class="btn" id="btnLarkPreflight" type="button">只读检查统一台账字段</button>
+        <span class="config-field-state checking" id="larkSaveFeedback" aria-live="polite">等待保存</span>
         <span class="hint">只读检查不会创建、修改或删除飞书记录。</span>
       </div>
     </section>
@@ -882,10 +906,13 @@ let regRunning = false;
 let envPlanId = null;
 let envAccountCount = 0;
 let envRunning = false;
+let envSubmitting = false;
 let envPreflightReady = false;
 let envGroupSaving = false;
 let larkReady = false;
 let larkTargetConfigured = false;
+let larkTargetBaseName = '';
+let larkTargetTableName = '';
 let envBuyers = [];                          // [{name,code}] 来自 /api/config，后端单一事实源
 let envDefaultSplit = ['新刚', '志恒', '康德'];
 let envBackupMax = 25;
@@ -938,7 +965,15 @@ function toast(msg) {
 }
 
 async function api(path, opts) {
-  const res = await fetch(path, opts);
+  if (location.protocol === 'file:') {
+    throw new Error('当前页面是本地文件预览，无法连接系统接口；请访问 http://127.0.0.1:8767/');
+  }
+  let res;
+  try {
+    res = await fetch(path, opts);
+  } catch (err) {
+    throw new Error('无法连接 Xynigo 本地服务；请确认启动窗口保持运行，并重新打开 http://127.0.0.1:8767/');
+  }
   let j = {};
   try { j = await res.json(); } catch (e) {}
   if (!res.ok) throw new Error(j.error || ('请求失败 HTTP ' + res.status));
@@ -1083,6 +1118,54 @@ const ST_CLS = {
 };
 
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function larkTargetDisplayName() {
+  return larkTargetBaseName && larkTargetTableName
+    ? `飞书「${larkTargetBaseName} / ${larkTargetTableName}」`
+    : '当前已连接的飞书统一台账';
+}
+
+function renderLarkWriteTargetText() {
+  const target = larkTargetDisplayName();
+  const sentences = [
+    [$('envWriteLedgerLabel'), '建环境成功后通过“小犀代采”企业自建应用回写', '；默认关闭，正式执行时还会单独二次确认。'],
+    [$('regWriteLedgerLabel'), '成功后通过“小犀代采”企业自建应用更新', '（每个任务必须已有 record_id；不自动创建/猜测记录）。'],
+  ];
+  sentences.forEach(([element, prefix, suffix]) => {
+    element.textContent = '';
+    element.appendChild(document.createTextNode(prefix));
+    element.appendChild(larkTargetConfigured
+      ? createLarkTargetLink(target)
+      : document.createTextNode(target));
+    element.appendChild(document.createTextNode(suffix));
+  });
+}
+
+function createLarkTargetLink(text) {
+  const link = document.createElement('a');
+  link.className = 'config-target-link';
+  link.href = '/api/lark/open-target';
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.title = '在新标签页打开当前飞书多维表格';
+  link.textContent = text;
+  link.addEventListener('click', event => event.stopPropagation());
+  return link;
+}
+
+function renderLarkConnectedTarget(element, targetDisplay, targetVerified, targetConfigured) {
+  element.textContent = '当前连接：';
+  if (!targetConfigured) {
+    element.appendChild(document.createTextNode('未配置'));
+    return;
+  }
+  const link = createLarkTargetLink(targetDisplay || '打开已配置目标');
+  element.appendChild(link);
+  if (!targetVerified) {
+    element.appendChild(document.createTextNode(
+      targetDisplay ? '（待重新验证）' : '（名称待连接验证）'));
+  }
+}
 
 function renderRows(rows) {
   if (!rows.length) {
@@ -1242,6 +1325,7 @@ function renderEnvBuyerCards() {
   }
   const total = envAccountCount;
   const assigned = envAssignedTotal();
+  const busy = envSubmitting || envRunning;
   const mmdd = envMmdd(), site = $('envSite').value;
   grid.innerHTML = '';
   envBuyers.forEach(b => {
@@ -1255,20 +1339,20 @@ function renderEnvBuyerCards() {
       `<div class="buyer-head">` +
         `<span class="buyer-name">${esc(b.name)}-${esc(b.code)}</span>` +
         `<span class="stepper">` +
-          `<button type="button" data-act="dec"${n === 0 || envRunning ? ' disabled' : ''}>−</button>` +
-          `<input type="text" inputmode="numeric" value="${n}"${envRunning ? ' disabled' : ''}>` +
-          `<button type="button" data-act="inc"${assigned >= total || envRunning ? ' disabled' : ''}>＋</button>` +
+          `<button type="button" data-act="dec"${n === 0 || busy ? ' disabled' : ''}>−</button>` +
+          `<input type="text" inputmode="numeric" value="${n}"${busy ? ' disabled' : ''}>` +
+          `<button type="button" data-act="inc"${assigned >= total || busy ? ' disabled' : ''}>＋</button>` +
         `</span>` +
       `</div>` +
       `<div class="buyer-range-row">` +
         `<div class="buyer-range mono${n > 0 ? '' : ' idle'}">${esc(range)}</div>` +
-        `<button type="button" class="btn-mini" data-all="${esc(b.name)}" title="本批账号全部分给${esc(b.name)}"${envRunning || !total ? ' disabled' : ''}>全给</button>` +
+        `<button type="button" class="btn-mini" data-all="${esc(b.name)}" title="本批账号全部分给${esc(b.name)}"${busy || !total ? ' disabled' : ''}>全给</button>` +
       `</div>`;
     const allBtn = card.querySelector('[data-all]');
     const [decBtn, incBtn] = card.querySelectorAll('[data-act]');
     const input = card.querySelector('input');
     allBtn.onclick = () => {
-      if (!envAccountCount || envRunning) return;
+      if (!envAccountCount || busy) return;
       envBuyers.forEach(x => { envBuyerCounts[x.name] = 0; });
       envBuyerCounts[b.name] = envAccountCount;
       toast(`已全部分给${b.name}`);
@@ -1305,7 +1389,7 @@ function renderEnvBackupCards() {
       `<div class="buyer-head"><span class="buyer-name">${esc(b.name)}-${esc(b.code)}</span>` +
       (selected ? '<span class="badge ok">已选</span>' : '') + `</div>` +
       `<div class="buyer-range mono${selected ? '' : ' idle'}">${selected ? esc(backupNamePreview(b, 0)) : '点击选择'}</div>`;
-    card.onclick = () => { if (!backupRunning) { envBackup.buyer = b.name; refreshAssignUi(); } };
+    card.onclick = () => { if (!envSubmitting && !backupRunning) { envBackup.buyer = b.name; refreshAssignUi(); } };
     grid.appendChild(card);
   });
   const last = backupNamePreview(envBuyerByName(envBackup.buyer), envBackup.count - 1);
@@ -1325,6 +1409,7 @@ function backupNamePreview(buyer, index) {
 function refreshAssignUi() {
   renderEnvBuyerCards();
   renderEnvBackupCards();
+  const busy = envSubmitting || envRunning || backupRunning;
   const total = envAccountCount;
   const assigned = envAssignedTotal();
   const balanced = total > 0 && assigned === total;
@@ -1332,6 +1417,13 @@ function refreshAssignUi() {
   chip.textContent = `已分配 ${assigned}/${total || '—'}` + (balanced ? ' ✓' : (assigned < total ? `，还差 ${total - assigned}` : ''));
   chip.className = 'assign-sum ' + (balanced ? 'ok' : 'warn');
   $('envSpecOut').textContent = assigned > 0 ? composeAssignmentSpec() : '（未分配）';
+  for (const id of ['envFile', 'envDate', 'envVerify', 'envVerifyCount',
+                    'btnEnvEven', 'btnEnvClear', 'envBackupDec',
+                    'envBackupCount', 'envBackupInc']) {
+    $(id).disabled = busy;
+  }
+  document.querySelectorAll('.chip[data-n], input[name="envBackupType"]').forEach(
+    element => { element.disabled = busy; });
   updateEnvButtons();
 }
 
@@ -1340,9 +1432,12 @@ function updateEnvButtons() {
     envAssignedTotal() === envAccountCount && envAccountCount > 0;
   const backupReady = envMode === 'backup' && envBackup.count >= 1 && envBackup.count <= envBackupMax;
   const ready = envPreflightReady && (boundReady || backupReady);
-  $('btnEnvPreview').disabled = envRunning || backupRunning || !ready;
-  $('btnEnvStart').disabled = envRunning || backupRunning || !ready;
-  $('envWriteLedger').disabled = envMode !== 'bound' || !larkReady || envRunning || backupRunning;
+  const busy = envSubmitting || envRunning || backupRunning;
+  $('btnEnvPreview').disabled = busy || !ready;
+  $('btnEnvStart').disabled = busy || !ready;
+  $('btnEnvStart').textContent = envSubmitting
+    ? '⏳ 正在提交…' : ((envRunning || backupRunning) ? '⏳ 执行中…' : '▶ 正式执行');
+  $('envWriteLedger').disabled = envMode !== 'bound' || !larkReady || busy;
   if (envMode !== 'bound') $('envWriteLedger').checked = false;
 }
 
@@ -1394,7 +1489,7 @@ const ENV_BOUND_THEAD = '<tr><th>邮箱</th><th>采购员</th><th>环境名</th>
 const ENV_BACKUP_THEAD = '<tr><th>序号</th><th>环境名</th><th>HUB序号</th><th>当前状态</th><th>说明</th></tr>';
 
 function setEnvMode(next) {
-  if (envRunning || backupRunning) { toast('任务执行中，不能切换模式'); return; }
+  if (envSubmitting || envRunning || backupRunning) { toast('任务提交或执行中，不能切换模式'); return; }
   envMode = next;
   document.querySelectorAll('#envModeBar .mode-tab').forEach(tab => {
     tab.classList.toggle('active', tab.dataset.mode === next);
@@ -1419,13 +1514,16 @@ function setEnvMode(next) {
   $('envPreviewText').textContent = bound
     ? '解析后点“干跑预览”，将只读 HubStudio 全量环境并核对续排序号，不做任何写入。'
     : '选定采购员、数量与类型后点“干跑预览”，只读核对续排序号，不做任何写入。';
+  setEnvExecutionState(
+    'idle', '等待执行确认',
+    '完成正式执行确认后，这里会立即显示任务提交和后台执行状态。');
   refreshAssignUi();
   refreshEnvPreflight();
 }
 
 function updateEnvModeTabs() {
   document.querySelectorAll('#envModeBar .mode-tab').forEach(tab => {
-    tab.disabled = envRunning || backupRunning;
+    tab.disabled = envSubmitting || envRunning || backupRunning;
   });
 }
 
@@ -1448,14 +1546,125 @@ function renderLedgerSummary(ledger) {
     .map(row => `<div>${esc(row.emailMasked)} · ${esc(row.site)} · ${row.state === 'conflict' ? '冲突' : '待重试'}${row.message ? '：' + esc(row.message) : ''}</div>`)
     .join('');
   box.innerHTML = `<b>${esc(headline)}</b>${ledger.error ? `<div class="hint">${esc(ledger.error)}</div>` : ''}${details ? `<div class="ledger-rows">${details}</div>` : ''}`;
-  retry.disabled = envRunning || !(ledger.pending > 0);
+  retry.disabled = envSubmitting || envRunning || !(ledger.pending > 0);
+}
+
+function setEnvExecutionState(kind, title, detail) {
+  const box = $('envExecutionState');
+  box.className = 'execution-state ' + kind;
+  $('envExecutionTitle').textContent = title;
+  $('envExecutionDetail').textContent = detail;
+}
+
+function beginEnvSubmission(title, detail) {
+  envSubmitting = true;
+  setEnvExecutionState('submitting', title, detail);
+  updateEnvModeTabs();
+  refreshAssignUi();
+  $('envSite').disabled = true;
+  $('envSiteGroup').disabled = true;
+}
+
+function paintEnvSubmissionState() {
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    const fallback = setTimeout(finish, 120);
+    const schedule = typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame : callback => setTimeout(callback, 0);
+    schedule(() => schedule(() => {
+      clearTimeout(fallback);
+      finish();
+    }));
+  });
+}
+
+function finishEnvSubmission() {
+  envSubmitting = false;
+  updateEnvModeTabs();
+  refreshAssignUi();
+  $('envSite').disabled = envRunning || backupRunning || envGroupSaving;
+  $('envSiteGroup').disabled = envRunning || backupRunning || envGroupSaving || $('envSiteGroup').options.length < 2;
+}
+
+function renderEnvExecutionState(snap, mode) {
+  if (envSubmitting) return;
+  const rows = snap.rows || [];
+  const ledger = snap.ledger || {};
+  const total = rows.length;
+  const done = rows.filter(row => row.state === 'done').length;
+  const failed = rows.filter(row => row.state === 'failed').length;
+  const taskName = mode === 'backup' ? '备用/测试环境任务' : '买家号建环境任务';
+  if (snap.running) {
+    if (mode === 'bound' && ledger.enabled && ledger.running) {
+      setEnvExecutionState(
+        'running', 'HubStudio 已完成，正在回写飞书台账',
+        `建环境完成 ${done}/${total || '—'}，飞书正在执行查重、写入和写后回读；已用 ${snap.elapsedSec || 0} 秒，请勿重复提交。`);
+      return;
+    }
+    if (mode === 'bound' && ledger.enabled && total > 0 && done === total) {
+      setEnvExecutionState(
+        'running', 'HubStudio 已完成，正在准备飞书台账回写',
+        `建环境完成 ${done}/${total}，后台即将开始飞书查重、写入和写后回读；已用 ${snap.elapsedSec || 0} 秒。`);
+      return;
+    }
+    setEnvExecutionState(
+      'running', `${taskName}正在后台执行`,
+      `当前完成 ${done}/${total || '—'}，已用 ${snap.elapsedSec || 0} 秒；页面每 1.5 秒自动刷新，请勿重复点击“正式执行”。`);
+    return;
+  }
+  if (snap.fatalError) {
+    setEnvExecutionState(
+      'failed', `${taskName}执行中断`,
+      `后台返回错误：${snap.fatalError}。请先查看下方明细，再决定是否重试。`);
+    return;
+  }
+  if (total) {
+    const ledgerPending = Number(ledger.pending || 0);
+    const ledgerConflicts = Number(ledger.conflict || 0);
+    const ledgerFailed = mode === 'bound' && ledger.enabled &&
+      (ledgerPending > 0 || ledgerConflicts > 0 || Boolean(ledger.error));
+    const partlyFailed = failed > 0 || ledgerFailed;
+    const kind = partlyFailed ? 'warning' : 'success';
+    let title = `${taskName}已完成：${done}/${total}`;
+    let detail = ledger.enabled
+      ? `HubStudio 已完成，飞书新增 ${ledger.created || 0}、补全 ${ledger.updated || 0}、幂等确认 ${ledger.confirmed || 0}。`
+      : '后台任务已经结束，可查看下方结果并下载对应留档。';
+    if (partlyFailed) {
+      title = `${taskName}部分失败：HubStudio ${done}/${total} 完成`;
+      const issues = [];
+      const remedies = [];
+      if (failed) issues.push(`HubStudio 失败 ${failed}`);
+      if (ledgerPending) issues.push(`飞书待重试 ${ledgerPending}`);
+      if (ledgerConflicts) issues.push(`飞书冲突 ${ledgerConflicts}`);
+      if (ledger.error) issues.push('飞书回写异常');
+      if (failed) remedies.push('HubStudio 失败行可按失败步骤重试');
+      if (ledgerPending) {
+        remedies.push('飞书待重试可使用“仅重试飞书回写”，不会再次调用 HubStudio');
+      }
+      if (ledgerConflicts) remedies.push('飞书冲突需先核对台账中的业务键和站点');
+      if (ledger.error && !ledgerPending) remedies.push('请根据下方错误检查飞书配置或表结构');
+      detail = `${issues.join('，')}。请查看下方明细；${remedies.join('；')}。`;
+    }
+    setEnvExecutionState(
+      kind, title, detail);
+    return;
+  }
+  setEnvExecutionState(
+    'idle', '等待执行确认',
+    '完成正式执行确认后，这里会立即显示任务提交和后台执行状态。');
 }
 
 function renderEnvBatch(snap) {
+  const wasRunning = envRunning;
   envRunning = !!snap.running;
   setHubStatus(snap.hubConnected);
-  $('envSite').disabled = envRunning || backupRunning || envGroupSaving;
-  $('envSiteGroup').disabled = envRunning || backupRunning || envGroupSaving || $('envSiteGroup').options.length < 2;
+  $('envSite').disabled = envSubmitting || envRunning || backupRunning || envGroupSaving;
+  $('envSiteGroup').disabled = envSubmitting || envRunning || backupRunning || envGroupSaving || $('envSiteGroup').options.length < 2;
   updateEnvModeTabs();
   const rows = snap.rows || [];
   const done = rows.filter(r => r.state === 'done').length;
@@ -1463,10 +1672,12 @@ function renderEnvBatch(snap) {
   $('envProgressText').textContent = `${done} / ${rows.length || envAccountCount}`;
   const sec = snap.elapsedSec || 0;
   $('envElapsed').textContent = '已用 ' + String(Math.floor(sec / 60)).padStart(2, '0') + ':' + String(sec % 60).padStart(2, '0');
-  updateEnvButtons();
+  if (wasRunning !== envRunning) refreshAssignUi();
+  else updateEnvButtons();
   $('btnEnvMapping').disabled = !snap.mappingReady;
   $('btnEnvTsv').disabled = !snap.tsvReady;
   renderLedgerSummary(snap.ledger);
+  renderEnvExecutionState(snap, 'bound');
   if (snap.fatalError) $('envPreviewText').textContent = '执行错误：' + snap.fatalError;
   if (!rows.length) return;
   $('envTbody').innerHTML = rows.map(r => {
@@ -1495,10 +1706,11 @@ function renderEnvBatch(snap) {
 }
 
 function renderBackupBatch(snap) {
+  const wasRunning = backupRunning;
   backupRunning = !!snap.running;
   setHubStatus(snap.hubConnected);
-  $('envSite').disabled = envRunning || backupRunning || envGroupSaving;
-  $('envSiteGroup').disabled = envRunning || backupRunning || envGroupSaving || $('envSiteGroup').options.length < 2;
+  $('envSite').disabled = envSubmitting || envRunning || backupRunning || envGroupSaving;
+  $('envSiteGroup').disabled = envSubmitting || envRunning || backupRunning || envGroupSaving || $('envSiteGroup').options.length < 2;
   updateEnvModeTabs();
   const rows = snap.rows || [];
   const done = rows.filter(r => r.state === 'done').length;
@@ -1506,8 +1718,10 @@ function renderBackupBatch(snap) {
   $('envProgressText').textContent = `${done} / ${rows.length || envBackup.count}`;
   const sec = snap.elapsedSec || 0;
   $('envElapsed').textContent = '已用 ' + String(Math.floor(sec / 60)).padStart(2, '0') + ':' + String(sec % 60).padStart(2, '0');
-  updateEnvButtons();
+  if (wasRunning !== backupRunning) refreshAssignUi();
+  else updateEnvButtons();
   $('btnEnvBackupResult').disabled = !snap.resultReady;
+  renderEnvExecutionState(snap, 'backup');
   if (snap.fatalError) $('envPreviewText').textContent = '执行错误：' + snap.fatalError;
   if (!rows.length) return;
   const badge = r => {
@@ -1539,7 +1753,14 @@ async function pollEnvBatch() {
     envPollFailures = 0;
   } catch (e) {
     envPollFailures += 1;
-    if (envPollFailures >= 3) $('envProgressText').textContent = '进度获取失败，持续重试中…';
+    if (envPollFailures >= 3) {
+      $('envProgressText').textContent = '进度获取失败，持续重试中…';
+      if (!envSubmitting) {
+        setEnvExecutionState(
+          'warning', '任务状态暂时无法获取',
+          '后台任务不会因此自动停止；页面仍会每 1.5 秒重试，请不要重复提交。');
+      }
+    }
   }
 }
 setInterval(pollEnvBatch, 1500);
@@ -1564,8 +1785,8 @@ async function refreshEnvPreflight() {
     envPreflightReady = false;
     $('envPreflightText').textContent = '预检失败：' + e.message;
   }
-  $('envSite').disabled = envRunning || backupRunning || envGroupSaving;
-  $('envSiteGroup').disabled = envRunning || backupRunning || envGroupSaving || $('envSiteGroup').options.length < 2;
+  $('envSite').disabled = envSubmitting || envRunning || backupRunning || envGroupSaving;
+  $('envSiteGroup').disabled = envSubmitting || envRunning || backupRunning || envGroupSaving || $('envSiteGroup').options.length < 2;
   updateEnvButtons();
 }
 refreshEnvPreflight();
@@ -1741,7 +1962,7 @@ $('btnRegStart').onclick = async () => {
   };
   if (payload.writeLarkLedger) {
     if (!larkReady) { toast('飞书 OpenAPI 尚未配置完成，请先到左侧“系统设置”处理'); return; }
-    payload.confirmLarkWrite = confirm('注册成功后将更新任务中明确指定的飞书台账记录，并执行写后回读。\n\n这是独立的飞书写入确认，是否继续？');
+    payload.confirmLarkWrite = confirm(`注册成功后将更新${larkTargetDisplayName()}中任务明确指定的记录，并执行写后回读。\n\n这是独立的飞书写入确认，是否继续？`);
     if (!payload.confirmLarkWrite) return;
   }
   try {
@@ -1830,16 +2051,30 @@ $('btnEnvStart').onclick = async () => {
   if (Number.isNaN(verifyCount) || verifyCount < 0 || verifyCount > 10) { toast('出口 IP 抽查数请填 0-10'); return; }
   if (envMode === 'backup') {
     if (!confirm(`将按${siteName}为 ${envBackup.buyer} 创建 ${envBackup.count} 个「${envBackup.type}环境」：只建环境并写备注，不导 Cookie、不绑号、不写台账。\n\n确认正式执行？`)) return;
+    beginEnvSubmission(
+      '执行指令已确认，正在提交备用/测试环境任务',
+      '正在等待本机服务受理，请勿重复点击或关闭页面；受理后会自动切换为“后台执行中”。');
     try {
       const result = await api('/api/envbatch/backup/start', {
         method:'POST', headers:{'Content-Type':'application/json'},
         body:JSON.stringify({buyer:envBackup.buyer, count:envBackup.count, type:envBackup.type, purchaseDate:envPurchaseDate(), verifySampleCount:verifyCount, confirmWrite:true, site})
       });
+      backupRunning = true;
+      finishEnvSubmission();
+      setEnvExecutionState(
+        'running', '备用/测试环境任务已受理，正在后台执行',
+        `本次共 ${result.count} 个环境；页面每 1.5 秒自动刷新，请勿重复提交。`);
       updateEnvButtons();
       pollEnvBatch();
       setTimeout(pollEnvBatch, 400);
       toast(`备用任务已开始，并行创建 ${result.count} 个${envBackup.type}环境`);
-    } catch (err) { toast(err.message); }
+    } catch (err) {
+      finishEnvSubmission();
+      setEnvExecutionState(
+        'failed', '备用/测试环境任务提交失败或响应中断',
+        `${err.message}。系统仍会继续轮询后台状态，请勿立即重复提交。`);
+      toast(err.message);
+    }
     return;
   }
   if (!envPlanId) { toast('请先选择并解析 xlsx'); return; }
@@ -1849,21 +2084,40 @@ $('btnEnvStart').onclick = async () => {
   if (!confirm(`将按${siteName}处理 ${envAccountCount} 个账号：创建环境、导入 Cookie、绑定账号并写备注。\n\n本次确认只授权 HubStudio 写入，是否继续？`)) return;
   let confirmLarkWrite = false;
   if (writeLarkLedger) {
-    confirmLarkWrite = confirm('建环境成功后，将通过“小犀代采”企业自建应用回写飞书「买家号（统一）」并进行写后回读。\n\n这是独立的飞书写入确认，是否继续？');
+    confirmLarkWrite = confirm(`建环境成功后，将通过“小犀代采”企业自建应用回写${larkTargetDisplayName()}并进行写后回读。\n\n这是独立的飞书写入确认，是否继续？`);
     if (!confirmLarkWrite) return;
   }
+  beginEnvSubmission(
+    writeLarkLedger
+      ? '执行指令已确认，正在检查飞书台账并提交任务'
+      : '执行指令已确认，正在提交买家号建环境任务',
+    writeLarkLedger
+      ? '正在执行飞书字段、双键和站点冲突只读预检；通过后才会启动 HubStudio 写入，请勿重复点击或关闭页面。'
+      : '正在等待本机服务受理，请勿重复点击或关闭页面；受理后会自动切换为“后台执行中”。');
+  await paintEnvSubmissionState();
   try {
     const result = await api('/api/envbatch/start', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({planId:envPlanId, assignment, purchaseDate:envPurchaseDate(), verifySampleCount:verifyCount, confirmWrite:true, site, writeLarkLedger, confirmLarkWrite})
     });
     envPlanId = null;
+    envRunning = true;
+    finishEnvSubmission();
+    setEnvExecutionState(
+      'running', '买家号建环境任务已受理，正在后台执行',
+      `本次共 ${result.count} 个账号；页面每 1.5 秒自动刷新，请勿重复提交。`);
     updateEnvButtons();
     pollEnvBatch();
     setTimeout(pollEnvBatch, 400);
     $('envPlan').textContent = `已启动 ${result.count} 个账号；页面不再持有原始文件内容。`;
     toast(`模块三已开始，并行处理 ${result.count} 个账号`);
-  } catch (err) { toast(err.message); }
+  } catch (err) {
+    finishEnvSubmission();
+    setEnvExecutionState(
+      'failed', '买家号建环境任务提交失败或响应中断',
+      `${err.message}。系统仍会继续轮询后台状态，请勿立即重复提交。`);
+    toast(err.message);
+  }
 };
 
 $('btnEnvRetryLedger').onclick = async () => {
@@ -2055,18 +2309,18 @@ async function loadEnvGroups() {
         placeholder.textContent = '当前配置未匹配，请重新选择采购分组';
       }
     }
-    siteSel.disabled = envRunning || envGroupSaving;
-    sel.disabled = envRunning || envGroupSaving || groups.length === 0;
+    siteSel.disabled = envSubmitting || envRunning || envGroupSaving;
+    sel.disabled = envSubmitting || envRunning || envGroupSaving || groups.length === 0;
   } catch (e) {
     sel.innerHTML = '<option value="">分组接口不可用，请检查 HubStudio</option>';
-    siteSel.disabled = envRunning || envGroupSaving;
+    siteSel.disabled = envSubmitting || envRunning || envGroupSaving;
     sel.disabled = true;
   }
 }
 
 $('envSite').onchange = async e => {
   const site = e.target.value;
-  if (envRunning || envGroupSaving) return;
+  if (envSubmitting || envRunning || envGroupSaving) return;
   envGroupSaving = true;
   envPreflightReady = false;
   e.target.disabled = true;
@@ -2087,14 +2341,14 @@ $('envSite').onchange = async e => {
     await refreshEnvPreflight();
   } finally {
     envGroupSaving = false;
-    e.target.disabled = envRunning;
-    $('envSiteGroup').disabled = envRunning || $('envSiteGroup').options.length < 2;
+    e.target.disabled = envSubmitting || envRunning;
+    $('envSiteGroup').disabled = envSubmitting || envRunning || $('envSiteGroup').options.length < 2;
   }
 };
 
 $('envSiteGroup').onchange = async e => {
   const selected = e.target.value;
-  if (!selected || envRunning || envGroupSaving) return;
+  if (!selected || envSubmitting || envRunning || envGroupSaving) return;
   envGroupSaving = true;
   envPreflightReady = false;
   e.target.disabled = true;
@@ -2116,8 +2370,8 @@ $('envSiteGroup').onchange = async e => {
     await refreshEnvPreflight();
   } finally {
     envGroupSaving = false;
-    $('envSite').disabled = envRunning;
-    e.target.disabled = envRunning || e.target.options.length < 2;
+    $('envSite').disabled = envSubmitting || envRunning;
+    e.target.disabled = envSubmitting || envRunning || e.target.options.length < 2;
   }
 };
 
@@ -2131,19 +2385,29 @@ loadEnvGroups();
 
 function renderLarkConfigStatus(state) {
   larkReady = !!(state && state.ready);
+  larkTargetConfigured = !!(state && state.ledgerTargetConfigured);
   const pill = $('larkConfigStatus');
   pill.className = 'pill ' + (larkReady ? 'ok' : 'bad');
   pill.textContent = larkReady ? '✓ 飞书 OpenAPI 已就绪' : '⚠ 飞书 OpenAPI 未就绪';
   const parts = [];
   if (state && state.credentialConfigured) parts.push(`应用 ${state.appIdMasked || '已配置'}`);
   else parts.push('应用凭证未配置');
-  parts.push(state && state.ledgerTargetConfigured ? '统一台账目标已配置' : '统一台账目标未配置');
+  const targetBaseName = String(state && state.targetBaseName || '').trim();
+  const targetTableName = String(state && state.targetTableName || '').trim();
+  larkTargetBaseName = targetBaseName;
+  larkTargetTableName = targetTableName;
+  renderLarkWriteTargetText();
+  const targetDisplay = targetBaseName && targetTableName
+    ? `${targetBaseName} / ${targetTableName}` : '';
+  parts.push(state && state.ledgerTargetConfigured
+    ? (targetDisplay ? `当前连接 ${targetDisplay}` : '统一台账目标已配置，名称待连接验证')
+    : '统一台账目标未配置');
   $('larkConfigDetail').textContent = parts.join(' · ') + '。页面和 API 不回显凭证或台账标识。';
   const credentialConfigured = !!(state && state.credentialConfigured);
-  larkTargetConfigured = !!(state && state.ledgerTargetConfigured);
   const appState = $('cfgLarkAppIdState');
   const secretState = $('cfgLarkAppSecretState');
   const ledgerState = $('cfgLarkLedgerUrlState');
+  const connectedTarget = $('cfgLarkConnectedTarget');
   if (!state) {
     for (const element of [appState, secretState, ledgerState]) {
       element.className = 'config-field-state bad';
@@ -2152,6 +2416,8 @@ function renderLarkConfigStatus(state) {
     $('cfgLarkAppId').placeholder = '状态读取失败；可输入新 App ID 覆盖';
     $('cfgLarkAppSecret').placeholder = '状态读取失败；可输入新 Secret 覆盖';
     $('cfgLarkLedgerUrl').placeholder = '状态读取失败；可粘贴新链接覆盖';
+    connectedTarget.className = 'config-field-state bad';
+    connectedTarget.textContent = '当前连接：状态读取失败';
   } else {
     appState.className = 'config-field-state ' + (credentialConfigured ? 'ok' : 'bad');
     appState.textContent = credentialConfigured
@@ -2160,6 +2426,10 @@ function renderLarkConfigStatus(state) {
     secretState.textContent = credentialConfigured ? '✓ 已安全保存 App Secret' : '○ 未配置 App Secret';
     ledgerState.className = 'config-field-state ' + (larkTargetConfigured ? 'ok' : 'bad');
     ledgerState.textContent = larkTargetConfigured ? '✓ 买家号统一台账目标已配置' : '○ 未配置统一台账目标';
+    connectedTarget.className = 'config-field-state ' + (state.targetVerified ? 'ok' : (larkTargetConfigured ? 'checking' : 'bad'));
+    renderLarkConnectedTarget(
+      connectedTarget, targetDisplay, !!state.targetVerified,
+      larkTargetConfigured);
     $('cfgLarkAppId').placeholder = credentialConfigured
       ? `已配置 ${state.appIdMasked || '应用'}；留空保持不变` : '请输入企业自建应用 App ID';
     $('cfgLarkAppSecret').placeholder = credentialConfigured
@@ -2168,12 +2438,12 @@ function renderLarkConfigStatus(state) {
       ? '台账目标已配置；留空保持不变，粘贴新链接可替换'
       : '粘贴包含 table=tbl... 的飞书 /base/ 或 /wiki/ 完整链接';
   }
-  $('envWriteLedger').disabled = envMode !== 'bound' || !larkReady || envRunning || backupRunning;
+  $('envWriteLedger').disabled = envMode !== 'bound' || !larkReady || envSubmitting || envRunning || backupRunning;
   if (!larkReady) $('envWriteLedger').checked = false;
   $('regWriteLedger').disabled = !larkReady || regRunning;
   if (!larkReady) $('regWriteLedger').checked = false;
   $('envLedgerState').textContent = larkReady
-    ? '飞书 OpenAPI 已就绪；回写开关默认关闭，勾选后执行时会独立确认。'
+    ? `${larkTargetDisplayName()}已就绪；回写开关默认关闭，勾选后执行时会独立确认。`
     : '飞书 OpenAPI 未就绪；请到左侧“系统设置”配置应用凭证和统一台账目标。';
 }
 
@@ -2209,9 +2479,6 @@ async function loadSettingsPage() {
     $('cfgProxyState').textContent = cfg.proxySource === 'custom'
       ? '当前使用自定义代理链接；留空保存保持不变，勾选清除恢复内置默认。'
       : '已内置默认提取链接（前期写死），可直接使用；仅需要自定义时填写。';
-    for (const id of ['cfgLarkAppId','cfgLarkAppSecret','cfgLarkLedgerUrl']) $(id).value = '';
-    $('cfgLarkClearCredential').checked = false;
-    $('cfgLarkClearTarget').checked = false;
   } catch (e) { toast('设置读取失败：' + e.message); }
 }
 
@@ -2254,18 +2521,30 @@ $('btnCfgSave').onclick = async () => {
   } catch (e) { toast(e.message); }
 };
 
-$('btnLarkSave').onclick = async () => {
-  const appId = $('cfgLarkAppId').value.trim();
-  const appSecret = $('cfgLarkAppSecret').value.trim();
-  const ledgerUrl = $('cfgLarkLedgerUrl').value.trim();
-  const clearCredential = $('cfgLarkClearCredential').checked;
-  const clearLedgerTarget = $('cfgLarkClearTarget').checked;
-  if ((appId && !appSecret) || (!appId && appSecret)) { toast('App ID 与 App Secret 必须同时填写'); return; }
-  if (clearCredential && (appId || appSecret)) { toast('清除凭证与填写新凭证不能同时选择'); return; }
-  if (clearCredential && ledgerUrl) { toast('清除应用凭证时不能同时解析新台账链接'); return; }
-  if (clearLedgerTarget && ledgerUrl) { toast('清除台账目标与填写新链接不能同时选择'); return; }
-  if (ledgerUrl && larkTargetConfigured && !confirm('保存新链接后将替换当前买家号统一台账目标。\n\n系统不会回显旧链接；请确认新表已按统一模板配置字段，并在保存后执行只读字段检查。\n\n确认重新配置？')) return;
+function setLarkSaveFeedback(kind, message) {
+  const feedback = $('larkSaveFeedback');
+  feedback.className = 'config-field-state ' + kind;
+  feedback.textContent = message;
+}
+
+async function saveLarkConfig() {
+  const button = $('btnLarkSave');
+  if (button.disabled) return;
+  let ledgerUrl = '';
   try {
+    const appId = $('cfgLarkAppId').value.trim();
+    const appSecret = $('cfgLarkAppSecret').value.trim();
+    ledgerUrl = $('cfgLarkLedgerUrl').value.trim();
+    const clearCredential = $('cfgLarkClearCredential').checked;
+    const clearLedgerTarget = $('cfgLarkClearTarget').checked;
+    if ((appId && !appSecret) || (!appId && appSecret)) throw new Error('App ID 与 App Secret 必须同时填写');
+    if (clearCredential && (appId || appSecret)) throw new Error('清除凭证与填写新凭证不能同时选择');
+    if (clearCredential && ledgerUrl) throw new Error('清除应用凭证时不能同时解析新台账链接');
+    if (clearLedgerTarget && ledgerUrl) throw new Error('清除台账目标与填写新链接不能同时选择');
+    if (ledgerUrl && larkTargetConfigured && !confirm('保存新链接后将替换当前买家号统一台账目标。\n\n系统不会回显旧链接；请确认新表已按统一模板配置字段，并在保存后执行只读字段检查。\n\n确认重新配置？')) return;
+    button.disabled = true;
+    button.textContent = '保存中…';
+    setLarkSaveFeedback('checking', '正在安全保存应用凭证并解析台账链接…');
     const state = await api('/api/lark/config', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({appId, appSecret, ledgerUrl, clearCredential, clearLedgerTarget})
@@ -2274,9 +2553,19 @@ $('btnLarkSave').onclick = async () => {
     $('cfgLarkClearCredential').checked = false;
     $('cfgLarkClearTarget').checked = false;
     renderLarkConfigStatus(state);
-    toast(ledgerUrl ? '飞书链接已自动解析，OpenAPI 配置已保存' : '飞书 OpenAPI 配置已保存到当前电脑');
-  } catch (err) { toast(err.message); }
-};
+    const message = ledgerUrl ? '✓ 飞书链接已解析，OpenAPI 配置保存成功' : '✓ 飞书 OpenAPI 配置保存成功';
+    setLarkSaveFeedback('ok', message);
+    toast(message.replace(/^✓\s*/, ''));
+  } catch (err) {
+    setLarkSaveFeedback('bad', '⚠ 保存失败：' + err.message);
+    toast('飞书配置保存失败：' + err.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = '保存飞书配置';
+  }
+}
+
+$('btnLarkSave').onclick = saveLarkConfig;
 
 $('btnLarkPreflight').onclick = async () => {
   if (!larkReady) { toast('请先保存完整的飞书应用与统一台账配置'); return; }
@@ -2286,6 +2575,7 @@ $('btnLarkPreflight').onclick = async () => {
     const result = await api('/api/lark/preflight', {
       method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'
     });
+    renderLarkConfigStatus(result);
     toast(result.message || '飞书统一台账只读检查通过');
   } catch (err) { toast(err.message); }
   finally { button.disabled = false; }

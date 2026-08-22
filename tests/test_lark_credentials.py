@@ -6,7 +6,8 @@ import tempfile
 import unittest
 
 from purchase_tool.lark_credentials import (
-    LarkCredentials, MacKeychainCredentialStore, MemoryCredentialStore,
+    LarkCredentialError, LarkCredentials, MacKeychainCredentialStore,
+    MemoryCredentialStore,
     WindowsDpapiCredentialStore, public_credential_status)
 
 
@@ -21,7 +22,7 @@ class QueueRunner(object):
 
 
 class LarkCredentialTests(unittest.TestCase):
-    def test_macos_save_feeds_secret_on_stdin_not_argv(self):
+    def test_macos_save_uses_noninteractive_hex_stdin_not_argv(self):
         runner = QueueRunner([
             subprocess.CompletedProcess([], 0, '', ''),
         ])
@@ -30,8 +31,27 @@ class LarkCredentialTests(unittest.TestCase):
         store.save('cli_public_demo', 'private-secret-demo')
         argv, kwargs = runner.calls[0]
         self.assertNotIn('private-secret-demo', ' '.join(argv))
-        self.assertIn('private-secret-demo', kwargs['input'])
-        self.assertEqual(argv[-1], '-w')
+        self.assertEqual(argv, ['/usr/bin/security', '-i'])
+        payload = json.dumps({
+            'app_id': 'cli_public_demo',
+            'app_secret': 'private-secret-demo',
+        }, ensure_ascii=False, separators=(',', ':'))
+        self.assertNotIn(payload, kwargs['input'])
+        self.assertNotIn('private-secret-demo', kwargs['input'])
+        self.assertIn(payload.encode('utf-8').hex(), kwargs['input'])
+        self.assertIn('add-generic-password', kwargs['input'])
+        self.assertIn('-X', kwargs['input'])
+        self.assertEqual(kwargs['timeout'], 15)
+
+    def test_macos_save_reports_keychain_timeout_without_secret(self):
+        def timeout_runner(argv, **kwargs):
+            raise subprocess.TimeoutExpired(argv, kwargs.get('timeout'))
+
+        store = MacKeychainCredentialStore(runner=timeout_runner)
+        with self.assertRaisesRegex(
+                LarkCredentialError,
+                '保存飞书应用凭证到 macOS 钥匙串超时'):
+            store.save('cli_public_demo', 'private-secret-demo')
 
     def test_macos_load_and_public_status_never_return_secret(self):
         payload = json.dumps({

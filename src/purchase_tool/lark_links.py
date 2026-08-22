@@ -2,7 +2,7 @@
 """Strict parsing of Feishu/Lark Base links for local target configuration."""
 from dataclasses import dataclass
 import re
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit, urlunsplit
 
 
 TOKEN_RE = re.compile(r'^[A-Za-z0-9_-]{8,160}$')
@@ -19,6 +19,7 @@ class LarkLinkReference:
     kind: str
     document_token: str
     table_id: str
+    hostname: str
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,7 @@ class LarkLedgerTargetConfig:
     base_token: str
     table_id: str
     source_kind: str
+    source_hostname: str
 
 
 def _allowed_host(hostname):
@@ -67,7 +69,27 @@ def parse_lark_base_link(value):
     if not TOKEN_RE.fullmatch(token):
         raise LarkLinkError('飞书链接中的文档标识格式无效')
     table_id = _one_table_id(parsed.query)
-    return LarkLinkReference(segments[0], token, table_id)
+    return LarkLinkReference(
+        segments[0], token, table_id, parsed.hostname.lower())
+
+
+def build_lark_base_link(base_token, table_id, hostname=''):
+    """Build a safe user-facing Base link from validated routing data."""
+    base_token = str(base_token or '').strip()
+    table_id = str(table_id or '').strip()
+    hostname = str(hostname or '').strip().lower().rstrip('.')
+    if not TOKEN_RE.fullmatch(base_token):
+        raise LarkLinkError('飞书 Base Token 格式无效')
+    if not TABLE_RE.fullmatch(table_id):
+        raise LarkLinkError('飞书数据表 ID 格式无效')
+    if hostname and not _allowed_host(hostname):
+        raise LarkLinkError('飞书多维表格域名格式无效')
+    # Older local configs did not persist the validated source hostname.
+    # Feishu's canonical web entry remains a safe backward-compatible target.
+    hostname = hostname or 'www.feishu.cn'
+    return urlunsplit((
+        'https', hostname, '/base/' + quote(base_token, safe=''),
+        urlencode({'table': table_id}), ''))
 
 
 def resolve_lark_ledger_link(value, client=None):
@@ -79,7 +101,8 @@ def resolve_lark_ledger_link(value, client=None):
     reference = parse_lark_base_link(value)
     if reference.kind == 'base':
         return LarkLedgerTargetConfig(
-            reference.document_token, reference.table_id, 'base')
+            reference.document_token, reference.table_id, 'base',
+            reference.hostname)
     if client is None:
         raise LarkLinkError('Wiki 链接需要先配置应用凭证才能自动解析')
     try:
@@ -92,4 +115,4 @@ def resolve_lark_ledger_link(value, client=None):
     if not TOKEN_RE.fullmatch(base_token):
         raise LarkLinkError('Wiki 节点未返回有效的多维表格标识')
     return LarkLedgerTargetConfig(
-        base_token, reference.table_id, 'wiki')
+        base_token, reference.table_id, 'wiki', reference.hostname)

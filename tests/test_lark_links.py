@@ -2,7 +2,8 @@
 import unittest
 
 from purchase_tool.lark_links import (
-    LarkLinkError, parse_lark_base_link, resolve_lark_ledger_link)
+    LarkLinkError, build_lark_base_link, parse_lark_base_link,
+    resolve_lark_ledger_link)
 
 
 class FakeWikiClient(object):
@@ -26,10 +27,28 @@ class LarkLinkTests(unittest.TestCase):
                '&view=vewPublicSafeExample')
         ref = parse_lark_base_link(url)
         self.assertEqual(ref.kind, 'base')
+        self.assertEqual(ref.hostname, 'public-safe.feishu.cn')
         target = resolve_lark_ledger_link(url)
         self.assertEqual(target.base_token, 'bascnPublicSafeExample')
         self.assertEqual(target.table_id, 'tblPublicSafeExample')
         self.assertEqual(target.source_kind, 'base')
+        self.assertEqual(target.source_hostname, 'public-safe.feishu.cn')
+
+    def test_builds_safe_browser_link_and_legacy_host_fallback(self):
+        exact = build_lark_base_link(
+            'bascnPublicSafeExample', 'tblPublicSafeExample',
+            'public-safe.feishu.cn')
+        self.assertEqual(
+            exact,
+            'https://public-safe.feishu.cn/base/'
+            'bascnPublicSafeExample?table=tblPublicSafeExample')
+        legacy = build_lark_base_link(
+            'bascnPublicSafeExample', 'tblPublicSafeExample')
+        self.assertTrue(legacy.startswith('https://www.feishu.cn/base/'))
+        with self.assertRaisesRegex(LarkLinkError, '域名'):
+            build_lark_base_link(
+                'bascnPublicSafeExample', 'tblPublicSafeExample',
+                'example.test')
 
     def test_larksuite_host_is_supported(self):
         target = resolve_lark_ledger_link(
