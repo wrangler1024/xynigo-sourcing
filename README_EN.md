@@ -30,8 +30,16 @@ workflows contributed by **Samforo**.
   custom app, with unified-ledger conflict preflight and post-write readback.
   Teammate computers do not need `lark-cli`.
 
-The current stable release is `v0.8.2`. The project is under active
+The current stable release is `v0.8.3`. The project is under active
 development and is not yet a hosted SaaS product.
+
+v0.8.3 improves connection verification after a production Feishu Base target
+is reconfigured. Opening System Settings can refresh the current Base and
+table names, while saving and the dedicated connection-and-schema check report
+their validation results separately. If advanced permissions hide the target
+table from the Xynigo enterprise app, the UI now gives a direct authorization
+hint. Metadata refresh and schema validation remain read-only, and public
+configuration responses still withhold secrets and deployment identifiers.
 
 v0.8.2 fixes a potential macOS Keychain stall while saving Feishu app
 credentials and improves visibility of the configured Base target. The UI

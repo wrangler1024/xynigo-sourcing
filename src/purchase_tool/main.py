@@ -436,10 +436,12 @@ def _clean_lark_target_name(value, label):
     return value
 
 
-def refreshed_lark_target_labels(cfg, credential_store):
+def refreshed_lark_target_labels(cfg, credential_store, client=None):
     """Verify the configured target and persist display-only names."""
-    service = build_buyer_ledger_service(cfg, credential_store)
-    metadata = service.client.get_target_metadata()
+    if client is None:
+        client = build_buyer_ledger_service(
+            cfg, credential_store).client
+    metadata = client.get_target_metadata()
     refreshed = dict(cfg)
     refreshed['larkBuyerBaseName'] = _clean_lark_target_name(
         metadata.get('base_name'), '飞书多维表格名称')
@@ -1713,6 +1715,7 @@ class Handler(BaseHTTPRequestHandler):
                     body, STATE.lark_credentials)
                 cfg = updated_lark_config(
                     load_config(), body, resolved_target)
+                target_validation_error = ''
                 if body.get('clearCredential'):
                     STATE.lark_credentials.clear()
                 elif credentials:
@@ -1724,22 +1727,37 @@ class Handler(BaseHTTPRequestHandler):
                     try:
                         cfg = refreshed_lark_target_labels(
                             cfg, STATE.lark_credentials)
-                    except Exception:
+                    except Exception as exc:
                         cfg['larkBuyerTargetVerified'] = False
+                        target_validation_error = public_error(exc)
+                save_config(cfg)
+                STATE.cfg = cfg
+                response = {
+                    'saved': True,
+                    **public_lark_config(cfg, STATE.lark_credentials),
+                }
+                if target_validation_error:
+                    response['targetValidationError'] = \
+                        target_validation_error
+                self._json(response)
+            elif path == '/api/lark/target-metadata':
+                cfg = refreshed_lark_target_labels(
+                    STATE.cfg, STATE.lark_credentials)
                 save_config(cfg)
                 STATE.cfg = cfg
                 self._json({
-                    'saved': True,
+                    'refreshed': True,
                     **public_lark_config(cfg, STATE.lark_credentials),
                 })
             elif path == '/api/lark/preflight':
                 service = build_buyer_ledger_service(
                     STATE.cfg, STATE.lark_credentials)
-                validate_unified_schema(service.client.list_fields())
                 cfg = refreshed_lark_target_labels(
-                    STATE.cfg, STATE.lark_credentials)
+                    STATE.cfg, STATE.lark_credentials,
+                    client=service.client)
                 save_config(cfg)
                 STATE.cfg = cfg
+                validate_unified_schema(service.client.list_fields())
                 self._json({
                     'ready': True,
                     'message': '飞书统一台账字段检查通过',

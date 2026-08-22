@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Xynigo Sourcing v0.8.2</title>
+<title>Xynigo Sourcing v0.8.3</title>
 <link rel="icon" type="image/png" sizes="260x260" href="/xynigo-x.png?v=5">
 <link rel="icon" type="image/x-icon" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256" href="/favicon.ico?v=5">
 <link rel="shortcut icon" href="/favicon.ico?v=5">
@@ -512,7 +512,7 @@
           <div class="hero-kicker">XYNIGO SOURCING WORKSPACE</div>
           <h1>让小犀帮你把每一单稳稳带回来，<span class="hero-call">Xyni, GO!</span></h1>
           <p id="moduleSummary">批量查询订单与物流状态，异常任务集中处理，结果一键导出。</p>
-          <div class="hero-meta"><span class="hero-chip">稳定版 v0.8.2</span><span class="hero-chip">本机数据不出站</span><span class="hero-chip">在线更新已开启</span></div>
+          <div class="hero-meta"><span class="hero-chip">稳定版 v0.8.3</span><span class="hero-chip">本机数据不出站</span><span class="hero-chip">在线更新已开启</span></div>
         </div>
         <div class="hero-lockup" role="img" aria-label="小犀与 Xynigo 完整品牌一体图形">
           <img src="xynigo-logo.png" alt="">
@@ -856,9 +856,9 @@
       </div>
       <div class="settings-actions">
         <button class="btn primary" id="btnLarkSave" type="button">保存飞书配置</button>
-        <button class="btn" id="btnLarkPreflight" type="button">只读检查统一台账字段</button>
+        <button class="btn" id="btnLarkPreflight" type="button">重新验证连接与字段</button>
         <span class="config-field-state checking" id="larkSaveFeedback" aria-live="polite">等待保存</span>
-        <span class="hint">只读检查不会创建、修改或删除飞书记录。</span>
+        <span class="hint">重新验证会刷新当前 Base／数据表名称并检查字段，不会创建、修改或删除飞书记录。</span>
       </div>
     </section>
   </div>
@@ -2447,10 +2447,22 @@ function renderLarkConfigStatus(state) {
     : '飞书 OpenAPI 未就绪；请到左侧“系统设置”配置应用凭证和统一台账目标。';
 }
 
-async function loadLarkConfigStatus() {
+async function loadLarkConfigStatus({refreshPending=false} = {}) {
   try {
-    const state = await api('/api/lark/config');
+    let state = await api('/api/lark/config');
     renderLarkConfigStatus(state);
+    if (refreshPending && state.ready && state.ledgerTargetConfigured && !state.targetVerified) {
+      setLarkSaveFeedback('checking', '正在自动获取当前连接名称…');
+      try {
+        state = await api('/api/lark/target-metadata', {
+          method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'
+        });
+        renderLarkConfigStatus(state);
+        setLarkSaveFeedback('ok', '✓ 当前连接名称已自动刷新');
+      } catch (refreshError) {
+        setLarkSaveFeedback('bad', '⚠ 当前连接名称自动获取失败：' + refreshError.message);
+      }
+    }
     return state;
   } catch (err) {
     renderLarkConfigStatus(null);
@@ -2461,7 +2473,9 @@ async function loadLarkConfigStatus() {
 
 async function loadSettingsPage() {
   try {
-    const [cfg] = await Promise.all([api('/api/config'), loadLarkConfigStatus()]);
+    const [cfg] = await Promise.all([
+      api('/api/config'), loadLarkConfigStatus({refreshPending:true})
+    ]);
     $('cfgPort').value = cfg.hubPort || 6873;
     $('cfgConcurrency').value = cfg.concurrency || 2;
     setHiddenQueryColumns(cfg.hiddenQueryColumns || []);
@@ -2553,8 +2567,11 @@ async function saveLarkConfig() {
     $('cfgLarkClearCredential').checked = false;
     $('cfgLarkClearTarget').checked = false;
     renderLarkConfigStatus(state);
-    const message = ledgerUrl ? '✓ 飞书链接已解析，OpenAPI 配置保存成功' : '✓ 飞书 OpenAPI 配置保存成功';
-    setLarkSaveFeedback('ok', message);
+    const validationError = String(state && state.targetValidationError || '').trim();
+    const message = validationError
+      ? `⚠ 配置已保存，但连接名称获取失败：${validationError}。请检查多维表格高级权限后重新验证。`
+      : (ledgerUrl ? '✓ 飞书链接已解析并完成连接验证' : '✓ 飞书 OpenAPI 配置保存成功');
+    setLarkSaveFeedback(validationError ? 'bad' : 'ok', message);
     toast(message.replace(/^✓\s*/, ''));
   } catch (err) {
     setLarkSaveFeedback('bad', '⚠ 保存失败：' + err.message);
@@ -2571,14 +2588,24 @@ $('btnLarkPreflight').onclick = async () => {
   if (!larkReady) { toast('请先保存完整的飞书应用与统一台账配置'); return; }
   const button = $('btnLarkPreflight');
   button.disabled = true;
+  button.textContent = '正在验证…';
+  setLarkSaveFeedback('checking', '正在获取当前连接名称并只读检查统一台账字段…');
   try {
     const result = await api('/api/lark/preflight', {
       method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'
     });
     renderLarkConfigStatus(result);
-    toast(result.message || '飞书统一台账只读检查通过');
-  } catch (err) { toast(err.message); }
-  finally { button.disabled = false; }
+    const message = result.message || '飞书统一台账只读检查通过';
+    setLarkSaveFeedback('ok', '✓ ' + message);
+    toast(message);
+  } catch (err) {
+    await loadLarkConfigStatus();
+    setLarkSaveFeedback('bad', '⚠ 重新验证失败：' + err.message);
+    toast(err.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = '重新验证连接与字段';
+  }
 };
 
 loadLarkConfigStatus();

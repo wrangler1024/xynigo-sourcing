@@ -382,9 +382,15 @@ class ConfigRouteTests(unittest.TestCase):
             connection.close()
 
     def test_post_lark_config_saves_secret_outside_config_and_never_echoes_it(self):
+        fake_client = SimpleNamespace(get_target_metadata=lambda: {
+            'base_name': '公开脱敏测试 Base',
+            'table_name': '买家号统一台账（测试）',
+        })
         with tempfile.TemporaryDirectory() as tmp:
             config_path = str(Path(tmp) / 'config.json')
-            with patch.object(main_module, 'CONFIG_PATH', config_path):
+            with patch.object(main_module, 'CONFIG_PATH', config_path), \
+                    patch('purchase_tool.main.build_buyer_ledger_service') as build:
+                build.return_value.client = fake_client
                 response = self._post_json('/api/lark/config', {
                     'appId': 'cli_public_safe_example',
                     'appSecret': 'sanitized-secret-value',
@@ -402,6 +408,68 @@ class ConfigRouteTests(unittest.TestCase):
         self.assertNotIn('https://public-safe.feishu.cn', persisted)
         self.assertIn('bascnPublicSafeExample', persisted)
         self.assertIn('tblPublicSafeExample', persisted)
+        self.assertTrue(response['targetVerified'])
+        self.assertEqual(response['targetBaseName'], '公开脱敏测试 Base')
+        self.assertEqual(
+            response['targetTableName'], '买家号统一台账（测试）')
+
+    def test_post_lark_config_reports_target_name_validation_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = str(Path(tmp) / 'config.json')
+            with patch.object(main_module, 'CONFIG_PATH', config_path), \
+                    patch('purchase_tool.main.build_buyer_ledger_service',
+                          side_effect=RuntimeError('模拟高级权限未授权')):
+                response = self._post_json('/api/lark/config', {
+                    'ledgerUrl': ('https://public-safe.feishu.cn/base/'
+                                  'bascnPublicSafeExample'
+                                  '?table=tblPublicSafeExample'),
+                })
+        self.assertTrue(response['saved'])
+        self.assertFalse(response['targetVerified'])
+        self.assertEqual(
+            response['targetValidationError'], '模拟高级权限未授权')
+
+    def test_preflight_persists_target_names_before_schema_validation(self):
+        fake_client = SimpleNamespace(
+            get_target_metadata=lambda: {
+                'base_name': '公开脱敏测试 Base',
+                'table_name': '买家号统一台账（测试）',
+            },
+            list_fields=lambda: [])
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = str(Path(tmp) / 'config.json')
+            with patch.object(main_module, 'CONFIG_PATH', config_path), \
+                    patch('purchase_tool.main.build_buyer_ledger_service') as build, \
+                    patch('purchase_tool.main.validate_unified_schema',
+                          side_effect=ValueError('模拟字段契约不一致')):
+                build.return_value.client = fake_client
+                with self.assertRaises(urllib.error.HTTPError):
+                    self._post_json('/api/lark/preflight', {})
+                state = json.loads(self._get_json('/api/lark/config'))
+        self.assertTrue(state['targetVerified'])
+        self.assertEqual(state['targetBaseName'], '公开脱敏测试 Base')
+        self.assertEqual(
+            state['targetTableName'], '买家号统一台账（测试）')
+
+    def test_target_metadata_route_refreshes_names_without_field_read(self):
+        fake_client = SimpleNamespace(
+            get_target_metadata=lambda: {
+                'base_name': '公开脱敏测试 Base',
+                'table_name': '买家号统一台账（测试）',
+            },
+            list_fields=lambda: self.fail('名称刷新不应读取字段'))
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = str(Path(tmp) / 'config.json')
+            with patch.object(main_module, 'CONFIG_PATH', config_path), \
+                    patch('purchase_tool.main.build_buyer_ledger_service') as build:
+                build.return_value.client = fake_client
+                response = self._post_json(
+                    '/api/lark/target-metadata', {})
+        self.assertTrue(response['refreshed'])
+        self.assertTrue(response['targetVerified'])
+        self.assertEqual(response['targetBaseName'], '公开脱敏测试 Base')
+        self.assertEqual(
+            response['targetTableName'], '买家号统一台账（测试）')
 
 
 if __name__ == '__main__':

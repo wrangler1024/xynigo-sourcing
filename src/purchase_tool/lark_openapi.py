@@ -231,8 +231,11 @@ class LarkOpenApiClient(object):
         table = next((item for item in tables
                       if isinstance(item, dict)
                       and str(item.get('table_id') or '') == self.table_id), None)
-        if not table or not str(table.get('name') or '').strip():
-            raise LarkApiError('飞书目标数据表不存在或名称为空')
+        if not table:
+            raise LarkApiError(
+                '小犀代采应用无法访问目标数据表；请在多维表格高级权限中为应用开放该表')
+        if not str(table.get('name') or '').strip():
+            raise LarkApiError('飞书目标数据表名称为空')
         return {
             'base_name': str(base['name']).strip(),
             'table_name': str(table['name']).strip(),

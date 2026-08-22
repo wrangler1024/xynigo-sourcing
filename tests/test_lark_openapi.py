@@ -4,7 +4,7 @@ import unittest
 
 from purchase_tool.lark_credentials import LarkCredentials
 from purchase_tool.lark_openapi import (
-    LarkHttpResponse, LarkOpenApiClient)
+    LarkApiError, LarkHttpResponse, LarkOpenApiClient)
 
 
 def response(payload, status=200):
@@ -135,6 +135,24 @@ class LarkOpenApiTests(unittest.TestCase):
         self.assertTrue(transport.calls[1]['url'].endswith(
             '/open-apis/bitable/v1/apps/base_public_demo'))
         self.assertIn('/tables?page_size=100', transport.calls[2]['url'])
+
+    def test_target_metadata_explains_advanced_permission_failure(self):
+        client, _transport = self.client([
+            response({'code': 0, 'tenant_access_token': 'tenant-secret',
+                      'expire': 7200}),
+            response({'code': 0, 'data': {'app': {
+                'name': '公开脱敏测试 Base'}}}),
+            response({'code': 0, 'data': {
+                'items': [{
+                    'table_id': 'tbl_other_public_demo',
+                    'name': '其他测试表',
+                }],
+                'has_more': False,
+            }}),
+        ])
+        with self.assertRaisesRegex(
+                LarkApiError, '高级权限中为应用开放该表'):
+            client.get_target_metadata()
 
     def test_rate_limit_retries_without_leaking_credentials(self):
         sleeps = []

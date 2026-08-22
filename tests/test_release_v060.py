@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Release contract tests for Xynigo Sourcing v0.8.2."""
+"""Release contract tests for Xynigo Sourcing v0.8.3."""
 
 from pathlib import Path
 import unittest
@@ -7,12 +7,12 @@ import unittest
 from purchase_tool import __version__
 
 
-class ReleaseV082Tests(unittest.TestCase):
+class ReleaseV083Tests(unittest.TestCase):
     def test_version_and_packaging_are_aligned(self):
         root = Path(__file__).resolve().parents[1]
-        self.assertEqual(__version__, '0.8.2')
+        self.assertEqual(__version__, '0.8.3')
         pyproject = (root / 'pyproject.toml').read_text(encoding='utf-8')
-        self.assertIn('version = "0.8.2"', pyproject)
+        self.assertIn('version = "0.8.3"', pyproject)
         script = (root / '组装Windows绿色包.sh').read_text(encoding='utf-8')
         self.assertIn('v${VERSION}.zip', script)
         self.assertIn('Xynigo Sourcing v%s 启动中', script)
@@ -118,7 +118,7 @@ class ReleaseV082Tests(unittest.TestCase):
         self.assertIn("cfg.proxySource === 'custom'", html)
         self.assertIn('系统模板固定带表头', html)
         self.assertNotIn('https://proxy.example.test', html)
-        self.assertIn('Xynigo Sourcing v0.8.2', html)
+        self.assertIn('Xynigo Sourcing v0.8.3', html)
         self.assertIn('Xyni, GO!', html)
         self.assertIn('Xynigo 品牌字标', html)
         self.assertIn('小犀与 Xynigo 完整品牌一体图形', html)
@@ -161,6 +161,10 @@ class ReleaseV082Tests(unittest.TestCase):
         self.assertIn('function saveLarkConfig()', html)
         self.assertIn("button.textContent = '保存中…'", html)
         self.assertIn("setLarkSaveFeedback('bad', '⚠ 保存失败：'", html)
+        self.assertIn('配置已保存，但连接名称获取失败', html)
+        self.assertIn('重新验证连接与字段', html)
+        self.assertIn('正在获取当前连接名称并只读检查统一台账字段', html)
+        self.assertIn('await loadLarkConfigStatus()', html)
         self.assertIn('已安全保存 App Secret', html)
         self.assertIn('台账目标已配置；留空保持不变', html)
         self.assertIn('function renderLarkConnectedTarget(', html)
@@ -180,6 +184,9 @@ class ReleaseV082Tests(unittest.TestCase):
         self.assertIn('body:JSON.stringify({appId, appSecret, ledgerUrl, clearCredential, clearLedgerTarget})', html)
         self.assertIn('/api/lark/config', html)
         self.assertIn('/api/lark/preflight', html)
+        self.assertIn('/api/lark/target-metadata', html)
+        self.assertIn('refreshPending:true', html)
+        self.assertIn('正在自动获取当前连接名称', html)
         self.assertIn('id="envWriteLedger" disabled', html)
         self.assertIn('id="envExecutionState" role="status" aria-live="polite"', html)
         self.assertIn('id="envExecutionTitle"', html)
