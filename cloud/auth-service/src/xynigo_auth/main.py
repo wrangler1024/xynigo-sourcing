@@ -1,3 +1,4 @@
+import logging
 import uuid
 from contextlib import asynccontextmanager
 from collections.abc import Iterator
@@ -25,6 +26,9 @@ from .models import (
     UserRole,
 )
 from .security import hash_token, pkce_challenge, random_url_token
+
+
+logger = logging.getLogger(__name__)
 
 
 SUPER_ADMIN_ROLE = "super_admin"
@@ -62,6 +66,7 @@ def create_app(
         app_id=settings.feishu_app_id,
         app_secret=settings.feishu_app_secret.get_secret_value(),
         redirect_uri=settings.feishu_redirect_uri,
+        code_challenge_method=settings.feishu_pkce_method,
     )
 
     @asynccontextmanager
@@ -111,7 +116,7 @@ def create_app(
         now = utcnow()
         session.execute(delete(OAuthLoginAttempt).where(OAuthLoginAttempt.expires_at < now))
         state_token = random_url_token()
-        verifier = random_url_token(48)
+        verifier = None if settings.feishu_pkce_method == "disabled" else random_url_token()
         session.add(
             OAuthLoginAttempt(
                 state_hash=hash_token(state_token),
@@ -120,9 +125,16 @@ def create_app(
             )
         )
         session.commit()
+        if settings.feishu_pkce_method == "disabled":
+            code_challenge = None
+        elif settings.feishu_pkce_method == "plain":
+            code_challenge = verifier
+        else:
+            assert verifier is not None
+            code_challenge = pkce_challenge(verifier)
         url = oauth_client.authorization_url(
             state=state_token,
-            code_challenge=pkce_challenge(verifier),
+            code_challenge=code_challenge,
         )
         return RedirectResponse(url=url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
@@ -149,7 +161,10 @@ def create_app(
             attempt is None
             or attempt.used_at is not None
             or as_utc(attempt.expires_at) <= now
-            or not attempt.code_verifier
+            or (
+                settings.feishu_pkce_method != "disabled"
+                and not attempt.code_verifier
+            )
         ):
             raise HTTPException(status_code=400, detail={"code": "oauth_state_invalid"})
 
@@ -162,6 +177,12 @@ def create_app(
             access_token = oauth_client.exchange_code(code=code, code_verifier=verifier)
             identity = oauth_client.get_identity(access_token)
         except OAuthProviderError as exc:
+            logger.warning(
+                "Feishu OAuth provider failure: stage=%s provider_code=%s request_id=%s",
+                exc.stage,
+                exc.provider_code,
+                request.state.request_id,
+            )
             raise HTTPException(
                 status_code=502,
                 detail={"code": "oauth_provider_failed", "stage": exc.stage},

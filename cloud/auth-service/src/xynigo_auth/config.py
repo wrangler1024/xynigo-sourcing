@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     feishu_app_id: str
     feishu_app_secret: SecretStr
     feishu_redirect_uri: str
+    feishu_pkce_method: Literal["S256", "plain", "disabled"] = "S256"
     allowed_tenant_keys: str = ""
     bootstrap_super_admin_open_ids: str = ""
     auto_activate_users: bool = False

@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+"""Atomically update a supported non-secret runtime setting."""
+
+from __future__ import annotations
+
+import argparse
+import os
+from pathlib import Path
+import sys
+import tempfile
+
+
+SETTING_KEYS = {
+    "feishu_pkce_method": "XYNIGO_AUTH_FEISHU_PKCE_METHOD",
+}
+
+
+def update_env(path: Path, setting: str, value: str) -> None:
+    if setting == "feishu_pkce_method" and value not in {"S256", "plain", "disabled"}:
+        raise ValueError("invalid Feishu PKCE method")
+
+    env_key = SETTING_KEYS[setting]
+    lines = path.read_text(encoding="utf-8").splitlines()
+    updated: list[str] = []
+    matches = 0
+    for line in lines:
+        key, separator, _current_value = line.partition("=")
+        if separator and key == env_key:
+            matches += 1
+            updated.append(f"{env_key}={value}")
+        else:
+            updated.append(line)
+    if matches > 1:
+        raise ValueError("runtime env contains the setting more than once")
+    if matches == 0:
+        updated.append(f"{env_key}={value}")
+
+    file_descriptor, temporary_name = tempfile.mkstemp(
+        prefix=".env.xynigo-setting.", dir=path.parent
+    )
+    try:
+        os.fchmod(file_descriptor, 0o600)
+        with os.fdopen(file_descriptor, "w", encoding="utf-8") as stream:
+            stream.write("\n".join(updated) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_name, path)
+    except BaseException:
+        try:
+            os.close(file_descriptor)
+        except OSError:
+            pass
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--env-file", type=Path, required=True)
+    parser.add_argument("--setting", choices=sorted(SETTING_KEYS), required=True)
+    parser.add_argument("--value", required=True)
+    arguments = parser.parse_args()
+    update_env(arguments.env_file, arguments.setting, arguments.value)
+    print(f"updated_setting={arguments.setting}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

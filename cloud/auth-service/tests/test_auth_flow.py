@@ -18,18 +18,19 @@ from xynigo_auth.models import (
     SessionRecord,
     User,
 )
-from xynigo_auth.security import hash_token
+from xynigo_auth.security import hash_token, pkce_challenge
 
 
 @dataclass
 class FakeOAuthClient:
     identity: FeishuIdentity
-    exchanges: list[tuple[str, str]] = field(default_factory=list)
+    exchanges: list[tuple[str, str | None]] = field(default_factory=list)
 
-    def authorization_url(self, *, state: str, code_challenge: str) -> str:
-        return f"https://accounts.example.test/authorize?state={state}&code_challenge={code_challenge}"
+    def authorization_url(self, *, state: str, code_challenge: str | None) -> str:
+        suffix = f"&code_challenge={code_challenge}" if code_challenge else ""
+        return f"https://accounts.example.test/authorize?state={state}{suffix}"
 
-    def exchange_code(self, *, code: str, code_verifier: str) -> str:
+    def exchange_code(self, *, code: str, code_verifier: str | None) -> str:
         self.exchanges.append((code, code_verifier))
         return "temporary-user-access-token"
 
@@ -38,7 +39,13 @@ class FakeOAuthClient:
         return self.identity
 
 
-def build_test_app(tmp_path, *, open_id: str = "ou_admin", bootstrap: str = "ou_admin"):
+def build_test_app(
+    tmp_path,
+    *,
+    open_id: str = "ou_admin",
+    bootstrap: str = "ou_admin",
+    pkce_method: str = "S256",
+):
     database = Database(f"sqlite+pysqlite:///{tmp_path / 'identity.sqlite3'}")
     Base.metadata.create_all(database.engine)
     settings = Settings(
@@ -47,6 +54,7 @@ def build_test_app(tmp_path, *, open_id: str = "ou_admin", bootstrap: str = "ou_
         feishu_app_id="cli_test",
         feishu_app_secret="test-secret-not-real",
         feishu_redirect_uri="http://testserver/v1/auth/feishu/callback",
+        feishu_pkce_method=pkce_method,
         allowed_tenant_keys="tenant_allowed",
         bootstrap_super_admin_open_ids=bootstrap,
         cookie_secure=False,
@@ -65,11 +73,12 @@ def build_test_app(tmp_path, *, open_id: str = "ou_admin", bootstrap: str = "ou_
     return app, database, oauth
 
 
-def start_login(client: TestClient) -> tuple[str, str]:
+def start_login(client: TestClient) -> tuple[str, str | None]:
     response = client.get("/v1/auth/feishu/start", follow_redirects=False)
     assert response.status_code == 307
     query = parse_qs(urlparse(response.headers["location"]).query)
-    return query["state"][0], query["code_challenge"][0]
+    challenge = query.get("code_challenge", [None])[0]
+    return query["state"][0], challenge
 
 
 def test_bootstrap_admin_login_creates_hashed_session_and_rbac(tmp_path) -> None:
@@ -77,7 +86,7 @@ def test_bootstrap_admin_login_creates_hashed_session_and_rbac(tmp_path) -> None
 
     with TestClient(app) as client:
         state, challenge = start_login(client)
-        assert challenge
+        assert challenge is not None
 
         with database.session_factory() as session:
             attempt = session.scalar(select(OAuthLoginAttempt))
@@ -85,6 +94,9 @@ def test_bootstrap_admin_login_creates_hashed_session_and_rbac(tmp_path) -> None
             assert attempt.state_hash == hash_token(state)
             assert state not in attempt.state_hash
             verifier = attempt.code_verifier
+            assert verifier is not None
+            assert len(verifier) == 43
+            assert challenge == pkce_challenge(verifier)
 
         callback = client.get(
             "/v1/auth/feishu/callback",
@@ -158,6 +170,36 @@ def test_oauth_state_is_single_use(tmp_path) -> None:
         )
         assert second.status_code == 400
         assert second.json()["detail"]["code"] == "oauth_state_invalid"
+
+
+def test_plain_pkce_uses_the_verifier_as_the_challenge(tmp_path) -> None:
+    app, database, _oauth = build_test_app(tmp_path, pkce_method="plain")
+
+    with TestClient(app) as client:
+        _state, challenge = start_login(client)
+
+    with database.session_factory() as session:
+        verifier = session.scalar(select(OAuthLoginAttempt.code_verifier))
+        assert verifier is not None
+        assert challenge == verifier
+
+
+def test_disabled_pkce_omits_challenge_and_verifier(tmp_path) -> None:
+    app, database, oauth = build_test_app(tmp_path, pkce_method="disabled")
+
+    with TestClient(app) as client:
+        state, challenge = start_login(client)
+        assert challenge is None
+        callback = client.get(
+            "/v1/auth/feishu/callback",
+            params={"code": "authorization-code", "state": state},
+            follow_redirects=False,
+        )
+        assert callback.status_code == 303
+
+    with database.session_factory() as session:
+        assert session.scalar(select(OAuthLoginAttempt.code_verifier)) is None
+    assert oauth.exchanges == [("authorization-code", None)]
 
 
 def test_health_and_readiness(tmp_path) -> None:

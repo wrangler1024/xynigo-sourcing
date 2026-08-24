@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 from urllib.parse import urlencode
 
 import httpx
@@ -32,9 +32,9 @@ class FeishuIdentity:
 
 
 class OAuthClient(Protocol):
-    def authorization_url(self, *, state: str, code_challenge: str) -> str: ...
+    def authorization_url(self, *, state: str, code_challenge: str | None) -> str: ...
 
-    def exchange_code(self, *, code: str, code_verifier: str) -> str: ...
+    def exchange_code(self, *, code: str, code_verifier: str | None) -> str: ...
 
     def get_identity(self, user_access_token: str) -> FeishuIdentity: ...
 
@@ -46,40 +46,48 @@ class FeishuOAuthClient:
         app_id: str,
         app_secret: str,
         redirect_uri: str,
+        code_challenge_method: Literal["S256", "plain", "disabled"] = "S256",
         timeout_seconds: float = 10.0,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.app_id = app_id
         self.app_secret = app_secret
         self.redirect_uri = redirect_uri
+        self.code_challenge_method = code_challenge_method
         self.timeout_seconds = timeout_seconds
         self.transport = transport
 
-    def authorization_url(self, *, state: str, code_challenge: str) -> str:
-        query = urlencode(
-            {
-                "client_id": self.app_id,
-                "response_type": "code",
-                "redirect_uri": self.redirect_uri,
-                "state": state,
-                "code_challenge": code_challenge,
-                "code_challenge_method": "S256",
-            }
-        )
+    def authorization_url(self, *, state: str, code_challenge: str | None) -> str:
+        parameters = {
+            "client_id": self.app_id,
+            "response_type": "code",
+            "redirect_uri": self.redirect_uri,
+            "state": state,
+        }
+        if self.code_challenge_method != "disabled":
+            if not code_challenge:
+                raise ValueError("PKCE challenge is required when PKCE is enabled")
+            parameters["code_challenge"] = code_challenge
+            parameters["code_challenge_method"] = self.code_challenge_method
+        query = urlencode(parameters)
         return f"{AUTHORIZE_ENDPOINT}?{query}"
 
-    def exchange_code(self, *, code: str, code_verifier: str) -> str:
+    def exchange_code(self, *, code: str, code_verifier: str | None) -> str:
+        token_request = {
+            "grant_type": "authorization_code",
+            "client_id": self.app_id,
+            "client_secret": self.app_secret,
+            "code": code,
+            "redirect_uri": self.redirect_uri,
+        }
+        if self.code_challenge_method != "disabled":
+            if not code_verifier:
+                raise ValueError("PKCE verifier is required when PKCE is enabled")
+            token_request["code_verifier"] = code_verifier
         with httpx.Client(timeout=self.timeout_seconds, transport=self.transport) as client:
             response = client.post(
                 TOKEN_ENDPOINT,
-                data={
-                    "grant_type": "authorization_code",
-                    "client_id": self.app_id,
-                    "client_secret": self.app_secret,
-                    "code": code,
-                    "redirect_uri": self.redirect_uri,
-                    "code_verifier": code_verifier,
-                },
+                json=token_request,
                 headers={"Accept": "application/json"},
             )
         payload = self._json(response, "token")
