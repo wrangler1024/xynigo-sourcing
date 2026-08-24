@@ -214,9 +214,31 @@
     display: flex; align-items: center; justify-content: space-between; gap: 16px;
     background: rgba(255,255,255,.94); border-bottom: 1px solid var(--line); backdrop-filter: blur(12px);
   }
-  .breadcrumb { min-width: 0; display: flex; align-items: center; gap: 10px; color: var(--navy-500); font-size: 13px; }
-  .breadcrumb strong { overflow: hidden; color: var(--navy-950); font-size: 17px; text-overflow: ellipsis; white-space: nowrap; }
-  .topbar-right { display: flex; align-items: center; gap: 10px; }
+  .workspace-tabbar { min-width: 0; flex: 1 1 auto; overflow: hidden; }
+  .workspace-tabs {
+    min-width: 0; display: flex; align-items: center; gap: 6px; overflow-x: auto;
+    scroll-behavior: smooth; scrollbar-width: none;
+  }
+  .workspace-tabs::-webkit-scrollbar { display: none; }
+  .workspace-tab {
+    flex: 0 0 auto; min-width: 0; height: 38px; padding: 3px;
+    display: flex; align-items: center; border: 1px solid #dce6ed; border-radius: 11px;
+    background: #f7f9fb; color: var(--navy-700); transition: background .16s ease, border-color .16s ease;
+  }
+  .workspace-tab:hover { border-color: #cbdbe4; background: #f1f6f8; }
+  .workspace-tab.active { border-color: #a9dadd; background: var(--rhino-100); color: #126f74; }
+  .workspace-tab-open, .workspace-tab-close {
+    height: 30px; padding: 0; border: 0; display: grid; place-items: center;
+    background: transparent; color: inherit; cursor: pointer;
+  }
+  .workspace-tab-open {
+    max-width: 180px; padding: 0 8px; overflow: hidden;
+    font-size: 12px; font-weight: 850; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .workspace-tab-close { width: 26px; border-radius: 7px; color: #8da0b0; font-size: 17px; line-height: 1; }
+  .workspace-tab-close:hover { background: rgba(8,37,72,.07); color: var(--navy-950); }
+  .workspace-tab-close[hidden] { display: none; }
+  .topbar-right { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; }
   .pill { display: inline-flex; align-items: center; gap: 7px; padding: 8px 11px; font-size: 12px; font-weight: 800; }
   .pill.ok { background: var(--green-100); }
   .update-notice {
@@ -409,7 +431,8 @@
     .resource-toolbar .push { margin-left: 0; }
     main { padding: 16px 14px 28px; }
     .topbar { padding: 0 14px; }
-    .breadcrumb > span:first-child, .breadcrumb > span:nth-child(2) { display: none; }
+    .workspace-tab-open { max-width: 120px; padding-left: 7px; padding-right: 7px; }
+    .workspace-tab-close { width: 24px; }
     .hero { padding: 22px 20px; }
     .hero h1 { font-size: 23px; }
     .hero-lockup {
@@ -598,7 +621,14 @@
 
   <section class="workspace">
     <header class="topbar">
-      <div class="breadcrumb"><span id="primaryLabel">履约追踪</span><span>›</span><strong id="moduleLabel">订单物流查询</strong></div>
+      <div class="workspace-tabbar">
+        <div class="workspace-tabs" id="workspaceTabs" role="tablist" aria-label="已打开业务页面">
+          <div class="workspace-tab active" data-workspace-tab="query">
+            <button class="workspace-tab-open" type="button" role="tab" aria-selected="true">订单物流查询</button>
+            <button class="workspace-tab-close" type="button" aria-label="关闭订单物流查询" hidden>×</button>
+          </div>
+        </div>
+      </div>
       <div class="topbar-right">
         <button class="update-check" id="updateCheck" type="button" title="手动检查更新" aria-label="检查更新">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-4M4 4v5h5M4 13a8 8 0 0 0 14.9 4M20 20v-5h-5"/></svg>
@@ -1139,8 +1169,36 @@ const PRIMARY_MODULES = {
     summary: '管理本机业务设置、飞书 OpenAPI、外部服务和版本能力。'
   }
 };
+const FEATURE_MODULES = {
+  query: {
+    label: '订单物流查询', primary: 'fulfillment',
+    summary: '批量查询订单与物流状态，异常任务集中处理，结果一键导出。'
+  },
+  buyerlib: {
+    label: '买家号库', primary: 'resources',
+    summary: '集中查看可用、预占、已绑定与异常买家号，页面仅展示脱敏元数据。'
+  },
+  vendorimport: {
+    label: '号商入库', primary: 'resources',
+    summary: '号商账号先完成严格校验与查重，再经单独确认写入飞书买家号库。'
+  },
+  register: {
+    label: '账号注册', primary: 'resources',
+    summary: '按任务完成账号注册、验证与归档，敏感凭证不在页面持久保存。'
+  },
+  envbatch: {
+    label: '采购环境', primary: 'resources',
+    summary: '按采购需求创建 HubStudio 环境，并在后台验证全部新建环境出口 IP。'
+  },
+  settings: {
+    label: '本机与飞书设置', primary: 'system',
+    summary: '集中管理本机连接、建环境偏好与飞书 OpenAPI 配置。'
+  }
+};
 let activePrimary = 'fulfillment';
 let activeModule = 'query';
+let openFeatureTabs = ['query'];
+let settingsPageLoaded = false;
 let hiddenQueryColumns = new Set(['envName', 'ip']);
 let updatePollTimer = null;
 let lastUpdateDecision = '';
@@ -2126,15 +2184,8 @@ $('btnRetryFail').onclick = async () => {
 /* ---------- 模块切换与注册 ---------- */
 
 function setFeaturePanel(module) {
-  const labels = {query:'订单物流查询',buyerlib:'买家号库',vendorimport:'号商入库',register:'账号注册',envbatch:'采购环境',settings:'本机与飞书设置'};
-  const summaries = {
-    query:'批量查询订单与物流状态，异常任务集中处理，结果一键导出。',
-    buyerlib:'集中查看可用、预占、已绑定与异常买家号，页面仅展示脱敏元数据。',
-    vendorimport:'号商账号先完成严格校验与查重，再经单独确认写入飞书买家号库。',
-    register:'按任务完成账号注册、验证与归档，敏感凭证不在页面持久保存。',
-    envbatch:'按采购需求创建 HubStudio 环境，并在后台验证全部新建环境出口 IP。',
-    settings:'集中管理本机连接、建环境偏好与飞书 OpenAPI 配置。'
-  };
+  const info = FEATURE_MODULES[module];
+  if (!info) return;
   activeModule = module;
   document.querySelectorAll('[data-module]').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.module === module);
@@ -2146,32 +2197,22 @@ function setFeaturePanel(module) {
   $('envPanel').classList.toggle('hidden', module !== 'envbatch');
   $('settingsPanel').classList.toggle('hidden', module !== 'settings');
   $('planningPanel').classList.add('hidden');
-  $('moduleLabel').textContent = labels[module];
-  $('moduleSummary').textContent = summaries[module];
+  $('moduleSummary').textContent = info.summary;
+  renderWorkspaceTabs();
   if (module === 'query') poll();
   else if (module === 'buyerlib') loadBuyerLibrary();
   else if (module === 'vendorimport') return;
   else if (module === 'register') pollRegister();
   else if (module === 'envbatch') { pollEnvBatch(); refreshEnvPreflight(); }
-  else loadSettingsPage();
+  else if (!settingsPageLoaded) {
+    settingsPageLoaded = true;
+    loadSettingsPage().then(loaded => {
+      if (!loaded) settingsPageLoaded = false;
+    });
+  }
 }
 
-function setPlannedPrimary(primary) {
-  const info = PRIMARY_MODULES[primary];
-  $('queryPanel').classList.add('hidden');
-  $('buyerLibraryPanel').classList.add('hidden');
-  $('vendorImportPanel').classList.add('hidden');
-  $('registerPanel').classList.add('hidden');
-  $('envPanel').classList.add('hidden');
-  $('settingsPanel').classList.add('hidden');
-  $('planningPanel').classList.remove('hidden');
-  $('planningTitle').textContent = `${info.label}入口已完成迁移`;
-  $('planningDescription').textContent = info.planning;
-  $('moduleLabel').textContent = '功能规划';
-  $('moduleSummary').textContent = info.summary;
-}
-
-function setPrimaryModule(primary) {
+function syncPrimaryNavigation(primary) {
   const info = PRIMARY_MODULES[primary];
   if (!info) return;
   activePrimary = primary;
@@ -2183,9 +2224,93 @@ function setPrimaryModule(primary) {
   document.querySelectorAll('#secondaryTabs [data-parent]').forEach(btn => {
     btn.hidden = btn.dataset.parent !== primary;
   });
-  $('primaryLabel').textContent = info.label;
   $('secondaryTabs').setAttribute('aria-label', `${info.label}二级功能`);
-  if (info.defaultModule) setFeaturePanel(info.defaultModule);
+}
+
+function renderWorkspaceTabs() {
+  const tabs = $('workspaceTabs');
+  tabs.innerHTML = '';
+  openFeatureTabs.forEach(module => {
+    const info = FEATURE_MODULES[module];
+    if (!info) return;
+    const item = document.createElement('div');
+    item.className = 'workspace-tab' + (module === activeModule ? ' active' : '');
+    item.dataset.workspaceTab = module;
+
+    const openButton = document.createElement('button');
+    openButton.className = 'workspace-tab-open';
+    openButton.type = 'button';
+    openButton.setAttribute('role', 'tab');
+    openButton.setAttribute('aria-selected', module === activeModule ? 'true' : 'false');
+    openButton.title = `${PRIMARY_MODULES[info.primary].label} / ${info.label}`;
+    openButton.textContent = info.label;
+    openButton.onclick = () => activateFeatureTab(module);
+
+    const closeButton = document.createElement('button');
+    closeButton.className = 'workspace-tab-close';
+    closeButton.type = 'button';
+    closeButton.setAttribute('aria-label', `关闭${info.label}`);
+    closeButton.title = `关闭${info.label}`;
+    closeButton.textContent = '×';
+    closeButton.hidden = openFeatureTabs.length === 1;
+    closeButton.onclick = () => closeFeatureTab(module);
+
+    item.append(openButton, closeButton);
+    tabs.appendChild(item);
+  });
+  requestAnimationFrame(() => {
+    const activeTab = tabs.querySelector('.workspace-tab.active');
+    if (activeTab) activeTab.scrollIntoView({block: 'nearest', inline: 'nearest'});
+  });
+}
+
+function activateFeatureTab(module) {
+  const info = FEATURE_MODULES[module];
+  if (!info || !openFeatureTabs.includes(module)) return;
+  syncPrimaryNavigation(info.primary);
+  setFeaturePanel(module);
+}
+
+function openFeatureTab(module) {
+  if (!FEATURE_MODULES[module]) return;
+  if (!openFeatureTabs.includes(module)) openFeatureTabs.push(module);
+  activateFeatureTab(module);
+}
+
+function closeFeatureTab(module) {
+  if (openFeatureTabs.length <= 1) return;
+  const index = openFeatureTabs.indexOf(module);
+  if (index < 0) return;
+  const wasActive = activeModule === module;
+  openFeatureTabs.splice(index, 1);
+  if (wasActive) {
+    activateFeatureTab(openFeatureTabs[Math.min(index, openFeatureTabs.length - 1)]);
+  } else {
+    renderWorkspaceTabs();
+  }
+}
+
+function setPlannedPrimary(primary) {
+  const info = PRIMARY_MODULES[primary];
+  activeModule = '';
+  $('queryPanel').classList.add('hidden');
+  $('buyerLibraryPanel').classList.add('hidden');
+  $('vendorImportPanel').classList.add('hidden');
+  $('registerPanel').classList.add('hidden');
+  $('envPanel').classList.add('hidden');
+  $('settingsPanel').classList.add('hidden');
+  $('planningPanel').classList.remove('hidden');
+  $('planningTitle').textContent = `${info.label}入口已完成迁移`;
+  $('planningDescription').textContent = info.planning;
+  $('moduleSummary').textContent = info.summary;
+  renderWorkspaceTabs();
+}
+
+function setPrimaryModule(primary) {
+  const info = PRIMARY_MODULES[primary];
+  if (!info) return;
+  syncPrimaryNavigation(primary);
+  if (info.defaultModule) openFeatureTab(info.defaultModule);
   else setPlannedPrimary(primary);
 }
 
@@ -2200,8 +2325,10 @@ document.querySelectorAll('[data-primary]').forEach(btn => {
 });
 
 document.querySelectorAll('[data-module]').forEach(btn => {
-  btn.onclick = () => setFeaturePanel(btn.dataset.module);
+  btn.onclick = () => openFeatureTab(btn.dataset.module);
 });
+
+renderWorkspaceTabs();
 
 $('regFile').onchange = async e => {
   regTasks = null;
@@ -2906,7 +3033,11 @@ async function loadSettingsPage() {
     $('cfgProxyState').textContent = cfg.proxySource === 'custom'
       ? '当前使用自定义代理链接；留空保存保持不变，勾选清除恢复内置默认。'
       : '已内置默认提取链接（前期写死），可直接使用；仅需要自定义时填写。';
-  } catch (e) { toast('设置读取失败：' + e.message); }
+    return true;
+  } catch (e) {
+    toast('设置读取失败：' + e.message);
+    return false;
+  }
 }
 
 $('btnCfgSave').onclick = async () => {
