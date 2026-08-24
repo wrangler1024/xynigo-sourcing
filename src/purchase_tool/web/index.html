@@ -356,6 +356,7 @@
   }
   .secondary-tab:hover:not(:disabled) { background: #f5f9fa; color: var(--navy-950); }
   .secondary-tab.active { background: var(--rhino-100); color: #126f74; }
+  .secondary-tabs[hidden] { display: none; }
   .secondary-tab[hidden] { display: none; }
   .secondary-tab:disabled { cursor: default; opacity: .72; }
   .secondary-status {
@@ -637,20 +638,42 @@
         <button class="secondary-tab" data-parent="procurement" data-planned="采购执行" disabled hidden>采购执行<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="procurement" data-planned="异常协同" disabled hidden>异常协同<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab active" data-parent="fulfillment" data-module="query">订单物流查询<span class="secondary-status">现有</span></button>
+        <button class="secondary-tab" data-parent="operations" data-planned="运营任务" disabled hidden>运营任务<span class="secondary-status planned">规划</span></button>
+        <button class="secondary-tab" data-parent="operations" data-planned="订单运营" disabled hidden>订单运营<span class="secondary-status planned">规划</span></button>
+        <button class="secondary-tab" data-parent="operations" data-planned="异常工单" disabled hidden>异常工单<span class="secondary-status planned">规划</span></button>
+        <button class="secondary-tab" data-parent="operations" data-planned="协同记录" disabled hidden>协同记录<span class="secondary-status planned">规划</span></button>
+        <button class="secondary-tab" data-parent="finance" data-planned="应付管理" disabled hidden>应付管理<span class="secondary-status planned">规划</span></button>
+        <button class="secondary-tab" data-parent="finance" data-planned="对账结算" disabled hidden>对账结算<span class="secondary-status planned">规划</span></button>
+        <button class="secondary-tab" data-parent="finance" data-planned="费用管理" disabled hidden>费用管理<span class="secondary-status planned">规划</span></button>
+        <button class="secondary-tab" data-parent="finance" data-planned="财务报表" disabled hidden>财务报表<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="resources" data-module="buyerlib" hidden>买家号库<span class="secondary-status">新增</span></button>
         <button class="secondary-tab" data-parent="resources" data-module="vendorimport" hidden>号商入库<span class="secondary-status">新增</span></button>
         <button class="secondary-tab" data-parent="resources" data-module="register" hidden>账号注册<span class="secondary-status">现有</span></button>
-        <button class="secondary-tab" data-parent="resources" data-module="envbatch" hidden>采购环境<span class="secondary-status">现有</span></button>
+        <button class="secondary-tab" data-parent="resources" data-module="envbatch" hidden>环境创建<span class="secondary-status">现有</span></button>
         <button class="secondary-tab" data-parent="analytics" data-planned="采购效率" disabled hidden>采购效率<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="analytics" data-planned="履约质量" disabled hidden>履约质量<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="analytics" data-planned="资源健康" disabled hidden>资源健康<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="system" data-module="settings" hidden>本机与飞书设置<span class="secondary-status">现有</span></button>
+        <button class="secondary-tab" data-parent="system" data-planned="组织权限" disabled hidden>组织权限<span class="secondary-status planned">规划</span></button>
+        <button class="secondary-tab" data-parent="system" data-planned="登录安全" disabled hidden>登录安全<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="system" data-planned="外部服务" disabled hidden>外部服务<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="system" data-planned="版本与审计" disabled hidden>版本与审计<span class="secondary-status planned">规划</span></button>
       </div>
+      <button class="module-tab" data-primary="operations" title="运营中心">
+        <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 4h12v16H6zM9 2h6v4H9zM9 10h6M9 14h4"/><path d="m15 17 1.5 1.5L20 15"/></svg></span>
+        <span class="nav-text"><b>运营中心</b><small>任务 · 订单 · 异常 · 协同</small></span>
+      </button>
+      <button class="module-tab" data-primary="finance" title="财务中心">
+        <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16v12H4zM4 10h16M8 4h8v3"/><circle cx="16" cy="15" r="1"/></svg></span>
+        <span class="nav-text"><b>财务中心</b><small>应付 · 对账 · 费用 · 报表</small></span>
+      </button>
       <button class="module-tab" data-primary="resources" title="资源中心">
         <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2M19 8v6M16 11h6"/></svg></span>
         <span class="nav-text"><b>资源中心</b><small>库存 · 入库 · 注册 · 环境</small></span>
+      </button>
+      <button class="module-tab" data-primary="assistant" title="小犀助手">
+        <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 1.2 3.3L16.5 7.5l-3.3 1.2L12 12l-1.2-3.3-3.3-1.2 3.3-1.2zM18 13l.8 2.2L21 16l-2.2.8L18 19l-.8-2.2L15 16l2.2-.8zM5 13l.7 1.8 1.8.7-1.8.7L5 18l-.7-1.8-1.8-.7 1.8-.7z"/></svg></span>
+        <span class="nav-text"><b>小犀助手</b><small>业务效率工具</small></span>
       </button>
       <button class="module-tab" data-primary="analytics" title="数据分析">
         <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></span>
@@ -658,7 +681,7 @@
       </button>
       <button class="module-tab" data-primary="system" title="系统管理">
         <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></svg></span>
-        <span class="nav-text"><b>系统管理</b><small>设置 · 飞书 · 服务</small></span>
+        <span class="nav-text"><b>系统管理</b><small>权限 · 设置 · 安全</small></span>
       </button>
     </nav>
     <div class="nav-spacer"></div>
@@ -1059,7 +1082,7 @@
     </section>
 
     <section class="card">
-      <div class="card-title">采购环境设置</div>
+      <div class="card-title">环境创建设置</div>
       <div class="settings-grid">
         <div class="settings-field">
           <label>后台出口 IP 验证</label>
@@ -1218,9 +1241,25 @@ const PRIMARY_MODULES = {
     label: '履约追踪', hint: '查询 · 跟踪 · 导出', defaultModule: 'query',
     summary: '批量查询订单与物流状态，异常任务集中处理，结果一键导出。'
   },
+  operations: {
+    label: '运营中心', hint: '任务 · 订单 · 异常 · 协同', defaultModule: null,
+    summary: '集中承接运营任务、订单处理、异常工单与跨岗位协同。',
+    planning: '运营中心已纳入产品规划，具体数据口径和业务流程将在需求确认后接入。'
+  },
+  finance: {
+    label: '财务中心', hint: '应付 · 对账 · 费用 · 报表', defaultModule: null,
+    summary: '统一规划应付、对账、费用与财务报表能力。',
+    planning: '财务中心已预留产品入口，后续将结合财务权限与审批流程分阶段建设。'
+  },
   resources: {
     label: '资源中心', hint: '库存 · 入库 · 注册 · 环境', defaultModule: 'buyerlib',
     summary: '统一管理买家号库存、账号来源、HubStudio 环境与飞书台账。'
+  },
+  assistant: {
+    label: '小犀助手', hint: '业务效率工具', defaultModule: null,
+    summary: '承载项目业务中逐步沉淀的效率工具与辅助能力。',
+    planningTitle: '小犀助手暂未开放',
+    planning: '当前不预设具体工具；待业务需求明确后再新增二级入口和对应权限。'
   },
   analytics: {
     label: '数据分析', hint: '效率 · 履约 · 健康', defaultModule: null,
@@ -1228,8 +1267,8 @@ const PRIMARY_MODULES = {
     planning: '数据分析将在采购与履约数据口径稳定后接入。'
   },
   system: {
-    label: '系统管理', hint: '设置 · 飞书 · 服务', defaultModule: 'settings',
-    summary: '管理本机业务设置、飞书 OpenAPI、外部服务和版本能力。'
+    label: '系统管理', hint: '权限 · 设置 · 安全', defaultModule: 'settings',
+    summary: '规划成员角色与模块权限，并管理本机设置、飞书集成、安全和审计能力。'
   }
 };
 const FEATURE_MODULES = {
@@ -1250,7 +1289,7 @@ const FEATURE_MODULES = {
     summary: '按任务完成账号注册、验证与归档，敏感凭证不在页面持久保存。'
   },
   envbatch: {
-    label: '采购环境', primary: 'resources',
+    label: '环境创建', primary: 'resources',
     summary: '按采购需求创建 HubStudio 环境，并在后台验证全部新建环境出口 IP。'
   },
   settings: {
@@ -2285,9 +2324,12 @@ function syncPrimaryNavigation(primary) {
     btn.classList.toggle('active', btn.dataset.primary === primary);
   });
   if (primaryButton) primaryButton.insertAdjacentElement('afterend', $('secondaryTabs'));
+  let visibleSecondaryCount = 0;
   document.querySelectorAll('#secondaryTabs [data-parent]').forEach(btn => {
     btn.hidden = btn.dataset.parent !== primary;
+    if (!btn.hidden) visibleSecondaryCount += 1;
   });
+  $('secondaryTabs').hidden = visibleSecondaryCount === 0;
   $('secondaryTabs').setAttribute('aria-label', `${info.label}二级功能`);
 }
 
@@ -2445,7 +2487,7 @@ function setPlannedPrimary(primary) {
   $('envPanel').classList.add('hidden');
   $('settingsPanel').classList.add('hidden');
   $('planningPanel').classList.remove('hidden');
-  $('planningTitle').textContent = `${info.label}入口已完成迁移`;
+  $('planningTitle').textContent = info.planningTitle || `${info.label}入口已完成迁移`;
   $('planningDescription').textContent = info.planning;
   $('moduleSummary').textContent = info.summary;
   renderWorkspaceTabs();

@@ -136,12 +136,13 @@ class ReleaseV090Tests(unittest.TestCase):
         self.assertIn('持续迭代中', html)
         # 新系统 UI 第一阶段：一级产品层级 + 左侧可展开二级导航，现有功能入口保持不变。
         for primary in (
-                'workbench', 'procurement', 'fulfillment', 'resources',
-                'analytics', 'system'):
+                'workbench', 'procurement', 'fulfillment', 'operations',
+                'finance', 'resources', 'assistant', 'analytics', 'system'):
             self.assertIn('data-primary="%s"' % primary, html)
         for label in (
-                '工作台', '采购中心', '履约追踪', '资源中心',
-                '数据分析', '系统管理'):
+                '工作台', '采购中心', '履约追踪', '运营中心',
+                '财务中心', '资源中心', '小犀助手', '数据分析',
+                '系统管理'):
             self.assertIn('<b>%s</b>' % label, html)
         self.assertIn('id="secondaryTabs"', html)
         self.assertLess(html.index('id="secondaryTabs"'), html.index('</aside>'))
@@ -153,8 +154,14 @@ class ReleaseV090Tests(unittest.TestCase):
         self.assertIn('data-parent="resources" data-module="vendorimport"', html)
         self.assertIn('data-parent="resources" data-module="register"', html)
         self.assertIn('data-parent="resources" data-module="envbatch"', html)
-        for label in ('买家号库', '号商入库', '账号注册', '采购环境'):
+        for label in ('买家号库', '号商入库', '账号注册', '环境创建'):
             self.assertIn('>%s<span class="secondary-status">' % label, html)
+        for parent, label in (
+                ('operations', '运营任务'), ('finance', '应付管理'),
+                ('system', '组织权限'), ('system', '登录安全')):
+            self.assertIn('data-parent="%s" data-planned="%s"' % (parent, label), html)
+        self.assertIn("planningTitle: '小犀助手暂未开放'", html)
+        self.assertIn("$('secondaryTabs').hidden = visibleSecondaryCount === 0", html)
         self.assertIn('id="buyerLibraryPanel"', html)
         self.assertIn('id="vendorImportPanel"', html)
         self.assertIn('/api/buyer-library', html)
