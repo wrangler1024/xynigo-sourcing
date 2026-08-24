@@ -6,6 +6,7 @@ from typing import Annotated
 
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session
 
@@ -78,6 +79,7 @@ def create_app(
     app.state.settings = settings
     app.state.database = database
     app.state.oauth_client = oauth_client
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_host_list)
 
     def get_session() -> Iterator[Session]:
         yield from database.sessions()
@@ -89,6 +91,10 @@ def create_app(
         request.state.request_id = uuid.uuid4().hex
         response = await call_next(request)
         response.headers["X-Request-ID"] = request.state.request_id
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Content-Type-Options"] = "nosniff"
         return response
 
     @app.get("/healthz")

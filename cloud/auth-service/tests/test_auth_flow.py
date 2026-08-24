@@ -50,6 +50,7 @@ def build_test_app(tmp_path, *, open_id: str = "ou_admin", bootstrap: str = "ou_
         allowed_tenant_keys="tenant_allowed",
         bootstrap_super_admin_open_ids=bootstrap,
         cookie_secure=False,
+        allowed_hosts="testserver",
     )
     oauth = FakeOAuthClient(
         FeishuIdentity(
@@ -108,6 +109,8 @@ def test_bootstrap_admin_login_creates_hashed_session_and_rbac(tmp_path) -> None
 
         me = client.get("/v1/auth/me")
         assert me.status_code == 200
+        assert me.headers["cache-control"] == "no-store"
+        assert me.headers["x-content-type-options"] == "nosniff"
         assert me.json()["roles"] == ["super_admin"]
         assert "system.lark_connection.manage" in me.json()["permissions"]
         assert me.json()["user"]["name"] == "合成测试用户"

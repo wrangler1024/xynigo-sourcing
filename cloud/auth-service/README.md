@@ -17,6 +17,7 @@
 - 浏览器只保存 HttpOnly 会话 Cookie；数据库只保存 SHA-256 会话摘要。
 - 飞书 `user_access_token` 仅用于当次读取身份，用完即丢弃，不写数据库。
 - PostgreSQL 不发布宿主机端口；PostgreSQL 18 数据卷挂载到其版本感知父目录 `/var/lib/postgresql`。认证服务只绑定 `127.0.0.1:8080`，由同机 HTTPS 反向代理转发。
+- 认证服务校验 Host 白名单并返回 no-store、CSP、Referrer-Policy、nosniff 等安全响应头；容器使用非 root、只读根文件系统、能力清空、内存上限和日志轮转。
 
 ## 数据表
 

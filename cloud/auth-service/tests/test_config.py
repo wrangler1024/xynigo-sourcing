@@ -15,6 +15,7 @@ def production_settings(**overrides):
         "feishu_redirect_uri": "https://xynigo.example.com/v1/auth/feishu/callback",
         "allowed_tenant_keys": "tenant_allowed",
         "cookie_secure": True,
+        "allowed_hosts": "xynigo.example.com,127.0.0.1",
     }
     values.update(overrides)
     return Settings(**values)
@@ -40,3 +41,8 @@ def test_settings_repr_redacts_database_password_and_app_secret() -> None:
     rendered = repr(settings)
     assert "password" not in rendered
     assert "test-secret-not-real" not in rendered
+
+
+def test_production_rejects_wildcard_hosts() -> None:
+    with pytest.raises(ValidationError):
+        production_settings(allowed_hosts="*")

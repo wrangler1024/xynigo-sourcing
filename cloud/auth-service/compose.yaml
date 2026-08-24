@@ -16,6 +16,13 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    mem_limit: 384m
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - identity
 
@@ -29,6 +36,10 @@ services:
     networks:
       - identity
     restart: "no"
+    mem_limit: 256m
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true
 
   auth:
     build: .
@@ -44,6 +55,20 @@ services:
     networks:
       - identity
       - edge
+    mem_limit: 256m
+    cpus: 1.0
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 networks:
   identity:

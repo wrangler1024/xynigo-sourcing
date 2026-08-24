@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     cookie_name: str = "xynigo_session"
     cookie_secure: bool = True
     login_success_path: str = "/v1/auth/me"
+    allowed_hosts: str = "localhost,127.0.0.1"
 
     @field_validator("feishu_app_id", "feishu_redirect_uri")
     @classmethod
@@ -70,6 +71,8 @@ class Settings(BaseSettings):
                 raise ValueError("production cookies must be Secure")
             if not self.allowed_tenant_key_set:
                 raise ValueError("production requires at least one allowed tenant key")
+            if not self.allowed_host_list or "*" in self.allowed_host_list:
+                raise ValueError("production requires an explicit allowed host list")
         return self
 
     @cached_property
@@ -81,3 +84,7 @@ class Settings(BaseSettings):
         return frozenset(
             part.strip() for part in self.bootstrap_super_admin_open_ids.split(",") if part.strip()
         )
+
+    @cached_property
+    def allowed_host_list(self) -> list[str]:
+        return [part.strip() for part in self.allowed_hosts.split(",") if part.strip()]
