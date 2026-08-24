@@ -134,6 +134,24 @@ class ReleaseV090Tests(unittest.TestCase):
         self.assertIn('小犀提示', html)
         self.assertIn('品牌表达', html)
         self.assertIn('持续迭代中', html)
+        # 新系统 UI 第一阶段：一级产品层级 + 可扩展二级导航，现有功能入口保持不变。
+        for primary in (
+                'workbench', 'procurement', 'fulfillment', 'resources',
+                'analytics', 'system'):
+            self.assertIn('data-primary="%s"' % primary, html)
+        for label in (
+                '工作台', '采购中心', '履约追踪', '资源中心',
+                '数据分析', '系统管理'):
+            self.assertIn('<b>%s</b>' % label, html)
+        self.assertIn('id="secondaryTabs"', html)
+        self.assertIn('data-parent="fulfillment" data-module="query"', html)
+        self.assertIn('data-parent="resources" data-module="register"', html)
+        self.assertIn('data-parent="resources" data-module="envbatch"', html)
+        self.assertIn('data-parent="system" data-module="settings"', html)
+        self.assertIn('id="planningPanel"', html)
+        self.assertIn('功能规划中 · 不影响现有模块', html)
+        self.assertIn('function setPrimaryModule(primary)', html)
+        self.assertIn('function setFeaturePanel(module)', html)
         self.assertIn('id="sidebarToggle"', html)
         self.assertIn('id="btnRetryFail"', html)
         self.assertIn('id="updateNotice"', html)

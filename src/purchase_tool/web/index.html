@@ -194,11 +194,12 @@
     text-align: left; font-size: 14px; font-weight: 800; cursor: pointer;
   }
   .module-tab:hover { background: #f5f8fa; }
-  .module-tab.active { color: var(--navy-950); border: 0; background: linear-gradient(90deg,var(--rhino-100),#edf3f7); box-shadow: inset 3px 0 var(--tech-blue); }
+  .module-tab.active { color: var(--navy-950); border: 0; background: #eef7f7; box-shadow: none; }
   .nav-icon { flex: 0 0 auto; width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; color: var(--navy-900); background: #eef2f6; }
   .nav-icon svg, .icon-button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
-  .module-tab.active .nav-icon { color: #fff; background: var(--action-gradient); box-shadow: 0 6px 14px rgba(55,132,158,.18); }
+  .module-tab.active .nav-icon { color: #fff; background: var(--action-gradient); box-shadow: none; }
   .nav-text { display: flex; flex-direction: column; gap: 2px; }
+  .nav-text b { font-size: 13px; }
   .nav-text small { color: #8ca0b0; font-size: 10px; font-weight: 600; }
   .nav-spacer { flex: 1; min-height: 18px; }
   .side-help { padding: 13px; border: 1px solid #f4dc9f; border-radius: 14px; background: var(--parcel-100); color: #77551d; font-size: 12px; line-height: 1.55; }
@@ -271,6 +272,39 @@
     position: absolute; width: var(--lockup-width); max-width: none; height: auto;
     transform: translate(var(--lockup-x),var(--lockup-y));
   }
+  .secondary-nav-shell {
+    min-width: 0; padding: 10px 12px; display: flex; align-items: center; gap: 16px;
+    border: 1px solid var(--line); border-radius: 16px; background: rgba(255,255,255,.96);
+    box-shadow: 0 7px 20px rgba(8,37,72,.04);
+  }
+  .secondary-nav-copy { flex: 0 0 auto; min-width: 118px; padding: 0 4px; }
+  .secondary-nav-copy b { display: block; color: var(--navy-950); font-size: 13px; }
+  .secondary-nav-copy small { display: block; margin-top: 2px; color: var(--navy-500); font-size: 10px; }
+  .secondary-tabs { min-width: 0; display: flex; align-items: center; gap: 6px; overflow-x: auto; scrollbar-width: thin; }
+  .secondary-tab {
+    flex: 0 0 auto; min-height: 38px; padding: 7px 11px; border: 1px solid transparent; border-radius: 10px;
+    display: inline-flex; align-items: center; gap: 7px; background: transparent; color: var(--navy-700);
+    font-size: 12px; font-weight: 800; cursor: pointer; white-space: nowrap;
+  }
+  .secondary-tab:hover:not(:disabled) { border-color: #d8e6eb; background: #f5f9fa; }
+  .secondary-tab.active { border-color: #aadadd; background: var(--rhino-100); color: #126f74; }
+  .secondary-tab[hidden] { display: none; }
+  .secondary-tab:disabled { cursor: default; opacity: .72; }
+  .secondary-status {
+    padding: 2px 5px; border-radius: 999px; background: #eef2f6; color: var(--navy-500);
+    font-size: 9px; font-weight: 900;
+  }
+  .secondary-tab.active .secondary-status { background: rgba(255,255,255,.72); color: var(--rhino-600); }
+  .secondary-status.planned { background: var(--parcel-100); color: #90600c; }
+  .planning-panel { min-height: 290px; display: grid; place-items: center; }
+  .planning-card { width: min(620px,100%); padding: 34px; text-align: center; }
+  .planning-icon {
+    width: 54px; height: 54px; margin: 0 auto 15px; border-radius: 17px; display: grid; place-items: center;
+    background: var(--rhino-100); color: var(--rhino-600); font-size: 23px; font-weight: 900;
+  }
+  .planning-card h2 { color: var(--navy-950); font-size: 19px; }
+  .planning-card p { margin: 9px auto 0; max-width: 480px; color: var(--navy-500); font-size: 12px; line-height: 1.8; }
+  .planning-note { display: inline-flex; margin-top: 16px; padding: 6px 10px; border-radius: 999px; background: var(--parcel-100); color: #815510; font-size: 10px; font-weight: 900; }
   .card { padding: 19px; border: 1px solid var(--line); border-radius: 20px; background: #fff; box-shadow: 0 8px 24px rgba(8,37,72,.04); }
   .card-title { margin-bottom: 14px; color: var(--navy-950); font-size: 15px; font-weight: 900; }
   .legend { color: var(--navy-500); font-size: 11px; line-height: 1.6; }
@@ -448,6 +482,25 @@
     .settings-grid { grid-template-columns: 1fr; }
     .settings-field.full { grid-column: auto; }
   }
+  @media (max-width: 860px) {
+    .app-shell, body.sidebar-collapsed .app-shell { grid-template-columns: 1fr; }
+    .sidebar, body.sidebar-collapsed .sidebar {
+      position: fixed; inset: auto 0 0; width: 100%; height: 66px; padding: 6px 8px; z-index: 60;
+      display: block; border: 0; border-top: 1px solid var(--line); box-shadow: 0 -8px 24px rgba(8,37,72,.08);
+    }
+    .sidebar-toggle, .brand-card, .nav-label, .nav-text, .nav-spacer, .side-help, .side-footer { display: none !important; }
+    .module-tabs, body.sidebar-collapsed .module-tabs {
+      width: 100%; height: 54px; margin: 0; display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: 2px;
+    }
+    .module-tab, body.sidebar-collapsed .module-tab {
+      width: 100%; min-height: 52px; padding: 4px; justify-content: center; border-radius: 11px;
+    }
+    .nav-icon, body.sidebar-collapsed .nav-icon { width: 34px; height: 34px; }
+    .workspace { padding-bottom: 66px; }
+    .secondary-nav-shell { align-items: flex-start; flex-direction: column; gap: 8px; }
+    .secondary-nav-copy { min-width: 0; }
+    .secondary-tabs { width: 100%; }
+  }
 </style>
 </head>
 <body>
@@ -464,36 +517,41 @@
       <div class="brand-meta"><span class="product-type">跨境采购协同系统</span></div>
     </div>
 
-    <nav class="module-tabs" aria-label="功能模块">
-      <div class="nav-label">工作台</div>
-      <button class="module-tab active" data-module="query" title="订单物流查询">
+    <nav class="module-tabs" aria-label="一级功能模块">
+      <div class="nav-label">XYNIGO SOURCING</div>
+      <button class="module-tab" data-primary="workbench" title="工作台">
+        <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v10h14V10M9 20v-6h6v6"/></svg></span>
+        <span class="nav-text"><b>工作台</b><small>概览 · 待办 · 连接</small></span>
+      </button>
+      <button class="module-tab" data-primary="procurement" title="采购中心">
+        <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 3h12v18H6zM9 7h6M9 11h6M9 15h3"/><path d="m15 17 2 2 4-5"/></svg></span>
+        <span class="nav-text"><b>采购中心</b><small>提单 · 分配 · 执行</small></span>
+      </button>
+      <button class="module-tab active" data-primary="fulfillment" title="履约追踪">
         <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m7.5 4.3 9 5.1"/><path d="M21 8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l3 1.7"/><path d="M12 22V12M3.3 7 12 12l8.7-5"/><circle cx="18.5" cy="15.5" r="2.5"/><path d="m20.3 17.3 1.7 1.7"/></svg></span>
-        <span class="nav-text">订单物流查询<small>查询 · 跟踪 · 导出</small></span>
+        <span class="nav-text"><b>履约追踪</b><small>查询 · 跟踪 · 导出</small></span>
       </button>
-      <button class="module-tab" data-module="register" title="买家号注册">
+      <button class="module-tab" data-primary="resources" title="资源中心">
         <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2M19 8v6M16 11h6"/></svg></span>
-        <span class="nav-text">买家号注册<small>任务 · 验证 · 归档</small></span>
+        <span class="nav-text"><b>资源中心</b><small>账号 · 环境 · 台账</small></span>
       </button>
-      <button class="module-tab" data-module="envbatch" title="买家号建环境">
-        <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 8h18M7 6h.01M10 6h.01M12 11v6M9 14h6"/></svg></span>
-        <span class="nav-text">买家号建环境<small>解析 · 建档 · 映射</small></span>
+      <button class="module-tab" data-primary="analytics" title="数据分析">
+        <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></span>
+        <span class="nav-text"><b>数据分析</b><small>效率 · 履约 · 健康</small></span>
       </button>
-    </nav>
-
-    <div class="nav-spacer"></div>
-    <nav class="module-tabs settings-tabs" aria-label="系统配置">
-      <button class="module-tab" data-module="settings" title="系统设置">
+      <button class="module-tab" data-primary="system" title="系统管理">
         <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></svg></span>
-        <span class="nav-text">系统设置<small>连接 · 偏好 · 飞书</small></span>
+        <span class="nav-text"><b>系统管理</b><small>设置 · 飞书 · 服务</small></span>
       </button>
     </nav>
+    <div class="nav-spacer"></div>
     <div class="side-help"><strong>小犀提示</strong>批量任务开始前，请确认 HubStudio 已登录并保持网络代理正常。</div>
     <div class="side-footer"><span>Xynigo Sourcing</span><span>本地运行</span></div>
   </aside>
 
   <section class="workspace">
     <header class="topbar">
-      <div class="breadcrumb"><span>工作台</span><span>›</span><strong id="moduleLabel">订单物流查询</strong></div>
+      <div class="breadcrumb"><span id="primaryLabel">履约追踪</span><span>›</span><strong id="moduleLabel">订单物流查询</strong></div>
       <div class="topbar-right">
         <button class="update-check" id="updateCheck" type="button" title="手动检查更新" aria-label="检查更新">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-4M4 4v5h5M4 13a8 8 0 0 0 14.9 4M20 20v-5h-5"/></svg>
@@ -518,6 +576,36 @@
           <img src="xynigo-logo.png" alt="">
         </div>
       </section>
+
+      <section class="secondary-nav-shell" aria-label="二级功能导航">
+        <div class="secondary-nav-copy"><b id="secondaryTitle">履约追踪</b><small id="secondaryHint">查询 · 跟踪 · 导出</small></div>
+        <nav class="secondary-tabs" id="secondaryTabs">
+          <button class="secondary-tab" data-parent="workbench" data-planned="业务概览" disabled hidden>业务概览<span class="secondary-status planned">规划</span></button>
+          <button class="secondary-tab" data-parent="workbench" data-planned="我的待办" disabled hidden>我的待办<span class="secondary-status planned">规划</span></button>
+          <button class="secondary-tab" data-parent="workbench" data-planned="连接状态" disabled hidden>连接状态<span class="secondary-status planned">规划</span></button>
+          <button class="secondary-tab" data-parent="procurement" data-planned="采购任务" disabled hidden>采购任务<span class="secondary-status planned">规划</span></button>
+          <button class="secondary-tab" data-parent="procurement" data-planned="采购执行" disabled hidden>采购执行<span class="secondary-status planned">规划</span></button>
+          <button class="secondary-tab" data-parent="procurement" data-planned="异常协同" disabled hidden>异常协同<span class="secondary-status planned">规划</span></button>
+          <button class="secondary-tab active" data-parent="fulfillment" data-module="query">订单物流查询<span class="secondary-status">现有</span></button>
+          <button class="secondary-tab" data-parent="resources" data-module="register" hidden>买家号注册<span class="secondary-status">现有</span></button>
+          <button class="secondary-tab" data-parent="resources" data-module="envbatch" hidden>买家号建环境<span class="secondary-status">现有</span></button>
+          <button class="secondary-tab" data-parent="analytics" data-planned="采购效率" disabled hidden>采购效率<span class="secondary-status planned">规划</span></button>
+          <button class="secondary-tab" data-parent="analytics" data-planned="履约质量" disabled hidden>履约质量<span class="secondary-status planned">规划</span></button>
+          <button class="secondary-tab" data-parent="analytics" data-planned="资源健康" disabled hidden>资源健康<span class="secondary-status planned">规划</span></button>
+          <button class="secondary-tab" data-parent="system" data-module="settings" hidden>本机与飞书设置<span class="secondary-status">现有</span></button>
+          <button class="secondary-tab" data-parent="system" data-planned="外部服务" disabled hidden>外部服务<span class="secondary-status planned">规划</span></button>
+          <button class="secondary-tab" data-parent="system" data-planned="版本与审计" disabled hidden>版本与审计<span class="secondary-status planned">规划</span></button>
+        </nav>
+      </section>
+
+  <div class="module-panel planning-panel hidden" id="planningPanel">
+    <section class="card planning-card">
+      <div class="planning-icon" aria-hidden="true">＋</div>
+      <h2 id="planningTitle">模块入口已迁移</h2>
+      <p id="planningDescription">本轮只迁移新系统导航与视觉外壳，未接入演示数据。现有正式功能保持原 API 与操作流程。</p>
+      <span class="planning-note">功能规划中 · 不影响现有模块</span>
+    </section>
+  </div>
 
   <div class="module-panel" id="queryPanel">
   <section class="card">
@@ -925,6 +1013,36 @@ let backupRunning = false;
 const BUYER_GROUP_PATTERN = /采购|买家号|Registration/i;
 // 站点默认采购分组：本机未配置时下拉直接选中并记住，免得在 HubStudio 长列表里翻找
 const SITE_DEFAULT_GROUPS = { MX: '希音墨西哥采购', US: '美国采购分组' };
+const PRIMARY_MODULES = {
+  workbench: {
+    label: '工作台', hint: '概览 · 待办 · 连接', defaultModule: null,
+    summary: '集中查看采购待办、履约风险与本地执行状态。',
+    planning: '工作台业务概览与统一待办将在后续阶段接入真实数据。'
+  },
+  procurement: {
+    label: '采购中心', hint: '提单 · 分配 · 执行', defaultModule: null,
+    summary: '承接运营采购需求，完成认领、执行、结果回填与异常协作。',
+    planning: '采购任务、执行回填和异常协同将在云端控制面阶段接入。'
+  },
+  fulfillment: {
+    label: '履约追踪', hint: '查询 · 跟踪 · 导出', defaultModule: 'query',
+    summary: '批量查询订单与物流状态，异常任务集中处理，结果一键导出。'
+  },
+  resources: {
+    label: '资源中心', hint: '账号 · 环境 · 台账', defaultModule: 'register',
+    summary: '统一管理买家号注册、HubStudio 环境与飞书台账。'
+  },
+  analytics: {
+    label: '数据分析', hint: '效率 · 履约 · 健康', defaultModule: null,
+    summary: '观察采购效率、履约质量和账号环境资源健康。',
+    planning: '数据分析将在采购与履约数据口径稳定后接入。'
+  },
+  system: {
+    label: '系统管理', hint: '设置 · 飞书 · 服务', defaultModule: 'settings',
+    summary: '管理本机业务设置、飞书 OpenAPI、外部服务和版本能力。'
+  }
+};
+let activePrimary = 'fulfillment';
 let activeModule = 'query';
 let hiddenQueryColumns = new Set(['envName', 'ip']);
 let updatePollTimer = null;
@@ -1909,29 +2027,67 @@ $('btnRetryFail').onclick = async () => {
 
 /* ---------- 模块切换与注册 ---------- */
 
-document.querySelectorAll('[data-module]').forEach(btn => {
-  btn.onclick = () => {
-    document.querySelectorAll('[data-module]').forEach(x => x.classList.toggle('active', x === btn));
-    const module = btn.dataset.module;
-    activeModule = module;
-    $('queryPanel').classList.toggle('hidden', module !== 'query');
-    $('registerPanel').classList.toggle('hidden', module !== 'register');
-    $('envPanel').classList.toggle('hidden', module !== 'envbatch');
-    $('settingsPanel').classList.toggle('hidden', module !== 'settings');
-    const labels = {query:'订单物流查询',register:'买家号注册',envbatch:'买家号建环境',settings:'系统设置'};
-    const summaries = {
-      query:'批量查询订单与物流状态，异常任务集中处理，结果一键导出。',
-      register:'按任务完成账号注册、验证与归档，敏感凭证不在页面持久保存。',
-      envbatch:'解析号商名单，批量创建采购环境并按需回写飞书统一台账。',
-      settings:'集中管理本机连接、建环境偏好与飞书 OpenAPI 配置。'
-    };
-    $('moduleLabel').textContent = labels[module];
-    $('moduleSummary').textContent = summaries[module];
-    if (module === 'query') poll();
-    else if (module === 'register') pollRegister();
-    else if (module === 'envbatch') { pollEnvBatch(); refreshEnvPreflight(); }
-    else loadSettingsPage();
+function setFeaturePanel(module) {
+  const labels = {query:'订单物流查询',register:'买家号注册',envbatch:'买家号建环境',settings:'本机与飞书设置'};
+  const summaries = {
+    query:'批量查询订单与物流状态，异常任务集中处理，结果一键导出。',
+    register:'按任务完成账号注册、验证与归档，敏感凭证不在页面持久保存。',
+    envbatch:'解析号商名单，批量创建采购环境并按需回写飞书统一台账。',
+    settings:'集中管理本机连接、建环境偏好与飞书 OpenAPI 配置。'
   };
+  activeModule = module;
+  document.querySelectorAll('[data-module]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.module === module);
+  });
+  $('queryPanel').classList.toggle('hidden', module !== 'query');
+  $('registerPanel').classList.toggle('hidden', module !== 'register');
+  $('envPanel').classList.toggle('hidden', module !== 'envbatch');
+  $('settingsPanel').classList.toggle('hidden', module !== 'settings');
+  $('planningPanel').classList.add('hidden');
+  $('moduleLabel').textContent = labels[module];
+  $('moduleSummary').textContent = summaries[module];
+  if (module === 'query') poll();
+  else if (module === 'register') pollRegister();
+  else if (module === 'envbatch') { pollEnvBatch(); refreshEnvPreflight(); }
+  else loadSettingsPage();
+}
+
+function setPlannedPrimary(primary) {
+  const info = PRIMARY_MODULES[primary];
+  $('queryPanel').classList.add('hidden');
+  $('registerPanel').classList.add('hidden');
+  $('envPanel').classList.add('hidden');
+  $('settingsPanel').classList.add('hidden');
+  $('planningPanel').classList.remove('hidden');
+  $('planningTitle').textContent = `${info.label}入口已完成迁移`;
+  $('planningDescription').textContent = info.planning;
+  $('moduleLabel').textContent = '功能规划';
+  $('moduleSummary').textContent = info.summary;
+}
+
+function setPrimaryModule(primary) {
+  const info = PRIMARY_MODULES[primary];
+  if (!info) return;
+  activePrimary = primary;
+  document.querySelectorAll('[data-primary]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.primary === primary);
+  });
+  document.querySelectorAll('#secondaryTabs [data-parent]').forEach(btn => {
+    btn.hidden = btn.dataset.parent !== primary;
+  });
+  $('primaryLabel').textContent = info.label;
+  $('secondaryTitle').textContent = info.label;
+  $('secondaryHint').textContent = info.hint;
+  if (info.defaultModule) setFeaturePanel(info.defaultModule);
+  else setPlannedPrimary(primary);
+}
+
+document.querySelectorAll('[data-primary]').forEach(btn => {
+  btn.onclick = () => setPrimaryModule(btn.dataset.primary);
+});
+
+document.querySelectorAll('[data-module]').forEach(btn => {
+  btn.onclick = () => setFeaturePanel(btn.dataset.module);
 });
 
 $('regFile').onchange = async e => {
@@ -1969,7 +2125,7 @@ $('btnRegStart').onclick = async () => {
     confirmLarkWrite: false
   };
   if (payload.writeLarkLedger) {
-    if (!larkReady) { toast('飞书 OpenAPI 尚未配置完成，请先到左侧“系统设置”处理'); return; }
+    if (!larkReady) { toast('飞书 OpenAPI 尚未配置完成，请先到“系统管理 → 本机与飞书设置”处理'); return; }
     payload.confirmLarkWrite = confirm(`注册成功后将更新${larkTargetDisplayName()}中任务明确指定的记录，并执行写后回读。\n\n这是独立的飞书写入确认，是否继续？`);
     if (!payload.confirmLarkWrite) return;
   }
@@ -2088,7 +2244,7 @@ $('btnEnvStart').onclick = async () => {
   if (!envPlanId) { toast('请先选择并解析 xlsx'); return; }
   const assignment = composeAssignmentSpec();
   const writeLarkLedger = $('envWriteLedger').checked;
-  if (writeLarkLedger && !larkReady) { toast('飞书 OpenAPI 尚未配置完成，请先到左侧“系统设置”处理'); return; }
+  if (writeLarkLedger && !larkReady) { toast('飞书 OpenAPI 尚未配置完成，请先到“系统管理 → 本机与飞书设置”处理'); return; }
   if (!confirm(`将按${siteName}处理 ${envAccountCount} 个账号：创建环境、导入 Cookie、绑定账号并写备注。\n\n本次确认只授权 HubStudio 写入，是否继续？`)) return;
   let confirmLarkWrite = false;
   if (writeLarkLedger) {
@@ -2459,7 +2615,7 @@ function renderLarkConfigStatus(state) {
   if (!larkReady) $('regWriteLedger').checked = false;
   $('envLedgerState').textContent = larkReady
     ? `${larkTargetDisplayName()}已就绪；回写开关默认关闭，勾选后执行时会独立确认。`
-    : '飞书 OpenAPI 未就绪；请到左侧“系统设置”配置应用凭证和统一台账目标。';
+    : '飞书 OpenAPI 未就绪；请到“系统管理 → 本机与飞书设置”配置应用凭证和统一台账目标。';
 }
 
 async function loadLarkConfigStatus({refreshPending=false} = {}) {
