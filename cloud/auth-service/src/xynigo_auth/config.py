@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     auto_activate_users: bool = False
     session_ttl_seconds: int = 8 * 60 * 60
     oauth_attempt_ttl_seconds: int = 5 * 60
+    local_login_ttl_seconds: int = 5 * 60
     cookie_name: str = "xynigo_session"
     cookie_secure: bool = True
     login_success_path: str = "/v1/auth/me"
@@ -53,6 +54,13 @@ class Settings(BaseSettings):
     def validate_oauth_ttl(cls, value: int) -> int:
         if value < 60 or value > 300:
             raise ValueError("oauth_attempt_ttl_seconds must be between 60 and 300")
+        return value
+
+    @field_validator("local_login_ttl_seconds")
+    @classmethod
+    def validate_local_login_ttl(cls, value: int) -> int:
+        if value < 60 or value > 600:
+            raise ValueError("local_login_ttl_seconds must be between 60 and 600")
         return value
 
     @field_validator("login_success_path")

@@ -23,6 +23,7 @@ Xynigo Sourcing 是一套面向跨境电商团队的开源代采协同系统，�
 
 - [项目记忆](docs/项目记忆.md)：已确认的产品层级、架构边界与安全约束。
 - [20260824 前端页面改造完成里程碑](docs/里程碑/20260824-前端页面改造完成.md)：完成范围、未完成边界和验收证据。
+- [20260824 本地前端接入云端登录](docs/里程碑/20260824-本地前端接入云端登录.md)：飞书扫码登录、本机安全会话、模块权限和真实联调边界。
 - [后端实施交接](docs/后端实施交接.md)：云端控制面、本地执行器、权限和买家号自动分配的分阶段路线。
 
 v0.9.0 升级买家号建环境后的飞书统一台账契约：新增“环境分组名”回写、幂等比对和写后回读；同一环境移动分组时更新原记录，账号绑定到不同环境时仍按冲突阻止。飞书 Email／URL 文本样式可通过字段预检，URL 字段按 OpenAPI 对象格式写入，修复 `URLFieldConvFail`。已完成但最初未勾选飞书回写的 HubStudio 批次，可在单独二次确认和只读预检后补写台账，不会重跑 HubStudio 步骤。
@@ -76,6 +77,7 @@ python -m purchase_tool
 | `XYNIGO_LARK_TABLE_ID` | 可选：首次运行时迁移统一买家号台账 Table ID |
 | `XYNIGO_LARK_TABLE_ID_MX` / `XYNIGO_LARK_TABLE_ID_US` | 仅供旧版管理员补账命令兼容使用；Web OpenAPI 主链路不按站点拆表 |
 | `XYNIGO_LARK_OPERATOR_OPEN_ID` | 仅供旧版管理员补账命令使用的可选操作人 ID |
+| `XYNIGO_AUTH_BASE_URL` | 可选：云端认证服务地址；默认使用 `https://xynigo.samforo.icu`，远程地址必须为 HTTPS |
 
 旧版模块三 Mac 管理员补账命令仍需 `lark-cli`，并且必须显式核对站点；美国站使用
 `python -m purchase_tool backfill --site US ...`，并要求独立配置
@@ -94,6 +96,7 @@ python -m purchase_tool
 - 飞书写入只有在写后回读确认字段一致时才计为成功；超时或结果不确定时标记为待重试。
 - 批次续作文件仅保存不可逆的账号标识及非敏感进度信息。
 - 更新包和发行包不得包含本地 `config.json`、日志或用户输入文件。
+- 登录轮询令牌和云端会话不返回给本地网页；macOS 使用钥匙串、Windows 使用当前用户 DPAPI 保存会话。未登录请求及无权业务接口在本地后端直接返回 401/403，本机 POST API 同时拒绝浏览器跨站调用。
 
 部署或报告安全问题前，请先阅读 [SECURITY.md](SECURITY.md)。
 

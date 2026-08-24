@@ -123,12 +123,39 @@ class SessionRecord(Base):
     )
 
 
+class LocalLoginRequest(Base):
+    __tablename__ = "local_login_requests"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    poll_token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    denial_code: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'approved', 'denied', 'consumed')",
+            name="ck_local_login_status",
+        ),
+        Index("ix_local_login_expiry", "expires_at"),
+    )
+
+
 class OAuthLoginAttempt(Base):
     __tablename__ = "oauth_login_attempts"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     state_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     code_verifier: Mapped[str | None] = mapped_column(String(128))
+    local_login_request_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("local_login_requests.id", ondelete="SET NULL")
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

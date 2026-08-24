@@ -43,6 +43,7 @@ from . import __version__
 from .buyer_library import BuyerLibraryJob, BuyerLibraryService
 from .buyer_ledger_sync import validate_unified_schema
 from .buyer_register import BuyerRegistrationTask, RegistrationOrchestrator
+from .cloud_auth import LocalAuthError, LocalAuthService
 from .excel_export import EXPORT_HEAD, export_bytes
 from .env_batch import (BACKUP_MAX_COUNT, BACKUP_REMARK, BUYER_CODES,
                         BUYER_ROSTER, BatchEnvOrchestrator,
@@ -100,6 +101,35 @@ CONFIG_REQUEST_FIELDS = (CONFIG_FIELDS - {
     'larkBuyerTargetHost',
     'larkBuyerBaseName', 'larkBuyerTableName',
     'larkBuyerTargetVerified'}) | {'proxyClear'}
+
+PUBLIC_AUTH_API_PATHS = frozenset({
+    '/api/auth/status',
+    '/api/auth/start',
+    '/api/auth/poll',
+    '/api/auth/logout',
+})
+AUTH_PERMISSION_BY_PATH = {
+    '/api/progress': 'fulfillment.order.read',
+    '/api/query': 'fulfillment.order.read',
+    '/api/stop': 'fulfillment.order.read',
+    '/api/requery': 'fulfillment.order.read',
+    '/api/requery-failed': 'fulfillment.order.read',
+    '/api/screenshot': 'fulfillment.order.read',
+    '/api/export': 'fulfillment.order.export',
+    '/api/buyer-library': 'resource.buyer.read',
+    '/api/buyer-library/import/parse': 'resource.buyer.import',
+    '/api/buyer-library/import/commit': 'resource.buyer.import',
+    '/api/register/progress': 'resource.buyer.import',
+    '/api/register/validate': 'resource.buyer.import',
+    '/api/register/start': 'resource.buyer.import',
+    '/api/lark/config': 'system.lark_connection.manage',
+    '/api/lark/open-target': 'system.lark_connection.manage',
+    '/api/lark/target-metadata': 'system.lark_connection.manage',
+    '/api/lark/preflight': 'system.lark_connection.manage',
+}
+AUTH_PERMISSION_BY_PREFIX = (
+    ('/api/envbatch/', 'resource.environment.create'),
+)
 
 
 def default_config():
@@ -423,6 +453,18 @@ def public_lark_config(cfg, credential_store):
     return result
 
 
+def public_lark_runtime_status(cfg, credential_store):
+    """Expose only the connection readiness needed by business modules."""
+    configured = public_lark_config(cfg, credential_store)
+    return {
+        'ready': configured['ready'],
+        'ledgerTargetConfigured': configured['ledgerTargetConfigured'],
+        'targetBaseName': configured['targetBaseName'],
+        'targetTableName': configured['targetTableName'],
+        'targetVerified': configured['targetVerified'],
+    }
+
+
 def lark_target_link(cfg):
     """Return the validated browser URL for the locally configured target."""
     return build_lark_base_link(
@@ -499,9 +541,10 @@ class HubStatusCache(object):
 class AppState(object):
     """进程级共享状态：配置 + HubStudio 连接 + 编排器。"""
 
-    def __init__(self, credential_store=None):
+    def __init__(self, credential_store=None, auth_service=None):
         cfg = load_config()
         self.cfg = cfg
+        self.auth = auth_service or LocalAuthService()
         self.lark_credentials = credential_store or system_credential_store()
         self.hub = HubStudioApi(port=cfg['hubPort'])
         self._hub_status = HubStatusCache(lambda: self.hub)
@@ -1480,9 +1523,45 @@ class Handler(BaseHTTPRequestHandler):
         body = json.dumps(obj, ensure_ascii=False).encode('utf-8')
         self.send_response(status)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _require_auth(self, path):
+        if path in PUBLIC_AUTH_API_PATHS:
+            return None
+        permission = AUTH_PERMISSION_BY_PATH.get(path)
+        if permission is None:
+            for prefix, required in AUTH_PERMISSION_BY_PREFIX:
+                if path.startswith(prefix):
+                    permission = required
+                    break
+        return STATE.auth.require(permission)
+
+    def _auth_error(self, exc):
+        self._json({
+            'error': str(exc),
+            'code': exc.code,
+        }, exc.status)
+
+    def _require_same_origin(self):
+        """Reject browser cross-site writes to the loopback executor."""
+        fetch_site = str(self.headers.get('Sec-Fetch-Site') or '').casefold()
+        if fetch_site == 'cross-site':
+            raise LocalAuthError(
+                'origin_forbidden', '拒绝来自外部网页的本机写入请求', 403)
+        origin = str(self.headers.get('Origin') or '').strip()
+        if not origin:
+            # Native clients and existing local scripts do not send Origin.
+            return
+        parsed = urlparse(origin)
+        expected_host = str(self.headers.get('Host') or '').casefold()
+        if (parsed.scheme != 'http' or parsed.netloc.casefold() != expected_host
+                or parsed.path not in ('', '/') or parsed.query or parsed.fragment):
+            raise LocalAuthError(
+                'origin_forbidden', '拒绝来自外部网页的本机写入请求', 403)
 
     def _body(self):
         length = int(self.headers.get('Content-Length') or 0)
@@ -1529,6 +1608,8 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path, query = parsed.path, parse_qs(parsed.query)
         try:
+            if path.startswith('/api/'):
+                self._require_auth(path)
             if path == '/':
                 self._file(INDEX_HTML, 'text/html')
             elif path == '/xynigo-logo.png':
@@ -1541,6 +1622,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._file(X_ICON_ICO, 'image/x-icon')
             elif path == '/favicon.ico':
                 self._file(X_ICON_ICO, 'image/x-icon')
+            elif path == '/api/auth/status':
+                self._json(STATE.auth.status(force=True))
             elif path == '/api/hub-status':
                 ok, err = STATE.hub_status(force=True)
                 self._json({'connected': ok, 'error': err})
@@ -1649,6 +1732,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(data)
             elif path == '/api/config':
                 self._json(public_config(STATE.cfg))
+            elif path == '/api/lark/status':
+                self._json(public_lark_runtime_status(
+                    STATE.cfg, STATE.lark_credentials))
             elif path == '/api/lark/config':
                 self._json(public_lark_config(
                     STATE.cfg, STATE.lark_credentials))
@@ -1656,6 +1742,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._redirect(lark_target_link(STATE.cfg))
             else:
                 self._json({'error': 'not found'}, 404)
+        except LocalAuthError as e:
+            self._auth_error(e)
         except ConnectionError as e:
             self._json({'error': 'HubStudio 未连接：%s' % e}, 503)
         except ValueError as e:
@@ -1667,9 +1755,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-        body = self._body()
         try:
-            if path == '/api/query':
+            if path.startswith('/api/'):
+                self._require_same_origin()
+                self._require_auth(path)
+            body = self._body()
+            if path == '/api/auth/start':
+                self._json(STATE.auth.start_login(), 201)
+            elif path == '/api/auth/poll':
+                self._json(STATE.auth.poll_login())
+            elif path == '/api/auth/logout':
+                self._json(STATE.auth.logout())
+            elif path == '/api/query':
                 if STATE.orch.running:
                     return self._json({'error': '已有查询在进行中'}, 409)
                 if STATE.env_job.running or STATE.backup_job.running:
@@ -1858,6 +1955,8 @@ class Handler(BaseHTTPRequestHandler):
                 })
             else:
                 self._json({'error': 'not found'}, 404)
+        except LocalAuthError as e:
+            self._auth_error(e)
         except RuntimeError as e:
             self._json({'error': str(e)}, 409)
         except ValueError as e:

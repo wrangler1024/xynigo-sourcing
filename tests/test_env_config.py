@@ -14,7 +14,8 @@ from unittest.mock import patch
 import purchase_tool.main as main_module
 from purchase_tool.main import (
     Handler, default_config, effective_proxy_link, load_config,
-    lark_target_link, public_config, public_lark_config, save_config,
+    lark_target_link, public_config, public_lark_config,
+    public_lark_runtime_status, save_config,
     purchase_tag_for_site,
     refreshed_lark_target_labels, resolve_submitted_lark_target,
     updated_config, updated_lark_config)
@@ -175,6 +176,15 @@ class ConfigTests(unittest.TestCase):
         self.assertNotIn('public-safe.feishu.cn', rendered)
         self.assertNotIn('sanitized-secret-value', rendered)
 
+        runtime = public_lark_runtime_status(replaced, store)
+        runtime_rendered = json.dumps(runtime)
+        self.assertTrue(runtime['ready'])
+        self.assertEqual(runtime['targetBaseName'], '')
+        self.assertNotIn('credentialConfigured', runtime)
+        self.assertNotIn('appIdMasked', runtime)
+        self.assertNotIn('bascnAnotherSafeExample', runtime_rendered)
+        self.assertNotIn('tblAnotherSafeExample', runtime_rendered)
+
         self.assertEqual(
             lark_target_link(replaced),
             'https://public-safe.feishu.cn/base/'
@@ -303,6 +313,10 @@ class ConfigRouteTests(unittest.TestCase):
                  'proxyLink': TEST_PROXY,
                  'larkBuyerBaseToken': 'bascnPublicSafeExample',
                  'larkBuyerTableId': 'tblPublicSafeExample'},
+            auth=SimpleNamespace(require=lambda permission=None: {
+                'roles': ['super_admin'],
+                'permissions': ['system.lark_connection.manage'],
+            }),
             lark_credentials=MemoryCredentialStore(),
             env_job=env_job)
         main_module.STATE.lark_credentials.save(

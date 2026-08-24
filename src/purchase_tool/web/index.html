@@ -10,6 +10,7 @@
 <link rel="apple-touch-icon" href="/xynigo-x.png?v=5">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
+  [hidden] { display: none !important; }
   :root {
     --primary: #2563eb; --primary-dark: #1d4ed8;
     --green: #16a34a; --green-bg: #f0fdf4;
@@ -602,10 +603,96 @@
     .secondary-tab { width: auto; flex: 0 0 auto; min-height: 36px; padding: 7px 10px; gap: 7px; }
     .workspace { padding-bottom: 122px; }
   }
+
+  /* ===== 云端登录与当前成员 ===== */
+  body.auth-locked { overflow: hidden; }
+  body.auth-locked .app-shell { pointer-events: none; user-select: none; }
+  .auth-gate {
+    position: fixed; inset: 0; z-index: 500; padding: 28px;
+    display: grid; place-items: center;
+    background:
+      radial-gradient(circle at 18% 15%, rgba(72,195,194,.20), transparent 34%),
+      radial-gradient(circle at 85% 82%, rgba(70,123,173,.17), transparent 37%),
+      linear-gradient(145deg, #f8fcfc 0%, #eff6f8 53%, #eaf0f6 100%);
+  }
+  .auth-gate[hidden] { display: none; }
+  .auth-card {
+    width: min(100%, 460px); padding: 34px 34px 30px; border: 1px solid rgba(182,208,218,.75);
+    border-radius: 24px; background: rgba(255,255,255,.94); text-align: center;
+    box-shadow: 0 28px 75px rgba(8,37,72,.16); backdrop-filter: blur(16px);
+  }
+  .auth-brand { display: flex; align-items: center; justify-content: center; gap: 12px; }
+  .auth-brand-mark { width: 48px; height: 48px; padding: 7px; border-radius: 15px; background: #eef7f8; }
+  .auth-brand-mark img { width: 100%; height: 100%; object-fit: contain; }
+  .auth-brand-copy { text-align: left; }
+  .auth-brand-copy strong { display: block; color: var(--navy-950); font-size: 21px; letter-spacing: -.02em; }
+  .auth-brand-copy span { display: block; margin-top: 2px; color: var(--rhino-600); font-size: 10px; font-weight: 900; letter-spacing: .12em; }
+  .auth-card h1 { margin-top: 28px; color: var(--navy-950); font-size: 24px; letter-spacing: -.02em; }
+  .auth-message { min-height: 48px; margin: 10px auto 20px; color: var(--navy-500); font-size: 13px; line-height: 1.75; }
+  .auth-loader { width: 30px; height: 30px; margin: 2px auto 14px; border: 3px solid #dcebee; border-top-color: var(--rhino-500); border-radius: 50%; animation: auth-spin .8s linear infinite; }
+  .auth-loader[hidden] { display: none; }
+  @keyframes auth-spin { to { transform: rotate(360deg); } }
+  .auth-actions { display: grid; gap: 10px; }
+  .auth-login, .auth-retry {
+    width: 100%; min-height: 46px; padding: 11px 16px; border-radius: 12px;
+    font-size: 13px; font-weight: 900; cursor: pointer;
+  }
+  .auth-login { border: 0; background: var(--action-gradient); color: #fff; box-shadow: 0 10px 22px rgba(55,132,158,.25); }
+  .auth-login:hover:not(:disabled) { filter: brightness(.97); transform: translateY(-1px); }
+  .auth-login:disabled { cursor: wait; opacity: .7; }
+  .auth-retry { border: 1px solid #cddfe7; background: #fff; color: var(--navy-700); }
+  .auth-actions [hidden] { display: none; }
+  .auth-fallback { color: var(--rhino-600); font-size: 12px; font-weight: 800; text-underline-offset: 3px; }
+  .auth-footnote { margin-top: 21px; color: #8497a7; font-size: 10px; line-height: 1.65; }
+  .auth-user {
+    min-width: 0; max-width: 210px; height: 38px; padding: 3px 5px 3px 4px;
+    display: inline-flex; align-items: center; gap: 7px; border: 1px solid #d7e5eb;
+    border-radius: 12px; background: #fff;
+  }
+  .auth-user[hidden] { display: none; }
+  .auth-avatar {
+    flex: 0 0 auto; width: 29px; height: 29px; overflow: hidden; border-radius: 9px;
+    display: grid; place-items: center; background: var(--rhino-100); color: #126f74;
+    font-size: 11px; font-weight: 900;
+  }
+  .auth-avatar img { width: 100%; height: 100%; object-fit: cover; }
+  .auth-user-copy { min-width: 0; flex: 1; text-align: left; line-height: 1.12; }
+  .auth-user-copy b, .auth-user-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .auth-user-copy b { color: var(--navy-950); font-size: 10px; }
+  .auth-user-copy small { margin-top: 3px; color: var(--navy-500); font-size: 8px; }
+  .auth-logout { flex: 0 0 auto; padding: 5px 6px; border: 0; border-radius: 7px; background: transparent; color: var(--navy-500); font-size: 9px; font-weight: 800; cursor: pointer; }
+  .auth-logout:hover { background: #f1f6f8; color: var(--navy-950); }
+  @media (max-width: 980px) {
+    .auth-user-copy, .auth-logout { display: none; }
+    .auth-user { width: 38px; padding: 4px; }
+    .auth-avatar { width: 28px; height: 28px; }
+  }
+  @media (max-width: 600px) {
+    .auth-gate { padding: 16px; }
+    .auth-card { padding: 28px 22px 24px; border-radius: 20px; }
+    .auth-card h1 { font-size: 21px; }
+  }
 </style>
 </head>
-<body>
-<div class="app-shell">
+<body class="auth-locked">
+<div class="auth-gate" id="authGate" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+  <section class="auth-card">
+    <div class="auth-brand">
+      <span class="auth-brand-mark"><img src="xynigo-x.png?v=5" alt=""></span>
+      <span class="auth-brand-copy"><strong>Xynigo</strong><span>SOURCING WORKSPACE</span></span>
+    </div>
+    <h1 id="authTitle">登录 Xynigo Sourcing</h1>
+    <p class="auth-message" id="authMessage">正在检查本机登录状态…</p>
+    <div class="auth-loader" id="authLoader" aria-label="正在加载"></div>
+    <div class="auth-actions">
+      <button class="auth-login" id="authLoginButton" type="button" hidden>使用飞书扫码登录</button>
+      <a class="auth-fallback" id="authFallbackLink" href="#" target="_blank" rel="noopener noreferrer" hidden>没有打开授权页？重新打开</a>
+      <button class="auth-retry" id="authRetryButton" type="button" hidden>重新检查</button>
+    </div>
+    <p class="auth-footnote">登录凭据仅保存在当前电脑的系统安全存储中；网页不会接触云端会话令牌。</p>
+  </section>
+</div>
+<div class="app-shell" id="appShell" inert>
   <aside class="sidebar">
     <button class="sidebar-toggle" id="sidebarToggle" type="button" aria-label="收起侧栏" title="收起侧栏">‹</button>
     <div class="brand-card">
@@ -719,6 +806,11 @@
         </div>
       </div>
       <div class="topbar-right">
+        <div class="auth-user" id="authUser" hidden>
+          <span class="auth-avatar" id="authAvatar">XY</span>
+          <span class="auth-user-copy"><b id="authUserName">当前成员</b><small id="authUserRole">已登录</small></span>
+          <button class="auth-logout" id="authLogout" type="button">退出</button>
+        </div>
         <button class="update-check" id="updateCheck" type="button" title="手动检查更新" aria-label="检查更新">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-4M4 4v5h5M4 13a8 8 0 0 0 14.9 4M20 20v-5h-5"/></svg>
           <span id="updateCheckText">检查更新</span>
@@ -1219,6 +1311,10 @@ let larkReady = false;
 let larkTargetConfigured = false;
 let larkTargetBaseName = '';
 let larkTargetTableName = '';
+let authReady = false;
+let authIdentity = null;
+let authPollTimer = null;
+let currentAuthLoginUrl = '';
 let envBuyers = [];                          // [{name,code}] 来自 /api/config，后端单一事实源
 let envDefaultSplit = ['新刚', '志恒', '康德'];
 let envBackupMax = 25;
@@ -1279,22 +1375,27 @@ const PRIMARY_MODULES = {
 const FEATURE_MODULES = {
   query: {
     label: '订单物流查询', primary: 'fulfillment',
+    requiredPermission: 'fulfillment.order.read',
     summary: '批量查询订单与物流状态，异常任务集中处理，结果一键导出。'
   },
   buyerlib: {
     label: '买家号库', primary: 'resources',
+    requiredPermission: 'resource.buyer.read',
     summary: '集中查看可用、预占、已绑定与异常买家号，页面仅展示脱敏元数据。'
   },
   vendorimport: {
     label: '号商入库', primary: 'resources',
+    requiredPermission: 'resource.buyer.import',
     summary: '号商账号先完成严格校验与查重，再经单独确认写入飞书买家号库。'
   },
   register: {
     label: '账号注册', primary: 'resources',
+    requiredPermission: 'resource.buyer.import',
     summary: '按任务完成账号注册、验证与归档，敏感凭证不在页面持久保存。'
   },
   envbatch: {
     label: '环境创建', primary: 'resources',
+    requiredPermission: 'resource.environment.create',
     summary: '按采购需求创建 HubStudio 环境，并在后台验证全部新建环境出口 IP。'
   },
   localsettings: {
@@ -1303,6 +1404,7 @@ const FEATURE_MODULES = {
   },
   larkconnection: {
     label: '飞书连接', primary: 'system', requiredRole: 'super_admin',
+    requiredPermission: 'system.lark_connection.manage',
     summary: '由超级管理员集中维护企业应用凭证及各业务模块的飞书数据连接。'
   }
 };
@@ -1363,9 +1465,193 @@ async function api(path, opts) {
   }
   let j = {};
   try { j = await res.json(); } catch (e) {}
-  if (!res.ok) throw new Error(j.error || ('请求失败 HTTP ' + res.status));
+  if (!res.ok) {
+    const error = new Error(j.error || ('请求失败 HTTP ' + res.status));
+    error.code = j.code || (j.detail && j.detail.code) || '';
+    error.status = res.status;
+    if (res.status === 401 && !path.startsWith('/api/auth/')) lockWorkspace(error.message);
+    throw error;
+  }
   return j;
 }
+
+function setAuthGate(mode, message) {
+  const loading = mode === 'checking' || mode === 'waiting';
+  $('authGate').hidden = false;
+  $('authLoader').hidden = !loading;
+  $('authLoginButton').hidden = mode !== 'login';
+  $('authRetryButton').hidden = mode !== 'retry';
+  $('authFallbackLink').hidden = mode !== 'waiting' || !currentAuthLoginUrl;
+  $('authMessage').textContent = message || '';
+}
+
+function lockWorkspace(message='请先使用飞书登录') {
+  authReady = false;
+  authIdentity = null;
+  clearTimeout(authPollTimer);
+  clearTimeout(updatePollTimer);
+  authPollTimer = null;
+  document.body.classList.add('auth-locked');
+  $('appShell').setAttribute('inert', '');
+  $('authUser').hidden = true;
+  setAuthGate('login', message);
+}
+
+function hasRole(role) {
+  return !!(authIdentity && Array.isArray(authIdentity.roles)
+    && authIdentity.roles.includes(role));
+}
+
+function hasPermission(permission) {
+  return !permission || !!(authIdentity && Array.isArray(authIdentity.permissions)
+    && authIdentity.permissions.includes(permission));
+}
+
+function hasFeatureAccess(module) {
+  const info = FEATURE_MODULES[module];
+  if (!info || !authIdentity) return false;
+  if (info.requiredRole && !hasRole(info.requiredRole)) return false;
+  return hasPermission(info.requiredPermission);
+}
+
+function applyPermissionVisibility() {
+  document.querySelectorAll('#secondaryTabs [data-module]').forEach(button => {
+    button.dataset.permissionHidden = hasFeatureAccess(button.dataset.module) ? '0' : '1';
+  });
+  document.querySelectorAll('.module-tab[data-primary]').forEach(button => {
+    const modules = Object.keys(FEATURE_MODULES).filter(
+      key => FEATURE_MODULES[key].primary === button.dataset.primary);
+    button.hidden = modules.length > 0 && !modules.some(hasFeatureAccess);
+  });
+  $('btnExport').hidden = !hasPermission('fulfillment.order.export');
+  openFeatureTabs = openFeatureTabs.filter(hasFeatureAccess);
+  if (!openFeatureTabs.length) {
+    const firstAllowed = Object.keys(FEATURE_MODULES).find(hasFeatureAccess);
+    if (firstAllowed) openFeatureTabs = [firstAllowed];
+  }
+  if (!hasFeatureAccess(activeModule)) activeModule = openFeatureTabs[0] || '';
+}
+
+function renderAuthenticatedUser(identity) {
+  const user = identity.user || {};
+  const roles = Array.isArray(identity.roles) ? identity.roles : [];
+  const name = String(user.name || '当前成员');
+  $('authUserName').textContent = name;
+  $('authUserRole').textContent = roles.includes('super_admin') ? '超级管理员' : '已登录成员';
+  const avatar = $('authAvatar');
+  avatar.textContent = name.slice(0, 2).toUpperCase();
+  if (user.avatarUrl) {
+    const image = document.createElement('img');
+    image.src = user.avatarUrl;
+    image.alt = '';
+    image.referrerPolicy = 'no-referrer';
+    image.onerror = () => image.remove();
+    avatar.appendChild(image);
+  }
+  $('authUser').hidden = false;
+}
+
+async function initializeAuthenticatedWorkspace(identity) {
+  authIdentity = identity;
+  authReady = true;
+  applyPermissionVisibility();
+  renderAuthenticatedUser(identity);
+  document.body.classList.remove('auth-locked');
+  $('appShell').removeAttribute('inert');
+  $('authGate').hidden = true;
+  if (activeModule && hasFeatureAccess(activeModule)) {
+    activateFeatureTab(activeModule);
+  } else {
+    const firstAllowed = openFeatureTabs[0];
+    if (firstAllowed) activateFeatureTab(firstAllowed);
+  }
+  pollUpdateStatus();
+  loadQueryDisplayConfig();
+  loadLarkRuntimeStatus();
+  if (hasFeatureAccess('query')) { loadGroups(); poll(); }
+  if (hasFeatureAccess('register')) pollRegister();
+  if (hasFeatureAccess('envbatch')) {
+    loadEnvGroups();
+    refreshEnvPreflight();
+    pollEnvBatch();
+  }
+}
+
+async function initializeAuth() {
+  setAuthGate('checking', '正在检查本机登录状态…');
+  try {
+    const state = await api('/api/auth/status');
+    if (state.authenticated && state.identity) {
+      await initializeAuthenticatedWorkspace(state.identity);
+      return;
+    }
+    const message = state.message || (state.code === 'cloud_unreachable'
+      ? '暂时无法连接 Xynigo 云端认证服务，请检查网络后重试。'
+      : '使用飞书扫码登录后，即可进入当前电脑上的 Xynigo 工作台。');
+    setAuthGate(state.code === 'cloud_unreachable' || state.code === 'credential_store_failed'
+      ? 'retry' : 'login', message);
+  } catch (error) {
+    setAuthGate('retry', error.message);
+  }
+}
+
+async function pollCloudLogin() {
+  clearTimeout(authPollTimer);
+  try {
+    const result = await api('/api/auth/poll', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}'
+    });
+    if (result.status === 'authenticated' && result.identity) {
+      currentAuthLoginUrl = '';
+      await initializeAuthenticatedWorkspace(result.identity);
+      return;
+    }
+    setAuthGate('waiting', '已打开飞书授权页，请扫码或确认授权。本页面会自动完成登录。');
+    authPollTimer = setTimeout(pollCloudLogin, 1500);
+  } catch (error) {
+    const retryable = ['cloud_unreachable'].includes(error.code);
+    currentAuthLoginUrl = '';
+    setAuthGate(retryable ? 'retry' : 'login', error.message);
+  }
+}
+
+$('authLoginButton').onclick = async () => {
+  const authWindow = window.open('about:blank', '_blank');
+  if (authWindow) authWindow.opener = null;
+  $('authLoginButton').disabled = true;
+  setAuthGate('checking', '正在创建飞书登录请求…');
+  try {
+    const started = await api('/api/auth/start', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}'
+    });
+    currentAuthLoginUrl = started.loginUrl;
+    $('authFallbackLink').href = currentAuthLoginUrl;
+    if (authWindow) authWindow.location.replace(currentAuthLoginUrl);
+    setAuthGate('waiting', '已打开飞书授权页，请扫码或确认授权。本页面会自动完成登录。');
+    pollCloudLogin();
+  } catch (error) {
+    if (authWindow) authWindow.close();
+    setAuthGate('retry', error.message);
+  } finally {
+    $('authLoginButton').disabled = false;
+  }
+};
+
+$('authRetryButton').onclick = initializeAuth;
+$('authLogout').onclick = async () => {
+  $('authLogout').disabled = true;
+  try {
+    await api('/api/auth/logout', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}'
+    });
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    $('authLogout').disabled = false;
+    currentAuthLoginUrl = '';
+    lockWorkspace('已安全退出当前账号。');
+  }
+};
 
 function renderUpdateStatus(info) {
   currentUpdateInfo = info || {state: 'idle', enabled: false};
@@ -1417,6 +1703,7 @@ function renderUpdateStatus(info) {
 
 async function pollUpdateStatus() {
   clearTimeout(updatePollTimer);
+  if (!authReady) return;
   let delay = 30000;
   try {
     const info = await api('/api/update/status');
@@ -1458,7 +1745,6 @@ $('updateCheck').onclick = async () => {
   }
   setTimeout(pollUpdateStatus, 500);
 };
-pollUpdateStatus();
 
 function setHubStatus(connected) {
   if (connected === hubConnected && $('hubStatus').className !== 'pill checking') {
@@ -1486,7 +1772,6 @@ async function loadQueryDisplayConfig() {
     setHiddenQueryColumns(cfg.hiddenQueryColumns || []);
   } catch (e) {}
 }
-loadQueryDisplayConfig();
 
 /* ---------- 渲染 ---------- */
 
@@ -1521,7 +1806,7 @@ function renderLarkWriteTargetText() {
   sentences.forEach(([element, prefix, suffix]) => {
     element.textContent = '';
     element.appendChild(document.createTextNode(prefix));
-    element.appendChild(larkTargetConfigured
+    element.appendChild(larkTargetConfigured && hasPermission('system.lark_connection.manage')
       ? createLarkTargetLink(target)
       : document.createTextNode(target));
     element.appendChild(document.createTextNode(suffix));
@@ -1643,7 +1928,7 @@ function render(snap) {
 /* ---------- 轮询 ---------- */
 
 async function poll() {
-  if (activeModule !== 'query') return;
+  if (!authReady || !hasFeatureAccess('query') || activeModule !== 'query') return;
   try { render(await api('/api/progress')); }
   catch (e) {
     if (hubConnected !== false) {
@@ -1653,10 +1938,9 @@ async function poll() {
   }
 }
 setInterval(poll, 1500);
-poll();
 
 async function pollRegister() {
-  if (activeModule !== 'register') return;
+  if (!authReady || !hasFeatureAccess('register') || activeModule !== 'register') return;
   try {
     const snap = await api('/api/register/progress');
     regRunning = snap.running;
@@ -1674,7 +1958,6 @@ async function pollRegister() {
   } catch (e) {}
 }
 setInterval(pollRegister, 1500);
-pollRegister();
 
 /* ---------- 模块三轮询与渲染 ---------- */
 
@@ -2138,7 +2421,7 @@ function renderBackupBatch(snap) {
 
 let envPollFailures = 0;
 async function pollEnvBatch() {
-  if (activeModule !== 'envbatch') return;
+  if (!authReady || !hasFeatureAccess('envbatch') || activeModule !== 'envbatch') return;
   try {
     if (envMode === 'backup') {
       renderBackupBatch(await api('/api/envbatch/backup/progress'));
@@ -2159,9 +2442,9 @@ async function pollEnvBatch() {
   }
 }
 setInterval(pollEnvBatch, 1500);
-pollEnvBatch();
 
 async function refreshEnvPreflight() {
+  if (!authReady || !hasFeatureAccess('envbatch')) return;
   try {
     const site = $('envSite').value;
     const state = await api('/api/envbatch/preflight?site=' + encodeURIComponent(site));
@@ -2184,7 +2467,6 @@ async function refreshEnvPreflight() {
   $('envSiteGroup').disabled = envSubmitting || envRunning || backupRunning || envGroupSaving || $('envSiteGroup').options.length < 2;
   updateEnvButtons();
 }
-refreshEnvPreflight();
 
 /* ---------- 操作 ---------- */
 
@@ -2345,7 +2627,8 @@ function syncPrimaryNavigation(primary) {
   if (primaryButton) primaryButton.insertAdjacentElement('afterend', $('secondaryTabs'));
   let visibleSecondaryCount = 0;
   document.querySelectorAll('#secondaryTabs [data-parent]').forEach(btn => {
-    btn.hidden = btn.dataset.parent !== primary;
+    btn.hidden = btn.dataset.parent !== primary
+      || (btn.dataset.module && btn.dataset.permissionHidden === '1');
     if (!btn.hidden) visibleSecondaryCount += 1;
   });
   $('secondaryTabs').hidden = visibleSecondaryCount === 0;
@@ -2451,13 +2734,16 @@ function renderWorkspaceTabs() {
 
 function activateFeatureTab(module) {
   const info = FEATURE_MODULES[module];
-  if (!info || !openFeatureTabs.includes(module)) return;
+  if (!info || !hasFeatureAccess(module) || !openFeatureTabs.includes(module)) return;
   syncPrimaryNavigation(info.primary);
   setFeaturePanel(module);
 }
 
 function openFeatureTab(module) {
-  if (!FEATURE_MODULES[module]) return;
+  if (!FEATURE_MODULES[module] || !hasFeatureAccess(module)) {
+    if (authReady) toast('当前账号没有此功能权限');
+    return;
+  }
   if (!openFeatureTabs.includes(module)) {
     if (openFeatureTabs.length >= MAX_OPEN_FEATURE_TABS) {
       toast(`最多同时打开 ${MAX_OPEN_FEATURE_TABS} 个业务页签，请先关闭不再使用的页面`);
@@ -2516,7 +2802,11 @@ function setPrimaryModule(primary) {
   const info = PRIMARY_MODULES[primary];
   if (!info) return;
   syncPrimaryNavigation(primary);
-  if (info.defaultModule) openFeatureTab(info.defaultModule);
+  const defaultModule = info.defaultModule && hasFeatureAccess(info.defaultModule)
+    ? info.defaultModule
+    : Object.keys(FEATURE_MODULES).find(
+      module => FEATURE_MODULES[module].primary === primary && hasFeatureAccess(module));
+  if (defaultModule) openFeatureTab(defaultModule);
   else setPlannedPrimary(primary);
 }
 
@@ -3142,12 +3432,36 @@ function inferQuerySite(groupName) {
   if (/美国|\bUS\b/i.test(name)) $('querySite').value = 'US';
   else if (/墨西哥|\bMX\b/i.test(name)) $('querySite').value = 'MX';
 }
-loadGroups();
-loadEnvGroups();
 
-function renderLarkConfigStatus(state) {
+function applyLarkRuntimeStatus(state) {
   larkReady = !!(state && state.ready);
   larkTargetConfigured = !!(state && state.ledgerTargetConfigured);
+  larkTargetBaseName = String(state && state.targetBaseName || '').trim();
+  larkTargetTableName = String(state && state.targetTableName || '').trim();
+  renderLarkWriteTargetText();
+  $('envWriteLedger').disabled = envMode !== 'bound' || !larkReady
+    || envSubmitting || envRunning || backupRunning;
+  if (!larkReady) $('envWriteLedger').checked = false;
+  $('regWriteLedger').disabled = !larkReady || regRunning;
+  if (!larkReady) $('regWriteLedger').checked = false;
+  $('envLedgerState').textContent = larkReady
+    ? `${larkTargetDisplayName()}已就绪；回写开关默认关闭，勾选后执行时会独立确认。`
+    : '飞书 OpenAPI 未就绪；请联系超级管理员到“系统管理 → 飞书连接”配置应用凭证和模块数据连接。';
+}
+
+async function loadLarkRuntimeStatus() {
+  try {
+    const state = await api('/api/lark/status');
+    applyLarkRuntimeStatus(state);
+    return state;
+  } catch (error) {
+    applyLarkRuntimeStatus(null);
+    return null;
+  }
+}
+
+function renderLarkConfigStatus(state) {
+  applyLarkRuntimeStatus(state);
   const pill = $('larkConfigStatus');
   pill.className = 'pill ' + (larkReady ? 'ok' : 'bad');
   pill.textContent = larkReady ? '✓ 飞书 OpenAPI 已就绪' : '⚠ 飞书 OpenAPI 未就绪';
@@ -3379,7 +3693,7 @@ $('btnLarkPreflight').onclick = async () => {
   }
 };
 
-loadLarkConfigStatus();
+initializeAuth();
 </script>
 </body>
 </html>

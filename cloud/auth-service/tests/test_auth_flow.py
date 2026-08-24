@@ -12,6 +12,7 @@ from xynigo_auth.feishu import FeishuIdentity
 from xynigo_auth.main import create_app
 from xynigo_auth.models import (
     Base,
+    LocalLoginRequest,
     OAuthLoginAttempt,
     Permission,
     Role,
@@ -79,6 +80,14 @@ def start_login(client: TestClient) -> tuple[str, str | None]:
     query = parse_qs(urlparse(response.headers["location"]).query)
     challenge = query.get("code_challenge", [None])[0]
     return query["state"][0], challenge
+
+
+def start_local_login(client: TestClient) -> tuple[str, str]:
+    response = client.post("/v1/auth/local/start")
+    assert response.status_code == 201
+    payload = response.json()
+    query = parse_qs(urlparse(payload["loginUrl"]).query)
+    return query["state"][0], payload["pollToken"]
 
 
 def test_bootstrap_admin_login_creates_hashed_session_and_rbac(tmp_path) -> None:
@@ -200,6 +209,87 @@ def test_disabled_pkce_omits_challenge_and_verifier(tmp_path) -> None:
     with database.session_factory() as session:
         assert session.scalar(select(OAuthLoginAttempt.code_verifier)) is None
     assert oauth.exchanges == [("authorization-code", None)]
+
+
+def test_local_login_bridge_issues_bearer_session_once(tmp_path) -> None:
+    app, database, _oauth = build_test_app(tmp_path)
+
+    with TestClient(app) as client:
+        state, poll_token = start_local_login(client)
+        pending = client.post("/v1/auth/local/poll", json={"pollToken": poll_token})
+        assert pending.status_code == 202
+        assert pending.json() == {"status": "pending"}
+
+        callback = client.get(
+            "/v1/auth/feishu/callback",
+            params={"code": "authorization-code", "state": state},
+            follow_redirects=False,
+        )
+        assert callback.status_code == 303
+        assert callback.headers["location"] == "/v1/auth/local/complete"
+        assert "set-cookie" not in callback.headers
+
+        exchanged = client.post("/v1/auth/local/poll", json={"pollToken": poll_token})
+        assert exchanged.status_code == 200
+        payload = exchanged.json()
+        assert payload["status"] == "authenticated"
+        assert payload["identity"]["roles"] == ["super_admin"]
+        bearer_token = payload["sessionToken"]
+
+        consumed = client.post("/v1/auth/local/poll", json={"pollToken": poll_token})
+        assert consumed.status_code == 409
+        assert consumed.json()["detail"]["code"] == "local_login_consumed"
+
+        me = client.get(
+            "/v1/auth/me",
+            headers={"Authorization": f"Bearer {bearer_token}"},
+        )
+        assert me.status_code == 200
+        assert me.json()["user"]["status"] == "active"
+        logout = client.post(
+            "/v1/auth/logout",
+            headers={"Authorization": f"Bearer {bearer_token}"},
+        )
+        assert logout.status_code == 204
+        assert client.get(
+            "/v1/auth/me",
+            headers={"Authorization": f"Bearer {bearer_token}"},
+        ).status_code == 401
+
+    with database.session_factory() as session:
+        local_login = session.scalar(select(LocalLoginRequest))
+        assert local_login is not None
+        assert local_login.status == "consumed"
+        stored_session = session.scalar(select(SessionRecord))
+        assert stored_session is not None
+        assert stored_session.token_hash == hash_token(bearer_token)
+        assert stored_session.revoked_at is not None
+
+
+def test_local_login_reports_pending_user_denial(tmp_path) -> None:
+    app, database, _oauth = build_test_app(
+        tmp_path,
+        open_id="ou_pending",
+        bootstrap="ou_admin",
+    )
+
+    with TestClient(app) as client:
+        state, poll_token = start_local_login(client)
+        callback = client.get(
+            "/v1/auth/feishu/callback",
+            params={"code": "authorization-code", "state": state},
+            follow_redirects=False,
+        )
+        assert callback.status_code == 403
+        denied = client.post("/v1/auth/local/poll", json={"pollToken": poll_token})
+        assert denied.status_code == 403
+        assert denied.json()["detail"]["code"] == "user_pending_approval"
+
+    with database.session_factory() as session:
+        local_login = session.scalar(select(LocalLoginRequest))
+        assert local_login is not None
+        assert local_login.status == "denied"
+        assert session.scalar(select(SessionRecord)) is None
 
 
 def test_health_and_readiness(tmp_path) -> None:

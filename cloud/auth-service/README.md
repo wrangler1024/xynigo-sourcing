@@ -14,7 +14,7 @@
 - 用户身份主键使用 `tenant_key + open_id`，不使用邮箱或手机号作为登录主键。
 - 新用户默认 `pending`，不会自动获得业务权限。
 - 超级管理员通过环境变量显式指定飞书 `open_id`，不采用“第一个登录的人自动成为管理员”。
-- 浏览器只保存 HttpOnly 会话 Cookie；数据库只保存 SHA-256 会话摘要。
+- 云端网页只保存 HttpOnly 会话 Cookie；本地执行器采用一次性登录桥换取 Bearer 会话，最终令牌仅保存在 macOS 钥匙串或 Windows CurrentUser DPAPI 中，浏览器页面拿不到轮询令牌或会话令牌。数据库始终只保存 SHA-256 会话摘要。
 - 飞书 `user_access_token` 仅用于当次读取身份，用完即丢弃，不写数据库。
 - PostgreSQL 不发布宿主机端口；PostgreSQL 18 数据卷挂载到其版本感知父目录 `/var/lib/postgresql`。认证服务只绑定 `127.0.0.1:8080`，由同机 HTTPS 反向代理转发。
 - 认证服务校验 Host 白名单并返回 no-store、CSP、Referrer-Policy、nosniff 等安全响应头；容器使用非 root、只读根文件系统、能力清空、内存上限和日志轮转。
@@ -29,7 +29,18 @@
 | `user_roles`、`role_permissions` | 用户授权关系 |
 | `sessions` | 短期、可撤销的登录会话摘要 |
 | `oauth_login_attempts` | 5 分钟内有效的一次性 OAuth state/PKCE 上下文 |
+| `local_login_requests` | 本地执行器 5 分钟内有效、单次消费的飞书登录交换请求 |
 | `audit_events` | 登录成功、拒绝及后续敏感操作审计 |
+
+## 本地执行器登录桥
+
+1. 本地 Python 服务向 `/v1/auth/local/start` 创建一次性请求；认证服务返回飞书授权地址和高熵轮询令牌。
+2. 本地服务只把授权地址交给页面并在系统浏览器打开，轮询令牌留在 Python 进程内。
+3. 飞书回调只把请求标记为已批准，不在授权页面写入本地会话。
+4. 本地服务通过 `/v1/auth/local/poll` 单次换取会话，保存到系统安全存储；页面只收到脱敏用户、角色和权限摘要。
+5. 本地业务 API 再校验云端会话与具体权限；退出时云端撤销会话并清理本机安全存储。
+
+公网 Nginx 对登录创建接口单独限流。轮询请求只接受摘要匹配、未过期且尚未消费的令牌，并使用数据库行锁保证同一登录请求最多签发一个会话。
 
 ## 本地合成测试
 
@@ -62,4 +73,4 @@ https://xynigo.samforo.icu/v1/auth/feishu/callback
 
 当前租户在授权端未实际登记 PKCE challenge，S256 与 plain 的令牌交换均返回飞书 `20049`。因此测试实例受控设置为 `XYNIGO_AUTH_FEISHU_PKCE_METHOD=disabled`；代码默认值仍为 S256，且 disabled 模式仍启用随机 `state`、五分钟有效期、摘要存储和单次消费。飞书侧恢复兼容后应优先切回 S256。
 
-测试实例不代表已经生产上线。真实浏览器受 Comet 策略影响，会在认证服务已返回成功响应后显示 `ERR_BLOCKED_BY_CLIENT`；退出接口及会话撤销已通过合成测试，正式前端接入时仍需补做正常浏览器中的登录/退出界面验收。
+测试实例不代表已经生产上线。前端已接入本地登录门禁、当前成员、退出和模块权限显示；成员审批、角色配置管理页面和正式绿色包发布仍未完成。

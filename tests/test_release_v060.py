@@ -275,7 +275,12 @@ class ReleaseV090Tests(unittest.TestCase):
         self.assertIn('id="regWriteLedgerLabel"', html)
         self.assertIn('function larkTargetDisplayName()', html)
         self.assertIn('function renderLarkWriteTargetText()', html)
-        self.assertIn('larkTargetConfigured\n      ? createLarkTargetLink(target)', html)
+        self.assertIn(
+            "larkTargetConfigured && hasPermission('system.lark_connection.manage')\n"
+            '      ? createLarkTargetLink(target)', html)
+        self.assertIn('id="authGate" role="dialog"', html)
+        self.assertIn('id="authLoginButton"', html)
+        self.assertIn('requiredPermission: \'resource.environment.create\'', html)
         self.assertIn('larkTargetBaseName = targetBaseName', html)
         self.assertIn('回写${larkTargetDisplayName()}', html)
         self.assertNotIn('回写飞书「买家号（统一）」', html)
