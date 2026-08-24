@@ -888,7 +888,7 @@
     <section class="card">
       <div class="card-title">③ 执行确认</div>
       <div class="check-row">
-        <label><input type="checkbox" id="envVerify" checked> <span>后台验证全部新建环境出口 IP，读取检测结果后立即关闭环境。当前 HubStudio 本地接口未提供真正无头参数，检测时可能短暂出现环境窗口。</span></label>
+        <label><input type="checkbox" id="envVerify" checked> <span>后台无头验证全部新建环境出口 IP，读取检测结果后立即关闭；不会打开可见的 HubStudio 环境窗口。</span></label>
         <input type="hidden" id="envVerifyCount" value="1">
         <label><input type="checkbox" id="envWriteLedger" disabled> <span id="envWriteLedgerLabel">建环境成功后通过“小犀代采”企业自建应用回写当前已连接的飞书统一台账；默认关闭，正式执行时还会单独二次确认。</span></label>
         <div class="hint" id="envLedgerState">正在读取飞书 OpenAPI 配置状态…</div>
@@ -971,7 +971,7 @@
         <div class="settings-field">
           <label>后台出口 IP 验证</label>
           <div class="query-col-checks"><label><input type="checkbox" id="cfgEnvVerify" checked> 新建完成后验证全部环境</label></div>
-          <div class="hint">当前 HubStudio 接口未提供真正无头参数，任务在后台逐个启动检测并立即关闭。</div>
+          <div class="hint">通过 HubStudio Local API 无头、只读启动环境进程，页面不会弹出真实环境窗口。</div>
         </div>
         <div class="settings-field">
           <label>建环境并发数（1-10）</label>
