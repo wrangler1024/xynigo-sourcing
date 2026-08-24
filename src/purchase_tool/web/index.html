@@ -214,9 +214,12 @@
     display: flex; align-items: center; justify-content: space-between; gap: 16px;
     background: rgba(255,255,255,.94); border-bottom: 1px solid var(--line); backdrop-filter: blur(12px);
   }
-  .workspace-tabbar { min-width: 0; flex: 1 1 auto; overflow: hidden; }
+  .workspace-tabbar {
+    position: relative; min-width: 0; flex: 1 1 auto;
+    display: flex; align-items: center; gap: 6px;
+  }
   .workspace-tabs {
-    min-width: 0; display: flex; align-items: center; gap: 6px; overflow-x: auto;
+    min-width: 0; flex: 1 1 auto; display: flex; align-items: center; gap: 6px; overflow-x: auto;
     scroll-behavior: smooth; scrollbar-width: none;
   }
   .workspace-tabs::-webkit-scrollbar { display: none; }
@@ -238,6 +241,50 @@
   .workspace-tab-close { width: 26px; border-radius: 7px; color: #8da0b0; font-size: 17px; line-height: 1; }
   .workspace-tab-close:hover { background: rgba(8,37,72,.07); color: var(--navy-950); }
   .workspace-tab-close[hidden] { display: none; }
+  .workspace-tab-scroll, .workspace-tab-list-toggle {
+    flex: 0 0 auto; width: 34px; height: 34px; padding: 0; border: 1px solid #dce6ed; border-radius: 9px;
+    display: grid; place-items: center; background: #fff; color: var(--navy-700); cursor: pointer;
+  }
+  .workspace-tab-scroll { font-size: 21px; line-height: 1; }
+  .workspace-tab-scroll:hover:not(:disabled), .workspace-tab-list-toggle:hover { border-color: #bcd1dc; background: #f3f8fa; color: var(--navy-950); }
+  .workspace-tab-scroll:disabled { cursor: default; opacity: .35; }
+  .workspace-tab-scroll[hidden], .workspace-tab-list-wrap[hidden] { display: none; }
+  .workspace-tab-list-wrap { position: relative; flex: 0 0 auto; }
+  .workspace-tab-list-toggle { position: relative; }
+  .workspace-tab-list-toggle svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; }
+  .workspace-tab-count {
+    position: absolute; top: -6px; right: -5px; min-width: 17px; height: 17px; padding: 0 4px;
+    display: grid; place-items: center; border: 2px solid #fff; border-radius: 999px;
+    background: var(--rhino-600); color: #fff; font-size: 8px; font-weight: 900;
+  }
+  .workspace-tab-menu {
+    position: absolute; top: calc(100% + 9px); right: 0; z-index: 80; width: 270px;
+    overflow: hidden; border: 1px solid #dce6ed; border-radius: 14px;
+    background: rgba(255,255,255,.99); box-shadow: 0 18px 45px rgba(8,37,72,.18);
+  }
+  .workspace-tab-menu[hidden] { display: none; }
+  .workspace-tab-menu-head {
+    padding: 11px 13px 8px; display: flex; align-items: center; justify-content: space-between;
+    color: var(--navy-950); font-size: 11px; font-weight: 900;
+  }
+  .workspace-tab-menu-head span { color: var(--navy-500); font-size: 9px; }
+  .workspace-tab-menu-list { max-height: 310px; padding: 3px 7px 7px; overflow-y: auto; }
+  .workspace-tab-menu-item {
+    width: 100%; min-height: 42px; padding: 7px 9px; border: 0; border-radius: 9px;
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    background: transparent; color: var(--navy-700); text-align: left; cursor: pointer;
+  }
+  .workspace-tab-menu-item:hover { background: #f3f7f9; }
+  .workspace-tab-menu-item.active { background: var(--rhino-100); color: #126f74; }
+  .workspace-tab-menu-item b { min-width: 0; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+  .workspace-tab-menu-item small { flex: 0 0 auto; color: #8da0b0; font-size: 9px; }
+  .workspace-tab-menu-actions { padding: 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; border-top: 1px solid var(--line); background: #f8fafb; }
+  .workspace-tab-menu-action {
+    min-height: 32px; padding: 6px 8px; border: 1px solid #dce6ed; border-radius: 8px;
+    background: #fff; color: var(--navy-700); font-size: 10px; font-weight: 800; cursor: pointer;
+  }
+  .workspace-tab-menu-action:hover:not(:disabled) { border-color: #bcd1dc; color: var(--navy-950); }
+  .workspace-tab-menu-action:disabled { cursor: default; opacity: .45; }
   .topbar-right { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; }
   .pill { display: inline-flex; align-items: center; gap: 7px; padding: 8px 11px; font-size: 12px; font-weight: 800; }
   .pill.ok { background: var(--green-100); }
@@ -622,10 +669,26 @@
   <section class="workspace">
     <header class="topbar">
       <div class="workspace-tabbar">
+        <button class="workspace-tab-scroll" id="workspaceTabScrollLeft" type="button" aria-label="向左滚动页签" title="向左滚动页签" hidden>‹</button>
         <div class="workspace-tabs" id="workspaceTabs" role="tablist" aria-label="已打开业务页面">
           <div class="workspace-tab active" data-workspace-tab="query">
             <button class="workspace-tab-open" type="button" role="tab" aria-selected="true">订单物流查询</button>
             <button class="workspace-tab-close" type="button" aria-label="关闭订单物流查询" hidden>×</button>
+          </div>
+        </div>
+        <button class="workspace-tab-scroll" id="workspaceTabScrollRight" type="button" aria-label="向右滚动页签" title="向右滚动页签" hidden>›</button>
+        <div class="workspace-tab-list-wrap" id="workspaceTabListWrap" hidden>
+          <button class="workspace-tab-list-toggle" id="workspaceTabListToggle" type="button" aria-label="查看全部页签" aria-expanded="false" title="查看全部页签">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h9"/></svg>
+            <span class="workspace-tab-count" id="workspaceTabCount">1</span>
+          </button>
+          <div class="workspace-tab-menu" id="workspaceTabMenu" hidden>
+            <div class="workspace-tab-menu-head">全部页签 <span>最多 10 个</span></div>
+            <div class="workspace-tab-menu-list" id="workspaceTabMenuList"></div>
+            <div class="workspace-tab-menu-actions">
+              <button class="workspace-tab-menu-action" id="workspaceTabCloseOthers" type="button">关闭其他</button>
+              <button class="workspace-tab-menu-action" id="workspaceTabCloseRight" type="button">关闭右侧</button>
+            </div>
           </div>
         </div>
       </div>
@@ -1197,6 +1260,7 @@ const FEATURE_MODULES = {
 };
 let activePrimary = 'fulfillment';
 let activeModule = 'query';
+const MAX_OPEN_FEATURE_TABS = 10;
 let openFeatureTabs = ['query'];
 let settingsPageLoaded = false;
 let hiddenQueryColumns = new Set(['envName', 'ip']);
@@ -2227,6 +2291,64 @@ function syncPrimaryNavigation(primary) {
   $('secondaryTabs').setAttribute('aria-label', `${info.label}二级功能`);
 }
 
+function setWorkspaceTabMenuOpen(open) {
+  const menu = $('workspaceTabMenu');
+  const toggle = $('workspaceTabListToggle');
+  const shouldOpen = Boolean(open) && openFeatureTabs.length > 1;
+  menu.hidden = !shouldOpen;
+  toggle.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
+  if (shouldOpen) renderWorkspaceTabMenu();
+}
+
+function renderWorkspaceTabMenu() {
+  const list = $('workspaceTabMenuList');
+  list.innerHTML = '';
+  openFeatureTabs.forEach(module => {
+    const info = FEATURE_MODULES[module];
+    if (!info) return;
+    const button = document.createElement('button');
+    button.className = 'workspace-tab-menu-item' + (module === activeModule ? ' active' : '');
+    button.type = 'button';
+
+    const label = document.createElement('b');
+    label.textContent = info.label;
+    const primary = document.createElement('small');
+    primary.textContent = PRIMARY_MODULES[info.primary].label;
+    button.append(label, primary);
+    button.onclick = () => {
+      setWorkspaceTabMenuOpen(false);
+      activateFeatureTab(module);
+    };
+    list.appendChild(button);
+  });
+
+  const activeIndex = openFeatureTabs.indexOf(activeModule);
+  $('workspaceTabCloseOthers').disabled = activeIndex < 0 || openFeatureTabs.length <= 1;
+  $('workspaceTabCloseRight').disabled = activeIndex < 0 || activeIndex >= openFeatureTabs.length - 1;
+}
+
+function updateWorkspaceTabControls() {
+  const tabs = $('workspaceTabs');
+  const left = $('workspaceTabScrollLeft');
+  const right = $('workspaceTabScrollRight');
+  left.hidden = true;
+  right.hidden = true;
+  const hasOverflow = tabs.scrollWidth > tabs.clientWidth + 1;
+  left.hidden = !hasOverflow;
+  right.hidden = !hasOverflow;
+  left.disabled = tabs.scrollLeft <= 1;
+  right.disabled = tabs.scrollLeft + tabs.clientWidth >= tabs.scrollWidth - 1;
+  $('workspaceTabCount').textContent = String(openFeatureTabs.length);
+  $('workspaceTabListWrap').hidden = openFeatureTabs.length <= 1;
+  if (openFeatureTabs.length <= 1) setWorkspaceTabMenuOpen(false);
+}
+
+function scrollWorkspaceTabs(direction) {
+  const tabs = $('workspaceTabs');
+  const distance = Math.max(180, Math.floor(tabs.clientWidth * .7));
+  tabs.scrollBy({left: direction * distance, behavior: 'smooth'});
+}
+
 function renderWorkspaceTabs() {
   const tabs = $('workspaceTabs');
   tabs.innerHTML = '';
@@ -2258,9 +2380,11 @@ function renderWorkspaceTabs() {
     item.append(openButton, closeButton);
     tabs.appendChild(item);
   });
+  renderWorkspaceTabMenu();
   requestAnimationFrame(() => {
     const activeTab = tabs.querySelector('.workspace-tab.active');
     if (activeTab) activeTab.scrollIntoView({block: 'nearest', inline: 'nearest'});
+    updateWorkspaceTabControls();
   });
 }
 
@@ -2273,7 +2397,13 @@ function activateFeatureTab(module) {
 
 function openFeatureTab(module) {
   if (!FEATURE_MODULES[module]) return;
-  if (!openFeatureTabs.includes(module)) openFeatureTabs.push(module);
+  if (!openFeatureTabs.includes(module)) {
+    if (openFeatureTabs.length >= MAX_OPEN_FEATURE_TABS) {
+      toast(`最多同时打开 ${MAX_OPEN_FEATURE_TABS} 个业务页签，请先关闭不再使用的页面`);
+      return;
+    }
+    openFeatureTabs.push(module);
+  }
   activateFeatureTab(module);
 }
 
@@ -2288,6 +2418,21 @@ function closeFeatureTab(module) {
   } else {
     renderWorkspaceTabs();
   }
+}
+
+function closeOtherFeatureTabs() {
+  if (!FEATURE_MODULES[activeModule] || openFeatureTabs.length <= 1) return;
+  openFeatureTabs = [activeModule];
+  setWorkspaceTabMenuOpen(false);
+  renderWorkspaceTabs();
+}
+
+function closeRightFeatureTabs() {
+  const activeIndex = openFeatureTabs.indexOf(activeModule);
+  if (activeIndex < 0 || activeIndex >= openFeatureTabs.length - 1) return;
+  openFeatureTabs.splice(activeIndex + 1);
+  setWorkspaceTabMenuOpen(false);
+  renderWorkspaceTabs();
 }
 
 function setPlannedPrimary(primary) {
@@ -2327,6 +2472,22 @@ document.querySelectorAll('[data-primary]').forEach(btn => {
 document.querySelectorAll('[data-module]').forEach(btn => {
   btn.onclick = () => openFeatureTab(btn.dataset.module);
 });
+
+$('workspaceTabScrollLeft').onclick = () => scrollWorkspaceTabs(-1);
+$('workspaceTabScrollRight').onclick = () => scrollWorkspaceTabs(1);
+$('workspaceTabs').addEventListener('scroll', updateWorkspaceTabControls);
+$('workspaceTabListToggle').onclick = event => {
+  event.stopPropagation();
+  setWorkspaceTabMenuOpen($('workspaceTabMenu').hidden);
+};
+$('workspaceTabMenu').onclick = event => event.stopPropagation();
+$('workspaceTabCloseOthers').onclick = closeOtherFeatureTabs;
+$('workspaceTabCloseRight').onclick = closeRightFeatureTabs;
+document.addEventListener('click', () => setWorkspaceTabMenuOpen(false));
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') setWorkspaceTabMenuOpen(false);
+});
+window.addEventListener('resize', updateWorkspaceTabControls);
 
 renderWorkspaceTabs();
 
