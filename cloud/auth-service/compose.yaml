@@ -1,0 +1,54 @@
+name: xynigo-auth
+
+services:
+  db:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      # PostgreSQL 18+ stores clusters below this version-aware parent path.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - identity
+
+  migrate:
+    build: .
+    env_file: .env
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - identity
+    restart: "no"
+
+  auth:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks:
+      - identity
+      - edge
+
+networks:
+  identity:
+    internal: true
+  edge:
+
+volumes:
+  postgres-data:
