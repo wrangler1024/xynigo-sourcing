@@ -14,6 +14,9 @@ API：
   POST /api/register/validate 脱敏校验注册凭证文件
   POST /api/register/start  启动低并发注册
   GET  /api/register/progress 注册脱敏进度
+  GET  /api/buyer-library 读取飞书买家号库脱敏元数据
+  POST /api/buyer-library/import/parse 号商 xlsx 入库预检
+  POST /api/buyer-library/import/commit 二次确认后写入买家号库
   POST /api/envbatch/parse  模块三 xlsx 严格解析（只返回脱敏计划）
   POST /api/envbatch/preview/start/retry-row 模块三预览/执行/单步重试
   GET  /api/envbatch/progress/export-mapping/export-tsv 模块三进度/导出
@@ -37,6 +40,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 from . import __version__
+from .buyer_library import BuyerLibraryJob, BuyerLibraryService
 from .buyer_ledger_sync import validate_unified_schema
 from .buyer_register import BuyerRegistrationTask, RegistrationOrchestrator
 from .excel_export import EXPORT_HEAD, export_bytes
@@ -509,6 +513,10 @@ class AppState(object):
             ledger_sink_factory=lambda: LarkLedgerSink(
                 build_buyer_ledger_service(
                     self.cfg, self.lark_credentials).client))
+        self.buyer_library = BuyerLibraryJob(
+            lambda: BuyerLibraryService(
+                build_buyer_ledger_service(
+                    self.cfg, self.lark_credentials).client))
         self.env_job = EnvBatchJob(
             lambda: self.hub, lambda: self.cfg,
             ledger_sync_factory=lambda: build_buyer_ledger_service(
@@ -948,9 +956,9 @@ class EnvBatchJob(object):
         if write_lark_ledger and self.ledger_sync_factory is None:
             raise ValueError('飞书 OpenAPI 回写尚未配置')
         try:
-            verify_sample_count = max(0, min(10, int(verify_sample_count)))
+            verify_sample_count = max(0, int(verify_sample_count))
         except (TypeError, ValueError) as exc:
-            raise ValueError('出口 IP 抽查数必须是 0-10 的整数') from exc
+            raise ValueError('后台出口 IP 检测数量必须是非负整数') from exc
         with self.lock:
             if self.running:
                 raise RuntimeError('已有模块三任务在进行')
@@ -959,6 +967,7 @@ class EnvBatchJob(object):
             if not pending:
                 raise ValueError('解析计划已过期，请重新选择 xlsx')
             account_count = len(pending['accounts'])
+            verify_sample_count = min(verify_sample_count, account_count)
         parse_assignment(assignment, account_count)
         runtime = self._runtime_config(site)
         # 正式执行同步校验：站点与账号 Cookie 域冲突在消费计划前整批拒收
@@ -1368,11 +1377,12 @@ class BackupEnvJob(object):
         if not confirm_write:
             raise ValueError('正式执行必须二次确认 HubStudio 写入')
         try:
-            verify_sample_count = max(0, min(10, int(verify_sample_count)))
+            verify_sample_count = max(0, int(verify_sample_count))
         except (TypeError, ValueError) as exc:
-            raise ValueError('出口 IP 抽查数必须是 0-10 的整数') from exc
+            raise ValueError('后台出口 IP 检测数量必须是非负整数') from exc
         buyer, count, backup_type, purchase_date = self._validate_params(
             buyer, count, backup_type, purchase_date)
+        verify_sample_count = min(verify_sample_count, count)
         with self.lock:
             if self.running:
                 raise RuntimeError('已有备用环境任务在进行')
@@ -1555,6 +1565,11 @@ class Handler(BaseHTTPRequestHandler):
                 snap = STATE.reg_job.snapshot()
                 snap['hubConnected'] = STATE.hub_status()[0]
                 self._json(snap)
+            elif path == '/api/buyer-library':
+                self._json(STATE.buyer_library.list_public(
+                    site=(query.get('site') or [''])[0],
+                    status=(query.get('status') or [''])[0],
+                    limit=(query.get('limit') or ['100'])[0]))
             elif path == '/api/envbatch/progress':
                 snap = STATE.env_job.snapshot()
                 snap['hubConnected'] = STATE.hub_status()[0]
@@ -1721,6 +1736,18 @@ class Handler(BaseHTTPRequestHandler):
                     write_lark_ledger=bool(body.get('writeLarkLedger')),
                     confirm_lark_write=bool(body.get('confirmLarkWrite')))
                 self._json({'started': True, 'count': count})
+            elif path == '/api/buyer-library/import/parse':
+                result = STATE.buyer_library.parse(
+                    body.get('filename'), body.get('contentBase64'),
+                    body.get('site') or 'MX', body.get('vendorName'),
+                    body.get('batchNo'),
+                    body.get('purchaseDate') or time.strftime('%Y-%m-%d'))
+                self._json(result)
+            elif path == '/api/buyer-library/import/commit':
+                result = STATE.buyer_library.commit(
+                    body.get('planId'),
+                    confirm_write=bool(body.get('confirmWrite')))
+                self._json({'saved': True, **result})
             elif path == '/api/envbatch/parse':
                 result = STATE.env_job.parse(
                     body.get('filename'), body.get('contentBase64'))

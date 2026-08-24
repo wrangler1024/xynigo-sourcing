@@ -305,6 +305,27 @@
   .planning-card h2 { color: var(--navy-950); font-size: 19px; }
   .planning-card p { margin: 9px auto 0; max-width: 480px; color: var(--navy-500); font-size: 12px; line-height: 1.8; }
   .planning-note { display: inline-flex; margin-top: 16px; padding: 6px 10px; border-radius: 999px; background: var(--parcel-100); color: #815510; font-size: 10px; font-weight: 900; }
+  .resource-toolbar { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+  .resource-toolbar .field { min-width: 170px; }
+  .resource-toolbar .field select { width: 100%; }
+  .resource-toolbar .push { margin-left: auto; }
+  .resource-metrics { display: grid; grid-template-columns: repeat(5,minmax(110px,1fr)); gap: 10px; }
+  .resource-metric { padding: 13px 15px; border: 1px solid var(--line); border-radius: 13px; background: #f8fafb; }
+  .resource-metric b { display: block; color: var(--navy-950); font-size: 20px; }
+  .resource-metric span { display: block; margin-top: 3px; color: var(--navy-500); font-size: 10px; font-weight: 800; }
+  .resource-metric.available b { color: var(--green); }
+  .resource-metric.warning b { color: var(--amber); }
+  .resource-metric.bound b { color: var(--tech-blue-dark); }
+  .resource-metric.abnormal b { color: var(--coral-500); }
+  .resource-state { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 11px; background: #f8fafb; color: var(--navy-500); font-size: 11px; line-height: 1.6; }
+  .resource-state.ok { border-color: #bce5d2; background: var(--green-100); color: var(--green); }
+  .resource-state.bad { border-color: #ffd2c7; background: var(--coral-100); color: var(--coral-500); }
+  .resource-state.warn { border-color: #f2ddb2; background: var(--parcel-100); color: var(--amber); }
+  .import-grid { display: grid; grid-template-columns: repeat(4,minmax(160px,1fr)); gap: 12px; }
+  .import-grid .field input, .import-grid .field select { width: 100%; }
+  .credential-note { margin-top: 12px; padding: 11px 13px; border-left: 3px solid var(--rhino-500); border-radius: 0 10px 10px 0; background: var(--rhino-100); color: #416d72; font-size: 11px; line-height: 1.65; }
+  #buyerLibraryWrap { max-height: 520px; overflow: auto; }
+  #buyerLibraryWrap th { position: sticky; top: 0; z-index: 1; box-shadow: inset 0 -1px 0 var(--line); }
   .card { padding: 19px; border: 1px solid var(--line); border-radius: 20px; background: #fff; box-shadow: 0 8px 24px rgba(8,37,72,.04); }
   .card-title { margin-bottom: 14px; color: var(--navy-950); font-size: 15px; font-weight: 900; }
   .legend { color: var(--navy-500); font-size: 11px; line-height: 1.6; }
@@ -384,6 +405,9 @@
     .side-footer span:last-child { display: none; }
   }
   @media (max-width: 760px) {
+    .resource-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .import-grid { grid-template-columns: 1fr; }
+    .resource-toolbar .push { margin-left: 0; }
     main { padding: 16px 14px 28px; }
     .topbar { padding: 0 14px; }
     .breadcrumb > span:first-child, .breadcrumb > span:nth-child(2) { display: none; }
@@ -533,7 +557,7 @@
       </button>
       <button class="module-tab" data-primary="resources" title="资源中心">
         <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2M19 8v6M16 11h6"/></svg></span>
-        <span class="nav-text"><b>资源中心</b><small>账号 · 环境 · 台账</small></span>
+        <span class="nav-text"><b>资源中心</b><small>库存 · 入库 · 注册 · 环境</small></span>
       </button>
       <button class="module-tab" data-primary="analytics" title="数据分析">
         <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></span>
@@ -587,8 +611,10 @@
           <button class="secondary-tab" data-parent="procurement" data-planned="采购执行" disabled hidden>采购执行<span class="secondary-status planned">规划</span></button>
           <button class="secondary-tab" data-parent="procurement" data-planned="异常协同" disabled hidden>异常协同<span class="secondary-status planned">规划</span></button>
           <button class="secondary-tab active" data-parent="fulfillment" data-module="query">订单物流查询<span class="secondary-status">现有</span></button>
-          <button class="secondary-tab" data-parent="resources" data-module="register" hidden>买家号注册<span class="secondary-status">现有</span></button>
-          <button class="secondary-tab" data-parent="resources" data-module="envbatch" hidden>买家号建环境<span class="secondary-status">现有</span></button>
+          <button class="secondary-tab" data-parent="resources" data-module="buyerlib" hidden>买家号库<span class="secondary-status">新增</span></button>
+          <button class="secondary-tab" data-parent="resources" data-module="vendorimport" hidden>号商入库<span class="secondary-status">新增</span></button>
+          <button class="secondary-tab" data-parent="resources" data-module="register" hidden>账号注册<span class="secondary-status">现有</span></button>
+          <button class="secondary-tab" data-parent="resources" data-module="envbatch" hidden>采购环境<span class="secondary-status">现有</span></button>
           <button class="secondary-tab" data-parent="analytics" data-planned="采购效率" disabled hidden>采购效率<span class="secondary-status planned">规划</span></button>
           <button class="secondary-tab" data-parent="analytics" data-planned="履约质量" disabled hidden>履约质量<span class="secondary-status planned">规划</span></button>
           <button class="secondary-tab" data-parent="analytics" data-planned="资源健康" disabled hidden>资源健康<span class="secondary-status planned">规划</span></button>
@@ -683,6 +709,74 @@
       <span>未查询 <b id="cntPending">0</b></span>
     </div>
   </section>
+  </div>
+
+  <div class="module-panel hidden" id="buyerLibraryPanel">
+    <section class="card">
+      <div class="card-title">买家号库存概览 <span class="legend">读取当前连接的飞书买家号表，只展示脱敏元数据</span></div>
+      <div class="resource-metrics">
+        <div class="resource-metric"><b id="buyerCountTotal">—</b><span>账号总量</span></div>
+        <div class="resource-metric available"><b id="buyerCountAvailable">—</b><span>当前可用</span></div>
+        <div class="resource-metric warning"><b id="buyerCountReserved">—</b><span>预占绑定</span></div>
+        <div class="resource-metric bound"><b id="buyerCountBound">—</b><span>已经绑定</span></div>
+        <div class="resource-metric abnormal"><b id="buyerCountAbnormal">—</b><span>异常停用</span></div>
+      </div>
+      <div class="resource-state" id="buyerLibraryState">正在读取飞书买家号库…</div>
+    </section>
+
+    <section class="card table-card">
+      <div class="card-title table-title-row">
+        <div class="table-title-copy"><span>账号明细</span><span class="legend">密码、Cookie、接码 Key 永不返回页面</span></div>
+        <div class="resource-toolbar">
+          <div class="field"><label>站点</label><select id="buyerLibrarySite"><option value="">全部站点</option><option value="MX">墨西哥站</option><option value="US">美国站</option></select></div>
+          <div class="field"><label>账号状态</label><select id="buyerLibraryStatus"><option value="">全部状态</option><option value="可用">可用</option><option value="已预占">已预占</option><option value="已绑定">已绑定</option><option value="异常">异常</option><option value="停用">停用</option></select></div>
+          <button class="btn primary" id="btnBuyerLibraryRefresh" type="button">↻ 刷新库存</button>
+        </div>
+      </div>
+      <div class="table-wrap" id="buyerLibraryWrap">
+        <table>
+          <thead><tr><th>账号</th><th>站点</th><th>来源</th><th>号商/批次</th><th>购买日期</th><th>账号状态</th><th>凭证状态</th><th>采购员</th><th>绑定环境</th><th>IP检测</th></tr></thead>
+          <tbody id="buyerLibraryTbody"><tr><td colspan="10" class="empty-tip">正在读取买家号库…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <div class="module-panel hidden" id="vendorImportPanel">
+    <section class="card">
+      <div class="card-title">① 填写入库批次 <span class="legend">号商账号先入库，创建采购环境时再由库存分配</span></div>
+      <div class="import-grid">
+        <div class="field"><label>入库站点</label><select id="buyerImportSite"><option value="MX">墨西哥站 · MX</option><option value="US">美国站 · US</option></select></div>
+        <div class="field"><label>号商名称</label><input class="env-text" type="text" id="buyerImportVendor" maxlength="50" autocomplete="off" placeholder="例如：供应商简称"></div>
+        <div class="field"><label>入库批次</label><input class="env-text" type="text" id="buyerImportBatch" maxlength="80" autocomplete="off" placeholder="例如：20260824-A"></div>
+        <div class="field"><label>购买日期</label><input class="env-text" type="date" id="buyerImportDate"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-title">② 上传号商交付文件 <span class="legend">固定 4 列：邮箱 / 密码 / 接码Key / Cookie；兼容有表头或无表头</span></div>
+      <div class="file-box">
+        <b>选择号商交付 xlsx</b>
+        <input type="file" id="buyerImportFile" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+        <div class="hint">文件只传给本机服务并保存在短期内存计划中；预览仅显示脱敏邮箱和凭证完整性，不回显任何密码、Cookie 或接码链接。</div>
+        <div style="margin-top:8px"><a class="btn-mini" href="/api/envbatch/template" style="text-decoration:none;display:inline-block;padding:6px 12px">📥 下载填写模板</a></div>
+      </div>
+      <div class="credential-note">安全顺序：本地严格解析 → 飞书字段校验 → 邮箱/号商单号查重 → 脱敏预览 → 单独确认飞书写入。任一冲突都会阻止整批入库。</div>
+      <div class="resource-state">新表结构：保留现有统一台账字段；新增「来源类型」（号商采购/自主注册）、「号商名称」、「入库批次」、「入库时间」、「凭证状态」（未验证/验证通过/验证失败）。账号状态继续使用未绑定/已绑定/已登录/异常/封号/停用，保持现有注册与建环境回写兼容。</div>
+      <div class="action-row" style="margin-top:14px">
+        <button class="btn" id="btnBuyerImportParse" type="button">👁 解析并预检</button>
+        <button class="btn primary" id="btnBuyerImportCommit" type="button" disabled>＋ 确认入库</button>
+        <span class="hint" id="buyerImportHint">尚未生成入库计划</span>
+      </div>
+    </section>
+
+    <section class="card table-card">
+      <div class="card-title">③ 脱敏预览</div>
+      <div class="resource-state" id="buyerImportState">尚未选择文件</div>
+      <div class="table-wrap">
+        <table><thead><tr><th>账号</th><th>Cookie</th><th>查重结果</th></tr></thead><tbody id="buyerImportTbody"><tr><td colspan="3" class="empty-tip">完成预检后显示脱敏账号</td></tr></tbody></table>
+      </div>
+    </section>
   </div>
 
   <div class="module-panel hidden" id="registerPanel">
@@ -794,7 +888,8 @@
     <section class="card">
       <div class="card-title">③ 执行确认</div>
       <div class="check-row">
-        <label><input type="checkbox" id="envVerify" checked> <span>批末逐个抽查 <input class="env-text" type="text" id="envVerifyCount" value="3" style="width:42px;padding:2px 5px"> 个环境出口 IP，检测后立即关闭。</span></label>
+        <label><input type="checkbox" id="envVerify" checked> <span>后台验证全部新建环境出口 IP，读取检测结果后立即关闭环境。当前 HubStudio 本地接口未提供真正无头参数，检测时可能短暂出现环境窗口。</span></label>
+        <input type="hidden" id="envVerifyCount" value="1">
         <label><input type="checkbox" id="envWriteLedger" disabled> <span id="envWriteLedgerLabel">建环境成功后通过“小犀代采”企业自建应用回写当前已连接的飞书统一台账；默认关闭，正式执行时还会单独二次确认。</span></label>
         <div class="hint" id="envLedgerState">正在读取飞书 OpenAPI 配置状态…</div>
       </div>
@@ -824,7 +919,7 @@
     <section class="card">
       <div class="card-title">⑤ 批次摘要与留档</div>
       <div class="stat-grid" id="envSummary"><div class="stat-chip"><b>0</b>完成</div><div class="stat-chip"><b>0</b>失败</div></div>
-      <div class="reg-plan" id="envIpList">尚无出口 IP 抽查结果</div>
+      <div class="reg-plan" id="envIpList">尚无后台出口 IP 检测结果</div>
       <div class="reg-plan ledger-summary" id="envLedgerSummary">飞书台账回写未启用。</div>
       <div class="action-row" style="margin-top:10px">
         <button class="btn" id="btnEnvRetryLedger" disabled>↻ 仅重试飞书回写</button>
@@ -871,11 +966,12 @@
     </section>
 
     <section class="card">
-      <div class="card-title">买家号建环境设置</div>
+      <div class="card-title">采购环境设置</div>
       <div class="settings-grid">
         <div class="settings-field">
-          <label>出口 IP 验证抽查数（0-10）</label>
-          <input type="text" id="cfgEnvVerify" value="3" inputmode="numeric">
+          <label>后台出口 IP 验证</label>
+          <div class="query-col-checks"><label><input type="checkbox" id="cfgEnvVerify" checked> 新建完成后验证全部环境</label></div>
+          <div class="hint">当前 HubStudio 接口未提供真正无头参数，任务在后台逐个启动检测并立即关闭。</div>
         </div>
         <div class="settings-field">
           <label>建环境并发数（1-10）</label>
@@ -991,6 +1087,7 @@ let lastRows = [];
 let toastTimer = null;
 let regTasks = null;
 let regRunning = false;
+let buyerImportPlanId = null;
 let envPlanId = null;
 let envAccountCount = 0;
 let envRunning = false;
@@ -1029,8 +1126,8 @@ const PRIMARY_MODULES = {
     summary: '批量查询订单与物流状态，异常任务集中处理，结果一键导出。'
   },
   resources: {
-    label: '资源中心', hint: '账号 · 环境 · 台账', defaultModule: 'register',
-    summary: '统一管理买家号注册、HubStudio 环境与飞书台账。'
+    label: '资源中心', hint: '库存 · 入库 · 注册 · 环境', defaultModule: 'buyerlib',
+    summary: '统一管理买家号库存、账号来源、HubStudio 环境与飞书台账。'
   },
   analytics: {
     label: '数据分析', hint: '效率 · 履约 · 健康', defaultModule: null,
@@ -1073,6 +1170,7 @@ function localYmd() {
   return String(now.getFullYear()) + String(now.getMonth() + 1).padStart(2, '0') + String(now.getDate()).padStart(2, '0');
 }
 $('envDate').value = localYmd().replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3');
+$('buyerImportDate').value = $('envDate').value;
 
 function toast(msg) {
   const el = $('toast');
@@ -1626,9 +1724,9 @@ function setEnvMode(next) {
   $('envTbody').innerHTML = `<tr><td colspan="8" class="empty-tip">尚未开始</td></tr>`;
   $('envBar').style.width = '0%';
   $('envSummary').innerHTML = '<div class="stat-chip"><b>0</b>完成</div><div class="stat-chip"><b>0</b>失败</div>';
-  $('envIpList').textContent = '尚无出口 IP 抽查结果';
+  $('envIpList').textContent = '尚无后台出口 IP 检测结果';
   renderLedgerSummary({enabled:false});
-  $('envVerifyCount').value = bound ? 3 : 1;
+  $('envVerifyCount').value = '1';
   $('envPreviewText').textContent = bound
     ? '解析后点“干跑预览”，将只读 HubStudio 全量环境并核对续排序号，不做任何写入。'
     : '选定采购员、数量与类型后点“干跑预览”，只读核对续排序号，不做任何写入。';
@@ -1828,7 +1926,7 @@ function renderEnvBatch(snap) {
   const summary = snap.summary || {};
   $('envSummary').innerHTML = `<div class="stat-chip ok"><b>${summary.done || done}</b>完成</div><div class="stat-chip bad"><b>${summary.failed || rows.filter(r => r.state === 'failed').length}</b>失败</div><div class="stat-chip blue"><b>${summary.ipOk || 0}/${summary.ipTotal || 0}</b>出口 IP 国家匹配</div>`;
   const checks = snap.ipChecks || [];
-  $('envIpList').textContent = checks.length ? '抽查明细：\n' + checks.map(x => `${x.envName} → ${x.ip || '—'} · ${x.country || x.error || '未知'} ${x.ok ? '✓' : '⚠'}`).join('\n') : '尚无出口 IP 抽查结果';
+  $('envIpList').textContent = checks.length ? '后台检测明细：\n' + checks.map(x => `${x.envName} → ${x.ip || '—'} · ${x.country || x.error || '未知'} ${x.ok ? '✓' : '⚠'}`).join('\n') : '尚无后台出口 IP 检测结果';
 }
 
 function renderBackupBatch(snap) {
@@ -1864,7 +1962,7 @@ function renderBackupBatch(snap) {
   const summary = snap.summary || {};
   $('envSummary').innerHTML = `<div class="stat-chip ok"><b>${summary.done || done}</b>完成</div><div class="stat-chip bad"><b>${summary.failed || rows.filter(r => r.state === 'failed').length}</b>失败</div><div class="stat-chip blue"><b>${summary.ipOk || 0}/${summary.ipTotal || 0}</b>出口 IP 国家匹配</div>`;
   const checks = snap.ipChecks || [];
-  $('envIpList').textContent = checks.length ? '抽查明细：\n' + checks.map(x => `${x.envName} → ${x.ip || '—'} · ${x.country || x.error || '未知'} ${x.ok ? '✓' : '⚠'}`).join('\n') : '尚无出口 IP 抽查结果';
+  $('envIpList').textContent = checks.length ? '后台检测明细：\n' + checks.map(x => `${x.envName} → ${x.ip || '—'} · ${x.country || x.error || '未知'} ${x.ok ? '✓' : '⚠'}`).join('\n') : '尚无后台出口 IP 检测结果';
 }
 
 let envPollFailures = 0;
@@ -2028,11 +2126,13 @@ $('btnRetryFail').onclick = async () => {
 /* ---------- 模块切换与注册 ---------- */
 
 function setFeaturePanel(module) {
-  const labels = {query:'订单物流查询',register:'买家号注册',envbatch:'买家号建环境',settings:'本机与飞书设置'};
+  const labels = {query:'订单物流查询',buyerlib:'买家号库',vendorimport:'号商入库',register:'账号注册',envbatch:'采购环境',settings:'本机与飞书设置'};
   const summaries = {
     query:'批量查询订单与物流状态，异常任务集中处理，结果一键导出。',
+    buyerlib:'集中查看可用、预占、已绑定与异常买家号，页面仅展示脱敏元数据。',
+    vendorimport:'号商账号先完成严格校验与查重，再经单独确认写入飞书买家号库。',
     register:'按任务完成账号注册、验证与归档，敏感凭证不在页面持久保存。',
-    envbatch:'解析号商名单，批量创建采购环境并按需回写飞书统一台账。',
+    envbatch:'按采购需求创建 HubStudio 环境，并在后台验证全部新建环境出口 IP。',
     settings:'集中管理本机连接、建环境偏好与飞书 OpenAPI 配置。'
   };
   activeModule = module;
@@ -2040,6 +2140,8 @@ function setFeaturePanel(module) {
     btn.classList.toggle('active', btn.dataset.module === module);
   });
   $('queryPanel').classList.toggle('hidden', module !== 'query');
+  $('buyerLibraryPanel').classList.toggle('hidden', module !== 'buyerlib');
+  $('vendorImportPanel').classList.toggle('hidden', module !== 'vendorimport');
   $('registerPanel').classList.toggle('hidden', module !== 'register');
   $('envPanel').classList.toggle('hidden', module !== 'envbatch');
   $('settingsPanel').classList.toggle('hidden', module !== 'settings');
@@ -2047,6 +2149,8 @@ function setFeaturePanel(module) {
   $('moduleLabel').textContent = labels[module];
   $('moduleSummary').textContent = summaries[module];
   if (module === 'query') poll();
+  else if (module === 'buyerlib') loadBuyerLibrary();
+  else if (module === 'vendorimport') return;
   else if (module === 'register') pollRegister();
   else if (module === 'envbatch') { pollEnvBatch(); refreshEnvPreflight(); }
   else loadSettingsPage();
@@ -2055,6 +2159,8 @@ function setFeaturePanel(module) {
 function setPlannedPrimary(primary) {
   const info = PRIMARY_MODULES[primary];
   $('queryPanel').classList.add('hidden');
+  $('buyerLibraryPanel').classList.add('hidden');
+  $('vendorImportPanel').classList.add('hidden');
   $('registerPanel').classList.add('hidden');
   $('envPanel').classList.add('hidden');
   $('settingsPanel').classList.add('hidden');
@@ -2153,6 +2259,135 @@ function bytesToBase64(bytes) {
   return btoa(binary);
 }
 
+function buyerStatusBadge(status) {
+  const cls = status === '可用' ? 'ok' : (['异常','停用'].includes(status) ? 'fail' : 'st-procesando');
+  return `<span class="badge ${cls}">${esc(status || '待校验')}</span>`;
+}
+
+async function loadBuyerLibrary() {
+  const button = $('btnBuyerLibraryRefresh');
+  button.disabled = true;
+  $('buyerLibraryState').className = 'resource-state';
+  $('buyerLibraryState').textContent = '正在读取飞书买家号库…';
+  $('buyerLibraryTbody').innerHTML = '<tr><td colspan="10" class="empty-tip">正在读取买家号库…</td></tr>';
+  try {
+    const query = new URLSearchParams({
+      site:$('buyerLibrarySite').value,
+      status:$('buyerLibraryStatus').value,
+      limit:'100'
+    });
+    const result = await api('/api/buyer-library?' + query.toString());
+    const counts = result.counts || {};
+    $('buyerCountTotal').textContent = counts.total || 0;
+    $('buyerCountAvailable').textContent = counts.available || 0;
+    $('buyerCountReserved').textContent = counts.reserved || 0;
+    $('buyerCountBound').textContent = counts.bound || 0;
+    $('buyerCountAbnormal').textContent = Number(counts.abnormal || 0) + Number(counts.disabled || 0);
+    const rows = result.rows || [];
+    $('buyerLibraryState').className = 'resource-state ok';
+    $('buyerLibraryState').textContent = `飞书连接正常，共加载 ${rows.length} 条脱敏记录${result.truncated ? '（列表已按上限截取）' : ''}。`;
+    $('buyerLibraryTbody').innerHTML = rows.length ? rows.map(row => `<tr>
+      <td class="mono">${esc(row.emailMasked)}</td><td>${esc(row.site) || '—'}</td><td>${esc(row.source) || '—'}</td>
+      <td>${esc([row.vendor,row.batchNo].filter(Boolean).join(' · ')) || '—'}</td><td>${esc(row.purchaseDate) || '—'}</td>
+      <td>${buyerStatusBadge(row.status)}</td><td>${esc(row.credentialStatus) || '—'}</td><td>${esc(row.buyer) || '—'}</td>
+      <td class="mono">${esc(row.envName) || '—'}</td><td>${esc(row.ipStatus) || '—'}</td></tr>`).join('')
+      : '<tr><td colspan="10" class="empty-tip">当前筛选条件下没有账号</td></tr>';
+  } catch (err) {
+    for (const id of ['buyerCountTotal','buyerCountAvailable','buyerCountReserved','buyerCountBound','buyerCountAbnormal']) $(id).textContent = '—';
+    $('buyerLibraryState').className = 'resource-state bad';
+    $('buyerLibraryState').textContent = `买家号库暂不可用：${err.message}。请在“系统管理”连接按新表字段设计创建的飞书多维表。`;
+    $('buyerLibraryTbody').innerHTML = '<tr><td colspan="10" class="empty-tip">完成飞书配置后刷新库存</td></tr>';
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function invalidateBuyerImport(message='批次信息已变化，请重新解析并预检') {
+  if (!buyerImportPlanId) return;
+  buyerImportPlanId = null;
+  $('btnBuyerImportCommit').disabled = true;
+  $('buyerImportHint').textContent = message;
+  $('buyerImportState').className = 'resource-state warn';
+  $('buyerImportState').textContent = message;
+}
+
+$('btnBuyerLibraryRefresh').onclick = loadBuyerLibrary;
+$('buyerLibrarySite').onchange = loadBuyerLibrary;
+$('buyerLibraryStatus').onchange = loadBuyerLibrary;
+for (const id of ['buyerImportSite','buyerImportVendor','buyerImportBatch','buyerImportDate']) {
+  $(id).onchange = () => invalidateBuyerImport();
+}
+
+$('btnBuyerImportParse').onclick = async () => {
+  buyerImportPlanId = null;
+  $('btnBuyerImportCommit').disabled = true;
+  const input = $('buyerImportFile');
+  const file = input.files[0];
+  const vendorName = $('buyerImportVendor').value.trim();
+  const batchNo = $('buyerImportBatch').value.trim();
+  const purchaseDate = $('buyerImportDate').value;
+  if (!vendorName || !batchNo || !purchaseDate) { toast('请先填写号商名称、入库批次和购买日期'); return; }
+  if (!file) { toast('请选择号商交付 xlsx'); return; }
+  $('btnBuyerImportParse').disabled = true;
+  $('buyerImportState').className = 'resource-state';
+  $('buyerImportState').textContent = '正在本机解析文件并执行飞书只读查重…';
+  try {
+    const contentBase64 = bytesToBase64(new Uint8Array(await file.arrayBuffer()));
+    const result = await api('/api/buyer-library/import/parse', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({filename:file.name, contentBase64, site:$('buyerImportSite').value, vendorName, batchNo, purchaseDate})
+    });
+    buyerImportPlanId = result.planId;
+    const conflictMap = new Map((result.conflictRows || []).map(row => [row.accountId,row.message]));
+    $('buyerImportTbody').innerHTML = (result.preview || []).map(row => `<tr>
+      <td class="mono">${esc(row.emailMasked)}</td><td>${row.cookieReady ? '<span class="badge ok">完整</span>' : '<span class="badge fail">缺失</span>'}</td>
+      <td>${!result.libraryReady ? '<span class="badge st-procesando">待新表</span>' : (conflictMap.has(row.accountId) ? `<span class="badge fail">${esc(conflictMap.get(row.accountId))}</span>` : '<span class="badge ok">可入库</span>')}</td></tr>`).join('') || '<tr><td colspan="3" class="empty-tip">没有可预览的账号</td></tr>';
+    const ready = result.libraryReady && result.conflicts === 0;
+    $('btnBuyerImportCommit').disabled = !ready;
+    $('btnBuyerImportCommit').dataset.count = result.count;
+    $('buyerImportHint').textContent = ready ? `预检通过，待确认写入 ${result.count} 条` : '预检未通过，禁止写入';
+    $('buyerImportState').className = `resource-state ${ready ? 'ok' : (result.libraryReady ? 'warn' : 'bad')}`;
+    $('buyerImportState').textContent = ready
+      ? `本地格式与飞书查重均通过：${result.count} 个账号，Cookie 完整 ${result.cookieCount}/${result.count}。`
+      : (result.libraryReady
+        ? `发现 ${result.conflicts} 条重复记录，已阻止整批入库。`
+        : `飞书买家号库尚未就绪：${result.libraryError}`);
+  } catch (err) {
+    $('buyerImportState').className = 'resource-state bad';
+    $('buyerImportState').textContent = '入库预检失败：' + err.message;
+    $('buyerImportTbody').innerHTML = '<tr><td colspan="3" class="empty-tip">请修正文件或批次信息后重试</td></tr>';
+  } finally {
+    input.value = '';
+    $('btnBuyerImportParse').disabled = false;
+  }
+};
+
+$('btnBuyerImportCommit').onclick = async () => {
+  if (!buyerImportPlanId) { toast('入库计划已失效，请重新解析'); return; }
+  const count = $('btnBuyerImportCommit').dataset.count || '本批';
+  if (!confirm(`将向当前连接的飞书买家号库新增 ${count} 条账号记录，包含密码、Cookie 与接码 Key 等敏感凭证。\n\n系统会在写入前再次查重；这是正式飞书写入，是否继续？`)) return;
+  const button = $('btnBuyerImportCommit');
+  button.disabled = true;
+  button.textContent = '正在入库…';
+  try {
+    const result = await api('/api/buyer-library/import/commit', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({planId:buyerImportPlanId, confirmWrite:true})
+    });
+    buyerImportPlanId = null;
+    $('buyerImportState').className = 'resource-state ok';
+    $('buyerImportState').textContent = `入库完成：已向飞书新增 ${result.created} 条账号。`;
+    $('buyerImportHint').textContent = '本批次已完成；如需继续，请重新选择文件';
+    toast(`号商入库完成：${result.created} 条`);
+  } catch (err) {
+    $('buyerImportState').className = 'resource-state bad';
+    $('buyerImportState').textContent = '正式入库失败：' + err.message;
+    button.disabled = false;
+  } finally {
+    button.textContent = '＋ 确认入库';
+  }
+};
+
 $('envFile').onchange = async e => {
   envPlanId = null;
   envAccountCount = 0;
@@ -2211,8 +2446,7 @@ $('btnEnvStart').onclick = async () => {
   if (!hubConnected) { toast('未检测到 HubStudio'); return; }
   const site = $('envSite').value;
   const siteName = site === 'US' ? '美国站' : '墨西哥站';
-  const verifyCount = $('envVerify').checked ? parseInt($('envVerifyCount').value || (envMode === 'backup' ? '1' : '3'), 10) : 0;
-  if (Number.isNaN(verifyCount) || verifyCount < 0 || verifyCount > 10) { toast('出口 IP 抽查数请填 0-10'); return; }
+  const verifyCount = $('envVerify').checked ? (envMode === 'backup' ? envBackup.count : envAccountCount) : 0;
   if (envMode === 'backup') {
     if (!confirm(`将按${siteName}为 ${envBackup.buyer} 创建 ${envBackup.count} 个「${envBackup.type}环境」：只建环境并写备注，不导 Cookie、不绑号、不写台账。\n\n确认正式执行？`)) return;
     beginEnvSubmission(
@@ -2436,6 +2670,7 @@ async function loadEnvGroups() {
     if (Array.isArray(cfg.buyerDefaultSplit) && cfg.buyerDefaultSplit.length) envDefaultSplit = cfg.buyerDefaultSplit;
     if (cfg.backupMaxCount) envBackupMax = cfg.backupMaxCount;
     if (cfg.importBuyerPlan) envImportBuyerPlan = cfg.importBuyerPlan;
+    $('envVerify').checked = Number(cfg.verifySampleCount == null ? 1 : cfg.verifySampleCount) > 0;
     // 买家号环境分组过滤：Hub 里店铺/后台/运营分组太多，只留采购与买家号相关
     const groups = Array.from(new Set(
       (result.groups || []).map(group => String(group || '').trim()).filter(Boolean)
@@ -2652,7 +2887,7 @@ async function loadSettingsPage() {
     setHiddenQueryColumns(cfg.hiddenQueryColumns || []);
     $('cfgHideEnvName').checked = hiddenQueryColumns.has('envName');
     $('cfgHideIp').checked = hiddenQueryColumns.has('ip');
-    $('cfgEnvVerify').value = cfg.verifySampleCount == null ? 3 : cfg.verifySampleCount;
+    $('cfgEnvVerify').checked = Number(cfg.verifySampleCount == null ? 1 : cfg.verifySampleCount) > 0;
     $('cfgEnvWorkers').value = cfg.envCreateWorkers == null ? 5 : cfg.envCreateWorkers;
     const rawPlan = cfg.importBuyerPlan || '1:新刚';
     $('cfgEnvAssign').value = planTemplateIsValid(rawPlan) ? rawPlan : '1:新刚';
@@ -2672,8 +2907,7 @@ $('btnCfgSave').onclick = async () => {
   if (!port || port < 1 || port > 65535) { toast('端口无效，请输入 1-65535 的数字'); return; }
   const conc = parseInt($('cfgConcurrency').value.trim(), 10);
   if (!conc || conc < 1 || conc > 5) { toast('并发数请填 1-5 的整数（建议 2-3）'); return; }
-  const verifyCount = parseInt($('cfgEnvVerify').value.trim(), 10);
-  if (Number.isNaN(verifyCount) || verifyCount < 0 || verifyCount > 10) { toast('模块三抽查数请填 0-10'); return; }
+  const verifyCount = $('cfgEnvVerify').checked ? 1 : 0;
   const envWorkers = parseInt($('cfgEnvWorkers').value.trim(), 10);
   if (Number.isNaN(envWorkers) || envWorkers < 1 || envWorkers > 10) { toast('模块三建环境并发数请填 1-10'); return; }
   const importBuyerPlan = $('cfgEnvAssign').value.trim();
@@ -2696,7 +2930,8 @@ $('btnCfgSave').onclick = async () => {
       body: JSON.stringify({ hubPort: port, concurrency: conc, verifySampleCount: verifyCount, envCreateWorkers: envWorkers, importBuyerPlan, hiddenQueryColumns, purchaseSite:$('envSite').value, purchaseTags, proxyLink, proxyClear })
     });
     setHiddenQueryColumns(hiddenQueryColumns);
-    $('envVerifyCount').value = verifyCount;
+    $('envVerify').checked = verifyCount > 0;
+    $('envVerifyCount').value = '1';
     envImportBuyerPlan = importBuyerPlan;
     setHubStatus(j.hubConnected);
     await loadEnvGroups();
