@@ -63,28 +63,29 @@ def tsv_rows(data):
 class LedgerPasteTsvTests(unittest.TestCase):
     def test_mx_tsv_is_headerless_and_matches_unified_table_from_site(self):
         rows = tsv_rows(ledger_tsv_bytes(
-            [result_row('MX')], 'MX', '20260820'))
+            [result_row('MX')], 'MX', '20260820', TEST_TAG))
         self.assertEqual(rows, [[
             'MX', 'paste@example.com', 'paste-secret',
             'https://codes.example.test/get?orderNo=paste123',
             '[{"name":"sid","value":"paste-cookie"}]',
             'order-paste-001', '2026-08-20', '已绑定', 'XG-MX-0820-001',
-            '2001', '新刚', '2026-08-20 15:30:00']])
+            TEST_TAG, '2001', '新刚', '2026-08-20 15:30:00']])
         self.assertNotIn('站点', rows[0])
 
     def test_us_tsv_uses_same_unified_table_order(self):
         rows = tsv_rows(ledger_tsv_bytes(
-            [result_row('US')], 'US', '20260820'))
+            [result_row('US')], 'US', '20260820', TEST_US_TAG))
         self.assertEqual(rows, [[
             'US', 'paste@example.com', 'paste-secret',
             'https://codes.example.test/get?orderNo=paste123',
             '[{"name":"sid","value":"paste-cookie"}]',
             'order-paste-001', '2026-08-20', '已绑定', 'XG-US-0820-001',
-            '2001', '新刚', '2026-08-20 15:30:00']])
+            TEST_US_TAG, '2001', '新刚', '2026-08-20 15:30:00']])
 
     def test_tsv_rejects_invalid_purchase_date(self):
         with self.assertRaisesRegex(ValueError, 'YYYYMMDD'):
-            ledger_tsv_bytes([result_row('MX')], 'MX', '20260230')
+            ledger_tsv_bytes(
+                [result_row('MX')], 'MX', '20260230', TEST_TAG)
 
 
 class FakeHub(object):
@@ -138,8 +139,8 @@ class FakeLedgerService(object):
         self.preflight_calls = []
         self.sync_calls = []
 
-    def preflight_plan(self, rows, site):
-        self.preflight_calls.append((len(rows), site))
+    def preflight_plan(self, rows, site, environment_group):
+        self.preflight_calls.append((len(rows), site, environment_group))
         return {
             'total': len(rows),
             'conflicts': self.preflight_conflicts,
@@ -147,8 +148,9 @@ class FakeLedgerService(object):
                      if self.preflight_conflicts else []),
         }
 
-    def sync(self, rows, site, purchase_date):
-        self.sync_calls.append((len(rows), site, purchase_date))
+    def sync(self, rows, site, purchase_date, environment_group):
+        self.sync_calls.append(
+            (len(rows), site, purchase_date, environment_group))
         state = self.sync_states.pop(0) if self.sync_states else 'confirmed'
         counts = {name: int(name == state) * len(rows) for name in (
             'created', 'updated', 'confirmed', 'conflict', 'pending')}
@@ -272,7 +274,7 @@ class EnvWebJobTests(unittest.TestCase):
                 parsed['planId'], '1:新刚', '20260819',
                 verify_sample_count=0, confirm_write=True,
                 write_lark_ledger=True, confirm_lark_write=True)
-        self.assertEqual(service.preflight_calls, [(1, 'MX')])
+        self.assertEqual(service.preflight_calls, [(1, 'MX', TEST_TAG)])
         self.assertEqual(service.sync_calls, [])
         self.assertIn(parsed['planId'], job.pending)
         self.assertFalse(any(call[0] in {
@@ -302,7 +304,7 @@ class EnvWebJobTests(unittest.TestCase):
                 hub_writes = [call for call in hub.calls if call[0] in {
                     'create', 'cookie', 'account', 'remark'}]
 
-                job.retry_ledger()
+                job.retry_ledger(confirm_lark_write=True)
                 deadline = time.time() + 5
                 while job.snapshot()['running'] and time.time() < deadline:
                     time.sleep(0.05)
@@ -337,7 +339,8 @@ class EnvWebJobTests(unittest.TestCase):
                 completed_steps={'created', 'cookie', 'bound', 'remarked'},
                 state='done', binding_time='2026-08-21 12:00:00'))
         job.runner = SimpleNamespace(
-            rows=rows, site='MX', purchase_date='20260821')
+            rows=rows, site='MX', purchase_date='20260821',
+            purchase_tag=TEST_TAG)
         job.ledger_enabled = True
         job.ledger_summary = {
             'enabled': True, 'running': False, 'total': 2,
@@ -352,16 +355,85 @@ class EnvWebJobTests(unittest.TestCase):
                  'site': 'MX', 'state': 'pending', 'message': 'timeout'},
             ],
         }
-        job.retry_ledger()
+        job.retry_ledger(confirm_lark_write=True)
         deadline = time.time() + 5
         while job.snapshot()['running'] and time.time() < deadline:
             time.sleep(0.05)
-        self.assertEqual(service.sync_calls, [(1, 'MX', '20260821')])
+        self.assertEqual(
+            service.sync_calls, [(1, 'MX', '20260821', TEST_TAG)])
         ledger = job.snapshot()['ledger']
         self.assertEqual(ledger['total'], 2)
         self.assertEqual(ledger['created'], 1)
         self.assertEqual(ledger['confirmed'], 1)
         self.assertEqual(ledger['pending'], 0)
+
+    def test_completed_hub_batch_can_supplement_ledger_without_hub_writes(self):
+        hub = FakeHub()
+        service = FakeLedgerService(sync_states=('created',))
+        job = EnvBatchJob(
+            lambda: hub, runtime_config,
+            ledger_sync_factory=lambda: service)
+        parsed = job.parse(
+            'vendor.xlsx', base64.b64encode(source_bytes()).decode('ascii'))
+        with tempfile.TemporaryDirectory() as tmp:
+            def store_factory(batch_id):
+                return ResumeStateStore(batch_id, tmp)
+
+            with patch('purchase_tool.main.ResumeStateStore', store_factory):
+                job.start(
+                    parsed['planId'], '1:新刚', '20260819',
+                    verify_sample_count=0, confirm_write=True,
+                    write_lark_ledger=False)
+                deadline = time.time() + 5
+                while job.snapshot()['running'] and time.time() < deadline:
+                    time.sleep(0.05)
+                self.assertTrue(
+                    job.snapshot()['ledger']['supplementAvailable'])
+                hub_writes = [call for call in hub.calls if call[0] in {
+                    'create', 'cookie', 'account', 'remark'}]
+
+                with self.assertRaisesRegex(ValueError, '单独二次确认'):
+                    job.retry_ledger()
+                result = job.retry_ledger(confirm_lark_write=True)
+                self.assertEqual(result, {'mode': 'supplement', 'count': 1})
+                deadline = time.time() + 5
+                while job.snapshot()['running'] and time.time() < deadline:
+                    time.sleep(0.05)
+
+        self.assertEqual(service.preflight_calls, [(1, 'MX', TEST_TAG)])
+        self.assertEqual(
+            service.sync_calls, [(1, 'MX', '20260819', TEST_TAG)])
+        self.assertEqual(job.snapshot()['ledger']['created'], 1)
+        self.assertFalse(job.snapshot()['ledger']['supplementAvailable'])
+        self.assertEqual(
+            [call for call in hub.calls if call[0] in {
+                'create', 'cookie', 'account', 'remark'}], hub_writes)
+
+    def test_supplement_preflight_conflict_blocks_lark_and_hub_writes(self):
+        hub = FakeHub()
+        service = FakeLedgerService(preflight_conflicts=1)
+        job = EnvBatchJob(
+            lambda: hub, runtime_config,
+            ledger_sync_factory=lambda: service)
+        row = result_row()
+        account = BuyerAccount(
+            row_number=1, email=row.account.email,
+            password=row.account.password, key_url=row.account.key_url,
+            cookie_text=row.account.cookie_text,
+            order_no=row.account.order_no, buyer=row.account.buyer)
+        job.runner = SimpleNamespace(
+            rows=[BatchPlanItem(
+                account=account, env_name=row.env_name,
+                serial_number=row.serial_number,
+                completed_steps={'created', 'cookie', 'bound', 'remarked'},
+                state='done', binding_time=row.binding_time)],
+            site='MX', purchase_date='20260820', purchase_tag=TEST_TAG)
+        before = list(hub.calls)
+        with self.assertRaisesRegex(ValueError, '已阻止补写'):
+            job.retry_ledger(confirm_lark_write=True)
+        self.assertEqual(service.sync_calls, [])
+        self.assertEqual(hub.calls, before)
+        self.assertFalse(job.ledger_enabled)
 
     def test_us_site_uses_us_group_proxy_name_and_account_binding(self):
         hub = FakeHub()

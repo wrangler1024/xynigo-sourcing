@@ -9,12 +9,17 @@ from purchase_tool.env_batch import BatchPlanItem, BuyerAccount
 from purchase_tool.lark_openapi import LarkApiError
 
 
+TEST_GROUP = '希音墨西哥采购_测试'
+TEST_US_GROUP = '美国采购分组_测试'
+
+
 def ledger_fields():
     types = {
         '站点': 'SingleSelect', '邮箱账号': 'Text', '密码': 'Text',
         '接码Key链接': 'Text', 'Cookie': 'Text', '号商购买单号': 'Text',
         '购买日期': 'DateTime', '账号状态': 'SingleSelect',
-        '绑定环境': 'Text', '环境序号': 'Number', '采购员': 'SingleSelect',
+        '绑定环境': 'Text', '环境分组名': 'Text', '环境序号': 'Number',
+        '采购员': 'SingleSelect',
         '绑定时间': 'DateTime', '首次登录日期': 'DateTime',
     }
     result = []
@@ -81,6 +86,11 @@ class FakeLark(object):
     def batch_create(self, field_maps):
         fields = copy.deepcopy(field_maps[0])
         self.create_calls.append(fields)
+        url_value = fields.get('接码Key链接')
+        if (not isinstance(url_value, dict)
+                or url_value.get('text') != url_value.get('link')):
+            raise LarkApiError(
+                'URLFieldConvFail', code=1254068, retryable=False)
         if fields['邮箱账号'] in self.fail_emails:
             raise LarkApiError(
                 'timeout password=%s cookie=%s' %
@@ -108,7 +118,7 @@ class FakeLark(object):
         return record
 
 
-def existing_record(row, site='MX', **overrides):
+def existing_record(row, site='MX', environment_group=TEST_GROUP, **overrides):
     fields = {
         '站点': site,
         '邮箱账号': row.account.email,
@@ -116,6 +126,7 @@ def existing_record(row, site='MX', **overrides):
         '购买日期': 1787241600000,
         '账号状态': '已绑定',
         '绑定环境': row.env_name,
+        '环境分组名': environment_group,
         '环境序号': row.serial_number,
         '采购员': row.account.buyer,
         '绑定时间': 1787277660000,
@@ -128,12 +139,19 @@ class BuyerLedgerSyncTests(unittest.TestCase):
     def test_mx_and_us_create_in_same_unified_table(self):
         fake = FakeLark()
         service = BuyerLedgerSyncService(fake)
-        mx = service.sync([plan_row(1, 'MX')], 'MX', '20260821')
-        us = service.sync([plan_row(2, 'US')], 'US', '20260821')
+        mx = service.sync(
+            [plan_row(1, 'MX')], 'MX', '20260821', TEST_GROUP)
+        us = service.sync(
+            [plan_row(2, 'US')], 'US', '20260821', TEST_US_GROUP)
         self.assertEqual(mx['created'], 1)
         self.assertEqual(us['created'], 1)
         self.assertEqual([call['站点'] for call in fake.create_calls],
                          ['MX', 'US'])
+        self.assertEqual(fake.create_calls[0]['接码Key链接'], {
+            'text': 'https://codes.example.test/get?id=1',
+            'link': 'https://codes.example.test/get?id=1',
+        })
+        self.assertEqual(fake.create_calls[0]['环境分组名'], TEST_GROUP)
         rendered = json.dumps([mx, us], ensure_ascii=False)
         self.assertNotIn('record_id', rendered)
         self.assertNotIn('cookie-1', rendered)
@@ -142,11 +160,42 @@ class BuyerLedgerSyncTests(unittest.TestCase):
         fake = FakeLark()
         service = BuyerLedgerSyncService(fake)
         row = plan_row(1)
-        first = service.sync([row], 'MX', '20260821')
-        second = service.sync([row], 'MX', '20260821')
+        first = service.sync([row], 'MX', '20260821', TEST_GROUP)
+        second = service.sync([row], 'MX', '20260821', TEST_GROUP)
         self.assertEqual(first['created'], 1)
         self.assertEqual(second['confirmed'], 1)
         self.assertEqual(len(fake.create_calls), 1)
+
+    def test_same_environment_moved_group_updates_original_record(self):
+        row = plan_row(1)
+        fake = FakeLark([existing_record(
+            row, environment_group='旧采购分组')])
+        service = BuyerLedgerSyncService(fake)
+
+        moved = service.sync(
+            [row], 'MX', '20260821', '新采购分组')
+        confirmed = service.sync(
+            [row], 'MX', '20260821', '新采购分组')
+
+        self.assertEqual(moved['updated'], 1)
+        self.assertEqual(confirmed['confirmed'], 1)
+        self.assertEqual(fake.create_calls, [])
+        self.assertEqual(fake.records[0]['record_id'], 'rec-existing')
+        self.assertEqual(fake.records[0]['fields']['环境分组名'],
+                         '新采购分组')
+
+    def test_group_change_does_not_allow_a_second_environment(self):
+        row = plan_row(1)
+        fake = FakeLark([existing_record(
+            row, environment_group='旧采购分组',
+            **{'绑定环境': 'XG-MX-0821-999'})])
+
+        result = BuyerLedgerSyncService(fake).sync(
+            [row], 'MX', '20260821', '新采购分组')
+
+        self.assertEqual(result['conflict'], 1)
+        self.assertEqual(fake.create_calls, [])
+        self.assertEqual(fake.update_calls, [])
 
     def test_exact_unbound_row_updates_binding_without_overwriting_credentials(self):
         row = plan_row(1)
@@ -159,7 +208,7 @@ class BuyerLedgerSyncTests(unittest.TestCase):
                '接码Key链接': 'https://keep.example.test'})
         fake = FakeLark([record])
         result = BuyerLedgerSyncService(fake).sync(
-            [row], 'MX', '20260821')
+            [row], 'MX', '20260821', TEST_GROUP)
         self.assertEqual(result['updated'], 1)
         stored = fake.records[0]['fields']
         self.assertEqual(stored['密码'], 'keep-old-password')
@@ -173,7 +222,7 @@ class BuyerLedgerSyncTests(unittest.TestCase):
                     '环境序号': None, '采购员': '', '绑定时间': None})
         fake = FakeLark([record])
         result = BuyerLedgerSyncService(fake).sync(
-            [row], 'MX', '20260821')
+            [row], 'MX', '20260821', TEST_GROUP)
         self.assertEqual(result['conflict'], 1)
         self.assertEqual(fake.create_calls, [])
         self.assertEqual(fake.update_calls, [])
@@ -192,7 +241,7 @@ class BuyerLedgerSyncTests(unittest.TestCase):
             with self.subTest(record=record['fields']):
                 fake = FakeLark([record])
                 result = BuyerLedgerSyncService(fake).sync(
-                    [row], 'MX', '20260821')
+                    [row], 'MX', '20260821', TEST_GROUP)
                 self.assertEqual(result['conflict'], 1)
                 self.assertEqual(fake.create_calls, [])
                 self.assertEqual(fake.update_calls, [])
@@ -207,7 +256,7 @@ class BuyerLedgerSyncTests(unittest.TestCase):
         order_record['record_id'] = 'rec-by-order'
         fake = FakeLark([email_record, order_record])
         result = BuyerLedgerSyncService(fake).sync(
-            [row], 'MX', '20260821')
+            [row], 'MX', '20260821', TEST_GROUP)
         self.assertEqual(result['conflict'], 1)
         self.assertEqual(fake.create_calls, [])
         self.assertEqual(fake.update_calls, [])
@@ -217,7 +266,7 @@ class BuyerLedgerSyncTests(unittest.TestCase):
         second = plan_row(2, email=first.account.email)
         fake = FakeLark()
         result = BuyerLedgerSyncService(fake).sync(
-            [first, second], 'MX', '20260821')
+            [first, second], 'MX', '20260821', TEST_GROUP)
         self.assertEqual(result['conflict'], 2)
         self.assertEqual(fake.create_calls, [])
         self.assertEqual(fake.update_calls, [])
@@ -227,7 +276,7 @@ class BuyerLedgerSyncTests(unittest.TestCase):
         second = plan_row(2)
         fake = FakeLark(fail_emails={second.account.email})
         result = BuyerLedgerSyncService(fake).sync(
-            [first, second], 'MX', '20260821')
+            [first, second], 'MX', '20260821', TEST_GROUP)
         self.assertEqual(result['created'], 1)
         self.assertEqual(result['pending'], 1)
         rendered = json.dumps(result, ensure_ascii=False)
@@ -239,7 +288,7 @@ class BuyerLedgerSyncTests(unittest.TestCase):
         row = plan_row(1)
         fake = FakeLark(corrupt_readback={row.account.email})
         result = BuyerLedgerSyncService(fake).sync(
-            [row], 'MX', '20260821')
+            [row], 'MX', '20260821', TEST_GROUP)
         self.assertEqual(result['pending'], 1)
         self.assertEqual(result['created'], 0)
 
@@ -248,7 +297,8 @@ class BuyerLedgerSyncTests(unittest.TestCase):
         fake = FakeLark([existing_record(row, site='US')])
         row.state = 'pending'
         row.serial_number = None
-        result = BuyerLedgerSyncService(fake).preflight_plan([row], 'MX')
+        result = BuyerLedgerSyncService(fake).preflight_plan(
+            [row], 'MX', TEST_GROUP)
         self.assertEqual(result['conflicts'], 1)
         self.assertNotIn('record_id', json.dumps(result))
 
@@ -257,6 +307,24 @@ class BuyerLedgerSyncTests(unittest.TestCase):
         site = next(field for field in fields if field['field_name'] == '站点')
         site['property']['options'] = [{'name': 'MX'}]
         with self.assertRaisesRegex(BuyerLedgerSyncError, 'MX/US'):
+            validate_unified_schema(fields)
+
+    def test_schema_accepts_email_and_url_text_ui_subtypes(self):
+        fields = ledger_fields()
+        email = next(
+            field for field in fields if field['field_name'] == '邮箱账号')
+        key_url = next(
+            field for field in fields if field['field_name'] == '接码Key链接')
+        email.update({'ui_type': 'Email', 'type': 1})
+        key_url.update({'ui_type': 'Url', 'type': 15})
+        validate_unified_schema(fields, buyers=('新刚',))
+
+    def test_schema_still_rejects_unrelated_ui_type(self):
+        fields = ledger_fields()
+        email = next(
+            field for field in fields if field['field_name'] == '邮箱账号')
+        email['ui_type'] = 'Number'
+        with self.assertRaisesRegex(BuyerLedgerSyncError, '邮箱账号'):
             validate_unified_schema(fields)
 
     def test_schema_rejects_polluted_status_options(self):

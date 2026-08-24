@@ -30,8 +30,18 @@ workflows contributed by **Samforo**.
   custom app, with unified-ledger conflict preflight and post-write readback.
   Teammate computers do not need `lark-cli`.
 
-The current stable release is `v0.8.3`. The project is under active
+The current stable release is `v0.9.0`. The project is under active
 development and is not yet a hosted SaaS product.
+
+v0.9.0 extends the unified buyer ledger contract with the HubStudio
+environment-group name, including idempotency checks and post-write readback.
+Moving the same environment to another group updates its existing record,
+while binding an account to a different environment remains a conflict.
+Feishu Email/URL text display styles now pass schema validation, and URL values
+use the object shape required by the raw OpenAPI. A completed HubStudio batch
+that did not initially enable ledger writeback can be supplemented later after
+a separate confirmation and read-only preflight, without rerunning HubStudio
+writes.
 
 v0.8.3 improves connection verification after a production Feishu Base target
 is reconfigured. Opening System Settings can refresh the current Base and

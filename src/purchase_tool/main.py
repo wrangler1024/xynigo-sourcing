@@ -647,12 +647,16 @@ LEDGER_PASTE_COLUMNS = (
     # 飞书「买家号（统一）」默认「表格」视图的连续列契约。
     # 直贴文件从「站点」列开始，不包含左侧自动编号「账号ID」。
     '站点', '邮箱账号', '密码', '接码Key链接', 'Cookie', '号商购买单号',
-    '购买日期', '账号状态', '绑定环境', '环境序号', '采购员', '绑定时间')
+    '购买日期', '账号状态', '绑定环境', '环境分组名', '环境序号',
+    '采购员', '绑定时间')
 
 
-def ledger_tsv_bytes(rows, site, purchase_date):
+def ledger_tsv_bytes(rows, site, purchase_date, environment_group):
     """生成对齐飞书统一台账的无表头直贴 TSV（含凭证）。"""
     site = normalize_env_site(site)
+    environment_group = str(environment_group or '').strip()
+    if not environment_group:
+        raise ValueError('环境分组名不能为空')
     purchase_date = str(purchase_date or '').strip()
     try:
         parsed_purchase_date = time.strptime(purchase_date, '%Y%m%d')
@@ -673,6 +677,7 @@ def ledger_tsv_bytes(rows, site, purchase_date):
             '购买日期': purchase_date_text,
             '账号状态': '已绑定' if complete else '未绑定',
             '绑定环境': row.env_name if complete else '',
+            '环境分组名': environment_group if complete else '',
             '环境序号': row.serial_number if complete else '',
             '采购员': row.account.buyer,
             '绑定时间': row.binding_time if complete else '',
@@ -913,7 +918,8 @@ class EnvBatchJob(object):
             } for row in done_rows],
         }
 
-    def _sync_ledger_rows(self, service, rows, site, purchase_date):
+    def _sync_ledger_rows(self, service, rows, site, purchase_date,
+                          environment_group):
         done_rows = [row for row in rows if row.state == 'done']
         with self.lock:
             self.ledger_summary.update({
@@ -921,7 +927,8 @@ class EnvBatchJob(object):
                 'error': '',
             })
         try:
-            result = service.sync(done_rows, site, purchase_date)
+            result = service.sync(
+                done_rows, site, purchase_date, environment_group)
             result.update({'enabled': True, 'running': False, 'error': ''})
         except Exception as exc:
             error = self._safe_error(
@@ -975,7 +982,7 @@ class EnvBatchJob(object):
         if write_lark_ledger:
             ledger_service = self.ledger_sync_factory()
             ledger_preflight = ledger_service.preflight_plan(
-                checked_plan, runtime['site'])
+                checked_plan, runtime['site'], runtime['purchaseTag'])
             if ledger_preflight.get('conflicts'):
                 raise ValueError(
                     '飞书统一台账发现 %d 条双键或站点冲突，已阻止建环境' %
@@ -1036,12 +1043,14 @@ class EnvBatchJob(object):
                 mapping = mapping_workbook_bytes(result_rows)
                 checks = runner.verify_ips(verify_sample_count)
                 tsv = ledger_tsv_bytes(
-                    result_rows, runtime['site'], purchase_date)
+                    result_rows, runtime['site'], purchase_date,
+                    runtime['purchaseTag'])
                 done = sum(row.state == 'done' for row in result_rows)
                 if write_lark_ledger:
                     self._sync_ledger_rows(
                         ledger_service, result_rows,
-                        runtime['site'], purchase_date)
+                        runtime['site'], purchase_date,
+                        runtime['purchaseTag'])
                 with self.lock:
                     self.mapping_data = mapping
                     self.mapping_name = '绑定映射清单_%s.xlsx' % purchase_date
@@ -1101,12 +1110,14 @@ class EnvBatchJob(object):
                                self.ledger_sync_factory())
                     self._sync_ledger_rows(
                         service, result_rows, self.runner.site,
-                        self.runner.purchase_date)
+                        self.runner.purchase_date,
+                        self.runner.purchase_tag)
                 with self.lock:
                     self.mapping_data = mapping_workbook_bytes(result_rows)
                     self.tsv_data = ledger_tsv_bytes(
                         result_rows, self.runner.site,
-                        self.runner.purchase_date)
+                        self.runner.purchase_date,
+                        self.runner.purchase_tag)
                     self.tsv_name = ledger_tsv_filename(
                         self.runner.site, self.runner.purchase_date)
                     self.summary.update({
@@ -1126,40 +1137,80 @@ class EnvBatchJob(object):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def retry_ledger(self):
-        """Retry only the Feishu close-out; never re-run HubStudio steps."""
+    def retry_ledger(self, confirm_lark_write=False):
+        """Retry or supplement Feishu only; never re-run HubStudio steps."""
+        if not confirm_lark_write:
+            raise ValueError('飞书台账回写必须单独二次确认')
         with self.lock:
             if self.running:
                 raise RuntimeError('模块三任务正在执行')
-            if not self.ledger_enabled or not self.runner:
-                raise ValueError('当前批次未启用飞书台账回写')
-            previous_rows = [dict(item) for item in
-                             self.ledger_summary.get('rows') or []]
-            pending_ids = {
-                str(item.get('accountId') or '') for item in previous_rows
-                if item.get('state') == 'pending'
-            }
-            done_rows = [
-                row for row in self.runner.rows
-                if row.state == 'done'
-                and row.account.account_id in pending_ids
-            ]
+            if not self.runner:
+                raise ValueError('没有可补写飞书台账的模块三任务')
+            if self.ledger_sync_factory is None:
+                raise ValueError('飞书 OpenAPI 回写尚未配置')
+            runner = self.runner
+            supplement = not self.ledger_enabled
+            if supplement:
+                done_rows = [row for row in runner.rows
+                             if row.state == 'done']
+                previous_rows = self._ledger_failure_summary(
+                    done_rows, runner.site, '').get('rows') or []
+                pending_ids = {
+                    str(item.get('accountId') or '')
+                    for item in previous_rows
+                }
+            else:
+                previous_rows = [dict(item) for item in
+                                 self.ledger_summary.get('rows') or []]
+                pending_ids = {
+                    str(item.get('accountId') or '')
+                    for item in previous_rows
+                    if item.get('state') == 'pending'
+                }
+                done_rows = [
+                    row for row in runner.rows
+                    if row.state == 'done'
+                    and row.account.account_id in pending_ids
+                ]
             if not done_rows:
-                raise ValueError('没有待重试的飞书台账行')
+                message = ('没有可补写的 HubStudio 成功行' if supplement
+                           else '没有待重试的飞书台账行')
+                raise ValueError(message)
             if any(not row.account.password for row in done_rows):
                 raise ValueError('凭证内存已清理，请重新选择原始 xlsx 后续跑')
             self._cancel_sensitive_cleanup_locked()
             self.running = True
             self.started_at = time.time()
             self.finished_at = None
+        try:
             service = self.ledger_sync_factory()
+            if supplement:
+                preflight = service.preflight_plan(
+                    done_rows, runner.site, runner.purchase_tag)
+                if preflight.get('conflicts'):
+                    raise ValueError(
+                        '飞书统一台账发现 %d 条双键或站点冲突，已阻止补写' %
+                        preflight['conflicts'])
+        except Exception as exc:
+            error = self._safe_error(
+                exc, [row.account for row in done_rows])
+            with self.lock:
+                self.finished_at = time.time()
+                self.running = False
+            self._schedule_sensitive_cleanup(runner)
+            raise ValueError(error) from exc
+        with self.lock:
             self._ledger_service = service
+            if supplement:
+                self.ledger_enabled = True
+                self.ledger_summary = self._ledger_failure_summary(
+                    done_rows, runner.site, '')
 
         def worker():
             try:
                 retry_result = self._sync_ledger_rows(
-                    service, done_rows, self.runner.site,
-                    self.runner.purchase_date)
+                    service, done_rows, runner.site,
+                    runner.purchase_date, runner.purchase_tag)
                 replacements = {
                     str(item.get('accountId') or ''): dict(item)
                     for item in retry_result.get('rows') or []
@@ -1186,19 +1237,37 @@ class EnvBatchJob(object):
                         'rows': merged_rows,
                         'error': retry_result.get('error') or '',
                     }
-                self._schedule_sensitive_cleanup(self.runner)
+                self._schedule_sensitive_cleanup(runner)
             finally:
                 with self.lock:
                     self.finished_at = time.time()
                     self.running = False
 
         threading.Thread(target=worker, daemon=True).start()
+        return {
+            'mode': 'supplement' if supplement else 'retry',
+            'count': len(done_rows),
+        }
 
     def snapshot(self):
         with self.lock:
             end_at = time.time() if self.running else self.finished_at
             elapsed = int(max(0, end_at - self.started_at)) \
                 if self.started_at and end_at else 0
+            ledger = {
+                key: ([dict(item) for item in value]
+                      if key == 'rows' else value)
+                for key, value in self.ledger_summary.items()
+            }
+            done_rows = ([row for row in self.runner.rows
+                          if row.state == 'done']
+                         if self.runner else [])
+            ledger['supplementAvailable'] = bool(
+                not self.running
+                and not self.ledger_enabled
+                and self.ledger_sync_factory is not None
+                and done_rows
+                and all(row.account.password for row in done_rows))
             return {
                 'running': self.running,
                 'elapsedSec': elapsed,
@@ -1208,11 +1277,7 @@ class EnvBatchJob(object):
                 'fatalError': self.fatal_error,
                 'mappingReady': self.mapping_data is not None,
                 'tsvReady': self.tsv_data is not None,
-                'ledger': {
-                    key: ([dict(item) for item in value]
-                          if key == 'rows' else value)
-                    for key, value in self.ledger_summary.items()
-                },
+                'ledger': ledger,
             }
 
     def mapping_export(self):
@@ -1684,8 +1749,9 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.env_job.retry_row(str(body.get('accountId') or ''))
                 self._json({'started': True})
             elif path == '/api/envbatch/retry-ledger':
-                STATE.env_job.retry_ledger()
-                self._json({'started': True})
+                result = STATE.env_job.retry_ledger(
+                    confirm_lark_write=bool(body.get('confirmLarkWrite')))
+                self._json({'started': True, **result})
             elif path == '/api/envbatch/backup/start':
                 if (STATE.orch.running or STATE.reg_job.running
                         or STATE.env_job.running):

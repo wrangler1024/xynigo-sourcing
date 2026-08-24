@@ -83,12 +83,26 @@ class LarkOpenApiTests(unittest.TestCase):
             response({'code': 0, 'data': {
                 'records': [{'record_id': 'rec-created'}]}}),
         ])
-        client.batch_create([{'站点': 'MX', '邮箱账号': 'demo@example.test'}])
+        client.batch_create([{
+            '站点': 'MX',
+            '邮箱账号': 'demo@example.test',
+            '接码Key链接': {
+                'text': 'https://codes.example.test/get?id=public-demo',
+                'link': 'https://codes.example.test/get?id=public-demo',
+            },
+        }])
         client.batch_update([('rec-created', {'账号状态': '已绑定'})])
         create_body = json.loads(transport.calls[1]['body'])
         update_body = json.loads(transport.calls[2]['body'])
         self.assertEqual(create_body, {'records': [{
-            'fields': {'站点': 'MX', '邮箱账号': 'demo@example.test'}}]})
+            'fields': {
+                '站点': 'MX',
+                '邮箱账号': 'demo@example.test',
+                '接码Key链接': {
+                    'text': 'https://codes.example.test/get?id=public-demo',
+                    'link': 'https://codes.example.test/get?id=public-demo',
+                },
+            }}]})
         self.assertEqual(update_body, {'records': [{
             'record_id': 'rec-created',
             'fields': {'账号状态': '已绑定'}}]})

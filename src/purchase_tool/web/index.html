@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Xynigo Sourcing v0.8.3</title>
+<title>Xynigo Sourcing v0.9.0</title>
 <link rel="icon" type="image/png" sizes="260x260" href="/xynigo-x.png?v=5">
 <link rel="icon" type="image/x-icon" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256" href="/favicon.ico?v=5">
 <link rel="shortcut icon" href="/favicon.ico?v=5">
@@ -512,7 +512,7 @@
           <div class="hero-kicker">XYNIGO SOURCING WORKSPACE</div>
           <h1>让小犀帮你把每一单稳稳带回来，<span class="hero-call">Xyni, GO!</span></h1>
           <p id="moduleSummary">批量查询订单与物流状态，异常任务集中处理，结果一键导出。</p>
-          <div class="hero-meta"><span class="hero-chip">稳定版 v0.8.3</span><span class="hero-chip">本机数据不出站</span><span class="hero-chip">在线更新已开启</span></div>
+          <div class="hero-meta"><span class="hero-chip">稳定版 v0.9.0</span><span class="hero-chip">本机数据不出站</span><span class="hero-chip">在线更新已开启</span></div>
         </div>
         <div class="hero-lockup" role="img" aria-label="小犀与 Xynigo 完整品牌一体图形">
           <img src="xynigo-logo.png" alt="">
@@ -1531,10 +1531,18 @@ function renderLedgerSummary(ledger) {
   const box = $('envLedgerSummary');
   const retry = $('btnEnvRetryLedger');
   if (!ledger || !ledger.enabled) {
-    box.textContent = '飞书台账回写未启用。';
-    retry.disabled = true;
+    const canSupplement = !!(ledger && ledger.supplementAvailable && larkReady);
+    box.textContent = canSupplement
+      ? '本批次 HubStudio 已完成但尚未回写飞书，可独立补写台账。'
+      : '飞书台账回写未启用。';
+    retry.textContent = canSupplement
+      ? '↻ 补写本批次飞书台账' : '↻ 仅重试飞书回写';
+    retry.dataset.mode = canSupplement ? 'supplement' : 'retry';
+    retry.disabled = envSubmitting || envRunning || !canSupplement;
     return;
   }
+  retry.textContent = '↻ 仅重试飞书回写';
+  retry.dataset.mode = 'retry';
   if (ledger.running) {
     box.textContent = '飞书台账正在写入并执行写后回读确认…';
     retry.disabled = true;
@@ -2121,14 +2129,21 @@ $('btnEnvStart').onclick = async () => {
 };
 
 $('btnEnvRetryLedger').onclick = async () => {
-  if (!confirm('只重新执行飞书台账查重、写入与回读；不会再次调用 HubStudio。\n\n确认重试？')) return;
+  const supplement = $('btnEnvRetryLedger').dataset.mode === 'supplement';
+  const prompt = supplement
+    ? '当前批次 HubStudio 已完成，将只执行飞书台账查重、写入与写后回读；不会再次调用 HubStudio。\n\n确认补写本批次飞书台账？'
+    : '只重新执行飞书台账查重、写入与回读；不会再次调用 HubStudio。\n\n确认重试？';
+  if (!confirm(prompt)) return;
   try {
-    await api('/api/envbatch/retry-ledger', {
-      method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'
+    const result = await api('/api/envbatch/retry-ledger', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({confirmLarkWrite:true})
     });
     $('btnEnvRetryLedger').disabled = true;
     pollEnvBatch();
-    toast('已开始仅重试飞书台账回写');
+    toast(result.mode === 'supplement'
+      ? `已开始补写 ${result.count || 0} 行飞书台账，不会重跑 HubStudio`
+      : '已开始仅重试飞书台账回写');
   } catch (err) { toast(err.message); }
 };
 

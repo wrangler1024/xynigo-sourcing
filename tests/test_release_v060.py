@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Release contract tests for Xynigo Sourcing v0.8.3."""
+"""Release contract tests for Xynigo Sourcing v0.9.0."""
 
 from pathlib import Path
 import unittest
@@ -7,12 +7,12 @@ import unittest
 from purchase_tool import __version__
 
 
-class ReleaseV083Tests(unittest.TestCase):
+class ReleaseV090Tests(unittest.TestCase):
     def test_version_and_packaging_are_aligned(self):
         root = Path(__file__).resolve().parents[1]
-        self.assertEqual(__version__, '0.8.3')
+        self.assertEqual(__version__, '0.9.0')
         pyproject = (root / 'pyproject.toml').read_text(encoding='utf-8')
-        self.assertIn('version = "0.8.3"', pyproject)
+        self.assertIn('version = "0.9.0"', pyproject)
         script = (root / '组装Windows绿色包.sh').read_text(encoding='utf-8')
         self.assertIn('v${VERSION}.zip', script)
         self.assertIn('Xynigo Sourcing v%s 启动中', script)
@@ -118,7 +118,7 @@ class ReleaseV083Tests(unittest.TestCase):
         self.assertIn("cfg.proxySource === 'custom'", html)
         self.assertIn('系统模板固定带表头', html)
         self.assertNotIn('https://proxy.example.test', html)
-        self.assertIn('Xynigo Sourcing v0.8.3', html)
+        self.assertIn('Xynigo Sourcing v0.9.0', html)
         self.assertIn('Xyni, GO!', html)
         self.assertIn('Xynigo 品牌字标', html)
         self.assertIn('小犀与 Xynigo 完整品牌一体图形', html)
@@ -215,6 +215,8 @@ class ReleaseV083Tests(unittest.TestCase):
         self.assertNotIn('回写飞书「买家号（统一）」', html)
         self.assertIn('id="btnEnvRetryLedger" disabled', html)
         self.assertIn('writeLarkLedger, confirmLarkWrite', html)
+        self.assertIn('补写本批次飞书台账', html)
+        self.assertIn('body:JSON.stringify({confirmLarkWrite:true})', html)
         self.assertTrue((root / 'src' / 'purchase_tool' / 'web' /
                          '采购工具买家号入库模板.xlsx').is_file())
         self.assertTrue((root / 'src' / 'purchase_tool' / 'web' /
@@ -229,15 +231,26 @@ class ReleaseV083Tests(unittest.TestCase):
         self.assertEqual(
             [cell.value for cell in ledger_template['买家号统一台账'][1]],
             ['账号ID', '站点', '邮箱账号', '密码', '接码Key链接', 'Cookie',
-             '号商购买单号', '购买日期', '账号状态', '绑定环境', '环境序号',
-             '采购员', '绑定时间', '首次登录日期', '最后使用日期', '创建时间',
-             '备注', '累计下单数', '异常记录', '创建人', '迁移状态', '操作人'])
+             '号商购买单号', '购买日期', '账号状态', '绑定环境', '环境分组名',
+             '环境序号', '采购员', '绑定时间', '首次登录日期', '最后使用日期',
+             '创建时间', '备注', '累计下单数', '异常记录', '创建人',
+             '迁移状态', '操作人'])
         guide_values = [
             cell.value for row in ledger_template['字段配置说明'].iter_rows()
             for cell in row if cell.value]
         self.assertIn('新刚、志恒、康德、宇航、熊、德、恒', guide_values)
         self.assertIn('正常、待复核（源表错列）', guide_values)
         self.assertIn('yyyy-mm-dd hh:mm', guide_values)
+        self.assertIn('环境分组名', guide_values)
+        guide = ledger_template['字段配置说明']
+        self.assertIn('连续13列', guide['A2'].value)
+        first_login = next(
+            [cell.value for cell in row]
+            for row in guide.iter_rows(
+                min_row=1, max_row=guide.max_row, min_col=1, max_col=6)
+            if row[0].value == '首次登录日期')
+        self.assertEqual(first_login[4], '字段预检必需')
+        self.assertIn('当前买家号建环境 API 不写入', first_login[5])
         ledger_template.close()
         self.assertTrue((root / 'src' / 'purchase_tool' / 'web' /
                          'xynigo-logo.png').is_file())

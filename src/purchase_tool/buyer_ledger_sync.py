@@ -16,7 +16,7 @@ from .redaction import mask_email, scrub_text
 SHANGHAI = timezone(timedelta(hours=8))
 IDENTITY_FIELDS = (
     '站点', '邮箱账号', '号商购买单号', '购买日期', '账号状态',
-    '绑定环境', '环境序号', '采购员', '绑定时间',
+    '绑定环境', '环境分组名', '环境序号', '采购员', '绑定时间',
 )
 CREATE_FIELD_TYPES = {
     '站点': 'SingleSelect',
@@ -28,6 +28,7 @@ CREATE_FIELD_TYPES = {
     '购买日期': 'DateTime',
     '账号状态': 'SingleSelect',
     '绑定环境': 'Text',
+    '环境分组名': 'Text',
     '环境序号': 'Number',
     '采购员': 'SingleSelect',
     '绑定时间': 'DateTime',
@@ -36,6 +37,10 @@ CREATE_FIELD_TYPES = {
 NORMALIZED_TYPES = {
     'text': 'Text', 'select': 'SingleSelect', 'datetime': 'DateTime',
     'number': 'Number', 'auto_number': 'AutoNumber',
+}
+TEXT_UI_TYPE_ALIASES = {
+    'Email': 'Text',
+    'Url': 'Text',
 }
 SAFE_BOUND_STATUSES = {'已绑定', '已登录'}
 BLOCKING_STATUSES = {'异常', '封号', '停用'}
@@ -116,7 +121,11 @@ def _record_id(record):
 def _field_type(field):
     ui_type = str(field.get('ui_type') or '')
     if ui_type:
-        return ui_type
+        # Feishu exposes text fields with email/link display styles as
+        # distinct UI types even though their OpenAPI value contract remains
+        # a plain string.  Treat only those documented subtypes as Text; keep
+        # every other type strict so a real schema mismatch is still blocked.
+        return TEXT_UI_TYPE_ALIASES.get(ui_type, ui_type)
     raw = field.get('type')
     if isinstance(raw, str):
         return NORMALIZED_TYPES.get(raw, raw)
@@ -172,6 +181,7 @@ class BuyerLedgerTarget:
     order_no: str
     purchase_date_ms: int
     env_name: str
+    environment_group: str
     serial_number: int
     buyer: str
     binding_time_ms: int
@@ -185,7 +195,7 @@ class BuyerLedgerTarget:
         return self.order_no.strip().casefold()
 
     @classmethod
-    def from_plan_row(cls, row, site, purchase_date):
+    def from_plan_row(cls, row, site, purchase_date, environment_group):
         if getattr(row, 'state', '') != 'done':
             raise BuyerLedgerSyncError('只有环境成功行可以回写飞书')
         account = row.account
@@ -196,6 +206,9 @@ class BuyerLedgerTarget:
         binding_time = str(row.binding_time or '').strip()
         if not binding_time:
             binding_time = datetime.now(SHANGHAI).strftime('%Y-%m-%d %H:%M:%S')
+        environment_group = str(environment_group or '').strip()
+        if not environment_group:
+            raise BuyerLedgerSyncError('环境分组名不能为空')
         return cls(
             account_id=account.account_id,
             row_number=int(account.row_number),
@@ -207,6 +220,7 @@ class BuyerLedgerTarget:
             order_no=str(account.order_no or '').strip(),
             purchase_date_ms=_date_ms(purchase_date, date_only=True),
             env_name=str(row.env_name or '').strip(),
+            environment_group=environment_group,
             serial_number=serial,
             buyer=str(account.buyer or '').strip(),
             binding_time_ms=_date_ms(binding_time),
@@ -217,12 +231,19 @@ class BuyerLedgerTarget:
             '站点': self.site,
             '邮箱账号': self.email,
             '密码': self.password,
-            '接码Key链接': self.key_url,
+            # Feishu raw OpenAPI type 15 (Url) requires an object.  The
+            # lark-cli shortcut accepts a string and normalizes it internally,
+            # but this service calls the OpenAPI directly.
+            '接码Key链接': {
+                'text': self.key_url,
+                'link': self.key_url,
+            },
             'Cookie': self.cookie_text,
             '号商购买单号': self.order_no,
             '购买日期': self.purchase_date_ms,
             '账号状态': '已绑定',
             '绑定环境': self.env_name,
+            '环境分组名': self.environment_group,
             '环境序号': self.serial_number,
             '采购员': self.buyer,
             '绑定时间': self.binding_time_ms,
@@ -277,6 +298,7 @@ class _RecordIndexes(object):
         if _text(fields.get('站点')).upper() != target.site:
             return 'conflict', record, '账号已存在于另一站点'
         env_name = _text(fields.get('绑定环境'))
+        environment_group = _text(fields.get('环境分组名'))
         serial = _number(fields.get('环境序号'))
         buyer = _text(fields.get('采购员'))
         purchase_date = _datetime_value(fields.get('购买日期'))
@@ -296,6 +318,8 @@ class _RecordIndexes(object):
                 and serial == target.serial_number
                 and buyer == target.buyer
                 and status in SAFE_BOUND_STATUSES):
+            if environment_group != target.environment_group:
+                return 'update', record, ''
             return 'confirmed', record, ''
         if status == '未绑定':
             return 'update', record, ''
@@ -310,6 +334,7 @@ def _matches_target(record, target, require_credentials=False):
             or _text(fields.get('邮箱账号')).casefold() != target.email_key
             or _text(fields.get('号商购买单号')).casefold() != target.order_key
             or _text(fields.get('绑定环境')) != target.env_name
+            or _text(fields.get('环境分组名')) != target.environment_group
             or _number(fields.get('环境序号')) != target.serial_number
             or _text(fields.get('采购员')) != target.buyer
             or _text(fields.get('账号状态')) not in SAFE_BOUND_STATUSES):
@@ -347,9 +372,9 @@ class BuyerLedgerSyncService(object):
     def __init__(self, client):
         self.client = client
 
-    def _targets(self, rows, site, purchase_date):
+    def _targets(self, rows, site, purchase_date, environment_group):
         targets = [BuyerLedgerTarget.from_plan_row(
-            row, site, purchase_date) for row in rows
+            row, site, purchase_date, environment_group) for row in rows
             if getattr(row, 'state', '') == 'done']
         emails, orders = {}, {}
         for target in targets:
@@ -367,9 +392,11 @@ class BuyerLedgerSyncService(object):
         validate_unified_schema(fields, [target.buyer for target in targets])
         return self.client.list_records(IDENTITY_FIELDS)
 
-    def preflight_plan(self, rows, site):
+    def preflight_plan(self, rows, site, environment_group):
         """Read-only guard before any HubStudio write is started."""
         site = normalize_env_site(site)
+        if not str(environment_group or '').strip():
+            raise BuyerLedgerSyncError('环境分组名不能为空')
         planned = [row for row in rows if getattr(row, 'account', None)]
         fields = self.client.list_fields()
         validate_unified_schema(
@@ -433,8 +460,9 @@ class BuyerLedgerSyncService(object):
         return {'total': len(planned), 'conflicts': len(conflicts),
                 'rows': conflicts}
 
-    def preflight(self, rows, site, purchase_date):
-        targets, duplicate_ids = self._targets(rows, site, purchase_date)
+    def preflight(self, rows, site, purchase_date, environment_group):
+        targets, duplicate_ids = self._targets(
+            rows, site, purchase_date, environment_group)
         records = self._schema_and_records(targets)
         indexes = _RecordIndexes(records)
         conflicts = []
@@ -458,6 +486,7 @@ class BuyerLedgerSyncService(object):
         fields = _fields(record)
         patch = {
             '绑定环境': target.env_name,
+            '环境分组名': target.environment_group,
             '环境序号': target.serial_number,
             '采购员': target.buyer,
         }
@@ -485,8 +514,9 @@ class BuyerLedgerSyncService(object):
         return _LedgerRowResult(
             target, 'pending', _safe_external_error(error, [target]))
 
-    def sync(self, rows, site, purchase_date):
-        targets, duplicate_ids = self._targets(rows, site, purchase_date)
+    def sync(self, rows, site, purchase_date, environment_group):
+        targets, duplicate_ids = self._targets(
+            rows, site, purchase_date, environment_group)
         records = self._schema_and_records(targets)
         indexes = _RecordIndexes(records)
         results = []
