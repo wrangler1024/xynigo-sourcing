@@ -134,7 +134,7 @@ class ReleaseV090Tests(unittest.TestCase):
         self.assertIn('小犀提示', html)
         self.assertIn('品牌表达', html)
         self.assertIn('持续迭代中', html)
-        # 新系统 UI 第一阶段：一级产品层级 + 可扩展二级导航，现有功能入口保持不变。
+        # 新系统 UI 第一阶段：一级产品层级 + 左侧可展开二级导航，现有功能入口保持不变。
         for primary in (
                 'workbench', 'procurement', 'fulfillment', 'resources',
                 'analytics', 'system'):
@@ -144,6 +144,10 @@ class ReleaseV090Tests(unittest.TestCase):
                 '数据分析', '系统管理'):
             self.assertIn('<b>%s</b>' % label, html)
         self.assertIn('id="secondaryTabs"', html)
+        self.assertLess(html.index('id="secondaryTabs"'), html.index('</aside>'))
+        self.assertNotIn('secondary-nav-shell', html)
+        self.assertIn("primaryButton.insertAdjacentElement('afterend', $('secondaryTabs'))", html)
+        self.assertIn('body.sidebar-collapsed .secondary-tabs { display: none; }', html)
         self.assertIn('data-parent="fulfillment" data-module="query"', html)
         self.assertIn('data-parent="resources" data-module="buyerlib"', html)
         self.assertIn('data-parent="resources" data-module="vendorimport"', html)

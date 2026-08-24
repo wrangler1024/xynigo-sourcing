@@ -186,7 +186,10 @@
   }
   .brand-meta { display: flex; align-items: center; }
   .product-type { color: var(--navy-700); font-size: 12px; font-weight: 800; }
-  .module-tabs { display: flex; flex-direction: column; gap: 5px; margin-top: 20px; }
+  .module-tabs {
+    min-height: 0; margin-top: 20px; padding-right: 2px; overflow-x: hidden; overflow-y: auto;
+    display: flex; flex: 1 1 auto; flex-direction: column; gap: 5px; scrollbar-width: thin;
+  }
   .nav-label { padding: 0 12px 8px; color: #93a4b3; font-size: 11px; font-weight: 800; letter-spacing: .14em; }
   .module-tab {
     width: 100%; margin: 0; padding: 11px 12px; border: 0; border-radius: 12px;
@@ -201,7 +204,7 @@
   .nav-text { display: flex; flex-direction: column; gap: 2px; }
   .nav-text b { font-size: 13px; }
   .nav-text small { color: #8ca0b0; font-size: 10px; font-weight: 600; }
-  .nav-spacer { flex: 1; min-height: 18px; }
+  .nav-spacer { min-height: 12px; }
   .side-help { padding: 13px; border: 1px solid #f4dc9f; border-radius: 14px; background: var(--parcel-100); color: #77551d; font-size: 12px; line-height: 1.55; }
   .side-help strong { display: block; margin-bottom: 3px; color: #5d4218; }
   .side-footer { display: flex; justify-content: space-between; margin-top: 12px; padding: 0 5px; color: #8da0b0; font-size: 11px; }
@@ -272,22 +275,18 @@
     position: absolute; width: var(--lockup-width); max-width: none; height: auto;
     transform: translate(var(--lockup-x),var(--lockup-y));
   }
-  .secondary-nav-shell {
-    min-width: 0; padding: 10px 12px; display: flex; align-items: center; gap: 16px;
-    border: 1px solid var(--line); border-radius: 16px; background: rgba(255,255,255,.96);
-    box-shadow: 0 7px 20px rgba(8,37,72,.04);
+  .secondary-tabs {
+    min-width: 0; margin: -1px 0 4px 43px; padding: 2px 0 3px 10px;
+    display: flex; flex-direction: column; gap: 2px; border-left: 1px solid #d7e4e9;
   }
-  .secondary-nav-copy { flex: 0 0 auto; min-width: 118px; padding: 0 4px; }
-  .secondary-nav-copy b { display: block; color: var(--navy-950); font-size: 13px; }
-  .secondary-nav-copy small { display: block; margin-top: 2px; color: var(--navy-500); font-size: 10px; }
-  .secondary-tabs { min-width: 0; display: flex; align-items: center; gap: 6px; overflow-x: auto; scrollbar-width: thin; }
   .secondary-tab {
-    flex: 0 0 auto; min-height: 38px; padding: 7px 11px; border: 1px solid transparent; border-radius: 10px;
-    display: inline-flex; align-items: center; gap: 7px; background: transparent; color: var(--navy-700);
-    font-size: 12px; font-weight: 800; cursor: pointer; white-space: nowrap;
+    width: 100%; min-height: 31px; padding: 6px 7px 6px 9px; border: 0; border-radius: 8px;
+    display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    background: transparent; color: var(--navy-700); text-align: left;
+    font-size: 11px; font-weight: 750; cursor: pointer; white-space: nowrap;
   }
-  .secondary-tab:hover:not(:disabled) { border-color: #d8e6eb; background: #f5f9fa; }
-  .secondary-tab.active { border-color: #aadadd; background: var(--rhino-100); color: #126f74; }
+  .secondary-tab:hover:not(:disabled) { background: #f5f9fa; color: var(--navy-950); }
+  .secondary-tab.active { background: var(--rhino-100); color: #126f74; }
   .secondary-tab[hidden] { display: none; }
   .secondary-tab:disabled { cursor: default; opacity: .72; }
   .secondary-status {
@@ -387,7 +386,7 @@
   body.sidebar-collapsed .brand-art, body.sidebar-collapsed .brand-meta,
   body.sidebar-collapsed .nav-label,
   body.sidebar-collapsed .nav-text, body.sidebar-collapsed .side-help,
-  body.sidebar-collapsed .side-footer { display: none; }
+  body.sidebar-collapsed .side-footer, body.sidebar-collapsed .secondary-tabs { display: none; }
   body.sidebar-collapsed .brand-mini { display: block; }
   body.sidebar-collapsed .module-tabs { margin-top: 16px; }
   body.sidebar-collapsed .module-tab { width: 54px; padding: 9px; justify-content: center; }
@@ -521,9 +520,14 @@
     }
     .nav-icon, body.sidebar-collapsed .nav-icon { width: 34px; height: 34px; }
     .workspace { padding-bottom: 66px; }
-    .secondary-nav-shell { align-items: flex-start; flex-direction: column; gap: 8px; }
-    .secondary-nav-copy { min-width: 0; }
-    .secondary-tabs { width: 100%; }
+    .secondary-tabs, body.sidebar-collapsed .secondary-tabs {
+      position: fixed; left: 8px; right: 8px; bottom: 72px; z-index: 59;
+      width: auto; margin: 0; padding: 7px; overflow-x: auto;
+      display: flex; flex-direction: row; gap: 4px; border: 1px solid var(--line); border-radius: 12px;
+      background: rgba(255,255,255,.97); box-shadow: 0 7px 20px rgba(8,37,72,.09); scrollbar-width: thin;
+    }
+    .secondary-tab { width: auto; flex: 0 0 auto; min-height: 36px; padding: 7px 10px; gap: 7px; }
+    .workspace { padding-bottom: 122px; }
   }
 </style>
 </head>
@@ -555,6 +559,25 @@
         <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m7.5 4.3 9 5.1"/><path d="M21 8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l3 1.7"/><path d="M12 22V12M3.3 7 12 12l8.7-5"/><circle cx="18.5" cy="15.5" r="2.5"/><path d="m20.3 17.3 1.7 1.7"/></svg></span>
         <span class="nav-text"><b>履约追踪</b><small>查询 · 跟踪 · 导出</small></span>
       </button>
+      <div class="secondary-tabs" id="secondaryTabs" role="navigation" aria-label="履约追踪二级功能">
+        <button class="secondary-tab" data-parent="workbench" data-planned="业务概览" disabled hidden>业务概览<span class="secondary-status planned">规划</span></button>
+        <button class="secondary-tab" data-parent="workbench" data-planned="我的待办" disabled hidden>我的待办<span class="secondary-status planned">规划</span></button>
+        <button class="secondary-tab" data-parent="workbench" data-planned="连接状态" disabled hidden>连接状态<span class="secondary-status planned">规划</span></button>
+        <button class="secondary-tab" data-parent="procurement" data-planned="采购任务" disabled hidden>采购任务<span class="secondary-status planned">规划</span></button>
+        <button class="secondary-tab" data-parent="procurement" data-planned="采购执行" disabled hidden>采购执行<span class="secondary-status planned">规划</span></button>
+        <button class="secondary-tab" data-parent="procurement" data-planned="异常协同" disabled hidden>异常协同<span class="secondary-status planned">规划</span></button>
+        <button class="secondary-tab active" data-parent="fulfillment" data-module="query">订单物流查询<span class="secondary-status">现有</span></button>
+        <button class="secondary-tab" data-parent="resources" data-module="buyerlib" hidden>买家号库<span class="secondary-status">新增</span></button>
+        <button class="secondary-tab" data-parent="resources" data-module="vendorimport" hidden>号商入库<span class="secondary-status">新增</span></button>
+        <button class="secondary-tab" data-parent="resources" data-module="register" hidden>账号注册<span class="secondary-status">现有</span></button>
+        <button class="secondary-tab" data-parent="resources" data-module="envbatch" hidden>采购环境<span class="secondary-status">现有</span></button>
+        <button class="secondary-tab" data-parent="analytics" data-planned="采购效率" disabled hidden>采购效率<span class="secondary-status planned">规划</span></button>
+        <button class="secondary-tab" data-parent="analytics" data-planned="履约质量" disabled hidden>履约质量<span class="secondary-status planned">规划</span></button>
+        <button class="secondary-tab" data-parent="analytics" data-planned="资源健康" disabled hidden>资源健康<span class="secondary-status planned">规划</span></button>
+        <button class="secondary-tab" data-parent="system" data-module="settings" hidden>本机与飞书设置<span class="secondary-status">现有</span></button>
+        <button class="secondary-tab" data-parent="system" data-planned="外部服务" disabled hidden>外部服务<span class="secondary-status planned">规划</span></button>
+        <button class="secondary-tab" data-parent="system" data-planned="版本与审计" disabled hidden>版本与审计<span class="secondary-status planned">规划</span></button>
+      </div>
       <button class="module-tab" data-primary="resources" title="资源中心">
         <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2M19 8v6M16 11h6"/></svg></span>
         <span class="nav-text"><b>资源中心</b><small>库存 · 入库 · 注册 · 环境</small></span>
@@ -599,29 +622,6 @@
         <div class="hero-lockup" role="img" aria-label="小犀与 Xynigo 完整品牌一体图形">
           <img src="xynigo-logo.png" alt="">
         </div>
-      </section>
-
-      <section class="secondary-nav-shell" aria-label="二级功能导航">
-        <div class="secondary-nav-copy"><b id="secondaryTitle">履约追踪</b><small id="secondaryHint">查询 · 跟踪 · 导出</small></div>
-        <nav class="secondary-tabs" id="secondaryTabs">
-          <button class="secondary-tab" data-parent="workbench" data-planned="业务概览" disabled hidden>业务概览<span class="secondary-status planned">规划</span></button>
-          <button class="secondary-tab" data-parent="workbench" data-planned="我的待办" disabled hidden>我的待办<span class="secondary-status planned">规划</span></button>
-          <button class="secondary-tab" data-parent="workbench" data-planned="连接状态" disabled hidden>连接状态<span class="secondary-status planned">规划</span></button>
-          <button class="secondary-tab" data-parent="procurement" data-planned="采购任务" disabled hidden>采购任务<span class="secondary-status planned">规划</span></button>
-          <button class="secondary-tab" data-parent="procurement" data-planned="采购执行" disabled hidden>采购执行<span class="secondary-status planned">规划</span></button>
-          <button class="secondary-tab" data-parent="procurement" data-planned="异常协同" disabled hidden>异常协同<span class="secondary-status planned">规划</span></button>
-          <button class="secondary-tab active" data-parent="fulfillment" data-module="query">订单物流查询<span class="secondary-status">现有</span></button>
-          <button class="secondary-tab" data-parent="resources" data-module="buyerlib" hidden>买家号库<span class="secondary-status">新增</span></button>
-          <button class="secondary-tab" data-parent="resources" data-module="vendorimport" hidden>号商入库<span class="secondary-status">新增</span></button>
-          <button class="secondary-tab" data-parent="resources" data-module="register" hidden>账号注册<span class="secondary-status">现有</span></button>
-          <button class="secondary-tab" data-parent="resources" data-module="envbatch" hidden>采购环境<span class="secondary-status">现有</span></button>
-          <button class="secondary-tab" data-parent="analytics" data-planned="采购效率" disabled hidden>采购效率<span class="secondary-status planned">规划</span></button>
-          <button class="secondary-tab" data-parent="analytics" data-planned="履约质量" disabled hidden>履约质量<span class="secondary-status planned">规划</span></button>
-          <button class="secondary-tab" data-parent="analytics" data-planned="资源健康" disabled hidden>资源健康<span class="secondary-status planned">规划</span></button>
-          <button class="secondary-tab" data-parent="system" data-module="settings" hidden>本机与飞书设置<span class="secondary-status">现有</span></button>
-          <button class="secondary-tab" data-parent="system" data-planned="外部服务" disabled hidden>外部服务<span class="secondary-status planned">规划</span></button>
-          <button class="secondary-tab" data-parent="system" data-planned="版本与审计" disabled hidden>版本与审计<span class="secondary-status planned">规划</span></button>
-        </nav>
       </section>
 
   <div class="module-panel planning-panel hidden" id="planningPanel">
@@ -2175,21 +2175,28 @@ function setPrimaryModule(primary) {
   const info = PRIMARY_MODULES[primary];
   if (!info) return;
   activePrimary = primary;
+  const primaryButton = document.querySelector(`[data-primary="${primary}"]`);
   document.querySelectorAll('[data-primary]').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.primary === primary);
   });
+  if (primaryButton) primaryButton.insertAdjacentElement('afterend', $('secondaryTabs'));
   document.querySelectorAll('#secondaryTabs [data-parent]').forEach(btn => {
     btn.hidden = btn.dataset.parent !== primary;
   });
   $('primaryLabel').textContent = info.label;
-  $('secondaryTitle').textContent = info.label;
-  $('secondaryHint').textContent = info.hint;
+  $('secondaryTabs').setAttribute('aria-label', `${info.label}二级功能`);
   if (info.defaultModule) setFeaturePanel(info.defaultModule);
   else setPlannedPrimary(primary);
 }
 
 document.querySelectorAll('[data-primary]').forEach(btn => {
-  btn.onclick = () => setPrimaryModule(btn.dataset.primary);
+  btn.onclick = () => {
+    if (window.innerWidth > 860 && document.body.classList.contains('sidebar-collapsed')) {
+      sidebarManuallyToggled = true;
+      setSidebarCollapsed(false);
+    }
+    setPrimaryModule(btn.dataset.primary);
+  };
 });
 
 document.querySelectorAll('[data-module]').forEach(btn => {
