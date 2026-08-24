@@ -365,6 +365,8 @@
   }
   .secondary-tab.active .secondary-status { background: rgba(255,255,255,.72); color: var(--rhino-600); }
   .secondary-status.planned { background: var(--parcel-100); color: #90600c; }
+  .secondary-status.restricted { background: #eef0ff; color: #4a52a8; }
+  .settings-view[hidden] { display: none; }
   .planning-panel { min-height: 290px; display: grid; place-items: center; }
   .planning-card { width: min(620px,100%); padding: 34px; text-align: center; }
   .planning-icon {
@@ -653,7 +655,8 @@
         <button class="secondary-tab" data-parent="analytics" data-planned="采购效率" disabled hidden>采购效率<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="analytics" data-planned="履约质量" disabled hidden>履约质量<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="analytics" data-planned="资源健康" disabled hidden>资源健康<span class="secondary-status planned">规划</span></button>
-        <button class="secondary-tab" data-parent="system" data-module="settings" hidden>本机与飞书设置<span class="secondary-status">现有</span></button>
+        <button class="secondary-tab" data-parent="system" data-module="localsettings" hidden>本机设置<span class="secondary-status">现有</span></button>
+        <button class="secondary-tab" data-parent="system" data-module="larkconnection" data-required-role="super_admin" hidden>飞书连接<span class="secondary-status restricted">超管</span></button>
         <button class="secondary-tab" data-parent="system" data-planned="组织权限" disabled hidden>组织权限<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="system" data-planned="登录安全" disabled hidden>登录安全<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="system" data-planned="外部服务" disabled hidden>外部服务<span class="secondary-status planned">规划</span></button>
@@ -1059,7 +1062,7 @@
   </div>
 
   <div class="module-panel hidden" id="settingsPanel">
-    <section class="card">
+    <section class="card settings-view" data-settings-view="localsettings">
       <div class="card-title">通用与查询设置 <span class="legend">仅保存在当前电脑</span></div>
       <div class="settings-grid">
         <div class="settings-field">
@@ -1081,7 +1084,7 @@
       </div>
     </section>
 
-    <section class="card">
+    <section class="card settings-view" data-settings-view="localsettings">
       <div class="card-title">环境创建设置</div>
       <div class="settings-grid">
         <div class="settings-field">
@@ -1121,8 +1124,10 @@
       </div>
     </section>
 
-    <section class="card">
-      <div class="card-title">飞书多维表格 OpenAPI <span class="legend">统一使用“小犀代采”企业自建应用，无需安装 lark-cli</span></div>
+    <section class="card settings-view" data-settings-view="larkconnection" hidden>
+      <div class="card-title">飞书连接 <span class="legend">集中维护各业务模块的飞书数据连接</span></div>
+      <div class="credential-note">权限要求：仅超级管理员可查看和修改飞书连接。成员与角色后端接入后，其他用户不显示此入口，直接调用配置接口也会被拒绝。</div>
+      <div class="card-title" style="margin-top:18px">企业应用连接 <span class="legend">统一使用“小犀代采”企业自建应用，无需安装 lark-cli</span></div>
       <div class="settings-status">
         <span class="pill checking" id="larkConfigStatus">正在读取配置…</span>
         <span class="hint" id="larkConfigDetail">应用凭证保存在当前电脑的 macOS 钥匙串或 Windows 当前用户 DPAPI；访问令牌只驻留进程内存。</span>
@@ -1139,7 +1144,7 @@
           <div class="config-field-state checking" id="cfgLarkAppSecretState">正在读取配置状态…</div>
         </div>
         <div class="settings-field full">
-          <label>买家号统一台账链接</label>
+          <label>资源中心 · 买家号统一台账链接</label>
           <input type="password" id="cfgLarkLedgerUrl" autocomplete="off" placeholder="正在读取配置状态…">
           <div class="config-field-state checking" id="cfgLarkLedgerUrlState">正在读取配置状态…</div>
           <div class="config-field-state checking" id="cfgLarkConnectedTarget">当前连接：正在读取…</div>
@@ -1151,7 +1156,7 @@
             <label><input type="checkbox" id="cfgLarkClearCredential"> 清除当前电脑上的应用凭证</label>
             <label><input type="checkbox" id="cfgLarkClearTarget"> 清除统一台账目标</label>
           </div>
-          <div class="hint">页面/API 永不回显 App Secret、完整链接、Base Token 或 Table ID；公开代码中也不包含这些值。一个企业自建应用可按权限对接多张多维表格。</div>
+          <div class="hint">页面/API 永不回显 App Secret、完整链接、Base Token 或 Table ID；公开代码中也不包含这些值。后续采购、运营、财务等模块在本页面增加独立数据连接，共用企业应用凭证并分别授权。</div>
         </div>
       </div>
       <div class="settings-actions">
@@ -1267,8 +1272,8 @@ const PRIMARY_MODULES = {
     planning: '数据分析将在采购与履约数据口径稳定后接入。'
   },
   system: {
-    label: '系统管理', hint: '权限 · 设置 · 安全', defaultModule: 'settings',
-    summary: '规划成员角色与模块权限，并管理本机设置、飞书集成、安全和审计能力。'
+    label: '系统管理', hint: '权限 · 设置 · 安全', defaultModule: 'localsettings',
+    summary: '规划成员角色与模块权限，并分别管理本机设置、飞书连接、安全和审计能力。'
   }
 };
 const FEATURE_MODULES = {
@@ -1292,16 +1297,21 @@ const FEATURE_MODULES = {
     label: '环境创建', primary: 'resources',
     summary: '按采购需求创建 HubStudio 环境，并在后台验证全部新建环境出口 IP。'
   },
-  settings: {
-    label: '本机与飞书设置', primary: 'system',
-    summary: '集中管理本机连接、建环境偏好与飞书 OpenAPI 配置。'
+  localsettings: {
+    label: '本机设置', primary: 'system',
+    summary: '管理当前电脑的 HubStudio 连接、查询展示和环境创建偏好。'
+  },
+  larkconnection: {
+    label: '飞书连接', primary: 'system', requiredRole: 'super_admin',
+    summary: '由超级管理员集中维护企业应用凭证及各业务模块的飞书数据连接。'
   }
 };
 let activePrimary = 'fulfillment';
 let activeModule = 'query';
 const MAX_OPEN_FEATURE_TABS = 10;
 let openFeatureTabs = ['query'];
-let settingsPageLoaded = false;
+let localSettingsPageLoaded = false;
+let larkConnectionPageLoaded = false;
 let hiddenQueryColumns = new Set(['envName', 'ip']);
 let updatePollTimer = null;
 let lastUpdateDecision = '';
@@ -2289,6 +2299,7 @@ $('btnRetryFail').onclick = async () => {
 function setFeaturePanel(module) {
   const info = FEATURE_MODULES[module];
   if (!info) return;
+  const isSettingsModule = module === 'localsettings' || module === 'larkconnection';
   activeModule = module;
   document.querySelectorAll('[data-module]').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.module === module);
@@ -2298,7 +2309,10 @@ function setFeaturePanel(module) {
   $('vendorImportPanel').classList.toggle('hidden', module !== 'vendorimport');
   $('registerPanel').classList.toggle('hidden', module !== 'register');
   $('envPanel').classList.toggle('hidden', module !== 'envbatch');
-  $('settingsPanel').classList.toggle('hidden', module !== 'settings');
+  $('settingsPanel').classList.toggle('hidden', !isSettingsModule);
+  document.querySelectorAll('#settingsPanel [data-settings-view]').forEach(section => {
+    section.hidden = section.dataset.settingsView !== module;
+  });
   $('planningPanel').classList.add('hidden');
   $('moduleSummary').textContent = info.summary;
   renderWorkspaceTabs();
@@ -2307,10 +2321,15 @@ function setFeaturePanel(module) {
   else if (module === 'vendorimport') return;
   else if (module === 'register') pollRegister();
   else if (module === 'envbatch') { pollEnvBatch(); refreshEnvPreflight(); }
-  else if (!settingsPageLoaded) {
-    settingsPageLoaded = true;
-    loadSettingsPage().then(loaded => {
-      if (!loaded) settingsPageLoaded = false;
+  else if (module === 'localsettings' && !localSettingsPageLoaded) {
+    localSettingsPageLoaded = true;
+    loadLocalSettingsPage().then(loaded => {
+      if (!loaded) localSettingsPageLoaded = false;
+    });
+  } else if (module === 'larkconnection' && !larkConnectionPageLoaded) {
+    larkConnectionPageLoaded = true;
+    loadLarkConnectionPage().then(loaded => {
+      if (!loaded) larkConnectionPageLoaded = false;
     });
   }
 }
@@ -2568,7 +2587,7 @@ $('btnRegStart').onclick = async () => {
     confirmLarkWrite: false
   };
   if (payload.writeLarkLedger) {
-    if (!larkReady) { toast('飞书 OpenAPI 尚未配置完成，请先到“系统管理 → 本机与飞书设置”处理'); return; }
+    if (!larkReady) { toast('飞书 OpenAPI 尚未配置完成，请联系超级管理员到“系统管理 → 飞书连接”处理'); return; }
     payload.confirmLarkWrite = confirm(`注册成功后将更新${larkTargetDisplayName()}中任务明确指定的记录，并执行写后回读。\n\n这是独立的飞书写入确认，是否继续？`);
     if (!payload.confirmLarkWrite) return;
   }
@@ -2815,7 +2834,7 @@ $('btnEnvStart').onclick = async () => {
   if (!envPlanId) { toast('请先选择并解析 xlsx'); return; }
   const assignment = composeAssignmentSpec();
   const writeLarkLedger = $('envWriteLedger').checked;
-  if (writeLarkLedger && !larkReady) { toast('飞书 OpenAPI 尚未配置完成，请先到“系统管理 → 本机与飞书设置”处理'); return; }
+  if (writeLarkLedger && !larkReady) { toast('飞书 OpenAPI 尚未配置完成，请联系超级管理员到“系统管理 → 飞书连接”处理'); return; }
   if (!confirm(`将按${siteName}处理 ${envAccountCount} 个账号：创建环境、导入 Cookie、绑定账号并写备注。\n\n本次确认只授权 HubStudio 写入，是否继续？`)) return;
   let confirmLarkWrite = false;
   if (writeLarkLedger) {
@@ -3187,7 +3206,7 @@ function renderLarkConfigStatus(state) {
   if (!larkReady) $('regWriteLedger').checked = false;
   $('envLedgerState').textContent = larkReady
     ? `${larkTargetDisplayName()}已就绪；回写开关默认关闭，勾选后执行时会独立确认。`
-    : '飞书 OpenAPI 未就绪；请到“系统管理 → 本机与飞书设置”配置应用凭证和统一台账目标。';
+    : '飞书 OpenAPI 未就绪；请联系超级管理员到“系统管理 → 飞书连接”配置应用凭证和模块数据连接。';
 }
 
 async function loadLarkConfigStatus({refreshPending=false} = {}) {
@@ -3214,11 +3233,9 @@ async function loadLarkConfigStatus({refreshPending=false} = {}) {
   }
 }
 
-async function loadSettingsPage() {
+async function loadLocalSettingsPage() {
   try {
-    const [cfg] = await Promise.all([
-      api('/api/config'), loadLarkConfigStatus({refreshPending:true})
-    ]);
+    const cfg = await api('/api/config');
     $('cfgPort').value = cfg.hubPort || 6873;
     $('cfgConcurrency').value = cfg.concurrency || 2;
     setHiddenQueryColumns(cfg.hiddenQueryColumns || []);
@@ -3241,6 +3258,13 @@ async function loadSettingsPage() {
     toast('设置读取失败：' + e.message);
     return false;
   }
+}
+
+async function loadLarkConnectionPage() {
+  const state = await loadLarkConfigStatus({refreshPending:true});
+  if (state) return true;
+  toast('飞书连接读取失败，请检查超级管理员权限或本机服务状态');
+  return false;
 }
 
 $('btnCfgSave').onclick = async () => {
