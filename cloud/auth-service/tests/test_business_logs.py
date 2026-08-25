@@ -142,7 +142,7 @@ def test_submit_records_structured_log_and_supports_list_detail_filters(tmp_path
         "X-Request-ID": "request-business-log-000000000001",
         "X-Trace-ID": "trace-business-log-0000000000001",
         "X-Xynigo-Source": "local_workspace",
-        "X-Xynigo-Client-Version": "0.11.1-test",
+        "X-Xynigo-Client-Version": "0.12.0-test",
     }
     response = client.post(
         "/v1/purchase-orders/submit",
@@ -176,7 +176,7 @@ def test_submit_records_structured_log_and_supports_list_detail_filters(tmp_path
     assert item["operationType"] == "purchase_order.submit"
     assert item["businessObject"]["number"] == "GSHDEMO20260825"
     assert item["source"] == "local_workspace"
-    assert item["clientVersion"] == "0.11.1-test"
+    assert item["clientVersion"] == "0.12.0-test"
     assert item["requestId"] == headers["X-Request-ID"]
     assert item["traceId"] == headers["X-Trace-ID"]
 

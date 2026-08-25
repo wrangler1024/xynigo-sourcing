@@ -121,7 +121,7 @@ def test_middleware_records_tenant_scoped_runtime_log_and_api_filters(tmp_path) 
         "X-Request-ID": "request-system-log-00000000001",
         "X-Trace-ID": "trace-system-log-000000000001",
         "X-Xynigo-Source": "local_workspace",
-        "X-Xynigo-Client-Version": "0.11.1-test",
+        "X-Xynigo-Client-Version": "0.12.0-test",
     }
     missing_order_id = uuid.uuid4()
     response = client.get(
@@ -161,7 +161,7 @@ def test_middleware_records_tenant_scoped_runtime_log_and_api_filters(tmp_path) 
     }
     assert item["actor"]["name"] == "合成测试用户"
     assert item["source"] == "local_workspace"
-    assert item["clientVersion"] == "0.11.1-test"
+    assert item["clientVersion"] == "0.12.0-test"
     assert item["requestId"] == request_headers["X-Request-ID"]
     assert item["traceId"] == request_headers["X-Trace-ID"]
 
