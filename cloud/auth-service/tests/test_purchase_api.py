@@ -41,12 +41,14 @@ def authenticated_client(tmp_path):
 
 def sample_draft() -> dict[str, object]:
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "mode": "xynigo-extension",
-        "orderKey": "test store|GSHDEMO20260825|XMWUDEMO20260825",
+        "orderKey": "蓝天-周远超（一组）|GSHDEMO20260825|XMWUDEMO20260825",
         "packageId": "XMWUDEMO20260825",
         "platformOrderNo": "GSHDEMO20260825",
-        "storeName": "Test Store",
+        "storeName": "蓝天-周远超（一组）",
+        "storeBaseName": "蓝天",
+        "operatorName": "周远超",
         "site": "US",
         "salesCurrency": "USD",
         "salesAmount": 50.0,
@@ -84,7 +86,18 @@ def sample_draft() -> dict[str, object]:
             }
         ],
         "guideTotalsByCurrency": {"USD": 18.0},
-        "estimatedMetrics": None,
+        "estimatedMetrics": {
+            "ok": True,
+            "currency": "MXN",
+            "salesAmount": 216.71,
+            "guideTotal": 100.0,
+            "estimatedCost": 100.0,
+            "estimatedProfit": 116.71,
+            "profitMargin": 53.86,
+            "roi": 116.71,
+            "minimumApplied": False,
+            "costBasis": "synthetic-test",
+        },
         "remarkText": "",
         "remarkStatus": "not-generated",
         "purchaseStatus": "draft-local",
@@ -117,6 +130,9 @@ def test_draft_is_tenant_scoped_idempotent_and_queued_for_sync(tmp_path) -> None
         order = session.scalar(select(PurchaseOrder))
         assert order is not None
         assert order.order_key == draft["orderKey"]
+        assert order.store_name == "蓝天-周远超（一组）"
+        assert order.store_base_name == "蓝天"
+        assert order.operator_name == "周远超"
         assert order.submission_status == "draft"
         assert session.scalar(select(func.count(PurchaseOrderLine.id))) == 1
         assert session.scalar(select(func.count(PurchaseSyncOutbox.id))) == 1
@@ -136,6 +152,35 @@ def test_draft_is_tenant_scoped_idempotent_and_queued_for_sync(tmp_path) -> None
                 order_key=str(draft["orderKey"]),
             )
         assert caught.value.code == "purchase_order_not_found"
+    client.close()
+
+
+def test_schema_v1_remains_compatible_without_operator_fields(tmp_path) -> None:
+    client, database, headers = authenticated_client(tmp_path)
+    draft = sample_draft()
+    draft.update(
+        {
+            "schemaVersion": 1,
+            "orderKey": "legacy store|GSHLEGACY20260825|XMWULEGACY20260825",
+            "packageId": "XMWULEGACY20260825",
+            "platformOrderNo": "GSHLEGACY20260825",
+            "storeName": "Legacy Store",
+        }
+    )
+    draft.pop("storeBaseName")
+    draft.pop("operatorName")
+
+    submitted = client.post("/v1/purchase-orders/submit", json=draft, headers=headers)
+    assert submitted.status_code == 200
+    assert "storeBaseName" not in submitted.json()["data"]["draft"]
+    assert "operatorName" not in submitted.json()["data"]["draft"]
+
+    with database.session_factory() as session:
+        order = session.scalar(select(PurchaseOrder))
+        assert order is not None
+        assert order.store_name == "Legacy Store"
+        assert order.store_base_name == "Legacy Store"
+        assert order.operator_name is None
     client.close()
 
 
@@ -190,10 +235,12 @@ def test_procurement_workspace_overview_list_and_detail(tmp_path) -> None:
     saved_draft = deepcopy(submitted_draft)
     saved_draft.update(
         {
-            "orderKey": "draft store|GSHDRAFT20260825|XMWUDRAFT20260825",
+            "orderKey": "草原-运营乙（二组）|GSHDRAFT20260825|XMWUDRAFT20260825",
             "packageId": "XMWUDRAFT20260825",
             "platformOrderNo": "GSHDRAFT20260825",
-            "storeName": "Draft Store",
+            "storeName": "草原-运营乙（二组）",
+            "storeBaseName": "草原",
+            "operatorName": "运营乙",
             "recipientName": "Private Draft Recipient",
         }
     )
@@ -213,9 +260,24 @@ def test_procurement_workspace_overview_list_and_detail(tmp_path) -> None:
         "submitted": 1,
     }
     assert overview_data["orders"]["bySyncStatus"]["pending"] == 2
+    assert overview_data["orders"]["byTaskScope"] == {
+        "unclaimed": 1,
+        "processing": 0,
+        "ordered": 0,
+        "abnormal": 0,
+    }
     assert overview_data["lines"]["total"] == 2
     assert overview_data["lines"]["byWorkflowStatus"]["draft"] == 1
     assert overview_data["lines"]["byWorkflowStatus"]["unclaimed"] == 1
+    assert overview_data["fieldVisibility"] == {
+        "store": True,
+        "operator": True,
+        "salesAmount": True,
+        "profit": True,
+        "profitMargin": True,
+    }
+    assert set(overview_data["filters"]["stores"]) == {"蓝天", "草原"}
+    assert set(overview_data["filters"]["operators"]) == {"周远超", "运营乙"}
 
     listed = client.get(
         "/v1/procurement/orders",
@@ -242,8 +304,19 @@ def test_procurement_workspace_overview_list_and_detail(tmp_path) -> None:
         "https://img.ltwebstatic.com/images3_pi/demo.jpg"
     ]
     assert summary["workflowCounts"]["unclaimed"] == 1
-    assert "recipientName" not in listed.text
-    assert "Synthetic Recipient" not in listed.text
+    assert summary["recipientName"] == "Synthetic Recipient"
+    assert summary["recipientCountry"] == "US"
+    assert summary["storeName"] == "蓝天-周远超（一组）"
+    assert summary["storeBaseName"] == "蓝天"
+    assert summary["operator"]["name"] == "周远超"
+    assert "team" not in summary["operator"]
+    assert summary["requiredQty"] == 1
+    assert summary["purchasedQty"] == 0
+    assert summary["purchasers"] == []
+    assert summary["profitCurrency"] == "MXN"
+    assert summary["estimatedProfit"] == 116.71
+    assert summary["profitMargin"] == 53.86
+    assert list_data["fieldVisibility"] == overview_data["fieldVisibility"]
     assert "recipientPhone" not in listed.text
     assert "100 Example Street" not in listed.text
 
@@ -258,6 +331,7 @@ def test_procurement_workspace_overview_list_and_detail(tmp_path) -> None:
     assert detail_data["lines"][0]["workflowStatus"] == "unclaimed"
     assert detail_data["lines"][0]["payload"]["sellerSku"] == "DEMO-12345678"
     assert detail_data["lines"][0]["purchaseOrderLineId"]
+    assert detail_data["fieldVisibility"] == overview_data["fieldVisibility"]
     with database.session_factory() as session:
         audit = session.scalar(
             select(AuditEvent).where(
@@ -288,6 +362,12 @@ def test_procurement_workspace_validates_filters_and_hides_cross_tenant_orders(
         headers=headers,
     )
     assert invalid_status.status_code == 422
+    invalid_scope = client.get(
+        "/v1/procurement/orders",
+        params={"taskScope": "unknown"},
+        headers=headers,
+    )
+    assert invalid_scope.status_code == 422
     invalid_page_size = client.get(
         "/v1/procurement/orders",
         params={"pageSize": 301},
@@ -301,8 +381,82 @@ def test_procurement_workspace_validates_filters_and_hides_cross_tenant_orders(
     )
     assert maximum_page_size.status_code == 200
     assert maximum_page_size.json()["data"]["pageSize"] == 300
+    searched = client.get(
+        "/v1/procurement/orders",
+        params={"site": "US", "keyword": "周远超"},
+        headers=headers,
+    )
+    assert searched.status_code == 200
+    assert searched.json()["data"]["total"] == 1
+    exact_store_operator = client.get(
+        "/v1/procurement/orders",
+        params={"store": "蓝天", "operator": "周远超"},
+        headers=headers,
+    )
+    assert exact_store_operator.status_code == 200
+    assert exact_store_operator.json()["data"]["total"] == 1
+    wrong_operator = client.get(
+        "/v1/procurement/orders",
+        params={"store": "蓝天", "operator": "不存在的运营"},
+        headers=headers,
+    )
+    assert wrong_operator.status_code == 200
+    assert wrong_operator.json()["data"]["total"] == 0
+    wrong_site = client.get(
+        "/v1/procurement/orders",
+        params={"site": "MX"},
+        headers=headers,
+    )
+    assert wrong_site.status_code == 200
+    assert wrong_site.json()["data"]["total"] == 0
 
     with database.session_factory() as session:
+        tenant = session.scalar(select(Tenant))
+        assert tenant is not None
+        hidden = {
+            "store": False,
+            "operator": False,
+            "salesAmount": False,
+            "profit": False,
+            "profitMargin": False,
+        }
+        hidden_list = PurchaseOrderService(session).workspace_list(
+            tenant_id=tenant.id,
+            field_visibility=hidden,
+        )
+        hidden_summary = hidden_list["items"][0]
+        for key in (
+            "storeName",
+            "storeBaseName",
+            "operator",
+            "salesAmount",
+            "salesCurrency",
+            "estimatedProfit",
+            "profitCurrency",
+            "profitMargin",
+            "orderKey",
+        ):
+            assert key not in hidden_summary
+        hidden_detail = PurchaseOrderService(session).workspace_detail(
+            tenant_id=tenant.id,
+            purchase_order_id=uuid.UUID(purchase_order_id),
+            field_visibility=hidden,
+        )
+        assert "storeName" not in hidden_detail["draft"]
+        assert "orderKey" not in hidden_detail["draft"]
+        assert "operatorName" not in hidden_detail["draft"]
+        assert "salesAmount" not in hidden_detail["draft"]
+        assert "estimatedProfit" not in hidden_detail["draft"]["estimatedMetrics"]
+        assert "estimatedCost" not in hidden_detail["draft"]["estimatedMetrics"]
+        assert "profitMargin" not in hidden_detail["draft"]["estimatedMetrics"]
+        store_only = PurchaseOrderService(session).workspace_list(
+            tenant_id=tenant.id,
+            field_visibility={"operator": False},
+        )["items"][0]
+        assert store_only["storeName"] == "蓝天"
+        assert store_only["storeBaseName"] == "蓝天"
+        assert "operator" not in store_only
+        assert "orderKey" not in store_only
         other_tenant = Tenant(
             feishu_tenant_key="tenant-workspace-other",
             name="Workspace Other Tenant",
@@ -340,6 +494,13 @@ def test_procurement_claim_split_and_execution_queue_use_persisted_test_data(
     line_id = detail["lines"][0]["purchaseOrderLineId"]
     assert detail["executionRevision"] == 0
     assert detail["lines"][0]["claimedBy"] is None
+    before_claim = client.get(
+        "/v1/procurement/orders",
+        params={"claimedByMe": "true"},
+        headers=headers,
+    )
+    assert before_claim.status_code == 200
+    assert before_claim.json()["data"]["total"] == 0
 
     claimed = client.post(
         "/v1/procurement/claims",
@@ -349,6 +510,16 @@ def test_procurement_claim_split_and_execution_queue_use_persisted_test_data(
     assert claimed.status_code == 200
     assert claimed.json()["data"]["claimedCount"] == 1
     assert claimed.json()["data"]["claimant"]["name"] == "合成测试用户"
+    my_execution = client.get(
+        "/v1/procurement/orders",
+        params={"claimedByMe": "true", "taskScope": "processing"},
+        headers=headers,
+    )
+    assert my_execution.status_code == 200
+    assert my_execution.json()["data"]["total"] == 1
+    execution_summary = my_execution.json()["data"]["items"][0]
+    assert execution_summary["requiredQty"] == 3
+    assert execution_summary["purchasers"][0]["name"] == "合成测试用户"
     retry = client.post(
         "/v1/procurement/claims",
         json={"purchaseOrderLineIds": [line_id]},
@@ -431,6 +602,8 @@ def test_procurement_claim_split_and_execution_queue_use_persisted_test_data(
     ).json()["data"]
     assert refreshed_detail["executionRevision"] == 1
     assert refreshed_detail["lines"][0]["claimedBy"]["name"] == "合成测试用户"
+    assert len(refreshed_detail["executionBatches"]) == 2
+    assert refreshed_detail["purchaseBatchCount"] == 2
     with database.session_factory() as session:
         assert session.scalar(select(func.count(PurchaseSplit.id))) == 2
         assert session.scalar(select(func.count(PurchaseSplitLine.id))) == 2
@@ -438,6 +611,96 @@ def test_procurement_claim_split_and_execution_queue_use_persisted_test_data(
         assert any(event.action == "purchase_order.lines.claim" for event in audits)
         assert any(event.action == "purchase_order.split_plan.save" for event in audits)
         assert all("buyerAccountRef" not in str(event.details) for event in audits)
+    client.close()
+
+
+def test_procurement_return_releases_unstarted_claim_and_rejects_split_plan(
+    tmp_path,
+) -> None:
+    client, database, headers = authenticated_client(tmp_path)
+    submitted = client.post(
+        "/v1/purchase-orders/submit", json=sample_draft(), headers=headers
+    )
+    assert submitted.status_code == 200
+    purchase_order_id = submitted.json()["data"]["purchaseOrderId"]
+    detail = client.get(
+        f"/v1/procurement/orders/{purchase_order_id}", headers=headers
+    ).json()["data"]
+    line_id = detail["lines"][0]["purchaseOrderLineId"]
+
+    claimed = client.post(
+        "/v1/procurement/claims",
+        json={"purchaseOrderIds": [purchase_order_id]},
+        headers=headers,
+    )
+    assert claimed.status_code == 200
+    returned = client.post(
+        f"/v1/procurement/orders/{purchase_order_id}/return",
+        json={"reason": "采购员排班调整，退回公共任务"},
+        headers=headers,
+    )
+    assert returned.status_code == 200
+    returned_data = returned.json()["data"]
+    assert returned_data["returnedCount"] == 1
+    assert returned_data["executionRevision"] == 1
+
+    mine = client.get(
+        "/v1/procurement/orders",
+        params={"claimedByMe": "true"},
+        headers=headers,
+    )
+    assert mine.status_code == 200
+    assert mine.json()["data"]["total"] == 0
+    public_tasks = client.get(
+        "/v1/procurement/orders",
+        params={"taskScope": "unclaimed"},
+        headers=headers,
+    )
+    assert public_tasks.status_code == 200
+    assert public_tasks.json()["data"]["total"] == 1
+
+    assert client.post(
+        "/v1/procurement/claims",
+        json={"purchaseOrderIds": [purchase_order_id]},
+        headers=headers,
+    ).status_code == 200
+    planned = client.post(
+        f"/v1/procurement/orders/{purchase_order_id}/splits",
+        json={
+            "expectedRevision": 1,
+            "groups": [{
+                "clientKey": "planned",
+                "resource": None,
+                "lines": [{"purchaseOrderLineId": line_id, "quantity": 1}],
+            }],
+        },
+        headers=headers,
+    )
+    assert planned.status_code == 200
+    blocked = client.post(
+        f"/v1/procurement/orders/{purchase_order_id}/return",
+        json={"reason": "已经分单后尝试退回"},
+        headers=headers,
+    )
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"]["code"] == "purchase_return_split_exists"
+
+    with database.session_factory() as session:
+        line = session.get(PurchaseOrderLine, uuid.UUID(line_id))
+        assert line is not None
+        assert line.workflow_status == "claimed"
+        assert line.claimed_by_user_id is not None
+        audits = list(
+            session.scalars(
+                select(AuditEvent).where(
+                    AuditEvent.action == "purchase_order.lines.return"
+                )
+            )
+        )
+        assert any(event.result == "success" for event in audits)
+        assert any(event.result == "denied" for event in audits)
+        success = next(event for event in audits if event.result == "success")
+        assert success.details["reason"] == "采购员排班调整，退回公共任务"
     client.close()
 
 
@@ -575,6 +838,13 @@ def test_purchase_routes_require_explicit_permission(tmp_path) -> None:
     )
     assert split_response.status_code == 403
     assert split_response.json()["detail"]["code"] == "permission_denied"
+    return_response = client.post(
+        "/v1/procurement/orders/00000000-0000-0000-0000-000000000001/return",
+        json={"reason": "权限测试退回"},
+        headers=headers,
+    )
+    assert return_response.status_code == 403
+    assert return_response.json()["detail"]["code"] == "permission_denied"
     with database.session_factory() as session:
         assert session.scalar(select(PurchaseOrder)) is None
     client.close()

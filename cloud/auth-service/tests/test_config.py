@@ -46,3 +46,19 @@ def test_settings_repr_redacts_database_password_and_app_secret() -> None:
 def test_production_rejects_wildcard_hosts() -> None:
     with pytest.raises(ValidationError):
         production_settings(allowed_hosts="*")
+
+
+def test_system_log_retention_capacity_and_sampling_are_bounded() -> None:
+    settings = production_settings()
+    assert settings.system_log_retention_days == 30
+    assert settings.system_log_max_rows_per_tenant == 100_000
+    assert settings.system_log_runtime_sample_rate == 1.0
+    for invalid in (
+        {"system_log_retention_days": 0},
+        {"system_log_retention_days": 366},
+        {"system_log_max_rows_per_tenant": 999},
+        {"system_log_runtime_sample_rate": -0.01},
+        {"system_log_runtime_sample_rate": 1.01},
+    ):
+        with pytest.raises(ValidationError):
+            production_settings(**invalid)

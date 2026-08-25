@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
+import io
 import json
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -56,6 +58,8 @@ class FakeCloudClient(object):
         self.admin_requests = []
         self.purchase_requests = []
         self.procurement_workspace_requests = []
+        self.business_log_requests = []
+        self.system_log_requests = []
 
     def start_login(self):
         self.start_calls += 1
@@ -100,6 +104,26 @@ class FakeCloudClient(object):
         return {
             'ok': True,
             'data': {'page': 1, 'pageSize': 20, 'total': 0, 'items': []},
+        }
+
+    def business_log_request(self, path, token):
+        self.business_log_requests.append((path, token))
+        return {
+            'ok': True,
+            'data': {
+                'scope': 'self', 'page': 1, 'pageSize': 50,
+                'total': 0, 'items': [],
+            },
+        }
+
+    def system_log_request(self, path, token):
+        self.system_log_requests.append((path, token))
+        return {
+            'ok': True,
+            'data': {
+                'scope': 'tenant', 'page': 1, 'pageSize': 50,
+                'total': 0, 'items': [],
+            },
         }
 
 
@@ -310,6 +334,84 @@ class CloudAuthTests(unittest.TestCase):
             ('/v1/procurement/claims', SESSION_TOKEN, 'POST', payload),
         ])
 
+    def test_business_log_proxy_keeps_bearer_session_local(self):
+        client = FakeCloudClient()
+        service = LocalAuthService(
+            client=client,
+            store=MemoryAuthSessionStore(SESSION_TOKEN),
+        )
+        result = service.business_log_request(
+            '/v1/business-logs?module=procurement&page=1')
+        self.assertEqual(result['data']['scope'], 'self')
+        self.assertEqual(client.business_log_requests, [
+            ('/v1/business-logs?module=procurement&page=1', SESSION_TOKEN),
+        ])
+        self.assertNotIn(SESSION_TOKEN, json.dumps(result))
+
+    def test_cloud_business_log_client_allows_only_read_paths(self):
+        client = CloudAuthClient('https://xynigo.example.test')
+        calls = []
+        client._request = lambda path, **kwargs: calls.append((path, kwargs)) or {
+            'ok': True, 'data': {}}
+        log_id = '00000000-0000-0000-0000-000000000001'
+        client.business_log_request(
+            '/v1/business-logs?result=success', SESSION_TOKEN)
+        client.business_log_request(
+            '/v1/business-logs/' + log_id, SESSION_TOKEN)
+        self.assertEqual([item[0] for item in calls], [
+            '/v1/business-logs?result=success',
+            '/v1/business-logs/' + log_id,
+        ])
+        self.assertTrue(all(
+            item[1]['source'] == 'local_workspace' for item in calls))
+        for unsafe_path in (
+                '/v1/admin/members',
+                '/v1/business-logs/../admin/members',
+                'https://evil.example.test/v1/business-logs'):
+            with self.subTest(path=unsafe_path):
+                with self.assertRaises(LocalAuthError):
+                    client.business_log_request(unsafe_path, SESSION_TOKEN)
+
+    def test_system_log_proxy_requires_permission_and_keeps_session_local(self):
+        client = FakeCloudClient()
+        identity = dict(IDENTITY)
+        identity['permissions'] = list(IDENTITY['permissions']) + [
+            'system.runtime_log.read']
+        service = LocalAuthService(
+            client=client,
+            store=MemoryAuthSessionStore(SESSION_TOKEN),
+        )
+        service.identity = identity
+        service.last_verified = time.time()
+        result = service.system_log_request(
+            '/v1/system-logs?level=error&page=1')
+        self.assertEqual(result['data']['scope'], 'tenant')
+        self.assertEqual(client.system_log_requests, [
+            ('/v1/system-logs?level=error&page=1', SESSION_TOKEN),
+        ])
+        self.assertNotIn(SESSION_TOKEN, json.dumps(result))
+
+    def test_cloud_system_log_client_allows_only_read_paths(self):
+        client = CloudAuthClient('https://xynigo.example.test')
+        calls = []
+        client._request = lambda path, **kwargs: calls.append((path, kwargs)) or {
+            'ok': True, 'data': {}}
+        log_id = '00000000-0000-0000-0000-000000000001'
+        client.system_log_request(
+            '/v1/system-logs?category=system_error', SESSION_TOKEN)
+        client.system_log_request('/v1/system-logs/' + log_id, SESSION_TOKEN)
+        self.assertEqual([item[0] for item in calls], [
+            '/v1/system-logs?category=system_error',
+            '/v1/system-logs/' + log_id,
+        ])
+        for unsafe_path in (
+                '/v1/admin/members',
+                '/v1/system-logs/../admin/members',
+                'https://evil.example.test/v1/system-logs'):
+            with self.subTest(path=unsafe_path):
+                with self.assertRaises(LocalAuthError):
+                    client.system_log_request(unsafe_path, SESSION_TOKEN)
+
     def test_cloud_procurement_client_allows_only_workspace_read_paths(self):
         client = CloudAuthClient('https://xynigo.example.test')
         calls = []
@@ -332,6 +434,9 @@ class CloudAuthTests(unittest.TestCase):
         client.procurement_workspace_request(
             '/v1/procurement/orders/' + detail_id + '/splits', SESSION_TOKEN,
             method='POST', payload={'expectedRevision': 0, 'groups': []})
+        client.procurement_workspace_request(
+            '/v1/procurement/orders/' + detail_id + '/return', SESSION_TOKEN,
+            method='POST', payload={'reason': 'synthetic return'})
         self.assertEqual([item[0] for item in calls], [
             '/v1/procurement/overview',
             '/v1/procurement/orders?submissionStatus=submitted',
@@ -339,6 +444,7 @@ class CloudAuthTests(unittest.TestCase):
             '/v1/procurement/execution/splits?pageSize=100',
             '/v1/procurement/claims',
             '/v1/procurement/orders/' + detail_id + '/splits',
+            '/v1/procurement/orders/' + detail_id + '/return',
         ])
         with self.assertRaises(LocalAuthError):
             client.procurement_workspace_request(
@@ -355,6 +461,48 @@ class CloudAuthTests(unittest.TestCase):
                 with self.assertRaises(LocalAuthError):
                     client.procurement_workspace_request(
                         unsafe_path, SESSION_TOKEN)
+
+    def test_purchase_contract_validation_error_is_not_reported_as_auth_failure(self):
+        def reject_v2(request, timeout=0):
+            del timeout
+            body = json.dumps({
+                'detail': [
+                    {
+                        'type': 'literal_error',
+                        'loc': ['body', 'schemaVersion'],
+                        'msg': 'Input should be 1',
+                    },
+                    {
+                        'type': 'extra_forbidden',
+                        'loc': ['body', 'operatorName'],
+                        'msg': 'Extra inputs are not permitted',
+                    },
+                ],
+            }).encode('utf-8')
+            raise HTTPError(
+                request.full_url,
+                422,
+                'Unprocessable Entity',
+                {},
+                io.BytesIO(body),
+            )
+
+        client = CloudAuthClient(
+            'https://xynigo.example.test',
+            opener=reject_v2,
+        )
+        with self.assertRaises(LocalAuthError) as caught:
+            client.purchase_request(
+                'submit',
+                SESSION_TOKEN,
+                {'schemaVersion': 2, 'orderKey': 'synthetic-order'},
+            )
+        self.assertEqual(
+            caught.exception.code,
+            'purchase_contract_version_unsupported',
+        )
+        self.assertEqual(caught.exception.status, 422)
+        self.assertIn('契约版本不一致', str(caught.exception))
 
     def test_cloud_admin_client_supports_delete_without_a_request_body(self):
         client = CloudAuthClient('https://xynigo.example.test')
@@ -567,6 +715,63 @@ class AuthRouteGuardTests(unittest.TestCase):
         self.assertEqual(payload['code'], 'authentication_required')
         self.assertEqual(self.auth.required_permissions, [None])
 
+    def test_business_log_route_requires_login_and_forwards_only_relative_path(self):
+        forwarded = []
+
+        def allow(permission=None, role=None):
+            self.auth.required_permissions.append(permission)
+            self.auth.required_roles.append(role)
+            return IDENTITY
+
+        self.auth.require = allow
+        self.auth.business_log_request = lambda path: (
+            forwarded.append(path) or {
+                'ok': True,
+                'data': {
+                    'scope': 'self', 'page': 1, 'pageSize': 50,
+                    'total': 0, 'items': [],
+                },
+            }
+        )
+        with urlopen(
+                self._url('/api/business-logs?module=procurement&page=2'),
+                timeout=3) as response:
+            payload = json.loads(response.read().decode('utf-8'))
+        self.assertTrue(payload['ok'])
+        self.assertEqual(self.auth.required_permissions, [None])
+        self.assertEqual(forwarded, [
+            '/v1/business-logs?module=procurement&page=2',
+        ])
+
+    def test_system_log_route_requires_permission_and_forwards_relative_path(self):
+        forwarded = []
+
+        def allow(permission=None, role=None):
+            self.auth.required_permissions.append(permission)
+            self.auth.required_roles.append(role)
+            return IDENTITY
+
+        self.auth.require = allow
+        self.auth.system_log_request = lambda path: (
+            forwarded.append(path) or {
+                'ok': True,
+                'data': {
+                    'scope': 'tenant', 'page': 1, 'pageSize': 50,
+                    'total': 0, 'items': [],
+                },
+            }
+        )
+        with urlopen(
+                self._url('/api/system-logs?level=error&page=2'),
+                timeout=3) as response:
+            payload = json.loads(response.read().decode('utf-8'))
+        self.assertTrue(payload['ok'])
+        self.assertEqual(
+            self.auth.required_permissions, ['system.runtime_log.read'])
+        self.assertEqual(forwarded, [
+            '/v1/system-logs?level=error&page=2',
+        ])
+
     def test_lark_connection_api_requires_super_admin_permission(self):
         with self.assertRaises(HTTPError) as caught:
             urlopen(self._url('/api/lark/config'), timeout=3)
@@ -597,6 +802,8 @@ class AuthRouteGuardTests(unittest.TestCase):
                 ('/api/procurement/orders/00000000-0000-0000-0000-000000000001',
                  'procurement.request.read'),
                 ('/api/procurement/orders/00000000-0000-0000-0000-000000000001/splits',
+                 'procurement.execution.manage'),
+                ('/api/procurement/orders/00000000-0000-0000-0000-000000000001/return',
                  'procurement.execution.manage')]:
             with self.subTest(path=path):
                 self.auth.required_permissions.clear()
@@ -625,6 +832,8 @@ class AuthRouteGuardTests(unittest.TestCase):
             ('/api/procurement/claims', {'purchaseOrderIds': [order_id]}),
             ('/api/procurement/orders/%s/splits' % order_id,
              {'expectedRevision': 0, 'groups': []}),
+            ('/api/procurement/orders/%s/return' % order_id,
+             {'reason': 'synthetic return'}),
         ]
         for path, payload in requests:
             with self.subTest(path=path):
@@ -640,6 +849,7 @@ class AuthRouteGuardTests(unittest.TestCase):
         self.assertEqual(self.auth.required_permissions, [
             'procurement.execution.manage',
             'procurement.execution.manage',
+            'procurement.execution.manage',
         ])
         self.assertEqual(forwarded, [
             ('/v1/procurement/claims', 'POST',
@@ -647,6 +857,9 @@ class AuthRouteGuardTests(unittest.TestCase):
              'procurement.execution.manage'),
             ('/v1/procurement/orders/%s/splits' % order_id, 'POST',
              {'expectedRevision': 0, 'groups': []},
+             'procurement.execution.manage'),
+            ('/v1/procurement/orders/%s/return' % order_id, 'POST',
+             {'reason': 'synthetic return'},
              'procurement.execution.manage'),
         ])
 

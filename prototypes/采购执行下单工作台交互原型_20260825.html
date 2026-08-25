@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Xynigo Sourcing · 采购执行下单工作台交互原型</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  :root {
+    --navy-950: #082548; --navy-900: #0b315e; --navy-700: #315372;
+    --navy-500: #6e879d; --rhino-600: #1698a0; --rhino-500: #20aeb3;
+    --tech-blue: #4e8ba9; --tech-blue-dark: #356f91;
+    --action-gradient: linear-gradient(135deg,#1698a0 0%,#4e8ba9 100%);
+    --rhino-100: #e8f8f7; --parcel-500: #f2b747; --parcel-100: #fff6de;
+    --coral-500: #ff694a; --coral-100: #fff0eb; --green-500: #34b783;
+    --green-100: #eaf8f2; --surface: #fff; --canvas: #f4f7fa;
+    --line: #e5ebf0; --shadow: 0 12px 34px rgba(8,37,72,.08);
+    --primary: var(--rhino-600); --primary-dark: #117f86;
+    --green: #16815b; --green-bg: var(--green-100);
+    --red: #c8472e; --red-bg: var(--coral-100);
+    --amber: #9a650d; --amber-bg: var(--parcel-100);
+    --blue: #2768c8; --blue-bg: #edf4ff;
+    --gray: var(--navy-500); --gray-bg: #eef2f6; --border: var(--line);
+  }
+  html, body { min-height: 100%; }
+  body {
+    background: var(--canvas); color: var(--navy-950); font-size: 14px;
+    font-family: Inter, ui-rounded, "SF Pro Rounded", "PingFang SC", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  button, input, textarea, select { font: inherit; }
+  button { cursor: pointer; }
+  button:disabled { cursor: default; opacity: .5; }
+  .app-shell { min-height: 100vh; display: grid; grid-template-columns: 220px minmax(0,1fr); }
+  .sidebar {
+    position: sticky; top: 0; height: 100vh; padding: 18px 14px; z-index: 30;
+    display: flex; flex-direction: column; background: var(--surface); border-right: 1px solid var(--line);
+  }
+  .sidebar-toggle {
+    position: absolute; top: 22px; right: -14px; z-index: 5; width: 29px; height: 29px;
+    display: grid; place-items: center; border: 1px solid #dce6ed; border-radius: 50%;
+    background: #fff; color: var(--navy-700); font-size: 20px; line-height: 1;
+    box-shadow: 0 5px 14px rgba(8,37,72,.12);
+  }
+  .brand-card { padding: 2px 8px 14px; border-bottom: 1px solid var(--line); }
+  .brand-art { width: 118px; height: 38px; overflow: hidden; position: relative; }
+  .brand-art img { position: absolute; width: 193px; max-width: none; height: auto; left: -68px; top: -43px; }
+  .brand-meta { margin-top: 4px; color: var(--navy-500); font-size: 9px; font-weight: 800; }
+  .module-tabs { margin-top: 16px; display: flex; flex-direction: column; gap: 4px; }
+  .nav-label { margin: 0 8px 6px; color: #9aabb9; font-size: 9px; font-weight: 900; letter-spacing: .12em; }
+  .module-tab {
+    width: 100%; min-height: 47px; padding: 6px 8px; border: 1px solid transparent; border-radius: 11px;
+    display: flex; align-items: center; gap: 9px; background: transparent; color: var(--navy-700); text-align: left;
+  }
+  .module-tab:hover { background: #f5f9fa; }
+  .module-tab.active { border-color: #cde6e7; background: var(--rhino-100); color: #126f74; }
+  .nav-icon { width: 36px; height: 36px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 10px; background: #f2f6f8; }
+  .module-tab.active .nav-icon { background: #fff; }
+  .nav-icon svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  .nav-text { min-width: 0; }
+  .nav-text b { display: block; font-size: 11px; }
+  .nav-text small { display: block; margin-top: 3px; color: var(--navy-500); font-size: 8px; }
+  .secondary-tabs { min-width: 0; margin: -1px 0 4px 43px; padding: 2px 0 3px 10px; display: flex; flex-direction: column; gap: 2px; border-left: 1px solid #d7e4e9; }
+  .secondary-tab {
+    width: 100%; min-height: 31px; padding: 6px 7px 6px 9px; border: 0; border-radius: 8px;
+    display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    background: transparent; color: var(--navy-700); text-align: left; font-size: 11px; font-weight: 750;
+  }
+  .secondary-tab:hover { background: #f5f9fa; color: var(--navy-950); }
+  .secondary-tab.active { background: var(--rhino-100); color: #126f74; }
+  .secondary-status { padding: 2px 5px; border-radius: 999px; background: #eef2f6; color: var(--navy-500); font-size: 9px; font-weight: 900; }
+  .secondary-tab.active .secondary-status { background: rgba(255,255,255,.72); color: var(--rhino-600); }
+  .side-footer { margin-top: auto; padding: 12px; border-radius: 12px; background: #f7fafb; color: var(--navy-500); font-size: 9px; line-height: 1.6; }
+  .side-footer b { display: block; color: var(--navy-700); font-size: 10px; }
+  .workspace { min-width: 0; }
+  .topbar { min-height: 63px; padding: 0 24px; position: sticky; top: 0; z-index: 10; display: flex; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid var(--line); background: rgba(255,255,255,.96); }
+  .workspace-tabs { min-width: 0; display: flex; align-items: center; gap: 7px; }
+  .workspace-tab { min-width: 0; height: 36px; padding: 0 4px 0 11px; border: 1px solid #dce6ec; border-radius: 9px; display: flex; align-items: center; background: #fff; color: var(--navy-700); }
+  .workspace-tab.active { border-color: #a9dadd; background: var(--rhino-100); color: #126f74; }
+  .workspace-tab-open { max-width: 190px; padding: 0 6px 0 0; overflow: hidden; border: 0; background: transparent; color: inherit; font-size: 10px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+  .workspace-tab-close { width: 26px; border: 0; border-radius: 7px; background: transparent; color: #8da0b0; font-size: 17px; }
+  .topbar-right { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; }
+  .hub-status { padding: 6px 9px; border-radius: 999px; background: var(--green-100); color: var(--green); font-size: 9px; font-weight: 850; }
+  .auth-user { padding: 5px 9px 5px 5px; border: 1px solid var(--line); border-radius: 999px; display: flex; align-items: center; gap: 8px; background: #fff; }
+  .auth-avatar { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--action-gradient); color: #fff; font-size: 9px; font-weight: 900; }
+  .auth-user b, .auth-user small { display: block; }
+  .auth-user b { color: var(--navy-950); font-size: 9px; }
+  .auth-user small { color: var(--navy-500); font-size: 8px; }
+  main { max-width: 1500px; margin: 0 auto; padding: 24px 28px 36px; display: flex; flex-direction: column; gap: 16px; }
+  .hero { position: relative; min-height: 148px; padding: 25px 28px; overflow: hidden; display: grid; grid-template-columns: minmax(0,1fr) minmax(250px,330px); align-items: center; gap: 24px; border-radius: 22px; background: linear-gradient(135deg,#9bdad5 0%,#6fb8c1 56%,#8eabc9 100%); color: var(--navy-950); box-shadow: var(--shadow); }
+  .hero::before, .hero::after { content: ""; position: absolute; border-radius: 50%; background: var(--navy-900); opacity: .09; }
+  .hero::before { width: 230px; height: 230px; right: 90px; top: -130px; }
+  .hero::after { width: 150px; height: 150px; right: -50px; bottom: -90px; }
+  .hero-copy { position: relative; z-index: 2; }
+  .hero-kicker { color: var(--rhino-600); font-weight: 900; font-size: 12px; letter-spacing: .12em; }
+  .hero h1 { margin: 8px 0 6px; font-size: 27px; line-height: 1.25; letter-spacing: -.02em; }
+  .hero-call { color: #117f86; white-space: nowrap; }
+  .hero p { color: var(--navy-700); font-size: 13px; }
+  .hero-meta { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 17px; }
+  .hero-chip { padding: 6px 10px; border: 1px solid rgba(8,37,72,.13); border-radius: 999px; background: rgba(255,255,255,.34); color: var(--navy-700); font-size: 11px; font-weight: 700; }
+  .hero-lockup { --lockup-width: 350px; --lockup-x: -13px; --lockup-y: -30px; position: relative; z-index: 1; justify-self: end; width: 320px; height: 128px; overflow: hidden; }
+  .hero-lockup img { position: absolute; width: var(--lockup-width); max-width: none; height: auto; transform: translate(var(--lockup-x),var(--lockup-y)); }
+  .card { padding: 18px 20px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+  .card-title { margin-bottom: 14px; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; font-size: 15px; font-weight: 600; }
+  .table-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .table-title-copy { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; }
+  .legend { color: var(--gray); font-size: 12px; font-weight: 400; }
+  .btn { padding: 9px 18px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--navy-950); font-size: 14px; white-space: nowrap; }
+  .btn:hover:not(:disabled) { background: var(--gray-bg); }
+  .btn.primary { border-color: var(--primary); background: var(--primary); color: #fff; font-weight: 600; }
+  .btn.primary:hover:not(:disabled) { background: var(--primary-dark); }
+  .btn-mini { padding: 3px 10px; border: 1px solid var(--border); border-radius: 6px; background: #fff; color: var(--primary); font-size: 12px; white-space: nowrap; }
+  .btn-mini:hover:not(:disabled) { border-color: var(--primary); background: var(--blue-bg); }
+  .execution-page-banner { padding: 12px 14px; border: 1px solid #f1d28b; border-radius: 12px; display: flex; align-items: center; justify-content: space-between; gap: 14px; background: var(--parcel-100); color: #815510; font-size: 10px; line-height: 1.6; }
+  .execution-page-banner b { color: #6f4709; }
+  .execution-page-banner span:last-child { flex: 0 0 auto; padding: 4px 7px; border-radius: 999px; background: #fff; font-size: 9px; font-weight: 900; }
+  .execution-page-metrics { margin-top: 12px; display: grid; grid-template-columns: repeat(5,minmax(112px,1fr)); gap: 10px; }
+  .execution-page-metric { min-height: 78px; padding: 13px 14px; border: 1px solid var(--line); border-radius: 13px; background: #f8fafb; }
+  .execution-page-metric b { display: block; color: var(--navy-950); font-size: 21px; }
+  .execution-page-metric span { display: block; margin-top: 6px; color: var(--navy-500); font-size: 9px; font-weight: 850; }
+  .execution-page-metric.ready b { color: var(--tech-blue-dark); }
+  .execution-page-metric.working b, .execution-page-metric.payment b { color: var(--rhino-600); }
+  .execution-page-metric.tracking b { color: var(--green); }
+  .execution-page-metric.exception b { color: var(--coral-500); }
+  .execution-page-filter-grid { display: grid; grid-template-columns: repeat(4,minmax(150px,1fr)); gap: 10px; }
+  .field label { display: block; margin-bottom: 6px; color: var(--gray); font-size: 13px; }
+  input, select { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: #fff; outline: none; }
+  input:focus, select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(22,152,160,.11); }
+  .execution-page-layout { display: grid; grid-template-columns: minmax(320px,400px) minmax(0,1fr); gap: 14px; align-items: start; }
+  .execution-page-queue, .execution-page-detail { padding: 0; overflow: hidden; }
+  .execution-page-pane-head { min-height: 58px; padding: 13px 15px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #fbfcfd; }
+  .execution-page-pane-head strong { color: var(--navy-950); font-size: 12px; }
+  .execution-page-pane-head span { color: var(--navy-500); font-size: 9px; }
+  .execution-page-queue-list { max-height: 660px; padding: 9px; overflow-y: auto; display: grid; gap: 7px; }
+  .execution-page-queue-card { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 12px; display: grid; grid-template-columns: 76px minmax(0,1fr); gap: 10px; background: #fff; color: inherit; text-align: left; }
+  .execution-page-queue-card:hover { border-color: #a9d7dc; background: #f8fcfc; }
+  .execution-page-queue-card.active { border-color: var(--rhino-500); background: var(--rhino-100); box-shadow: 0 0 0 3px rgba(32,174,179,.08); }
+  .product-stack { min-width: 0; display: flex; align-items: center; padding-left: 5px; }
+  .product-thumb { width: 40px; height: 52px; margin-left: -7px; overflow: hidden; border: 2px solid #fff; border-radius: 8px; display: grid; place-items: center; background: #eef3f6; color: var(--navy-500); box-shadow: 0 5px 13px rgba(8,37,72,.1); font-size: 8px; }
+  .product-thumb:first-child { margin-left: 0; }
+  .execution-page-card-copy { min-width: 0; }
+  .execution-page-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+  .execution-page-card-head b { overflow: hidden; color: var(--navy-950); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+  .execution-page-card-meta { display: block; margin-top: 5px; color: var(--navy-500); font-size: 9px; line-height: 1.55; }
+  .execution-page-card-foot { margin-top: 7px; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--navy-700); font-size: 9px; font-weight: 800; }
+  .execution-page-status { flex: 0 0 auto; padding: 4px 7px; border-radius: 999px; background: #eef3f5; color: var(--navy-700); font-size: 8px; font-weight: 900; }
+  .execution-page-status.ready { background: var(--blue-bg); color: var(--tech-blue-dark); }
+  .execution-page-status.ordering, .execution-page-status.payment { background: var(--rhino-100); color: #126f74; }
+  .execution-page-status.tracking { background: var(--green-100); color: var(--green); }
+  .execution-page-status.exception { background: var(--coral-100); color: var(--coral-500); }
+  .execution-page-detail-body { min-height: 510px; padding: 15px; }
+  .execution-page-detail-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .execution-page-detail-title h3 { color: var(--navy-950); font-size: 16px; }
+  .execution-page-detail-title p { margin-top: 5px; color: var(--navy-500); font-size: 10px; }
+  .execution-page-detail-grid { margin-top: 13px; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; }
+  .execution-page-detail-field { min-width: 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: 10px; background: #f8fafb; }
+  .execution-page-detail-field label { display: block; color: var(--navy-500); font-size: 8px; font-weight: 850; }
+  .execution-page-detail-field strong { display: block; margin-top: 4px; overflow-wrap: anywhere; color: var(--navy-950); font-size: 10px; }
+  .execution-page-detail-field small { display: block; margin-top: 3px; color: var(--navy-500); font-size: 8px; line-height: 1.45; }
+  .execution-page-lines { margin-top: 12px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  th { padding: 9px 10px; background: #f9fafb; color: var(--gray); font-weight: 600; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+  td { padding: 9px 10px; border-bottom: 1px solid #f3f4f6; white-space: nowrap; vertical-align: middle; }
+  .execution-page-action-draft { margin-top: 12px; padding: 11px 12px; border: 1px dashed #c9d6de; border-radius: 11px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; background: #fbfcfd; }
+  .execution-page-action-draft p { color: var(--navy-500); font-size: 9px; line-height: 1.6; }
+  .execution-page-action-draft p b { color: var(--navy-950); }
+  .execution-page-action-buttons { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+  .prototype-note { border-color: #bce5d2; background: var(--green-100); color: var(--green); }
+  .hidden { display: none !important; }
+  .module-panel { display: flex; flex-direction: column; gap: 16px; }
+  .procurement-metrics { display: grid; grid-template-columns: repeat(6,minmax(108px,1fr)); gap: 10px; }
+  .procurement-metric { width: 100%; min-height: 82px; padding: 14px 15px; border: 1px solid var(--line); border-radius: 14px; background: #f8fafb; font: inherit; text-align: left; cursor: pointer; transition: border-color .16s, box-shadow .16s, transform .16s; }
+  .procurement-metric:hover { border-color: #a9dadd; transform: translateY(-1px); }
+  .procurement-metric.active { border-color: var(--rhino-500); background: var(--rhino-100); box-shadow: 0 0 0 2px rgba(45,160,166,.12); }
+  .procurement-metric:focus-visible { outline: 2px solid var(--tech-blue); outline-offset: 2px; }
+  .procurement-metric b { display: block; color: var(--navy-950); font-size: 22px; line-height: 1; }
+  .procurement-metric span { display: block; margin-top: 8px; color: var(--navy-500); font-size: 10px; font-weight: 850; }
+  .procurement-metric.unclaimed b { color: var(--tech-blue-dark); }
+  .procurement-metric.processing b { color: var(--rhino-600); }
+  .procurement-metric.warning b { color: var(--amber); }
+  .procurement-metric.abnormal b { color: var(--coral-500); }
+  .procurement-state { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 11px; background: #f8fafb; color: var(--navy-500); font-size: 11px; line-height: 1.6; }
+  .procurement-filter-grid { display: grid; grid-template-columns: repeat(4,minmax(150px,1fr)); gap: 10px; }
+  .table-card { padding: 0; overflow: hidden; }
+  .table-card .card-title { margin: 0; padding: 17px 19px 12px; }
+  .table-wrap { overflow-x: auto; border-top: 1px solid var(--line); }
+  .task-table { min-width: 1460px; }
+  .task-table td { white-space: normal; }
+  .procurement-pagination { padding: 13px 18px; border-top: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; background: #fbfcfd; color: var(--navy-500); font-size: 10px; }
+  .status-badge { display: inline-flex; padding: 4px 7px; border-radius: 999px; background: var(--parcel-100); color: #815510; font-size: 9px; font-weight: 900; }
+  .status-badge.processing { background: var(--rhino-100); color: #126f74; }
+  .status-badge.ordered { background: var(--green-100); color: var(--green); }
+  .status-badge.exception { background: var(--coral-100); color: var(--coral-500); }
+  .execution-page-status.partial { background: var(--parcel-100); color: #815510; }
+  .execution-page-resource { margin-top: 12px; padding: 11px 12px; border: 1px solid #b9dfe3; border-radius: 11px; background: var(--rhino-100); }
+  .execution-page-resource-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .execution-page-resource-head b { color: #126f74; font-size: 10px; }
+  .execution-page-resource-head span { color: var(--navy-500); font-size: 8px; }
+  .execution-page-resource-copy { margin-top: 6px; color: var(--navy-700); font-size: 9px; line-height: 1.6; }
+  .session-stepbar { margin-bottom: 13px; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 6px; }
+  .session-step { padding: 8px 9px; border: 1px solid var(--line); border-radius: 9px; background: #f8fafb; color: var(--navy-500); font-size: 9px; font-weight: 800; }
+  .session-step.done { border-color: #bce5d2; background: var(--green-100); color: var(--green); }
+  .session-step.active { border-color: #a9dadd; background: var(--rhino-100); color: #126f74; }
+  .session-layout { display: grid; grid-template-columns: minmax(0,1.18fr) minmax(240px,.82fr); gap: 12px; align-items: start; }
+  .session-panel { padding: 12px; border: 1px solid var(--line); border-radius: 11px; background: #fbfcfd; }
+  .session-panel + .session-panel { margin-top: 10px; }
+  .session-panel h4 { margin-bottom: 10px; color: var(--navy-950); font-size: 11px; }
+  .session-panel h4 span { margin-left: 5px; color: var(--navy-500); font-size: 8px; font-weight: 500; }
+  .session-line { padding: 9px; border: 1px solid var(--line); border-radius: 10px; display: grid; grid-template-columns: 38px minmax(0,1fr) 96px; gap: 9px; align-items: center; background: #fff; }
+  .session-line + .session-line { margin-top: 7px; }
+  .session-line .product-thumb { width: 38px; height: 46px; margin: 0; }
+  .session-line b { display: block; font-size: 10px; }
+  .session-line small { display: block; margin-top: 3px; color: var(--navy-500); font-size: 8px; line-height: 1.5; }
+  .qty-control { display: grid; grid-template-columns: 26px 40px 26px; gap: 3px; align-items: center; }
+  .qty-control button { height: 28px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: var(--primary); }
+  .qty-control input { height: 28px; padding: 2px; text-align: center; font-size: 10px; }
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+  .form-grid .wide { grid-column: 1 / -1; }
+  .form-grid label { display: block; margin-bottom: 5px; color: var(--navy-500); font-size: 8px; font-weight: 850; }
+  .form-grid input, .form-grid select { height: 34px; padding: 6px 8px; font-size: 10px; }
+  .resource-seal { padding: 9px 10px; border-left: 3px solid var(--rhino-500); border-radius: 0 9px 9px 0; background: var(--rhino-100); color: var(--navy-700); font-size: 9px; line-height: 1.6; }
+  .batch-summary { margin-top: 10px; padding: 10px; border: 1px solid #cfe0e9; border-radius: 10px; background: #fff; }
+  .batch-summary-row { padding: 4px 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--navy-500); font-size: 9px; }
+  .batch-summary-row b { color: var(--navy-950); font-size: 10px; }
+  .batch-card { margin-top: 10px; padding: 11px 12px; border: 1px solid #bce5d2; border-radius: 11px; background: var(--green-100); }
+  .batch-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .batch-card-head b { color: var(--green); font-size: 10px; }
+  .batch-card p { margin-top: 7px; color: var(--navy-700); font-size: 9px; line-height: 1.65; }
+  .tracking-section { margin-top: 14px; padding: 12px; border: 1px solid var(--line); border-radius: 11px; background: #fbfcfd; scroll-margin-top: 76px; }
+  .tracking-section-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .tracking-section-head b { color: var(--navy-950); font-size: 11px; }
+  .tracking-section-head span { color: var(--navy-500); font-size: 9px; }
+  .tracking-batch-grid { display: grid; grid-template-columns: minmax(0,1fr); gap: 9px; }
+  .tracking-batch-grid .batch-card { margin-top: 10px; }
+  .action-bar { margin-top: 12px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 11px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; background: #fbfcfd; }
+  .action-bar-copy { color: var(--navy-500); font-size: 9px; line-height: 1.6; }
+  .action-bar-copy b { color: var(--navy-950); }
+  .action-bar-buttons { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
+  .btn.danger, .btn-mini.danger { border-color: #ffc1b4; color: var(--coral-500); background: #fff; }
+  .btn.danger:hover, .btn-mini.danger:hover { background: var(--coral-100); }
+  .modal-mask { position: fixed; inset: 0; z-index: 120; padding: 28px; display: flex; align-items: center; justify-content: center; background: rgba(17,24,39,.42); }
+  .modal { width: min(680px,calc(100vw - 56px)); max-height: calc(100vh - 56px); overflow: auto; border-radius: 12px; background: #fff; box-shadow: 0 20px 50px rgba(0,0,0,.18); }
+  .modal-head { padding: 17px 20px; border-bottom: 1px solid var(--line); display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; background: #fbfcfd; }
+  .modal-head h3 { color: var(--navy-950); font-size: 15px; }
+  .modal-head p { margin-top: 5px; color: var(--navy-500); font-size: 10px; line-height: 1.5; }
+  .modal-close { width: 32px; height: 32px; border: 0; border-radius: 8px; background: #eef2f6; color: var(--navy-500); font-size: 19px; }
+  .modal-body { padding: 18px 20px; }
+  .modal-actions { padding: 13px 20px; border-top: 1px solid var(--line); display: flex; align-items: center; justify-content: flex-end; gap: 8px; background: #fbfcfd; }
+  .modal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+  .modal-grid .wide { grid-column: 1 / -1; }
+  .modal-grid label { display: block; margin-bottom: 6px; color: var(--navy-500); font-size: 9px; font-weight: 850; }
+  .modal-note { margin-top: 12px; padding: 10px 12px; border-left: 3px solid var(--parcel-500); border-radius: 0 9px 9px 0; background: var(--parcel-100); color: #815510; font-size: 9px; line-height: 1.65; }
+  .claim-items { margin-top: 12px; display: grid; gap: 7px; }
+  .claim-item { padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; display: flex; align-items: center; justify-content: space-between; gap: 12px; background: #fff; font-size: 10px; }
+  .toast { position: fixed; left: 50%; bottom: 34px; z-index: 220; max-width: 520px; padding: 10px 18px; border-radius: 8px; background: #111827; color: #fff; font-size: 12px; opacity: 0; pointer-events: none; transform: translate(-50%,20px); transition: all .22s; }
+  .toast.show { opacity: 1; transform: translate(-50%,0); }
+  .execution-table { min-width: 1360px; }
+  .execution-table td { white-space: normal; }
+  .execution-table .product-stack { min-width: 76px; }
+  .execution-order-key b { display: block; color: var(--navy-950); font-size: 10px; }
+  .execution-order-key span { display: block; margin-top: 4px; color: var(--navy-500); font-size: 9px; }
+  .execution-structure { color: var(--navy-700); font-size: 9px; line-height: 1.55; }
+  .execution-resource-cell { max-width: 180px; color: var(--navy-500); font-size: 9px; line-height: 1.55; }
+  .execution-row-actions { min-width: 158px; display: grid; grid-template-columns: repeat(2,76px); gap: 6px; align-items: start; }
+  .execution-row-actions .btn-mini { width: 100%; height: 27px; padding: 3px 5px; overflow: hidden; text-align: center; text-overflow: ellipsis; }
+  .execution-table th:last-child, .execution-table td:last-child { width: 174px; min-width: 174px; }
+  .execution-action-popover { position: fixed; z-index: 180; width: 218px; padding: 7px; border: 1px solid #d7e3e9; border-radius: 10px; background: #fff; box-shadow: 0 16px 38px rgba(8,37,72,.18); }
+  .execution-action-popover button { width: 100%; padding: 9px 10px; border: 0; border-radius: 7px; display: flex; align-items: center; justify-content: space-between; gap: 10px; background: transparent; color: var(--navy-700); text-align: left; font-size: 10px; }
+  .execution-action-popover button:hover { background: var(--rhino-100); color: #126f74; }
+  .execution-action-popover button + button { margin-top: 3px; }
+  .execution-action-popover small { color: var(--navy-500); font-size: 8px; }
+  .execution-list-summary { min-width: 110px; color: var(--navy-500); font-size: 10px; font-weight: 850; text-align: right; }
+  .order-detail-page-head { margin-bottom: 0; padding: 15px 18px; display: flex; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid var(--line); background: #fbfcfd; }
+  .order-detail-page-head-copy { min-width: 0; }
+  .order-detail-page-head-copy b { display: block; color: var(--navy-950); font-size: 13px; }
+  .order-detail-page-head-copy span { display: block; margin-top: 4px; color: var(--navy-500); font-size: 9px; }
+  .order-detail-page-actions { display: flex; align-items: center; gap: 7px; }
+  .order-detail-shell { padding: 0; overflow: hidden; }
+  .order-detail-shell .execution-page-detail-body { padding: 18px; }
+  .recipient-section { margin-top: 12px; padding: 12px; border: 1px solid #f1d28b; border-radius: 11px; background: #fffdfa; }
+  .recipient-section-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .recipient-section-head b { color: var(--navy-950); font-size: 11px; }
+  .recipient-sensitive-badge { padding: 4px 7px; border-radius: 999px; background: var(--parcel-100); color: #815510; font-size: 8px; font-weight: 900; }
+  .recipient-note { margin-top: 7px; color: #815510; font-size: 9px; line-height: 1.55; }
+  .recipient-grid { margin-top: 10px; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 9px; }
+  .recipient-field { min-width: 0; padding: 8px 9px; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
+  .recipient-field.wide { grid-column: span 2; }
+  .recipient-field label { display: block; color: var(--navy-500); font-size: 8px; font-weight: 850; }
+  .recipient-field strong { display: block; margin-top: 4px; overflow-wrap: anywhere; color: var(--navy-950); font-size: 10px; line-height: 1.5; }
+  @media (max-width: 1080px) {
+    .execution-page-layout { grid-template-columns: 340px minmax(0,1fr); }
+    .execution-page-detail-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .session-layout { grid-template-columns: 1fr; }
+    .tracking-batch-grid { grid-template-columns: 1fr; }
+    .recipient-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  }
+</style>
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar">
+    <button class="sidebar-toggle" type="button" aria-label="收起侧栏">‹</button>
+    <div class="brand-card">
+      <div class="brand-art"><img src="../src/purchase_tool/web/xynigo-logo.png" alt="Xynigo"></div>
+      <div class="brand-meta">跨境采购协同系统</div>
+    </div>
+    <nav class="module-tabs" aria-label="一级功能模块">
+      <div class="nav-label">XYNIGO SOURCING</div>
+      <button class="module-tab" type="button"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v10h14V10M9 20v-6h6v6"/></svg></span><span class="nav-text"><b>工作台</b><small>概览 · 待办 · 连接</small></span></button>
+      <button class="module-tab active" type="button"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M6 3h12v18H6zM9 7h6M9 11h6M9 15h3"/><path d="m15 17 2 2 4-5"/></svg></span><span class="nav-text"><b>采购中心</b><small>提单 · 分配 · 执行</small></span></button>
+      <div class="secondary-tabs">
+        <button class="secondary-tab" id="navTask" type="button">采购任务<span class="secondary-status">云端</span></button>
+        <button class="secondary-tab active" id="navExecution" type="button">采购执行<span class="secondary-status">原型</span></button>
+        <button class="secondary-tab" type="button" disabled>异常协同<span class="secondary-status">规划</span></button>
+      </div>
+      <button class="module-tab" type="button"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="m7.5 4.3 9 5.1"/><path d="M21 8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l3 1.7"/><path d="M12 22V12M3.3 7 12 12l8.7-5"/></svg></span><span class="nav-text"><b>履约追踪</b><small>查询 · 跟踪 · 导出</small></span></button>
+      <button class="module-tab" type="button"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M6 4h12v16H6zM9 2h6v4H9zM9 10h6M9 14h4"/><path d="m15 17 1.5 1.5L20 15"/></svg></span><span class="nav-text"><b>运营中心</b><small>任务 · 订单 · 异常 · 协同</small></span></button>
+      <button class="module-tab" type="button"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 7h16v12H4zM4 10h16M8 4h8v3"/><circle cx="16" cy="15" r="1"/></svg></span><span class="nav-text"><b>财务中心</b><small>应付 · 对账 · 费用 · 报表</small></span></button>
+      <button class="module-tab" type="button"><span class="nav-icon"><svg viewBox="0 0 24 24"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2M19 8v6M16 11h6"/></svg></span><span class="nav-text"><b>资源中心</b><small>账号 · 店铺 · IP · 环境</small></span></button>
+      <button class="module-tab" type="button"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="m12 3 1.2 3.3L16.5 7.5l-3.3 1.2L12 12l-1.2-3.3-3.3-1.2 3.3-1.2zM18 13l.8 2.2L21 16l-2.2.8L18 19l-.8-2.2L15 16l2.2-.8zM5 13l.7 1.8 1.8.7-1.8.7L5 18l-.7-1.8-1.8-.7 1.8-.7z"/></svg></span><span class="nav-text"><b>小犀助手</b><small>业务效率工具</small></span></button>
+      <button class="module-tab" type="button"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></span><span class="nav-text"><b>数据分析</b><small>效率 · 履约 · 健康</small></span></button>
+      <button class="module-tab" type="button"><span class="nav-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></svg></span><span class="nav-text"><b>系统管理</b><small>权限 · 设置 · 安全</small></span></button>
+    </nav>
+    <div class="side-footer"><b>前端交互原型</b>全部为脱敏演示数据，不调用测试环境 API，也不会执行 Hub 删除或真实下单。</div>
+  </aside>
+
+  <section class="workspace">
+    <header class="topbar">
+      <div class="workspace-tabs">
+        <div class="workspace-tab"><button class="workspace-tab-open" id="tabTask" type="button">采购任务</button><button class="workspace-tab-close" type="button">×</button></div>
+        <div class="workspace-tab active"><button class="workspace-tab-open" id="tabExecution" type="button">采购执行</button><button class="workspace-tab-close" type="button">×</button></div>
+        <div class="workspace-tab" id="orderWorkspaceTab" hidden><button class="workspace-tab-open" id="tabOrderDetail" type="button">采购单执行</button><button class="workspace-tab-close" id="closeOrderTab" type="button">×</button></div>
+      </div>
+      <div class="topbar-right"><span class="hub-status">● HubStudio 已连接</span><div class="auth-user"><span class="auth-avatar">测</span><span><b>测试采购员</b><small>采购执行权限</small></span></div></div>
+    </header>
+    <main>
+      <section class="hero">
+        <div class="hero-copy"><div class="hero-kicker">XYNIGO SOURCING WORKSPACE</div><h1>让小犀帮你把每一单稳稳带回来，<span class="hero-call">Xyni, GO!</span></h1><p>处理本人已认领采购单，在真实结算阶段确定本次下单商品与数量。</p><div class="hero-meta"><span class="hero-chip">测试候选 v0.11.1</span><span class="hero-chip">采购执行交互原型</span><span class="hero-chip">全部为脱敏数据</span></div></div>
+        <div class="hero-lockup"><img src="../src/purchase_tool/web/xynigo-logo.png" alt=""></div>
+      </section>
+
+      <div class="module-panel hidden" id="taskPanel">
+        <section class="card">
+          <div class="card-title table-title-row"><span>采购任务概览 <span class="legend">PostgreSQL 事实源 · 团队公共待认领池</span></span><button class="btn" id="btnTaskRefresh" type="button">↻ 刷新采购中心</button></div>
+          <div class="procurement-metrics"><button class="procurement-metric" type="button" data-task-quick="all"><b id="taskMetricTotal">0</b><span>采购单总量</span></button><button class="procurement-metric unclaimed active" type="button" data-task-quick="unclaimed"><b id="taskMetricUnclaimed">0</b><span>待认领采购单</span></button><button class="procurement-metric processing" type="button" data-task-quick="processing"><b id="taskMetricClaimed">0</b><span>团队采购处理中</span></button><button class="procurement-metric" type="button" data-task-quick="ordered"><b id="taskMetricOrdered">0</b><span>已下单</span></button><button class="procurement-metric abnormal" type="button" data-task-quick="exception"><b id="taskMetricException">0</b><span>退回 / 异常</span></button><button class="procurement-metric warning" type="button" data-task-quick="sync"><b id="taskMetricSync">0</b><span>待同步采购单</span></button></div>
+          <div class="procurement-state" id="taskFilterState">当前快捷筛选：待认领采购单。认领只确定采购员归属，不在此页面提前创建采购分单。</div>
+        </section>
+        <section class="card">
+          <div class="card-title table-title-row"><span>筛选采购任务</span><button class="btn" id="btnTaskReset" type="button">重置筛选</button></div>
+          <div class="procurement-filter-grid"><div class="field"><label>任务范围</label><select id="taskScopeFilter"><option value="unclaimed">待认领采购单</option><option value="processing">团队采购处理中</option><option value="ordered">已下单</option><option value="exception">退回 / 异常</option><option value="sync">待同步采购单</option><option value="all">全部采购单</option></select></div><div class="field"><label>站点</label><select><option>全部站点</option><option>美国站 US</option><option>墨西哥站 MX</option></select></div><div class="field"><label>商品结构</label><select><option>全部</option><option>1 个明细 / 1 件</option><option>1 个明细 / 多件</option><option>多个明细 / 多件</option></select></div><div class="field"><label>搜索</label><input placeholder="采购单 / 销售订单号 / 店铺 / 运营 / 规格"></div></div>
+        </section>
+        <section class="card table-card">
+          <div class="card-title table-title-row"><div class="table-title-copy"><span id="taskListTitle">待认领采购单列表</span><span class="legend" id="taskVisibleCount">0 条</span></div><span class="legend">团队成员共用 · 按整张采购单认领</span></div>
+          <div class="table-wrap"><table class="task-table"><thead><tr><th>商品预览</th><th>采购单 / 平台单号</th><th>店铺 / 运营</th><th>收件人 / 国家</th><th>采购单金额</th><th>采购指导额</th><th>明细 / 件数</th><th>采购状态</th><th>采购员</th><th>提交人 / 时间</th><th>最近更新</th><th>操作</th></tr></thead><tbody id="taskTbody"></tbody></table></div>
+          <div class="procurement-pagination"><span>第 1 页 · 共 <span id="taskPageCount">2</span> 条</span><span><button class="btn-mini" disabled>上一页</button>&nbsp;&nbsp;1 / 1 页&nbsp;&nbsp;<button class="btn-mini" disabled>下一页</button></span></div>
+        </section>
+      </div>
+
+      <div class="module-panel" id="executionPanel">
+        <section class="card">
+          <div class="card-title table-title-row"><div class="table-title-copy"><span>采购执行工作台</span><span class="legend">采购需求 · 本次下单 · 付款结果 · 跟单留存</span></div><button class="btn" id="btnReset" type="button">↻ 重置演示</button></div>
+          <div class="execution-page-banner"><span><b>交互原型：</b>认领成功的采购单直接进入本人工作台；是否分批及每批数量在真实结算、付款阶段确定。</span><span>不连接真实业务数据</span></div>
+          <div class="execution-page-metrics"><div class="execution-page-metric ready"><b id="metricReady">2</b><span>待采购 / 部分完成</span></div><div class="execution-page-metric working"><b id="metricOrdering">1</b><span>本次下单中</span></div><div class="execution-page-metric payment"><b id="metricPayment">0</b><span>待确认付款</span></div><div class="execution-page-metric tracking"><b id="metricTracking">1</b><span>跟单采购批次</span></div><div class="execution-page-metric exception"><b id="metricException">0</b><span>异常</span></div></div>
+        </section>
+        <section class="card">
+          <div class="card-title table-title-row"><span>筛选采购单</span><span class="legend">仅展示当前采购员已经认领的采购单</span></div>
+          <div class="execution-page-filter-grid"><div class="field"><label>执行状态</label><select id="statusFilter"><option value="">全部状态</option><option value="ready">待采购 / 部分完成</option><option value="ordering">本次下单中</option><option value="payment">待确认付款</option><option value="tracking">跟单中</option></select></div><div class="field"><label>站点</label><select><option>全部站点</option><option>美国站 US</option><option>墨西哥站 MX</option></select></div><div class="field"><label>采购进度</label><select><option>全部进度</option><option>尚未采购</option><option>部分采购</option><option>全部采购</option></select></div><div class="field"><label>搜索</label><input id="keywordFilter" placeholder="销售订单号 / 采购单 / 店铺 / 运营 / 规格"></div></div>
+        </section>
+        <section class="card table-card" id="executionListView">
+          <div class="card-title table-title-row"><div class="table-title-copy"><span>本人采购单列表</span><span class="legend" id="executionVisibleCount">4 条</span></div><div class="table-title-copy"><span class="legend">默认 50 条/页 · 支持筛选后集中处理</span><span class="execution-list-summary" id="executionListSummary">待处理 3 单</span></div></div>
+          <div class="table-wrap"><table class="execution-table"><thead><tr><th>商品预览</th><th>销售订单 / 采购单</th><th>店铺 / 运营</th><th>销售金额</th><th>采购指导额</th><th>明细 / 件数</th><th>采购进度</th><th>执行状态</th><th>当前下单 / 跟单资源</th><th>最近更新</th><th>操作</th></tr></thead><tbody id="executionTbody"></tbody></table></div>
+          <div class="procurement-pagination"><span>第 1 页 · 共 <span id="executionPageCount">4</span> 条</span><span><select style="width:92px;padding:5px 7px;font-size:10px"><option>50 条</option><option>100 条</option><option>300 条</option></select>&nbsp;&nbsp;<button class="btn-mini" disabled>上一页</button>&nbsp;&nbsp;1 / 1 页&nbsp;&nbsp;<button class="btn-mini" disabled>下一页</button></span></div>
+        </section>
+      </div>
+
+      <div class="module-panel hidden" id="orderDetailPanel">
+        <section class="card order-detail-shell">
+          <div class="order-detail-page-head"><div class="order-detail-page-head-copy"><b id="orderDetailHeading">采购单执行详情</b><span>独立工作区 · 返回列表后保留筛选条件与当前位置</span></div><div class="order-detail-page-actions"><button class="btn-mini" id="btnPrevOrder" type="button">← 上一单</button><button class="btn-mini" id="btnNextOrder" type="button">下一单 →</button><button class="btn-mini" id="btnBackExecution" type="button">返回采购执行列表</button><span class="legend">原型演示数据</span></div></div>
+          <div class="execution-page-detail-body" id="detailBody"></div>
+        </section>
+      </div>
+    </main>
+  </section>
+</div>
+<div class="execution-action-popover hidden" id="executionActionMenu" role="menu"></div>
+<div class="modal-mask" id="claimModal" hidden>
+  <section class="modal" role="dialog" aria-modal="true" aria-labelledby="claimModalTitle">
+    <div class="modal-head"><div><h3 id="claimModalTitle">确认认领采购任务</h3><p>确认后采购单从团队公共池移出，进入当前账号的采购执行。</p></div><button class="modal-close" type="button" data-close="claimModal">×</button></div>
+    <div class="modal-body"><div class="modal-grid"><div><label>采购单</label><input id="claimOrderId" disabled></div><div><label>认领人</label><input value="测试采购员" disabled></div><div><label>采购明细数</label><input id="claimSkuCount" disabled></div><div><label>采购件数</label><input id="claimQtyCount" disabled></div></div><div class="claim-items" id="claimItems"></div><div class="modal-note">认领后直接进入“采购执行 → 待采购”。本步骤不会创建采购分单，也不会绑定买家号或 Hub 环境。</div></div>
+    <div class="modal-actions"><button class="btn" type="button" data-close="claimModal">取消</button><button class="btn primary" id="confirmClaim" type="button">确认认领</button></div>
+  </section>
+</div>
+
+<div class="modal-mask" id="resourceModal" hidden>
+  <section class="modal" role="dialog" aria-modal="true" aria-labelledby="resourceModalTitle">
+    <div class="modal-head"><div><h3 id="resourceModalTitle">开始本次下单</h3><p>先绑定一个买家号和新的 Hub 采购环境，再打开环境进入真实购物车和结算页。</p></div><button class="modal-close" type="button" data-close="resourceModal">×</button></div>
+    <div class="modal-body"><div class="modal-grid"><div class="wide"><label>采购单</label><input id="resourceOrderId" disabled></div><div><label>买家号</label><select id="resourceBuyer"><option value="BUYER-US-021">BUYER-US-021 · 可用</option><option value="BUYER-US-036">BUYER-US-036 · 可用</option><option value="BUYER-MX-012">BUYER-MX-012 · 可用</option></select></div><div><label>新采购环境</label><select id="resourceHub"><option value="HUB-DEMO-8821">HUB-DEMO-8821 · 新环境</option><option value="HUB-DEMO-8822">HUB-DEMO-8822 · 新环境</option><option value="HUB-DEMO-8823">HUB-DEMO-8823 · 新环境</option></select></div><div class="wide"><label>本次下单说明</label><input id="resourceNote" value="进入结算页后根据优惠券确定本批商品和数量"></div></div><div class="modal-note">原型按“绑定并打开环境后已登录买家号”演示：环境从此不可回到公共资源池。付款成功则保留用于跟单；失败或放弃则在 Hub 删除。</div></div>
+    <div class="modal-actions"><button class="btn" type="button" data-close="resourceModal">取消</button><button class="btn primary" id="confirmResource" type="button">绑定并打开采购环境</button></div>
+  </section>
+</div>
+
+<div class="modal-mask" id="abandonModal" hidden>
+  <section class="modal" role="dialog" aria-modal="true" aria-labelledby="abandonModalTitle">
+    <div class="modal-head"><div><h3 id="abandonModalTitle">放弃本次下单并销毁环境</h3><p>这是不可恢复的资源清理动作；原型只演示状态变化，不调用 Hub。</p></div><button class="modal-close" type="button" data-close="abandonModal">×</button></div>
+    <div class="modal-body"><div class="modal-note" style="margin-top:0;border-left-color:var(--coral-500);background:var(--coral-100);color:#a34736"><b>当前环境已经登录买家号，不能再次复用。</b><br>确认放弃后，本批商品数量将释放，买家号解除占用并可继续使用，当前 Hub 环境进入删除流程。</div><div class="modal-grid" style="margin-top:12px"><div><label>买家号处理</label><input id="abandonBuyer" disabled></div><div><label>环境处理</label><input id="abandonHub" disabled></div><div class="wide"><label>放弃原因</label><select id="abandonReason"><option>优惠券不满足，重新选择资源</option><option>商品缺货</option><option>价格变化</option><option>采购员主动终止</option></select></div></div></div>
+    <div class="modal-actions"><button class="btn" type="button" data-close="abandonModal">返回本次下单</button><button class="btn danger" id="confirmAbandon" type="button">确认放弃并删除环境</button></div>
+  </section>
+</div>
+
+<div class="modal-mask" id="failureModal" hidden>
+  <section class="modal" role="dialog" aria-modal="true" aria-labelledby="failureModalTitle">
+    <div class="modal-head"><div><h3 id="failureModalTitle">记录下单失败</h3><p>结束当前下单会话并处理买家号、商品数量和 Hub 环境。</p></div><button class="modal-close" type="button" data-close="failureModal">×</button></div>
+    <div class="modal-body"><div class="modal-grid"><div class="wide"><label>失败原因</label><select id="failureReason"><option value="coupon">优惠券无法使用</option><option value="payment">支付失败</option><option value="stock">商品缺货</option><option value="risk">账号风控或账号异常</option></select></div><div><label>商品数量</label><input value="释放回采购需求" disabled></div><div><label>Hub 环境</label><input value="退出资源池并删除" disabled></div></div><div class="modal-note">非账号异常时买家号解除占用并恢复可用；选择“账号风控或账号异常”时，买家号进入待检查。</div></div>
+    <div class="modal-actions"><button class="btn" type="button" data-close="failureModal">取消</button><button class="btn danger" id="confirmFailure" type="button">确认失败并删除环境</button></div>
+  </section>
+</div>
+
+<div class="modal-mask" id="paymentModal" hidden>
+  <section class="modal" role="dialog" aria-modal="true" aria-labelledby="paymentModalTitle">
+    <div class="modal-head"><div><h3 id="paymentModalTitle">确认付款成功</h3><p>付款结果确认后形成正式采购批次，本批商品数量不可直接修改。</p></div><button class="modal-close" type="button" data-close="paymentModal">×</button></div>
+    <div class="modal-body"><div class="modal-grid"><div><label>平台订单号</label><input id="platformOrderNo" value="PLAT-DEMO-20260825"></div><div><label>实际支付金额</label><input id="actualPayment" value="$24.80"></div><div><label>优惠券优惠</label><input id="actualDiscount" value="$5.00"></div><div><label>付款结果</label><input value="付款成功" disabled></div></div><div class="modal-note" style="border-left-color:var(--green-500);background:var(--green-100);color:var(--green)">确认后，当前 Hub 环境保留并与正式采购批次绑定，状态转为“跟单中”，用于后续查单、物流和售后。</div></div>
+    <div class="modal-actions"><button class="btn" type="button" data-close="paymentModal">返回核对</button><button class="btn primary" id="confirmPayment" type="button">确认付款并生成采购批次</button></div>
+  </section>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+  const $ = id => document.getElementById(id);
+  const clone = value => JSON.parse(JSON.stringify(value));
+  const esc = value => String(value ?? '').replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
+  const initialState = {
+    tasks: [
+      {id:'PO-DEMO-TASK-01',sales:'GSH-DEMO-20001',store:'US-Team-01',operator:'运营示例 A',site:'US',recipient:'Recipient Demo US-A',country:'US',salesAmount:'$22.90',amount:'$16.90',submitter:'运营示例 A',updated:'2026-08-25 14:42',lines:[{no:1,sku:'SKU-DEMO-G',spec:'米白色',primarySpec:'米白色',secondarySpec:'标准款',required:1,purchased:0}]},
+      {id:'PO-DEMO-TASK-02',sales:'GSH-DEMO-20002',store:'US-Team-02',operator:'运营示例 B',site:'US',recipient:'Recipient Demo US-B',country:'US',salesAmount:'$61.80',amount:'$47.30',submitter:'运营示例 B',updated:'2026-08-25 14:38',lines:[{no:1,sku:'SKU-DEMO-H',spec:'黑色 / L',primarySpec:'黑色',secondarySpec:'L',required:2,purchased:0},{no:2,sku:'SKU-DEMO-I',spec:'标准款',primarySpec:'标准款',secondarySpec:'默认',required:1,purchased:0}]}
+    ],
+    orders: [
+      {id:'PO-DEMO-0825-01',sales:'GSH-DEMO-10001',store:'US-Home-01',operator:'运营示例 A',site:'US',status:'partial',salesAmount:'$52.90',amount:'$38.60',updated:'2026-08-25 14:30',lines:[{no:1,sku:'SKU-DEMO-A',spec:'黑色 / M',primarySpec:'黑色',secondarySpec:'M',required:3,purchased:2}],attempt:null,batches:[{id:'PB-DEMO-01-1',platformOrderNo:'PLAT-DEMO-80001-A',buyer:'BUYER-US-018',hub:'HUB-DEMO-8811',actual:'$12.40',discount:'$2.50',created:'2026-08-25 14:22',lines:[{no:1,sku:'SKU-DEMO-A',qty:1}]},{id:'PB-DEMO-01-2',platformOrderNo:'PLAT-DEMO-80001-B',buyer:'BUYER-US-019',hub:'HUB-DEMO-8812',actual:'$12.40',discount:'$2.50',created:'2026-08-25 14:30',lines:[{no:1,sku:'SKU-DEMO-A',qty:1}]}]},
+      {id:'PO-DEMO-0825-02',sales:'GSH-DEMO-10002',store:'US-Home-02',operator:'运营示例 B',site:'US',status:'ready',salesAmount:'$18.90',amount:'$12.90',updated:'2026-08-25 14:25',lines:[{no:1,sku:'SKU-DEMO-B',spec:'标准款',primarySpec:'标准款',secondarySpec:'默认',required:1,purchased:0}],attempt:null,batches:[]},
+      {id:'PO-DEMO-0825-03',sales:'GSH-DEMO-10003',store:'MX-Store-01',operator:'运营示例 C',site:'MX',status:'ordering',salesAmount:'MX$790.00',amount:'MX$620.00',updated:'2026-08-25 14:12',lines:[{no:1,sku:'SKU-DEMO-D',spec:'白色',primarySpec:'白色',secondarySpec:'标准款',required:2,purchased:1},{no:2,sku:'SKU-DEMO-E',spec:'套装',primarySpec:'套装',secondarySpec:'2 件套',required:2,purchased:1}],attempt:{id:'TRY-DEMO-003-2',index:2,phase:'editing',buyer:'BUYER-MX-008',hub:'HUB-DEMO-8818',loggedIn:true,quantities:{1:1,2:1},coupon:'满 MX$399 减 MX$60',expected:'MX$268.00',note:'第 1 批已付款，当前继续采购剩余商品'},batches:[{id:'PB-DEMO-03-1',platformOrderNo:'PLAT-DEMO-80003-A',buyer:'BUYER-MX-007',hub:'HUB-DEMO-8817',actual:'MX$282.00',discount:'MX$60.00',created:'2026-08-25 13:55',lines:[{no:1,sku:'SKU-DEMO-D',qty:1},{no:2,sku:'SKU-DEMO-E',qty:1}]}]},
+      {id:'PO-DEMO-0825-04',sales:'GSH-DEMO-10004',store:'US-Home-03',operator:'运营示例 D',site:'US',status:'tracking',salesAmount:'$25.60',amount:'$18.40',updated:'2026-08-25 13:48',lines:[{no:1,sku:'SKU-DEMO-F',spec:'绿色',primarySpec:'绿色',secondarySpec:'标准款',required:1,purchased:1}],attempt:null,batches:[{id:'PB-DEMO-004-1',platformOrderNo:'PLAT-DEMO-80004',buyer:'BUYER-US-009',hub:'HUB-DEMO-8809',actual:'$18.40',discount:'$3.00',created:'2026-08-25 13:48',lines:[{no:1,sku:'SKU-DEMO-F',qty:1}]}]}
+    ],
+    buyers:[{id:'BUYER-US-021',status:'available'},{id:'BUYER-US-036',status:'available'},{id:'BUYER-MX-012',status:'available'}],
+    hubs:[{id:'HUB-DEMO-8821',status:'available'},{id:'HUB-DEMO-8822',status:'available'},{id:'HUB-DEMO-8823',status:'available'}],
+    activeId:'PO-DEMO-0825-01', pendingTaskId:'', page:'execution', detailOpen:false, taskQuickFilter:'unclaimed'
+  };
+  let state = clone(initialState);
+  let toastTimer = 0;
+  const labels = {ready:'待采购',partial:'部分完成',ordering:'本次下单中',payment:'待确认付款',tracking:'跟单中',exception:'异常'};
+
+  function showToast(message) {
+    clearTimeout(toastTimer); $('toast').textContent = message; $('toast').classList.add('show');
+    toastTimer = setTimeout(()=>$('toast').classList.remove('show'),2600);
+  }
+  function showModal(id) { $(id).hidden = false; }
+  function closeModal(id) { $(id).hidden = true; }
+  function orderRequired(order) { return order.lines.reduce((sum,line)=>sum+line.required,0); }
+  function orderPurchased(order) { return order.lines.reduce((sum,line)=>sum+line.purchased,0); }
+  function orderRemaining(order) { return orderRequired(order)-orderPurchased(order); }
+  function orderProgress(order) { return `${orderPurchased(order)} / ${orderRequired(order)} 件`; }
+  function orderStructure(order) {
+    return `${order.lines.length} 明细 / ${orderRequired(order)} 件`;
+  }
+  function statusChip(status) { return `<span class="execution-page-status ${esc(status)}">${esc(labels[status] || status)}</span>`; }
+  function productStack(lines) { return `<span class="product-stack">${lines.slice(0,2).map((line,index)=>`<span class="product-thumb">商品${index+1}</span>`).join('')}</span>`; }
+  function field(label,value) { return `<div class="execution-page-detail-field"><label>${esc(label)}</label><strong>${esc(value || '—')}</strong></div>`; }
+  function fieldWithMeta(label,value,meta) { return `<div class="execution-page-detail-field"><label>${esc(label)}</label><strong>${esc(value || '—')}</strong><small>${esc(meta || '')}</small></div>`; }
+  function orderOperator(order) { return order.operator || order.submitter || '未绑定运营'; }
+  function linePrimarySpec(line) { return line.primarySpec || line.spec || '—'; }
+  function lineSecondarySpec(line) { return line.secondarySpec || '—'; }
+  function batchLineSummary(order,batchLine) {
+    const sourceLine=order.lines.find(line=>line.no===batchLine.no) || batchLine;
+    return `明细 ${batchLine.no} · ${linePrimarySpec(sourceLine)} / ${lineSecondarySpec(sourceLine)} × ${batchLine.qty}`;
+  }
+  function orderRecipient(order) {
+    if (order.site==='MX') return {name:order.recipient || '收件人示例 MX',phone:'+52 55 0000 1386',postalCode:'06000',region:'Mexico City, CDMX, MX',address:'Avenida Reforma 168, Piso 3, Colonia Juárez'};
+    return {name:order.recipient || 'Recipient Demo US',phone:'+1 (555) 010-2688',postalCode:'90017',region:'Los Angeles, CA, US',address:'725 S Figueroa St, Apt 8B'};
+  }
+  function renderRecipientSection(order) {
+    const recipient=orderRecipient(order);
+    return `<section class="recipient-section"><div class="recipient-section-head"><b>收件与配送信息</b><span class="recipient-sensitive-badge">敏感信息 · 详情权限</span></div><p class="recipient-note">不在采购单列表返回或展示；进入详情后按权限读取并记录审计，关闭采购单页签后立即清空。</p><div class="recipient-grid"><div class="recipient-field"><label>收件人</label><strong>${esc(recipient.name)}</strong></div><div class="recipient-field"><label>电话</label><strong>${esc(recipient.phone)}</strong></div><div class="recipient-field"><label>邮编</label><strong>${esc(recipient.postalCode)}</strong></div><div class="recipient-field"><label>国家 / 州 / 城市</label><strong>${esc(recipient.region)}</strong></div><div class="recipient-field wide"><label>详细地址</label><strong>${esc(recipient.address)}</strong></div></div></section>`;
+  }
+  function currentOrder() { return state.orders.find(order=>order.id===state.activeId); }
+  function currentAttemptOrder() { return state.orders.find(order=>order.attempt && order.id===state.activeId) || currentOrder(); }
+  function isQuickOrder(order) { return order.lines.filter(line=>line.required-line.purchased>0).length===1 && orderRemaining(order)===1; }
+
+  function switchPage(page) {
+    closeExecutionActionMenu();
+    state.page = page;
+    const task = page==='task';
+    $('taskPanel').classList.toggle('hidden',!task); $('executionPanel').classList.toggle('hidden',task); $('orderDetailPanel').classList.add('hidden');
+    $('orderWorkspaceTab').hidden = !state.detailOpen;
+    $('navTask').classList.toggle('active',task); $('navExecution').classList.toggle('active',!task);
+    $('tabTask').parentElement.classList.toggle('active',task); $('tabExecution').parentElement.classList.toggle('active',!task);
+    $('orderWorkspaceTab').classList.remove('active');
+    document.querySelector('.hero-copy p').textContent = task ? '团队共同处理待认领采购任务，认领后进入采购员个人执行工作台。' : '处理本人已认领采购单，在真实结算阶段确定本次下单商品与数量。';
+    if (task) renderTasks(); else renderExecution();
+  }
+
+  const taskFilterLabels = {all:'全部采购单',unclaimed:'待认领采购单',processing:'团队采购处理中',ordered:'已下单',exception:'退回 / 异常',sync:'待同步采购单'};
+
+  function taskCategory(record,isUnclaimed=false) {
+    if (isUnclaimed) return 'unclaimed';
+    if (record.status==='exception') return 'exception';
+    if (record.status==='sync') return 'sync';
+    if (record.status==='tracking' || orderRemaining(record)===0) return 'ordered';
+    return 'processing';
+  }
+
+  function taskOverviewRows() {
+    const unclaimed=state.tasks.map(record=>({record,category:'unclaimed'}));
+    const claimed=state.orders.map(record=>({record,category:taskCategory(record)}));
+    return [...unclaimed,...claimed];
+  }
+
+  function taskPurchaser(record,category) {
+    if (category==='unclaimed') return '未分配';
+    if (record.purchaser) return record.purchaser;
+    if (record.site==='MX') return '采购员 B';
+    if (record.store?.includes('02')) return '采购员 A';
+    return '测试采购员';
+  }
+
+  function setTaskQuickFilter(filter) {
+    state.taskQuickFilter=taskFilterLabels[filter] ? filter : 'unclaimed';
+    renderTasks();
+  }
+
+  function renderTasks() {
+    const allRows=taskOverviewRows();
+    const counts=allRows.reduce((result,row)=>{result[row.category]=(result[row.category]||0)+1;return result;},{unclaimed:0,processing:0,ordered:0,exception:0,sync:0});
+    const filter=state.taskQuickFilter || 'unclaimed';
+    const rows=filter==='all' ? allRows : allRows.filter(row=>row.category===filter);
+    $('taskMetricTotal').textContent = allRows.length;
+    $('taskMetricUnclaimed').textContent = counts.unclaimed;
+    $('taskMetricClaimed').textContent = counts.processing;
+    $('taskMetricOrdered').textContent = counts.ordered;
+    $('taskMetricException').textContent = counts.exception;
+    $('taskMetricSync').textContent = counts.sync;
+    $('taskScopeFilter').value = filter;
+    document.querySelectorAll('[data-task-quick]').forEach(card=>{const active=card.dataset.taskQuick===filter;card.classList.toggle('active',active);card.setAttribute('aria-pressed',String(active));});
+    $('taskFilterState').textContent = `当前快捷筛选：${taskFilterLabels[filter]}。认领只确定采购员归属，不在此页面提前创建采购分单。`;
+    $('taskListTitle').textContent = `${taskFilterLabels[filter]}列表`;
+    $('taskVisibleCount').textContent = `${rows.length} 条`;
+    $('taskPageCount').textContent = rows.length;
+    $('taskTbody').innerHTML = rows.length ? rows.map(({record:task,category})=>{
+      const recipient=orderRecipient(task);
+      const statusText=category==='unclaimed'?'待认领':category==='ordered'?'已下单':category==='exception'?'退回 / 异常':category==='sync'?'待同步':labels[task.status] || '采购处理中';
+      const action=category==='unclaimed' ? `<button class="btn-mini" type="button" data-view-task="${esc(task.id)}">详情</button> <button class="btn-mini" type="button" data-claim-task="${esc(task.id)}">认领</button>` : `<button class="btn-mini" type="button" data-view-order="${esc(task.id)}">详情</button> <button class="btn-mini" type="button" data-view-order="${esc(task.id)}">查看执行</button>`;
+      return `<tr><td>${productStack(task.lines)}</td><td><b>${esc(task.sales)}</b><br><span class="legend">${esc(task.id)}</span></td><td><b>${esc(task.store)}</b><br><span class="legend">运营：${esc(orderOperator(task))}</span></td><td><b>${esc(task.recipient || recipient.name)}</b><br><span class="legend">${esc(task.country || task.site)}</span></td><td>${esc(task.salesAmount || task.amount)}</td><td>${esc(task.amount)}</td><td>${task.lines.length} 明细 / ${orderRequired(task)} 件</td><td><span class="status-badge ${esc(category)}">${esc(statusText)}</span></td><td>${esc(taskPurchaser(task,category))}</td><td>${esc(task.submitter || '运营示例')}<br><span class="legend">${esc(task.submittedAt || task.updated)}</span></td><td>${esc(task.updated)}</td><td>${action}</td></tr>`;
+    }).join('') : `<tr><td colspan="12" style="padding:42px;text-align:center;color:var(--navy-500)">${esc(taskFilterLabels[filter])}当前没有采购单</td></tr>`;
+  }
+
+  function openClaim(taskId) {
+    const task = state.tasks.find(item=>item.id===taskId); if(!task)return;
+    state.pendingTaskId = taskId;
+    $('claimOrderId').value = `${task.sales} / ${task.id}`;
+    $('claimSkuCount').value = `${task.lines.length} 条采购明细`;
+    $('claimQtyCount').value = `${orderRequired(task)} 件`;
+    $('claimItems').innerHTML = task.lines.map(line=>`<div class="claim-item"><b>主规格：${esc(linePrimarySpec(line))} · 次规格：${esc(lineSecondarySpec(line))}</b><span>需求 ${line.required} 件</span></div>`).join('');
+    showModal('claimModal');
+  }
+
+  function confirmClaim() {
+    const index = state.tasks.findIndex(item=>item.id===state.pendingTaskId); if(index<0)return;
+    const task = state.tasks.splice(index,1)[0];
+    state.orders.unshift({...task,status:'ready',attempt:null,batches:[],updated:'刚刚'});
+    state.activeId = task.id; state.pendingTaskId = '';
+    closeModal('claimModal'); switchPage('execution');
+    showToast('认领成功：采购单已进入本人采购执行 → 待采购');
+  }
+
+  function renderMetrics() {
+    const ready = state.orders.filter(order=>['ready','partial'].includes(order.status)).length;
+    $('metricReady').textContent = ready;
+    $('metricOrdering').textContent = state.orders.filter(order=>order.status==='ordering').length;
+    $('metricPayment').textContent = state.orders.filter(order=>order.status==='payment').length;
+    $('metricTracking').textContent = state.orders.reduce((sum,order)=>sum+order.batches.length,0);
+    $('metricException').textContent = state.orders.filter(order=>order.status==='exception').length;
+  }
+
+  function filteredOrders() {
+    const status = $('statusFilter').value; const keyword = $('keywordFilter').value.trim().toLowerCase();
+    return state.orders.filter(order => (!status || order.status===status || (status==='ready' && order.status==='partial')) && (!keyword || [order.id,order.sales,order.store,orderOperator(order),...order.lines.flatMap(line=>[linePrimarySpec(line),lineSecondarySpec(line)])].join(' ').toLowerCase().includes(keyword)));
+  }
+
+  function renderExecution() {
+    renderMetrics();
+    const rows = filteredOrders();
+    if (!rows.some(order=>order.id===state.activeId)) state.activeId = rows[0]?.id || '';
+    $('executionVisibleCount').textContent = `${rows.length} 条`;
+    $('executionPageCount').textContent = rows.length;
+    $('executionListSummary').textContent = `待处理 ${rows.filter(order=>order.status!=='tracking').length} 单`;
+    $('executionTbody').innerHTML = rows.length ? rows.map(order=>{
+      const resourceParts = [];
+      if (order.attempt) resourceParts.push(`本次下单：${esc(order.attempt.hub)} / ${esc(order.attempt.buyer)}`);
+      if (order.batches.length) resourceParts.push(`跟单：${order.batches.length} 个批次`);
+      const resource = resourceParts.join('<br>') || '尚未绑定资源';
+      return `<tr><td>${productStack(order.lines)}</td><td class="execution-order-key"><b>${esc(order.sales)}</b><span>${esc(order.id)}</span></td><td><b>${esc(order.store)}</b><br><span class="legend">运营：${esc(orderOperator(order))}</span></td><td>${esc(order.salesAmount || order.amount)}</td><td>${esc(order.amount)}</td><td class="execution-structure">${esc(orderStructure(order))}</td><td><b>${orderProgress(order)}</b><br><span class="legend">剩余 ${orderRemaining(order)} 件</span></td><td>${statusChip(order.status)}</td><td class="execution-resource-cell">${resource}</td><td>${esc(order.updated)}</td><td><div class="execution-row-actions"><button class="btn-mini" type="button" data-view-order="${esc(order.id)}">详情</button><button class="btn-mini" type="button" aria-haspopup="menu" data-action-menu="${esc(order.id)}">处理 ▾</button></div></td></tr>`;
+    }).join('') : '<tr><td colspan="11" style="padding:48px;text-align:center;color:var(--navy-500)">没有匹配的采购单</td></tr>';
+    if (!$('orderDetailPanel').classList.contains('hidden')) renderDetail(currentOrder());
+  }
+
+  function closeExecutionActionMenu() { $('executionActionMenu').classList.add('hidden'); }
+
+  function openExecutionActionMenu(button,orderId) {
+    const order=state.orders.find(item=>item.id===orderId); if(!order)return;
+    const actions=[]; const remaining=orderRemaining(order);
+    if (remaining>0) {
+      let label='开始下单';
+      if (order.attempt?.phase==='payment') label='回填付款结果';
+      else if (order.attempt) label='继续本次下单';
+      else if (isQuickOrder(order)) label='快捷下单';
+      else if (order.status==='partial') label=`继续采购剩余 ${remaining} 件`;
+      actions.push(`<button type="button" data-menu-open-order="${esc(order.id)}"><span>${esc(label)}</span><small>采购</small></button>`);
+    }
+    if (order.batches.length) actions.push(`<button type="button" data-menu-track-order="${esc(order.id)}"><span>查单跟单</span><small>${order.batches.length} 个批次</small></button>`);
+    $('executionActionMenu').innerHTML=actions.join('') || `<button type="button" data-view-order="${esc(order.id)}"><span>查看采购详情</span><small>详情</small></button>`;
+    const rect=button.getBoundingClientRect(); const menuWidth=218;
+    $('executionActionMenu').style.left=`${Math.max(12,Math.min(window.innerWidth-menuWidth-12,rect.right-menuWidth))}px`;
+    $('executionActionMenu').style.top=`${Math.min(window.innerHeight-110,rect.bottom+6)}px`;
+    $('executionActionMenu').classList.remove('hidden');
+  }
+
+  function openOrderDetail(orderId) {
+    const order = state.orders.find(item=>item.id===orderId); if(!order)return;
+    state.activeId = orderId; state.page = 'order-detail'; state.detailOpen = true;
+    $('taskPanel').classList.add('hidden'); $('executionPanel').classList.add('hidden'); $('orderDetailPanel').classList.remove('hidden');
+    $('orderWorkspaceTab').hidden = false; $('tabOrderDetail').textContent = `采购单 · ${order.sales}`;
+    $('tabTask').parentElement.classList.remove('active'); $('tabExecution').parentElement.classList.remove('active'); $('orderWorkspaceTab').classList.add('active');
+    $('orderDetailHeading').textContent = `采购单执行详情 · ${order.sales}`;
+    const rows=filteredOrders(); const index=rows.findIndex(item=>item.id===orderId);
+    $('btnPrevOrder').disabled = index<=0; $('btnNextOrder').disabled = index<0 || index>=rows.length-1;
+    document.querySelector('.hero-copy p').textContent = '在独立采购单工作区处理资源绑定、结算方案、付款结果和后续跟单。';
+    renderDetail(order);
+  }
+
+  function backToExecutionList() { switchPage('execution'); }
+  function closeOrderDetail() { state.detailOpen=false; $('detailBody').innerHTML=''; switchPage('execution'); }
+  function moveOrder(delta) {
+    const rows=filteredOrders(); const index=rows.findIndex(item=>item.id===state.activeId); const target=rows[index+delta];
+    if(target) openOrderDetail(target.id);
+  }
+
+  function renderTrackingSection(order) {
+    if (!order.batches.length) return '';
+    const cards = order.batches.map(batch=>`<div class="batch-card"><div class="batch-card-head"><b>${esc(batch.id)} · 跟单中</b><button class="btn-mini" type="button" data-open-hub="${esc(batch.hub)}">打开环境查单</button></div><p>平台订单号：${esc(batch.platformOrderNo)} · 付款时间：${esc(batch.created)}<br>本批商品：${batch.lines.map(line=>esc(batchLineSummary(order,line))).join('、')}<br>买家号：${esc(batch.buyer)} · Hub 环境：${esc(batch.hub)}<br>实际支付：${esc(batch.actual)} · 优惠：${esc(batch.discount)}</p></div>`).join('');
+    return `<section class="tracking-section" id="trackingSection"><div class="tracking-section-head"><b>采购批次与跟单</b><span>${order.batches.length} 个付款成功批次 · 每个批次保留独立环境</span></div><div class="tracking-batch-grid">${cards}</div></section>`;
+  }
+
+  function openOrderTracking(orderId) {
+    const order=state.orders.find(item=>item.id===orderId); if(!order?.batches.length)return;
+    openOrderDetail(orderId);
+    setTimeout(()=>document.getElementById('trackingSection')?.scrollIntoView({behavior:'smooth',block:'start'}),0);
+  }
+
+  function renderDetail(order) {
+    if (!order) { $('detailBody').innerHTML = '<div style="padding:48px 18px;text-align:center;color:var(--navy-500);font-size:11px">请选择采购单</div>'; return; }
+    if (order.attempt) { renderAttempt(order); return; }
+    const lines = order.lines.map(line=>`<tr><td>${line.no}</td><td><span class="product-thumb" style="margin:0">商品</span></td><td><b>${esc(linePrimarySpec(line))}</b></td><td>${esc(lineSecondarySpec(line))}</td><td>${line.required}</td><td>${line.purchased}</td><td>${line.required-line.purchased}</td></tr>`).join('');
+    const batches = renderTrackingSection(order);
+    const remaining = orderRemaining(order);
+    let action = '';
+    if (remaining>0) action = `<button class="btn primary" type="button" data-start-order="${esc(order.id)}">${isQuickOrder(order)?'快捷下单并绑定资源':order.status==='partial'?'继续采购剩余商品':'开始下单'}</button>`;
+    if (!remaining && order.batches.length) action = `<button class="btn primary" type="button" data-track-order="${esc(order.id)}">查看跟单批次</button>`;
+    const trackingAction = remaining>0 && order.batches.length ? `<button class="btn-mini" type="button" data-track-order="${esc(order.id)}">跟单(${order.batches.length})</button>` : '';
+    $('detailBody').innerHTML = `<div class="execution-page-detail-title"><div><h3>${esc(order.sales)}</h3><p>来源采购单 ${esc(order.id)} · ${order.lines.length} 条采购明细 · 最近更新 ${esc(order.updated)}</p></div>${statusChip(order.status)}</div><div class="execution-page-detail-grid">${field('店铺销售订单号',order.sales)}${field('来源采购单',order.id)}${field('店铺 / 运营',`${order.store} / ${orderOperator(order)}`)}${fieldWithMeta('采购执行','测试采购员',`最近更新 ${order.updated}`)}${field('销售金额',order.salesAmount || order.amount)}${field('采购指导额',order.amount)}${field('采购进度',orderProgress(order))}${field('正式采购批次',`${order.batches.length} 个`)}</div>${renderRecipientSection(order)}<div class="execution-page-lines"><table><thead><tr><th>原明细行</th><th>商品</th><th>主规格（采购备注）</th><th>次规格（采购备注）</th><th>需求数量</th><th>已采购</th><th>剩余数量</th></tr></thead><tbody>${lines}</tbody></table></div>${batches}<div class="execution-page-action-draft"><p><b>${remaining>0?(order.status==='partial'?'仍有剩余采购需求':'尚未创建本次下单'):'采购已全部下单'}</b><br>${remaining>0?'开始后先绑定买家号和新 Hub 环境，再在真实结算阶段确定本批商品与数量。':'付款成功的环境继续保留，用于查单、物流和售后。'}</p><div class="execution-page-action-buttons">${trackingAction}${action}<button class="btn-mini" type="button">查看操作记录</button></div></div>`;
+  }
+
+  function renderAttempt(order) {
+    const attempt = order.attempt; const locked = attempt.phase==='payment';
+    const batchQty = Object.values(attempt.quantities).reduce((sum,value)=>sum+Number(value||0),0);
+    const lineCards = order.lines.map(line=>{
+      const remaining = line.required-line.purchased; const qty = Number(attempt.quantities[line.no]||0);
+      return `<div class="session-line"><span class="product-thumb">商品</span><span><b>主规格：${esc(linePrimarySpec(line))} · 次规格：${esc(lineSecondarySpec(line))}</b><small>原明细 ${line.no} · 需求 ${line.required} · 已采购 ${line.purchased} · 本批最多 ${remaining}</small></span><span class="qty-control"><button type="button" data-qty-delta="-1" data-line="${line.no}" ${locked?'disabled':''}>−</button><input type="number" min="0" max="${remaining}" value="${qty}" data-qty-input="${line.no}" ${locked?'disabled':''}><button type="button" data-qty-delta="1" data-line="${line.no}" ${locked?'disabled':''}>＋</button></span></div>`;
+    }).join('');
+    const phaseLabel = locked ? '待确认付款结果' : '结算方案编辑中';
+    const steps = `<div class="session-stepbar"><div class="session-step done">① 资源已绑定</div><div class="session-step done">② 环境已打开</div><div class="session-step ${locked?'done':'active'}">③ 确认本批方案</div><div class="session-step ${locked?'active':''}">④ 回填付款结果</div></div>`;
+    const editingButtons = `<button class="btn-mini danger" type="button" data-attempt-action="abandon">放弃本次下单</button><button class="btn-mini" type="button" data-attempt-action="save">保存方案</button><button class="btn-mini" type="button" data-attempt-action="open-hub">打开采购环境</button><button class="btn primary" type="button" data-attempt-action="confirm-plan">确认本批并去付款</button>`;
+    const paymentButtons = `<button class="btn-mini danger" type="button" data-attempt-action="abandon">放弃本次下单</button><button class="btn-mini" type="button" data-attempt-action="back-edit">返回修改</button><button class="btn-mini" type="button" data-attempt-action="open-hub">打开采购环境</button><button class="btn-mini danger" type="button" data-attempt-action="failure">下单失败</button><button class="btn primary" type="button" data-attempt-action="payment-success">付款成功</button>`;
+    $('detailBody').innerHTML = `${steps}<div class="execution-page-detail-title"><div><h3>本次下单 #${attempt.index}</h3><p>${esc(order.sales)} · ${esc(attempt.id)} · ${esc(phaseLabel)} · 最近更新 ${esc(order.updated)}</p></div>${statusChip(order.status)}</div><div class="execution-page-detail-grid">${field('来源采购单',order.id)}${field('店铺 / 运营',`${order.store} / ${orderOperator(order)}`)}${field('销售金额',order.salesAmount || order.amount)}${field('采购指导额',order.amount)}${field('当前买家号',attempt.buyer)}${field('Hub 采购环境',attempt.hub)}${field('采购进度',orderProgress(order))}${fieldWithMeta('采购执行','测试采购员',`最近更新 ${order.updated}`)}</div>${renderRecipientSection(order)}<div class="session-layout"><section class="session-panel"><h4>本次下单商品 <span>在真实结算页确认优惠券后调整</span></h4>${lineCards}</section><div><section class="session-panel"><h4>资源与环境</h4><div class="resource-seal">买家号：<b>${esc(attempt.buyer)}</b><br>Hub 环境：<b>${esc(attempt.hub)}</b><br>状态：已登录买家号 · 不可回到公共资源池</div><button class="btn-mini" style="margin-top:9px" type="button" data-attempt-action="open-hub">打开采购环境</button></section><section class="session-panel"><h4>优惠与预计付款</h4><div class="form-grid"><div class="wide"><label>优惠券 / 店铺优惠</label><input value="${esc(attempt.coupon)}" data-attempt-field="coupon" ${locked?'disabled':''}></div><div><label>预计实付</label><input value="${esc(attempt.expected)}" data-attempt-field="expected" ${locked?'disabled':''}></div><div><label>当前方案</label><input value="${batchQty} 件" disabled></div><div class="wide"><label>采购备注</label><input value="${esc(attempt.note)}" data-attempt-field="note" ${locked?'disabled':''}></div></div><div class="batch-summary"><div class="batch-summary-row"><span>本批商品</span><b>${batchQty} 件</b></div><div class="batch-summary-row"><span>确认后</span><b>${locked?'数量已锁定':'暂时锁定本批数量'}</b></div><div class="batch-summary-row"><span>正式批次</span><b>付款成功后生成</b></div></div></section></div></div>${renderTrackingSection(order)}<div class="action-bar"><div class="action-bar-copy"><b>${locked?'请在真实环境完成付款并回填结果':'本批方案仍可修改'}</b><br>${locked?'付款失败可以返回修改，或结束本次下单并删除环境。':'保存只保留草稿；“确认本批”才会暂时锁定本次数量。'}</div><div class="action-bar-buttons">${order.batches.length?`<button class="btn-mini" type="button" data-track-order="${esc(order.id)}">跟单(${order.batches.length})</button>`:''}${locked?paymentButtons:editingButtons}</div></div>`;
+  }
+
+  function renderResourceOptions(order) {
+    const buyerOptions = state.buyers.filter(item=>item.status==='available' && (order.site==='MX' ? item.id.includes('-MX-') : item.id.includes('-US-')));
+    const hubOptions = state.hubs.filter(item=>item.status==='available');
+    $('resourceBuyer').innerHTML = buyerOptions.map(item=>`<option value="${esc(item.id)}">${esc(item.id)} · 可用</option>`).join('');
+    $('resourceHub').innerHTML = hubOptions.map(item=>`<option value="${esc(item.id)}">${esc(item.id)} · 新环境</option>`).join('');
+  }
+
+  function openResource(orderId) {
+    const order = state.orders.find(item=>item.id===orderId); if(!order)return;
+    state.activeId = orderId; $('resourceOrderId').value = `${order.sales} / ${order.id}`;
+    $('resourceModalTitle').textContent = isQuickOrder(order) ? '快捷下单并绑定资源' : '开始本次下单';
+    renderResourceOptions(order); showModal('resourceModal');
+  }
+
+  function confirmResource() {
+    const order = currentOrder(); if(!order)return;
+    const buyer = $('resourceBuyer').value; const hub = $('resourceHub').value;
+    if(!buyer || !hub) { showToast('没有符合当前站点的可用买家号或新环境'); return; }
+    const quantities = {}; order.lines.forEach(line=>{ quantities[line.no] = isQuickOrder(order) ? line.required-line.purchased : 0; });
+    order.attempt = {id:`TRY-${order.id.replace('PO-','')}-${order.batches.length+1}`,index:order.batches.length+1,phase:'editing',buyer,hub,loggedIn:true,quantities,coupon:'',expected:'',note:$('resourceNote').value};
+    order.status = 'ordering'; order.updated = '刚刚';
+    state.buyers.find(item=>item.id===buyer).status = 'in_use'; state.hubs.find(item=>item.id===hub).status = 'in_use';
+    closeModal('resourceModal'); renderExecution(); showToast('资源已绑定并模拟打开采购环境；环境登录后不可复用');
+  }
+
+  function updateQuantity(lineNo,nextValue) {
+    const order = currentOrder(); if(!order?.attempt || order.attempt.phase!=='editing')return;
+    const line = order.lines.find(item=>item.no===lineNo); if(!line)return;
+    const max = line.required-line.purchased; order.attempt.quantities[lineNo] = Math.max(0,Math.min(max,Number(nextValue)||0));
+    renderExecution();
+  }
+
+  function confirmPlan(order) {
+    const total = Object.values(order.attempt.quantities).reduce((sum,value)=>sum+Number(value||0),0);
+    if(total<=0) { showToast('请先填写本次至少购买 1 件商品'); return; }
+    order.attempt.phase='payment'; order.status='payment'; order.updated='刚刚'; renderExecution();
+    showToast('本批方案已确认，商品数量已暂时锁定；请返回采购环境付款');
+  }
+
+  function releaseAttempt(order,{risk=false,deleted=false}={}) {
+    const attempt = order.attempt; if(!attempt)return;
+    const buyer = state.buyers.find(item=>item.id===attempt.buyer); if(buyer) buyer.status = risk ? 'review' : 'available';
+    const hub = state.hubs.find(item=>item.id===attempt.hub); if(hub) hub.status = deleted ? 'deleted' : hub.status;
+    order.attempt = null; order.status = orderPurchased(order)>0 ? 'partial' : 'ready'; order.updated='刚刚';
+  }
+
+  function openAbandon(order) {
+    $('abandonBuyer').value = `${order.attempt.buyer} · 解除占用`;
+    $('abandonHub').value = `${order.attempt.hub} · 从 Hub 删除`;
+    showModal('abandonModal');
+  }
+
+  function confirmAbandon() {
+    const order=currentOrder(); if(!order?.attempt)return;
+    const hub=order.attempt.hub; releaseAttempt(order,{deleted:true}); closeModal('abandonModal'); renderExecution();
+    showToast(`已模拟放弃：买家号恢复可用，${hub} 已退出资源池并删除`);
+  }
+
+  function confirmFailure() {
+    const order=currentOrder(); if(!order?.attempt)return;
+    const hub=order.attempt.hub; const risk=$('failureReason').value==='risk'; releaseAttempt(order,{risk,deleted:true}); closeModal('failureModal'); renderExecution();
+    showToast(risk ? `已模拟失败：${hub} 已删除，买家号转待检查` : `已模拟失败：${hub} 已删除，买家号恢复可用`);
+  }
+
+  function openPayment(order) {
+    const expected = order.attempt.expected.trim(); if(expected) $('actualPayment').value=expected;
+    $('platformOrderNo').value=`PLAT-DEMO-${Date.now().toString().slice(-6)}`; showModal('paymentModal');
+  }
+
+  function confirmPayment() {
+    const order=currentOrder(); if(!order?.attempt)return;
+    const platformOrderNo=$('platformOrderNo').value.trim(); if(!platformOrderNo){showToast('请填写平台订单号');return;}
+    const attempt=order.attempt;
+    const batchLines=order.lines.filter(line=>Number(attempt.quantities[line.no]||0)>0).map(line=>({no:line.no,sku:line.sku,qty:Number(attempt.quantities[line.no])}));
+    batchLines.forEach(batchLine=>{ const line=order.lines.find(item=>item.no===batchLine.no); line.purchased+=batchLine.qty; });
+    order.batches.push({id:`PB-DEMO-${order.id.slice(-2)}-${order.batches.length+1}`,platformOrderNo,buyer:attempt.buyer,hub:attempt.hub,actual:$('actualPayment').value,discount:$('actualDiscount').value,created:'刚刚',lines:batchLines});
+    const buyer=state.buyers.find(item=>item.id===attempt.buyer); if(buyer)buyer.status='tracking';
+    const hub=state.hubs.find(item=>item.id===attempt.hub); if(hub)hub.status='tracking';
+    order.attempt=null; order.status=orderRemaining(order)>0?'partial':'tracking'; order.updated='刚刚';
+    closeModal('paymentModal'); renderExecution();
+    showToast(order.status==='partial'?'付款成功：已生成正式采购批次，剩余商品可继续采购':'付款成功：环境已保留并进入跟单');
+  }
+
+  function handleAttemptAction(action) {
+    const order=currentOrder(); if(!order?.attempt)return;
+    if(action==='save') showToast('本次下单方案草稿已保存');
+    if(action==='open-hub') showToast(`正在模拟打开 ${order.attempt.hub}；不会启动真实 Hub 环境`);
+    if(action==='confirm-plan') confirmPlan(order);
+    if(action==='back-edit'){order.attempt.phase='editing';order.status='ordering';renderExecution();showToast('已返回方案编辑，本批数量锁定已解除');}
+    if(action==='abandon') openAbandon(order);
+    if(action==='failure') showModal('failureModal');
+    if(action==='payment-success') openPayment(order);
+  }
+
+  document.addEventListener('click',event=>{
+    const close=event.target.closest('[data-close]'); if(close){closeModal(close.dataset.close);return;}
+    const taskQuick=event.target.closest('[data-task-quick]'); if(taskQuick){setTaskQuickFilter(taskQuick.dataset.taskQuick);return;}
+    const taskTab=event.target.closest('#navTask,#tabTask'); if(taskTab){switchPage('task');return;}
+    const executionTab=event.target.closest('#navExecution,#tabExecution'); if(executionTab){switchPage('execution');return;}
+    const orderTab=event.target.closest('#tabOrderDetail'); if(orderTab){openOrderDetail(state.activeId);return;}
+    const closeOrder=event.target.closest('#closeOrderTab'); if(closeOrder){closeOrderDetail();return;}
+    const claim=event.target.closest('[data-claim-task]'); if(claim){openClaim(claim.dataset.claimTask);return;}
+    const viewTask=event.target.closest('[data-view-task]'); if(viewTask){showToast('详情读取审计交互沿用测试版；原型重点展示认领与采购执行');return;}
+    const menuTrigger=event.target.closest('[data-action-menu]'); if(menuTrigger){openExecutionActionMenu(menuTrigger,menuTrigger.dataset.actionMenu);return;}
+    const menuOpen=event.target.closest('[data-menu-open-order]'); if(menuOpen){closeExecutionActionMenu();openOrderDetail(menuOpen.dataset.menuOpenOrder);return;}
+    const menuTracking=event.target.closest('[data-menu-track-order]'); if(menuTracking){closeExecutionActionMenu();openOrderTracking(menuTracking.dataset.menuTrackOrder);return;}
+    const tracking=event.target.closest('[data-track-order]'); if(tracking){openOrderTracking(tracking.dataset.trackOrder);return;}
+    const orderButton=event.target.closest('[data-view-order],[data-open-order]'); if(orderButton){openOrderDetail(orderButton.dataset.viewOrder || orderButton.dataset.openOrder);return;}
+    const start=event.target.closest('[data-start-order]'); if(start){openResource(start.dataset.startOrder);return;}
+    const action=event.target.closest('[data-attempt-action]'); if(action){handleAttemptAction(action.dataset.attemptAction);return;}
+    const delta=event.target.closest('[data-qty-delta]'); if(delta){const order=currentOrder();const line=Number(delta.dataset.line);updateQuantity(line,Number(order.attempt.quantities[line]||0)+Number(delta.dataset.qtyDelta));return;}
+    const hub=event.target.closest('[data-open-hub]'); if(hub){showToast(`正在模拟打开 ${hub.dataset.openHub} 查单；付款成功环境继续留存`);return;}
+    if (!event.target.closest('#executionActionMenu')) closeExecutionActionMenu();
+  });
+  window.addEventListener('resize',closeExecutionActionMenu);
+  window.addEventListener('scroll',closeExecutionActionMenu,true);
+  document.addEventListener('change',event=>{
+    if(event.target.matches('[data-qty-input]')) updateQuantity(Number(event.target.dataset.qtyInput),event.target.value);
+  });
+  document.addEventListener('input',event=>{
+    if(event.target.matches('[data-attempt-field]')) {const order=currentOrder();if(order?.attempt)order.attempt[event.target.dataset.attemptField]=event.target.value;}
+  });
+  $('confirmClaim').addEventListener('click',confirmClaim);
+  $('confirmResource').addEventListener('click',confirmResource);
+  $('confirmAbandon').addEventListener('click',confirmAbandon);
+  $('confirmFailure').addEventListener('click',confirmFailure);
+  $('confirmPayment').addEventListener('click',confirmPayment);
+  $('btnBackExecution').addEventListener('click',backToExecutionList);
+  $('btnPrevOrder').addEventListener('click',()=>moveOrder(-1));
+  $('btnNextOrder').addEventListener('click',()=>moveOrder(1));
+  $('taskScopeFilter').addEventListener('change',event=>setTaskQuickFilter(event.target.value));
+  $('statusFilter').addEventListener('change',renderExecution);
+  $('keywordFilter').addEventListener('input',renderExecution);
+  $('btnReset').addEventListener('click',()=>{state=clone(initialState);$('statusFilter').value='';$('keywordFilter').value='';renderTasks();renderExecution();showToast('演示数据已重置');});
+  $('btnTaskRefresh').addEventListener('click',()=>{renderTasks();showToast('已刷新脱敏演示任务，不调用测试环境接口');});
+  $('btnTaskReset').addEventListener('click',()=>{setTaskQuickFilter('unclaimed');showToast('采购任务筛选已恢复默认：待认领采购单');});
+  renderTasks(); renderExecution();
+</script>
+</body>
+</html>

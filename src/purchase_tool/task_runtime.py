@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """本地长任务准入、资源预占与 HubStudio 调用闸门。"""
+from contextlib import contextmanager
 import secrets
 import threading
 import time
@@ -128,15 +129,42 @@ class LocalTaskCoordinator(object):
 
 
 class HubRuntimeGate(object):
-    """限制 Local API 总并发，并串行提交浏览器 start/stop 控制请求。"""
+    """限制 Local API 总并发/请求速率，并串行提交浏览器控制请求。"""
 
-    def __init__(self, max_requests=4):
+    def __init__(self, max_requests=4, min_request_interval=0.3,
+                 sleep_fn=time.sleep, monotonic_fn=time.monotonic):
         self.request_slots = threading.BoundedSemaphore(
             max(1, int(max_requests)))
         self.browser_control = threading.Lock()
+        self.min_request_interval = max(0.0, float(min_request_interval))
+        self.sleep = sleep_fn
+        self.monotonic = monotonic_fn
+        self.request_pacing = threading.Lock()
+        self.next_request_at = 0.0
 
+    @contextmanager
     def request(self):
-        return self.request_slots
+        """为一次 Local API 调用分配并发槽并全局错开请求起点。"""
+        self.request_slots.acquire()
+        try:
+            with self.request_pacing:
+                now = self.monotonic()
+                delay = max(0.0, self.next_request_at - now)
+                if delay:
+                    self.sleep(delay)
+                    now = self.monotonic()
+                self.next_request_at = max(
+                    now, self.next_request_at) + self.min_request_interval
+            yield
+        finally:
+            self.request_slots.release()
+
+    def defer_requests(self, seconds):
+        """收到服务端限流后，让所有共享该闸门的线程共同等待。"""
+        delay = max(0.0, float(seconds))
+        with self.request_pacing:
+            self.next_request_at = max(
+                self.next_request_at, self.monotonic() + delay)
 
     def browser(self):
         return self.browser_control

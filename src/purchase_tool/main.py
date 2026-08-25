@@ -153,6 +153,7 @@ SUPER_ADMIN_ONLY_PERMISSIONS = frozenset({
 })
 AUTH_PERMISSION_BY_PREFIX = (
     ('/api/procurement/', 'procurement.request.read'),
+    ('/api/system-logs', 'system.runtime_log.read'),
     ('/api/admin/roles', 'system.role.manage'),
     ('/api/admin/permissions', 'system.role.manage'),
     ('/api/admin/sessions', 'system.member.manage'),
@@ -1652,7 +1653,7 @@ class Handler(BaseHTTPRequestHandler):
                 and path.endswith('/roles')):
             return STATE.auth.require('system.role.manage')
         if (path.startswith('/api/procurement/orders/')
-                and path.endswith('/splits')):
+                and path.endswith(('/splits', '/return'))):
             return STATE.auth.require('procurement.execution.manage')
         permission = AUTH_PERMISSION_BY_PATH.get(path)
         if permission is None:
@@ -1981,6 +1982,20 @@ class Handler(BaseHTTPRequestHandler):
                     STATE.cfg, STATE.lark_credentials))
             elif path == '/api/lark/open-target':
                 self._redirect(lark_target_link(STATE.cfg))
+            elif path == '/api/business-logs' or path.startswith(
+                    '/api/business-logs/'):
+                cloud_path = '/v1/business-logs' + path[
+                    len('/api/business-logs'):]
+                if parsed.query:
+                    cloud_path += '?' + parsed.query
+                self._json(STATE.auth.business_log_request(cloud_path))
+            elif path == '/api/system-logs' or path.startswith(
+                    '/api/system-logs/'):
+                cloud_path = '/v1/system-logs' + path[
+                    len('/api/system-logs'):]
+                if parsed.query:
+                    cloud_path += '?' + parsed.query
+                self._json(STATE.auth.system_log_request(cloud_path))
             elif path.startswith('/api/procurement/'):
                 cloud_path = '/v1/procurement/' + path[len('/api/procurement/'):]
                 if parsed.query:
@@ -2039,7 +2054,7 @@ class Handler(BaseHTTPRequestHandler):
                     cloud_path, method=cloud_method, payload=body))
             elif (path == '/api/procurement/claims'
                     or path.startswith('/api/procurement/orders/')
-                    and path.endswith('/splits')):
+                    and path.endswith(('/splits', '/return'))):
                 cloud_path = '/v1/procurement/' + path[len('/api/procurement/'):]
                 self._json(STATE.auth.procurement_workspace_request(
                     cloud_path,

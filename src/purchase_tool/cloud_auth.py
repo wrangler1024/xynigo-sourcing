@@ -18,9 +18,12 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
+
+from . import __version__
 
 
 DEFAULT_AUTH_BASE_URL = 'https://xynigo.samforo.icu'
@@ -29,6 +32,8 @@ KEYCHAIN_ACCOUNT = 'xynigo-cloud-session'
 TOKEN_PATTERN = re.compile(r'^[A-Za-z0-9_-]{32,256}$')
 MAX_RESPONSE_BYTES = 1024 * 1024
 MAX_PROCUREMENT_RESPONSE_BYTES = 4 * 1024 * 1024
+MAX_BUSINESS_LOG_RESPONSE_BYTES = 4 * 1024 * 1024
+MAX_SYSTEM_LOG_RESPONSE_BYTES = 4 * 1024 * 1024
 ALLOWED_LOGIN_HOSTS = frozenset({'accounts.feishu.cn'})
 
 
@@ -67,6 +72,9 @@ ERROR_MESSAGES = {
     'purchase_order_not_found': '未找到该采购单',
     'purchase_order_locked': '采购单已正式提交，不能直接覆盖',
     'purchase_submit_invalid': '采购单未满足正式提交要求',
+    'purchase_contract_invalid': '采购单数据未通过云端契约校验',
+    'purchase_contract_version_unsupported': (
+        '运营采购助手与云端采购契约版本不一致，请先更新云端服务'),
     'purchase_claim_selection_required': '请至少选择一张采购单或一条采购明细',
     'purchase_claim_empty': '所选采购单没有可认领的有效明细',
     'purchase_line_not_found': '未找到该采购明细',
@@ -79,6 +87,10 @@ ERROR_MESSAGES = {
     'purchase_split_allocation_incomplete': '已认领明细必须全部分配到采购分单',
     'purchase_split_quantity_mismatch': '采购分单数量与采购明细数量不一致',
     'purchase_split_started': '采购分单已进入执行流程，不能整体重建',
+    'business_log_not_found': '业务日志不存在或不在当前数据范围',
+    'business_log_time_range_invalid': '日志开始时间不能晚于结束时间',
+    'system_log_not_found': '系统日志不存在或不在当前租户范围',
+    'system_log_time_range_invalid': '系统日志开始时间不能晚于结束时间',
     'credential_store_failed': '无法安全保存登录会话',
 }
 
@@ -113,11 +125,17 @@ class CloudAuthClient(object):
         self.opener = opener
 
     def _request(self, path, method='GET', payload=None, token=None,
-                 max_response_bytes=MAX_RESPONSE_BYTES):
+                 max_response_bytes=MAX_RESPONSE_BYTES,
+                 source='local_executor'):
         data = None
+        request_id = uuid.uuid4().hex
         headers = {
             'Accept': 'application/json',
-            'User-Agent': 'Xynigo-Local-Executor/0.9',
+            'User-Agent': 'Xynigo-Local-Executor/' + __version__,
+            'X-Request-ID': request_id,
+            'X-Trace-ID': request_id,
+            'X-Xynigo-Source': str(source or 'local_executor')[:64],
+            'X-Xynigo-Client-Version': __version__,
         }
         if payload is not None:
             data = json.dumps(payload, separators=(',', ':')).encode('utf-8')
@@ -147,6 +165,19 @@ class CloudAuthClient(object):
                 detail = payload.get('detail') if isinstance(payload, dict) else None
                 if isinstance(detail, dict):
                     code = str(detail.get('code') or code)
+                elif (isinstance(detail, list)
+                      and path.startswith('/v1/purchase-orders/')):
+                    issue_fields = {
+                        str(part)
+                        for issue in detail
+                        if isinstance(issue, dict)
+                        for part in issue.get('loc', [])
+                    }
+                    if issue_fields & {
+                            'schemaVersion', 'storeBaseName', 'operatorName'}:
+                        code = 'purchase_contract_version_unsupported'
+                    else:
+                        code = 'purchase_contract_invalid'
             except Exception:
                 pass
             raise LocalAuthError(
@@ -227,6 +258,7 @@ class CloudAuthClient(object):
             method='POST',
             payload=payload,
             token=session_token,
+            source='extension_bridge',
         )
 
     def procurement_workspace_request(
@@ -240,7 +272,7 @@ class CloudAuthClient(object):
         } or re.fullmatch(
             r'/v1/procurement/orders/[0-9a-fA-F]{8}-'
             r'[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
-            r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?:/splits)?',
+            r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?:/(?:splits|return))?',
             parsed.path,
         )
         if (parsed.scheme or parsed.netloc or parsed.fragment
@@ -253,7 +285,7 @@ class CloudAuthClient(object):
                 'cloud_response_invalid', '云端采购中心接口方法无效', 500)
         is_write_path = (
             parsed.path == '/v1/procurement/claims'
-            or parsed.path.endswith('/splits')
+            or parsed.path.endswith(('/splits', '/return'))
             and '/v1/procurement/orders/' in parsed.path
         )
         if (is_write_path and method != 'POST') or (
@@ -266,6 +298,45 @@ class CloudAuthClient(object):
             payload=payload if method == 'POST' else None,
             token=session_token,
             max_response_bytes=MAX_PROCUREMENT_RESPONSE_BYTES,
+            source='local_workspace',
+        )
+
+    def business_log_request(self, path, session_token):
+        parsed = urlparse(str(path or ''))
+        allowed_path = parsed.path == '/v1/business-logs' or re.fullmatch(
+            r'/v1/business-logs/[0-9a-fA-F]{8}-'
+            r'[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
+            r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}',
+            parsed.path,
+        )
+        if (parsed.scheme or parsed.netloc or parsed.fragment
+                or not allowed_path):
+            raise LocalAuthError(
+                'cloud_response_invalid', '云端业务日志接口地址无效', 500)
+        return self._request(
+            path,
+            token=session_token,
+            max_response_bytes=MAX_BUSINESS_LOG_RESPONSE_BYTES,
+            source='local_workspace',
+        )
+
+    def system_log_request(self, path, session_token):
+        parsed = urlparse(str(path or ''))
+        allowed_path = parsed.path == '/v1/system-logs' or re.fullmatch(
+            r'/v1/system-logs/[0-9a-fA-F]{8}-'
+            r'[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
+            r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}',
+            parsed.path,
+        )
+        if (parsed.scheme or parsed.netloc or parsed.fragment
+                or not allowed_path):
+            raise LocalAuthError(
+                'cloud_response_invalid', '云端系统日志接口地址无效', 500)
+        return self._request(
+            path,
+            token=session_token,
+            max_response_bytes=MAX_SYSTEM_LOG_RESPONSE_BYTES,
+            source='local_workspace',
         )
 
 
@@ -735,6 +806,64 @@ class LocalAuthService(object):
             if not isinstance(result.get('data'), dict):
                 raise LocalAuthError(
                     'cloud_response_invalid', '云端采购中心接口数据无效', 502)
+            return result
+
+    def business_log_request(self, path):
+        with self.lock:
+            self.require()
+            if not self.session_token:
+                raise LocalAuthError('authentication_required', status=401)
+            try:
+                result = self.client.business_log_request(
+                    path,
+                    self.session_token,
+                )
+            except LocalAuthError as exc:
+                if exc.status == 401:
+                    try:
+                        self.store.clear()
+                    except Exception:
+                        self.storage_error = ERROR_MESSAGES[
+                            'credential_store_failed']
+                    self.session_token = None
+                    self.identity = None
+                    self.last_verified = 0.0
+                raise
+            if not isinstance(result, dict) or result.get('ok') is not True:
+                raise LocalAuthError(
+                    'cloud_response_invalid', '云端业务日志响应无效', 502)
+            if not isinstance(result.get('data'), dict):
+                raise LocalAuthError(
+                    'cloud_response_invalid', '云端业务日志数据无效', 502)
+            return result
+
+    def system_log_request(self, path):
+        with self.lock:
+            self.require('system.runtime_log.read')
+            if not self.session_token:
+                raise LocalAuthError('authentication_required', status=401)
+            try:
+                result = self.client.system_log_request(
+                    path,
+                    self.session_token,
+                )
+            except LocalAuthError as exc:
+                if exc.status == 401:
+                    try:
+                        self.store.clear()
+                    except Exception:
+                        self.storage_error = ERROR_MESSAGES[
+                            'credential_store_failed']
+                    self.session_token = None
+                    self.identity = None
+                    self.last_verified = 0.0
+                raise
+            if not isinstance(result, dict) or result.get('ok') is not True:
+                raise LocalAuthError(
+                    'cloud_response_invalid', '云端系统日志响应无效', 502)
+            if not isinstance(result.get('data'), dict):
+                raise LocalAuthError(
+                    'cloud_response_invalid', '云端系统日志数据无效', 502)
             return result
 
     def logout(self):

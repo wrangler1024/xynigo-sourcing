@@ -1,0 +1,735 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Xynigo 采购中心交互原型</title>
+  <style>
+    :root {
+      --navy-950:#0a203d;
+      --navy-900:#102c4f;
+      --navy-700:#315578;
+      --navy-500:#6b8299;
+      --navy-300:#afbfce;
+      --navy-100:#edf2f6;
+      --rhino-700:#126f74;
+      --rhino-500:#23aeb3;
+      --rhino-200:#bfe8e7;
+      --rhino-100:#e8f8f7;
+      --tech-700:#205fc7;
+      --tech-500:#3f7de0;
+      --tech-100:#eaf2ff;
+      --amber-700:#94610f;
+      --amber-500:#d99518;
+      --amber-100:#fff6df;
+      --coral-700:#a34736;
+      --coral-100:#fff0ed;
+      --green-700:#287754;
+      --green-100:#e9f7ef;
+      --surface:#fff;
+      --canvas:#f3f6f8;
+      --line:#dfe7ec;
+      --shadow:0 16px 36px rgba(22,48,76,.09);
+      --sidebar:226px;
+      --radius:14px;
+    }
+
+    * { box-sizing:border-box; }
+    html { min-width:1120px; background:var(--canvas); }
+    body {
+      margin:0;
+      color:var(--navy-950);
+      background:
+        radial-gradient(circle at 82% 2%, rgba(35,174,179,.08), transparent 28%),
+        var(--canvas);
+      font-family:Inter,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+      font-size:13px;
+    }
+    button,input,select,textarea { font:inherit; }
+    button { cursor:pointer; }
+    button:disabled { cursor:not-allowed; opacity:.52; }
+    .hidden { display:none !important; }
+
+    .app-shell { min-height:100vh; display:grid; grid-template-columns:var(--sidebar) 1fr; }
+    .sidebar {
+      position:sticky;
+      top:0;
+      height:100vh;
+      padding:22px 14px;
+      color:#fff;
+      background:linear-gradient(180deg,#0a2340 0%,#0d3155 58%,#0c3b59 100%);
+      box-shadow:10px 0 30px rgba(10,32,61,.13);
+    }
+    .brand { display:flex; align-items:center; gap:11px; padding:0 8px 22px; }
+    .brand img { width:38px; height:38px; object-fit:contain; filter:drop-shadow(0 5px 12px rgba(0,0,0,.18)); }
+    .brand strong { display:block; font-size:18px; letter-spacing:.02em; }
+    .brand span { display:block; margin-top:2px; color:#b9d7df; font-size:10px; letter-spacing:.14em; }
+    .prototype-pill {
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+      margin:0 8px 18px;
+      padding:6px 9px;
+      border:1px solid rgba(255,255,255,.17);
+      border-radius:999px;
+      color:#d8edf1;
+      background:rgba(255,255,255,.07);
+      font-size:10px;
+    }
+    .prototype-pill::before { content:""; width:6px; height:6px; border-radius:50%; background:#65ddd4; box-shadow:0 0 0 4px rgba(101,221,212,.12); }
+    .nav-label { margin:10px 10px 7px; color:#759ab4; font-size:9px; font-weight:800; letter-spacing:.15em; }
+    .nav-item {
+      width:100%;
+      min-height:42px;
+      margin:4px 0;
+      padding:0 12px;
+      display:flex;
+      align-items:center;
+      gap:10px;
+      border:1px solid transparent;
+      border-radius:11px;
+      color:#c7dce8;
+      background:transparent;
+      text-align:left;
+    }
+    .nav-item .nav-icon { width:23px; height:23px; display:grid; place-items:center; border-radius:7px; background:rgba(255,255,255,.07); font-weight:900; }
+    .nav-item.active { color:#fff; border-color:rgba(110,226,218,.24); background:linear-gradient(90deg,rgba(35,174,179,.24),rgba(35,174,179,.08)); }
+    .nav-item.muted { color:#7f9bb0; }
+    .nav-item small { margin-left:auto; color:#82a4b8; font-size:9px; }
+    .sidebar-foot { position:absolute; left:14px; right:14px; bottom:18px; padding:12px; border:1px solid rgba(255,255,255,.1); border-radius:12px; background:rgba(0,0,0,.09); }
+    .sidebar-foot b { display:block; font-size:11px; }
+    .sidebar-foot span { display:block; margin-top:4px; color:#92b8c8; font-size:9px; line-height:1.5; }
+
+    .main { min-width:0; }
+    .topbar {
+      height:68px;
+      padding:0 28px;
+      display:flex;
+      align-items:center;
+      gap:16px;
+      border-bottom:1px solid var(--line);
+      background:rgba(255,255,255,.9);
+      backdrop-filter:blur(12px);
+    }
+    .crumb { color:var(--navy-500); font-size:11px; }
+    .crumb b { color:var(--navy-900); }
+    .topbar-spacer { flex:1; }
+    .safe-note { padding:7px 10px; border-radius:999px; color:var(--green-700); background:var(--green-100); font-size:10px; font-weight:750; }
+    .user-chip { display:flex; align-items:center; gap:9px; padding:5px 10px 5px 6px; border:1px solid var(--line); border-radius:999px; background:#fff; }
+    .avatar { width:29px; height:29px; display:grid; place-items:center; border-radius:50%; color:#fff; background:linear-gradient(135deg,var(--rhino-500),var(--tech-500)); font-size:10px; font-weight:900; }
+    .user-chip b { display:block; font-size:10px; }
+    .user-chip small { display:block; color:var(--navy-500); font-size:8px; }
+
+    .workspace { padding:24px 28px 44px; }
+    .page-head { display:flex; align-items:flex-start; gap:20px; margin-bottom:18px; }
+    .page-head h1 { margin:0; font-size:22px; letter-spacing:-.02em; }
+    .page-head p { margin:7px 0 0; color:var(--navy-500); font-size:11px; line-height:1.6; }
+    .page-head-actions { margin-left:auto; display:flex; gap:8px; }
+    .btn {
+      min-height:34px;
+      padding:0 13px;
+      border:1px solid var(--line);
+      border-radius:9px;
+      color:var(--navy-700);
+      background:#fff;
+      font-weight:750;
+    }
+    .btn:hover { border-color:var(--navy-300); background:#f8fafb; }
+    .btn.primary { color:#fff; border-color:var(--rhino-500); background:linear-gradient(135deg,var(--rhino-500),#168e9c); box-shadow:0 8px 18px rgba(35,174,179,.2); }
+    .btn.primary:hover { background:linear-gradient(135deg,#1ba0a6,#137d8b); }
+    .btn.tech { color:#fff; border-color:var(--tech-500); background:var(--tech-500); }
+    .btn.ghost { background:transparent; }
+    .btn.small { min-height:29px; padding:0 10px; font-size:10px; }
+
+    .page-tabs { display:flex; gap:6px; margin-bottom:18px; padding:5px; width:max-content; border:1px solid var(--line); border-radius:12px; background:#fff; box-shadow:0 8px 20px rgba(22,48,76,.05); }
+    .page-tab { padding:9px 16px; border:0; border-radius:8px; color:var(--navy-500); background:transparent; font-weight:800; }
+    .page-tab.active { color:var(--navy-950); background:var(--rhino-100); box-shadow:inset 0 0 0 1px var(--rhino-200); }
+    .page-tab span { margin-left:6px; padding:2px 6px; border-radius:999px; color:var(--rhino-700); background:#fff; font-size:9px; }
+
+    .notice {
+      margin-bottom:14px;
+      padding:13px 15px;
+      display:flex;
+      align-items:center;
+      gap:12px;
+      border:1px solid var(--rhino-200);
+      border-left:4px solid var(--rhino-500);
+      border-radius:11px;
+      background:linear-gradient(90deg,var(--rhino-100),#fff);
+      box-shadow:0 8px 20px rgba(35,174,179,.08);
+    }
+    .notice strong { display:block; font-size:11px; }
+    .notice span { display:block; margin-top:3px; color:var(--navy-500); font-size:10px; }
+    .notice .btn { margin-left:auto; }
+
+    .metric-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-bottom:14px; }
+    .metric { position:relative; min-height:98px; padding:15px 16px; overflow:hidden; border:1px solid var(--line); border-radius:var(--radius); background:#fff; box-shadow:0 8px 22px rgba(22,48,76,.05); }
+    .metric::after { content:""; position:absolute; width:70px; height:70px; right:-25px; top:-28px; border-radius:50%; background:var(--rhino-100); }
+    .metric.tech::after { background:var(--tech-100); }
+    .metric.amber::after { background:var(--amber-100); }
+    .metric label { color:var(--navy-500); font-size:10px; font-weight:750; }
+    .metric b { display:block; margin-top:9px; font-size:25px; line-height:1; }
+    .metric small { display:block; margin-top:8px; color:var(--navy-500); font-size:9px; }
+
+    .card { border:1px solid var(--line); border-radius:var(--radius); background:#fff; box-shadow:var(--shadow); }
+    .toolbar { padding:13px 14px; display:flex; align-items:center; gap:9px; border-bottom:1px solid var(--line); }
+    .segment { display:flex; gap:3px; padding:3px; border:1px solid var(--line); border-radius:9px; background:#f6f8fa; }
+    .segment button { min-height:28px; padding:0 10px; border:0; border-radius:6px; color:var(--navy-500); background:transparent; font-size:10px; font-weight:750; }
+    .segment button.active { color:var(--navy-950); background:#fff; box-shadow:0 2px 7px rgba(22,48,76,.09); }
+    .field-inline { position:relative; }
+    .field-inline input,.field-inline select { height:34px; padding:0 10px; border:1px solid var(--line); border-radius:8px; color:var(--navy-700); background:#fff; outline:none; }
+    .field-inline input { width:230px; padding-left:30px; }
+    .field-inline .magnify { position:absolute; left:10px; top:8px; color:var(--navy-300); }
+    .toolbar .spacer { flex:1; }
+    .table-wrap { overflow:hidden; }
+    table { width:100%; border-collapse:collapse; }
+    th { padding:10px 12px; color:var(--navy-500); background:#f7f9fa; font-size:9px; letter-spacing:.03em; text-align:left; white-space:nowrap; }
+    td { padding:12px; border-top:1px solid #edf1f3; vertical-align:middle; }
+    tbody tr:hover { background:#fbfdfd; }
+    .order-main b { display:block; font-size:11px; }
+    .order-main span { display:block; margin-top:4px; color:var(--navy-500); font-size:9px; }
+    .site-chip,.status-chip { display:inline-flex; align-items:center; gap:5px; padding:4px 7px; border-radius:999px; font-size:9px; font-weight:800; white-space:nowrap; }
+    .site-chip { color:var(--tech-700); background:var(--tech-100); }
+    .status-chip.unclaimed { color:var(--amber-700); background:var(--amber-100); }
+    .status-chip.planning { color:var(--tech-700); background:var(--tech-100); }
+    .status-chip.binding { color:var(--rhino-700); background:var(--rhino-100); }
+    .status-chip.ordering { color:var(--green-700); background:var(--green-100); }
+    .status-dot { width:5px; height:5px; border-radius:50%; background:currentColor; }
+    .muted { color:var(--navy-500); font-size:10px; }
+    .claim-action { color:var(--rhino-700); border-color:var(--rhino-200); background:var(--rhino-100); }
+    .claim-action:hover { border-color:var(--rhino-500); background:#dff4f2; }
+    .empty { padding:60px 20px; color:var(--navy-500); text-align:center; }
+    .empty b { display:block; margin-bottom:7px; color:var(--navy-700); }
+
+    .execution-layout { display:grid; grid-template-columns:minmax(380px,42%) minmax(560px,1fr); gap:14px; align-items:start; }
+    .queue-head,.detail-head { min-height:56px; padding:13px 15px; display:flex; align-items:center; gap:10px; border-bottom:1px solid var(--line); }
+    .queue-head b,.detail-head b { font-size:12px; }
+    .queue-head span,.detail-head span { color:var(--navy-500); font-size:9px; }
+    .scope-chip { margin-left:auto; padding:5px 8px; border-radius:999px; color:var(--green-700) !important; background:var(--green-100); font-weight:800; }
+    .queue-filters { padding:10px 12px; display:flex; gap:7px; border-bottom:1px solid var(--line); background:#fafcfc; }
+    .queue-filters select,.queue-filters input { height:32px; padding:0 9px; border:1px solid var(--line); border-radius:8px; color:var(--navy-700); background:#fff; }
+    .queue-filters input { flex:1; min-width:0; }
+    .queue-list { max-height:620px; overflow:auto; }
+    .queue-card { width:100%; padding:13px 14px; display:grid; grid-template-columns:1fr auto; gap:7px 12px; border:0; border-bottom:1px solid #edf1f3; color:inherit; background:#fff; text-align:left; }
+    .queue-card:hover { background:#f8fbfb; }
+    .queue-card.active { position:relative; background:linear-gradient(90deg,var(--rhino-100),#fff); }
+    .queue-card.active::before { content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--rhino-500); }
+    .queue-card b { font-size:11px; }
+    .queue-card small { color:var(--navy-500); font-size:9px; line-height:1.55; }
+    .queue-card .queue-foot { grid-column:1/-1; display:flex; justify-content:space-between; color:var(--navy-500); font-size:9px; }
+    .detail-body { padding:16px; }
+    .detail-summary { padding:14px; border:1px solid var(--line); border-radius:12px; background:#f9fbfc; }
+    .detail-summary h2 { margin:0; font-size:15px; }
+    .detail-summary p { margin:6px 0 0; color:var(--navy-500); font-size:10px; }
+    .detail-grid { margin-top:13px; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:9px; }
+    .detail-field { min-width:0; }
+    .detail-field label { display:block; color:var(--navy-500); font-size:8px; font-weight:800; }
+    .detail-field b { display:block; margin-top:4px; overflow-wrap:anywhere; font-size:10px; }
+    .section-title { margin:17px 0 9px; display:flex; align-items:center; gap:8px; }
+    .section-title b { font-size:11px; }
+    .section-title span { color:var(--navy-500); font-size:9px; }
+    .section-title .btn { margin-left:auto; }
+    .line-list { display:grid; gap:7px; }
+    .line-item { padding:10px 11px; display:grid; grid-template-columns:32px 1fr auto; align-items:center; gap:10px; border:1px solid var(--line); border-radius:10px; }
+    .line-index { width:27px; height:27px; display:grid; place-items:center; border-radius:8px; color:var(--tech-700); background:var(--tech-100); font-size:9px; font-weight:900; }
+    .line-item b { display:block; font-size:10px; }
+    .line-item small { display:block; margin-top:3px; color:var(--navy-500); font-size:8px; }
+    .split-list { display:grid; gap:8px; }
+    .split-card { padding:11px 12px; border:1px solid var(--rhino-200); border-radius:11px; background:linear-gradient(90deg,var(--rhino-100),#fff); }
+    .split-card-head { display:flex; align-items:center; gap:8px; }
+    .split-card-head b { font-size:10px; }
+    .split-card-head .status-chip { margin-left:auto; }
+    .split-card p { margin:7px 0 0; color:var(--navy-500); font-size:9px; line-height:1.6; }
+    .flow-hint { margin-top:14px; padding:11px 12px; display:flex; align-items:center; gap:8px; border-radius:10px; color:var(--navy-700); background:var(--amber-100); font-size:9px; line-height:1.55; }
+
+    .modal-mask { position:fixed; inset:0; z-index:50; display:grid; place-items:center; padding:30px; background:rgba(7,25,45,.48); backdrop-filter:blur(4px); }
+    .modal { width:min(720px,calc(100vw - 60px)); max-height:calc(100vh - 60px); overflow:auto; border:1px solid rgba(255,255,255,.6); border-radius:17px; background:#fff; box-shadow:0 30px 80px rgba(4,20,38,.3); }
+    .modal-head { padding:17px 19px; display:flex; align-items:flex-start; gap:14px; border-bottom:1px solid var(--line); }
+    .modal-head h3 { margin:0; font-size:15px; }
+    .modal-head p { margin:5px 0 0; color:var(--navy-500); font-size:10px; }
+    .modal-head button { margin-left:auto; width:31px; height:31px; border:0; border-radius:9px; color:var(--navy-500); background:var(--navy-100); }
+    .modal-body { padding:18px 19px; }
+    .modal-foot { padding:13px 19px; display:flex; justify-content:flex-end; gap:8px; border-top:1px solid var(--line); background:#fafcfc; }
+    .claim-overview { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:9px; }
+    .claim-overview div { padding:11px; border:1px solid var(--line); border-radius:10px; background:#f8fafb; }
+    .claim-overview label { display:block; color:var(--navy-500); font-size:8px; }
+    .claim-overview b { display:block; margin-top:5px; font-size:10px; }
+    .claim-warning { margin-top:12px; padding:10px 12px; border-left:3px solid var(--rhino-500); border-radius:0 8px 8px 0; color:var(--navy-700); background:var(--rhino-100); font-size:9px; line-height:1.6; }
+    .plan-toolbar { display:flex; align-items:center; gap:8px; margin-bottom:12px; }
+    .plan-toolbar p { margin:0; color:var(--navy-500); font-size:9px; line-height:1.55; }
+    .plan-toolbar .btn { margin-left:auto; }
+    .plan-groups { display:grid; gap:10px; }
+    .plan-group { padding:12px; border:1px solid var(--line); border-radius:11px; background:#fafcfc; }
+    .plan-group-head { display:flex; align-items:center; gap:8px; margin-bottom:9px; }
+    .plan-group-head b { font-size:10px; }
+    .plan-group-head span { color:var(--navy-500); font-size:8px; }
+    .plan-group-lines { display:grid; gap:6px; }
+    .plan-group-line { padding:8px 9px; display:grid; grid-template-columns:1fr 150px; align-items:center; gap:12px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+    .plan-group-line b { display:block; font-size:9px; }
+    .plan-group-line small { display:block; margin-top:3px; color:var(--navy-500); font-size:8px; }
+    .plan-group-line select { height:30px; border:1px solid var(--line); border-radius:7px; color:var(--navy-700); background:#fff; }
+    .toast { position:fixed; right:24px; bottom:24px; z-index:80; min-width:280px; max-width:390px; padding:12px 14px; border:1px solid var(--rhino-200); border-radius:11px; color:var(--navy-900); background:#fff; box-shadow:0 18px 45px rgba(9,37,64,.2); transform:translateY(18px); opacity:0; pointer-events:none; transition:.22s ease; }
+    .toast.show { transform:translateY(0); opacity:1; }
+    .toast b { display:block; font-size:10px; }
+    .toast span { display:block; margin-top:3px; color:var(--navy-500); font-size:9px; }
+
+    @media (max-width:1220px) {
+      :root { --sidebar:204px; }
+      .workspace { padding-left:20px; padding-right:20px; }
+      .detail-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <img src="../src/purchase_tool/web/xynigo-mascot-x.png" alt="">
+        <div><strong>Xynigo</strong><span>小犀代采</span></div>
+      </div>
+      <div class="prototype-pill">前端交互原型 · 合成数据</div>
+      <div class="nav-label">业务模块</div>
+      <button class="nav-item muted" type="button"><span class="nav-icon">⌂</span>工作台<small>规划</small></button>
+      <button class="nav-item active" type="button"><span class="nav-icon">采</span>采购中心</button>
+      <button class="nav-item muted" type="button"><span class="nav-icon">履</span>履约追踪</button>
+      <button class="nav-item muted" type="button"><span class="nav-icon">资</span>资源中心</button>
+      <div class="nav-label">采购中心</div>
+      <button class="nav-item active" id="sideTask" type="button"><span class="nav-icon">任</span>采购任务<small id="sideTaskCount">3</small></button>
+      <button class="nav-item" id="sideExecution" type="button"><span class="nav-icon">执</span>采购执行<small id="sideExecutionCount">1</small></button>
+      <div class="sidebar-foot"><b>原型边界</b><span>不连接云端 API、不调用 HubStudio、不修改 PostgreSQL 或飞书数据。</span></div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="crumb">采购中心&nbsp; / &nbsp;<b id="crumbCurrent">采购任务</b></div>
+        <div class="topbar-spacer"></div>
+        <span class="safe-note">仅原型演示 · 所有操作可重置</span>
+        <div class="user-chip"><span class="avatar">测</span><div><b>测试采购员</b><small>采购执行权限</small></div></div>
+      </header>
+
+      <div class="workspace">
+        <div class="page-head">
+          <div>
+            <h1 id="pageTitle">采购任务</h1>
+            <p id="pageSubtitle">全团队共享的待认领采购单池。默认只显示已正式提交、尚未认领的采购单。</p>
+          </div>
+          <div class="page-head-actions">
+            <button class="btn ghost" id="btnReset" type="button">重置演示数据</button>
+            <button class="btn" id="btnRefresh" type="button">刷新当前页面</button>
+          </div>
+        </div>
+
+        <div class="page-tabs">
+          <button class="page-tab active" id="tabTask" type="button">采购任务<span id="tabTaskCount">3</span></button>
+          <button class="page-tab" id="tabExecution" type="button">采购执行<span id="tabExecutionCount">1</span></button>
+        </div>
+
+        <section id="taskPage">
+          <div class="notice hidden" id="claimNotice">
+            <div><strong id="claimNoticeTitle">认领成功</strong><span id="claimNoticeCopy"></span></div>
+            <button class="btn primary small" id="btnGoExecution" type="button">前往采购执行</button>
+          </div>
+
+          <div class="metric-grid">
+            <div class="metric amber"><label>待认领采购单</label><b id="metricTaskUnclaimed">3</b><small>全团队共享队列</small></div>
+            <div class="metric"><label>待认领明细</label><b id="metricLineUnclaimed">6</b><small>随整张采购单认领</small></div>
+            <div class="metric tech"><label>今日已认领</label><b id="metricClaimedToday">2</b><small>认领后进入个人执行台</small></div>
+            <div class="metric"><label>异常待协调</label><b>1</b><small>管理员团队视图处理</small></div>
+          </div>
+
+          <div class="card">
+            <div class="toolbar">
+              <div class="segment" id="taskStatusSegment">
+                <button class="active" data-task-status="unclaimed" type="button">待认领</button>
+                <button data-task-status="assigned" type="button">已认领</button>
+                <button data-task-status="all" type="button">全部</button>
+              </div>
+              <div class="field-inline"><span class="magnify">⌕</span><input id="taskSearch" placeholder="搜索销售订单号、店铺或包裹号"></div>
+              <div class="field-inline"><select id="taskSite"><option value="">全部站点</option><option>MX</option><option>US</option></select></div>
+              <div class="spacer"></div>
+              <span class="muted" id="taskVisibleCount">3 张采购单</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th><input id="selectAllTasks" type="checkbox" aria-label="全选当前待认领采购单"></th><th>采购单 / 销售订单</th><th>店铺</th><th>站点</th><th>商品明细</th><th>指导采购额</th><th>提交时间</th><th>归属状态</th><th>操作</th></tr></thead>
+                <tbody id="taskTableBody"></tbody>
+              </table>
+            </div>
+            <div class="toolbar">
+              <span class="muted" id="selectedSummary">已选 0 张采购单</span>
+              <div class="spacer"></div>
+              <button class="btn primary" id="btnBatchClaim" type="button" disabled>批量认领</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="hidden" id="executionPage">
+          <div class="metric-grid">
+            <div class="metric tech"><label>待分单</label><b id="metricPlanning">1</b><small>已认领，尚未规划采购分单</small></div>
+            <div class="metric"><label>待绑定资源</label><b id="metricBinding">0</b><small>等待 Hub 环境与买家号</small></div>
+            <div class="metric amber"><label>待下单</label><b id="metricWaitingOrder">0</b><small>资源已就绪</small></div>
+            <div class="metric"><label>采购中</label><b id="metricPurchasing">0</b><small>仅显示当前采购员数据</small></div>
+          </div>
+
+          <div class="execution-layout">
+            <section class="card">
+              <div class="queue-head"><div><b>我的采购单</b><br><span>认领成功后立即进入这里</span></div><span class="scope-chip">当前采购员</span></div>
+              <div class="queue-filters"><select id="executionStatus"><option value="">全部执行状态</option><option value="planning_pending">待分单</option><option value="waiting_binding">待绑定资源</option><option value="waiting_order">待下单</option><option value="purchasing">采购中</option></select><input id="executionSearch" placeholder="搜索销售订单号或店铺"></div>
+              <div class="queue-list" id="executionQueue"></div>
+            </section>
+            <section class="card">
+              <div class="detail-head"><div><b>采购执行详情</b><br><span>分单、资源绑定与采购结果在个人工作台完成</span></div></div>
+              <div class="detail-body" id="executionDetail"></div>
+            </section>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div class="modal-mask hidden" id="claimModal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="claimTitle">
+      <div class="modal-head"><div><h3 id="claimTitle">确认整单认领</h3><p>采购单归属与采购执行分开；认领后到个人工作台进行分单。</p></div><button data-close-modal="claimModal" type="button">×</button></div>
+      <div class="modal-body"><div class="claim-overview" id="claimOverview"></div><div class="section-title"><b>将要认领的采购单</b><span id="claimLineSummary"></span></div><div class="line-list" id="claimOrderList"></div><div class="claim-warning">确认后所选采购单会立即从全团队“待认领”共享池移出，并进入当前账号的“采购执行 → 待分单”。本步骤不会自动创建采购分单。</div></div>
+      <div class="modal-foot"><button class="btn" data-close-modal="claimModal" type="button">取消</button><button class="btn primary" id="btnConfirmClaim" type="button">确认认领</button></div>
+    </div>
+  </div>
+
+  <div class="modal-mask hidden" id="splitModal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="splitTitle">
+      <div class="modal-head"><div><h3 id="splitTitle">创建采购分单</h3><p>在个人采购执行中决定各商品如何组合下单；当前只演示整条明细分组。</p></div><button data-close-modal="splitModal" type="button">×</button></div>
+      <div class="modal-body"><div class="plan-toolbar"><p>每条采购明细必须分配到一个采购分单。保存后进入“待绑定资源”。</p><button class="btn small" id="btnAddSplitGroup" type="button">＋ 增加分单</button></div><div class="plan-groups" id="planGroups"></div><div class="claim-warning">原型不读取真实 Hub 环境或买家号。资源绑定、开始下单和异常回滚继续保留为下一阶段交互。</div></div>
+      <div class="modal-foot"><button class="btn" data-close-modal="splitModal" type="button">取消</button><button class="btn primary" id="btnSaveSplit" type="button">保存采购分单</button></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"><b id="toastTitle"></b><span id="toastCopy"></span></div>
+
+  <script>
+    const DEMO_TASKS = [
+      {id:'CG-260825-001', salesNo:'GSH-DEMO-260825-01', packageNo:'XMWU-DEMO-5901', store:'墨西哥测试店铺 A', site:'MX', amount:'MXN 328.50', submittedAt:'13:06', assignment:'unclaimed', lines:[
+        {id:'L-001-1', no:1, sku:'SKU-DEMO-RED', spec:'红色 / M', qty:1},
+        {id:'L-001-2', no:2, sku:'SKU-DEMO-BLACK', spec:'黑色 / L', qty:2}
+      ]},
+      {id:'CG-260825-002', salesNo:'GSH-DEMO-260825-02', packageNo:'XMWU-DEMO-5902', store:'美国测试店铺 B', site:'US', amount:'USD 46.20', submittedAt:'13:12', assignment:'unclaimed', lines:[
+        {id:'L-002-1', no:1, sku:'SKU-DEMO-WHITE', spec:'白色 / One Size', qty:1}
+      ]},
+      {id:'CG-260825-003', salesNo:'GSH-DEMO-260825-03', packageNo:'XMWU-DEMO-5903', store:'墨西哥测试店铺 C', site:'MX', amount:'MXN 517.00', submittedAt:'13:18', assignment:'unclaimed', lines:[
+        {id:'L-003-1', no:1, sku:'SKU-DEMO-BLUE', spec:'海军蓝 / S', qty:1},
+        {id:'L-003-2', no:2, sku:'SKU-DEMO-GREEN', spec:'绿色 / M', qty:1},
+        {id:'L-003-3', no:3, sku:'SKU-DEMO-GRAY', spec:'灰色 / L', qty:1}
+      ]},
+      {id:'CG-260825-000', salesNo:'GSH-DEMO-260825-00', packageNo:'XMWU-DEMO-5900', store:'美国测试店铺 D', site:'US', amount:'USD 32.80', submittedAt:'12:48', assignment:'assigned', assignee:'其他采购员', lines:[
+        {id:'L-000-1', no:1, sku:'SKU-DEMO-OTHER', spec:'米白 / M', qty:1}
+      ]}
+    ];
+
+    const DEMO_EXECUTION = [
+      {id:'CG-260825-MY01', salesNo:'GSH-DEMO-MY-001', packageNo:'XMWU-DEMO-MY01', store:'墨西哥测试店铺 D', site:'MX', amount:'MXN 219.00', assignment:'assigned', assignee:'me', executionStatus:'planning_pending', updatedAt:'12:55', lines:[
+        {id:'L-MY-1', no:1, sku:'SKU-DEMO-PINK', spec:'粉色 / M', qty:1},
+        {id:'L-MY-2', no:2, sku:'SKU-DEMO-KHAKI', spec:'卡其 / L', qty:1}
+      ], splits:[]}
+    ];
+
+    const state = {
+      page:'task',
+      taskStatus:'unclaimed',
+      tasks:[],
+      execution:[],
+      selectedTasks:new Set(),
+      activeExecutionId:'',
+      claimTargets:[],
+      splitTargetId:'',
+      splitGroupCount:1,
+      lineGroupAssignments:{},
+      claimedToday:2
+    };
+
+    const $ = id => document.getElementById(id);
+    const esc = value => String(value ?? '').replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
+    const statusLabel = status => ({planning_pending:'待分单',waiting_binding:'待绑定资源',waiting_order:'待下单',purchasing:'采购中'}[status] || status);
+    const statusClass = status => ({planning_pending:'planning',waiting_binding:'binding',waiting_order:'ordering',purchasing:'ordering'}[status] || 'planning');
+
+    function clone(value) { return JSON.parse(JSON.stringify(value)); }
+
+    function resetDemo(showMessage=false) {
+      state.tasks = clone(DEMO_TASKS);
+      state.execution = clone(DEMO_EXECUTION);
+      state.selectedTasks.clear();
+      state.activeExecutionId = state.execution[0].id;
+      state.claimTargets = [];
+      state.splitTargetId = '';
+      state.splitGroupCount = 1;
+      state.lineGroupAssignments = {};
+      state.claimedToday = 2;
+      state.taskStatus = 'unclaimed';
+      $('taskSearch').value = '';
+      $('taskSite').value = '';
+      $('executionStatus').value = '';
+      $('executionSearch').value = '';
+      $('claimNotice').classList.add('hidden');
+      document.querySelectorAll('[data-task-status]').forEach(button => button.classList.toggle('active', button.dataset.taskStatus === 'unclaimed'));
+      renderAll();
+      if (showMessage) toast('演示数据已重置','已恢复初始共享任务池和个人执行数据。');
+    }
+
+    function switchPage(page) {
+      state.page = page;
+      const task = page === 'task';
+      $('taskPage').classList.toggle('hidden', !task);
+      $('executionPage').classList.toggle('hidden', task);
+      $('tabTask').classList.toggle('active', task);
+      $('tabExecution').classList.toggle('active', !task);
+      $('sideTask').classList.toggle('active', task);
+      $('sideExecution').classList.toggle('active', !task);
+      $('crumbCurrent').textContent = task ? '采购任务' : '采购执行';
+      $('pageTitle').textContent = task ? '采购任务' : '采购执行';
+      $('pageSubtitle').textContent = task
+        ? '全团队共享的待认领采购单池。默认只显示已正式提交、尚未认领的采购单。'
+        : '当前采购员的个人工作台。已认领采购单先进入待分单，再完成资源绑定与下单执行。';
+      if (!task) renderExecution();
+    }
+
+    function filteredTasks() {
+      const keyword = $('taskSearch').value.trim().toLowerCase();
+      const site = $('taskSite').value;
+      return state.tasks.filter(task => {
+        if (state.taskStatus !== 'all' && task.assignment !== state.taskStatus) return false;
+        if (site && task.site !== site) return false;
+        if (keyword && ![task.id,task.salesNo,task.packageNo,task.store].join(' ').toLowerCase().includes(keyword)) return false;
+        return true;
+      });
+    }
+
+    function renderTaskTable() {
+      const rows = filteredTasks();
+      const tbody = $('taskTableBody');
+      $('taskVisibleCount').textContent = `${rows.length} 张采购单`;
+      if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="9"><div class="empty"><b>当前筛选没有采购单</b>待认领任务认领后会立即从默认共享池移出。</div></td></tr>';
+      } else {
+        tbody.innerHTML = rows.map(task => {
+          const claimable = task.assignment === 'unclaimed';
+          const selected = state.selectedTasks.has(task.id);
+          return `<tr><td><input type="checkbox" data-task-select="${esc(task.id)}" ${selected ? 'checked' : ''} ${claimable ? '' : 'disabled'} aria-label="选择 ${esc(task.salesNo)}"></td>` +
+            `<td><div class="order-main"><b>${esc(task.salesNo)}</b><span>${esc(task.id)} · ${esc(task.packageNo)}</span></div></td>` +
+            `<td>${esc(task.store)}</td><td><span class="site-chip">${esc(task.site)}</span></td>` +
+            `<td><b>${task.lines.length}</b> 条</td><td><b>${esc(task.amount)}</b></td><td class="muted">${esc(task.submittedAt)}</td>` +
+            `<td>${claimable ? '<span class="status-chip unclaimed"><i class="status-dot"></i>待认领</span>' : `<span class="status-chip planning"><i class="status-dot"></i>${esc(task.assignee || '已认领')}</span>`}</td>` +
+            `<td>${claimable ? `<button class="btn small claim-action" data-claim-one="${esc(task.id)}" type="button">整单认领</button>` : '<span class="muted">已移入个人执行台</span>'}</td></tr>`;
+        }).join('');
+      }
+      const claimableVisible = rows.filter(task => task.assignment === 'unclaimed');
+      const selectedVisible = claimableVisible.filter(task => state.selectedTasks.has(task.id));
+      $('selectAllTasks').disabled = !claimableVisible.length;
+      $('selectAllTasks').checked = claimableVisible.length > 0 && selectedVisible.length === claimableVisible.length;
+      $('selectAllTasks').indeterminate = selectedVisible.length > 0 && selectedVisible.length < claimableVisible.length;
+      $('selectedSummary').textContent = `已选 ${state.selectedTasks.size} 张采购单`;
+      $('btnBatchClaim').disabled = state.selectedTasks.size === 0;
+    }
+
+    function renderMetrics() {
+      const unclaimed = state.tasks.filter(task => task.assignment === 'unclaimed');
+      const unclaimedLines = unclaimed.reduce((sum,task) => sum + task.lines.length,0);
+      $('metricTaskUnclaimed').textContent = String(unclaimed.length);
+      $('metricLineUnclaimed').textContent = String(unclaimedLines);
+      $('metricClaimedToday').textContent = String(state.claimedToday);
+      $('sideTaskCount').textContent = String(unclaimed.length);
+      $('tabTaskCount').textContent = String(unclaimed.length);
+      $('metricPlanning').textContent = String(state.execution.filter(order => order.executionStatus === 'planning_pending').length);
+      $('metricBinding').textContent = String(state.execution.filter(order => order.executionStatus === 'waiting_binding').length);
+      $('metricWaitingOrder').textContent = String(state.execution.filter(order => order.executionStatus === 'waiting_order').length);
+      $('metricPurchasing').textContent = String(state.execution.filter(order => order.executionStatus === 'purchasing').length);
+      $('sideExecutionCount').textContent = String(state.execution.length);
+      $('tabExecutionCount').textContent = String(state.execution.length);
+    }
+
+    function filteredExecution() {
+      const status = $('executionStatus').value;
+      const keyword = $('executionSearch').value.trim().toLowerCase();
+      return state.execution.filter(order => {
+        if (status && order.executionStatus !== status) return false;
+        if (keyword && ![order.id,order.salesNo,order.packageNo,order.store].join(' ').toLowerCase().includes(keyword)) return false;
+        return order.assignee === 'me';
+      });
+    }
+
+    function renderExecution() {
+      renderMetrics();
+      const orders = filteredExecution();
+      if (!orders.some(order => order.id === state.activeExecutionId)) state.activeExecutionId = orders[0]?.id || '';
+      $('executionQueue').innerHTML = orders.length ? orders.map(order =>
+        `<button class="queue-card ${order.id === state.activeExecutionId ? 'active' : ''}" data-execution-id="${esc(order.id)}" type="button">` +
+          `<b>${esc(order.salesNo)}</b><span class="status-chip ${statusClass(order.executionStatus)}"><i class="status-dot"></i>${esc(statusLabel(order.executionStatus))}</span>` +
+          `<small>${esc(order.id)} · ${esc(order.store)} / ${esc(order.site)}<br>${order.lines.length} 条明细 · ${esc(order.amount)}</small>` +
+          `<span class="queue-foot"><span>当前采购员</span><span>${esc(order.updatedAt || '刚刚更新')}</span></span></button>`
+      ).join('') : '<div class="empty"><b>没有匹配的个人采购单</b>共享任务需要先在“采购任务”完成认领。</div>';
+      renderExecutionDetail(orders.find(order => order.id === state.activeExecutionId));
+    }
+
+    function renderExecutionDetail(order) {
+      if (!order) {
+        $('executionDetail').innerHTML = '<div class="empty"><b>请选择一张采购单</b>采购单详情和分单入口将在这里显示。</div>';
+        return;
+      }
+      const isPlanning = order.executionStatus === 'planning_pending';
+      const lines = order.lines.map(line => `<div class="line-item"><span class="line-index">${line.no}</span><div><b>${esc(line.sku)}</b><small>${esc(line.spec)} · 采购数量 ${line.qty}</small></div><span class="muted">待分配</span></div>`).join('');
+      const splits = Array.isArray(order.splits) && order.splits.length
+        ? order.splits.map(split => `<div class="split-card"><div class="split-card-head"><b>${esc(split.name)}</b><span>${split.lines.length} 条明细</span><span class="status-chip binding"><i class="status-dot"></i>待绑定资源</span></div><p>${split.lines.map(line => `${esc(line.sku)} × ${line.qty}`).join('；')}<br>Hub 环境：待选择 · 买家号：待选择</p></div>`).join('')
+        : '<div class="flow-hint">当前采购单已经归属当前采购员，但尚未生成采购分单。先根据实际下单组合完成分单，再绑定 Hub 环境和买家号。</div>';
+      $('executionDetail').innerHTML = `<div class="detail-summary"><h2>${esc(order.salesNo)}</h2><p>${esc(order.id)} · ${esc(order.packageNo)} · ${esc(order.store)}</p><div class="detail-grid"><div class="detail-field"><label>当前负责人</label><b>测试采购员</b></div><div class="detail-field"><label>站点</label><b>${esc(order.site)}</b></div><div class="detail-field"><label>指导采购额</label><b>${esc(order.amount)}</b></div><div class="detail-field"><label>执行状态</label><b>${esc(statusLabel(order.executionStatus))}</b></div></div></div>` +
+        `<div class="section-title"><b>采购明细</b><span>${order.lines.length} 条 · 整单归属当前采购员</span>${isPlanning ? `<button class="btn primary small" data-open-split="${esc(order.id)}" type="button">创建采购分单</button>` : ''}</div><div class="line-list">${lines}</div>` +
+        `<div class="section-title"><b>采购分单</b><span>${order.splits?.length || 0} 张</span>${!isPlanning ? `<button class="btn small" data-open-split="${esc(order.id)}" type="button">调整分单</button>` : ''}</div><div class="split-list">${splits}</div>`;
+    }
+
+    function openClaimModal(ids) {
+      state.claimTargets = ids.map(id => state.tasks.find(task => task.id === id)).filter(task => task && task.assignment === 'unclaimed');
+      if (!state.claimTargets.length) return toast('没有可认领采购单','请刷新共享任务池后重试。');
+      const lines = state.claimTargets.reduce((sum,task) => sum + task.lines.length,0);
+      $('claimOverview').innerHTML = `<div><label>采购单</label><b>${state.claimTargets.length} 张</b></div><div><label>采购明细</label><b>${lines} 条</b></div><div><label>认领人</label><b>测试采购员</b></div>`;
+      $('claimLineSummary').textContent = `共 ${lines} 条明细，按整单认领`;
+      $('claimOrderList').innerHTML = state.claimTargets.map(task => `<div class="line-item"><span class="line-index">${esc(task.site)}</span><div><b>${esc(task.salesNo)}</b><small>${esc(task.store)} · ${task.lines.length} 条明细</small></div><b>${esc(task.amount)}</b></div>`).join('');
+      $('claimModal').classList.remove('hidden');
+    }
+
+    function confirmClaim() {
+      const claimed = [];
+      state.claimTargets.forEach(task => {
+        const liveTask = state.tasks.find(item => item.id === task.id);
+        if (!liveTask || liveTask.assignment !== 'unclaimed') return;
+        liveTask.assignment = 'assigned';
+        liveTask.assignee = 'me';
+        claimed.push(liveTask);
+        state.execution.unshift({...clone(liveTask),executionStatus:'planning_pending',updatedAt:'刚刚',splits:[]});
+        state.selectedTasks.delete(liveTask.id);
+      });
+      closeModal('claimModal');
+      if (!claimed.length) return toast('认领状态已变化','当前任务没有产生新的认领结果。');
+      state.claimedToday += claimed.length;
+      state.activeExecutionId = claimed[0].id;
+      $('claimNoticeTitle').textContent = `已认领 ${claimed.length} 张采购单`;
+      $('claimNoticeCopy').textContent = '任务已从全团队共享池移出，并进入当前账号的“采购执行 → 待分单”。';
+      $('claimNotice').classList.remove('hidden');
+      renderAll();
+      toast('认领成功','采购单已进入个人采购执行工作台，下一步创建采购分单。');
+    }
+
+    function openSplitModal(orderId) {
+      const order = state.execution.find(item => item.id === orderId);
+      if (!order) return;
+      state.splitTargetId = orderId;
+      state.splitGroupCount = Math.max(1,order.splits?.length || 1);
+      state.lineGroupAssignments = {};
+      if (order.splits?.length) order.splits.forEach((split,index) => split.lines.forEach(line => { state.lineGroupAssignments[line.id] = index + 1; }));
+      order.lines.forEach(line => { if (!state.lineGroupAssignments[line.id]) state.lineGroupAssignments[line.id] = 1; });
+      renderPlanGroups();
+      $('splitModal').classList.remove('hidden');
+    }
+
+    function renderPlanGroups() {
+      const order = state.execution.find(item => item.id === state.splitTargetId);
+      if (!order) return;
+      $('planGroups').innerHTML = Array.from({length:state.splitGroupCount},(_,index) => {
+        const groupNo = index + 1;
+        const groupLines = order.lines.filter(line => Number(state.lineGroupAssignments[line.id]) === groupNo);
+        const lineHtml = groupLines.length ? groupLines.map(line => `<div class="plan-group-line"><div><b>${esc(line.sku)} × ${line.qty}</b><small>${esc(line.spec)}</small></div><select data-line-group="${esc(line.id)}">${Array.from({length:state.splitGroupCount},(_,optionIndex) => `<option value="${optionIndex + 1}" ${optionIndex + 1 === groupNo ? 'selected' : ''}>移动到分单 ${String.fromCharCode(65 + optionIndex)}</option>`).join('')}</select></div>`).join('') : '<div class="empty" style="padding:18px">暂无明细，可从其他分单移动到这里</div>';
+        return `<div class="plan-group"><div class="plan-group-head"><b>采购分单 ${String.fromCharCode(64 + groupNo)}</b><span>${groupLines.length} 条明细 · 保存后待绑定资源</span></div><div class="plan-group-lines">${lineHtml}</div></div>`;
+      }).join('');
+    }
+
+    function saveSplitPlan() {
+      const order = state.execution.find(item => item.id === state.splitTargetId);
+      if (!order) return;
+      const groups = Array.from({length:state.splitGroupCount},(_,index) => {
+        const groupNo = index + 1;
+        return {name:`采购分单 ${String.fromCharCode(64 + groupNo)}`,lines:order.lines.filter(line => Number(state.lineGroupAssignments[line.id]) === groupNo).map(clone)};
+      }).filter(group => group.lines.length);
+      if (!groups.length) return toast('无法保存分单','至少需要一个包含采购明细的分单。');
+      order.splits = groups;
+      order.executionStatus = 'waiting_binding';
+      order.updatedAt = '刚刚';
+      closeModal('splitModal');
+      renderAll();
+      toast('采购分单已保存',`${groups.length} 张分单已进入待绑定资源；未写入任何真实系统。`);
+    }
+
+    function closeModal(id) { $(id).classList.add('hidden'); }
+    let toastTimer;
+    function toast(title,copy) {
+      $('toastTitle').textContent = title;
+      $('toastCopy').textContent = copy;
+      $('toast').classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => $('toast').classList.remove('show'),3200);
+    }
+
+    function renderAll() { renderMetrics(); renderTaskTable(); renderExecution(); }
+
+    $('tabTask').addEventListener('click',() => switchPage('task'));
+    $('tabExecution').addEventListener('click',() => switchPage('execution'));
+    $('sideTask').addEventListener('click',() => switchPage('task'));
+    $('sideExecution').addEventListener('click',() => switchPage('execution'));
+    $('btnGoExecution').addEventListener('click',() => switchPage('execution'));
+    $('btnReset').addEventListener('click',() => resetDemo(true));
+    $('btnRefresh').addEventListener('click',() => { renderAll(); toast('页面已刷新','原型状态保持不变，没有请求真实接口。'); });
+    $('taskSearch').addEventListener('input',renderTaskTable);
+    $('taskSite').addEventListener('change',renderTaskTable);
+    $('executionStatus').addEventListener('change',renderExecution);
+    $('executionSearch').addEventListener('input',renderExecution);
+    $('taskStatusSegment').addEventListener('click',event => {
+      const button = event.target.closest('[data-task-status]');
+      if (!button) return;
+      state.taskStatus = button.dataset.taskStatus;
+      document.querySelectorAll('[data-task-status]').forEach(item => item.classList.toggle('active',item === button));
+      state.selectedTasks.clear();
+      renderTaskTable();
+    });
+    $('taskTableBody').addEventListener('change',event => {
+      const checkbox = event.target.closest('[data-task-select]');
+      if (!checkbox) return;
+      checkbox.checked ? state.selectedTasks.add(checkbox.dataset.taskSelect) : state.selectedTasks.delete(checkbox.dataset.taskSelect);
+      renderTaskTable();
+    });
+    $('taskTableBody').addEventListener('click',event => {
+      const button = event.target.closest('[data-claim-one]');
+      if (button) openClaimModal([button.dataset.claimOne]);
+    });
+    $('selectAllTasks').addEventListener('change',event => {
+      filteredTasks().filter(task => task.assignment === 'unclaimed').forEach(task => event.target.checked ? state.selectedTasks.add(task.id) : state.selectedTasks.delete(task.id));
+      renderTaskTable();
+    });
+    $('btnBatchClaim').addEventListener('click',() => openClaimModal([...state.selectedTasks]));
+    $('btnConfirmClaim').addEventListener('click',confirmClaim);
+    $('executionQueue').addEventListener('click',event => {
+      const button = event.target.closest('[data-execution-id]');
+      if (!button) return;
+      state.activeExecutionId = button.dataset.executionId;
+      renderExecution();
+    });
+    $('executionDetail').addEventListener('click',event => {
+      const button = event.target.closest('[data-open-split]');
+      if (button) openSplitModal(button.dataset.openSplit);
+    });
+    $('btnAddSplitGroup').addEventListener('click',() => {
+      if (state.splitGroupCount >= 4) return toast('最多演示 4 张分单','当前原型用于确认信息结构，不模拟无限分组。');
+      state.splitGroupCount += 1;
+      renderPlanGroups();
+    });
+    $('planGroups').addEventListener('change',event => {
+      const select = event.target.closest('[data-line-group]');
+      if (!select) return;
+      state.lineGroupAssignments[select.dataset.lineGroup] = Number(select.value);
+      renderPlanGroups();
+    });
+    $('btnSaveSplit').addEventListener('click',saveSplitPlan);
+    document.querySelectorAll('[data-close-modal]').forEach(button => button.addEventListener('click',() => closeModal(button.dataset.closeModal)));
+    document.querySelectorAll('.modal-mask').forEach(mask => mask.addEventListener('click',event => { if (event.target === mask) closeModal(mask.id); }));
+    document.addEventListener('keydown',event => {
+      if (event.key !== 'Escape') return;
+      document.querySelectorAll('.modal-mask:not(.hidden)').forEach(mask => closeModal(mask.id));
+    });
+
+    resetDemo(false);
+  </script>
+</body>
+</html>
