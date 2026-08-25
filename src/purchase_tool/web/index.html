@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Xynigo Sourcing v0.9.0</title>
+<title>Xynigo Sourcing v0.10.0</title>
 <link rel="icon" type="image/png" sizes="260x260" href="/xynigo-x.png?v=5">
 <link rel="icon" type="image/x-icon" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256" href="/favicon.ico?v=5">
 <link rel="shortcut icon" href="/favicon.ico?v=5">
@@ -502,6 +502,7 @@
         <button class="update-notice" id="updateNotice" type="button" title="发现新版本" hidden>
           <span class="update-signal" aria-hidden="true">↑</span><span id="updateNoticeText">发现新版本</span>
         </button>
+        <span class="pill" id="taskStatus" title="本机后台任务状态">后台空闲</span>
         <span class="pill checking" id="hubStatus" title="点击重新检测连接">⏳ 正在检测 HubStudio…</span>
       </div>
     </header>
@@ -512,7 +513,7 @@
           <div class="hero-kicker">XYNIGO SOURCING WORKSPACE</div>
           <h1>让小犀帮你把每一单稳稳带回来，<span class="hero-call">Xyni, GO!</span></h1>
           <p id="moduleSummary">批量查询订单与物流状态，异常任务集中处理，结果一键导出。</p>
-          <div class="hero-meta"><span class="hero-chip">稳定版 v0.9.0</span><span class="hero-chip">本机数据不出站</span><span class="hero-chip">在线更新已开启</span></div>
+          <div class="hero-meta"><span class="hero-chip">稳定版 v0.10.0</span><span class="hero-chip">本机数据不出站</span><span class="hero-chip">在线更新已开启</span></div>
         </div>
         <div class="hero-lockup" role="img" aria-label="小犀与 Xynigo 完整品牌一体图形">
           <img src="xynigo-logo.png" alt="">
@@ -772,6 +773,13 @@
           <input type="text" id="cfgConcurrency" value="2" inputmode="numeric">
         </div>
         <div class="settings-field full">
+          <label>跨模块任务模式</label>
+          <div class="query-col-checks">
+            <label><input type="checkbox" id="cfgSafeParallel"> 开启安全并行：允许物流查询与一种环境创建任务同时运行</label>
+          </div>
+          <div class="hint">同一环境仍禁止双开；注册、两个建环境批次和两个物流查询批次继续互斥。开启后建环境实际并发自动封顶为 3，首次发布默认关闭。</div>
+        </div>
+        <div class="settings-field full">
           <label>模块一 · 查询结果隐藏字段</label>
           <div class="query-col-checks">
             <label><input type="checkbox" id="cfgHideEnvName" checked> 环境名</label>
@@ -921,6 +929,7 @@ let envBuyerCounts = {};                     // 绑号模式：姓名 → 数量
 let envMode = 'bound';                       // bound=绑号环境 / backup=备用·测试环境
 let envBackup = { buyer: '', count: 10, type: '备用' };
 let backupRunning = false;
+let safeParallelTasks = false;
 // 采购/买家号相关分组白名单：模块一、模块三均暂时隐藏店铺/后台分组
 const BUYER_GROUP_PATTERN = /采购|买家号|Registration/i;
 // 站点默认采购分组：本机未配置时下拉直接选中并记住，免得在 HubStudio 长列表里翻找
@@ -1100,6 +1109,26 @@ async function loadQueryDisplayConfig() {
   } catch (e) {}
 }
 loadQueryDisplayConfig();
+
+async function pollTaskStatus() {
+  try {
+    const state = await api('/api/tasks');
+    const tasks = state.tasks || [];
+    const pill = $('taskStatus');
+    safeParallelTasks = !!state.safeParallel;
+    if (!tasks.length) {
+      pill.className = 'pill';
+      pill.textContent = state.safeParallel ? '安全并行已开启 · 空闲' : '兼容串行 · 空闲';
+      pill.title = '当前没有后台任务';
+      return;
+    }
+    pill.className = 'pill checking';
+    pill.textContent = `${tasks.length} 个后台任务运行中`;
+    pill.title = tasks.map(task => `${task.label} · ${task.elapsedSec || 0} 秒`).join('\n');
+  } catch (e) {}
+}
+setInterval(pollTaskStatus, 1500);
+pollTaskStatus();
 
 /* ---------- 渲染 ---------- */
 
@@ -2493,6 +2522,8 @@ async function loadSettingsPage() {
     ]);
     $('cfgPort').value = cfg.hubPort || 6873;
     $('cfgConcurrency').value = cfg.concurrency || 2;
+    safeParallelTasks = !!cfg.safeParallelTasks;
+    $('cfgSafeParallel').checked = safeParallelTasks;
     setHiddenQueryColumns(cfg.hiddenQueryColumns || []);
     $('cfgHideEnvName').checked = hiddenQueryColumns.has('envName');
     $('cfgHideIp').checked = hiddenQueryColumns.has('ip');
@@ -2537,12 +2568,14 @@ $('btnCfgSave').onclick = async () => {
     if ($('cfgHideIp').checked) hiddenQueryColumns.push('ip');
     const j = await api('/api/config', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ hubPort: port, concurrency: conc, verifySampleCount: verifyCount, envCreateWorkers: envWorkers, importBuyerPlan, hiddenQueryColumns, purchaseSite:$('envSite').value, purchaseTags, proxyLink, proxyClear })
+      body: JSON.stringify({ hubPort: port, concurrency: conc, safeParallelTasks:$('cfgSafeParallel').checked, verifySampleCount: verifyCount, envCreateWorkers: envWorkers, importBuyerPlan, hiddenQueryColumns, purchaseSite:$('envSite').value, purchaseTags, proxyLink, proxyClear })
     });
     setHiddenQueryColumns(hiddenQueryColumns);
     $('envVerifyCount').value = verifyCount;
     envImportBuyerPlan = importBuyerPlan;
     setHubStatus(j.hubConnected);
+    safeParallelTasks = $('cfgSafeParallel').checked;
+    pollTaskStatus();
     await loadEnvGroups();
     await refreshEnvPreflight();
     if (j.hubConnected) { loadGroups(); toast('设置已保存：并发 ' + conc + '，HubStudio 连接正常'); }
