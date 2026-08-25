@@ -5,6 +5,11 @@ cd "$(dirname "$0")"
 
 ROOT="$(pwd)"
 VERSION="$(PYTHONPATH=src python3 -c 'from purchase_tool import __version__; print(__version__)')"
+CHANNEL="${XYNIGO_RELEASE_CHANNEL:-stable}"
+case "$CHANNEL" in
+  stable|test) ;;
+  *) echo "XYNIGO_RELEASE_CHANNEL must be stable or test: $CHANNEL" >&2; exit 2 ;;
+esac
 RAW_ARCH="$(uname -m)"
 case "$RAW_ARCH" in
   arm64|aarch64) PLATFORM="macos-arm64"; ARCH_LABEL="arm64" ;;
@@ -43,13 +48,14 @@ cp -RL "$BUILD_ROOT/dist/xynigo-sourcing/"* "$STAGE/runtime/"
 cp packaging/macos/update-helper.sh "$STAGE/update-helper.sh"
 
 echo "[3/7] Write launcher and package metadata ..."
-STAGE="$STAGE" VERSION="$VERSION" PLATFORM="$PLATFORM" python3 - <<'PY'
+STAGE="$STAGE" VERSION="$VERSION" CHANNEL="$CHANNEL" PLATFORM="$PLATFORM" python3 - <<'PY'
 import json
 import os
 from pathlib import Path
 
 stage = Path(os.environ['STAGE'])
 version = os.environ['VERSION']
+channel = os.environ['CHANNEL']
 platform_key = os.environ['PLATFORM']
 launcher = '''#!/bin/bash
 cd "$(dirname "$0")"
@@ -69,7 +75,7 @@ version_info = {
     'schemaVersion': 2,
     'product': 'Xynigo Sourcing',
     'version': version,
-    'channel': 'stable',
+    'channel': channel,
     'platform': platform_key,
     'repository': 'wrangler1024/xynigo-sourcing',
     'managedPaths': [
@@ -151,7 +157,8 @@ PY
 
 echo "[7/7] Update SHA-256 and shared manifest ..."
 python3 scripts/update_release_assets.py \
-  --version "$VERSION" --platform "$PLATFORM" --asset "$ZIP" \
+  --version "$VERSION" --channel "$CHANNEL" \
+  --platform "$PLATFORM" --asset "$ZIP" \
   --notes "release/v${VERSION}.zh-CN.json" \
   --manifest "$MANIFEST" --sha-file "$SHA_FILE"
 du -sh "$ZIP"

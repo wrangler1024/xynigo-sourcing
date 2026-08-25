@@ -294,6 +294,30 @@ class LarkOpenApiClient(object):
             raise LarkApiError('飞书记录回读结构无效')
         return record
 
+    def get_spreadsheet_values(self, spreadsheet_token, range_a1):
+        """Read one Feishu spreadsheet range without binding this client to it.
+
+        Resource Center uses a normal spreadsheet for the proxy ledger while
+        the original buyer ledger uses Base.  Keeping this read method on the
+        same credential-aware client avoids a second token cache and, more
+        importantly, lets callers request non-contiguous safe ranges so proxy
+        usernames/passwords are not loaded for ordinary list pages.
+        """
+        spreadsheet_token = str(spreadsheet_token or '').strip()
+        range_a1 = str(range_a1 or '').strip()
+        if not spreadsheet_token or not range_a1:
+            raise LarkApiError('飞书电子表格读取目标不完整')
+        path = '/open-apis/sheets/v2/spreadsheets/%s/values/%s' % (
+            quote(spreadsheet_token, safe=''), quote(range_a1, safe=''))
+        result = self._request('GET', path, require_target=False)
+        value_range = (result.get('data') or {}).get('valueRange')
+        if not isinstance(value_range, dict):
+            raise LarkApiError('飞书电子表格返回结构无效')
+        values = value_range.get('values') or []
+        if not isinstance(values, list):
+            raise LarkApiError('飞书电子表格单元格结果无效')
+        return values
+
     def batch_create(self, field_maps):
         created = []
         for offset in range(0, len(field_maps), self.batch_size):

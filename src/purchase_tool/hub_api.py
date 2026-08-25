@@ -8,7 +8,8 @@
   data.list[] 含 containerName / containerCode / serialNumber / remark 等
 - all-browser-status：data.containers[] 为当前已打开环境（containerCode 类型是
   字符串，而 env/list 里是数字——本模块统一转为字符串）
-- browser/start：data 含 debuggingPort（字符串）和 ip（出口IP）
+- browser/start：data 含 debuggingPort（字符串）和 ip（出口IP），支持
+  isHeadless=true 的无头启动
 """
 import json
 import time
@@ -17,6 +18,7 @@ import urllib.request
 from .task_runtime import HubRuntimeGate
 
 DEFAULT_PORT = 6873
+RATE_LIMIT_CODE = 'E010205'
 
 # 强制直连不走系统代理：同事电脑开着 Clash 类系统代理时，urllib 默认会把
 # 127.0.0.1 的请求也送进代理导致"连接失败"（PowerShell/浏览器则默认绕过本地）
@@ -39,10 +41,12 @@ class HubStudioApi(object):
             self.headers['local-api-key'] = api_key
 
     def _post(self, path, body):
-        """POST JSON，重试递增间隔；HubStudio 未启动时抛 ConnectionError。"""
+        """POST JSON；普通异常短退避，限流则触发跨线程共享冷却。"""
         data = json.dumps(body).encode('utf-8')
         last_err = None
         for i in range(self.retries):
+            deferred_by_gate = False
+            retry_delay = 0.4 * (i + 1)
             try:
                 req = urllib.request.Request(
                     self.base + path, data=data, headers=self.headers,
@@ -54,12 +58,23 @@ class HubStudioApi(object):
                     return j.get('data')
                 last_err = HubApiError('%s 返回 code=%s: %s' % (
                     path, j.get('code'), j.get('msg')))
+                if str(j.get('code') or '') == RATE_LIMIT_CODE:
+                    # HubStudio 的 E010205 是时间窗限流；原 0.4/0.8 秒
+                    # 单线程重试会被并行 worker 继续打断。把 2/4/8 秒
+                    # 冷却写入共享闸门，所有 Local API 调用一起避让。
+                    retry_delay = min(8.0, 2.0 * (2 ** i))
+                    defer = getattr(self.runtime_gate,
+                                    'defer_requests', None)
+                    if callable(defer):
+                        defer(retry_delay)
+                        deferred_by_gate = True
             except urllib.error.URLError as e:
                 last_err = ConnectionError('无法连接 HubStudio Local API: %s' % e)
                 break   # 客户端没开，重试无意义
             except Exception as e:   # 超时等，可重试
                 last_err = HubApiError('%s 调用异常: %s' % (path, e))
-            time.sleep(0.4 * (i + 1))
+            if i + 1 < self.retries and not deferred_by_gate:
+                time.sleep(retry_delay)
         raise last_err
 
     # ---- 查询类 ----
@@ -116,13 +131,25 @@ class HubStudioApi(object):
 
     # ---- 浏览器控制 ----
 
-    def browser_start(self, container_code):
-        """启动环境浏览器，返回 data（含 debuggingPort / ip）。"""
+    def browser_start(self, container_code, headless=False):
+        """启动环境浏览器，返回 data（含 debuggingPort / ip）。
+
+        ``headless`` 只供不需要人工交互的只读检测使用。订单查询和账号
+        注册仍走默认可见模式，避免改变现有人工接管流程。
+        """
+        body = {'containerCode': str(container_code)}
+        if headless:
+            body.update({
+                'isHeadless': True,
+                'isWebDriverReadOnlyMode': True,
+                # HubStudio 官方兼容建议：部分内核仅传 isHeadless 时
+                # 仍可能无法按无头模式连接。
+                'args': ['--headless=new'],
+            })
         # 只串行提交 start/stop 控制 RPC，不持有整个浏览器会话；不同环境
         # 仍可同时运行，避免 HubStudio 同时收到 start 时返回 -10005。
         with self.runtime_gate.browser():
-            return self._post('/browser/start',
-                              {'containerCode': str(container_code)}) or {}
+            return self._post('/browser/start', body) or {}
 
     def browser_stop(self, container_code):
         with self.runtime_gate.browser():

@@ -14,11 +14,11 @@
 
 | 通道 | 版本 | 用途 |
 | --- | --- | --- |
-| 默认分支 `main` | v0.10.0 | 本地执行器稳定源码基线 |
-| 最新 Release | [v0.12.0](https://github.com/wrangler1024/xynigo-sourcing/releases/tag/v0.12.0) | Windows / macOS 协同测试包与对应源码 |
+| 默认分支 `main` | v0.12.0 | 本地执行器、云端控制面与采购中心的最新公开源码 |
+| 最新 Release | [v0.12.0](https://github.com/wrangler1024/xynigo-sourcing/releases/tag/v0.12.0) | Windows / macOS 协同测试包与固定版本源码 |
 | 公共 SaaS | 未开放 | 当前云端能力仅用于受控测试，不提供公开注册服务 |
 
-如需体验新版采购中心，请直接下载 v0.12.0 Release，或从 `v0.12.0` 标签检出源码。默认分支暂不等同于最新协同测试版。
+如需体验新版采购中心，可直接下载 v0.12.0 Release；开发者可以使用 `main` 获取最新公开源码，或从 `v0.12.0` 标签检出可复现的固定版本。
 
 ## 系统架构
 

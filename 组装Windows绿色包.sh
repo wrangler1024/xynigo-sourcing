@@ -5,6 +5,11 @@ cd "$(dirname "$0")"
 
 ROOT="$(pwd)"
 VERSION="$(PYTHONPATH=src python3 -c 'from purchase_tool import __version__; print(__version__)')"
+CHANNEL="${XYNIGO_RELEASE_CHANNEL:-stable}"
+case "$CHANNEL" in
+  stable|test) ;;
+  *) echo "XYNIGO_RELEASE_CHANNEL must be stable or test: $CHANNEL" >&2; exit 2 ;;
+esac
 PYVER=3.11.9
 STAGE="$(mktemp -d)/Xynigo-Sourcing"
 STAMP="$(date +%Y%m%d)"
@@ -48,12 +53,13 @@ python311.zip
 import site
 EOF
 
-STAGE="$STAGE" VERSION="$VERSION" python3 - <<'PY'
+STAGE="$STAGE" VERSION="$VERSION" CHANNEL="$CHANNEL" python3 - <<'PY'
 import json
 import os
 
 stage = os.environ['STAGE']
 version = os.environ['VERSION']
+channel = os.environ['CHANNEL']
 
 bat = (
     '@echo off\r\n'
@@ -103,7 +109,7 @@ version_info = {
     'schemaVersion': 2,
     'product': 'Xynigo Sourcing',
     'version': version,
-    'channel': 'stable',
+    'channel': channel,
     'platform': 'windows-x86_64',
     'repository': 'wrangler1024/xynigo-sourcing',
     'managedPaths': [
@@ -179,7 +185,8 @@ PY
 
 echo "[7/7] Generate SHA-256 and update manifest ..."
 python3 scripts/update_release_assets.py \
-  --version "$VERSION" --platform "windows-x86_64" --asset "$ZIP" \
+  --version "$VERSION" --channel "$CHANNEL" \
+  --platform "windows-x86_64" --asset "$ZIP" \
   --notes "release/v${VERSION}.zh-CN.json" \
   --manifest "$MANIFEST" --sha-file "$SHA_FILE"
 

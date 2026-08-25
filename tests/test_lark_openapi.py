@@ -128,6 +128,26 @@ class LarkOpenApiTests(unittest.TestCase):
         self.assertIn('token=wikcnPublicSafeExample',
                       transport.calls[1]['url'])
 
+    def test_spreadsheet_range_read_uses_same_in_memory_token(self):
+        client, transport = self.client([
+            response({'code': 0, 'tenant_access_token': 'tenant-secret',
+                      'expire': 7200}),
+            response({'code': 0, 'data': {'valueRange': {
+                'range': 'sheet-public!A1:B2',
+                'values': [['IP地址', '端口'], ['203.0.113.9', 1080]],
+            }}}),
+        ])
+        values = client.get_spreadsheet_values(
+            'spreadsheet-public', 'sheet-public!A1:B2')
+        self.assertEqual(values[1], ['203.0.113.9', 1080])
+        self.assertIn(
+            '/open-apis/sheets/v2/spreadsheets/spreadsheet-public/values/'
+            'sheet-public%21A1%3AB2',
+            transport.calls[1]['url'])
+        self.assertEqual(
+            transport.calls[1]['headers']['Authorization'],
+            'Bearer tenant-secret')
+
     def test_target_metadata_returns_names_without_exposing_identifiers(self):
         client, transport = self.client([
             response({'code': 0, 'tenant_access_token': 'tenant-secret',

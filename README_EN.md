@@ -14,11 +14,11 @@ An open-source sourcing orchestration tool for cross-border ecommerce teams. It 
 
 | Channel | Version | Purpose |
 | --- | --- | --- |
-| Default branch `main` | v0.10.0 | Stable source baseline for the local executor |
-| Latest Release | [v0.12.0](https://github.com/wrangler1024/xynigo-sourcing/releases/tag/v0.12.0) | Coordinated test packages and matching source for Windows and macOS |
+| Default branch `main` | v0.12.0 | Latest public source for the local executor, cloud control plane, and procurement workspace |
+| Latest Release | [v0.12.0](https://github.com/wrangler1024/xynigo-sourcing/releases/tag/v0.12.0) | Coordinated test packages and reproducible source for Windows and macOS |
 | Public SaaS | Not available | Cloud capabilities are currently limited to controlled testing |
 
-To try the new procurement workspace, download the v0.12.0 Release or check out the `v0.12.0` tag. The default branch is intentionally not presented as the latest coordinated test build.
+To try the new procurement workspace, download the v0.12.0 Release. Developers can use `main` for the latest public source or check out the `v0.12.0` tag for a reproducible version.
 
 ## Architecture
 

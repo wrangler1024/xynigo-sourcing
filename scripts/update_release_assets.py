@@ -17,6 +17,8 @@ def sha256_file(path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--version', required=True)
+    parser.add_argument(
+        '--channel', choices=('stable', 'test'), default='stable')
     parser.add_argument('--platform', required=True)
     parser.add_argument('--asset', type=Path, required=True)
     parser.add_argument('--notes', type=Path, required=True)
@@ -43,7 +45,7 @@ def main():
     manifest.update({
         'schemaVersion': 2,
         'product': 'Xynigo Sourcing',
-        'channel': 'stable',
+        'channel': args.channel,
         'version': args.version,
         'notesZh': notes,
     })
