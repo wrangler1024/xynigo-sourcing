@@ -27,6 +27,15 @@ TEST_PROXY = 'https://proxy.example.test/{region}'
 
 
 class ConfigTests(unittest.TestCase):
+    def test_safe_parallel_mode_is_explicit_boolean_and_defaults_off(self):
+        default = default_config()
+        self.assertFalse(default['safeParallelTasks'])
+        enabled = updated_config(default, {'safeParallelTasks': True})
+        self.assertTrue(enabled['safeParallelTasks'])
+        self.assertTrue(public_config(enabled)['safeParallelTasks'])
+        with self.assertRaisesRegex(ValueError, '布尔值'):
+            updated_config(default, {'safeParallelTasks': 'true'})
+
     def test_atomic_private_save_load_and_whitelist(self):
         with tempfile.TemporaryDirectory() as tmp:
             config_path = str(Path(tmp) / 'config.json')

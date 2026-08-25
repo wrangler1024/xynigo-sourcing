@@ -67,6 +67,8 @@ from .lark_openapi import LarkOpenApiClient
 from .lark_runtime import build_buyer_ledger_service
 from .redaction import scrub_text
 from .shein_query import QueryOrchestrator, normalize_site
+from .task_runtime import (HubRuntimeGate, LocalTaskCoordinator,
+                           environment_resources)
 from .updater import UpdateCoordinator
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -86,6 +88,7 @@ CONFIG_FIELDS = frozenset({
     'hubPort', 'serverPort', 'concurrency', 'importBuyerPlan',
     'verifySampleCount', 'hiddenQueryColumns', 'purchaseSite',
     'purchaseTag', 'purchaseTags', 'proxyLink', 'envCreateWorkers',
+    'safeParallelTasks',
     'larkBuyerBaseToken', 'larkBuyerTableId',
     'larkBuyerTargetHost',
     'larkBuyerBaseName', 'larkBuyerTableName',
@@ -116,6 +119,7 @@ def default_config():
         'purchaseTags': {'MX': mx_tag, 'US': us_tag},
         'proxyLink': os.environ.get('XYNIGO_PROXY_LINK', ''),
         'envCreateWorkers': 5,
+        'safeParallelTasks': False,
         # Base/table identifiers are local routing configuration.  The App
         # Secret lives in Keychain/DPAPI and is never written to config.json.
         'larkBuyerBaseToken': os.environ.get('XYNIGO_LARK_BASE_TOKEN', ''),
@@ -269,6 +273,10 @@ def updated_config(old_cfg, body):
         if not 1 <= workers <= 10:
             raise ValueError('模块三建环境并发数必须是 1-10 的整数')
         cfg['envCreateWorkers'] = workers
+    if 'safeParallelTasks' in body:
+        if not isinstance(body.get('safeParallelTasks'), bool):
+            raise ValueError('安全并行模式必须是布尔值')
+        cfg['safeParallelTasks'] = body['safeParallelTasks']
     if 'importBuyerPlan' in body:
         cfg['importBuyerPlan'] = validate_assignment_template(
             body.get('importBuyerPlan'))
@@ -499,7 +507,11 @@ class AppState(object):
         cfg = load_config()
         self.cfg = cfg
         self.lark_credentials = credential_store or system_credential_store()
-        self.hub = HubStudioApi(port=cfg['hubPort'])
+        self.hub_runtime_gate = HubRuntimeGate(max_requests=4)
+        self.tasks = LocalTaskCoordinator(
+            lambda: bool(self.cfg.get('safeParallelTasks')))
+        self.hub = HubStudioApi(
+            port=cfg['hubPort'], runtime_gate=self.hub_runtime_gate)
         self._hub_status = HubStatusCache(lambda: self.hub)
         self.orch = QueryOrchestrator(
             self.hub, log_dir=LOG_DIR,
@@ -519,7 +531,8 @@ class AppState(object):
 
     def reconnect_hub(self):
         self.orch.close()
-        self.hub = HubStudioApi(port=self.cfg['hubPort'])
+        self.hub = HubStudioApi(
+            port=self.cfg['hubPort'], runtime_gate=self.hub_runtime_gate)
         self.orch = QueryOrchestrator(
             self.hub, log_dir=LOG_DIR,
             concurrency=self.cfg.get('concurrency', 2))
@@ -574,7 +587,8 @@ class RegistrationJob(object):
 
     def start(self, raw_tasks, accept_terms=False,
               acknowledge_ms_privacy=False, keep_open=False,
-              write_lark_ledger=False, confirm_lark_write=False):
+              write_lark_ledger=False, confirm_lark_write=False,
+              on_finished=None):
         if self.running:
             raise RuntimeError('已有注册任务在进行')
         if not accept_terms:
@@ -604,12 +618,12 @@ class RegistrationJob(object):
                 'message': '', 'manualCode': ''} for t in tasks]
 
         def worker():
-            runner = RegistrationOrchestrator(
-                self.hub_getter(), accept_terms=True,
-                acknowledge_ms_privacy=acknowledge_ms_privacy,
-                ledger_sink=ledger_sink,
-                close_on_success=not keep_open)
             try:
+                runner = RegistrationOrchestrator(
+                    self.hub_getter(), accept_terms=True,
+                    acknowledge_ms_privacy=acknowledge_ms_privacy,
+                    ledger_sink=ledger_sink,
+                    close_on_success=not keep_open)
                 for index, task in enumerate(tasks):
                     with self.lock:
                         self.rows[index]['state'] = 'running'
@@ -631,6 +645,11 @@ class RegistrationJob(object):
                 with self.lock:
                     self.finished_at = time.time()
                     self.running = False
+                if on_finished:
+                    try:
+                        on_finished()
+                    except Exception:
+                        pass
 
         threading.Thread(target=worker, daemon=True).start()
         return len(tasks)
@@ -735,6 +754,8 @@ class EnvBatchJob(object):
             workers = max(1, min(10, int(cfg.get('envCreateWorkers') or 5)))
         except (TypeError, ValueError):
             workers = 5
+        if cfg.get('safeParallelTasks'):
+            workers = min(workers, 3)
         return {
             'site': site,
             'purchaseTag': purchase_tag_for_site(cfg, site),
@@ -940,7 +961,8 @@ class EnvBatchJob(object):
 
     def start(self, plan_id, assignment, purchase_date,
               verify_sample_count=3, confirm_write=False, site='MX',
-              write_lark_ledger=False, confirm_lark_write=False):
+              write_lark_ledger=False, confirm_lark_write=False,
+              reserve_resources=None, on_finished=None):
         if not confirm_write:
             raise ValueError('正式执行必须二次确认 HubStudio 写入')
         if write_lark_ledger and not confirm_lark_write:
@@ -978,6 +1000,8 @@ class EnvBatchJob(object):
             existing_envs=selected_existing,
             site=runtime['site'], purchase_date=purchase_date,
             all_existing_envs=all_existing)
+        if reserve_resources:
+            reserve_resources(environment_resources(checked_plan))
         ledger_service = None
         if write_lark_ledger:
             ledger_service = self.ledger_sync_factory()
@@ -1039,6 +1063,10 @@ class EnvBatchJob(object):
                 with self.lock:
                     self.runner = runner
                 runner.prepare(accounts, assignment)
+                if reserve_resources:
+                    # prepare 会再次读取 HubStudio；若外部进程在预检后改变了
+                    # 续排结果，必须在任何写入前补充预占并再次查冲突。
+                    reserve_resources(environment_resources(runner.rows))
                 result_rows = runner.run()
                 mapping = mapping_workbook_bytes(result_rows)
                 checks = runner.verify_ips(verify_sample_count)
@@ -1080,11 +1108,17 @@ class EnvBatchJob(object):
                 with self.lock:
                     self.finished_at = time.time()
                     self.running = False
+                if on_finished:
+                    try:
+                        on_finished()
+                    except Exception:
+                        pass
 
         threading.Thread(target=worker, daemon=True).start()
         return len(accounts)
 
-    def retry_row(self, account_id):
+    def retry_row(self, account_id, reserve_resources=None,
+                  on_finished=None):
         with self.lock:
             if self.running:
                 raise RuntimeError('模块三任务正在执行')
@@ -1096,6 +1130,8 @@ class EnvBatchJob(object):
                 raise ValueError('找不到待重试账号')
             if not row.account.password:
                 raise ValueError('凭证内存已清理，请重新选择原始 xlsx 后续跑')
+            if reserve_resources:
+                reserve_resources(environment_resources([row]))
             self._cancel_sensitive_cleanup_locked()
             self.running = True
             self.started_at = time.time()
@@ -1134,10 +1170,15 @@ class EnvBatchJob(object):
                 with self.lock:
                     self.finished_at = time.time()
                     self.running = False
+                if on_finished:
+                    try:
+                        on_finished()
+                    except Exception:
+                        pass
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def retry_ledger(self, confirm_lark_write=False):
+    def retry_ledger(self, confirm_lark_write=False, on_finished=None):
         """Retry or supplement Feishu only; never re-run HubStudio steps."""
         if not confirm_lark_write:
             raise ValueError('飞书台账回写必须单独二次确认')
@@ -1242,6 +1283,11 @@ class EnvBatchJob(object):
                 with self.lock:
                     self.finished_at = time.time()
                     self.running = False
+                if on_finished:
+                    try:
+                        on_finished()
+                    except Exception:
+                        pass
 
         threading.Thread(target=worker, daemon=True).start()
         return {
@@ -1320,6 +1366,8 @@ class BackupEnvJob(object):
             workers = max(1, min(10, int(cfg.get('envCreateWorkers') or 5)))
         except (TypeError, ValueError):
             workers = 5
+        if cfg.get('safeParallelTasks'):
+            workers = min(workers, 3)
         return {
             'site': site,
             'purchaseTag': purchase_tag_for_site(cfg, site),
@@ -1364,7 +1412,8 @@ class BackupEnvJob(object):
             self.rows = [dict(row) for row in rows]
 
     def start(self, buyer, count, backup_type, purchase_date,
-              verify_sample_count=1, confirm_write=False, site='MX'):
+              verify_sample_count=1, confirm_write=False, site='MX',
+              reserve_resources=None, on_finished=None):
         if not confirm_write:
             raise ValueError('正式执行必须二次确认 HubStudio 写入')
         try:
@@ -1382,6 +1431,12 @@ class BackupEnvJob(object):
         require_envbatch_ready(
             hub, runtime['purchaseTag'], runtime['proxyLink'],
             site=runtime['site'])
+        planned_names = backup_env_names(
+            hub.env_list(runtime['purchaseTag']), buyer, count,
+            backup_type, runtime['site'], purchase_date)
+        if reserve_resources:
+            reserve_resources(environment_resources(
+                [{'envName': name} for name in planned_names]))
         with self.lock:
             if self.running:
                 raise RuntimeError('已有备用环境任务在进行')
@@ -1403,6 +1458,8 @@ class BackupEnvJob(object):
                     on_progress=self._set_rows,
                     max_workers=runtime['workers'])
                 runner.prepare(buyer, count, backup_type, purchase_date)
+                if reserve_resources:
+                    reserve_resources(environment_resources(runner.rows))
                 result_rows = runner.run()
                 checks = runner.verify_ips(verify_sample_count)
                 done = sum(row.state == 'done' for row in result_rows)
@@ -1433,6 +1490,11 @@ class BackupEnvJob(object):
                 with self.lock:
                     self.finished_at = time.time()
                     self.running = False
+                if on_finished:
+                    try:
+                        on_finished()
+                    except Exception:
+                        pass
 
         threading.Thread(target=worker, daemon=True).start()
         return count
@@ -1551,6 +1613,8 @@ class Handler(BaseHTTPRequestHandler):
                 snap = STATE.orch.snapshot()
                 snap['hubConnected'] = STATE.hub_status()[0]
                 self._json(snap)
+            elif path == '/api/tasks':
+                self._json(STATE.tasks.snapshot())
             elif path == '/api/register/progress':
                 snap = STATE.reg_job.snapshot()
                 snap['hubConnected'] = STATE.hub_status()[0]
@@ -1655,27 +1719,32 @@ class Handler(BaseHTTPRequestHandler):
         body = self._body()
         try:
             if path == '/api/query':
-                if STATE.orch.running:
-                    return self._json({'error': '已有查询在进行中'}, 409)
-                if STATE.env_job.running or STATE.backup_job.running:
-                    return self._json({'error': '模块三建环境正在进行'}, 409)
                 serials = body.get('serials')
                 group = body.get('group')
                 site = normalize_site(body.get('site') or 'MX')
-                env_index = None
+                envs = STATE.hub.env_list(group or None)
+                env_index = {str(e.get('serialNumber')): e for e in envs
+                             if e.get('serialNumber') is not None}
                 if not serials and group:
-                    envs = STATE.hub.env_list(group)
                     serials = sorted(
                         [str(e.get('serialNumber')) for e in envs
                          if e.get('serialNumber') is not None],
                         key=lambda x: int(x) if x.isdigit() else 0)
-                    env_index = {str(e.get('serialNumber')): e
-                                 for e in envs}
                 if not serials:
                     return self._json({'error': '未提供环境序号'}, 400)
-                STATE.orch.start_batch(serials, env_index, site=site)
+                selected_envs = [env_index[str(serial)] for serial in serials
+                                 if str(serial) in env_index]
+                task_id = STATE.tasks.begin(
+                    'query', environment_resources(selected_envs))
+                try:
+                    STATE.orch.start_batch(
+                        serials, env_index, site=site,
+                        on_finished=lambda: STATE.tasks.finish(task_id))
+                except Exception:
+                    STATE.tasks.finish(task_id)
+                    raise
                 self._json({'started': True, 'total': len(serials),
-                            'site': site})
+                            'site': site, 'taskId': task_id})
             elif path == '/api/stop':
                 STATE.orch.request_stop()
                 self._json({'stopped': True})
@@ -1683,11 +1752,40 @@ class Handler(BaseHTTPRequestHandler):
                 serial = str(body.get('serial') or '')
                 if not serial:
                     return self._json({'error': '缺少 serial'}, 400)
-                STATE.orch.requery(serial, force=bool(body.get('force')))
-                self._json({'started': True})
+                env = STATE.hub.env_by_serial(serial)
+                env_index = {serial: env} if env else {}
+                task_id = STATE.tasks.begin(
+                    'query', environment_resources([env] if env else []))
+                try:
+                    STATE.orch.requery(
+                        serial, env_index=env_index,
+                        force=bool(body.get('force')),
+                        on_finished=lambda: STATE.tasks.finish(task_id))
+                except Exception:
+                    STATE.tasks.finish(task_id)
+                    raise
+                self._json({'started': True, 'taskId': task_id})
             elif path == '/api/requery-failed':
-                count = STATE.orch.requery_failed()
-                self._json({'started': True, 'count': count})
+                rows = STATE.orch.snapshot().get('rows') or []
+                retry_serials = [str(row.get('serial')) for row in rows
+                                 if row.get('state') in (
+                                     'fail', 'inuse', 'pending', 'stopped')]
+                all_envs = STATE.hub.env_list()
+                env_index = {str(e.get('serialNumber')): e for e in all_envs
+                             if e.get('serialNumber') is not None}
+                selected = [env_index[serial] for serial in retry_serials
+                            if serial in env_index]
+                task_id = STATE.tasks.begin(
+                    'query', environment_resources(selected))
+                try:
+                    count = STATE.orch.requery_failed(
+                        env_index=env_index,
+                        on_finished=lambda: STATE.tasks.finish(task_id))
+                except Exception:
+                    STATE.tasks.finish(task_id)
+                    raise
+                self._json({'started': True, 'count': count,
+                            'taskId': task_id})
             elif path == '/api/update/check':
                 started = STATE.updates.check_async(force=True)
                 payload = STATE.updates.snapshot()
@@ -1706,21 +1804,22 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({'valid': True, 'count': len(plan),
                             'plan': plan})
             elif path == '/api/register/start':
-                if STATE.orch.running:
-                    return self._json({
-                        'error': '物流查询正在进行，请结束后再注册'}, 409)
-                if STATE.env_job.running or STATE.backup_job.running:
-                    return self._json({
-                        'error': '模块三建环境正在进行，请结束后再注册'}, 409)
-                count = STATE.reg_job.start(
-                    body.get('tasks'),
-                    accept_terms=bool(body.get('acceptTerms')),
-                    acknowledge_ms_privacy=bool(
-                        body.get('acknowledgeMsPrivacy')),
-                    keep_open=bool(body.get('keepOpen')),
-                    write_lark_ledger=bool(body.get('writeLarkLedger')),
-                    confirm_lark_write=bool(body.get('confirmLarkWrite')))
-                self._json({'started': True, 'count': count})
+                task_id = STATE.tasks.begin('register')
+                try:
+                    count = STATE.reg_job.start(
+                        body.get('tasks'),
+                        accept_terms=bool(body.get('acceptTerms')),
+                        acknowledge_ms_privacy=bool(
+                            body.get('acknowledgeMsPrivacy')),
+                        keep_open=bool(body.get('keepOpen')),
+                        write_lark_ledger=bool(body.get('writeLarkLedger')),
+                        confirm_lark_write=bool(body.get('confirmLarkWrite')),
+                        on_finished=lambda: STATE.tasks.finish(task_id))
+                except Exception:
+                    STATE.tasks.finish(task_id)
+                    raise
+                self._json({'started': True, 'count': count,
+                            'taskId': task_id})
             elif path == '/api/envbatch/parse':
                 result = STATE.env_job.parse(
                     body.get('filename'), body.get('contentBase64'))
@@ -1732,41 +1831,75 @@ class Handler(BaseHTTPRequestHandler):
                     site=body.get('site') or 'MX')
                 self._json({'valid': True, 'count': len(rows), 'rows': rows})
             elif path == '/api/envbatch/start':
-                if (STATE.orch.running or STATE.reg_job.running
-                        or STATE.backup_job.running):
-                    return self._json({
-                        'error': '模块一/二或备用环境任务正在进行，请结束后再建环境'}, 409)
-                count = STATE.env_job.start(
-                    body.get('planId'), body.get('assignment'),
-                    body.get('purchaseDate') or time.strftime('%Y%m%d'),
-                    verify_sample_count=body.get('verifySampleCount', 3),
-                    confirm_write=bool(body.get('confirmWrite')),
-                    site=body.get('site') or 'MX',
-                    write_lark_ledger=bool(body.get('writeLarkLedger')),
-                    confirm_lark_write=bool(body.get('confirmLarkWrite')))
-                self._json({'started': True, 'count': count})
+                task_id = STATE.tasks.begin('env_batch')
+                try:
+                    count = STATE.env_job.start(
+                        body.get('planId'), body.get('assignment'),
+                        body.get('purchaseDate') or time.strftime('%Y%m%d'),
+                        verify_sample_count=body.get('verifySampleCount', 3),
+                        confirm_write=bool(body.get('confirmWrite')),
+                        site=body.get('site') or 'MX',
+                        write_lark_ledger=bool(body.get('writeLarkLedger')),
+                        confirm_lark_write=bool(body.get('confirmLarkWrite')),
+                        reserve_resources=lambda resources:
+                            STATE.tasks.reserve(task_id, resources),
+                        on_finished=lambda: STATE.tasks.finish(task_id))
+                except Exception:
+                    STATE.tasks.finish(task_id)
+                    raise
+                self._json({'started': True, 'count': count,
+                            'taskId': task_id})
             elif path == '/api/envbatch/retry-row':
-                STATE.env_job.retry_row(str(body.get('accountId') or ''))
-                self._json({'started': True})
+                task_id = STATE.tasks.begin('env_batch')
+                try:
+                    STATE.env_job.retry_row(
+                        str(body.get('accountId') or ''),
+                        reserve_resources=lambda resources:
+                            STATE.tasks.reserve(task_id, resources),
+                        on_finished=lambda: STATE.tasks.finish(task_id))
+                except Exception:
+                    STATE.tasks.finish(task_id)
+                    raise
+                self._json({'started': True, 'taskId': task_id})
             elif path == '/api/envbatch/retry-ledger':
-                result = STATE.env_job.retry_ledger(
-                    confirm_lark_write=bool(body.get('confirmLarkWrite')))
-                self._json({'started': True, **result})
+                task_id = STATE.tasks.begin('env_batch')
+                try:
+                    result = STATE.env_job.retry_ledger(
+                        confirm_lark_write=bool(body.get('confirmLarkWrite')),
+                        on_finished=lambda: STATE.tasks.finish(task_id))
+                except Exception:
+                    STATE.tasks.finish(task_id)
+                    raise
+                self._json({'started': True, 'taskId': task_id, **result})
             elif path == '/api/envbatch/backup/start':
-                if (STATE.orch.running or STATE.reg_job.running
-                        or STATE.env_job.running):
-                    return self._json({
-                        'error': '模块一/二/三任务正在进行，请结束后再执行'}, 409)
-                count = STATE.backup_job.start(
-                    body.get('buyer'), body.get('count'), body.get('type'),
-                    body.get('purchaseDate') or time.strftime('%Y%m%d'),
-                    verify_sample_count=body.get('verifySampleCount', 1),
-                    confirm_write=bool(body.get('confirmWrite')),
-                    site=body.get('site') or 'MX')
-                self._json({'started': True, 'count': count})
+                task_id = STATE.tasks.begin('backup_env')
+                try:
+                    count = STATE.backup_job.start(
+                        body.get('buyer'), body.get('count'), body.get('type'),
+                        body.get('purchaseDate') or time.strftime('%Y%m%d'),
+                        verify_sample_count=body.get('verifySampleCount', 1),
+                        confirm_write=bool(body.get('confirmWrite')),
+                        site=body.get('site') or 'MX',
+                        reserve_resources=lambda resources:
+                            STATE.tasks.reserve(task_id, resources),
+                        on_finished=lambda: STATE.tasks.finish(task_id))
+                except Exception:
+                    STATE.tasks.finish(task_id)
+                    raise
+                self._json({'started': True, 'count': count,
+                            'taskId': task_id})
             elif path == '/api/config':
                 old_cfg = load_config()
                 cfg = updated_config(old_cfg, body)
+                runtime_fields = {
+                    'hubPort', 'concurrency', 'envCreateWorkers',
+                    'safeParallelTasks',
+                }
+                if (STATE.tasks.running()
+                        and any(cfg.get(name) != old_cfg.get(name)
+                                for name in runtime_fields)):
+                    raise RuntimeError(
+                        '后台任务运行中，不能修改端口、并发数或并行模式')
                 save_config(cfg)
                 STATE.cfg = cfg
                 reconnect_needed = (

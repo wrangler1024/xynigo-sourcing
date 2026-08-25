@@ -190,6 +190,18 @@ class EnvWebJobTests(unittest.TestCase):
                        'web-secret-cookie', 'codes.example.test'):
             self.assertNotIn(secret, rendered)
 
+    def test_safe_parallel_mode_caps_environment_workers_at_three(self):
+        cfg = {
+            'purchaseTag': TEST_TAG,
+            'proxyLink': TEST_PROXY,
+            'envCreateWorkers': 9,
+            'safeParallelTasks': True,
+        }
+        job = EnvBatchJob(lambda: FakeHub(), lambda: cfg)
+        backup = BackupEnvJob(lambda: FakeHub(), lambda: cfg)
+        self.assertEqual(job._runtime_config()['workers'], 3)
+        self.assertEqual(backup._runtime_config()['workers'], 3)
+
     def test_apply_generates_safe_mapping_and_one_shot_tsv(self):
         source = source_bytes()
         hub = FakeHub()
@@ -245,6 +257,24 @@ class EnvWebJobTests(unittest.TestCase):
             'vendor.xlsx', base64.b64encode(source_bytes()).decode('ascii'))
         with self.assertRaises(ValueError):
             job.start(parsed['planId'], '1:新刚', '20260819')
+
+    def test_resource_conflict_stops_before_plan_consumption_or_hub_write(self):
+        hub = FakeHub()
+        job = EnvBatchJob(lambda: hub, runtime_config)
+        parsed = job.parse(
+            'vendor.xlsx', base64.b64encode(source_bytes()).decode('ascii'))
+
+        def reject(_resources):
+            raise RuntimeError('目标环境正被物流查询占用')
+
+        with self.assertRaisesRegex(RuntimeError, '目标环境'):
+            job.start(
+                parsed['planId'], '1:新刚', '20260819',
+                verify_sample_count=0, confirm_write=True,
+                reserve_resources=reject)
+        self.assertFalse(any(call[0] == 'create' for call in hub.calls))
+        self.assertIn(parsed['planId'], job.pending)
+        self.assertFalse(job.running)
 
     def test_lark_write_requires_separate_confirmation(self):
         service = FakeLedgerService()
