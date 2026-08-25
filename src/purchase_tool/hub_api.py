@@ -14,6 +14,8 @@ import json
 import time
 import urllib.request
 
+from .task_runtime import HubRuntimeGate
+
 DEFAULT_PORT = 6873
 
 # 强制直连不走系统代理：同事电脑开着 Clash 类系统代理时，urllib 默认会把
@@ -26,10 +28,12 @@ class HubApiError(Exception):
 
 
 class HubStudioApi(object):
-    def __init__(self, port=DEFAULT_PORT, timeout=30, retries=3, api_key=None):
+    def __init__(self, port=DEFAULT_PORT, timeout=30, retries=3, api_key=None,
+                 runtime_gate=None):
         self.base = 'http://127.0.0.1:%s/api/v1' % port
         self.timeout = timeout
         self.retries = retries
+        self.runtime_gate = runtime_gate or HubRuntimeGate()
         self.headers = {'Content-Type': 'application/json'}
         if api_key:
             self.headers['local-api-key'] = api_key
@@ -43,8 +47,9 @@ class HubStudioApi(object):
                 req = urllib.request.Request(
                     self.base + path, data=data, headers=self.headers,
                     method='POST')
-                with OPENER.open(req, timeout=self.timeout) as resp:
-                    j = json.loads(resp.read().decode('utf-8'))
+                with self.runtime_gate.request():
+                    with OPENER.open(req, timeout=self.timeout) as resp:
+                        j = json.loads(resp.read().decode('utf-8'))
                 if j.get('code') == 0:
                     return j.get('data')
                 last_err = HubApiError('%s 返回 code=%s: %s' % (
@@ -113,12 +118,16 @@ class HubStudioApi(object):
 
     def browser_start(self, container_code):
         """启动环境浏览器，返回 data（含 debuggingPort / ip）。"""
-        return self._post('/browser/start',
-                          {'containerCode': str(container_code)}) or {}
+        # 只串行提交 start/stop 控制 RPC，不持有整个浏览器会话；不同环境
+        # 仍可同时运行，避免 HubStudio 同时收到 start 时返回 -10005。
+        with self.runtime_gate.browser():
+            return self._post('/browser/start',
+                              {'containerCode': str(container_code)}) or {}
 
     def browser_stop(self, container_code):
-        return self._post('/browser/stop',
-                          {'containerCode': str(container_code)}) or {}
+        with self.runtime_gate.browser():
+            return self._post('/browser/stop',
+                              {'containerCode': str(container_code)}) or {}
 
     # ---- 注册模块写操作（上层必须显式 --apply） ----
 
