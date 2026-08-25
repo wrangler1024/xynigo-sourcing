@@ -465,16 +465,18 @@ class QueryOrchestrator(object):
 
     # ---- 查询入口 ----
 
-    def start_batch(self, serials, env_index=None, site='MX'):
+    def start_batch(self, serials, env_index=None, site='MX',
+                    on_finished=None):
         """启动批量查询线程。env_index: {serialNumber(str): env dict}。"""
         if self.running:
             raise RuntimeError('已有查询在进行中')
         site = normalize_site(site)
         threading.Thread(
-            target=self._run, args=(list(serials), env_index or {}, True, site),
+            target=self._run,
+            args=(list(serials), env_index or {}, True, site, on_finished),
             daemon=True).start()
 
-    def requery(self, serial, env_index=None, force=False):
+    def requery(self, serial, env_index=None, force=False, on_finished=None):
         """单行重新查询（复用同一套流程，不新增行）。
 
         force=True：环境浏览器处于打开状态时先关闭再查——用于清理上次
@@ -493,10 +495,10 @@ class QueryOrchestrator(object):
         site = row.get('site') or self.site
         threading.Thread(
             target=self._run,
-            args=([serial], env_index or {}, False, site),
+            args=([serial], env_index or {}, False, site, on_finished),
             daemon=True).start()
 
-    def requery_failed(self, env_index=None):
+    def requery_failed(self, env_index=None, on_finished=None):
         """批量重查异常行（失败/使用中/未查询/已停止）。
 
         登录失效行不含在内——需先在 HubStudio 手动登录，否则重查结果不变。
@@ -514,7 +516,8 @@ class QueryOrchestrator(object):
             site = next((r.get('site') for r in self.rows
                          if r['serial'] in serials), self.site)
         threading.Thread(
-            target=self._run, args=(serials, env_index or {}, False, site),
+            target=self._run,
+            args=(serials, env_index or {}, False, site, on_finished),
             daemon=True).start()
         return len(serials)
 
@@ -523,7 +526,8 @@ class QueryOrchestrator(object):
 
     # ---- 主流程 ----
 
-    def _run(self, serials, env_index, fresh=True, site='MX'):
+    def _run(self, serials, env_index, fresh=True, site='MX',
+             on_finished=None):
         site = normalize_site(site)
         self.stop_event = threading.Event()
         with self.lock:
@@ -586,6 +590,11 @@ class QueryOrchestrator(object):
             with self.lock:
                 self.finished_at = time.time()
                 self.running = False
+            if on_finished:
+                try:
+                    on_finished()
+                except Exception:
+                    pass
 
     def _fail_all(self, reason):
         with self.lock:
