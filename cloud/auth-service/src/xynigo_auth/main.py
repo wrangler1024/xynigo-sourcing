@@ -1,7 +1,13 @@
+"""HTTP 接口层（FastAPI），相当于 Java 的 Controller + 一部分启动配置。
+
+路由写在本文件；采购业务委托 PurchaseOrderService；登录走飞书 OAuth 与本地执行器桥。
+"""
+
 import base64
 import hashlib
 import logging
 import re
+import time
 import uuid
 from contextlib import asynccontextmanager
 from collections.abc import Iterator
@@ -10,12 +16,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Literal
 
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.orm import Session
 
+from .business_log import BusinessLogService
 from .config import Settings
 from .database import Database
 from .feishu import (
@@ -29,7 +37,6 @@ from .feishu import (
     OAuthProviderError,
 )
 from .models import (
-    AuditEvent,
     LocalLoginRequest,
     OAuthLoginAttempt,
     Permission,
@@ -43,6 +50,13 @@ from .models import (
 from .purchase_contract import PurchaseDraft
 from .purchase_service import PurchaseOrderService, PurchaseServiceError
 from .security import hash_token, pkce_challenge, random_url_token
+from .system_log import (
+    SYSTEM_ERROR_CATEGORY,
+    SYSTEM_RUNTIME_CATEGORY,
+    SystemLogService,
+    normalize_route,
+    should_capture_http,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -77,6 +91,7 @@ PERMISSION_CATALOG: tuple[tuple[str, str], ...] = (
     ("system.lark_connection.manage", "飞书连接管理"),
     ("system.integration.manage", "外部服务管理"),
     ("system.audit.read", "审计日志查看"),
+    ("system.runtime_log.read", "系统运行日志查看"),
     ("resource.buyer.read", "买家号查看"),
     ("resource.buyer.credential.read", "买家号敏感凭证查看"),
     ("resource.buyer.import", "买家号入库"),
@@ -102,6 +117,7 @@ SUPER_ADMIN_ONLY_PERMISSIONS = frozenset({
     "resource.ip.credential.manage",
 })
 SYSTEM_MANAGED_PERMISSION_ROLES = frozenset({SUPER_ADMIN_ROLE, ADMIN_ROLE})
+REQUEST_CONTEXT_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{8,64}$")
 
 
 @dataclass(frozen=True)
@@ -156,6 +172,18 @@ class ProcurementClaimBody(BaseModel):
         if not self.purchaseOrderIds and not self.purchaseOrderLineIds:
             raise ValueError("at least one purchase order or line is required")
         return self
+
+
+class ProcurementReturnBody(BaseModel):
+    reason: str = Field(min_length=2, max_length=300)
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str) -> str:
+        normalized = " ".join(value.split())
+        if len(normalized) < 2:
+            raise ValueError("return reason is required")
+        return normalized
 
 
 class PurchaseSplitResourceBody(BaseModel):
@@ -247,7 +275,7 @@ def create_app(
 
     app = FastAPI(
         title="Xynigo Auth Service",
-        version="0.11.1",
+        version="0.12.0",
         docs_url=None,
         redoc_url=None,
         lifespan=lifespan,
@@ -256,12 +284,83 @@ def create_app(
     app.state.database = database
     app.state.oauth_client = oauth_client
     app.state.directory_client = directory_client
+    app.state.last_system_log_prune_at = 0.0
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_host_list)
 
     def get_session() -> Iterator[Session]:
         yield from database.sessions()
 
     SessionDep = Annotated[Session, Depends(get_session)]
+
+    def bind_request_identity(request: Request, *, user: User, tenant: Tenant) -> None:
+        request.state.tenant_id = tenant.id
+        request.state.actor_user_id = user.id
+        request.state.actor_name = user.display_name
+
+    def persist_http_system_log(
+        request: Request,
+        *,
+        status_code: int,
+        duration_ms: int,
+        exception: Exception | None = None,
+    ) -> None:
+        route_object = request.scope.get("route")
+        route = normalize_route(getattr(route_object, "path", None) or "/unmatched")
+        if not should_capture_http(
+            method=request.method,
+            route=route,
+            status_code=status_code,
+            trace_id=request.state.trace_id,
+            runtime_sample_rate=settings.system_log_runtime_sample_rate,
+        ):
+            return
+        is_error = status_code >= 500 or exception is not None
+        level = "error" if is_error else "warning" if status_code >= 400 else "info"
+        try:
+            with database.session_factory() as system_log_session:
+                service = SystemLogService(system_log_session)
+                service.append(
+                    tenant_id=getattr(request.state, "tenant_id", None),
+                    actor_user_id=getattr(request.state, "actor_user_id", None),
+                    actor_name=getattr(request.state, "actor_name", None),
+                    category=SYSTEM_ERROR_CATEGORY if is_error else SYSTEM_RUNTIME_CATEGORY,
+                    level=level,
+                    service="auth_service",
+                    component="http_api",
+                    environment=settings.environment,
+                    event_type="http.request.failed" if is_error else "http.request.completed",
+                    message="Unhandled application exception" if exception else "HTTP request completed",
+                    request_id=request.state.request_id,
+                    trace_id=request.state.trace_id,
+                    retention_days=settings.system_log_retention_days,
+                    source=getattr(request.state, "log_source", "web_api"),
+                    client_version=getattr(request.state, "client_version", None) or None,
+                    http_method=request.method,
+                    route=route,
+                    status_code=status_code,
+                    duration_ms=duration_ms,
+                    exception_type=type(exception).__name__ if exception else None,
+                    error_code="unhandled_exception"
+                    if exception
+                    else f"http_{status_code}"
+                    if status_code >= 400
+                    else None,
+                    details={"handled": exception is None},
+                )
+                system_log_session.flush()
+                prune_now = time.monotonic()
+                if prune_now - app.state.last_system_log_prune_at >= 3600:
+                    service.enforce_retention(
+                        retention_days=settings.system_log_retention_days,
+                        max_rows_per_tenant=settings.system_log_max_rows_per_tenant,
+                    )
+                    app.state.last_system_log_prune_at = prune_now
+                system_log_session.commit()
+        except Exception:
+            logger.exception(
+                "Failed to append system log request_id=%s",
+                request.state.request_id,
+            )
 
     def create_authorization_url(
         session: Session,
@@ -296,9 +395,45 @@ def create_app(
 
     @app.middleware("http")
     async def request_id_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
-        request.state.request_id = uuid.uuid4().hex
-        response = await call_next(request)
+        started_at = time.perf_counter()
+        incoming_request_id = str(request.headers.get("X-Request-ID") or "").strip()
+        request.state.request_id = (
+            incoming_request_id
+            if REQUEST_CONTEXT_PATTERN.fullmatch(incoming_request_id)
+            else uuid.uuid4().hex
+        )
+        incoming_trace_id = str(request.headers.get("X-Trace-ID") or "").strip()
+        request.state.trace_id = (
+            incoming_trace_id
+            if REQUEST_CONTEXT_PATTERN.fullmatch(incoming_trace_id)
+            else request.state.request_id
+        )
+        incoming_source = str(request.headers.get("X-Xynigo-Source") or "").strip()
+        request.state.log_source = (
+            incoming_source
+            if REQUEST_CONTEXT_PATTERN.fullmatch(incoming_source)
+            else "web_api"
+        )
+        request.state.client_version = " ".join(
+            str(request.headers.get("X-Xynigo-Client-Version") or "").split()
+        )[:64]
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            persist_http_system_log(
+                request,
+                status_code=500,
+                duration_ms=round((time.perf_counter() - started_at) * 1000),
+                exception=exc,
+            )
+            raise
+        persist_http_system_log(
+            request,
+            status_code=response.status_code,
+            duration_ms=round((time.perf_counter() - started_at) * 1000),
+        )
         response.headers["X-Request-ID"] = request.state.request_id
+        response.headers["X-Trace-ID"] = request.state.trace_id
         response.headers["Cache-Control"] = "no-store"
         if request.url.path == "/v1/auth/local/complete":
             response.headers["Content-Security-Policy"] = (
@@ -313,6 +448,56 @@ def create_app(
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Content-Type-Options"] = "nosniff"
         return response
+
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_error_handler(
+        request: Request,
+        exc: RequestValidationError,
+    ) -> JSONResponse:
+        action, business_object_id = _validation_log_target(
+            request.method, request.url.path
+        )
+        if action is not None:
+            try:
+                raw_token = _request_session_token(
+                    request.cookies.get(settings.cookie_name),
+                    request.headers.get("Authorization"),
+                )
+                with database.session_factory() as audit_session:
+                    _record_validation_failure(
+                        audit_session,
+                        request=request,
+                        raw_token=raw_token,
+                        action=action,
+                        business_object_id=business_object_id,
+                    )
+                    audit_session.commit()
+            except HTTPException:
+                # Invalid unauthenticated requests have no trusted operator
+                # context and therefore are not business operation logs.
+                pass
+            except Exception:
+                logger.exception(
+                    "Failed to append validation business log request_id=%s",
+                    request.state.request_id,
+                )
+        safe_errors = [
+            {
+                "type": str(error.get("type") or "validation_error")[:120],
+                "loc": [str(item)[:120] for item in error.get("loc", ())],
+                "msg": str(error.get("msg") or "请求参数无效")[:300],
+            }
+            for error in exc.errors()[:50]
+        ]
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": safe_errors,
+                "code": "validation_failed",
+                "requestId": request.state.request_id,
+                "traceId": request.state.trace_id,
+            },
+        )
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
@@ -515,6 +700,8 @@ def create_app(
             session.commit()
             raise HTTPException(status_code=403, detail={"code": "user_pending_approval"})
 
+        _ensure_system_catalog(session, tenant=tenant)
+        bind_request_identity(request, user=user, tenant=tenant)
         if is_bootstrap_admin:
             _ensure_super_admin(session, tenant=tenant, user=user)
 
@@ -629,6 +816,8 @@ def create_app(
             session.commit()
             raise HTTPException(status_code=403, detail={"code": "tenant_disabled"})
 
+        _ensure_system_catalog(session, tenant=tenant)
+        bind_request_identity(request, user=user, tenant=tenant)
         raw_session_token = random_url_token(48)
         expires_at = now + timedelta(seconds=settings.session_ttl_seconds)
         session.add(
@@ -663,12 +852,15 @@ def create_app(
 
     @app.get("/v1/auth/me")
     def current_user(
+        request: Request,
         session: SessionDep,
         session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
         authorization: Annotated[str | None, Header()] = None,
     ) -> dict[str, object]:
         raw_token = _request_session_token(session_token, authorization)
         record, user, tenant = _authenticated_identity(session, raw_token)
+        bind_request_identity(request, user=user, tenant=tenant)
+        _ensure_system_catalog(session, tenant=tenant)
         record.last_seen_at = utcnow()
         payload = _identity_payload(session, user, tenant)
         session.commit()
@@ -708,6 +900,7 @@ def create_app(
     ) -> AdminActor:
         raw_token = _request_session_token(session_token, authorization)
         session_record, user, tenant = _authenticated_identity(session, raw_token)
+        bind_request_identity(request, user=user, tenant=tenant)
         _ensure_system_catalog(session, tenant=tenant)
         if permission not in _permission_code_set(session, user):
             _add_audit(
@@ -715,9 +908,12 @@ def create_app(
                 request_id=request.state.request_id,
                 action=audit_action,
                 result="denied",
+                outcome="permission_denied",
                 tenant_id=tenant.id,
                 actor_user_id=user.id,
+                failure_reason="permission_denied",
                 details={"permission": permission},
+                **_request_log_context(request),
             )
             session.commit()
             raise HTTPException(status_code=403, detail={"code": "permission_denied"})
@@ -747,15 +943,38 @@ def create_app(
         actor: AdminActor,
         action: str,
         exc: PurchaseServiceError,
+        *,
+        business_object_id: str | uuid.UUID | None = None,
+        business_object_no: str | None = None,
     ) -> None:
+        # The failure log must survive, but a service failure must never cause
+        # partial business mutations to be committed with it.
+        session.rollback()
+        if exc.status == 403:
+            outcome = "permission_denied"
+        elif exc.status == 404:
+            outcome = "not_found"
+        elif exc.status == 409:
+            outcome = "business_conflict"
+        elif exc.status == 422:
+            outcome = "validation_failed"
+        elif exc.status in (502, 503, 504):
+            outcome = "external_service_failed"
+        else:
+            outcome = "failure"
         _add_audit(
             session,
             request_id=request.state.request_id,
             action=action,
             result="denied" if exc.status in (403, 404, 409, 422) else "failure",
+            outcome=outcome,
             tenant_id=actor.tenant.id,
             actor_user_id=actor.user.id,
+            business_object_id=business_object_id,
+            business_object_no=business_object_no,
+            failure_reason=exc.code,
             details={"reason": exc.code},
+            **_request_log_context(request),
         )
         session.commit()
         raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": str(exc)})
@@ -775,7 +994,7 @@ def create_app(
             permission="procurement.request.save",
             session_token=session_token,
             authorization=authorization,
-            audit_action="purchase_order.authorization",
+            audit_action=action,
         )
         try:
             result = PurchaseOrderService(session).save_draft(
@@ -784,7 +1003,14 @@ def create_app(
                 draft=body,
             )
         except PurchaseServiceError as exc:
-            purchase_error(request, session, actor, action, exc)
+            purchase_error(
+                request,
+                session,
+                actor,
+                action,
+                exc,
+                business_object_no=body.platformOrderNo,
+            )
         _add_audit(
             session,
             request_id=request.state.request_id,
@@ -792,11 +1018,18 @@ def create_app(
             result="success",
             tenant_id=actor.tenant.id,
             actor_user_id=actor.user.id,
+            business_object_id=result["purchaseOrderId"],
+            business_object_no=body.platformOrderNo,
+            change_summary={
+                "draftRevision": {"after": result["draftRevision"]},
+                "unchanged": result["unchanged"],
+            },
             details={
                 "purchaseOrderId": result["purchaseOrderId"],
                 "draftRevision": result["draftRevision"],
                 "unchanged": result["unchanged"],
             },
+            **_request_log_context(request),
         )
         session.commit()
         return {"ok": True, "data": result}
@@ -816,7 +1049,7 @@ def create_app(
             permission="procurement.request.submit",
             session_token=session_token,
             authorization=authorization,
-            audit_action="purchase_order.authorization",
+            audit_action=action,
         )
         try:
             result = PurchaseOrderService(session).submit(
@@ -825,7 +1058,14 @@ def create_app(
                 draft=body,
             )
         except PurchaseServiceError as exc:
-            purchase_error(request, session, actor, action, exc)
+            purchase_error(
+                request,
+                session,
+                actor,
+                action,
+                exc,
+                business_object_no=body.platformOrderNo,
+            )
         _add_audit(
             session,
             request_id=request.state.request_id,
@@ -833,11 +1073,19 @@ def create_app(
             result="success",
             tenant_id=actor.tenant.id,
             actor_user_id=actor.user.id,
+            business_object_id=result["purchaseOrderId"],
+            business_object_no=body.platformOrderNo,
+            change_summary={
+                "submissionStatus": {"after": "submitted"},
+                "draftRevision": {"after": result["draftRevision"]},
+                "unchanged": result["unchanged"],
+            },
             details={
                 "purchaseOrderId": result["purchaseOrderId"],
                 "draftRevision": result["draftRevision"],
                 "unchanged": result["unchanged"],
             },
+            **_request_log_context(request),
         )
         session.commit()
         return {"ok": True, "data": result}
@@ -857,7 +1105,7 @@ def create_app(
             permission="procurement.request.read",
             session_token=session_token,
             authorization=authorization,
-            audit_action="purchase_order.authorization",
+            audit_action=action,
         )
         try:
             result = PurchaseOrderService(session).get(
@@ -873,10 +1121,12 @@ def create_app(
             result="success",
             tenant_id=actor.tenant.id,
             actor_user_id=actor.user.id,
+            business_object_id=result["purchaseOrderId"],
             details={
                 "purchaseOrderId": result["purchaseOrderId"],
                 "draftRevision": result["draftRevision"],
             },
+            **_request_log_context(request),
         )
         actor.session_record.last_seen_at = utcnow()
         session.commit()
@@ -895,7 +1145,7 @@ def create_app(
             permission="procurement.request.read",
             session_token=session_token,
             authorization=authorization,
-            audit_action="purchase_order.authorization",
+            audit_action="purchase_order.workspace.overview.read",
         )
         result = PurchaseOrderService(session).workspace_overview(
             tenant_id=actor.tenant.id,
@@ -930,6 +1180,15 @@ def create_app(
             | None,
             Query(alias="workflowStatus"),
         ] = None,
+        claimed_by_me: Annotated[bool, Query(alias="claimedByMe")] = False,
+        task_scope: Annotated[
+            Literal["unclaimed", "processing", "ordered", "abnormal"] | None,
+            Query(alias="taskScope"),
+        ] = None,
+        site: Annotated[str | None, Query(max_length=20)] = None,
+        store: Annotated[str | None, Query(max_length=300)] = None,
+        operator: Annotated[str | None, Query(max_length=100)] = None,
+        keyword: Annotated[str | None, Query(max_length=200)] = None,
         page: Annotated[int, Query(ge=1, le=100_000)] = 1,
         page_size: Annotated[int, Query(alias="pageSize", ge=1, le=300)] = 50,
         session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
@@ -941,10 +1200,17 @@ def create_app(
             permission="procurement.request.read",
             session_token=session_token,
             authorization=authorization,
-            audit_action="purchase_order.authorization",
+            audit_action="purchase_order.workspace.list",
         )
         result = PurchaseOrderService(session).workspace_list(
             tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            claimed_by_me=claimed_by_me,
+            task_scope=task_scope,
+            site=site,
+            store=store,
+            operator=operator,
+            keyword=keyword,
             submission_status=submission_status,
             sync_status=sync_status,
             workflow_status=workflow_status,
@@ -969,7 +1235,7 @@ def create_app(
             permission="procurement.request.read",
             session_token=session_token,
             authorization=authorization,
-            audit_action="purchase_order.authorization",
+            audit_action=action,
         )
         try:
             result = PurchaseOrderService(session).workspace_detail(
@@ -977,7 +1243,14 @@ def create_app(
                 purchase_order_id=purchase_order_id,
             )
         except PurchaseServiceError as exc:
-            purchase_error(request, session, actor, action, exc)
+            purchase_error(
+                request,
+                session,
+                actor,
+                action,
+                exc,
+                business_object_id=purchase_order_id,
+            )
         _add_audit(
             session,
             request_id=request.state.request_id,
@@ -985,7 +1258,11 @@ def create_app(
             result="success",
             tenant_id=actor.tenant.id,
             actor_user_id=actor.user.id,
+            business_object_id=result["purchaseOrderId"],
+            business_object_no=str(result.get("platformOrderNo") or "") or None,
+            change_summary={"sensitiveFields": ["recipientPhone", "address"]},
             details={"purchaseOrderId": result["purchaseOrderId"]},
+            **_request_log_context(request),
         )
         session.commit()
         return {"ok": True, "data": result}
@@ -1005,7 +1282,7 @@ def create_app(
             permission="procurement.execution.manage",
             session_token=session_token,
             authorization=authorization,
-            audit_action="purchase_order.authorization",
+            audit_action=action,
         )
         try:
             result = PurchaseOrderService(session).claim(
@@ -1023,11 +1300,79 @@ def create_app(
             result="success",
             tenant_id=actor.tenant.id,
             actor_user_id=actor.user.id,
+            business_object_id=(
+                result["purchaseOrderIds"][0]
+                if len(result["purchaseOrderIds"]) == 1
+                else None
+            ),
+            change_summary={
+                "workflowStatus": {"after": "claimed"},
+                "orderCount": len(result["purchaseOrderIds"]),
+                "lineCount": result["lineCount"],
+                "claimedCount": result["claimedCount"],
+            },
             details={
                 "orderCount": len(result["purchaseOrderIds"]),
                 "lineCount": result["lineCount"],
                 "claimedCount": result["claimedCount"],
             },
+            **_request_log_context(request),
+        )
+        session.commit()
+        return {"ok": True, "data": result}
+
+    @app.post("/v1/procurement/orders/{purchase_order_id}/return")
+    def return_procurement_order_to_task(
+        request: Request,
+        purchase_order_id: uuid.UUID,
+        body: ProcurementReturnBody,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "purchase_order.lines.return"
+        actor = authorize_request(
+            request,
+            session,
+            permission="procurement.execution.manage",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        try:
+            result = PurchaseOrderService(session).return_to_task(
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                purchase_order_id=purchase_order_id,
+            )
+        except PurchaseServiceError as exc:
+            purchase_error(
+                request,
+                session,
+                actor,
+                action,
+                exc,
+                business_object_id=purchase_order_id,
+            )
+        _add_audit(
+            session,
+            request_id=request.state.request_id,
+            action=action,
+            result="success",
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            business_object_id=result["purchaseOrderId"],
+            change_summary={
+                "workflowStatus": {"before": "claimed", "after": "unclaimed"},
+                "lineCount": result["returnedCount"],
+                "executionRevision": {"after": result["executionRevision"]},
+            },
+            details={
+                "purchaseOrderId": result["purchaseOrderId"],
+                "lineCount": result["returnedCount"],
+                "reason": body.reason,
+            },
+            **_request_log_context(request),
         )
         session.commit()
         return {"ok": True, "data": result}
@@ -1048,7 +1393,7 @@ def create_app(
             permission="procurement.execution.manage",
             session_token=session_token,
             authorization=authorization,
-            audit_action="purchase_order.authorization",
+            audit_action=action,
         )
         try:
             result = PurchaseOrderService(session).save_split_plan(
@@ -1059,7 +1404,14 @@ def create_app(
                 groups=[group.model_dump(mode="python") for group in body.groups],
             )
         except PurchaseServiceError as exc:
-            purchase_error(request, session, actor, action, exc)
+            purchase_error(
+                request,
+                session,
+                actor,
+                action,
+                exc,
+                business_object_id=purchase_order_id,
+            )
         _add_audit(
             session,
             request_id=request.state.request_id,
@@ -1067,12 +1419,19 @@ def create_app(
             result="success",
             tenant_id=actor.tenant.id,
             actor_user_id=actor.user.id,
+            business_object_id=result["purchaseOrderId"],
+            change_summary={
+                "executionRevision": {"after": result["executionRevision"]},
+                "splitCount": result["splitCount"],
+                "lineCount": result["lineCount"],
+            },
             details={
                 "purchaseOrderId": result["purchaseOrderId"],
                 "executionRevision": result["executionRevision"],
                 "splitCount": result["splitCount"],
                 "lineCount": result["lineCount"],
             },
+            **_request_log_context(request),
         )
         session.commit()
         return {"ok": True, "data": result}
@@ -1106,7 +1465,7 @@ def create_app(
             permission="procurement.request.read",
             session_token=session_token,
             authorization=authorization,
-            audit_action="purchase_order.authorization",
+            audit_action="purchase_order.execution.list",
         )
         result = PurchaseOrderService(session).execution_list(
             tenant_id=actor.tenant.id,
@@ -1117,6 +1476,215 @@ def create_app(
             page=page,
             page_size=page_size,
         )
+        session.commit()
+        return {"ok": True, "data": result}
+
+    def business_log_actor(
+        request: Request,
+        session: Session,
+        *,
+        session_token: str | None,
+        authorization: str | None,
+    ) -> tuple[AdminActor, bool]:
+        raw_token = _request_session_token(session_token, authorization)
+        session_record, user, tenant = _authenticated_identity(session, raw_token)
+        bind_request_identity(request, user=user, tenant=tenant)
+        _ensure_system_catalog(session, tenant=tenant)
+        tenant_wide = "system.audit.read" in _permission_code_set(session, user)
+        session_record.last_seen_at = utcnow()
+        return AdminActor(session_record=session_record, user=user, tenant=tenant), tenant_wide
+
+    @app.get("/v1/business-logs")
+    def list_business_logs(
+        request: Request,
+        session: SessionDep,
+        started_at: Annotated[datetime | None, Query(alias="startTime")] = None,
+        ended_at: Annotated[datetime | None, Query(alias="endTime")] = None,
+        module: Annotated[str | None, Query(max_length=64)] = None,
+        operator: Annotated[str | None, Query(max_length=255)] = None,
+        log_result: Annotated[
+            Literal[
+                "success",
+                "validation_failed",
+                "permission_denied",
+                "business_conflict",
+                "not_found",
+                "external_service_failed",
+                "failure",
+            ]
+            | None,
+            Query(alias="result"),
+        ] = None,
+        business_no: Annotated[str | None, Query(alias="businessNo", max_length=255)] = None,
+        operation_type: Annotated[
+            str | None, Query(alias="operationType", max_length=160)
+        ] = None,
+        request_id: Annotated[str | None, Query(alias="requestId", max_length=64)] = None,
+        page: Annotated[int, Query(ge=1, le=100_000)] = 1,
+        page_size: Annotated[int, Query(alias="pageSize", ge=1, le=200)] = 50,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        normalized_started_at = as_utc(started_at) if started_at is not None else None
+        normalized_ended_at = as_utc(ended_at) if ended_at is not None else None
+        if (
+            normalized_started_at is not None
+            and normalized_ended_at is not None
+            and normalized_started_at > normalized_ended_at
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "business_log_time_range_invalid"},
+            )
+        actor, tenant_wide = business_log_actor(
+            request,
+            session,
+            session_token=session_token,
+            authorization=authorization,
+        )
+        result = BusinessLogService(session).list_events(
+            tenant_id=actor.tenant.id,
+            viewer_user_id=actor.user.id,
+            tenant_wide=tenant_wide,
+            started_at=normalized_started_at,
+            ended_at=normalized_ended_at,
+            module=module,
+            operator=operator,
+            outcome=log_result,
+            business_no=business_no,
+            operation_type=operation_type,
+            request_id=request_id,
+            page=page,
+            page_size=page_size,
+        )
+        session.commit()
+        return {"ok": True, "data": result}
+
+    @app.get("/v1/business-logs/{business_log_id}")
+    def get_business_log_detail(
+        business_log_id: uuid.UUID,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor, tenant_wide = business_log_actor(
+            request,
+            session,
+            session_token=session_token,
+            authorization=authorization,
+        )
+        result = BusinessLogService(session).get_event(
+            tenant_id=actor.tenant.id,
+            viewer_user_id=actor.user.id,
+            event_id=business_log_id,
+            tenant_wide=tenant_wide,
+        )
+        if result is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "business_log_not_found"},
+            )
+        session.commit()
+        return {"ok": True, "data": result}
+
+    @app.get("/v1/system-logs")
+    def list_system_logs(
+        request: Request,
+        session: SessionDep,
+        started_at: Annotated[datetime | None, Query(alias="startTime")] = None,
+        ended_at: Annotated[datetime | None, Query(alias="endTime")] = None,
+        category: Annotated[
+            Literal["system_runtime", "system_error"] | None, Query()
+        ] = None,
+        level: Annotated[
+            Literal["info", "warning", "error", "critical"] | None, Query()
+        ] = None,
+        service: Annotated[str | None, Query(max_length=64)] = None,
+        component: Annotated[str | None, Query(max_length=64)] = None,
+        event_type: Annotated[
+            str | None, Query(alias="eventType", max_length=160)
+        ] = None,
+        status_code: Annotated[
+            int | None, Query(alias="statusCode", ge=100, le=599)
+        ] = None,
+        request_id: Annotated[
+            str | None, Query(alias="requestId", max_length=64)
+        ] = None,
+        keyword: Annotated[str | None, Query(max_length=255)] = None,
+        page: Annotated[int, Query(ge=1, le=100_000)] = 1,
+        page_size: Annotated[int, Query(alias="pageSize", ge=1, le=200)] = 50,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        normalized_started_at = as_utc(started_at) if started_at is not None else None
+        normalized_ended_at = as_utc(ended_at) if ended_at is not None else None
+        if (
+            normalized_started_at is not None
+            and normalized_ended_at is not None
+            and normalized_started_at > normalized_ended_at
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "system_log_time_range_invalid"},
+            )
+        actor = authorize_request(
+            request,
+            session,
+            permission="system.runtime_log.read",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="system_log.read",
+        )
+        result = SystemLogService(session).list_events(
+            tenant_id=actor.tenant.id,
+            started_at=normalized_started_at,
+            ended_at=normalized_ended_at,
+            category=category,
+            level=level,
+            service=service,
+            component=component,
+            event_type=event_type,
+            status_code=status_code,
+            request_id=request_id,
+            keyword=keyword,
+            page=page,
+            page_size=page_size,
+        )
+        result["retentionDays"] = settings.system_log_retention_days
+        result["maxRowsPerTenant"] = settings.system_log_max_rows_per_tenant
+        session.commit()
+        return {"ok": True, "data": result}
+
+    @app.get("/v1/system-logs/{system_log_id}")
+    def get_system_log_detail(
+        system_log_id: uuid.UUID,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="system.runtime_log.read",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="system_log.detail.read",
+        )
+        result = SystemLogService(session).get_event(
+            tenant_id=actor.tenant.id,
+            event_id=system_log_id,
+        )
+        if result is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "system_log_not_found"},
+            )
         session.commit()
         return {"ok": True, "data": result}
 
@@ -2568,6 +3136,69 @@ def _authenticated_identity(
     return record, user, tenant
 
 
+def _validation_log_target(method: str, path: str) -> tuple[str | None, str | None]:
+    method = method.upper()
+    if method == "POST" and path == "/v1/purchase-orders/draft":
+        return "purchase_order.draft.save", None
+    if method == "POST" and path == "/v1/purchase-orders/submit":
+        return "purchase_order.submit", None
+    if method == "POST" and path == "/v1/procurement/claims":
+        return "purchase_order.lines.claim", None
+    return_match = re.fullmatch(
+        r"/v1/procurement/orders/([0-9a-fA-F-]{36})/return", path
+    )
+    if method == "POST" and return_match:
+        return "purchase_order.lines.return", return_match.group(1)
+    split_match = re.fullmatch(
+        r"/v1/procurement/orders/([0-9a-fA-F-]{36})/splits", path
+    )
+    if method == "POST" and split_match:
+        return "purchase_order.split_plan.save", split_match.group(1)
+    if method == "GET" and path == "/v1/procurement/orders":
+        return "purchase_order.workspace.list", None
+    detail_match = re.fullmatch(
+        r"/v1/procurement/orders/([0-9a-fA-F-]{36})", path
+    )
+    if method == "GET" and detail_match:
+        return "purchase_order.workspace.detail.read", detail_match.group(1)
+    return None, None
+
+
+def _request_log_context(request: Request) -> dict[str, str | None]:
+    return {
+        "trace_id": getattr(request.state, "trace_id", request.state.request_id),
+        "source": getattr(request.state, "log_source", "web_api"),
+        "client_version": getattr(request.state, "client_version", None) or None,
+    }
+
+
+def _record_validation_failure(
+    session: Session,
+    *,
+    request: Request,
+    raw_token: str | None,
+    action: str,
+    business_object_id: str | None,
+) -> None:
+    _record, user, tenant = _authenticated_identity(session, raw_token)
+    request.state.tenant_id = tenant.id
+    request.state.actor_user_id = user.id
+    request.state.actor_name = user.display_name
+    _add_audit(
+        session,
+        request_id=request.state.request_id,
+        action=action,
+        result="denied",
+        outcome="validation_failed",
+        tenant_id=tenant.id,
+        actor_user_id=user.id,
+        business_object_id=business_object_id,
+        failure_reason="request_validation_failed",
+        details={"reason": "request_validation_failed"},
+        **_request_log_context(request),
+    )
+
+
 def _add_audit(
     session: Session,
     *,
@@ -2576,15 +3207,35 @@ def _add_audit(
     result: str,
     tenant_id: uuid.UUID | None = None,
     actor_user_id: uuid.UUID | None = None,
+    trace_id: str | None = None,
+    outcome: str | None = None,
+    module: str | None = None,
+    category: str | None = None,
+    business_object_type: str | None = None,
+    business_object_id: str | uuid.UUID | None = None,
+    business_object_no: str | None = None,
+    failure_reason: str | None = None,
+    change_summary: dict[str, Any] | None = None,
+    source: str = "api",
+    client_version: str | None = None,
     details: dict[str, Any] | None = None,
 ) -> None:
-    session.add(
-        AuditEvent(
-            tenant_id=tenant_id,
-            actor_user_id=actor_user_id,
-            action=action,
-            result=result,
-            request_id=request_id,
-            details=details or {},
-        )
+    BusinessLogService(session).append(
+        tenant_id=tenant_id,
+        actor_user_id=actor_user_id,
+        action=action,
+        result=result,
+        request_id=request_id,
+        trace_id=trace_id,
+        outcome=outcome,
+        module=module,
+        category=category,
+        business_object_type=business_object_type,
+        business_object_id=business_object_id,
+        business_object_no=business_object_no,
+        failure_reason=failure_reason,
+        change_summary=change_summary,
+        source=source,
+        client_version=client_version,
+        details=details,
     )

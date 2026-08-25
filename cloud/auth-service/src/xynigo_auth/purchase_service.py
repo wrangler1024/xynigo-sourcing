@@ -1,3 +1,8 @@
+"""采购单业务层，相当于 Java 的 PurchaseService（没有单独 Mapper）。
+
+查询和写入都通过 SQLAlchemy Session 直接操作 models.py 里的表。
+"""
+
 from __future__ import annotations
 
 import uuid
@@ -22,11 +27,13 @@ from .purchase_contract import (
     draft_content_hash,
     line_content_hash,
     line_key,
+    parse_store_assignment,
     validate_formal_submit,
 )
 
 
 class PurchaseServiceError(Exception):
+    """业务失败。code 给前端/API 识别，status 是 HTTP 状态码。"""
     def __init__(self, code: str, message: str, status: int) -> None:
         self.code = code
         self.status = status
@@ -37,7 +44,17 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _store_columns(draft: PurchaseDraft) -> tuple[str, str, str | None]:
+    parsed_store, parsed_operator = parse_store_assignment(draft.storeName)
+    return (
+        draft.storeName,
+        draft.storeBaseName or parsed_store or draft.storeName,
+        draft.operatorName or parsed_operator or None,
+    )
+
+
 class PurchaseOrderService:
+    """采购单草稿、正式提交、工作台列表/认领、拆分执行计划。"""
     WORKFLOW_STATUSES = (
         "draft",
         "unclaimed",
@@ -51,6 +68,22 @@ class PurchaseOrderService:
     )
     SUBMISSION_STATUSES = ("draft", "submitted")
     SYNC_STATUSES = ("pending", "synced", "failed", "conflict")
+    TASK_SCOPE_STATUSES = {
+        "unclaimed": ("unclaimed",),
+        "processing": ("claimed", "purchasing"),
+        "ordered": ("ordered", "logistics_filled", "completed"),
+        "abnormal": ("returned", "exception"),
+    }
+    FIELD_VISIBILITY_KEYS = (
+        "store",
+        "operator",
+        "salesAmount",
+        "profit",
+        "profitMargin",
+    )
+    DEFAULT_FIELD_VISIBILITY = {
+        key: True for key in FIELD_VISIBILITY_KEYS
+    }
 
     def __init__(self, session: Session, clock=_utcnow) -> None:  # type: ignore[no-untyped-def]
         self.session = session
@@ -63,6 +96,7 @@ class PurchaseOrderService:
         actor_user_id: uuid.UUID,
         draft: PurchaseDraft,
     ) -> dict[str, object]:
+        """幂等保存草稿。已正式提交的单不能被不同内容覆盖。"""
         now = self.clock()
         record = self._find_order(tenant_id, draft.orderKey, lock=True)
         target_hash = draft_content_hash(draft)
@@ -77,10 +111,14 @@ class PurchaseOrderService:
 
         changed = record is None or record.content_hash != target_hash
         if record is None:
+            store_name, store_base_name, operator_name = _store_columns(draft)
             record = PurchaseOrder(
                 tenant_id=tenant_id,
                 order_key=draft.orderKey,
                 schema_version=draft.schemaVersion,
+                store_name=store_name,
+                store_base_name=store_base_name,
+                operator_name=operator_name,
                 draft_payload=canonical_draft_dict(draft),
                 content_hash=target_hash,
                 draft_revision=1,
@@ -94,7 +132,11 @@ class PurchaseOrderService:
             self.session.add(record)
             self.session.flush()
         elif changed:
+            store_name, store_base_name, operator_name = _store_columns(draft)
             record.schema_version = draft.schemaVersion
+            record.store_name = store_name
+            record.store_base_name = store_base_name
+            record.operator_name = operator_name
             record.draft_payload = canonical_draft_dict(draft)
             record.content_hash = target_hash
             record.draft_revision += 1
@@ -115,6 +157,7 @@ class PurchaseOrderService:
         actor_user_id: uuid.UUID,
         draft: PurchaseDraft,
     ) -> dict[str, object]:
+        """正式提交：先走更严校验，成功后明细进入可认领状态，并写飞书同步 outbox。"""
         try:
             validate_formal_submit(draft)
         except ValueError as exc:
@@ -134,10 +177,14 @@ class PurchaseOrderService:
 
         changed = record is None or record.content_hash != target_hash
         if record is None:
+            store_name, store_base_name, operator_name = _store_columns(draft)
             record = PurchaseOrder(
                 tenant_id=tenant_id,
                 order_key=draft.orderKey,
                 schema_version=draft.schemaVersion,
+                store_name=store_name,
+                store_base_name=store_base_name,
+                operator_name=operator_name,
                 draft_payload=canonical_draft_dict(draft),
                 content_hash=target_hash,
                 draft_revision=1,
@@ -151,7 +198,11 @@ class PurchaseOrderService:
             self.session.add(record)
             self.session.flush()
         elif changed:
+            store_name, store_base_name, operator_name = _store_columns(draft)
             record.schema_version = draft.schemaVersion
+            record.store_name = store_name
+            record.store_base_name = store_base_name
+            record.operator_name = operator_name
             record.draft_payload = canonical_draft_dict(draft)
             record.content_hash = target_hash
             record.draft_revision += 1
@@ -168,6 +219,7 @@ class PurchaseOrderService:
         return self._payload(record, unchanged=False)
 
     def get(self, *, tenant_id: uuid.UUID, order_key: str) -> dict[str, object]:
+        """按业务键读取一张采购单（租户内）。"""
         normalized = str(order_key or "").strip()
         if not normalized or len(normalized) > 800:
             raise PurchaseServiceError("purchase_order_key_invalid", "采购单标识无效", 422)
@@ -176,7 +228,14 @@ class PurchaseOrderService:
             raise PurchaseServiceError("purchase_order_not_found", "采购单不存在", 404)
         return self._payload(record, unchanged=True)
 
-    def workspace_overview(self, *, tenant_id: uuid.UUID) -> dict[str, object]:
+    def workspace_overview(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        field_visibility: dict[str, bool] | None = None,
+    ) -> dict[str, object]:
+        """工作台汇总：按提交状态、同步状态、明细流转状态计数。"""
+        visibility = self._field_visibility(field_visibility)
         submission_counts = dict(
             self.session.execute(
                 select(PurchaseOrder.submission_status, func.count(PurchaseOrder.id))
@@ -202,6 +261,21 @@ class PurchaseOrderService:
                 .group_by(PurchaseOrderLine.workflow_status)
             ).all()
         )
+        task_scope_counts = {
+            scope: int(
+                self.session.scalar(
+                    select(func.count(func.distinct(PurchaseOrderLine.purchase_order_id)))
+                    .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+                    .where(
+                        PurchaseOrder.tenant_id == tenant_id,
+                        PurchaseOrderLine.is_active.is_(True),
+                        PurchaseOrderLine.workflow_status.in_(statuses),
+                    )
+                )
+                or 0
+            )
+            for scope, statuses in self.TASK_SCOPE_STATUSES.items()
+        }
         normalized_submission = {
             status: int(submission_counts.get(status, 0))
             for status in self.SUBMISSION_STATUSES
@@ -215,10 +289,22 @@ class PurchaseOrderService:
             for status in self.WORKFLOW_STATUSES
         }
         return {
+            "fieldVisibility": visibility,
+            "filters": {
+                "stores": self._distinct_order_values(
+                    tenant_id=tenant_id,
+                    column=PurchaseOrder.store_base_name,
+                ) if visibility["store"] else [],
+                "operators": self._distinct_order_values(
+                    tenant_id=tenant_id,
+                    column=PurchaseOrder.operator_name,
+                ) if visibility["operator"] else [],
+            },
             "orders": {
                 "total": sum(normalized_submission.values()),
                 "bySubmissionStatus": normalized_submission,
                 "bySyncStatus": normalized_sync,
+                "byTaskScope": task_scope_counts,
             },
             "lines": {
                 "total": sum(normalized_workflow.values()),
@@ -230,17 +316,54 @@ class PurchaseOrderService:
         self,
         *,
         tenant_id: uuid.UUID,
+        actor_user_id: uuid.UUID | None = None,
+        claimed_by_me: bool = False,
+        task_scope: str | None = None,
+        site: str | None = None,
+        store: str | None = None,
+        operator: str | None = None,
+        keyword: str | None = None,
         submission_status: str | None = None,
         sync_status: str | None = None,
         workflow_status: str | None = None,
         page: int = 1,
         page_size: int = 50,
+        field_visibility: dict[str, bool] | None = None,
     ) -> dict[str, object]:
+        """采购工作台分页列表，可按状态、站点、关键词、是否我认领的筛选。"""
+        visibility = self._field_visibility(field_visibility)
         filters = [PurchaseOrder.tenant_id == tenant_id]
         if submission_status is not None:
             filters.append(PurchaseOrder.submission_status == submission_status)
         if sync_status is not None:
             filters.append(PurchaseOrder.sync_status == sync_status)
+        if site:
+            filters.append(PurchaseOrder.draft_payload["site"].as_string() == site)
+        normalized_store = str(store or "").strip()
+        if normalized_store and visibility["store"]:
+            filters.append(PurchaseOrder.store_base_name == normalized_store)
+        normalized_operator = str(operator or "").strip()
+        if normalized_operator and visibility["operator"]:
+            filters.append(PurchaseOrder.operator_name == normalized_operator)
+        normalized_keyword = str(keyword or "").strip()
+        if normalized_keyword:
+            pattern = f"%{normalized_keyword}%"
+            keyword_filters = [
+                PurchaseOrder.order_key.ilike(pattern),
+                PurchaseOrder.draft_payload["packageId"].as_string().ilike(pattern),
+                PurchaseOrder.draft_payload["platformOrderNo"].as_string().ilike(pattern),
+                PurchaseOrder.draft_payload["recipientName"].as_string().ilike(pattern),
+            ]
+            if visibility["store"]:
+                keyword_filters.extend((
+                    PurchaseOrder.store_name.ilike(pattern),
+                    PurchaseOrder.store_base_name.ilike(pattern),
+                ))
+            if visibility["operator"]:
+                keyword_filters.append(PurchaseOrder.operator_name.ilike(pattern))
+            filters.append(
+                or_(*keyword_filters)
+            )
         if workflow_status is not None:
             filters.append(
                 select(PurchaseOrderLine.id)
@@ -248,6 +371,40 @@ class PurchaseOrderService:
                     PurchaseOrderLine.purchase_order_id == PurchaseOrder.id,
                     PurchaseOrderLine.is_active.is_(True),
                     PurchaseOrderLine.workflow_status == workflow_status,
+                )
+                .exists()
+            )
+        if task_scope is not None:
+            scope_statuses = self.TASK_SCOPE_STATUSES.get(task_scope)
+            if scope_statuses:
+                filters.append(
+                    select(PurchaseOrderLine.id)
+                    .where(
+                        PurchaseOrderLine.purchase_order_id == PurchaseOrder.id,
+                        PurchaseOrderLine.is_active.is_(True),
+                        PurchaseOrderLine.workflow_status.in_(scope_statuses),
+                    )
+                    .exists()
+                )
+        if claimed_by_me:
+            if actor_user_id is None:
+                raise ValueError("actor_user_id is required when claimed_by_me is true")
+            filters.append(
+                select(PurchaseOrderLine.id)
+                .where(
+                    PurchaseOrderLine.purchase_order_id == PurchaseOrder.id,
+                    PurchaseOrderLine.is_active.is_(True),
+                    PurchaseOrderLine.claimed_by_user_id == actor_user_id,
+                    PurchaseOrderLine.workflow_status.in_(
+                        (
+                            "claimed",
+                            "purchasing",
+                            "ordered",
+                            "logistics_filled",
+                            "completed",
+                            "exception",
+                        )
+                    ),
                 )
                 .exists()
             )
@@ -268,14 +425,23 @@ class PurchaseOrderService:
             )
         )
         lines_by_order = self._active_lines_by_order([record.id for record in records])
+        splits_by_order = self._splits_by_order([record.id for record in records])
         users_by_id = self._users_by_id(
             [
-                record.submitted_by_user_id
-                for record in records
-                if record.submitted_by_user_id is not None
+                user_id
+                for user_id in [
+                    *(record.submitted_by_user_id for record in records),
+                    *(
+                        line.claimed_by_user_id
+                        for lines in lines_by_order.values()
+                        for line in lines
+                    ),
+                ]
+                if user_id is not None
             ]
         )
         return {
+            "fieldVisibility": visibility,
             "page": page,
             "pageSize": page_size,
             "total": total,
@@ -284,6 +450,8 @@ class PurchaseOrderService:
                     record,
                     lines_by_order.get(record.id, []),
                     users_by_id,
+                    splits_by_order.get(record.id, []),
+                    visibility,
                 )
                 for record in records
             ],
@@ -294,7 +462,10 @@ class PurchaseOrderService:
         *,
         tenant_id: uuid.UUID,
         purchase_order_id: uuid.UUID,
+        field_visibility: dict[str, bool] | None = None,
     ) -> dict[str, object]:
+        """工作台打开一张单：头、明细、拆分批次；含收件人等敏感字段，需对应权限。"""
+        visibility = self._field_visibility(field_visibility)
         record = self.session.scalar(
             select(PurchaseOrder).where(
                 PurchaseOrder.id == purchase_order_id,
@@ -304,20 +475,59 @@ class PurchaseOrderService:
         if record is None:
             raise PurchaseServiceError("purchase_order_not_found", "采购单不存在", 404)
         lines = self._active_lines_by_order([record.id]).get(record.id, [])
+        splits = self._splits_by_order([record.id]).get(record.id, [])
         users_by_id = self._users_by_id(
             [
                 user_id
                 for user_id in [
                     record.submitted_by_user_id,
                     *(line.claimed_by_user_id for line in lines),
+                    *(split.purchaser_user_id for split in splits),
                 ]
                 if user_id is not None
             ]
         )
         draft_header = dict(record.draft_payload)
         draft_header.pop("items", None)
+        if not visibility["store"] or not visibility["operator"]:
+            draft_header.pop("orderKey", None)
+        if not visibility["store"]:
+            draft_header.pop("storeName", None)
+            draft_header.pop("storeBaseName", None)
+        elif not visibility["operator"]:
+            draft_header["storeName"] = record.store_base_name
+        if not visibility["operator"]:
+            draft_header.pop("operatorName", None)
+        if not visibility["salesAmount"]:
+            draft_header.pop("salesAmount", None)
+            draft_header.pop("salesCurrency", None)
+        metrics = draft_header.get("estimatedMetrics")
+        if isinstance(metrics, dict):
+            metrics = dict(metrics)
+            if not visibility["salesAmount"]:
+                metrics.pop("salesAmount", None)
+            if not visibility["profit"]:
+                for key in (
+                    "estimatedProfit",
+                    "estimatedCost",
+                    "estimatedTopUpAmount",
+                    "roi",
+                    "minimumApplied",
+                    "costBasis",
+                ):
+                    metrics.pop(key, None)
+            if not visibility["profitMargin"]:
+                metrics.pop("profitMargin", None)
+            draft_header["estimatedMetrics"] = metrics
         return {
-            **self._workspace_summary(record, lines, users_by_id),
+            **self._workspace_summary(
+                record,
+                lines,
+                users_by_id,
+                splits,
+                visibility,
+            ),
+            "fieldVisibility": visibility,
             "schemaVersion": record.schema_version,
             "contentHash": record.content_hash,
             "executionRevision": record.execution_revision,
@@ -339,6 +549,12 @@ class PurchaseOrderService:
                 }
                 for line in lines
             ],
+            "executionBatches": self._execution_batches(
+                record,
+                lines,
+                splits,
+                users_by_id,
+            ),
         }
 
     def claim(
@@ -349,6 +565,7 @@ class PurchaseOrderService:
         purchase_order_ids: list[uuid.UUID],
         purchase_order_line_ids: list[uuid.UUID],
     ) -> dict[str, object]:
+        """认领整单或若干明细，进入 claimed，供后续拆分执行。"""
         order_ids = list(dict.fromkeys(purchase_order_ids))
         line_ids = list(dict.fromkeys(purchase_order_line_ids))
         if not order_ids and not line_ids:
@@ -448,6 +665,85 @@ class PurchaseOrderService:
             "claimedAt": now.isoformat(),
         }
 
+    def return_to_task(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        purchase_order_id: uuid.UUID,
+    ) -> dict[str, object]:
+        """将当前采购员尚未开始执行的认领明细释放回公共采购任务。"""
+        order = self.session.scalar(
+            select(PurchaseOrder)
+            .where(
+                PurchaseOrder.id == purchase_order_id,
+                PurchaseOrder.tenant_id == tenant_id,
+                PurchaseOrder.submission_status == "submitted",
+            )
+            .with_for_update()
+        )
+        if order is None:
+            raise PurchaseServiceError(
+                "purchase_order_not_found",
+                "采购单不存在或尚未正式提交",
+                404,
+            )
+
+        owned_lines = list(
+            self.session.scalars(
+                select(PurchaseOrderLine)
+                .where(
+                    PurchaseOrderLine.purchase_order_id == order.id,
+                    PurchaseOrderLine.is_active.is_(True),
+                    PurchaseOrderLine.claimed_by_user_id == actor_user_id,
+                )
+                .order_by(PurchaseOrderLine.line_no)
+                .with_for_update()
+            )
+        )
+        if not owned_lines:
+            raise PurchaseServiceError(
+                "purchase_return_no_claimed_lines",
+                "当前采购员没有可退回的认领明细",
+                409,
+            )
+        if any(line.workflow_status != "claimed" for line in owned_lines):
+            raise PurchaseServiceError(
+                "purchase_return_already_started",
+                "采购明细已进入下单、付款或跟单流程，不能直接退回",
+                409,
+            )
+
+        existing_split = self.session.scalar(
+            select(PurchaseSplit.id).where(
+                PurchaseSplit.purchase_order_id == order.id,
+                PurchaseSplit.purchaser_user_id == actor_user_id,
+            )
+        )
+        if existing_split is not None:
+            raise PurchaseServiceError(
+                "purchase_return_split_exists",
+                "采购单已形成下单方案，请先按下单放弃流程处理资源",
+                409,
+            )
+
+        now = self.clock()
+        for line in owned_lines:
+            line.workflow_status = "unclaimed"
+            line.claimed_by_user_id = None
+            line.claimed_at = None
+            line.updated_at = now
+        order.execution_revision += 1
+        order.updated_at = now
+        self.session.flush()
+        return {
+            "purchaseOrderId": str(order.id),
+            "purchaseOrderLineIds": [str(line.id) for line in owned_lines],
+            "returnedCount": len(owned_lines),
+            "executionRevision": order.execution_revision,
+            "returnedAt": now.isoformat(),
+        }
+
     def save_split_plan(
         self,
         *,
@@ -457,6 +753,7 @@ class PurchaseOrderService:
         expected_revision: int,
         groups: list[dict[str, object]],
     ) -> dict[str, object]:
+        """保存拆分计划：按采购员分组生成 PurchaseSplit，带 expected_revision 防并发覆盖。"""
         order = self.session.scalar(
             select(PurchaseOrder)
             .where(
@@ -657,6 +954,7 @@ class PurchaseOrderService:
         page: int = 1,
         page_size: int = 100,
     ) -> dict[str, object]:
+        """执行侧批次列表：待绑环境、采购中、已下单等。"""
         filters = [PurchaseSplit.tenant_id == tenant_id]
         if status:
             filters.append(PurchaseSplit.status == status)
@@ -796,7 +1094,9 @@ class PurchaseOrderService:
             "sourceOrder": draft.get("packageId") or order.order_key,
             "salesOrderNo": draft.get("platformOrderNo") or "",
             "site": split.site,
-            "store": draft.get("storeName") or "",
+            "store": order.store_base_name,
+            "storeName": order.store_name,
+            "operator": {"name": order.operator_name} if order.operator_name else None,
             "purchaser": purchaser.display_name if purchaser else "—",
             "purchaserUserId": str(split.purchaser_user_id),
             "status": split.status,
@@ -855,6 +1155,21 @@ class PurchaseOrderService:
             result.setdefault(line.purchase_order_id, []).append(line)
         return result
 
+    def _splits_by_order(
+        self,
+        order_ids: list[uuid.UUID],
+    ) -> dict[uuid.UUID, list[PurchaseSplit]]:
+        result: dict[uuid.UUID, list[PurchaseSplit]] = {}
+        if not order_ids:
+            return result
+        for split in self.session.scalars(
+            select(PurchaseSplit)
+            .where(PurchaseSplit.purchase_order_id.in_(order_ids))
+            .order_by(PurchaseSplit.purchase_order_id, PurchaseSplit.created_at)
+        ):
+            result.setdefault(split.purchase_order_id, []).append(split)
+        return result
+
     def _users_by_id(self, user_ids: list[uuid.UUID]) -> dict[uuid.UUID, User]:
         if not user_ids:
             return {}
@@ -865,15 +1180,56 @@ class PurchaseOrderService:
             )
         }
 
+    @classmethod
+    def _field_visibility(
+        cls,
+        overrides: dict[str, bool] | None,
+    ) -> dict[str, bool]:
+        """生成由服务端策略决定的字段可见性；调用方不能从请求参数覆盖。"""
+        visibility = dict(cls.DEFAULT_FIELD_VISIBILITY)
+        if overrides:
+            for key in cls.FIELD_VISIBILITY_KEYS:
+                if key in overrides:
+                    visibility[key] = bool(overrides[key])
+        return visibility
+
+    def _distinct_order_values(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        column: object,
+    ) -> list[str]:
+        values = self.session.scalars(
+            select(column)
+            .where(
+                PurchaseOrder.tenant_id == tenant_id,
+                column.is_not(None),
+                column != "",
+            )
+            .distinct()
+            .order_by(column)
+            .limit(1000)
+        )
+        return [str(value) for value in values if str(value or "").strip()]
+
     def _workspace_summary(
         self,
         record: PurchaseOrder,
         lines: list[PurchaseOrderLine],
         users_by_id: dict[uuid.UUID, User],
+        splits: list[PurchaseSplit] | None = None,
+        field_visibility: dict[str, bool] | None = None,
     ) -> dict[str, object]:
         draft = record.draft_payload
+        visibility = self._field_visibility(field_visibility)
+        metrics = draft.get("estimatedMetrics")
+        if not isinstance(metrics, dict):
+            metrics = {}
         workflow_counts = {status: 0 for status in self.WORKFLOW_STATUSES}
         preview_images: list[str] = []
+        required_qty = 0
+        purchased_qty = 0
+        purchaser_ids: list[uuid.UUID] = []
         for line in lines:
             workflow_counts[line.workflow_status] = (
                 workflow_counts.get(line.workflow_status, 0) + 1
@@ -881,33 +1237,124 @@ class PurchaseOrderService:
             image_url = str(line.payload.get("productImageUrl") or "").strip()
             if image_url and image_url not in preview_images:
                 preview_images.append(image_url)
+            quantity = int(
+                line.payload.get("purchaseQty")
+                or line.payload.get("salesQty")
+                or 0
+            )
+            required_qty += quantity
+            if line.workflow_status in ("ordered", "logistics_filled", "completed"):
+                purchased_qty += quantity
+            if (
+                line.claimed_by_user_id is not None
+                and line.claimed_by_user_id not in purchaser_ids
+            ):
+                purchaser_ids.append(line.claimed_by_user_id)
         submitted_by = None
         if record.submitted_by_user_id is not None:
             user = users_by_id.get(record.submitted_by_user_id)
             if user is not None:
                 submitted_by = {"id": str(user.id), "name": user.display_name}
-        return {
+        purchase_splits = splits or []
+        tracking_splits = [
+            split
+            for split in purchase_splits
+            if split.status == "ordered"
+        ]
+        latest_split = purchase_splits[-1] if purchase_splits else None
+        result: dict[str, object] = {
             "purchaseOrderId": str(record.id),
             "orderKey": record.order_key,
             "packageId": draft.get("packageId"),
             "platformOrderNo": draft.get("platformOrderNo"),
-            "storeName": draft.get("storeName"),
+            "storeName": record.store_name,
+            "storeBaseName": record.store_base_name,
             "site": draft.get("site"),
+            "recipientName": draft.get("recipientName"),
+            "recipientCountry": draft.get("site"),
             "salesCurrency": draft.get("salesCurrency"),
             "salesAmount": draft.get("salesAmount"),
+            "profitCurrency": metrics.get("currency") or draft.get("salesCurrency"),
+            "estimatedProfit": metrics.get("estimatedProfit"),
+            "profitMargin": metrics.get("profitMargin"),
             "dianxiaomiOrderTime": draft.get("dianxiaomiOrderTime"),
             "guideTotalsByCurrency": draft.get("guideTotalsByCurrency") or {},
             "submissionStatus": record.submission_status,
             "syncStatus": record.sync_status,
             "draftRevision": record.draft_revision,
             "itemCount": len(lines),
+            "requiredQty": required_qty,
+            "purchasedQty": purchased_qty,
             "previewImages": preview_images[:3],
             "workflowCounts": workflow_counts,
             "createdAt": record.created_at.isoformat(),
             "updatedAt": record.updated_at.isoformat(),
             "submittedAt": record.submitted_at.isoformat() if record.submitted_at else None,
             "submittedBy": submitted_by,
+            "operator": {"name": record.operator_name} if record.operator_name else None,
+            "purchasers": [
+                public_user
+                for user_id in purchaser_ids
+                if (public_user := self._public_user(users_by_id.get(user_id))) is not None
+            ],
+            "purchaseBatchCount": len(purchase_splits),
+            "trackingBatchCount": len(tracking_splits),
+            "currentResource": {
+                "hubEnvironmentRef": latest_split.hub_environment_ref,
+                "hubEnvironmentName": latest_split.hub_environment_name,
+                "buyerAccountRef": latest_split.buyer_account_ref,
+                "buyerAccountLabel": latest_split.buyer_account_label,
+            } if latest_split and (
+                latest_split.hub_environment_ref or latest_split.buyer_account_ref
+            ) else None,
         }
+        if not visibility["store"]:
+            result.pop("storeName", None)
+            result.pop("storeBaseName", None)
+        elif not visibility["operator"]:
+            result["storeName"] = record.store_base_name
+        if not visibility["operator"]:
+            result.pop("operator", None)
+        if not visibility["store"] or not visibility["operator"]:
+            result.pop("orderKey", None)
+        if not visibility["salesAmount"]:
+            result.pop("salesCurrency", None)
+            result.pop("salesAmount", None)
+        if not visibility["profit"]:
+            result.pop("profitCurrency", None)
+            result.pop("estimatedProfit", None)
+        if not visibility["profitMargin"]:
+            result.pop("profitMargin", None)
+        return result
+
+    def _execution_batches(
+        self,
+        record: PurchaseOrder,
+        lines: list[PurchaseOrderLine],
+        splits: list[PurchaseSplit],
+        users_by_id: dict[uuid.UUID, User],
+    ) -> list[dict[str, object]]:
+        if not splits:
+            return []
+        split_ids = [split.id for split in splits]
+        split_lines: dict[uuid.UUID, list[PurchaseSplitLine]] = {}
+        for split_line in self.session.scalars(
+            select(PurchaseSplitLine)
+            .where(PurchaseSplitLine.purchase_split_id.in_(split_ids))
+            .order_by(PurchaseSplitLine.purchase_split_id, PurchaseSplitLine.id)
+        ):
+            split_lines.setdefault(split_line.purchase_split_id, []).append(split_line)
+        source_lines = {line.id: line for line in lines}
+        return [
+            self._execution_item(
+                split,
+                record,
+                split_lines.get(split.id, []),
+                source_lines,
+                users_by_id.get(split.purchaser_user_id),
+            )
+            for split in splits
+        ]
 
     def _reconcile_lines(
         self,

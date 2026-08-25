@@ -33,11 +33,12 @@ workflows contributed by **Samforo**.
 The current stable release is `v0.10.0`. The project is under active
 development and is not yet a hosted SaaS product.
 
-The current coordinated test candidate is `v0.11.1`. Based on v0.11.0, it
-fixes a local polling race that could return the page to sign-in after a
-successful Feishu authorization, and resumes an unexpired sign-in request
-after a page refresh. It is limited to all current users of the shared test
-environment; it is not a production release.
+The current coordinated test candidate is `v0.12.0`. It upgrades the shared
+procurement claim pool and each buyer's execution workspace, adds batch claim,
+store/operator filters, profit summaries, quick checkout and guarded task
+return actions, and reduces HubStudio Local API rate-limit failures during
+concurrent environment creation. It is limited to all current users of the
+shared test environment; it is not a production release.
 
 v0.10.0 adds an opt-in safe parallel mode. When enabled, one order/shipment
 query batch may run alongside either one bound-environment batch or one

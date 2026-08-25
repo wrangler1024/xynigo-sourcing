@@ -87,7 +87,7 @@ class HubRuntimeGateTests(unittest.TestCase):
         self.assertEqual(state['maximum'], 1)
 
     def test_request_slots_bound_total_local_api_concurrency(self):
-        gate = HubRuntimeGate(max_requests=2)
+        gate = HubRuntimeGate(max_requests=2, min_request_interval=0)
         state = {'active': 0, 'maximum': 0}
         lock = threading.Lock()
 
@@ -107,6 +107,36 @@ class HubRuntimeGateTests(unittest.TestCase):
         for thread in threads:
             thread.join(timeout=2)
         self.assertEqual(state['maximum'], 2)
+
+    def test_requests_are_globally_paced_and_rate_limit_adds_cooldown(self):
+        class FakeClock(object):
+            def __init__(self):
+                self.now = 0.0
+                self.sleeps = []
+
+            def monotonic(self):
+                return self.now
+
+            def sleep(self, seconds):
+                self.sleeps.append(seconds)
+                self.now += seconds
+
+        clock = FakeClock()
+        gate = HubRuntimeGate(
+            max_requests=4, min_request_interval=0.3,
+            sleep_fn=clock.sleep, monotonic_fn=clock.monotonic)
+
+        with gate.request():
+            pass
+        with gate.request():
+            pass
+        gate.defer_requests(2.0)
+        with gate.request():
+            pass
+
+        self.assertEqual(len(clock.sleeps), 2)
+        self.assertAlmostEqual(clock.sleeps[0], 0.3)
+        self.assertAlmostEqual(clock.sleeps[1], 2.0)
 
 
 if __name__ == '__main__':

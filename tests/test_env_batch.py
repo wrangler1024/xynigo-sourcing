@@ -7,6 +7,8 @@ import random
 import tempfile
 import threading
 import unittest
+from contextlib import nullcontext
+from unittest.mock import patch
 import zipfile
 
 from openpyxl import Workbook, load_workbook
@@ -469,6 +471,52 @@ class EnvBatchTests(unittest.TestCase):
             'args': ['--headless=new'],
         })])
 
+    def test_hub_rate_limit_uses_shared_cooldown_then_retries(self):
+        class FakeResponse(object):
+            def __init__(self, payload):
+                self.payload = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _type, _value, _traceback):
+                return False
+
+            def read(self):
+                return json.dumps(self.payload).encode('utf-8')
+
+        class FakeOpener(object):
+            def __init__(self):
+                self.responses = [
+                    {'code': 'E010205', 'msg': '请求太频繁，请稍后再试'},
+                    {'code': 0, 'msg': 'ok', 'data': {'list': [], 'total': 0}},
+                ]
+
+            def open(self, _request, timeout=None):
+                self.timeout = timeout
+                return FakeResponse(self.responses.pop(0))
+
+        class FakeGate(object):
+            def __init__(self):
+                self.cooldowns = []
+
+            def request(self):
+                return nullcontext()
+
+            def defer_requests(self, seconds):
+                self.cooldowns.append(seconds)
+
+        gate = FakeGate()
+        api = HubStudioApi(runtime_gate=gate, retries=3)
+        opener = FakeOpener()
+        with patch('purchase_tool.hub_api.OPENER', opener), \
+                patch('purchase_tool.hub_api.time.sleep') as fallback_sleep:
+            rows = api.env_list()
+
+        self.assertEqual(rows, [])
+        self.assertEqual(gate.cooldowns, [2.0])
+        fallback_sleep.assert_not_called()
+
     def test_ip_probe_never_uses_visible_browser_mode(self):
         class ProbeHub(object):
             def __init__(self):
@@ -724,6 +772,45 @@ class EnvBatchTests(unittest.TestCase):
         self.assertEqual(sum(call[0] == 'create' for call in hub.calls), 0)
         self.assertEqual(sum(call[0] == 'cookie' for call in hub.calls), 1)
         self.assertEqual(sum(call[0] == 'account' for call in hub.calls), 1)
+
+    def test_rate_limit_after_create_retries_by_adopting_half_finished_env(self):
+        class RateLimitedAfterCreateHub(FakeHub):
+            def __init__(self):
+                super().__init__()
+                self.fail_next_list = False
+
+            def env_create(self, body):
+                result = super().env_create(body)
+                self.fail_next_list = True
+                return result
+
+            def env_list(self, tag=None):
+                if self.fail_next_list:
+                    self.fail_next_list = False
+                    raise RuntimeError(
+                        '/env/list 返回 code=E010205: 请求太频繁，请稍后再试')
+                return super().env_list(tag)
+
+        hub = RateLimitedAfterCreateHub()
+        accounts = parse_vendor_workbook(
+            BytesIO(workbook_bytes(demo_rows()[:1])))
+        runner = BatchEnvOrchestrator(
+            hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY,
+            purchase_date='20260819', sleep_fn=lambda _seconds: None,
+            max_workers=1)
+        runner.prepare(accounts, '1:新刚')
+
+        runner.run()
+        self.assertEqual(runner.rows[0].state, 'failed')
+        self.assertEqual(runner.rows[0].error_step, 'env_created')
+        self.assertEqual(len(hub.envs), 1)
+
+        runner.retry_one(runner.rows[0].account.account_id)
+        self.assertEqual(runner.rows[0].state, 'done')
+        self.assertEqual(sum(call[0] == 'create' for call in hub.calls), 1)
+        self.assertEqual(sum(call[0] == 'cookie' for call in hub.calls), 1)
+        self.assertEqual(sum(call[0] == 'account' for call in hub.calls), 1)
+        self.assertEqual(sum(call[0] == 'remark' for call in hub.calls), 1)
 
     def test_backup_result_tsv_contains_no_credentials(self):
         hub = FakeHub()

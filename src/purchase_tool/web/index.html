@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Xynigo Sourcing v0.11.1</title>
+<title>Xynigo Sourcing v0.12.0</title>
 <link rel="icon" type="image/png" sizes="260x260" href="/xynigo-x.png?v=5">
 <link rel="icon" type="image/x-icon" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256" href="/favicon.ico?v=5">
 <link rel="shortcut icon" href="/favicon.ico?v=5">
@@ -378,7 +378,9 @@
   .planning-card p { margin: 9px auto 0; max-width: 480px; color: var(--navy-500); font-size: 12px; line-height: 1.8; }
   .planning-note { display: inline-flex; margin-top: 16px; padding: 6px 10px; border-radius: 999px; background: var(--parcel-100); color: #815510; font-size: 10px; font-weight: 900; }
   .procurement-metrics { display: grid; grid-template-columns: repeat(6,minmax(108px,1fr)); gap: 10px; }
-  .procurement-metric { min-height: 82px; padding: 14px 15px; border: 1px solid var(--line); border-radius: 14px; background: #f8fafb; }
+  .procurement-metric { min-height: 82px; padding: 14px 15px; border: 1px solid var(--line); border-radius: 14px; background: #f8fafb; font: inherit; text-align: left; cursor: pointer; }
+  .procurement-metric:hover { border-color: #afd8dc; background: #f5fbfb; transform: translateY(-1px); }
+  .procurement-metric.active { border-color: var(--rhino-500); background: var(--rhino-100); box-shadow: 0 0 0 3px rgba(32,174,179,.08); }
   .procurement-metric b { display: block; color: var(--navy-950); font-size: 22px; line-height: 1; }
   .procurement-metric span { display: block; margin-top: 8px; color: var(--navy-500); font-size: 10px; font-weight: 850; }
   .procurement-metric.submitted b { color: var(--green); }
@@ -386,26 +388,51 @@
   .procurement-metric.processing b { color: var(--rhino-600); }
   .procurement-metric.warning b { color: var(--amber); }
   .procurement-metric.abnormal b { color: var(--coral-500); }
-  .procurement-filter-grid { display: grid; grid-template-columns: repeat(4,minmax(150px,1fr)); gap: 10px; }
-  .procurement-filter-grid .field select { width: 100%; }
+  .procurement-filter-grid { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: 10px; align-items: end; }
+  .procurement-filter-grid .field { min-width: 0; }
+  .procurement-filter-grid .field input,
+  .procurement-filter-grid .field select {
+    width: 100%; min-width: 0; min-height: 42px; padding: 8px 11px;
+    border: 1px solid #dbe4eb; border-radius: 12px; outline: none;
+    background: #fbfcfd; color: var(--navy-950); font: inherit;
+  }
+  .procurement-filter-grid .field input:focus,
+  .procurement-filter-grid .field select:focus {
+    border-color: var(--rhino-500); box-shadow: 0 0 0 3px rgba(32,174,179,.12);
+  }
   .procurement-state { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 11px; background: #f8fafb; color: var(--navy-500); font-size: 11px; line-height: 1.6; }
   .procurement-state.ok { border-color: #bce5d2; background: var(--green-100); color: var(--green); }
   .procurement-state.bad { border-color: #ffd2c7; background: var(--coral-100); color: var(--coral-500); }
+  .procurement-table-scroll { position: relative; }
   .procurement-table-scroll th { z-index: 1; box-shadow: inset 0 -1px 0 var(--line); }
-  .procurement-order-key { max-width: 220px; overflow: hidden; color: var(--navy-500); text-overflow: ellipsis; }
   .procurement-workflow { display: flex; max-width: 240px; flex-wrap: wrap; gap: 4px; }
-  .procurement-table-scroll table { min-width: 1320px; }
+  .procurement-table-scroll table { min-width: 1780px; }
+  .procurement-task-table th:nth-child(3), .procurement-task-table td:nth-child(3) { min-width: 190px; }
+  .procurement-task-table th:nth-child(4), .procurement-task-table td:nth-child(4) { min-width: 150px; }
+  .procurement-task-table th:nth-child(5), .procurement-task-table td:nth-child(5) { min-width: 170px; }
+  .procurement-task-table th:nth-child(13), .procurement-task-table td:nth-child(13) { min-width: 145px; }
+  .procurement-task-table th:last-child, .procurement-task-table td:last-child { width: 166px; min-width: 166px; }
+  .procurement-task-table th:last-child,
+  .procurement-execution-table th:last-child { position: sticky; right: 0; z-index: 5; background: #f8fafb; box-shadow: -8px 0 16px rgba(8,37,72,.07), inset 0 -1px 0 var(--line); }
+  .procurement-task-table td:last-child,
+  .procurement-execution-table td:last-child { position: sticky; right: 0; z-index: 3; background: #fff; box-shadow: -8px 0 16px rgba(8,37,72,.07); }
   .procurement-batch-toolbar { justify-content: flex-end; }
   .procurement-batch-count { min-width: 104px; color: var(--navy-500); font-size: 10px; font-weight: 850; text-align: right; }
   .procurement-select-cell { width: 42px; text-align: center; }
   .procurement-select-cell input { width: 16px; height: 16px; accent-color: var(--rhino-600); cursor: pointer; }
   .procurement-select-cell input:disabled { cursor: not-allowed; opacity: .35; }
+  .procurement-field-help {
+    width: 16px; height: 16px; margin-left: 3px; padding: 0; border: 0; border-radius: 50%;
+    display: inline-grid; place-items: center; vertical-align: -2px; background: #eaf3f6;
+    color: var(--tech-blue-dark); font-size: 10px; font-weight: 900; cursor: help;
+  }
   .procurement-image-stack { min-width: 112px; display: flex; align-items: center; padding-left: 5px; }
   .procurement-image-thumb { width: 54px; height: 68px; margin-left: -7px; overflow: hidden; border: 2px solid #fff; border-radius: 11px; display: grid; place-items: center; background: #eef3f6; color: var(--navy-500); box-shadow: 0 5px 13px rgba(8,37,72,.1); }
   .procurement-image-thumb:first-child { margin-left: 0; }
   .procurement-image-thumb img { width: 100%; height: 100%; display: block; object-fit: cover; }
   .procurement-image-more { width: 28px; height: 28px; margin-left: -5px; border: 2px solid #fff; border-radius: 50%; display: grid; place-items: center; background: var(--navy-700); color: #fff; font-size: 9px; font-weight: 900; }
-  .procurement-action-stack { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+  .procurement-action-stack { display: grid; grid-template-columns: repeat(2,minmax(72px,1fr)); align-items: center; gap: 6px; }
+  .procurement-action-stack .btn-mini { width: 100%; white-space: nowrap; }
   .procurement-row-claim { border-color: #9bd5d3; background: var(--rhino-100); color: #126f74; }
   .procurement-row-claim:hover { border-color: var(--rhino-500); background: #e4f7f5; }
   .procurement-pagination { padding: 13px 18px; border-top: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; background: #fbfcfd; }
@@ -485,7 +512,10 @@
   .execution-page-metric.ordered b { color: var(--green); }
   .execution-page-metric.exception b { color: var(--coral-500); }
   .execution-page-filter-grid { display: grid; grid-template-columns: repeat(4,minmax(150px,1fr)); gap: 10px; }
-  .execution-page-filter-grid input, .execution-page-filter-grid select { width: 100%; }
+  .execution-page-filter-grid .field { min-width: 0; }
+  .execution-page-filter-grid input, .execution-page-filter-grid select { width: 100%; min-width: 0; min-height: 42px; padding: 8px 11px; border: 1px solid var(--line); border-radius: 11px; outline: none; background: #fbfcfd; color: var(--navy-950); font: inherit; font-size: 11px; }
+  .execution-page-filter-grid input::placeholder { color: #8c9da9; }
+  .execution-page-filter-grid input:focus, .execution-page-filter-grid select:focus { border-color: var(--rhino-500); background: #fff; box-shadow: 0 0 0 3px rgba(32,174,179,.10); }
   .execution-page-layout { display: grid; grid-template-columns: minmax(320px,400px) minmax(0,1fr); gap: 14px; align-items: start; }
   .execution-page-queue, .execution-page-detail { padding: 0; overflow: hidden; }
   .execution-page-pane-head { min-height: 58px; padding: 13px 15px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #fbfcfd; }
@@ -528,6 +558,58 @@
   .execution-page-action-draft p { margin: 0; color: var(--navy-500); font-size: 9px; line-height: 1.6; }
   .execution-page-action-buttons { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
   .execution-page-action-buttons .btn-mini:disabled { opacity: .55; cursor: not-allowed; }
+  .procurement-execution-table { min-width: 1540px !important; }
+  .procurement-execution-table th:nth-child(2), .procurement-execution-table td:nth-child(2) { min-width: 190px; }
+  .procurement-execution-table th:nth-child(3), .procurement-execution-table td:nth-child(3) { min-width: 150px; }
+  .procurement-execution-table th:nth-child(9), .procurement-execution-table td:nth-child(9) { min-width: 220px; }
+  .procurement-execution-table th:last-child, .procurement-execution-table td:last-child { width: 178px; min-width: 178px; }
+  .procurement-execution-table td.execution-menu-open { z-index: 25; }
+  .execution-row-actions { display: grid; grid-template-columns: repeat(2,minmax(72px,1fr)); gap: 6px; align-items: center; }
+  .execution-row-actions .btn-mini { width: 100%; white-space: nowrap; }
+  .execution-action-wrap { position: relative; }
+  .execution-action-menu { position: fixed; z-index: 120; top: 0; left: 0; width: 154px; padding: 5px; border: 1px solid var(--line); border-radius: 10px; display: grid; gap: 3px; background: #fff; box-shadow: 0 12px 30px rgba(8,37,72,.16); }
+  .execution-action-menu[hidden] { display: none; }
+  .execution-action-menu button { width: 100%; padding: 8px 9px; border: 0; border-radius: 7px; background: transparent; color: var(--navy-700); font: inherit; font-size: 10px; font-weight: 800; text-align: left; cursor: pointer; }
+  .execution-action-menu button:hover { background: var(--rhino-100); color: #126f74; }
+  .execution-action-menu button:disabled { color: #9aa9b5; cursor: not-allowed; }
+  .execution-action-menu button.danger { color: #b54732; }
+  .execution-action-menu button.danger:hover { background: var(--coral-100); color: #96341f; }
+  .execution-progress { min-width: 110px; }
+  .execution-progress b { display: block; color: var(--navy-950); font-size: 11px; }
+  .execution-progress span { display: block; margin-top: 3px; color: var(--navy-500); font-size: 9px; }
+  .procurement-workspace-card { padding: 0; overflow: hidden; }
+  .procurement-workspace-head { min-height: 66px; padding: 15px 18px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 16px; background: #fbfcfd; }
+  .procurement-workspace-head p { margin: 5px 0 0; color: var(--navy-500); font-size: 9px; }
+  .procurement-workspace-body { padding: 18px; }
+  .procurement-workspace-title { margin-bottom: 14px; display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+  .procurement-workspace-title h2 { margin: 0; color: var(--navy-950); font-size: 18px; }
+  .procurement-workspace-title p { margin: 5px 0 0; color: var(--navy-500); font-size: 10px; }
+  .procurement-workspace-summary { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; }
+  .procurement-workspace-summary .procurement-detail-field { padding: 10px 11px; border: 1px solid var(--line); border-radius: 10px; background: #f8fafb; }
+  .procurement-tracking-list { display: grid; gap: 9px; }
+  .procurement-tracking-batch { padding: 12px; border: 1px solid #bce5d2; border-radius: 11px; background: var(--green-100); }
+  .procurement-tracking-batch-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .procurement-tracking-batch-head b { color: var(--green); font-size: 11px; }
+  .procurement-tracking-batch-copy { margin-top: 7px; color: var(--navy-700); font-size: 9px; line-height: 1.6; }
+  .procurement-workspace-footer { margin-top: 12px; padding: 12px; border: 1px dashed #c9d6de; border-radius: 11px; display: flex; align-items: center; justify-content: space-between; gap: 12px; background: #fbfcfd; }
+  .procurement-workspace-footer p { margin: 0; color: var(--navy-500); font-size: 9px; line-height: 1.6; }
+  .business-log-filter-grid { display: grid; grid-template-columns: repeat(4,minmax(170px,1fr)); gap: 10px; }
+  .business-log-filter-grid .field input, .business-log-filter-grid .field select { width: 100%; }
+  .business-log-toolbar { margin-top: 12px; display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+  .business-log-toolbar .business-log-scope { margin-right: auto; color: var(--navy-500); font-size: 10px; line-height: 1.6; }
+  .business-log-table-scroll { overflow: auto; }
+  .business-log-table { min-width: 1180px; }
+  .business-log-result { display: inline-flex; padding: 4px 7px; border-radius: 999px; font-size: 9px; font-weight: 900; }
+  .business-log-result.success { background: var(--green-100); color: var(--green); }
+  .business-log-result.denied { background: var(--parcel-100); color: var(--amber); }
+  .business-log-result.failure { background: var(--coral-100); color: var(--coral-500); }
+  .business-log-detail { margin-top: 14px; }
+  .business-log-detail-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
+  .business-log-detail-field { min-width: 0; padding: 10px 11px; border: 1px solid var(--line); border-radius: 10px; background: #f8fafb; }
+  .business-log-detail-field.wide { grid-column: 1 / -1; }
+  .business-log-detail-field label { display: block; color: var(--navy-500); font-size: 9px; font-weight: 800; }
+  .business-log-detail-field span, .business-log-detail-field pre { display: block; margin: 5px 0 0; color: var(--navy-800); font-size: 10px; line-height: 1.65; overflow-wrap: anywhere; }
+  .business-log-detail-field pre { max-height: 240px; overflow: auto; white-space: pre-wrap; font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
   .resource-toolbar { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
   .resource-toolbar .field { min-width: 170px; }
   .resource-toolbar .field select { width: 100%; }
@@ -664,6 +746,8 @@
     .procurement-execution-line select { width: 100%; grid-column: 1 / -1; }
     .execution-page-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
     .execution-page-filter-grid, .execution-page-detail-grid { grid-template-columns: 1fr; }
+    .business-log-filter-grid, .business-log-detail-grid { grid-template-columns: 1fr; }
+    .business-log-detail-field.wide { grid-column: span 1; }
     .execution-page-layout { grid-template-columns: 1fr; }
     .execution-page-queue-list { max-height: 420px; }
     .procurement-detail-field.wide { grid-column: span 1; }
@@ -1062,8 +1146,10 @@
         <button class="secondary-tab" data-parent="system" data-module="larkconnection" data-required-role="super_admin" hidden>飞书连接<span class="secondary-status restricted">超管</span></button>
         <button class="secondary-tab" data-parent="system" data-module="organizationaccess" hidden>组织与权限<span class="secondary-status">云端</span></button>
         <button class="secondary-tab" data-parent="system" data-module="sessionmanagement" hidden>登录会话<span class="secondary-status">云端</span></button>
+        <button class="secondary-tab" data-parent="system" data-module="businesslogs" hidden>业务操作日志<span class="secondary-status">云端</span></button>
+        <button class="secondary-tab" data-parent="system" data-module="systemlogs" hidden>系统运行日志<span class="secondary-status">云端</span></button>
         <button class="secondary-tab" data-parent="system" data-planned="云端服务配置" disabled hidden>云端服务配置<span class="secondary-status restricted">超管</span></button>
-        <button class="secondary-tab" data-parent="system" data-planned="版本与审计" disabled hidden>版本与审计<span class="secondary-status planned">规划</span></button>
+        <button class="secondary-tab" data-parent="system" data-planned="版本管理" disabled hidden>版本管理<span class="secondary-status planned">规划</span></button>
       </div>
       <button class="module-tab" data-primary="operations" title="运营中心">
         <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 4h12v16H6zM9 2h6v4H9zM9 10h6M9 14h4"/><path d="m15 17 1.5 1.5L20 15"/></svg></span>
@@ -1151,7 +1237,7 @@
           <div class="hero-kicker">XYNIGO SOURCING WORKSPACE</div>
           <h1>让小犀帮你把每一单稳稳带回来，<span class="hero-call">Xyni, GO!</span></h1>
           <p id="moduleSummary">批量查询订单与物流状态，异常任务集中处理，结果一键导出。</p>
-          <div class="hero-meta"><span class="hero-chip">测试候选 v0.11.1</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
+          <div class="hero-meta"><span class="hero-chip">测试候选 v0.12.0</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
         </div>
         <div class="hero-lockup" role="img" aria-label="小犀与 Xynigo 完整品牌一体图形">
           <img src="xynigo-logo.png" alt="">
@@ -1170,19 +1256,19 @@
   <div class="module-panel hidden" id="procurementPanel">
     <section class="card">
       <div class="card-title table-title-row">
-        <span>采购任务概览 <span class="legend">PostgreSQL 事实源 · 认领与分单测试版</span></span>
+        <span>采购任务概览 <span class="legend">团队公共待认领池 · 点击卡片快捷筛选</span></span>
         <button class="btn" id="btnProcurementRefresh" type="button">↻ 刷新采购中心</button>
       </div>
       <div class="procurement-metrics">
-        <div class="procurement-metric"><b id="procurementCountTotal">—</b><span>采购单总量</span></div>
-        <div class="procurement-metric submitted"><b id="procurementCountSubmitted">—</b><span>已正式提交</span></div>
-        <div class="procurement-metric unclaimed"><b id="procurementCountUnclaimed">—</b><span>待认领明细</span></div>
-        <div class="procurement-metric processing"><b id="procurementCountProcessing">—</b><span>采购处理中</span></div>
-        <div class="procurement-metric abnormal"><b id="procurementCountAbnormal">—</b><span>退回 / 异常</span></div>
-        <div class="procurement-metric warning"><b id="procurementCountSyncPending">—</b><span>待同步采购单</span></div>
+        <button class="procurement-metric" type="button" data-procurement-quick-scope=""><b id="procurementCountTotal">—</b><span>采购单总量</span></button>
+        <button class="procurement-metric unclaimed active" type="button" data-procurement-quick-scope="unclaimed"><b id="procurementCountUnclaimed">—</b><span>待认领采购单</span></button>
+        <button class="procurement-metric processing" type="button" data-procurement-quick-scope="processing"><b id="procurementCountProcessing">—</b><span>团队采购处理中</span></button>
+        <button class="procurement-metric submitted" type="button" data-procurement-quick-scope="ordered"><b id="procurementCountSubmitted">—</b><span>已下单</span></button>
+        <button class="procurement-metric abnormal" type="button" data-procurement-quick-scope="abnormal"><b id="procurementCountAbnormal">—</b><span>退回 / 异常</span></button>
+        <button class="procurement-metric warning" type="button" data-procurement-quick-sync="pending"><b id="procurementCountSyncPending">—</b><span>待同步采购单</span></button>
       </div>
       <div class="procurement-state" id="procurementState">进入页面后读取当前组织的采购任务摘要，不触发店小秘审核或飞书同步。</div>
-      <div class="credential-note">概览和列表不会返回收件人姓名、电话或地址；只有点击“详情”后才按权限读取完整采购快照，并由云端记录详情读取审计。</div>
+      <div class="credential-note">列表只展示收件人和国家；电话、邮编及详细地址仅在采购单详情中按权限读取，并记录详情读取审计。</div>
     </section>
 
     <section class="card">
@@ -1191,9 +1277,11 @@
         <div class="table-actions"><button class="btn" id="btnProcurementReset" type="button">重置筛选</button></div>
       </div>
       <div class="procurement-filter-grid">
-        <div class="field"><label for="procurementFilterSubmission">提交状态</label><select id="procurementFilterSubmission"><option value="">全部提交状态</option><option value="submitted">已正式提交</option><option value="draft">草稿</option></select></div>
-        <div class="field"><label for="procurementFilterWorkflow">采购状态</label><select id="procurementFilterWorkflow"><option value="">全部采购状态</option><option value="draft">草稿明细</option><option value="unclaimed">待认领</option><option value="claimed">已认领</option><option value="purchasing">采购中</option><option value="ordered">已下单</option><option value="logistics_filled">已填物流</option><option value="completed">已完成</option><option value="returned">已退回</option><option value="exception">异常</option></select></div>
-        <div class="field"><label for="procurementFilterSync">同步状态</label><select id="procurementFilterSync"><option value="">全部同步状态</option><option value="pending">待同步</option><option value="synced">已同步</option><option value="failed">同步失败</option><option value="conflict">同步冲突</option></select></div>
+        <div class="field"><label for="procurementFilterScope">任务范围</label><select id="procurementFilterScope"><option value="unclaimed" selected>待认领采购单</option><option value="">全部采购单</option><option value="processing">团队采购处理中</option><option value="ordered">已下单</option><option value="abnormal">退回 / 异常</option></select></div>
+        <div class="field"><label for="procurementFilterSite">站点</label><select id="procurementFilterSite"><option value="">全部站点</option><option value="US">美国站 US</option><option value="MX">墨西哥站 MX</option></select></div>
+        <div class="field" data-procurement-filter-field="store"><label for="procurementFilterStore">店铺</label><select id="procurementFilterStore"><option value="">全部店铺</option></select></div>
+        <div class="field" data-procurement-filter-field="operator"><label for="procurementFilterOperator">运营</label><select id="procurementFilterOperator"><option value="">全部运营</option></select></div>
+        <div class="field"><label for="procurementFilterKeyword">搜索</label><input id="procurementFilterKeyword" type="search" placeholder="采购单 / 销售订单号 / 店铺 / 运营"></div>
         <div class="field"><label for="procurementPageSize">每页数量</label><select id="procurementPageSize"><option value="30">30 条</option><option value="50">50 条</option><option value="100">100 条</option><option value="300">300 条</option></select></div>
       </div>
     </section>
@@ -1201,16 +1289,12 @@
     <section class="card table-card">
       <div class="card-title table-title-row">
         <div class="table-title-copy"><span>采购单列表</span><span class="legend" id="procurementVisibleCount">0 条</span></div>
-        <div class="table-actions procurement-batch-toolbar">
-          <span class="procurement-batch-count" id="procurementSelectedCount">已选 0 单 / 0 条明细</span>
-          <button class="btn primary" id="btnProcurementBatchClaim" type="button" disabled>批量认领</button>
-          <span class="legend">整单和批量入口最终仍按采购明细认领 · 测试库原子写入</span>
-        </div>
+        <div class="table-actions procurement-batch-toolbar"><span class="procurement-batch-count" id="procurementBatchCount">已选 0 单</span><button class="btn primary" id="btnProcurementBatchClaim" type="button" disabled>批量认领</button></div>
       </div>
       <div class="table-wrap procurement-table-scroll">
-        <table>
-          <thead><tr><th class="procurement-select-cell"><input id="procurementSelectAll" type="checkbox" aria-label="选择当前页全部可认领采购单"></th><th>商品预览</th><th>采购单 / 平台单号</th><th>店铺 / 站点</th><th>销售金额</th><th>采购指导额</th><th>明细 / 采购状态</th><th>提交状态</th><th>同步状态</th><th>提交人 / 时间</th><th>最近更新</th><th>操作</th></tr></thead>
-          <tbody id="procurementTbody"><tr><td colspan="12" class="empty-tip">尚未读取采购任务</td></tr></tbody>
+        <table class="procurement-task-table">
+          <thead><tr><th class="procurement-select-cell"><input id="procurementSelectAll" type="checkbox" aria-label="选择当前页全部可认领采购单" disabled></th><th>商品预览</th><th>采购单 / 平台单号</th><th data-procurement-field-group="storeOperator" id="procurementStoreOperatorHeader">店铺 / 运营</th><th>收件人 / 国家</th><th data-procurement-field="salesAmount">销售金额</th><th>采购指导额</th><th data-procurement-field="profit">预估利润 <span class="procurement-field-help" title="来自运营采购助手插件：预估利润 = 包裹总金额 - 预估采购成本；最终利润以后续实际采购金额为准。" aria-label="预估利润说明">?</span></th><th data-procurement-field="profitMargin">利润率 <span class="procurement-field-help" title="来自运营采购助手插件：利润率 = 预估利润 ÷ 包裹总金额 × 100%。" aria-label="利润率说明">?</span></th><th>明细 / 件数</th><th>采购状态</th><th>采购员</th><th>提交人 / 时间</th><th>最近更新</th><th>操作</th></tr></thead>
+          <tbody id="procurementTbody"><tr><td colspan="15" class="empty-tip">尚未读取采购任务</td></tr></tbody>
         </table>
       </div>
       <div class="procurement-pagination">
@@ -1223,42 +1307,52 @@
   <div class="module-panel hidden" id="procurementExecutionPanel">
     <section class="card">
       <div class="card-title table-title-row">
-        <div class="table-title-copy"><span>采购执行工作台</span><span class="legend">采购分单 · 资源绑定 · 下单回填</span></div>
-        <button class="btn" id="btnExecutionPrototypeReset" type="button">↻ 刷新测试数据</button>
+        <div class="table-title-copy"><span>采购执行工作台</span><span class="legend">本人已认领采购单 · 本次下单 · 付款结果 · 跟单留存</span></div>
+        <button class="btn" id="btnExecutionPrototypeReset" type="button">↻ 刷新采购执行</button>
       </div>
       <div class="execution-page-banner">
-        <span><b>测试版本：</b>采购分单来自测试库；Hub 环境只保存安全标识，买家号只保存脱敏标签，不保存密码、Cookie 或授权凭证。</span>
-        <span>真实下单动作暂未开放</span>
+        <span><b>执行原则：</b>认领成功的采购单直接进入本人工作台；是否分批及每批数量在真实结算、确认优惠券后确定。</span>
+        <span>资源结果按付款结果处理</span>
       </div>
       <div class="execution-page-metrics">
-        <div class="execution-page-metric binding"><b id="executionMetricWaitingBinding">0</b><span>待绑定资源</span></div>
-        <div class="execution-page-metric ready"><b id="executionMetricWaitingOrder">0</b><span>待下单</span></div>
-        <div class="execution-page-metric working"><b id="executionMetricPurchasing">0</b><span>采购中</span></div>
-        <div class="execution-page-metric ordered"><b id="executionMetricOrdered">0</b><span>已下单</span></div>
+        <div class="execution-page-metric binding"><b id="executionMetricWaitingBinding">0</b><span>待采购 / 部分完成</span></div>
+        <div class="execution-page-metric ready"><b id="executionMetricWaitingOrder">0</b><span>本次下单中</span></div>
+        <div class="execution-page-metric working"><b id="executionMetricPurchasing">0</b><span>待确认付款</span></div>
+        <div class="execution-page-metric ordered"><b id="executionMetricOrdered">0</b><span>跟单采购单</span></div>
         <div class="execution-page-metric exception"><b id="executionMetricException">0</b><span>异常</span></div>
       </div>
     </section>
 
     <section class="card">
-      <div class="card-title table-title-row"><span>筛选采购分单</span><span class="legend">状态口径和可执行动作将在下一轮共同确认</span></div>
+      <div class="card-title table-title-row"><span>筛选采购单</span><span class="legend">仅展示当前账号已认领的采购单</span></div>
       <div class="execution-page-filter-grid">
-        <div class="field"><label for="executionFilterStatus">分单状态</label><select id="executionFilterStatus"><option value="">全部状态</option><option value="waiting_binding">待绑定资源</option><option value="waiting_order">待下单</option><option value="purchasing">采购中</option><option value="ordered">已下单</option><option value="exception">异常</option></select></div>
+        <div class="field"><label for="executionFilterStatus">执行状态</label><select id="executionFilterStatus"><option value="">全部状态</option><option value="waiting_binding">待采购 / 部分完成</option><option value="waiting_order">本次下单中</option><option value="ordered">跟单中</option><option value="exception">异常</option></select></div>
         <div class="field"><label for="executionFilterSite">站点</label><select id="executionFilterSite"><option value="">全部站点</option><option value="US">美国站 US</option><option value="MX">墨西哥站 MX</option></select></div>
-        <div class="field"><label for="executionFilterBinding">资源绑定</label><select id="executionFilterBinding"><option value="">全部绑定状态</option><option value="bound">已绑定 Hub + 买家号</option><option value="unbound">尚未绑定</option></select></div>
-        <div class="field"><label for="executionFilterKeyword">搜索</label><input id="executionFilterKeyword" type="text" placeholder="分单号 / 销售订单号 / 采购单 / SKU"></div>
+        <div class="field"><label for="executionFilterBinding">采购进度</label><select id="executionFilterBinding"><option value="">全部进度</option><option value="remaining">仍有待采购</option><option value="completed">采购已完成</option></select></div>
+        <div class="field"><label for="executionFilterKeyword">搜索</label><input id="executionFilterKeyword" type="search" placeholder="销售订单号 / 采购单 / 店铺 / 运营"></div>
       </div>
     </section>
 
-    <div class="execution-page-layout">
-      <section class="card execution-page-queue">
-        <div class="execution-page-pane-head"><strong>采购分单队列</strong><span id="executionQueueCount">0 张</span></div>
-        <div class="execution-page-queue-list" id="executionQueueList"><div class="execution-page-empty">正在读取测试库数据…</div></div>
-      </section>
-      <section class="card execution-page-detail">
-        <div class="execution-page-pane-head"><strong>采购分单详情</strong><span>测试库数据</span></div>
-        <div class="execution-page-detail-body" id="executionPageDetail"><div class="execution-page-empty">从左侧选择一张采购分单，查看来源明细、资源绑定和下单回填区域。</div></div>
-      </section>
-    </div>
+    <section class="card table-card execution-order-list">
+      <div class="card-title table-title-row"><div class="table-title-copy"><span>本人采购单列表</span><span class="legend" id="executionQueueCount">0 单</span></div><span class="legend">操作始终保持两列：详情 / 快捷或处理</span></div>
+      <div class="table-wrap procurement-table-scroll">
+        <table class="procurement-execution-table">
+          <thead><tr><th>商品预览</th><th>销售订单 / 采购单</th><th>店铺 / 运营</th><th>采购单金额</th><th>采购指导额</th><th>明细 / 件数</th><th>采购进度</th><th>采购单状态</th><th>跟单摘要</th><th>最近更新</th><th>操作</th></tr></thead>
+          <tbody id="executionQueueList"><tr><td colspan="11" class="empty-tip">正在读取本人采购单…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="procurement-pagination"><span class="procurement-pagination-copy" id="executionPageSummary">第 1 页 · 共 0 单</span><div class="procurement-pagination-actions"><select id="executionPageSize"><option value="50">50 条</option><option value="100">100 条</option><option value="300">300 条</option></select><button class="btn-mini" id="btnExecutionPrev" type="button" disabled>上一页</button><span id="executionPageIndicator">1 / 1 页</span><button class="btn-mini" id="btnExecutionNext" type="button" disabled>下一页</button></div></div>
+    </section>
+  </div>
+
+  <div class="module-panel hidden" id="procurementOrderDetailPanel">
+    <section class="card procurement-workspace-card">
+      <div class="procurement-workspace-head">
+        <div><div class="card-title" id="procurementWorkspaceTitle">采购单执行详情</div><p id="procurementWorkspaceSubtitle">独立工作区 · 返回列表后保留筛选条件与当前位置</p></div>
+        <div class="table-actions"><button class="btn-mini" id="btnProcurementWorkspacePrev" type="button">← 上一单</button><button class="btn-mini" id="btnProcurementWorkspaceNext" type="button">下一单 →</button><button class="btn-mini" id="btnProcurementWorkspaceBack" type="button">返回采购执行列表</button></div>
+      </div>
+      <div class="procurement-workspace-body" id="procurementWorkspaceBody"><div class="procurement-detail-loading">请选择采购单</div></div>
+    </section>
   </div>
 
   <div class="module-panel" id="queryPanel">
@@ -1658,6 +1752,86 @@
     </section>
   </div>
 
+  <div class="module-panel hidden" id="businessLogsPanel">
+    <section class="card">
+      <div class="card-title table-title-row">
+        <span>业务操作日志 <span class="legend">后端事实记录 · 只允许追加</span></span>
+        <button class="btn" id="btnBusinessLogsRefresh" type="button">↻ 刷新日志</button>
+      </div>
+      <div class="credential-note">普通采购员仅能查看本人日志；具备审计查看权限的主管和管理员可查看当前租户范围。日志不会保存密码、Cookie、Token、API Key、完整电话或详细地址。</div>
+      <div class="business-log-filter-grid" style="margin-top:14px">
+        <div class="field"><label>开始时间</label><input class="env-text" id="businessLogStartTime" type="datetime-local"></div>
+        <div class="field"><label>结束时间</label><input class="env-text" id="businessLogEndTime" type="datetime-local"></div>
+        <div class="field"><label>模块</label><select id="businessLogModule"><option value="">全部模块</option><option value="procurement">采购中心</option><option value="system">系统管理</option><option value="resources">资源中心</option><option value="operations">运营中心</option><option value="finance">财务中心</option></select></div>
+        <div class="field"><label>操作人</label><input class="env-text" id="businessLogOperator" type="text" maxlength="255" placeholder="姓名或用户 ID"></div>
+        <div class="field"><label>结果</label><select id="businessLogResult"><option value="">全部结果</option><option value="success">成功</option><option value="validation_failed">校验失败</option><option value="permission_denied">权限拒绝</option><option value="business_conflict">业务冲突</option><option value="not_found">对象不可见</option><option value="external_service_failed">外部服务失败</option><option value="failure">失败</option></select></div>
+        <div class="field"><label>业务单号</label><input class="env-text" id="businessLogBusinessNo" type="text" maxlength="255" placeholder="采购单号 / 平台订单号"></div>
+        <div class="field"><label>操作类型</label><input class="env-text" id="businessLogOperationType" type="text" maxlength="160" placeholder="如 purchase_order.submit"></div>
+        <div class="field"><label>requestId / traceId</label><input class="env-text" id="businessLogRequestId" type="text" maxlength="64" placeholder="精确定位一次后端请求"></div>
+      </div>
+      <div class="business-log-toolbar">
+        <span class="business-log-scope" id="businessLogScope">尚未读取日志范围</span>
+        <button class="btn" id="btnBusinessLogReset" type="button">重置筛选</button>
+        <button class="btn primary" id="btnBusinessLogSearch" type="button">查询</button>
+      </div>
+    </section>
+
+    <section class="card table-card" style="margin-top:14px">
+      <div class="card-title table-title-row"><div class="table-title-copy"><span>日志明细</span><span class="legend" id="businessLogCount">0 条</span></div><span class="legend">按操作时间倒序</span></div>
+      <div class="table-wrap business-log-table-scroll">
+        <table class="business-log-table"><thead><tr><th>操作时间</th><th>操作人 / 角色</th><th>模块</th><th>操作类型</th><th>业务对象</th><th>结果</th><th>失败原因</th><th>requestId</th><th>操作</th></tr></thead>
+        <tbody id="businessLogTbody"><tr><td colspan="9" class="empty-tip">尚未读取业务日志</td></tr></tbody></table>
+      </div>
+      <div class="procurement-pagination"><button class="btn" id="btnBusinessLogPrev" type="button" disabled>上一页</button><span id="businessLogPageState">第 1 页</span><button class="btn" id="btnBusinessLogNext" type="button" disabled>下一页</button><label class="legend">每页 <select id="businessLogPageSize"><option value="30">30</option><option value="50" selected>50</option><option value="100">100</option><option value="200">200</option></select> 条</label></div>
+    </section>
+
+    <section class="card business-log-detail" id="businessLogDetailPanel" hidden>
+      <div class="card-title table-title-row"><span id="businessLogDetailTitle">日志详情</span><button class="btn" id="btnBusinessLogDetailClose" type="button">关闭详情</button></div>
+      <div class="business-log-detail-grid" id="businessLogDetailBody"></div>
+    </section>
+  </div>
+
+  <div class="module-panel hidden" id="systemLogsPanel">
+    <section class="card">
+      <div class="card-title table-title-row">
+        <span>系统运行日志 <span class="legend">独立存储 · 结构化采集</span></span>
+        <button class="btn" id="btnSystemLogsRefresh" type="button">↻ 刷新日志</button>
+      </div>
+      <div class="credential-note">仅具备系统运行日志查看权限的主管和管理员可查看当前租户。日志不保存查询串、请求/响应正文、原始堆栈、密码、Cookie、Token、完整电话或详细地址。</div>
+      <div class="business-log-filter-grid" style="margin-top:14px">
+        <div class="field"><label>开始时间</label><input class="env-text" id="systemLogStartTime" type="datetime-local"></div>
+        <div class="field"><label>结束时间</label><input class="env-text" id="systemLogEndTime" type="datetime-local"></div>
+        <div class="field"><label>分类</label><select id="systemLogCategory"><option value="">全部分类</option><option value="system_runtime">运行日志</option><option value="system_error">错误日志</option></select></div>
+        <div class="field"><label>级别</label><select id="systemLogLevel"><option value="">全部级别</option><option value="info">信息</option><option value="warning">警告</option><option value="error">错误</option><option value="critical">严重</option></select></div>
+        <div class="field"><label>服务</label><input class="env-text" id="systemLogService" type="text" maxlength="64" placeholder="如 auth_service"></div>
+        <div class="field"><label>组件</label><input class="env-text" id="systemLogComponent" type="text" maxlength="64" placeholder="如 http_api"></div>
+        <div class="field"><label>事件类型</label><input class="env-text" id="systemLogEventType" type="text" maxlength="160" placeholder="如 http.request.failed"></div>
+        <div class="field"><label>HTTP 状态码</label><input class="env-text" id="systemLogStatusCode" type="number" min="100" max="599" placeholder="如 500"></div>
+        <div class="field"><label>requestId / traceId</label><input class="env-text" id="systemLogRequestId" type="text" maxlength="64" placeholder="定位一次跨组件请求"></div>
+        <div class="field"><label>关键词</label><input class="env-text" id="systemLogKeyword" type="search" maxlength="255" placeholder="消息、路由、错误码或指纹"></div>
+      </div>
+      <div class="business-log-toolbar">
+        <span class="business-log-scope" id="systemLogScope">尚未读取系统日志</span>
+        <button class="btn" id="btnSystemLogReset" type="button">重置筛选</button>
+        <button class="btn primary" id="btnSystemLogSearch" type="button">查询</button>
+      </div>
+    </section>
+
+    <section class="card table-card" style="margin-top:14px">
+      <div class="card-title table-title-row"><div class="table-title-copy"><span>运行与错误事件</span><span class="legend" id="systemLogCount">0 条</span></div><span class="legend">按发生时间倒序</span></div>
+      <div class="table-wrap business-log-table-scroll">
+        <table class="business-log-table"><thead><tr><th>发生时间</th><th>级别 / 分类</th><th>服务 / 组件</th><th>事件类型</th><th>HTTP</th><th>安全消息</th><th>requestId</th><th>操作</th></tr></thead>
+        <tbody id="systemLogTbody"><tr><td colspan="8" class="empty-tip">尚未读取系统运行日志</td></tr></tbody></table>
+      </div>
+      <div class="procurement-pagination"><button class="btn" id="btnSystemLogPrev" type="button" disabled>上一页</button><span id="systemLogPageState">第 1 页</span><button class="btn" id="btnSystemLogNext" type="button" disabled>下一页</button><label class="legend">每页 <select id="systemLogPageSize"><option value="30">30</option><option value="50" selected>50</option><option value="100">100</option><option value="200">200</option></select> 条</label></div>
+    </section>
+
+    <section class="card business-log-detail" id="systemLogDetailPanel" hidden>
+      <div class="card-title table-title-row"><span id="systemLogDetailTitle">系统日志详情</span><button class="btn" id="btnSystemLogDetailClose" type="button">关闭详情</button></div>
+      <div class="business-log-detail-grid" id="systemLogDetailBody"></div>
+    </section>
+  </div>
+
   <div class="module-panel hidden" id="settingsPanel">
     <section class="card settings-view" data-settings-view="localsettings">
       <div class="card-title">通用与查询设置 <span class="legend">仅保存在当前电脑</span></div>
@@ -2034,6 +2208,14 @@ let authPollTimer = null;
 let currentAuthLoginUrl = '';
 let authLoginWindow = null;
 let authLoginStarting = false;
+let businessLogPage = 1;
+let businessLogTotal = 0;
+let businessLogsLoaded = false;
+let businessLogsLoading = false;
+let systemLogPage = 1;
+let systemLogTotal = 0;
+let systemLogsLoaded = false;
+let systemLogsLoading = false;
 let envBuyers = [];                          // [{name,code}] 来自 /api/config，后端单一事实源
 let envDefaultSplit = ['新刚', '志恒', '康德'];
 let envBackupMax = 25;
@@ -2107,7 +2289,12 @@ const FEATURE_MODULES = {
   procurementexecution: {
     label: '采购执行', primary: 'procurement',
     requiredPermission: 'procurement.request.read',
-    summary: '按采购分单查看测试库中的资源绑定和采购上下文；真实下单与平台订单回填暂未开放。'
+    summary: '只展示当前采购员已认领的采购单；分批方案在实际结算确认优惠券后确定。'
+  },
+  procurementorderdetail: {
+    label: '采购单执行详情', primary: 'procurement',
+    requiredPermission: 'procurement.request.read',
+    summary: '在独立采购单工作区查看收件信息、采购备注、采购批次与跟单环境。'
   },
   query: {
     label: '订单物流查询', primary: 'fulfillment',
@@ -2162,6 +2349,15 @@ const FEATURE_MODULES = {
     label: '登录会话', primary: 'system',
     requiredPermission: 'system.member.manage',
     summary: '查看当前组织的有效会话摘要，并撤销单个会话或某位成员的全部会话。'
+  },
+  businesslogs: {
+    label: '业务操作日志', primary: 'system',
+    summary: '查看由后端记录的业务操作事实，按数据范围筛选成功、校验失败、权限拒绝和外部服务失败事件。'
+  },
+  systemlogs: {
+    label: '系统运行日志', primary: 'system',
+    requiredPermission: 'system.runtime_log.read',
+    summary: '查看当前租户的结构化运行与错误事件，通过 requestId 和 traceId 定位云端请求。'
   }
 };
 const PERMISSION_MENU_GROUPS = [
@@ -2298,9 +2494,14 @@ const PERMISSION_MENU_GROUPS = [
         codes: ['system.integration.manage']
       },
       {
-        id: 'audit', label: '版本与审计', badge: '规划入口',
-        note: '菜单尚未开放，先保留审计读取授权项。',
+        id: 'audit', label: '业务操作日志',
+        note: '授权后可查看当前租户业务日志；未授权成员仍只能查看本人日志。',
         codes: ['system.audit.read']
+      },
+      {
+        id: 'runtimelog', label: '系统运行日志', badge: '敏感只读',
+        note: '查看当前租户的结构化运行与错误日志，不包含原始堆栈或请求正文。',
+        codes: ['system.runtime_log.read']
       }
     ]
   }
@@ -2340,15 +2541,26 @@ let procurementPage = 1;
 let procurementTotal = 0;
 let procurementLoaded = false;
 let procurementLoading = false;
+let procurementSearchTimer = null;
 let procurementDetailRequest = 0;
 let activeProcurementDetailData = null;
 let procurementClaimTarget = null;
 const procurementSelectedOrderIds = new Set();
+const DEFAULT_PROCUREMENT_FIELD_VISIBILITY = {
+  store:true, operator:true, salesAmount:true, profit:true, profitMargin:true
+};
+let procurementFieldVisibility = {...DEFAULT_PROCUREMENT_FIELD_VISIBILITY};
 let procurementExecutionPreview = null;
 let procurementExecutionGroupCounter = 0;
 let procurementExecutionPageLoaded = false;
 let procurementExecutionPageRows = [];
+let procurementExecutionPage = 1;
+let procurementExecutionTotal = 0;
+let procurementExecutionSearchTimer = null;
 let activeProcurementExecutionPageId = '';
+let activeProcurementWorkspaceId = '';
+let procurementWorkspaceSourceModule = 'procurementexecution';
+let procurementWorkspaceOrderIds = [];
 const PROCUREMENT_EXECUTION_STATUS_LABELS = {
   waiting_binding:'待绑定资源', waiting_order:'待下单', purchasing:'采购中',
   ordered:'已下单', exception:'异常'
@@ -2851,6 +3063,13 @@ function procurementGuideTotals(value) {
     : '—';
 }
 
+function procurementPercent(value) {
+  if (value == null || value === '') return '—';
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '—';
+  return `${number.toLocaleString('zh-CN', {minimumFractionDigits:2, maximumFractionDigits:2})}%`;
+}
+
 function procurementSubmissionBadge(status) {
   const info = {
     draft:['草稿', 'inuse'],
@@ -2880,32 +3099,67 @@ function setProcurementMetric(id, value) {
   $(id).textContent = procurementNumber(value);
 }
 
+function setProcurementFilterOptions(id, label, values) {
+  const select = $(id);
+  const selected = select.value;
+  const normalized = Array.from(new Set((Array.isArray(values) ? values : [])
+    .map(value => String(value || '').trim()).filter(Boolean)));
+  select.replaceChildren(new Option(label, ''), ...normalized.map(value => new Option(value, value)));
+  select.value = normalized.includes(selected) ? selected : '';
+}
+
+function applyProcurementFieldVisibility() {
+  const visibility = procurementFieldVisibility;
+  document.querySelectorAll('[data-procurement-field]').forEach(node => {
+    node.hidden = visibility[node.dataset.procurementField] === false;
+  });
+  const showStoreOperator = visibility.store !== false || visibility.operator !== false;
+  document.querySelectorAll('[data-procurement-field-group="storeOperator"]').forEach(node => {
+    node.hidden = !showStoreOperator;
+  });
+  $('procurementStoreOperatorHeader').textContent = visibility.store !== false && visibility.operator !== false
+    ? '店铺 / 运营' : (visibility.store !== false ? '店铺' : '运营');
+  document.querySelectorAll('[data-procurement-filter-field]').forEach(node => {
+    const field = node.dataset.procurementFilterField;
+    node.hidden = visibility[field] === false;
+    if (node.hidden) node.querySelector('select').value = '';
+  });
+}
+
 function renderProcurementOverview(data) {
+  procurementFieldVisibility = {
+    ...DEFAULT_PROCUREMENT_FIELD_VISIBILITY,
+    ...(data && data.fieldVisibility || {})
+  };
   const orders = data && data.orders || {};
-  const submission = orders.bySubmissionStatus || {};
   const sync = orders.bySyncStatus || {};
-  const workflow = data && data.lines && data.lines.byWorkflowStatus || {};
+  const scopes = orders.byTaskScope || {};
+  const filters = data && data.filters || {};
+  setProcurementFilterOptions('procurementFilterStore', '全部店铺', filters.stores);
+  setProcurementFilterOptions('procurementFilterOperator', '全部运营', filters.operators);
+  applyProcurementFieldVisibility();
   setProcurementMetric('procurementCountTotal', orders.total);
-  setProcurementMetric('procurementCountSubmitted', submission.submitted);
-  setProcurementMetric('procurementCountUnclaimed', workflow.unclaimed);
-  setProcurementMetric(
-    'procurementCountProcessing',
-    Number(workflow.claimed || 0) + Number(workflow.purchasing || 0)
-      + Number(workflow.ordered || 0) + Number(workflow.logistics_filled || 0));
-  setProcurementMetric(
-    'procurementCountAbnormal',
-    Number(workflow.returned || 0) + Number(workflow.exception || 0));
+  setProcurementMetric('procurementCountUnclaimed', scopes.unclaimed);
+  setProcurementMetric('procurementCountProcessing', scopes.processing);
+  setProcurementMetric('procurementCountSubmitted', scopes.ordered);
+  setProcurementMetric('procurementCountAbnormal', scopes.abnormal);
   setProcurementMetric('procurementCountSyncPending', sync.pending);
 }
 
 function procurementOrdersPath(page) {
   const params = new URLSearchParams();
-  const submission = $('procurementFilterSubmission').value;
-  const workflow = $('procurementFilterWorkflow').value;
-  const sync = $('procurementFilterSync').value;
-  if (submission) params.set('submissionStatus', submission);
-  if (workflow) params.set('workflowStatus', workflow);
-  if (sync) params.set('syncStatus', sync);
+  const scope = $('procurementFilterScope').value;
+  const site = $('procurementFilterSite').value;
+  const store = $('procurementFilterStore').value;
+  const operator = $('procurementFilterOperator').value;
+  const keyword = $('procurementFilterKeyword').value.trim();
+  if (scope) params.set('taskScope', scope);
+  if (site) params.set('site', site);
+  if (store && procurementFieldVisibility.store !== false) params.set('store', store);
+  if (operator && procurementFieldVisibility.operator !== false) params.set('operator', operator);
+  if (keyword) params.set('keyword', keyword);
+  const pendingQuickFilter = document.querySelector('[data-procurement-quick-sync].active');
+  if (pendingQuickFilter) params.set('syncStatus', pendingQuickFilter.dataset.procurementQuickSync);
   params.set('page', String(page));
   params.set('pageSize', $('procurementPageSize').value || '30');
   return '/api/procurement/orders?' + params.toString();
@@ -2945,26 +3199,30 @@ function procurementImageStack(values, itemCount) {
 }
 
 function updateProcurementSelectionToolbar() {
-  const eligibleRows = procurementRows.filter(procurementIsClaimable);
-  const selectedRows = eligibleRows.filter(row => procurementSelectedOrderIds.has(String(row.purchaseOrderId)));
-  const selectedLineCount = selectedRows.reduce((sum, row) => sum + procurementUnclaimedCount(row), 0);
-  $('procurementSelectedCount').textContent = `已选 ${selectedRows.length} 单 / ${selectedLineCount} 条明细`;
-  $('btnProcurementBatchClaim').disabled = selectedLineCount === 0;
+  const claimableIds = procurementRows
+    .filter(procurementIsClaimable)
+    .map(row => String(row.purchaseOrderId));
+  const claimableSet = new Set(claimableIds);
+  Array.from(procurementSelectedOrderIds).forEach(id => {
+    if (!claimableSet.has(id)) procurementSelectedOrderIds.delete(id);
+  });
+  const selectedCount = procurementSelectedOrderIds.size;
+  $('procurementBatchCount').textContent = `已选 ${selectedCount} 单`;
+  $('btnProcurementBatchClaim').disabled = procurementLoading || selectedCount === 0;
   const selectAll = $('procurementSelectAll');
-  selectAll.disabled = eligibleRows.length === 0;
-  selectAll.checked = eligibleRows.length > 0 && selectedRows.length === eligibleRows.length;
-  selectAll.indeterminate = selectedRows.length > 0 && selectedRows.length < eligibleRows.length;
+  selectAll.disabled = procurementLoading || claimableIds.length === 0;
+  selectAll.checked = claimableIds.length > 0 && selectedCount === claimableIds.length;
+  selectAll.indeterminate = selectedCount > 0 && selectedCount < claimableIds.length;
 }
 
 function renderProcurementRows(data) {
+  procurementFieldVisibility = {
+    ...DEFAULT_PROCUREMENT_FIELD_VISIBILITY,
+    ...(data && data.fieldVisibility || procurementFieldVisibility)
+  };
   procurementRows = Array.isArray(data.items) ? data.items : [];
   procurementPage = Number(data.page || 1);
   procurementTotal = Number(data.total || 0);
-  const visibleIds = new Set(procurementRows.map(row => String(row.purchaseOrderId)));
-  [...procurementSelectedOrderIds].forEach(id => {
-    const row = procurementRows.find(item => String(item.purchaseOrderId) === id);
-    if (!visibleIds.has(id) || !procurementIsClaimable(row)) procurementSelectedOrderIds.delete(id);
-  });
   const pageSize = Number(data.pageSize || $('procurementPageSize').value || 30);
   const totalPages = Math.max(1, Math.ceil(procurementTotal / pageSize));
   $('procurementVisibleCount').textContent = `${procurementRows.length} / ${procurementTotal} 条`;
@@ -2973,34 +3231,47 @@ function renderProcurementRows(data) {
   $('btnProcurementPrev').disabled = procurementLoading || procurementPage <= 1;
   $('btnProcurementNext').disabled = procurementLoading || procurementPage >= totalPages;
   if (!procurementRows.length) {
-    $('procurementTbody').innerHTML = '<tr><td colspan="12" class="empty-tip">当前筛选没有匹配采购单</td></tr>';
+    procurementSelectedOrderIds.clear();
+    $('procurementTbody').innerHTML = '<tr><td colspan="15" class="empty-tip">当前筛选没有匹配采购单</td></tr>';
+    applyProcurementFieldVisibility();
     updateProcurementSelectionToolbar();
     return;
   }
   $('procurementTbody').innerHTML = procurementRows.map(row => {
     const submittedBy = row.submittedBy && row.submittedBy.name || '—';
+    const operator = row.operator && row.operator.name || '待识别';
+    const storeName = row.storeBaseName || row.storeName || '—';
+    const purchasers = (Array.isArray(row.purchasers) ? row.purchasers : [])
+      .map(item => item && item.name).filter(Boolean);
     const orderId = String(row.purchaseOrderId || '');
     const claimable = procurementIsClaimable(row);
+    const selected = claimable && procurementSelectedOrderIds.has(orderId);
     const unclaimedCount = procurementUnclaimedCount(row);
-    const selected = procurementSelectedOrderIds.has(orderId);
     const claimAction = claimable
-      ? `<button class="btn-mini procurement-row-claim" type="button" data-procurement-claim-order="${esc(orderId)}">认领 ${procurementNumber(unclaimedCount)} 条</button>`
-      : '<span class="resource-muted">无待认领明细</span>';
+      ? `<button class="btn-mini procurement-row-claim" type="button" data-procurement-claim-order="${esc(orderId)}">认领</button>`
+      : '<button class="btn-mini" type="button" disabled>不可认领</button>';
+    const storeLines = [];
+    if (procurementFieldVisibility.store !== false) storeLines.push(esc(storeName));
+    if (procurementFieldVisibility.operator !== false) storeLines.push(`<span class="resource-muted">运营：${esc(operator)}</span>`);
     return `<tr data-procurement-order-row="${esc(orderId)}">` +
-      `<td class="procurement-select-cell"><input type="checkbox" data-procurement-select="${esc(orderId)}" aria-label="选择采购单 ${esc(row.packageId || orderId)}"${selected ? ' checked' : ''}${claimable ? '' : ' disabled'}></td>` +
+      `<td class="procurement-select-cell"><input type="checkbox" data-procurement-select-order="${esc(orderId)}" aria-label="选择采购单 ${esc(row.packageId || row.platformOrderNo || orderId)}"${claimable ? '' : ' disabled'}${selected ? ' checked' : ''}></td>` +
       `<td>${procurementImageStack(row.previewImages, row.itemCount)}</td>` +
-      `<td><b>${esc(row.packageId) || '—'}</b><div class="resource-muted mono">${esc(row.platformOrderNo) || '—'}</div><div class="procurement-order-key mono" title="${esc(row.orderKey)}">${esc(row.orderKey)}</div></td>` +
-      `<td>${esc(row.storeName) || '—'}<div class="resource-muted">${esc(row.site) || '—'}</div></td>` +
-      `<td>${esc(procurementMoney(row.salesAmount, row.salesCurrency))}</td>` +
+      `<td><b>${esc(row.packageId) || '—'}</b><div class="resource-muted mono">${esc(row.platformOrderNo) || '—'}</div></td>` +
+      `<td data-procurement-field-group="storeOperator">${storeLines.join('<br>') || '—'}</td>` +
+      `<td>${esc(row.recipientName) || '—'}<div class="resource-muted">${esc(row.recipientCountry || row.site) || '—'}</div></td>` +
+      `<td data-procurement-field="salesAmount">${esc(procurementMoney(row.salesAmount, row.salesCurrency))}</td>` +
       `<td>${esc(procurementGuideTotals(row.guideTotalsByCurrency))}</td>` +
-      `<td data-procurement-order-workflow><b>${procurementNumber(row.itemCount)} 条</b><div class="procurement-workflow">${procurementWorkflowBadges(row.workflowCounts)}</div></td>` +
-      `<td>${procurementSubmissionBadge(row.submissionStatus)}</td>` +
-      `<td>${procurementSyncBadge(row.syncStatus)}</td>` +
+      `<td data-procurement-field="profit">${esc(procurementMoney(row.estimatedProfit, row.profitCurrency || row.salesCurrency))}</td>` +
+      `<td data-procurement-field="profitMargin">${esc(procurementPercent(row.profitMargin))}</td>` +
+      `<td><b>${procurementNumber(row.itemCount)} 明细 / ${procurementNumber(row.requiredQty)} 件</b></td>` +
+      `<td data-procurement-order-workflow><div class="procurement-workflow">${procurementWorkflowBadges(row.workflowCounts)}</div></td>` +
+      `<td>${purchasers.length ? esc(purchasers.join('、')) : '<span class="resource-muted">未分配</span>'}</td>` +
       `<td>${esc(submittedBy)}<div class="resource-muted">${esc(procurementDateTime(row.submittedAt))}</div></td>` +
       `<td>${esc(procurementDateTime(row.updatedAt))}</td>` +
-      `<td data-procurement-order-action><div class="procurement-action-stack">${claimAction}<button class="btn-mini" type="button" data-procurement-detail="${esc(orderId)}">详情</button></div></td>` +
+      `<td data-procurement-order-action><div class="procurement-action-stack"><button class="btn-mini" type="button" data-procurement-detail="${esc(orderId)}">详情</button>${claimAction}</div></td>` +
       `</tr>`;
   }).join('');
+  applyProcurementFieldVisibility();
   updateProcurementSelectionToolbar();
 }
 
@@ -3012,6 +3283,7 @@ function setProcurementLoading(loading) {
   const pageSize = Number($('procurementPageSize').value || 30);
   const totalPages = Math.max(1, Math.ceil(procurementTotal / pageSize));
   $('btnProcurementNext').disabled = loading || procurementPage >= totalPages;
+  updateProcurementSelectionToolbar();
 }
 
 async function loadProcurementOrders(page=1, quiet=false) {
@@ -3027,13 +3299,13 @@ async function loadProcurementOrders(page=1, quiet=false) {
     renderProcurementRows(result.data);
     procurementLoaded = true;
     $('procurementState').className = 'procurement-state ok';
-    $('procurementState').textContent = `只读数据已更新 · ${new Date().toLocaleTimeString('zh-CN', {hour12:false})} · 列表不含收件信息。`;
+    $('procurementState').textContent = `数据已更新 · ${new Date().toLocaleTimeString('zh-CN', {hour12:false})} · 列表仅展示收件人和国家。`;
     return true;
   } catch (error) {
     $('procurementState').className = 'procurement-state bad';
     $('procurementState').textContent = `采购单读取失败：${error.message}`;
     if (!procurementRows.length) {
-      $('procurementTbody').innerHTML = `<tr><td colspan="12" class="empty-tip">${esc(error.message)}</td></tr>`;
+      $('procurementTbody').innerHTML = `<tr><td colspan="15" class="empty-tip">${esc(error.message)}</td></tr>`;
     }
     return false;
   } finally {
@@ -3064,7 +3336,7 @@ async function loadProcurementWorkspace(resetPage=false) {
     $('procurementState').className = 'procurement-state bad';
     $('procurementState').textContent = `采购中心读取失败：${error.message}`;
     if (!procurementRows.length) {
-      $('procurementTbody').innerHTML = `<tr><td colspan="12" class="empty-tip">${esc(error.message)}</td></tr>`;
+      $('procurementTbody').innerHTML = `<tr><td colspan="15" class="empty-tip">${esc(error.message)}</td></tr>`;
     }
   } finally {
     setProcurementLoading(false);
@@ -3096,9 +3368,11 @@ function renderProcurementDetail(data) {
   const canPlan = canManageExecution && lines.some(line => line.workflowStatus === 'claimed'
     && line.claimedBy && String(line.claimedBy.id) === currentUserId);
   const submittedBy = data.submittedBy && data.submittedBy.name || '—';
+  const operator = data.operator && data.operator.name || '待识别';
+  const storeName = data.storeBaseName || data.storeName || '—';
   const address = [draft.addressLine1, draft.addressLine2, draft.city, draft.stateProvince, draft.postalCode].filter(Boolean).join('，');
   $('procurementDetailTitle').textContent = `采购单详情｜${data.packageId || data.platformOrderNo || '—'}`;
-  $('procurementDetailSubtitle').textContent = `${data.storeName || '—'} · ${data.site || '—'} · ${lines.length} 条有效明细`;
+  $('procurementDetailSubtitle').textContent = `${storeName} · 运营 ${operator} · ${data.site || '—'} · ${lines.length} 条有效明细`;
   const lineRows = lines.length ? lines.map(line => {
     const item = line.payload || {};
     const purchaseLink = safeSheinPurchaseLink(item.purchaseLink);
@@ -3130,7 +3404,7 @@ function renderProcurementDetail(data) {
   $('procurementDetailBody').innerHTML =
     `<section class="procurement-detail-section"><h4>订单与状态</h4><div class="procurement-detail-grid">` +
       procurementDetailField('采购单 ID', data.purchaseOrderId, true) +
-      procurementDetailField('店铺 / 站点', `${data.storeName || '—'} / ${data.site || '—'}`) +
+      procurementDetailField('店铺 / 运营', `${storeName} / ${operator}`) +
       procurementDetailField('包裹号', data.packageId) +
       procurementDetailField('平台订单号', data.platformOrderNo) +
       procurementDetailField('店小秘下单时间', data.dianxiaomiOrderTime) +
@@ -3198,7 +3472,7 @@ function openProcurementOrderClaimPreview(orderId) {
   showProcurementClaimPreview({
     scope: 'orders', orderCount: 1, lineCount, rangeLabel: '整单待认领明细',
     orderIds: [String(row.purchaseOrderId)], lineIds: [], purchaseOrderId: '',
-    items: [{title: row.packageId || row.platformOrderNo || row.purchaseOrderId, meta: `${lineCount} 条 · ${row.storeName || '—'} / ${row.site || '—'}`}]
+    items: [{title: row.packageId || row.platformOrderNo || row.purchaseOrderId, meta: `${lineCount} 条 · ${row.storeBaseName || row.storeName || '—'} / ${row.site || '—'}`}]
   });
 }
 
@@ -3215,7 +3489,7 @@ function openProcurementBatchClaimPreview() {
     orderIds: rows.map(row => String(row.purchaseOrderId)), lineIds: [], purchaseOrderId: '',
     items: rows.map(row => ({
       title: row.packageId || row.platformOrderNo || row.purchaseOrderId,
-      meta: `${procurementUnclaimedCount(row)} 条 · ${row.storeName || '—'} / ${row.site || '—'}`
+      meta: `${procurementUnclaimedCount(row)} 条 · ${row.storeBaseName || row.storeName || '—'} / ${row.site || '—'}`
     }))
   });
 }
@@ -3241,7 +3515,8 @@ async function confirmProcurementClaimPreview() {
     (target.orderIds || []).forEach(id => procurementSelectedOrderIds.delete(String(id)));
     closeProcurementClaimPreview();
     await loadProcurementWorkspace(false);
-    if (target.purchaseOrderId) await openProcurementDetail(target.purchaseOrderId);
+    await resetProcurementExecutionPage(false);
+    openFeatureTab('procurementexecution');
     toast(`已认领 ${procurementNumber(data.claimedCount)} 条明细${data.unchangedCount ? `，${procurementNumber(data.unchangedCount)} 条保持原认领` : ''}`);
   } catch (error) {
     toast(error.message);
@@ -3415,12 +3690,21 @@ async function saveProcurementExecutionPreview() {
 }
 
 function procurementExecutionPageStatus(row) {
-  const label = PROCUREMENT_EXECUTION_STATUS_LABELS[row.status] || row.status || '未知';
-  return `<span class="execution-page-status ${esc(row.status)}">${esc(label)}</span>`;
+  const status = procurementExecutionOrderStatus(row);
+  const label = {
+    waiting_binding:'待采购', waiting_order:'本次下单中', ordered:'跟单中', exception:'异常'
+  }[status] || '待采购';
+  return `<span class="execution-page-status ${esc(status)}">${esc(label)}</span>`;
 }
 
-function procurementExecutionPageField(label, value) {
-  return `<div class="execution-page-detail-field"><label>${esc(label)}</label><strong>${esc(value || '—')}</strong></div>`;
+function procurementExecutionOrderStatus(row) {
+  const workflow = row && row.workflowCounts || {};
+  if (Number(workflow.exception || 0) + Number(workflow.returned || 0) > 0) return 'exception';
+  if (Number(workflow.purchasing || 0) > 0) return 'waiting_order';
+  const required = Number(row && row.requiredQty || 0);
+  const purchased = Number(row && row.purchasedQty || 0);
+  if (required > 0 && purchased >= required) return 'ordered';
+  return 'waiting_binding';
 }
 
 function procurementExecutionPageFilteredRows() {
@@ -3429,13 +3713,17 @@ function procurementExecutionPageFilteredRows() {
   const binding = $('executionFilterBinding').value;
   const keyword = $('executionFilterKeyword').value.trim().toLowerCase();
   return procurementExecutionPageRows.filter(row => {
-    if (status && row.status !== status) return false;
+    if (status && procurementExecutionOrderStatus(row) !== status) return false;
     if (site && row.site !== site) return false;
-    if (binding === 'bound' && !(row.hub && row.buyer)) return false;
-    if (binding === 'unbound' && (row.hub || row.buyer)) return false;
+    const required = Number(row.requiredQty || 0);
+    const purchased = Number(row.purchasedQty || 0);
+    if (binding === 'remaining' && purchased >= required) return false;
+    if (binding === 'completed' && (!required || purchased < required)) return false;
     if (keyword) {
-      const searchable = [row.id, row.salesOrderNo, row.sourceOrder, row.store, row.purchaser,
-        ...row.lines.flatMap(line => [line.sku, line.spec])].join(' ').toLowerCase();
+      const operator = row.operator && row.operator.name || '';
+      const purchasers = (row.purchasers || []).map(item => item.name).join(' ');
+      const searchable = [row.packageId, row.platformOrderNo, row.orderKey, row.storeName,
+        operator, purchasers].join(' ').toLowerCase();
       if (!searchable.includes(keyword)) return false;
     }
     return true;
@@ -3445,7 +3733,8 @@ function procurementExecutionPageFilteredRows() {
 function renderProcurementExecutionPageMetrics() {
   const counts = {waiting_binding:0, waiting_order:0, purchasing:0, ordered:0, exception:0};
   procurementExecutionPageRows.forEach(row => {
-    if (Object.prototype.hasOwnProperty.call(counts, row.status)) counts[row.status] += 1;
+    const status = procurementExecutionOrderStatus(row);
+    if (Object.prototype.hasOwnProperty.call(counts, status)) counts[status] += 1;
   });
   $('executionMetricWaitingBinding').textContent = procurementNumber(counts.waiting_binding);
   $('executionMetricWaitingOrder').textContent = procurementNumber(counts.waiting_order);
@@ -3454,89 +3743,306 @@ function renderProcurementExecutionPageMetrics() {
   $('executionMetricException').textContent = procurementNumber(counts.exception);
 }
 
-function renderProcurementExecutionPageDetail(row) {
-  if (!row) {
-    $('executionPageDetail').innerHTML = '<div class="execution-page-empty">当前筛选条件下没有采购分单。调整筛选条件后再查看。</div>';
-    return;
-  }
-  const resourceBound = Boolean(row.hub && row.buyer);
-  const lineRows = row.lines.map(line => {
-    const image = safeProcurementImageUrl(line.image);
-    return `<tr><td>${esc(line.lineNo)}</td>` +
-      `<td>${image ? `<span class="procurement-image-thumb"><img src="${esc(image)}" alt="" loading="lazy"></span>` : '<span class="procurement-image-thumb">暂无图</span>'}</td>` +
-      `<td><b>${esc(line.sku)}</b></td><td>${esc(line.spec)}</td><td>${procurementNumber(line.qty)}</td></tr>`;
-  }).join('');
-  const proposedAction = {
-    waiting_binding:'绑定 Hub 环境与买家号', waiting_order:'开始下单', purchasing:'回填平台订单号',
-    ordered:'查看履约衔接', exception:'处理异常'
-  }[row.status] || '继续处理';
-  $('executionPageDetail').innerHTML =
-    `<div class="execution-page-detail-title"><div><h3>${esc(row.id)}</h3><p>销售订单 ${esc(row.salesOrderNo)} · 来源采购单 ${esc(row.sourceOrder)} · ${row.lines.length} 条采购明细</p></div>${procurementExecutionPageStatus(row)}</div>` +
-    `<div class="execution-page-detail-grid">` +
-      procurementExecutionPageField('店铺销售订单号', row.salesOrderNo) +
-      procurementExecutionPageField('来源采购单', row.sourceOrder) +
-      procurementExecutionPageField('店铺 / 站点', `${row.store} / ${row.site}`) +
-      procurementExecutionPageField('采购员', row.purchaser) +
-      procurementExecutionPageField('采购指导额', procurementMoney(row.amount, row.currency)) +
-      procurementExecutionPageField('平台订单号', row.platformOrderNo) +
-      procurementExecutionPageField('最近更新', procurementDateTime(row.updatedAt)) +
-    `</div>` +
-    `<div class="execution-page-resource"><div class="execution-page-resource-head"><b>${resourceBound ? '已绑定下单资源' : '尚未绑定下单资源'}</b><span>一张采购分单对应一组资源</span></div>` +
-      `<div class="execution-page-resource-copy">Hub 环境：${esc(row.hub || '待选择')}<br>买家号：${esc(row.buyer || '待选择')}<br>业务备注：${esc(row.note || '—')}</div></div>` +
-    `<div class="execution-page-lines"><table><thead><tr><th>原明细行</th><th>商品</th><th>SKU</th><th>规格</th><th>分单数量</th></tr></thead><tbody>${lineRows}</tbody></table></div>` +
-    `<div class="execution-page-action-draft"><p><b>下一步动作暂不启用</b><br>按钮用于讨论状态流转、资源占用和失败回滚规则，不会改变页面或业务数据。</p>` +
-      `<div class="execution-page-action-buttons"><button class="btn-mini" type="button" disabled>${esc(proposedAction)}</button><button class="btn-mini" type="button" disabled>查看操作记录</button></div></div>`;
-}
-
 function renderProcurementExecutionPage() {
   renderProcurementExecutionPageMetrics();
   const rows = procurementExecutionPageFilteredRows();
-  if (!rows.some(row => row.id === activeProcurementExecutionPageId)) {
-    activeProcurementExecutionPageId = rows[0] && rows[0].id || '';
-  }
-  $('executionQueueCount').textContent = `${rows.length} 张`;
-  $('executionQueueList').innerHTML = rows.length ? rows.map(row =>
-    `<button class="execution-page-queue-card${row.id === activeProcurementExecutionPageId ? ' active' : ''}" type="button" data-execution-page-select="${esc(row.id)}">` +
-      `${procurementImageStack(row.lines.map(line => line.image), row.lines.length)}` +
-      `<span class="execution-page-card-copy"><span class="execution-page-card-head"><b>${esc(row.id)}</b>${procurementExecutionPageStatus(row)}</span>` +
-      `<span class="execution-page-card-meta">销售单 ${esc(row.salesOrderNo)}<br>来源 ${esc(row.sourceOrder)} · ${esc(row.store)} / ${esc(row.site)}<br>${row.lines.length} 条明细 · ${esc(procurementMoney(row.amount, row.currency))}</span>` +
-      `<span class="execution-page-card-foot"><span>${esc(row.purchaser)}</span><span>${esc(row.hub || '资源待绑定')}</span></span></span></button>`
-  ).join('') : '<div class="execution-page-empty">没有匹配的采购分单<br>可调整状态、站点或关键词。</div>';
-  renderProcurementExecutionPageDetail(rows.find(row => row.id === activeProcurementExecutionPageId));
+  procurementWorkspaceOrderIds = rows.map(row => String(row.purchaseOrderId));
+  const pageSize = Number($('executionPageSize').value || 50);
+  const totalPages = Math.max(1, Math.ceil(procurementExecutionTotal / pageSize));
+  $('executionQueueCount').textContent = `${rows.length} / ${procurementExecutionTotal} 单`;
+  $('executionPageSummary').textContent = `第 ${procurementExecutionPage} 页 · 共 ${procurementExecutionTotal} 单`;
+  $('executionPageIndicator').textContent = `${procurementExecutionPage} / ${totalPages} 页`;
+  $('btnExecutionPrev').disabled = procurementExecutionPage <= 1;
+  $('btnExecutionNext').disabled = procurementExecutionPage >= totalPages;
+  $('executionQueueList').innerHTML = rows.length ? rows.map(row => {
+    const id = String(row.purchaseOrderId || '');
+    const operator = row.operator && row.operator.name || '待识别';
+    const storeName = row.storeBaseName || row.storeName || '—';
+    const required = Number(row.requiredQty || 0);
+    const purchased = Number(row.purchasedQty || 0);
+    const remaining = Math.max(0, required - purchased);
+    const resource = row.currentResource || {};
+    const purchaseBatchCount = Number(row.purchaseBatchCount || 0);
+    const trackingBatchCount = Number(row.trackingBatchCount || 0);
+    const trackingCopy = trackingBatchCount
+      ? `${procurementNumber(trackingBatchCount)} 个付款批次 · 物流待回填`
+      : (purchaseBatchCount ? `${procurementNumber(purchaseBatchCount)} 个下单方案 · 尚未付款` : '尚未形成采购批次');
+    const resourceCopy = resource.hubEnvironmentName
+      ? `<b>${esc(resource.hubEnvironmentName)}</b><div class="resource-muted">${esc(trackingCopy)}</div>`
+      : `<span>${esc(trackingCopy)}</span>`;
+    const canContinue = remaining > 0;
+    const canTrack = purchased > 0 || trackingBatchCount > 0;
+    const quickEligible = Number(row.itemCount || 0) === 1 && required === 1
+      && purchased === 0 && purchaseBatchCount === 0;
+    const workflow = row.workflowCounts || {};
+    const canReturn = purchased === 0 && purchaseBatchCount === 0
+      && Number(workflow.claimed || 0) > 0
+      && Number(workflow.purchasing || 0) === 0
+      && Number(workflow.exception || 0) === 0;
+    const actionLabel = quickEligible ? '快捷下单 ▾' : '处理 ▾';
+    return `<tr data-execution-order-row="${esc(id)}">` +
+      `<td>${procurementImageStack(row.previewImages, row.itemCount)}</td>` +
+      `<td><b>${esc(row.packageId) || '—'}</b><div class="resource-muted mono">${esc(row.platformOrderNo) || '—'}</div></td>` +
+      `<td>${esc(storeName)}<div class="resource-muted">运营：${esc(operator)}</div></td>` +
+      `<td>${esc(procurementMoney(row.salesAmount, row.salesCurrency))}</td>` +
+      `<td>${esc(procurementGuideTotals(row.guideTotalsByCurrency))}</td>` +
+      `<td>${procurementNumber(row.itemCount)} 明细 / ${procurementNumber(required)} 件</td>` +
+      `<td><div class="execution-progress"><b>${procurementNumber(purchased)} / ${procurementNumber(required)} 件</b><span>剩余 ${procurementNumber(remaining)} 件</span></div></td>` +
+      `<td>${procurementExecutionPageStatus(row)}</td>` +
+      `<td>${resourceCopy}</td>` +
+      `<td>${esc(procurementDateTime(row.updatedAt))}</td>` +
+      `<td><div class="execution-row-actions"><button class="btn-mini" type="button" data-execution-detail="${esc(id)}">详情</button>` +
+        `<div class="execution-action-wrap"><button class="btn-mini" type="button" data-execution-action-toggle="${esc(id)}" aria-expanded="false">${actionLabel}</button>` +
+        `<div class="execution-action-menu" data-execution-action-menu="${esc(id)}" hidden>` +
+          `<button type="button" data-execution-workspace="${esc(id)}" data-execution-focus="${quickEligible ? 'quick-checkout' : 'checkout'}"${canContinue ? '' : ' disabled'}>${quickEligible ? '快捷下单（绑定资源）' : '继续采购下单'}</button>` +
+          `<button type="button" data-execution-workspace="${esc(id)}" data-execution-focus="tracking"${canTrack ? '' : ' disabled'}>查单跟单</button>` +
+          `<button class="danger" type="button" data-execution-return="${esc(id)}"${canReturn ? '' : ' disabled title="已形成采购批次或已进入采购流程，不能直接退回"'}>退回采购任务</button>` +
+        `</div></div></div></td></tr>`;
+  }).join('') : '<tr><td colspan="11" class="empty-tip">当前账号没有匹配的采购单</td></tr>';
 }
 
-async function resetProcurementExecutionPage(resetFilters=true) {
+function closeExecutionActionMenus() {
+  document.querySelectorAll('[data-execution-action-menu]').forEach(menu => {
+    menu.hidden = true;
+    menu.style.removeProperty('top');
+    menu.style.removeProperty('left');
+    menu.removeAttribute('data-placement');
+    const cell = menu.closest('td');
+    if (cell) cell.classList.remove('execution-menu-open');
+  });
+  document.querySelectorAll('[data-execution-action-toggle]').forEach(button => {
+    button.setAttribute('aria-expanded', 'false');
+  });
+}
+
+function placeExecutionActionMenu(toggle, menu) {
+  menu.hidden = false;
+  const gap = 6;
+  const viewportPadding = 8;
+  const toggleRect = toggle.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+  const spaceBelow = window.innerHeight - toggleRect.bottom - viewportPadding;
+  const spaceAbove = toggleRect.top - viewportPadding;
+  const tableHead = toggle.closest('table') && toggle.closest('table').querySelector('thead');
+  const tableHeadBottom = tableHead ? tableHead.getBoundingClientRect().bottom : viewportPadding;
+  const upwardTop = toggleRect.top - menuRect.height - gap;
+  const openUp = spaceBelow < menuRect.height + gap
+    && spaceAbove > spaceBelow
+    && upwardTop >= tableHeadBottom + 4;
+  const maxLeft = Math.max(viewportPadding, window.innerWidth - menuRect.width - viewportPadding);
+  const left = Math.min(maxLeft, Math.max(viewportPadding, toggleRect.right - menuRect.width));
+  const preferredTop = openUp
+    ? toggleRect.top - menuRect.height - gap
+    : toggleRect.bottom + gap;
+  const maxTop = Math.max(viewportPadding, window.innerHeight - menuRect.height - viewportPadding);
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(Math.min(maxTop, Math.max(viewportPadding, preferredTop)))}px`;
+  menu.dataset.placement = openUp ? 'top' : 'bottom';
+  const cell = menu.closest('td');
+  if (cell) cell.classList.add('execution-menu-open');
+  toggle.setAttribute('aria-expanded', 'true');
+}
+
+function openExecutionActionMenu(toggle, menu) {
+  menu.hidden = false;
+  const menuHeight = menu.getBoundingClientRect().height;
+  menu.hidden = true;
+  const toggleRect = toggle.getBoundingClientRect();
+  const requiredScroll = Math.max(0, toggleRect.bottom + menuHeight + 14 - window.innerHeight);
+  const availableScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight - window.scrollY);
+  const scrollAmount = Math.min(requiredScroll, availableScroll);
+  if (scrollAmount > 1) {
+    window.scrollBy({top: scrollAmount, behavior: 'auto'});
+    requestAnimationFrame(() => placeExecutionActionMenu(toggle, menu));
+    return;
+  }
+  placeExecutionActionMenu(toggle, menu);
+}
+
+let executionActionMenuRepositionFrame = 0;
+function scheduleExecutionActionMenuReposition() {
+  if (executionActionMenuRepositionFrame) return;
+  executionActionMenuRepositionFrame = requestAnimationFrame(() => {
+    executionActionMenuRepositionFrame = 0;
+    const menu = document.querySelector('[data-execution-action-menu]:not([hidden])');
+    if (!menu) return;
+    const toggle = document.querySelector(`[data-execution-action-toggle="${CSS.escape(menu.dataset.executionActionMenu)}"]`);
+    if (toggle) placeExecutionActionMenu(toggle, menu);
+  });
+}
+
+async function resetProcurementExecutionPage(resetFilters=true, page=1) {
   if (resetFilters) {
     $('executionFilterStatus').value = '';
     $('executionFilterSite').value = '';
     $('executionFilterBinding').value = '';
     $('executionFilterKeyword').value = '';
   }
-  $('executionQueueList').innerHTML = '<div class="execution-page-empty"><span class="spinner"></span><br>正在读取测试库采购分单…</div>';
+  procurementExecutionPage = Math.max(1, Number(page || 1));
+  $('executionQueueList').innerHTML = '<tr><td colspan="11" class="empty-tip"><span class="spinner"></span>正在读取本人采购单…</td></tr>';
   $('executionQueueCount').textContent = '读取中';
   try {
-    const result = await api('/api/procurement/execution/splits?page=1&pageSize=300');
+    const params = new URLSearchParams({
+      claimedByMe:'true',
+      page:String(procurementExecutionPage),
+      pageSize:$('executionPageSize').value || '50'
+    });
+    const site = $('executionFilterSite').value;
+    const keyword = $('executionFilterKeyword').value.trim();
+    if (site) params.set('site', site);
+    if (keyword) params.set('keyword', keyword);
+    const result = await api('/api/procurement/orders?' + params.toString());
     if (!result || !result.data || !Array.isArray(result.data.items)) {
       throw new Error('采购执行接口响应缺少 data.items');
     }
-    procurementExecutionPageRows = result.data.items.map(row => ({
-      ...row,
-      lines:Array.isArray(row.lines) ? row.lines.map(line => ({...line})) : []
-    }));
-    activeProcurementExecutionPageId = procurementExecutionPageRows.some(
-      row => row.id === activeProcurementExecutionPageId
-    ) ? activeProcurementExecutionPageId : (procurementExecutionPageRows[0] && procurementExecutionPageRows[0].id || '');
+    procurementExecutionPageRows = result.data.items.map(row => ({...row}));
+    procurementExecutionTotal = Number(result.data.total || 0);
     procurementExecutionPageLoaded = true;
     renderProcurementExecutionPage();
   } catch (error) {
     procurementExecutionPageRows = [];
+    procurementExecutionTotal = 0;
     procurementExecutionPageLoaded = false;
     renderProcurementExecutionPageMetrics();
     $('executionQueueCount').textContent = '读取失败';
-    $('executionQueueList').innerHTML = `<div class="execution-page-empty">${esc(error.message)}</div>`;
-    $('executionPageDetail').innerHTML = '<div class="execution-page-empty">采购执行测试接口暂不可用。</div>';
+    $('executionQueueList').innerHTML = `<tr><td colspan="11" class="empty-tip">${esc(error.message)}</td></tr>`;
     toast(error.message);
   }
+}
+
+function renderProcurementWorkspace(data, focus='') {
+  activeProcurementDetailData = data;
+  const draft = data && data.draft || {};
+  const lines = Array.isArray(data && data.lines) ? data.lines : [];
+  const allBatches = Array.isArray(data && data.executionBatches) ? data.executionBatches : [];
+  const batches = allBatches.filter(batch => batch.status === 'ordered');
+  const operator = data.operator && data.operator.name || '待识别';
+  const storeName = data.storeBaseName || data.storeName || '—';
+  const purchasers = (Array.isArray(data.purchasers) ? data.purchasers : [])
+    .map(item => item && item.name).filter(Boolean).join('、') || '未分配';
+  const required = Number(data.requiredQty || 0);
+  const purchased = Number(data.purchasedQty || 0);
+  const remaining = Math.max(0, required - purchased);
+  const quickCheckout = focus === 'quick-checkout' && lines.length === 1
+    && required === 1 && purchased === 0 && allBatches.length === 0;
+  const address = [draft.addressLine1, draft.addressLine2].filter(Boolean).join('，');
+  const location = [draft.city, draft.stateProvince, data.recipientCountry || data.site]
+    .filter(Boolean).join('，');
+  $('procurementWorkspaceTitle').textContent = `采购单执行详情 · ${data.packageId || data.platformOrderNo || '—'}`;
+  $('procurementWorkspaceSubtitle').textContent = `来源采购单 ${data.platformOrderNo || '—'} · ${lines.length} 条采购明细 · 最近更新 ${procurementDateTime(data.updatedAt)}`;
+
+  const lineRows = lines.length ? lines.map(line => {
+    const item = line.payload || {};
+    const imageUrl = safeProcurementImageUrl(item.productImageUrl);
+    const lineRequired = Number(item.purchaseQty || item.salesQty || 0);
+    const linePurchased = ['ordered','logistics_filled','completed'].includes(line.workflowStatus)
+      ? lineRequired : 0;
+    return `<tr><td>${esc(line.lineNo)}</td>` +
+      `<td>${imageUrl ? `<span class="procurement-image-thumb"><img src="${esc(imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer"></span>` : '<span class="procurement-image-thumb">暂无图</span>'}</td>` +
+      `<td>${esc(item.mainSpec) || '—'}</td><td>${esc(item.subSpec) || '—'}</td>` +
+      `<td>${procurementNumber(lineRequired)}</td><td>${procurementNumber(linePurchased)}</td>` +
+      `<td>${procurementNumber(Math.max(0, lineRequired - linePurchased))}</td>` +
+      `<td><span class="badge ${PROCUREMENT_WORKFLOW_CLASSES[line.workflowStatus] || 'inuse'}">${esc(PROCUREMENT_WORKFLOW_LABELS[line.workflowStatus] || line.workflowStatus)}</span></td></tr>`;
+  }).join('') : '<tr><td colspan="8" class="empty-tip">没有有效采购明细</td></tr>';
+
+  const batchCards = batches.length ? batches.map(batch => {
+    const lineText = (Array.isArray(batch.lines) ? batch.lines : [])
+      .map(line => `${line.spec || '未填写采购规格'} × ${procurementNumber(line.qty)}`).join('；') || '批次商品待确认';
+    const resource = batch.resource || {};
+    const trackingNumber = batch.trackingNumber || batch.logisticsTrackingNo || '';
+    const carrier = batch.carrier || batch.logisticsCarrier || '';
+    const logisticsStatus = batch.logisticsStatus || (trackingNumber ? '待查询' : '待回填');
+    return `<article class="procurement-tracking-batch">` +
+      `<div class="procurement-tracking-batch-head"><b>${esc(batch.id)} · ${esc(PROCUREMENT_EXECUTION_STATUS_LABELS[batch.status] || batch.status || '跟单中')}</b>` +
+      `<button class="btn-mini" type="button" data-open-tracking-env="${esc(batch.purchaseSplitId)}"${resource.hubEnvironmentRef ? '' : ' disabled'}>打开环境查单</button></div>` +
+      `<div class="procurement-tracking-batch-copy">平台订单号：${esc(batch.platformOrderNo) || '待回填'}<br>本批商品：${esc(lineText)}<br>买家号：${esc(batch.buyer) || '—'} · Hub 环境：${esc(batch.hub) || '—'}<br>采购实付：${esc(procurementMoney(batch.amount, batch.currency))}<br>物流单号：${esc(trackingNumber) || '待回填'} · 物流商：${esc(carrier) || '待回填'} · 物流状态：${esc(logisticsStatus)}</div></article>`;
+  }).join('') : '<div class="execution-page-empty">尚未形成付款成功的采购批次；结算确认后将在这里按批次纵向留存环境和查单入口。</div>';
+
+  $('procurementWorkspaceBody').innerHTML =
+    `<div class="procurement-workspace-title"><div><h2>${esc(data.packageId || data.platformOrderNo || '采购单')}</h2><p>来源采购单 ${esc(data.platformOrderNo) || '—'} · ${lines.length} 条采购明细</p></div>${procurementExecutionPageStatus(data)}</div>` +
+    `<div class="procurement-workspace-summary">` +
+      procurementDetailField('店铺销售订单号', data.packageId) +
+      procurementDetailField('来源采购单', data.platformOrderNo) +
+      procurementDetailField('店铺 / 运营', `${storeName} / ${operator}`) +
+      procurementDetailField('采购执行', `${purchasers} · 最近更新 ${procurementDateTime(data.updatedAt)}`) +
+      procurementDetailField('采购单金额', procurementMoney(data.salesAmount, data.salesCurrency)) +
+      procurementDetailField('采购指导额', procurementGuideTotals(data.guideTotalsByCurrency)) +
+      procurementDetailField('采购进度', `${purchased} / ${required} 件`) +
+      procurementDetailField('正式采购批次', `${batches.length} 个`) +
+    `</div>` +
+    `<section class="procurement-detail-section"><h4>收件与配送信息</h4><p class="procurement-sensitive-note">敏感信息仅在采购单详情按权限读取；系统记录本次详情读取审计。</p><div class="procurement-detail-grid">` +
+      procurementDetailField('收件人', draft.recipientName) +
+      procurementDetailField('电话', draft.recipientPhone) +
+      procurementDetailField('邮编', draft.postalCode) +
+      procurementDetailField('国家 / 州 / 城市', location) +
+      procurementDetailField('详细地址', address, true) +
+    `</div></section>` +
+    `<section class="procurement-detail-section"><div class="table-title-row"><h4>采购明细</h4><span class="legend">展示采购备注中的主规格、次规格，不展示店小秘 SKU</span></div><div class="procurement-lines-wrap"><table><thead><tr><th>原明细行</th><th>商品</th><th>主规格（采购备注）</th><th>次规格（采购备注）</th><th>需求数量</th><th>已采购</th><th>剩余数量</th><th>采购状态</th></tr></thead><tbody>${lineRows}</tbody></table></div></section>` +
+    `<section class="procurement-detail-section" id="procurementCheckoutSection"><div class="table-title-row"><h4>${quickCheckout ? '快捷下单' : '本次下单'}</h4><span class="legend">${quickCheckout ? '一单一 SKU 一件：直接绑定资源并进入采购环境' : '打开环境实际结算后，再确认本批商品与数量'}</span></div><div class="procurement-workspace-footer"><p><b>剩余 ${procurementNumber(remaining)} 件待采购</b><br>先绑定一个环境和买家号并打开采购环境；优惠券验证后确认本批方案。失败或放弃时买家号可释放，已登录环境必须从 Hub 删除；付款成功的环境继续留存跟单。</p><button class="btn primary" type="button" data-start-checkout="${esc(data.purchaseOrderId)}" data-checkout-mode="${quickCheckout ? 'quick' : 'standard'}"${remaining ? '' : ' disabled'}>${quickCheckout ? '快捷绑定资源并下单' : '开始 / 继续本次下单'}</button></div></section>` +
+    `<section class="procurement-detail-section" id="procurementTrackingSection"><div class="table-title-row"><h4>采购批次与跟单</h4><span class="legend">${batches.length} 个批次 · 每个付款成功批次保留独立环境</span></div><div class="procurement-tracking-list">${batchCards}</div></section>`;
+  if (focus === 'tracking') $('procurementTrackingSection').scrollIntoView({block:'start'});
+  else if (focus === 'checkout' || focus === 'quick-checkout') $('procurementCheckoutSection').scrollIntoView({block:'start'});
+}
+
+async function returnProcurementOrderToTask(purchaseOrderId) {
+  const id = String(purchaseOrderId || '');
+  if (!id) return;
+  const reason = String(window.prompt('请输入退回原因（必填，将写入操作日志）：', '') || '').trim();
+  if (!reason) {
+    toast('已取消：退回采购任务必须填写原因');
+    return;
+  }
+  if (!window.confirm('确认将本人尚未开始采购的明细退回公共采购任务？')) return;
+  try {
+    const result = await api('/api/procurement/orders/' + encodeURIComponent(id) + '/return', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({reason})
+    });
+    const count = Number(result && result.data && result.data.returnedCount || 0);
+    closeExecutionActionMenus();
+    await resetProcurementExecutionPage(false, procurementExecutionPage);
+    toast(`已退回 ${procurementNumber(count)} 条采购明细，公共采购任务可重新认领`);
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+function updateProcurementWorkspaceNavigation() {
+  const index = procurementWorkspaceOrderIds.indexOf(String(activeProcurementWorkspaceId));
+  $('btnProcurementWorkspacePrev').disabled = index <= 0;
+  $('btnProcurementWorkspaceNext').disabled = index < 0 || index >= procurementWorkspaceOrderIds.length - 1;
+}
+
+async function openProcurementOrderWorkspace(purchaseOrderId, sourceModule='procurementexecution', focus='') {
+  const id = String(purchaseOrderId || '');
+  if (!id) return;
+  procurementWorkspaceSourceModule = sourceModule;
+  if (sourceModule === 'procurementorders') {
+    procurementWorkspaceOrderIds = procurementRows.map(row => String(row.purchaseOrderId));
+  } else if (!procurementWorkspaceOrderIds.length) {
+    procurementWorkspaceOrderIds = procurementExecutionPageRows.map(row => String(row.purchaseOrderId));
+  }
+  activeProcurementWorkspaceId = id;
+  FEATURE_MODULES.procurementorderdetail.label = '采购单 · 读取中';
+  openFeatureTab('procurementorderdetail');
+  $('procurementWorkspaceBody').innerHTML = '<div class="procurement-detail-loading"><span class="spinner"></span>正在读取采购单执行详情…</div>';
+  updateProcurementWorkspaceNavigation();
+  try {
+    const result = await api('/api/procurement/orders/' + encodeURIComponent(id));
+    if (id !== activeProcurementWorkspaceId) return;
+    if (!result || !result.data) throw new Error('采购单详情响应缺少 data');
+    FEATURE_MODULES.procurementorderdetail.label = `采购单 · ${result.data.packageId || result.data.platformOrderNo || '详情'}`;
+    renderWorkspaceTabs();
+    renderProcurementWorkspace(result.data, focus);
+    updateProcurementWorkspaceNavigation();
+  } catch (error) {
+    $('procurementWorkspaceBody').innerHTML = `<div class="execution-page-empty">${esc(error.message)}</div>`;
+  }
+}
+
+function navigateProcurementWorkspace(offset) {
+  const index = procurementWorkspaceOrderIds.indexOf(String(activeProcurementWorkspaceId));
+  const target = procurementWorkspaceOrderIds[index + offset];
+  if (target) openProcurementOrderWorkspace(target, procurementWorkspaceSourceModule);
 }
 
 async function openProcurementDetail(purchaseOrderId) {
@@ -3576,18 +4082,69 @@ function closeProcurementDetail() {
 
 $('btnProcurementRefresh').onclick = () => loadProcurementWorkspace(false);
 $('btnProcurementReset').onclick = () => {
-  $('procurementFilterSubmission').value = '';
-  $('procurementFilterWorkflow').value = '';
-  $('procurementFilterSync').value = '';
+  $('procurementFilterScope').value = 'unclaimed';
+  $('procurementFilterSite').value = '';
+  $('procurementFilterStore').value = '';
+  $('procurementFilterOperator').value = '';
+  $('procurementFilterKeyword').value = '';
   $('procurementPageSize').value = '30';
+  document.querySelectorAll('[data-procurement-quick-scope],[data-procurement-quick-sync]').forEach(button => {
+    button.classList.toggle('active', button.dataset.procurementQuickScope === 'unclaimed');
+  });
   procurementPage = 1;
   loadProcurementWorkspace(true);
 };
-['procurementFilterSubmission','procurementFilterWorkflow','procurementFilterSync','procurementPageSize'].forEach(id => {
+['procurementFilterSite','procurementFilterStore','procurementFilterOperator','procurementPageSize'].forEach(id => {
   $(id).addEventListener('change', () => loadProcurementOrders(1));
 });
+$('procurementFilterScope').addEventListener('change', () => {
+  const scope = $('procurementFilterScope').value;
+  document.querySelectorAll('[data-procurement-quick-scope],[data-procurement-quick-sync]').forEach(button => {
+    button.classList.toggle('active', button.dataset.procurementQuickScope === scope);
+  });
+  loadProcurementOrders(1);
+});
+$('procurementFilterKeyword').addEventListener('input', () => {
+  clearTimeout(procurementSearchTimer);
+  procurementSearchTimer = setTimeout(() => loadProcurementOrders(1), 350);
+});
+document.querySelector('.procurement-metrics').onclick = event => {
+  const scopeButton = event.target.closest('[data-procurement-quick-scope]');
+  const syncButton = event.target.closest('[data-procurement-quick-sync]');
+  if (!scopeButton && !syncButton) return;
+  document.querySelectorAll('[data-procurement-quick-scope],[data-procurement-quick-sync]').forEach(button => button.classList.remove('active'));
+  if (scopeButton) {
+    scopeButton.classList.add('active');
+    $('procurementFilterScope').value = scopeButton.dataset.procurementQuickScope;
+  } else {
+    syncButton.classList.add('active');
+    $('procurementFilterScope').value = '';
+  }
+  loadProcurementOrders(1);
+};
 $('btnProcurementPrev').onclick = () => loadProcurementOrders(Math.max(1, procurementPage - 1));
 $('btnProcurementNext').onclick = () => loadProcurementOrders(procurementPage + 1);
+$('btnProcurementBatchClaim').onclick = openProcurementBatchClaimPreview;
+$('procurementSelectAll').onchange = event => {
+  const checked = event.currentTarget.checked;
+  procurementRows.filter(procurementIsClaimable).forEach(row => {
+    const orderId = String(row.purchaseOrderId);
+    if (checked) procurementSelectedOrderIds.add(orderId);
+    else procurementSelectedOrderIds.delete(orderId);
+  });
+  document.querySelectorAll('[data-procurement-select-order]:not(:disabled)').forEach(input => {
+    input.checked = checked;
+  });
+  updateProcurementSelectionToolbar();
+};
+$('procurementTbody').onchange = event => {
+  const checkbox = event.target.closest('[data-procurement-select-order]');
+  if (!checkbox) return;
+  const orderId = String(checkbox.dataset.procurementSelectOrder || '');
+  if (checkbox.checked) procurementSelectedOrderIds.add(orderId);
+  else procurementSelectedOrderIds.delete(orderId);
+  updateProcurementSelectionToolbar();
+};
 $('procurementTbody').onclick = event => {
   const claimButton = event.target.closest('[data-procurement-claim-order]');
   if (claimButton) {
@@ -3595,14 +4152,7 @@ $('procurementTbody').onclick = event => {
     return;
   }
   const detailButton = event.target.closest('[data-procurement-detail]');
-  if (detailButton) openProcurementDetail(detailButton.dataset.procurementDetail);
-};
-$('procurementTbody').onchange = event => {
-  const checkbox = event.target.closest('[data-procurement-select]');
-  if (!checkbox) return;
-  if (checkbox.checked) procurementSelectedOrderIds.add(String(checkbox.dataset.procurementSelect));
-  else procurementSelectedOrderIds.delete(String(checkbox.dataset.procurementSelect));
-  updateProcurementSelectionToolbar();
+  if (detailButton) openProcurementOrderWorkspace(detailButton.dataset.procurementDetail, 'procurementorders');
 };
 $('procurementDetailBody').onclick = event => {
   const claimButton = event.target.closest('[data-procurement-claim]');
@@ -3612,18 +4162,6 @@ $('procurementDetailBody').onclick = event => {
   }
   if (event.target.closest('[data-procurement-plan-open]')) openProcurementExecutionPreview();
 };
-$('procurementSelectAll').onchange = event => {
-  procurementRows.filter(procurementIsClaimable).forEach(row => {
-    const id = String(row.purchaseOrderId);
-    if (event.target.checked) procurementSelectedOrderIds.add(id);
-    else procurementSelectedOrderIds.delete(id);
-  });
-  document.querySelectorAll('#procurementTbody [data-procurement-select]').forEach(checkbox => {
-    if (!checkbox.disabled) checkbox.checked = event.target.checked;
-  });
-  updateProcurementSelectionToolbar();
-};
-$('btnProcurementBatchClaim').onclick = openProcurementBatchClaimPreview;
 $('btnProcurementDetailClose').onclick = closeProcurementDetail;
 $('procurementDetailMask').onclick = event => {
   if (event.target === event.currentTarget) closeProcurementDetail();
@@ -3658,19 +4196,66 @@ $('procurementExecutionMask').onclick = event => {
   if (event.target === event.currentTarget) closeProcurementExecutionPreview();
 };
 $('executionQueueList').onclick = event => {
-  const button = event.target.closest('[data-execution-page-select]');
-  if (!button) return;
-  activeProcurementExecutionPageId = button.dataset.executionPageSelect;
-  renderProcurementExecutionPage();
+  const detailButton = event.target.closest('[data-execution-detail]');
+  if (detailButton) {
+    openProcurementOrderWorkspace(detailButton.dataset.executionDetail, 'procurementexecution');
+    return;
+  }
+  const workspaceButton = event.target.closest('[data-execution-workspace]');
+  if (workspaceButton && !workspaceButton.disabled) {
+    openProcurementOrderWorkspace(workspaceButton.dataset.executionWorkspace, 'procurementexecution', workspaceButton.dataset.executionFocus || '');
+    return;
+  }
+  const returnButton = event.target.closest('[data-execution-return]');
+  if (returnButton && !returnButton.disabled) {
+    returnProcurementOrderToTask(returnButton.dataset.executionReturn);
+    return;
+  }
+  const toggle = event.target.closest('[data-execution-action-toggle]');
+  if (!toggle) return;
+  const id = toggle.dataset.executionActionToggle;
+  const menu = document.querySelector(`[data-execution-action-menu="${CSS.escape(id)}"]`);
+  if (!menu) return;
+  const shouldOpen = menu.hidden;
+  closeExecutionActionMenus();
+  if (shouldOpen) openExecutionActionMenu(toggle, menu);
 };
-['executionFilterStatus','executionFilterSite','executionFilterBinding'].forEach(id => {
+['executionFilterStatus','executionFilterBinding'].forEach(id => {
   $(id).addEventListener('change', renderProcurementExecutionPage);
 });
-$('executionFilterKeyword').addEventListener('input', renderProcurementExecutionPage);
+$('executionFilterSite').addEventListener('change', () => resetProcurementExecutionPage(false, 1));
+$('executionFilterKeyword').addEventListener('input', () => {
+  clearTimeout(procurementExecutionSearchTimer);
+  procurementExecutionSearchTimer = setTimeout(() => resetProcurementExecutionPage(false, 1), 350);
+});
 $('btnExecutionPrototypeReset').onclick = async () => {
-  await resetProcurementExecutionPage(true);
+  await resetProcurementExecutionPage(true, 1);
   if (procurementExecutionPageLoaded) toast('采购执行测试数据已刷新');
 };
+$('btnExecutionPrev').onclick = () => resetProcurementExecutionPage(false, procurementExecutionPage - 1);
+$('btnExecutionNext').onclick = () => resetProcurementExecutionPage(false, procurementExecutionPage + 1);
+$('executionPageSize').onchange = () => resetProcurementExecutionPage(false, 1);
+$('btnProcurementWorkspacePrev').onclick = () => navigateProcurementWorkspace(-1);
+$('btnProcurementWorkspaceNext').onclick = () => navigateProcurementWorkspace(1);
+$('btnProcurementWorkspaceBack').onclick = () => openFeatureTab(procurementWorkspaceSourceModule || 'procurementexecution');
+$('procurementWorkspaceBody').onclick = event => {
+  const checkoutButton = event.target.closest('[data-start-checkout]');
+  if (checkoutButton) {
+    toast(checkoutButton.dataset.checkoutMode === 'quick'
+      ? '快捷下单入口已保留：下一步绑定环境与买家号后直接打开采购环境'
+      : '本次下单会话接口正在按定版流程接入，当前不会提前生成采购分单');
+    return;
+  }
+  if (event.target.closest('[data-open-tracking-env]')) {
+    toast('环境查单入口已保留，HubStudio 打开接口将在下单会话改造时接入');
+  }
+};
+document.addEventListener('click', event => {
+  if (event.target.closest('.execution-action-wrap')) return;
+  closeExecutionActionMenus();
+});
+document.addEventListener('scroll', scheduleExecutionActionMenuReposition, true);
+window.addEventListener('resize', scheduleExecutionActionMenuReposition);
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && $('procurementExecutionMask').classList.contains('show')) {
     closeProcurementExecutionPreview();
@@ -4798,6 +5383,347 @@ $('btnRetryFail').onclick = async () => {
   } catch (e) { toast(e.message); }
 };
 
+/* ---------- 业务操作日志 ---------- */
+
+const BUSINESS_LOG_RESULT_LABELS = {
+  success: '成功',
+  validation_failed: '校验失败',
+  permission_denied: '权限拒绝',
+  business_conflict: '业务冲突',
+  not_found: '对象不可见',
+  external_service_failed: '外部服务失败',
+  failure: '失败'
+};
+const BUSINESS_LOG_MODULE_LABELS = {
+  procurement: '采购中心', system: '系统管理', resources: '资源中心',
+  operations: '运营中心', finance: '财务中心', auth: '认证安全'
+};
+
+function businessLogResultClass(result) {
+  if (result === 'success') return 'success';
+  if (result === 'failure' || result === 'external_service_failed') return 'failure';
+  return 'denied';
+}
+
+function businessLogTimeValue(id) {
+  const raw = String($(id).value || '').trim();
+  if (!raw) return '';
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? '' : date.toISOString();
+}
+
+function businessLogQueryPath(page) {
+  const params = new URLSearchParams();
+  const startTime = businessLogTimeValue('businessLogStartTime');
+  const endTime = businessLogTimeValue('businessLogEndTime');
+  if (startTime) params.set('startTime', startTime);
+  if (endTime) params.set('endTime', endTime);
+  const filters = [
+    ['module', 'businessLogModule'],
+    ['operator', 'businessLogOperator'],
+    ['result', 'businessLogResult'],
+    ['businessNo', 'businessLogBusinessNo'],
+    ['operationType', 'businessLogOperationType'],
+    ['requestId', 'businessLogRequestId']
+  ];
+  filters.forEach(([name, id]) => {
+    const value = String($(id).value || '').trim();
+    if (value) params.set(name, value);
+  });
+  params.set('page', String(page));
+  params.set('pageSize', $('businessLogPageSize').value || '50');
+  return '/api/business-logs?' + params.toString();
+}
+
+function businessLogDateTime(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString('zh-CN', {hour12:false});
+}
+
+function renderBusinessLogRows(data) {
+  const rows = Array.isArray(data.items) ? data.items : [];
+  businessLogPage = Number(data.page || 1);
+  businessLogTotal = Number(data.total || 0);
+  const pageSize = Number(data.pageSize || $('businessLogPageSize').value || 50);
+  const totalPages = Math.max(1, Math.ceil(businessLogTotal / pageSize));
+  $('businessLogScope').textContent = data.scope === 'tenant'
+    ? '当前范围：本租户业务日志（主管 / 管理员审计范围）'
+    : '当前范围：仅本人业务日志';
+  $('businessLogCount').textContent = `${businessLogTotal} 条`;
+  $('businessLogPageState').textContent = `第 ${businessLogPage} / ${totalPages} 页`;
+  $('btnBusinessLogPrev').disabled = businessLogsLoading || businessLogPage <= 1;
+  $('btnBusinessLogNext').disabled = businessLogsLoading || businessLogPage >= totalPages;
+  $('businessLogTbody').innerHTML = rows.length ? rows.map(item => {
+    const operator = item.operator || {};
+    const roles = Array.isArray(operator.roles) ? operator.roles.join(' / ') : '';
+    const object = item.businessObject || {};
+    const objectLabel = object.number || object.id || '—';
+    const resultLabel = BUSINESS_LOG_RESULT_LABELS[item.result] || item.result || '—';
+    return `<tr>` +
+      `<td class="mono">${esc(businessLogDateTime(item.operationTime))}</td>` +
+      `<td><b>${esc(operator.name || '系统')}</b><div class="resource-muted">${esc(roles || '无角色快照')}</div></td>` +
+      `<td>${esc(BUSINESS_LOG_MODULE_LABELS[item.module] || item.module || '—')}</td>` +
+      `<td class="mono">${esc(item.operationType || '—')}</td>` +
+      `<td><b>${esc(objectLabel)}</b><div class="resource-muted">${esc(object.type || '—')}</div></td>` +
+      `<td><span class="business-log-result ${businessLogResultClass(item.result)}">${esc(resultLabel)}</span></td>` +
+      `<td>${esc(item.failureReason || '—')}</td>` +
+      `<td class="mono">${esc(item.requestId || '—')}<div class="resource-muted">trace ${esc(item.traceId || '—')}</div></td>` +
+      `<td><button class="btn-mini" type="button" data-business-log-detail="${esc(item.businessLogId)}">详情</button></td>` +
+      `</tr>`;
+  }).join('') : '<tr><td colspan="9" class="empty-tip">当前筛选范围没有业务日志</td></tr>';
+}
+
+function businessLogDetailField(label, value, wide=false, preformatted=false) {
+  const content = value == null || value === '' ? '—' : String(value);
+  return `<div class="business-log-detail-field${wide ? ' wide' : ''}"><label>${esc(label)}</label>` +
+    (preformatted ? `<pre>${esc(content)}</pre>` : `<span>${esc(content)}</span>`) +
+    `</div>`;
+}
+
+function renderBusinessLogDetail(data) {
+  const operator = data.operator || {};
+  const object = data.businessObject || {};
+  $('businessLogDetailTitle').textContent = `日志详情｜${data.operationType || '业务操作'}`;
+  $('businessLogDetailBody').innerHTML =
+    businessLogDetailField('操作时间', businessLogDateTime(data.operationTime)) +
+    businessLogDetailField('操作人', operator.name || '系统') +
+    businessLogDetailField('角色快照', Array.isArray(operator.roles) ? operator.roles.join(' / ') : '—') +
+    businessLogDetailField('模块', BUSINESS_LOG_MODULE_LABELS[data.module] || data.module) +
+    businessLogDetailField('操作结果', BUSINESS_LOG_RESULT_LABELS[data.result] || data.result) +
+    businessLogDetailField('失败原因', data.failureReason) +
+    businessLogDetailField('业务对象', `${object.type || '—'} / ${object.number || object.id || '—'}`, true) +
+    businessLogDetailField('来源 / 客户端版本', `${data.source || '—'} / ${data.clientVersion || '—'}`, true) +
+    businessLogDetailField('requestId', data.requestId, true) +
+    businessLogDetailField('traceId', data.traceId, true) +
+    businessLogDetailField('字段级变更摘要', JSON.stringify(data.changeSummary || {}, null, 2), true, true) +
+    businessLogDetailField('安全补充信息', JSON.stringify(data.details || {}, null, 2), true, true);
+  $('businessLogDetailPanel').hidden = false;
+  $('businessLogDetailPanel').scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+async function loadBusinessLogs(resetPage=false) {
+  if (businessLogsLoading) return;
+  if (resetPage) businessLogPage = 1;
+  businessLogsLoading = true;
+  $('businessLogScope').textContent = '正在读取后端业务日志…';
+  $('btnBusinessLogSearch').disabled = true;
+  $('btnBusinessLogsRefresh').disabled = true;
+  try {
+    const result = await api(businessLogQueryPath(businessLogPage));
+    if (!result || !result.data) throw new Error('业务日志响应缺少 data');
+    renderBusinessLogRows(result.data);
+    businessLogsLoaded = true;
+  } catch (error) {
+    $('businessLogScope').textContent = `业务日志读取失败：${error.message}`;
+    if (!businessLogsLoaded) {
+      $('businessLogTbody').innerHTML = `<tr><td colspan="9" class="empty-tip">${esc(error.message)}</td></tr>`;
+    }
+  } finally {
+    businessLogsLoading = false;
+    $('btnBusinessLogSearch').disabled = false;
+    $('btnBusinessLogsRefresh').disabled = false;
+    $('btnBusinessLogPrev').disabled = businessLogPage <= 1;
+    const pageSize = Number($('businessLogPageSize').value || 50);
+    $('btnBusinessLogNext').disabled = businessLogPage * pageSize >= businessLogTotal;
+  }
+}
+
+$('btnBusinessLogSearch').onclick = () => loadBusinessLogs(true);
+$('btnBusinessLogsRefresh').onclick = () => loadBusinessLogs(false);
+$('btnBusinessLogReset').onclick = () => {
+  ['businessLogStartTime', 'businessLogEndTime', 'businessLogModule',
+   'businessLogOperator', 'businessLogResult', 'businessLogBusinessNo',
+   'businessLogOperationType', 'businessLogRequestId'].forEach(id => { $(id).value = ''; });
+  $('businessLogDetailPanel').hidden = true;
+  loadBusinessLogs(true);
+};
+$('btnBusinessLogPrev').onclick = () => {
+  if (businessLogPage > 1) { businessLogPage -= 1; loadBusinessLogs(false); }
+};
+$('btnBusinessLogNext').onclick = () => { businessLogPage += 1; loadBusinessLogs(false); };
+$('businessLogPageSize').onchange = () => loadBusinessLogs(true);
+$('btnBusinessLogDetailClose').onclick = () => {
+  $('businessLogDetailPanel').hidden = true;
+  $('businessLogDetailBody').replaceChildren();
+};
+$('businessLogTbody').addEventListener('click', async event => {
+  const button = event.target.closest('[data-business-log-detail]');
+  if (!button) return;
+  button.disabled = true;
+  try {
+    const result = await api('/api/business-logs/' + encodeURIComponent(button.dataset.businessLogDetail));
+    if (!result || !result.data) throw new Error('业务日志详情响应缺少 data');
+    renderBusinessLogDetail(result.data);
+  } catch (error) {
+    toast('业务日志详情读取失败：' + error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+/* ---------- 系统运行日志 ---------- */
+
+const SYSTEM_LOG_LEVEL_LABELS = {
+  info: '信息', warning: '警告', error: '错误', critical: '严重'
+};
+const SYSTEM_LOG_CATEGORY_LABELS = {
+  system_runtime: '运行日志', system_error: '错误日志'
+};
+
+function systemLogLevelClass(level) {
+  if (level === 'info') return 'success';
+  if (level === 'error' || level === 'critical') return 'failure';
+  return 'denied';
+}
+
+function systemLogQueryPath(page) {
+  const params = new URLSearchParams();
+  const startTime = businessLogTimeValue('systemLogStartTime');
+  const endTime = businessLogTimeValue('systemLogEndTime');
+  if (startTime) params.set('startTime', startTime);
+  if (endTime) params.set('endTime', endTime);
+  const filters = [
+    ['category', 'systemLogCategory'],
+    ['level', 'systemLogLevel'],
+    ['service', 'systemLogService'],
+    ['component', 'systemLogComponent'],
+    ['eventType', 'systemLogEventType'],
+    ['statusCode', 'systemLogStatusCode'],
+    ['requestId', 'systemLogRequestId'],
+    ['keyword', 'systemLogKeyword']
+  ];
+  filters.forEach(([name, id]) => {
+    const value = String($(id).value || '').trim();
+    if (value) params.set(name, value);
+  });
+  params.set('page', String(page));
+  params.set('pageSize', $('systemLogPageSize').value || '50');
+  return '/api/system-logs?' + params.toString();
+}
+
+function renderSystemLogRows(data) {
+  const rows = Array.isArray(data.items) ? data.items : [];
+  systemLogPage = Number(data.page || 1);
+  systemLogTotal = Number(data.total || 0);
+  const pageSize = Number(data.pageSize || $('systemLogPageSize').value || 50);
+  const totalPages = Math.max(1, Math.ceil(systemLogTotal / pageSize));
+  const retention = Number(data.retentionDays || 0);
+  const capacity = Number(data.maxRowsPerTenant || 0);
+  $('systemLogScope').textContent = `当前范围：本租户系统日志` +
+    (retention ? ` · 保留 ${retention} 天` : '') +
+    (capacity ? ` · 容量上限 ${capacity.toLocaleString('zh-CN')} 条` : '');
+  $('systemLogCount').textContent = `${systemLogTotal} 条`;
+  $('systemLogPageState').textContent = `第 ${systemLogPage} / ${totalPages} 页`;
+  $('btnSystemLogPrev').disabled = systemLogsLoading || systemLogPage <= 1;
+  $('btnSystemLogNext').disabled = systemLogsLoading || systemLogPage >= totalPages;
+  $('systemLogTbody').innerHTML = rows.length ? rows.map(item => {
+    const http = item.http || {};
+    const levelLabel = SYSTEM_LOG_LEVEL_LABELS[item.level] || item.level || '—';
+    const categoryLabel = SYSTEM_LOG_CATEGORY_LABELS[item.category] || item.category || '—';
+    const httpLabel = http.method || http.statusCode
+      ? `${http.method || '—'} ${http.statusCode || '—'}` : '—';
+    const duration = Number.isFinite(Number(http.durationMs))
+      ? `${Number(http.durationMs)} ms` : '—';
+    return `<tr>` +
+      `<td class="mono">${esc(businessLogDateTime(item.operationTime))}</td>` +
+      `<td><span class="business-log-result ${systemLogLevelClass(item.level)}">${esc(levelLabel)}</span><div class="resource-muted">${esc(categoryLabel)}</div></td>` +
+      `<td><b>${esc(item.service || '—')}</b><div class="resource-muted">${esc(item.component || '—')}</div></td>` +
+      `<td class="mono">${esc(item.eventType || '—')}</td>` +
+      `<td><b>${esc(httpLabel)}</b><div class="resource-muted mono">${esc(http.route || '—')} · ${esc(duration)}</div></td>` +
+      `<td>${esc(item.message || '—')}</td>` +
+      `<td class="mono">${esc(item.requestId || '—')}<div class="resource-muted">trace ${esc(item.traceId || '—')}</div></td>` +
+      `<td><button class="btn-mini" type="button" data-system-log-detail="${esc(item.systemLogId)}">详情</button></td>` +
+      `</tr>`;
+  }).join('') : '<tr><td colspan="8" class="empty-tip">当前筛选范围没有系统运行日志</td></tr>';
+}
+
+function renderSystemLogDetail(data) {
+  const actor = data.actor || {};
+  const http = data.http || {};
+  const error = data.error || {};
+  $('systemLogDetailTitle').textContent = `系统日志详情｜${data.eventType || '系统事件'}`;
+  $('systemLogDetailBody').innerHTML =
+    businessLogDetailField('发生时间', businessLogDateTime(data.operationTime)) +
+    businessLogDetailField('级别 / 分类', `${SYSTEM_LOG_LEVEL_LABELS[data.level] || data.level || '—'} / ${SYSTEM_LOG_CATEGORY_LABELS[data.category] || data.category || '—'}`) +
+    businessLogDetailField('服务 / 组件', `${data.service || '—'} / ${data.component || '—'}`) +
+    businessLogDetailField('环境', data.environment) +
+    businessLogDetailField('安全主体', `${actor.name || '系统'} / ${actor.id || '—'}`, true) +
+    businessLogDetailField('安全消息', data.message, true) +
+    businessLogDetailField('HTTP 请求', `${http.method || '—'} ${http.route || '—'} → ${http.statusCode || '—'} / ${http.durationMs ?? '—'} ms`, true) +
+    businessLogDetailField('异常类型 / 错误码', `${error.type || '—'} / ${error.code || '—'}`, true) +
+    businessLogDetailField('错误指纹', error.fingerprint, true) +
+    businessLogDetailField('来源 / 客户端版本', `${data.source || '—'} / ${data.clientVersion || '—'}`, true) +
+    businessLogDetailField('requestId', data.requestId, true) +
+    businessLogDetailField('traceId', data.traceId, true) +
+    businessLogDetailField('到期时间', businessLogDateTime(data.expiresAt), true) +
+    businessLogDetailField('安全补充信息', JSON.stringify(data.details || {}, null, 2), true, true);
+  $('systemLogDetailPanel').hidden = false;
+  $('systemLogDetailPanel').scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+async function loadSystemLogs(resetPage=false) {
+  if (systemLogsLoading) return;
+  if (resetPage) systemLogPage = 1;
+  systemLogsLoading = true;
+  $('systemLogScope').textContent = '正在读取后端系统日志…';
+  $('btnSystemLogSearch').disabled = true;
+  $('btnSystemLogsRefresh').disabled = true;
+  try {
+    const result = await api(systemLogQueryPath(systemLogPage));
+    if (!result || !result.data) throw new Error('系统日志响应缺少 data');
+    renderSystemLogRows(result.data);
+    systemLogsLoaded = true;
+  } catch (error) {
+    $('systemLogScope').textContent = `系统日志读取失败：${error.message}`;
+    if (!systemLogsLoaded) {
+      $('systemLogTbody').innerHTML = `<tr><td colspan="8" class="empty-tip">${esc(error.message)}</td></tr>`;
+    }
+  } finally {
+    systemLogsLoading = false;
+    $('btnSystemLogSearch').disabled = false;
+    $('btnSystemLogsRefresh').disabled = false;
+    $('btnSystemLogPrev').disabled = systemLogPage <= 1;
+    const pageSize = Number($('systemLogPageSize').value || 50);
+    $('btnSystemLogNext').disabled = systemLogPage * pageSize >= systemLogTotal;
+  }
+}
+
+$('btnSystemLogSearch').onclick = () => loadSystemLogs(true);
+$('btnSystemLogsRefresh').onclick = () => loadSystemLogs(false);
+$('btnSystemLogReset').onclick = () => {
+  ['systemLogStartTime', 'systemLogEndTime', 'systemLogCategory',
+   'systemLogLevel', 'systemLogService', 'systemLogComponent',
+   'systemLogEventType', 'systemLogStatusCode', 'systemLogRequestId',
+   'systemLogKeyword'].forEach(id => { $(id).value = ''; });
+  $('systemLogDetailPanel').hidden = true;
+  loadSystemLogs(true);
+};
+$('btnSystemLogPrev').onclick = () => {
+  if (systemLogPage > 1) { systemLogPage -= 1; loadSystemLogs(false); }
+};
+$('btnSystemLogNext').onclick = () => { systemLogPage += 1; loadSystemLogs(false); };
+$('systemLogPageSize').onchange = () => loadSystemLogs(true);
+$('btnSystemLogDetailClose').onclick = () => {
+  $('systemLogDetailPanel').hidden = true;
+  $('systemLogDetailBody').replaceChildren();
+};
+$('systemLogTbody').addEventListener('click', async event => {
+  const button = event.target.closest('[data-system-log-detail]');
+  if (!button) return;
+  button.disabled = true;
+  try {
+    const result = await api('/api/system-logs/' + encodeURIComponent(button.dataset.systemLogDetail));
+    if (!result || !result.data) throw new Error('系统日志详情响应缺少 data');
+    renderSystemLogDetail(result.data);
+  } catch (error) {
+    toast('系统日志详情读取失败：' + error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
 /* ---------- 模块切换与注册 ---------- */
 
 function setFeaturePanel(module) {
@@ -4813,12 +5739,15 @@ function setFeaturePanel(module) {
   $('queryPanel').classList.toggle('hidden', module !== 'query');
   $('procurementPanel').classList.toggle('hidden', module !== 'procurementorders');
   $('procurementExecutionPanel').classList.toggle('hidden', module !== 'procurementexecution');
+  $('procurementOrderDetailPanel').classList.toggle('hidden', module !== 'procurementorderdetail');
   $('buyerLibraryPanel').classList.toggle('hidden', module !== 'buyerlib');
   $('vendorImportPanel').classList.toggle('hidden', module !== 'vendorimport');
   $('registerPanel').classList.toggle('hidden', module !== 'register');
   $('envPanel').classList.toggle('hidden', module !== 'envbatch');
   $('storeManagementPanel').classList.toggle('hidden', module !== 'storemanagement');
   $('proxyManagementPanel').classList.toggle('hidden', module !== 'proxymanagement');
+  $('businessLogsPanel').classList.toggle('hidden', module !== 'businesslogs');
+  $('systemLogsPanel').classList.toggle('hidden', module !== 'systemlogs');
   $('settingsPanel').classList.toggle('hidden', !isSettingsModule);
   document.querySelectorAll('#settingsPanel [data-settings-view]').forEach(section => {
     section.hidden = section.dataset.settingsView !== module;
@@ -4835,6 +5764,8 @@ function setFeaturePanel(module) {
   else if (module === 'envbatch') { pollEnvBatch(); refreshEnvPreflight(); }
   else if (module === 'storemanagement') loadStoreManagement(false);
   else if (module === 'proxymanagement') { loadProxyManagement(false); pollProxyChecks(); }
+  else if (module === 'businesslogs' && !businessLogsLoaded) loadBusinessLogs(true);
+  else if (module === 'systemlogs' && !systemLogsLoaded) loadSystemLogs(true);
   else if (module === 'localsettings' && !localSettingsPageLoaded) {
     localSettingsPageLoaded = true;
     loadLocalSettingsPage().then(loaded => {
@@ -4997,6 +5928,12 @@ function closeFeatureTab(module) {
   if (index < 0) return;
   const wasActive = activeModule === module;
   openFeatureTabs.splice(index, 1);
+  if (module === 'procurementorderdetail') {
+    activeProcurementWorkspaceId = '';
+    activeProcurementDetailData = null;
+    $('procurementWorkspaceBody').replaceChildren();
+    FEATURE_MODULES.procurementorderdetail.label = '采购单执行详情';
+  }
   if (wasActive) {
     activateFeatureTab(openFeatureTabs[Math.min(index, openFeatureTabs.length - 1)]);
   } else {
@@ -5025,6 +5962,7 @@ function setPlannedPrimary(primary) {
   $('queryPanel').classList.add('hidden');
   $('procurementPanel').classList.add('hidden');
   $('procurementExecutionPanel').classList.add('hidden');
+  $('procurementOrderDetailPanel').classList.add('hidden');
   $('buyerLibraryPanel').classList.add('hidden');
   $('vendorImportPanel').classList.add('hidden');
   $('registerPanel').classList.add('hidden');

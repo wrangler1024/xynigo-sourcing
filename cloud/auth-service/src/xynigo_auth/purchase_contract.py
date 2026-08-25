@@ -1,3 +1,8 @@
+"""店小秘扩展提交的采购草稿契约（Pydantic），相当于 Java 的 DTO + 校验。
+
+校验通过后才允许写入 Postgres。extra=forbid 表示多传未知字段会直接拒绝。
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -15,6 +20,9 @@ PACKAGE_ID_RE = re.compile(r"^XMWU[A-Z0-9_-]+$")
 PLATFORM_ORDER_RE = re.compile(r"^G(?:SH|SU)[A-Z0-9_-]+$")
 TRUSTED_IMAGE_HOST_RE = re.compile(r"(?:^|\.)ltwebstatic\.com$", re.IGNORECASE)
 TRUSTED_SHEIN_HOST_RE = re.compile(r"(?:^|\.)shein\.com(?:\.mx)?$", re.IGNORECASE)
+STORE_ASSIGNMENT_RE = re.compile(
+    r"^(.+)\s*-\s*([^-（）()]+?)\s*[（(][^（）()]*[）)]\s*[$¥￥]?\s*$"
+)
 
 
 def _blank_to_none(value: Any) -> Any:
@@ -23,7 +31,21 @@ def _blank_to_none(value: Any) -> Any:
     return value
 
 
+def parse_store_assignment(store_name: str) -> tuple[str, str]:
+    """从店小秘店铺展示名拆出「店铺名」和「运营姓名」。
+
+    期望格式：店铺名-运营姓名（组别）。对不上则整串当店铺名，运营名为空。
+    """
+    normalized = " ".join(str(store_name or "").split())
+    matched = STORE_ASSIGNMENT_RE.fullmatch(normalized)
+    if matched is None:
+        return normalized, ""
+    return " ".join(matched.group(1).split()), " ".join(matched.group(2).split())
+
+
 class EstimatedMetrics(BaseModel):
+    """扩展带过来的预估销售额/成本/利润；禁止 NaN/Inf。"""
+
     model_config = ConfigDict(extra="forbid")
 
     ok: bool
@@ -56,6 +78,8 @@ class EstimatedMetrics(BaseModel):
 
 
 class PurchaseDraftLine(BaseModel):
+    """草稿里的一条 SKU 明细。正式提交还要校验 SHEIN 链接与 goods_id/skucode 一致。"""
+
     model_config = ConfigDict(extra="forbid")
 
     lineNo: int = Field(ge=1, le=200)
@@ -108,16 +132,18 @@ class PurchaseDraftLine(BaseModel):
 
 
 class PurchaseDraft(BaseModel):
-    """Public schemaVersion=1 contract accepted from the Dianxiaomi extension."""
+    """店小秘扩展提交的整单草稿。schemaVersion=2 起要求能识别店铺归属。"""
 
     model_config = ConfigDict(extra="forbid")
 
-    schemaVersion: Literal[1]
+    schemaVersion: Literal[1, 2]
     mode: Literal["local-dev-mock", "xynigo-extension"]
     orderKey: str = Field(min_length=1, max_length=800)
     packageId: str = Field(min_length=1, max_length=200)
     platformOrderNo: str = Field(min_length=1, max_length=200)
     storeName: str = Field(min_length=1, max_length=300)
+    storeBaseName: str = Field(default="", max_length=300)
+    operatorName: str = Field(default="", max_length=100)
     site: str = Field(default="", max_length=20)
     salesCurrency: str = Field(default="", max_length=12)
     salesAmount: float | None = Field(default=None, ge=0)
@@ -167,12 +193,10 @@ class PurchaseDraft(BaseModel):
             raise ValueError("invalid platform order number")
         return normalized
 
-    @field_validator("storeName")
+    @field_validator("storeName", "storeBaseName", "operatorName")
     @classmethod
-    def normalize_store_name(cls, value: str) -> str:
+    def normalize_store_fields(cls, value: str) -> str:
         normalized = " ".join(value.split())
-        if not normalized:
-            raise ValueError("store name is required")
         return normalized
 
     @field_validator("salesCurrency")
@@ -238,10 +262,16 @@ class PurchaseDraft(BaseModel):
             raise ValueError("lineNo must be continuous from 1")
         if self.orderKey != create_order_key(self.storeName, self.platformOrderNo, self.packageId):
             raise ValueError("orderKey does not match the order identity")
+        parsed_store, parsed_operator = parse_store_assignment(self.storeName)
+        if self.storeBaseName and self.storeBaseName != parsed_store:
+            raise ValueError("storeBaseName does not match storeName")
+        if self.operatorName and self.operatorName != parsed_operator:
+            raise ValueError("operatorName does not match storeName")
         return self
 
 
 def create_order_key(store_name: str, platform_order_no: str, package_id: str) -> str:
+    """租户内采购单业务键：店铺|平台单号|包裹号，须与客户端 orderKey 一致。"""
     store = " ".join(str(store_name).split()).lower()
     order_no = " ".join(str(platform_order_no).split()).upper()
     package = " ".join(str(package_id).split()).upper()
@@ -249,7 +279,11 @@ def create_order_key(store_name: str, platform_order_no: str, package_id: str) -
 
 
 def canonical_draft_dict(draft: PurchaseDraft, *, include_client_times: bool = True) -> dict[str, Any]:
+    """把草稿打成稳定 JSON 字典，用于落库和算哈希。v1 不含店铺归属字段。"""
     data = draft.model_dump(mode="json")
+    if draft.schemaVersion == 1:
+        data.pop("storeBaseName", None)
+        data.pop("operatorName", None)
     if not include_client_times:
         data.pop("createdAt", None)
         data.pop("updatedAt", None)
@@ -257,25 +291,32 @@ def canonical_draft_dict(draft: PurchaseDraft, *, include_client_times: bool = T
 
 
 def canonical_json(value: Any) -> str:
+    """键排序、无空格的 JSON，保证同一内容哈希始终相同。"""
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
 def draft_content_hash(draft: PurchaseDraft) -> str:
+    """整单内容指纹（不含客户端时间）。相同则视为未改，避免无意义写库。"""
     raw = canonical_json(canonical_draft_dict(draft, include_client_times=False)).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
 
 
 def line_content_hash(line: PurchaseDraftLine) -> str:
+    """单行明细指纹，用来判断这一行是否真的变了。"""
     return hashlib.sha256(canonical_json(line.model_dump(mode="json")).encode("utf-8")).hexdigest()
 
 
 def line_key(order_key: str, line_no: int) -> str:
+    """明细稳定键：订单键 + 行号。"""
     return f"{order_key}|{line_no}"
 
 
 def validate_formal_submit(draft: PurchaseDraft) -> None:
+    """正式提交比存草稿更严：收件人、SHEIN 链接、指导价、采购数量=销售数量。"""
     if not draft.items:
         raise ValueError("采购单至少需要一条采购明细")
+    if draft.schemaVersion >= 2 and (not draft.storeBaseName or not draft.operatorName):
+        raise ValueError("店铺归属无法识别，请确认店铺名格式为“店铺名-运营姓名（组别）”")
     required_recipient = {
         "收件人姓名": draft.recipientName,
         "收件人电话": draft.recipientPhone,

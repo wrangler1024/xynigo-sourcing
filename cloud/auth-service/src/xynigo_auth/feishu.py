@@ -1,3 +1,5 @@
+"""飞书 OAuth 与通讯录客户端。user_access_token 只用一次读身份，不写数据库。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

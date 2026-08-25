@@ -18,6 +18,7 @@ import urllib.request
 from .task_runtime import HubRuntimeGate
 
 DEFAULT_PORT = 6873
+RATE_LIMIT_CODE = 'E010205'
 
 # 强制直连不走系统代理：同事电脑开着 Clash 类系统代理时，urllib 默认会把
 # 127.0.0.1 的请求也送进代理导致"连接失败"（PowerShell/浏览器则默认绕过本地）
@@ -40,10 +41,12 @@ class HubStudioApi(object):
             self.headers['local-api-key'] = api_key
 
     def _post(self, path, body):
-        """POST JSON，重试递增间隔；HubStudio 未启动时抛 ConnectionError。"""
+        """POST JSON；普通异常短退避，限流则触发跨线程共享冷却。"""
         data = json.dumps(body).encode('utf-8')
         last_err = None
         for i in range(self.retries):
+            deferred_by_gate = False
+            retry_delay = 0.4 * (i + 1)
             try:
                 req = urllib.request.Request(
                     self.base + path, data=data, headers=self.headers,
@@ -55,12 +58,23 @@ class HubStudioApi(object):
                     return j.get('data')
                 last_err = HubApiError('%s 返回 code=%s: %s' % (
                     path, j.get('code'), j.get('msg')))
+                if str(j.get('code') or '') == RATE_LIMIT_CODE:
+                    # HubStudio 的 E010205 是时间窗限流；原 0.4/0.8 秒
+                    # 单线程重试会被并行 worker 继续打断。把 2/4/8 秒
+                    # 冷却写入共享闸门，所有 Local API 调用一起避让。
+                    retry_delay = min(8.0, 2.0 * (2 ** i))
+                    defer = getattr(self.runtime_gate,
+                                    'defer_requests', None)
+                    if callable(defer):
+                        defer(retry_delay)
+                        deferred_by_gate = True
             except urllib.error.URLError as e:
                 last_err = ConnectionError('无法连接 HubStudio Local API: %s' % e)
                 break   # 客户端没开，重试无意义
             except Exception as e:   # 超时等，可重试
                 last_err = HubApiError('%s 调用异常: %s' % (path, e))
-            time.sleep(0.4 * (i + 1))
+            if i + 1 < self.retries and not deferred_by_gate:
+                time.sleep(retry_delay)
         raise last_err
 
     # ---- 查询类 ----
