@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Release contract tests for Xynigo Sourcing v0.9.0."""
+"""Release contract tests for Xynigo Sourcing v0.10.0."""
 
 from pathlib import Path
 import unittest
@@ -10,9 +10,9 @@ from purchase_tool import __version__
 class ReleaseV090Tests(unittest.TestCase):
     def test_version_and_packaging_are_aligned(self):
         root = Path(__file__).resolve().parents[1]
-        self.assertEqual(__version__, '0.9.0')
+        self.assertEqual(__version__, '0.10.0')
         pyproject = (root / 'pyproject.toml').read_text(encoding='utf-8')
-        self.assertIn('version = "0.9.0"', pyproject)
+        self.assertIn('version = "0.10.0"', pyproject)
         script = (root / '组装Windows绿色包.sh').read_text(encoding='utf-8')
         self.assertIn('v${VERSION}.zip', script)
         self.assertIn('Xynigo Sourcing v%s 启动中', script)
@@ -42,6 +42,9 @@ class ReleaseV090Tests(unittest.TestCase):
         self.assertNotIn('物流订单查询', html)
         self.assertIn('买家号建环境', html)
         self.assertIn('/api/envbatch/start', html)
+        self.assertIn('/api/tasks', html)
+        self.assertIn('id="cfgSafeParallel"', html)
+        self.assertIn('开启安全并行', html)
         self.assertIn('/api/envbatch/preflight', html)
         self.assertIn('id="envSiteGroup"', html)
         self.assertNotIn('id="envSiteGroup" disabled', html)
@@ -118,7 +121,7 @@ class ReleaseV090Tests(unittest.TestCase):
         self.assertIn("cfg.proxySource === 'custom'", html)
         self.assertIn('系统模板固定带表头', html)
         self.assertNotIn('https://proxy.example.test', html)
-        self.assertIn('Xynigo Sourcing v0.9.0', html)
+        self.assertIn('Xynigo Sourcing v0.10.0', html)
         self.assertIn('Xyni, GO!', html)
         self.assertIn('Xynigo 品牌字标', html)
         self.assertIn('小犀与 Xynigo 完整品牌一体图形', html)

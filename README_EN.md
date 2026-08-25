@@ -30,8 +30,17 @@ workflows contributed by **Samforo**.
   custom app, with unified-ledger conflict preflight and post-write readback.
   Teammate computers do not need `lark-cli`.
 
-The current stable release is `v0.9.0`. The project is under active
+The current stable release is `v0.10.0`. The project is under active
 development and is not yet a hosted SaaS product.
+
+v0.10.0 adds an opt-in safe parallel mode. When enabled, one order/shipment
+query batch may run alongside either one bound-environment batch or one
+backup/test-environment batch. The local executor reserves environment names
+and container codes, continues to reject opening the same environment twice,
+serializes cross-module browser control requests, and caps total HubStudio
+Local API pressure. Registration, two query batches, and two environment
+creation batches remain mutually exclusive. The setting defaults to off for
+the initial rollout.
 
 v0.9.0 extends the unified buyer ledger contract with the HubStudio
 environment-group name, including idempotency checks and post-write readback.
