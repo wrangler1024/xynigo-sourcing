@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>连接运营采购助手｜Xynigo</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; color: #0b315e; background: #f4f7fa; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; }
+    main { width: min(440px, calc(100vw - 40px)); padding: 30px; border: 1px solid #e5ebf0; border-radius: 20px; background: #fff; box-shadow: 0 12px 34px rgba(8,37,72,.08); }
+    h1 { margin: 0 0 10px; font-size: 24px; }
+    p { color: #49677f; line-height: 1.7; }
+    code { display: block; margin: 18px 0; padding: 10px 12px; border-radius: 10px; background: #f4f7fa; color: #315372; overflow-wrap: anywhere; }
+    button { width: 100%; border: 0; border-radius: 12px; padding: 12px 16px; font: inherit; font-weight: 700; color: #fff; background: #1698a0; cursor: pointer; }
+    button:disabled { cursor: wait; opacity: .65; }
+    #status[data-tone="error"] { color: #b43f29; }
+    #status[data-tone="success"] { color: #21805d; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>连接运营采购助手</h1>
+    <p>确认后，插件将复用当前 Xynigo 登录身份和采购权限。飞书令牌与 Xynigo 云端会话不会交给插件。</p>
+    <code id="clientId">正在读取插件标识…</code>
+    <button id="approve" type="button">确认连接</button>
+    <p id="status" role="status" aria-live="polite">请确认这是你刚刚从插件弹窗发起的连接。</p>
+  </main>
+  <script src="/extension-connect.js"></script>
+</body>
+</html>

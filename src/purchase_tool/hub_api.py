@@ -8,7 +8,8 @@
   data.list[] 含 containerName / containerCode / serialNumber / remark 等
 - all-browser-status：data.containers[] 为当前已打开环境（containerCode 类型是
   字符串，而 env/list 里是数字——本模块统一转为字符串）
-- browser/start：data 含 debuggingPort（字符串）和 ip（出口IP）
+- browser/start：data 含 debuggingPort（字符串）和 ip（出口IP），支持
+  isHeadless=true 的无头启动
 """
 import json
 import time
@@ -116,13 +117,25 @@ class HubStudioApi(object):
 
     # ---- 浏览器控制 ----
 
-    def browser_start(self, container_code):
-        """启动环境浏览器，返回 data（含 debuggingPort / ip）。"""
+    def browser_start(self, container_code, headless=False):
+        """启动环境浏览器，返回 data（含 debuggingPort / ip）。
+
+        ``headless`` 只供不需要人工交互的只读检测使用。订单查询和账号
+        注册仍走默认可见模式，避免改变现有人工接管流程。
+        """
+        body = {'containerCode': str(container_code)}
+        if headless:
+            body.update({
+                'isHeadless': True,
+                'isWebDriverReadOnlyMode': True,
+                # HubStudio 官方兼容建议：部分内核仅传 isHeadless 时
+                # 仍可能无法按无头模式连接。
+                'args': ['--headless=new'],
+            })
         # 只串行提交 start/stop 控制 RPC，不持有整个浏览器会话；不同环境
         # 仍可同时运行，避免 HubStudio 同时收到 start 时返回 -10005。
         with self.runtime_gate.browser():
-            return self._post('/browser/start',
-                              {'containerCode': str(container_code)}) or {}
+            return self._post('/browser/start', body) or {}
 
     def browser_stop(self, container_code):
         with self.runtime_gate.browser():

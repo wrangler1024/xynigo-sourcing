@@ -1036,10 +1036,10 @@ class BatchEnvOrchestrator(object):
 
 
 def probe_env_ip(hub, site, env_name, container_code, geo_lookup):
-    """启动环境读取出口 IP 并核对国家，随后立即关闭浏览器。"""
+    """无头启动环境读取出口 IP 并核对国家，随后立即关闭。"""
     started = False
     try:
-        data = hub.browser_start(container_code) or {}
+        data = hub.browser_start(container_code, headless=True) or {}
         started = True
         ip = str(data.get('ip') or '')
         geo = geo_lookup(ip) if ip else {}

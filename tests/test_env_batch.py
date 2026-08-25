@@ -23,7 +23,7 @@ from purchase_tool.env_batch import (
     choose_resolution, envbatch_preflight, extract_vendor_order_no,
     format_remark, load_vendor_xlsx,
     mapping_workbook_bytes, normalize_buyer, normalize_env_site,
-    parse_assignment, parse_vendor_workbook,
+    parse_assignment, parse_vendor_workbook, probe_env_ip,
     validate_assignment_template, validate_purchase_tag)
 from purchase_tool.hub_api import HubStudioApi
 
@@ -454,6 +454,40 @@ class EnvBatchTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'MX.*US'):
             api.container_add_account(
                 123, 'ca@example.com', 'secret-pass', site='CA')
+
+    def test_hub_headless_start_uses_official_read_only_parameters(self):
+        api = HubStudioApi()
+        calls = []
+        api._post = lambda path, body: calls.append((path, body)) or {
+            'ip': '203.0.113.10'}
+        result = api.browser_start(123, headless=True)
+        self.assertEqual(result['ip'], '203.0.113.10')
+        self.assertEqual(calls, [('/browser/start', {
+            'containerCode': '123',
+            'isHeadless': True,
+            'isWebDriverReadOnlyMode': True,
+            'args': ['--headless=new'],
+        })])
+
+    def test_ip_probe_never_uses_visible_browser_mode(self):
+        class ProbeHub(object):
+            def __init__(self):
+                self.calls = []
+
+            def browser_start(self, code, headless=False):
+                self.calls.append(('start', str(code), headless))
+                return {'ip': '203.0.113.11'}
+
+            def browser_stop(self, code):
+                self.calls.append(('stop', str(code)))
+
+        hub = ProbeHub()
+        result = probe_env_ip(
+            hub, 'US', 'XG-US-0824-001', '123',
+            lambda _ip: {'countryCode': 'US', 'country': 'United States'})
+        self.assertTrue(result['ok'])
+        self.assertEqual(hub.calls, [
+            ('start', '123', True), ('stop', '123')])
 
     def test_hub_unfiltered_env_list_paginates_across_all_groups(self):
         api = HubStudioApi()

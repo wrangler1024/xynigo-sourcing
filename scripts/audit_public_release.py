@@ -2,12 +2,16 @@
 """Fail CI when public source contains known private-operation markers."""
 from pathlib import Path
 import hashlib
+import ipaddress
 import re
 import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SKIP_DIRS = {'.git', '.cache', '.venv', 'build', 'dist', '__pycache__'}
+SKIP_DIRS = {
+    '.git', '.cache', '.venv', 'build', 'dist', '__pycache__',
+    '查询日志', '运行数据', '日志', 'logs', 'imports', '导入文件',
+}
 TEXT_SUFFIXES = {
     '.py', '.md', '.html', '.sh', '.ps1', '.yml', '.yaml', '.toml',
     '.json', '.command', '.txt', '.gitignore',
@@ -34,6 +38,21 @@ TOKEN_PATTERNS = (
 )
 IP_PATTERN = re.compile(r'(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])')
 ALLOWED_IPS = {'127.0.0.1', '0.0.0.0'}
+DOCUMENTATION_NETWORKS = tuple(ipaddress.ip_network(value) for value in (
+    '192.0.2.0/24',
+    '198.51.100.0/24',
+    '203.0.113.0/24',
+))
+
+
+def is_allowed_ip(value):
+    if value in ALLOWED_IPS:
+        return True
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return any(address in network for network in DOCUMENTATION_NETWORKS)
 
 
 def iter_text_files():
@@ -65,7 +84,7 @@ def main():
                     continue
                 findings.append('%s: forbidden identifier or credential URL' % rel)
         for ip in IP_PATTERN.findall(text):
-            if ip not in ALLOWED_IPS:
+            if not is_allowed_ip(ip):
                 findings.append('%s: non-local IP address %s' % (rel, ip))
     if findings:
         print('\n'.join(sorted(set(findings))))

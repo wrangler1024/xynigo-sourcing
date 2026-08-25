@@ -69,6 +69,12 @@ class ParallelRouteTests(unittest.TestCase):
         self.env_job = FakeEnvJob()
         self.state = SimpleNamespace(
             cfg={'safeParallelTasks': True},
+            auth=SimpleNamespace(
+                require=lambda permission=None, role=None: {
+                    'authenticated': True,
+                    'permission': permission,
+                    'role': role,
+                }),
             hub=FakeHub(),
             orch=self.orch,
             env_job=self.env_job,
