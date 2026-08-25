@@ -506,14 +506,29 @@ class LocalAuthService(object):
 
     @staticmethod
     def _status(authenticated=False, identity=None, cloud_reachable=True,
-                code='', message=''):
+                code='', message='', login_pending=False):
         return {
             'authenticated': bool(authenticated),
             'cloudReachable': bool(cloud_reachable),
             'identity': identity if authenticated else None,
             'code': code,
             'message': message,
+            'loginPending': bool(login_pending and not authenticated),
         }
+
+    def _pending_login_active(self):
+        if not self.pending:
+            return False
+        try:
+            active = (
+                bool(self.pending.get('loginUrl'))
+                and self.clock() < float(self.pending['expiresAt'])
+            )
+        except (KeyError, TypeError, ValueError):
+            active = False
+        if not active:
+            self.pending = None
+        return active
 
     def status(self, force=True):
         with self.lock:
@@ -523,7 +538,10 @@ class LocalAuthService(object):
                     message=self.storage_error,
                 )
             if not self.session_token:
-                return self._status(code='authentication_required')
+                return self._status(
+                    code='authentication_required',
+                    login_pending=self._pending_login_active(),
+                )
             now = self.clock()
             if (not force and self.identity is not None
                     and now - self.last_verified < self.refresh_interval):
@@ -558,13 +576,23 @@ class LocalAuthService(object):
             if self.storage_error:
                 raise LocalAuthError(
                     'credential_store_failed', self.storage_error, 500)
+            if self._pending_login_active():
+                return {
+                    'started': False,
+                    'resumed': True,
+                    'loginUrl': self.pending['loginUrl'],
+                    'expiresIn': max(
+                        1, int(self.pending['expiresAt'] - self.clock())),
+                }
             started = self.client.start_login()
             self.pending = {
                 'pollToken': started['pollToken'],
+                'loginUrl': started['loginUrl'],
                 'expiresAt': self.clock() + started['expiresIn'],
             }
             return {
                 'started': True,
+                'resumed': False,
                 'loginUrl': started['loginUrl'],
                 'expiresIn': started['expiresIn'],
             }
@@ -576,16 +604,23 @@ class LocalAuthService(object):
             if self.clock() >= self.pending['expiresAt']:
                 self.pending = None
                 raise LocalAuthError('local_login_expired', status=410)
-            result = self.client.poll_login(self.pending['pollToken'])
+            try:
+                result = self.client.poll_login(self.pending['pollToken'])
+            except LocalAuthError as exc:
+                if exc.code != 'cloud_unreachable':
+                    self.pending = None
+                raise
             if result.get('status') == 'pending':
                 return {'status': 'pending'}
             if result.get('status') != 'authenticated':
+                self.pending = None
                 raise LocalAuthError('cloud_response_invalid', '云端登录状态无效', 502)
             token = _validated_token(result.get('sessionToken'))
             identity = _public_identity(result.get('identity'))
             try:
                 self.store.save(token)
             except Exception:
+                self.pending = None
                 try:
                     self.client.logout(token)
                 except Exception:

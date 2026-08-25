@@ -33,12 +33,11 @@ workflows contributed by **Samforo**.
 The current stable release is `v0.10.0`. The project is under active
 development and is not yet a hosted SaaS product.
 
-The current coordinated test candidate is `v0.11.0`. It preserves the
-v0.10.0 local executor and guarded parallel runtime while adding Feishu
-sign-in, organization/RBAC, cloud procurement requests, claims, splits,
-execution queues, and the loopback purchase-assistant bridge. It is limited
-to all current users of the shared test environment; it is not a production
-release.
+The current coordinated test candidate is `v0.11.1`. Based on v0.11.0, it
+fixes a local polling race that could return the page to sign-in after a
+successful Feishu authorization, and resumes an unexpired sign-in request
+after a page refresh. It is limited to all current users of the shared test
+environment; it is not a production release.
 
 v0.10.0 adds an opt-in safe parallel mode. When enabled, one order/shipment
 query batch may run alongside either one bound-environment batch or one

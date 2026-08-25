@@ -42,6 +42,7 @@ IDENTITY = {
 
 class FakeCloudClient(object):
     def __init__(self):
+        self.start_calls = 0
         self.poll_results = [
             {'status': 'pending'},
             {
@@ -57,6 +58,7 @@ class FakeCloudClient(object):
         self.procurement_workspace_requests = []
 
     def start_login(self):
+        self.start_calls += 1
         return {
             'loginUrl': 'https://xynigo.example.test/authorize',
             'pollToken': POLL_TOKEN,
@@ -125,6 +127,7 @@ class CloudAuthTests(unittest.TestCase):
         self.assertEqual(result['status'], 'authenticated')
         self.assertNotIn(SESSION_TOKEN, rendered)
         self.assertNotIn(POLL_TOKEN, rendered)
+        self.assertFalse(service.status(force=False)['loginPending'])
         self.assertEqual(store.load(), SESSION_TOKEN)
         self.assertEqual(service.require()['user']['name'], '合成管理员')
         self.assertEqual(
@@ -136,6 +139,73 @@ class CloudAuthTests(unittest.TestCase):
         self.assertEqual(service.logout(), {'loggedOut': True})
         self.assertIsNone(store.load())
         self.assertEqual(client.logout_tokens, [SESSION_TOKEN])
+
+    def test_pending_login_survives_page_refresh_and_reuses_request(self):
+        now = [100.0]
+        client = FakeCloudClient()
+        service = LocalAuthService(
+            client=client,
+            store=MemoryAuthSessionStore(),
+            clock=lambda: now[0],
+        )
+
+        started = service.start_login()
+        status = service.status()
+        resumed = service.start_login()
+
+        self.assertTrue(started['started'])
+        self.assertFalse(started['resumed'])
+        self.assertTrue(status['loginPending'])
+        self.assertNotIn(POLL_TOKEN, json.dumps(status))
+        self.assertFalse(resumed['started'])
+        self.assertTrue(resumed['resumed'])
+        self.assertEqual(resumed['loginUrl'], started['loginUrl'])
+        self.assertEqual(client.start_calls, 1)
+
+        now[0] = 401.0
+        self.assertFalse(service.status()['loginPending'])
+        self.assertTrue(service.start_login()['started'])
+        self.assertEqual(client.start_calls, 2)
+
+    def test_terminal_poll_error_clears_pending_login(self):
+        client = FakeCloudClient()
+        client.poll_results = [
+            LocalAuthError('user_pending_approval', status=403),
+        ]
+
+        def poll_login(token):
+            result = client.poll_results.pop(0)
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        client.poll_login = poll_login
+        service = LocalAuthService(
+            client=client,
+            store=MemoryAuthSessionStore(),
+        )
+        service.start_login()
+        with self.assertRaises(LocalAuthError) as caught:
+            service.poll_login()
+        self.assertEqual(caught.exception.code, 'user_pending_approval')
+        self.assertFalse(service.status()['loginPending'])
+
+    def test_transient_poll_error_keeps_pending_login_for_retry(self):
+        client = FakeCloudClient()
+
+        def poll_login(_token):
+            raise LocalAuthError('cloud_unreachable', status=503)
+
+        client.poll_login = poll_login
+        service = LocalAuthService(
+            client=client,
+            store=MemoryAuthSessionStore(),
+        )
+        service.start_login()
+        with self.assertRaises(LocalAuthError) as caught:
+            service.poll_login()
+        self.assertEqual(caught.exception.code, 'cloud_unreachable')
+        self.assertTrue(service.status()['loginPending'])
 
     def test_invalid_cloud_session_is_removed_from_secure_store(self):
         client = FakeCloudClient()

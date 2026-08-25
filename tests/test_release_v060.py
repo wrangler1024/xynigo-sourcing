@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Release contract tests for Xynigo Sourcing v0.11.0 test candidate."""
+"""Release contract tests for Xynigo Sourcing v0.11.1 test candidate."""
 
 from pathlib import Path
 import hashlib
@@ -12,24 +12,24 @@ import unittest
 from purchase_tool import __version__
 
 
-class ReleaseV0110Tests(unittest.TestCase):
+class ReleaseV0111Tests(unittest.TestCase):
     def test_version_and_packaging_are_aligned(self):
         root = Path(__file__).resolve().parents[1]
-        self.assertEqual(__version__, '0.11.0')
+        self.assertEqual(__version__, '0.11.1')
         pyproject = (root / 'pyproject.toml').read_text(encoding='utf-8')
-        self.assertIn('version = "0.11.0"', pyproject)
+        self.assertIn('version = "0.11.1"', pyproject)
         cloud_project = (root / 'cloud' / 'auth-service' /
                          'pyproject.toml').read_text(encoding='utf-8')
-        self.assertIn('version = "0.11.0"', cloud_project)
+        self.assertIn('version = "0.11.1"', cloud_project)
         cloud_init = (root / 'cloud' / 'auth-service' / 'src' /
                       'xynigo_auth' / '__init__.py').read_text(
                           encoding='utf-8')
-        self.assertIn('__version__ = "0.11.0"', cloud_init)
+        self.assertIn('__version__ = "0.11.1"', cloud_init)
         cloud_main = (root / 'cloud' / 'auth-service' / 'src' /
                       'xynigo_auth' / 'main.py').read_text(encoding='utf-8')
-        self.assertIn('version="0.11.0"', cloud_main)
-        self.assertTrue((root / 'release' / 'v0.11.0.zh-CN.json').is_file())
-        self.assertTrue((root / 'release' / 'v0.11.0.zh-CN.md').is_file())
+        self.assertIn('version="0.11.1"', cloud_main)
+        self.assertTrue((root / 'release' / 'v0.11.1.zh-CN.json').is_file())
+        self.assertTrue((root / 'release' / 'v0.11.1.zh-CN.md').is_file())
         script = (root / '组装Windows绿色包.sh').read_text(encoding='utf-8')
         self.assertIn('v${VERSION}.zip', script)
         self.assertIn('XYNIGO_RELEASE_CHANNEL:-stable', script)
@@ -62,19 +62,19 @@ class ReleaseV0110Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp = Path(temp_dir)
             asset = temp / 'Xynigo_Sourcing_test.zip'
-            asset.write_bytes(b'xynigo-v0.11.0-test-package')
+            asset.write_bytes(b'xynigo-v0.11.1-test-package')
             manifest = temp / 'latest.json'
             sha_file = temp / 'SHA256SUMS.txt'
             subprocess.run(
                 [
                     sys.executable,
                     str(root / 'scripts' / 'update_release_assets.py'),
-                    '--version', '0.11.0',
+                    '--version', '0.11.1',
                     '--channel', 'test',
                     '--platform', 'macos-arm64',
                     '--asset', str(asset),
                     '--notes', str(root / 'release' /
-                                   'v0.11.0.zh-CN.json'),
+                                   'v0.11.1.zh-CN.json'),
                     '--manifest', str(manifest),
                     '--sha-file', str(sha_file),
                 ],
@@ -86,7 +86,7 @@ class ReleaseV0110Tests(unittest.TestCase):
             digest = hashlib.sha256(asset.read_bytes()).hexdigest()
             self.assertEqual(payload['schemaVersion'], 2)
             self.assertEqual(payload['channel'], 'test')
-            self.assertEqual(payload['version'], '0.11.0')
+            self.assertEqual(payload['version'], '0.11.1')
             self.assertEqual(payload['platforms']['macos-arm64']['sha256'],
                              digest)
             self.assertEqual(
@@ -103,6 +103,10 @@ class ReleaseV0110Tests(unittest.TestCase):
         self.assertIn('买家号建环境', html)
         self.assertIn('/api/envbatch/start', html)
         self.assertIn('/api/tasks', html)
+        self.assertIn(
+            'async function pollTaskStatus() {\n  if (!authReady) return;',
+            html,
+        )
         self.assertIn('id="cfgSafeParallel"', html)
         self.assertIn('开启安全并行', html)
         self.assertIn('/api/envbatch/preflight', html)
@@ -181,8 +185,8 @@ class ReleaseV0110Tests(unittest.TestCase):
         self.assertIn("cfg.proxySource === 'custom'", html)
         self.assertIn('系统模板固定带表头', html)
         self.assertNotIn('https://proxy.example.test', html)
-        self.assertIn('Xynigo Sourcing v0.11.0', html)
-        self.assertIn('测试候选 v0.11.0', html)
+        self.assertIn('Xynigo Sourcing v0.11.1', html)
+        self.assertIn('测试候选 v0.11.1', html)
         self.assertIn('测试环境 · 数据隔离', html)
         self.assertNotIn('本机数据不出站', html)
         self.assertIn('Xyni, GO!', html)
@@ -327,6 +331,10 @@ class ReleaseV0110Tests(unittest.TestCase):
         self.assertIn("window.open('about:blank', 'xynigo-feishu-login')", html)
         self.assertIn('function closeAuthLoginWindow()', html)
         self.assertIn('closeAuthLoginWindow();\n  authIdentity = identity;', html)
+        self.assertIn('if (state.loginPending)', html)
+        self.assertIn('正在恢复登录状态', html)
+        self.assertIn('if (authLoginStarting) return;', html)
+        self.assertIn('started.resumed', html)
         self.assertIn('新增后状态固定为 pending', html)
         self.assertIn('不写入 Xynigo 数据库或审计日志', html)
         self.assertIn('id="roleEditor"', html)
