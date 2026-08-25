@@ -1,20 +1,40 @@
 # -*- coding: utf-8 -*-
-"""Release contract tests for Xynigo Sourcing v0.10.0."""
+"""Release contract tests for Xynigo Sourcing v0.11.0 test candidate."""
 
 from pathlib import Path
+import hashlib
+import json
+import subprocess
+import sys
+import tempfile
 import unittest
 
 from purchase_tool import __version__
 
 
-class ReleaseV090Tests(unittest.TestCase):
+class ReleaseV0110Tests(unittest.TestCase):
     def test_version_and_packaging_are_aligned(self):
         root = Path(__file__).resolve().parents[1]
-        self.assertEqual(__version__, '0.10.0')
+        self.assertEqual(__version__, '0.11.0')
         pyproject = (root / 'pyproject.toml').read_text(encoding='utf-8')
-        self.assertIn('version = "0.10.0"', pyproject)
+        self.assertIn('version = "0.11.0"', pyproject)
+        cloud_project = (root / 'cloud' / 'auth-service' /
+                         'pyproject.toml').read_text(encoding='utf-8')
+        self.assertIn('version = "0.11.0"', cloud_project)
+        cloud_init = (root / 'cloud' / 'auth-service' / 'src' /
+                      'xynigo_auth' / '__init__.py').read_text(
+                          encoding='utf-8')
+        self.assertIn('__version__ = "0.11.0"', cloud_init)
+        cloud_main = (root / 'cloud' / 'auth-service' / 'src' /
+                      'xynigo_auth' / 'main.py').read_text(encoding='utf-8')
+        self.assertIn('version="0.11.0"', cloud_main)
+        self.assertTrue((root / 'release' / 'v0.11.0.zh-CN.json').is_file())
+        self.assertTrue((root / 'release' / 'v0.11.0.zh-CN.md').is_file())
         script = (root / '组装Windows绿色包.sh').read_text(encoding='utf-8')
         self.assertIn('v${VERSION}.zip', script)
+        self.assertIn('XYNIGO_RELEASE_CHANNEL:-stable', script)
+        self.assertIn('--channel "$CHANNEL"', script)
+        self.assertIn("'channel': channel", script)
         self.assertIn('Xynigo Sourcing v%s 启动中', script)
         self.assertIn("os.environ.setdefault('XYNIGO_INSTALL_DIR', ROOT)", script)
         self.assertNotIn(
@@ -25,6 +45,9 @@ class ReleaseV090Tests(unittest.TestCase):
         mac_script = (root / '组装macOS绿色包.sh').read_text(
             encoding='utf-8')
         self.assertIn('Xynigo_Sourcing_macOS_', mac_script)
+        self.assertIn('XYNIGO_RELEASE_CHANNEL:-stable', mac_script)
+        self.assertIn('--channel "$CHANNEL"', mac_script)
+        self.assertIn("'channel': channel", mac_script)
         mac_entry = (root / 'packaging' / 'macos' / 'entry.py').read_text(
             encoding='utf-8')
         self.assertIn("os.environ.setdefault('XYNIGO_INSTALL_DIR'", mac_entry)
@@ -33,6 +56,43 @@ class ReleaseV090Tests(unittest.TestCase):
                          'update-helper.sh').is_file())
         self.assertTrue((root / 'src' / 'purchase_tool' /
                          'updater.py').is_file())
+
+    def test_release_asset_builder_supports_test_channel(self):
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            asset = temp / 'Xynigo_Sourcing_test.zip'
+            asset.write_bytes(b'xynigo-v0.11.0-test-package')
+            manifest = temp / 'latest.json'
+            sha_file = temp / 'SHA256SUMS.txt'
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(root / 'scripts' / 'update_release_assets.py'),
+                    '--version', '0.11.0',
+                    '--channel', 'test',
+                    '--platform', 'macos-arm64',
+                    '--asset', str(asset),
+                    '--notes', str(root / 'release' /
+                                   'v0.11.0.zh-CN.json'),
+                    '--manifest', str(manifest),
+                    '--sha-file', str(sha_file),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            payload = json.loads(manifest.read_text(encoding='utf-8'))
+            digest = hashlib.sha256(asset.read_bytes()).hexdigest()
+            self.assertEqual(payload['schemaVersion'], 2)
+            self.assertEqual(payload['channel'], 'test')
+            self.assertEqual(payload['version'], '0.11.0')
+            self.assertEqual(payload['platforms']['macos-arm64']['sha256'],
+                             digest)
+            self.assertEqual(
+                sha_file.read_text(encoding='utf-8'),
+                '%s  %s\n' % (digest, asset.name),
+            )
 
     def test_web_bundle_contains_module_three_and_template(self):
         root = Path(__file__).resolve().parents[1]
@@ -121,7 +181,10 @@ class ReleaseV090Tests(unittest.TestCase):
         self.assertIn("cfg.proxySource === 'custom'", html)
         self.assertIn('系统模板固定带表头', html)
         self.assertNotIn('https://proxy.example.test', html)
-        self.assertIn('Xynigo Sourcing v0.10.0', html)
+        self.assertIn('Xynigo Sourcing v0.11.0', html)
+        self.assertIn('测试候选 v0.11.0', html)
+        self.assertIn('测试环境 · 数据隔离', html)
+        self.assertNotIn('本机数据不出站', html)
         self.assertIn('Xyni, GO!', html)
         self.assertIn('Xynigo 品牌字标', html)
         self.assertIn('小犀与 Xynigo 完整品牌一体图形', html)
