@@ -28,6 +28,7 @@ KEYCHAIN_SERVICE = 'io.xynigo.sourcing.auth'
 KEYCHAIN_ACCOUNT = 'xynigo-cloud-session'
 TOKEN_PATTERN = re.compile(r'^[A-Za-z0-9_-]{32,256}$')
 MAX_RESPONSE_BYTES = 1024 * 1024
+MAX_PROCUREMENT_RESPONSE_BYTES = 4 * 1024 * 1024
 ALLOWED_LOGIN_HOSTS = frozenset({'accounts.feishu.cn'})
 
 
@@ -44,6 +45,40 @@ ERROR_MESSAGES = {
     'local_login_consumed': '登录请求已使用，请重新发起',
     'cloud_unreachable': '无法连接 Xynigo 云端认证服务',
     'permission_denied': '当前账号没有此功能权限',
+    'member_not_found': '成员不存在或不属于当前组织',
+    'role_not_found': '角色不存在或不属于当前组织',
+    'session_not_found': '登录会话不存在或不属于当前组织',
+    'member_status_conflict': '成员状态已变化，请刷新后重试',
+    'feishu_member_not_found': '未找到该手机号绑定的可用飞书成员，请检查号码或应用通讯录范围',
+    'feishu_member_ineligible': '该飞书成员未激活、已冻结或已离职，不能邀请',
+    'feishu_directory_permission_missing': '“小犀代采”尚未开通通讯录成员 ID 与基本信息权限',
+    'feishu_directory_unavailable': '飞书通讯录暂不可用，请检查应用权限和通讯录数据范围',
+    'member_already_exists': '该飞书成员已经在 Xynigo 成员列表中',
+    'cannot_disable_self': '不能停用当前登录账号',
+    'cannot_remove_own_super_admin': '不能移除自己的超级管理员角色',
+    'super_admin_required': '此操作仅允许超级管理员执行',
+    'super_admin_only_permission': '云端服务配置仅允许超级管理员访问',
+    'system_role_immutable': '系统角色及系统权限由后端维护，不能修改',
+    'role_name_invalid': '角色名称不能为空',
+    'role_name_conflict': '当前组织已存在同名角色',
+    'role_in_use': '角色已分配给成员，请先解除成员授权',
+    'permission_code_invalid': '包含系统未定义的权限码',
+    'permission_grant_exceeds_actor': '不能授予当前账号自身不具备的权限',
+    'purchase_order_not_found': '未找到该采购单',
+    'purchase_order_locked': '采购单已正式提交，不能直接覆盖',
+    'purchase_submit_invalid': '采购单未满足正式提交要求',
+    'purchase_claim_selection_required': '请至少选择一张采购单或一条采购明细',
+    'purchase_claim_empty': '所选采购单没有可认领的有效明细',
+    'purchase_line_not_found': '未找到该采购明细',
+    'purchase_line_claim_conflict': '部分采购明细已被其他采购员认领或已进入采购流程',
+    'purchase_execution_revision_conflict': '采购分单已被更新，请刷新后重试',
+    'purchase_split_no_claimed_lines': '请先认领采购明细，再创建采购分单',
+    'purchase_split_line_unavailable': '采购分单包含未由当前采购员认领的明细',
+    'purchase_split_resource_site_mismatch': 'Hub 环境、买家号与采购单站点不一致',
+    'purchase_split_resource_duplicate': '采购计划不能重复占用相同资源组合',
+    'purchase_split_allocation_incomplete': '已认领明细必须全部分配到采购分单',
+    'purchase_split_quantity_mismatch': '采购分单数量与采购明细数量不一致',
+    'purchase_split_started': '采购分单已进入执行流程，不能整体重建',
     'credential_store_failed': '无法安全保存登录会话',
 }
 
@@ -77,7 +112,8 @@ class CloudAuthClient(object):
         self.timeout = float(timeout)
         self.opener = opener
 
-    def _request(self, path, method='GET', payload=None, token=None):
+    def _request(self, path, method='GET', payload=None, token=None,
+                 max_response_bytes=MAX_RESPONSE_BYTES):
         data = None
         headers = {
             'Accept': 'application/json',
@@ -97,8 +133,8 @@ class CloudAuthClient(object):
         try:
             response = self.opener(request, timeout=self.timeout)
             with response:
-                raw = response.read(MAX_RESPONSE_BYTES + 1)
-                if len(raw) > MAX_RESPONSE_BYTES:
+                raw = response.read(max_response_bytes + 1)
+                if len(raw) > max_response_bytes:
                     raise LocalAuthError('cloud_response_invalid', '云端认证响应过大', 502)
                 if not raw:
                     return {}
@@ -158,6 +194,79 @@ class CloudAuthClient(object):
 
     def logout(self, session_token):
         return self._request('/v1/auth/logout', method='POST', token=session_token)
+
+    def admin_request(self, path, session_token, method='GET', payload=None):
+        parsed = urlparse(str(path or ''))
+        if (parsed.scheme or parsed.netloc or parsed.fragment
+                or not parsed.path.startswith('/v1/admin/')):
+            raise LocalAuthError(
+                'cloud_response_invalid', '云端管理接口地址无效', 500)
+        method = str(method or 'GET').upper()
+        if method not in ('GET', 'POST', 'PUT', 'DELETE'):
+            raise LocalAuthError(
+                'cloud_response_invalid', '云端管理接口方法无效', 500)
+        return self._request(
+            path,
+            method=method,
+            payload=payload if method in ('POST', 'PUT') else None,
+            token=session_token,
+        )
+
+    def purchase_request(self, action, session_token, payload):
+        paths = {
+            'draft': '/v1/purchase-orders/draft',
+            'submit': '/v1/purchase-orders/submit',
+            'get': '/v1/purchase-orders/get',
+        }
+        path = paths.get(str(action or ''))
+        if path is None:
+            raise LocalAuthError(
+                'cloud_response_invalid', '云端采购接口动作无效', 500)
+        return self._request(
+            path,
+            method='POST',
+            payload=payload,
+            token=session_token,
+        )
+
+    def procurement_workspace_request(
+            self, path, session_token, method='GET', payload=None):
+        parsed = urlparse(str(path or ''))
+        allowed_path = parsed.path in {
+            '/v1/procurement/overview',
+            '/v1/procurement/orders',
+            '/v1/procurement/claims',
+            '/v1/procurement/execution/splits',
+        } or re.fullmatch(
+            r'/v1/procurement/orders/[0-9a-fA-F]{8}-'
+            r'[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
+            r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?:/splits)?',
+            parsed.path,
+        )
+        if (parsed.scheme or parsed.netloc or parsed.fragment
+                or not allowed_path):
+            raise LocalAuthError(
+                'cloud_response_invalid', '云端采购中心接口地址无效', 500)
+        method = str(method or 'GET').upper()
+        if method not in ('GET', 'POST'):
+            raise LocalAuthError(
+                'cloud_response_invalid', '云端采购中心接口方法无效', 500)
+        is_write_path = (
+            parsed.path == '/v1/procurement/claims'
+            or parsed.path.endswith('/splits')
+            and '/v1/procurement/orders/' in parsed.path
+        )
+        if (is_write_path and method != 'POST') or (
+                not is_write_path and method != 'GET'):
+            raise LocalAuthError(
+                'cloud_response_invalid', '云端采购中心接口方法与地址不匹配', 500)
+        return self._request(
+            path,
+            method=method,
+            payload=payload if method == 'POST' else None,
+            token=session_token,
+            max_response_bytes=MAX_PROCUREMENT_RESPONSE_BYTES,
+        )
 
 
 class MemoryAuthSessionStore(object):
@@ -489,7 +598,7 @@ class LocalAuthService(object):
             self.pending = None
             return {'status': 'authenticated', 'identity': identity}
 
-    def require(self, permission=None):
+    def require(self, permission=None, role=None):
         with self.lock:
             state = self.status(force=False)
             if not state['authenticated']:
@@ -499,7 +608,99 @@ class LocalAuthService(object):
             identity = state['identity']
             if permission and permission not in identity['permissions']:
                 raise LocalAuthError('permission_denied', status=403)
+            if role and role not in identity['roles']:
+                raise LocalAuthError('super_admin_required', status=403)
             return identity
+
+    def admin_request(self, path, method='GET', payload=None):
+        with self.lock:
+            state = self.status(force=False)
+            if not state['authenticated'] or not self.session_token:
+                code = state.get('code') or 'authentication_required'
+                status = 503 if code == 'cloud_unreachable' else 401
+                raise LocalAuthError(code, state.get('message') or None, status)
+            try:
+                return self.client.admin_request(
+                    path,
+                    self.session_token,
+                    method=method,
+                    payload=payload,
+                )
+            except LocalAuthError as exc:
+                if exc.status == 401:
+                    try:
+                        self.store.clear()
+                    except Exception:
+                        self.storage_error = ERROR_MESSAGES[
+                            'credential_store_failed']
+                    self.session_token = None
+                    self.identity = None
+                    self.last_verified = 0.0
+                raise
+
+    def purchase_request(self, action, payload, permission):
+        with self.lock:
+            identity = self.require(permission)
+            if not self.session_token:
+                raise LocalAuthError('authentication_required', status=401)
+            try:
+                result = self.client.purchase_request(
+                    action,
+                    self.session_token,
+                    payload,
+                )
+            except LocalAuthError as exc:
+                if exc.status == 401:
+                    try:
+                        self.store.clear()
+                    except Exception:
+                        self.storage_error = ERROR_MESSAGES[
+                            'credential_store_failed']
+                    self.session_token = None
+                    self.identity = None
+                    self.last_verified = 0.0
+                raise
+            if not isinstance(result, dict) or result.get('ok') is not True:
+                raise LocalAuthError(
+                    'cloud_response_invalid', '云端采购接口响应无效', 502)
+            data = result.get('data')
+            if not isinstance(data, dict):
+                raise LocalAuthError(
+                    'cloud_response_invalid', '云端采购接口数据无效', 502)
+            return {'identity': identity, 'data': data}
+
+    def procurement_workspace_request(
+            self, path, method='GET', payload=None,
+            permission='procurement.request.read'):
+        with self.lock:
+            self.require(permission)
+            if not self.session_token:
+                raise LocalAuthError('authentication_required', status=401)
+            try:
+                result = self.client.procurement_workspace_request(
+                    path,
+                    self.session_token,
+                    method=method,
+                    payload=payload,
+                )
+            except LocalAuthError as exc:
+                if exc.status == 401:
+                    try:
+                        self.store.clear()
+                    except Exception:
+                        self.storage_error = ERROR_MESSAGES[
+                            'credential_store_failed']
+                    self.session_token = None
+                    self.identity = None
+                    self.last_verified = 0.0
+                raise
+            if not isinstance(result, dict) or result.get('ok') is not True:
+                raise LocalAuthError(
+                    'cloud_response_invalid', '云端采购中心接口响应无效', 502)
+            if not isinstance(result.get('data'), dict):
+                raise LocalAuthError(
+                    'cloud_response_invalid', '云端采购中心接口数据无效', 502)
+            return result
 
     def logout(self):
         with self.lock:

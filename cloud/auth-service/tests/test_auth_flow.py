@@ -125,7 +125,11 @@ def test_bootstrap_admin_login_creates_hashed_session_and_rbac(tmp_path) -> None
             assert stored_session.token_hash == hash_token(raw_cookie)
             assert raw_cookie not in stored_session.token_hash
             assert session.scalar(select(User.status)) == "active"
-            assert session.scalar(select(Role.code)) == "super_admin"
+            assert set(session.scalars(select(Role.code))) == {
+                "admin",
+                "member",
+                "super_admin",
+            }
             assert len(list(session.scalars(select(Permission.code)))) >= 10
 
         me = client.get("/v1/auth/me")
@@ -228,6 +232,14 @@ def test_local_login_bridge_issues_bearer_session_once(tmp_path) -> None:
         assert callback.status_code == 303
         assert callback.headers["location"] == "/v1/auth/local/complete"
         assert "set-cookie" not in callback.headers
+
+        complete = client.get("/v1/auth/local/complete")
+        assert complete.status_code == 200
+        assert complete.headers["content-type"].startswith("text/html")
+        assert "window.close()" in complete.text
+        assert "正在自动关闭此页面" in complete.text
+        assert "script-src 'sha256-" in complete.headers["content-security-policy"]
+        assert "'unsafe-inline'" not in complete.headers["content-security-policy"]
 
         exchanged = client.post("/v1/auth/local/poll", json={"pollToken": poll_token})
         assert exchanged.status_code == 200

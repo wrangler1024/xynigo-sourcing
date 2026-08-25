@@ -313,7 +313,7 @@ class ConfigRouteTests(unittest.TestCase):
                  'proxyLink': TEST_PROXY,
                  'larkBuyerBaseToken': 'bascnPublicSafeExample',
                  'larkBuyerTableId': 'tblPublicSafeExample'},
-            auth=SimpleNamespace(require=lambda permission=None: {
+            auth=SimpleNamespace(require=lambda permission=None, role=None: {
                 'roles': ['super_admin'],
                 'permissions': ['system.lark_connection.manage'],
             }),

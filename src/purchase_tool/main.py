@@ -61,6 +61,7 @@ from .env_batch import (BACKUP_MAX_COUNT, BACKUP_REMARK, BUYER_CODES,
                         validate_assignment_template,
                         validate_backup_count,
                         validate_proxy_link, validate_purchase_tag)
+from .extension_bridge import ExtensionBridge, ExtensionBridgeError
 from .hub_api import HubStudioApi, DEFAULT_PORT
 from .lark_credentials import (LarkCredentialError, LarkCredentials,
                                public_credential_status,
@@ -71,6 +72,7 @@ from .lark_ledger import LarkLedgerSink
 from .lark_openapi import LarkOpenApiClient
 from .lark_runtime import build_buyer_ledger_service
 from .redaction import scrub_text
+from .resource_center import ResourceCenterService
 from .shein_query import QueryOrchestrator, normalize_site
 from .updater import UpdateCoordinator
 
@@ -80,6 +82,10 @@ LOGO_PNG = os.path.join(BASE_DIR, 'web', 'xynigo-logo.png')
 MASCOT_X_PNG = os.path.join(BASE_DIR, 'web', 'xynigo-mascot-x.png')
 X_ICON_PNG = os.path.join(BASE_DIR, 'web', 'xynigo-x.png')
 X_ICON_ICO = os.path.join(BASE_DIR, 'web', 'xynigo-x.ico')
+EXTENSION_CONNECT_HTML = os.path.join(
+    BASE_DIR, 'web', 'extension-connect.html')
+EXTENSION_CONNECT_JS = os.path.join(
+    BASE_DIR, 'web', 'extension-connect.js')
 ENV_TEMPLATE_XLSX = os.path.join(
     BASE_DIR, 'web', '采购工具买家号入库模板.xlsx')
 LARK_LEDGER_TEMPLATE_XLSX = os.path.join(
@@ -122,14 +128,48 @@ AUTH_PERMISSION_BY_PATH = {
     '/api/register/progress': 'resource.buyer.import',
     '/api/register/validate': 'resource.buyer.import',
     '/api/register/start': 'resource.buyer.import',
+    '/api/resources/stores': 'resource.store.read',
+    '/api/resources/stores/export': 'resource.store.read',
+    '/api/resources/proxies': 'resource.ip.read',
+    '/api/resources/proxies/export': 'resource.ip.read',
+    '/api/resources/proxies/check/history': 'resource.ip.read',
+    '/api/resources/proxies/check/progress': 'resource.ip.test',
+    '/api/resources/proxies/check/start': 'resource.ip.test',
+    '/api/resources/proxies/check/stop': 'resource.ip.test',
     '/api/lark/config': 'system.lark_connection.manage',
     '/api/lark/open-target': 'system.lark_connection.manage',
     '/api/lark/target-metadata': 'system.lark_connection.manage',
     '/api/lark/preflight': 'system.lark_connection.manage',
+    '/api/extension/pair/approve': 'operations.access',
+    '/api/procurement/claims': 'procurement.execution.manage',
 }
+SUPER_ADMIN_ONLY_PERMISSIONS = frozenset({
+    'system.lark_connection.manage',
+    'system.integration.manage',
+    'resource.ip.credential.manage',
+})
 AUTH_PERMISSION_BY_PREFIX = (
+    ('/api/procurement/', 'procurement.request.read'),
+    ('/api/admin/roles', 'system.role.manage'),
+    ('/api/admin/permissions', 'system.role.manage'),
+    ('/api/admin/sessions', 'system.member.manage'),
+    ('/api/admin/members', 'system.member.manage'),
     ('/api/envbatch/', 'resource.environment.create'),
 )
+
+
+def admin_cloud_write_target(path):
+    """Map same-origin browser POST routes to the cloud admin method/path."""
+    cloud_path = '/v1/admin/' + path[len('/api/admin/'):]
+    if path.startswith('/api/admin/roles/') and path.endswith('/rename'):
+        return cloud_path[:-len('/rename')], 'PUT'
+    if path.startswith('/api/admin/roles/') and path.endswith('/delete'):
+        return cloud_path[:-len('/delete')], 'DELETE'
+    if path == '/api/admin/roles':
+        return cloud_path, 'POST'
+    if path.endswith('/roles') or path.endswith('/permissions'):
+        return cloud_path, 'PUT'
+    return cloud_path, 'POST'
 
 
 def default_config():
@@ -541,10 +581,12 @@ class HubStatusCache(object):
 class AppState(object):
     """进程级共享状态：配置 + HubStudio 连接 + 编排器。"""
 
-    def __init__(self, credential_store=None, auth_service=None):
+    def __init__(self, credential_store=None, auth_service=None,
+                 extension_bridge=None):
         cfg = load_config()
         self.cfg = cfg
         self.auth = auth_service or LocalAuthService()
+        self.extension_bridge = extension_bridge or ExtensionBridge()
         self.lark_credentials = credential_store or system_credential_store()
         self.hub = HubStudioApi(port=cfg['hubPort'])
         self._hub_status = HubStatusCache(lambda: self.hub)
@@ -565,6 +607,8 @@ class AppState(object):
             ledger_sync_factory=lambda: build_buyer_ledger_service(
                 self.cfg, self.lark_credentials))
         self.backup_job = BackupEnvJob(lambda: self.hub, lambda: self.cfg)
+        self.resources = ResourceCenterService(
+            lambda: self.hub, self.lark_credentials.load)
         self.updates = UpdateCoordinator(
             os.environ.get('XYNIGO_INSTALL_DIR'), __version__)
 
@@ -575,6 +619,7 @@ class AppState(object):
             self.hub, log_dir=LOG_DIR,
             concurrency=self.cfg.get('concurrency', 2))
         self._hub_status.reset()
+        self.resources.invalidate()
         return self.hub_status(force=True)[0]
 
     def hub_status(self, force=False):
@@ -1519,25 +1564,45 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---- helpers ----
 
-    def _json(self, obj, status=200):
+    def _json(self, obj, status=200, extra_headers=None):
         body = json.dumps(obj, ensure_ascii=False).encode('utf-8')
         self.send_response(status)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
+        for name, value in (extra_headers or {}).items():
+            self.send_header(str(name), str(value))
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
+    def _extension_json(self, obj, status=200):
+        origin = str(self.headers.get('Origin') or '').strip()
+        headers = {'Vary': 'Origin'}
+        if re.fullmatch(r'chrome-extension://[a-p]{32}', origin):
+            headers['Access-Control-Allow-Origin'] = origin
+        self._json(obj, status, headers)
+
     def _require_auth(self, path):
         if path in PUBLIC_AUTH_API_PATHS:
             return None
+        if (path.startswith('/api/admin/members/')
+                and path.endswith('/roles')):
+            return STATE.auth.require('system.role.manage')
+        if (path.startswith('/api/procurement/orders/')
+                and path.endswith('/splits')):
+            return STATE.auth.require('procurement.execution.manage')
         permission = AUTH_PERMISSION_BY_PATH.get(path)
         if permission is None:
             for prefix, required in AUTH_PERMISSION_BY_PREFIX:
                 if path.startswith(prefix):
                     permission = required
                     break
+        required_role = (
+            'super_admin' if permission in SUPER_ADMIN_ONLY_PERMISSIONS
+            else None)
+        if required_role:
+            return STATE.auth.require(permission, role=required_role)
         return STATE.auth.require(permission)
 
     def _auth_error(self, exc):
@@ -1563,14 +1628,100 @@ class Handler(BaseHTTPRequestHandler):
             raise LocalAuthError(
                 'origin_forbidden', '拒绝来自外部网页的本机写入请求', 403)
 
-    def _body(self):
+    def _body(self, max_bytes=2 * 1024 * 1024):
         length = int(self.headers.get('Content-Length') or 0)
         if not length:
             return {}
+        if length < 0 or length > max_bytes:
+            raise ValueError('请求数据过大')
         try:
             return json.loads(self.rfile.read(length).decode('utf-8'))
         except Exception:
             return {}
+
+    def _loopback_base_url(self):
+        host = str(self.headers.get('Host') or '').strip().lower()
+        if not re.fullmatch(r'127\.0\.0\.1:\d{1,5}', host):
+            raise ExtensionBridgeError(
+                'extension_host_invalid', 'Xynigo 本机服务地址无效', 400)
+        port = int(host.rsplit(':', 1)[1])
+        if port < 1 or port > 65535:
+            raise ExtensionBridgeError(
+                'extension_host_invalid', 'Xynigo 本机服务端口无效', 400)
+        return 'http://' + host
+
+    def _handle_extension_post(self, path, body):
+        if not isinstance(body, dict):
+            return self._extension_json({
+                'ok': False,
+                'code': 'extension_request_invalid',
+                'error': '插件请求格式无效',
+            }, 400)
+        origin = str(self.headers.get('Origin') or '').strip()
+        client_id = body.get('clientId')
+        if path == '/api/extension/v1/pair/request':
+            result = STATE.extension_bridge.request_pairing(
+                client_id,
+                body.get('clientVersion'),
+                origin,
+            )
+            base_url = self._loopback_base_url()
+            approval_url = '%s/extension-connect?clientId=%s' % (
+                base_url, result['clientId'])
+            return self._extension_json({
+                'ok': True,
+                'service': 'xynigo-sourcing',
+                'apiVersion': 1,
+                'status': 'approval-required',
+                'approvalUrl': approval_url,
+                **result,
+            }, 202)
+
+        STATE.extension_bridge.authenticate(
+            client_id,
+            body.get('bridgeToken') if isinstance(body, dict) else None,
+            origin,
+        )
+        if path == '/api/extension/v1/status':
+            auth_state = STATE.auth.status(force=True)
+            return self._extension_json({
+                'ok': True,
+                'service': 'xynigo-sourcing',
+                'apiVersion': 1,
+                'authenticated': bool(auth_state.get('authenticated')),
+                'identity': auth_state.get('identity'),
+                'code': auth_state.get('code') or '',
+                'message': auth_state.get('message') or '',
+            })
+        actions = {
+            '/api/extension/v1/purchase-orders/draft': (
+                'draft', 'procurement.request.save', body.get('draft')),
+            '/api/extension/v1/purchase-orders/submit': (
+                'submit', 'procurement.request.submit', body.get('draft')),
+            '/api/extension/v1/purchase-orders/get': (
+                'get', 'procurement.request.read',
+                {'orderKey': body.get('orderKey')}),
+        }
+        action = actions.get(path)
+        if action is None:
+            return self._extension_json({
+                'ok': False,
+                'code': 'not_found',
+                'error': '接口不存在',
+            }, 404)
+        cloud_action, permission, payload = action
+        if not isinstance(payload, dict):
+            return self._extension_json({
+                'ok': False,
+                'code': 'purchase_payload_invalid',
+                'error': '采购单数据无效',
+            }, 400)
+        result = STATE.auth.purchase_request(
+            cloud_action, payload, permission)
+        return self._extension_json({
+            'ok': True,
+            'data': result['data'],
+        })
 
     def _file(self, path, mime):
         with open(path, 'rb') as f:
@@ -1579,6 +1730,7 @@ class Handler(BaseHTTPRequestHandler):
         content_type = (mime + '; charset=utf-8'
                         if mime.startswith('text/') else mime)
         self.send_header('Content-Type', content_type)
+        self.send_header('Cache-Control', 'no-store')
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -1622,6 +1774,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._file(X_ICON_ICO, 'image/x-icon')
             elif path == '/favicon.ico':
                 self._file(X_ICON_ICO, 'image/x-icon')
+            elif path == '/extension-connect':
+                self._file(EXTENSION_CONNECT_HTML, 'text/html')
+            elif path == '/extension-connect.js':
+                self._file(EXTENSION_CONNECT_JS, 'text/javascript')
             elif path == '/api/auth/status':
                 self._json(STATE.auth.status(force=True))
             elif path == '/api/hub-status':
@@ -1653,6 +1809,27 @@ class Handler(BaseHTTPRequestHandler):
                     site=(query.get('site') or [''])[0],
                     status=(query.get('status') or [''])[0],
                     limit=(query.get('limit') or ['100'])[0]))
+            elif path == '/api/resources/stores':
+                self._json(STATE.resources.stores_snapshot(
+                    force=(query.get('refresh') or ['0'])[0] == '1'))
+            elif path == '/api/resources/stores/export':
+                self._download(
+                    STATE.resources.store_export(),
+                    'Xynigo店铺环境对账.csv',
+                    'text/csv; charset=utf-8')
+            elif path == '/api/resources/proxies':
+                self._json(STATE.resources.proxies_snapshot(
+                    force=(query.get('refresh') or ['0'])[0] == '1'))
+            elif path == '/api/resources/proxies/export':
+                self._download(
+                    STATE.resources.proxy_export(),
+                    'Xynigo代理IP健康清单.csv',
+                    'text/csv; charset=utf-8')
+            elif path == '/api/resources/proxies/check/progress':
+                self._json(STATE.resources.proxy_check_snapshot())
+            elif path == '/api/resources/proxies/check/history':
+                self._json(STATE.resources.proxy_history(
+                    (query.get('assetId') or [''])[0]))
             elif path == '/api/envbatch/progress':
                 snap = STATE.env_job.snapshot()
                 snap['hubConnected'] = STATE.hub_status()[0]
@@ -1740,10 +1917,27 @@ class Handler(BaseHTTPRequestHandler):
                     STATE.cfg, STATE.lark_credentials))
             elif path == '/api/lark/open-target':
                 self._redirect(lark_target_link(STATE.cfg))
+            elif path.startswith('/api/procurement/'):
+                cloud_path = '/v1/procurement/' + path[len('/api/procurement/'):]
+                if parsed.query:
+                    cloud_path += '?' + parsed.query
+                self._json(STATE.auth.procurement_workspace_request(cloud_path))
+            elif path.startswith('/api/admin/'):
+                cloud_path = '/v1/admin/' + path[len('/api/admin/'):]
+                if parsed.query:
+                    cloud_path += '?' + parsed.query
+                self._json(STATE.auth.admin_request(cloud_path))
             else:
                 self._json({'error': 'not found'}, 404)
         except LocalAuthError as e:
-            self._auth_error(e)
+            if path.startswith('/api/extension/v1/'):
+                self._extension_json({
+                    'ok': False,
+                    'code': e.code,
+                    'error': str(e),
+                }, e.status)
+            else:
+                self._auth_error(e)
         except ConnectionError as e:
             self._json({'error': 'HubStudio 未连接：%s' % e}, 503)
         except ValueError as e:
@@ -1756,16 +1950,38 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         try:
+            body = self._body()
+            if path.startswith('/api/extension/v1/'):
+                return self._handle_extension_post(path, body)
             if path.startswith('/api/'):
                 self._require_same_origin()
                 self._require_auth(path)
-            body = self._body()
             if path == '/api/auth/start':
                 self._json(STATE.auth.start_login(), 201)
             elif path == '/api/auth/poll':
                 self._json(STATE.auth.poll_login())
             elif path == '/api/auth/logout':
                 self._json(STATE.auth.logout())
+            elif path == '/api/extension/pair/approve':
+                approved = STATE.extension_bridge.approve(body.get('clientId'))
+                self._json({
+                    'ok': True,
+                    'apiBaseUrl': self._loopback_base_url(),
+                    **approved,
+                })
+            elif path.startswith('/api/admin/'):
+                cloud_path, cloud_method = admin_cloud_write_target(path)
+                self._json(STATE.auth.admin_request(
+                    cloud_path, method=cloud_method, payload=body))
+            elif (path == '/api/procurement/claims'
+                    or path.startswith('/api/procurement/orders/')
+                    and path.endswith('/splits')):
+                cloud_path = '/v1/procurement/' + path[len('/api/procurement/'):]
+                self._json(STATE.auth.procurement_workspace_request(
+                    cloud_path,
+                    method='POST',
+                    payload=body,
+                    permission='procurement.execution.manage'))
             elif path == '/api/query':
                 if STATE.orch.running:
                     return self._json({'error': '已有查询在进行中'}, 409)
@@ -1845,6 +2061,15 @@ class Handler(BaseHTTPRequestHandler):
                     body.get('planId'),
                     confirm_write=bool(body.get('confirmWrite')))
                 self._json({'saved': True, **result})
+            elif path == '/api/resources/proxies/check/start':
+                count = STATE.resources.start_proxy_checks(
+                    body.get('assetIds'),
+                    concurrency=body.get('concurrency', 10),
+                    timeout=body.get('timeoutSec', 8))
+                self._json({'started': True, 'count': count}, 202)
+            elif path == '/api/resources/proxies/check/stop':
+                STATE.resources.stop_proxy_checks()
+                self._json({'stopping': True})
             elif path == '/api/envbatch/parse':
                 result = STATE.env_job.parse(
                     body.get('filename'), body.get('contentBase64'))
@@ -1956,7 +2181,27 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._json({'error': 'not found'}, 404)
         except LocalAuthError as e:
-            self._auth_error(e)
+            if path.startswith('/api/extension/v1/'):
+                self._extension_json({
+                    'ok': False,
+                    'code': e.code,
+                    'error': str(e),
+                }, e.status)
+            else:
+                self._auth_error(e)
+        except ExtensionBridgeError as e:
+            if path.startswith('/api/extension/v1/'):
+                self._extension_json({
+                    'ok': False,
+                    'code': e.code,
+                    'error': str(e),
+                }, e.status)
+            else:
+                self._json({
+                    'ok': False,
+                    'code': e.code,
+                    'error': str(e),
+                }, e.status)
         except RuntimeError as e:
             self._json({'error': str(e)}, 409)
         except ValueError as e:

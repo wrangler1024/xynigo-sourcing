@@ -30,6 +30,15 @@ class FaviconRouteTests(unittest.TestCase):
         self.assertEqual(body, Path(X_ICON_ICO).read_bytes())
         self.assertEqual(int.from_bytes(body[4:6], 'little'), 7)
 
+    def test_static_frontend_is_never_served_from_browser_cache(self):
+        url = 'http://127.0.0.1:%d/?ui=organization-access' % (
+            self.server.server_address[1])
+        with urllib.request.urlopen(url, timeout=3) as response:
+            body = response.read().decode('utf-8')
+            cache_control = response.headers.get('Cache-Control')
+        self.assertEqual(cache_control, 'no-store')
+        self.assertIn('data-module="organizationaccess"', body)
+
 
 if __name__ == '__main__':
     unittest.main()

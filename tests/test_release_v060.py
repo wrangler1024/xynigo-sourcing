@@ -150,15 +150,23 @@ class ReleaseV090Tests(unittest.TestCase):
         self.assertIn("primaryButton.insertAdjacentElement('afterend', $('secondaryTabs'))", html)
         self.assertIn('body.sidebar-collapsed .secondary-tabs { display: none; }', html)
         self.assertIn('data-parent="fulfillment" data-module="query"', html)
+        self.assertIn(
+            'data-parent="procurement" data-module="procurementorders"', html)
+        self.assertIn(
+            'data-parent="procurement" data-module="procurementexecution"', html)
+        self.assertIn(
+            '>采购任务<span class="secondary-status">云端</span>', html)
         self.assertIn('data-parent="resources" data-module="buyerlib"', html)
         self.assertIn('data-parent="resources" data-module="vendorimport"', html)
         self.assertIn('data-parent="resources" data-module="register"', html)
         self.assertIn('data-parent="resources" data-module="envbatch"', html)
-        for label in ('买家号库', '号商入库', '账号注册', '环境创建'):
+        self.assertIn('data-parent="resources" data-module="storemanagement"', html)
+        self.assertIn('data-parent="resources" data-module="proxymanagement"', html)
+        for label in ('买家号库', '号商入库', '账号注册', '环境创建', '店铺管理', '代理IP'):
             self.assertIn('>%s<span class="secondary-status">' % label, html)
+        self.assertIn('账号 · 店铺 · IP · 环境', html)
         for parent, label in (
-                ('operations', '运营任务'), ('finance', '应付管理'),
-                ('system', '组织权限'), ('system', '登录安全')):
+                ('operations', '运营任务'), ('finance', '应付管理')):
             self.assertIn('data-parent="%s" data-planned="%s"' % (parent, label), html)
         self.assertIn("planningTitle: '小犀助手暂未开放'", html)
         self.assertIn("$('secondaryTabs').hidden = visibleSecondaryCount === 0", html)
@@ -173,6 +181,19 @@ class ReleaseV090Tests(unittest.TestCase):
             'data-required-role="super_admin"', html)
         self.assertIn('>本机设置<span class="secondary-status">现有</span>', html)
         self.assertIn('>飞书连接<span class="secondary-status restricted">超管</span>', html)
+        self.assertIn(
+            'data-parent="system" data-planned="云端服务配置"', html)
+        self.assertIn(
+            '>云端服务配置<span class="secondary-status restricted">超管</span>', html)
+        for module, label in (
+                ('organizationaccess', '组织与权限'),
+                ('sessionmanagement', '登录会话')):
+            self.assertIn(
+                'data-parent="system" data-module="%s"' % module, html)
+            self.assertIn(
+                '>%s<span class="secondary-status">云端</span>' % label, html)
+        self.assertNotIn('data-parent="system" data-module="membermanagement"', html)
+        self.assertNotIn('data-parent="system" data-module="rolemanagement"', html)
         self.assertIn('id="planningPanel"', html)
         self.assertIn('功能规划中 · 不影响现有模块', html)
         self.assertIn('function setPrimaryModule(primary)', html)
@@ -210,8 +231,176 @@ class ReleaseV090Tests(unittest.TestCase):
         self.assertIn('id="settingsPanel"', html)
         self.assertIn('data-settings-view="localsettings"', html)
         self.assertIn('data-settings-view="larkconnection"', html)
+        self.assertIn('data-settings-view="organizationaccess"', html)
+        self.assertIn('data-settings-view="sessionmanagement"', html)
+        for view, label in (
+                ('members', '成员管理'),
+                ('roles', '角色管理'),
+                ('policies', '权限策略')):
+            self.assertIn('data-organization-view="%s"' % view, html)
+            self.assertIn('>%s</button>' % label, html)
+            self.assertIn('data-organization-panel="%s"' % view, html)
+        self.assertIn(
+            'data-organization-view="data-scope" data-planned="数据范围"', html)
+        self.assertIn(
+            'disabled>数据范围<span class="secondary-status planned">规划</span>', html)
+        self.assertNotIn('data-organization-panel="data-scope"', html)
+        self.assertIn(
+            "requiredPermissionsAny: ['system.member.manage', 'system.role.manage']", html)
+        self.assertIn('/api/admin/members', html)
+        self.assertIn('/api/admin/members/invitations/resolve', html)
+        self.assertIn('/api/admin/members/invitations', html)
+        self.assertIn('/api/admin/roles', html)
+        self.assertIn('/api/admin/sessions', html)
+        self.assertIn('id="btnRoleCreate"', html)
+        self.assertIn('id="btnMemberInvite"', html)
+        self.assertIn('id="memberInviteEditor"', html)
+        self.assertIn('id="memberInviteMobile"', html)
+        self.assertIn('function resolveMemberInvitation()', html)
+        self.assertIn('function createMemberInvitation()', html)
+        self.assertIn("window.open('about:blank', 'xynigo-feishu-login')", html)
+        self.assertIn('function closeAuthLoginWindow()', html)
+        self.assertIn('closeAuthLoginWindow();\n  authIdentity = identity;', html)
+        self.assertIn('新增后状态固定为 pending', html)
+        self.assertIn('不写入 Xynigo 数据库或审计日志', html)
+        self.assertIn('id="roleEditor"', html)
+        self.assertIn('function saveRoleDefinition()', html)
+        self.assertIn('function deleteRoleDefinition(role)', html)
+        self.assertIn('/rename`, {name}', html)
+        self.assertIn('/delete`);', html)
+        self.assertIn('已分配成员的角色必须先解除授权才能删除', html)
+        self.assertIn('const PERMISSION_MENU_GROUPS = [', html)
+        for primary in ('履约追踪', '资源中心', '系统管理'):
+            self.assertIn("label: '%s'" % primary, html)
+        for primary, permission in (
+                ('工作台', 'workbench.access'),
+                ('采购中心', 'procurement.access'),
+                ('运营中心', 'operations.access'),
+                ('财务中心', 'finance.access'),
+                ('小犀助手', 'assistant.access'),
+                ('数据分析', 'analytics.access')):
+            self.assertIn("label: '%s'" % primary, html)
+            self.assertIn("requiredPermission: '%s'" % permission, html)
+            self.assertIn("codes: ['%s']" % permission, html)
+        self.assertIn("label: '订单物流查询'", html)
+        self.assertIn("label: '买家号库'", html)
+        self.assertIn("label: '店铺管理'", html)
+        self.assertIn("label: '代理IP'", html)
+        self.assertIn("label: '运营采购单'", html)
+        for permission in (
+                'procurement.request.read', 'procurement.request.save',
+                'procurement.request.submit',
+                'procurement.execution.manage'):
+            self.assertIn(permission, html)
+        # 采购中心 P0：真实概览/筛选列表/分页/按需详情。
+        self.assertIn("defaultModule: 'procurementorders'", html)
+        self.assertIn("label: '采购任务', primary: 'procurement'", html)
+        self.assertIn('id="procurementPanel"', html)
+        self.assertIn('id="procurementExecutionPanel"', html)
+        self.assertIn('id="executionFilterStatus"', html)
+        self.assertIn('id="executionFilterSite"', html)
+        self.assertIn('id="executionFilterBinding"', html)
+        self.assertIn('id="executionFilterKeyword"', html)
+        self.assertIn('分单号 / 销售订单号 / 采购单 / SKU', html)
+        self.assertIn('id="executionQueueList"', html)
+        self.assertIn('id="executionPageDetail"', html)
+        self.assertNotIn('const PROCUREMENT_EXECUTION_PAGE_SEED = [', html)
+        self.assertIn('function renderProcurementExecutionPage()', html)
+        self.assertIn("module === 'procurementexecution'", html)
+        self.assertIn('采购分单来自测试库', html)
+        self.assertIn("api('/api/procurement/execution/splits?page=1&pageSize=300')", html)
+        self.assertIn("procurementExecutionPageField('店铺销售订单号', row.salesOrderNo)", html)
+        self.assertIn('销售单 ${esc(row.salesOrderNo)}', html)
+        self.assertIn('id="procurementCountUnclaimed"', html)
+        self.assertIn('id="procurementFilterSubmission"', html)
+        self.assertIn('id="procurementFilterWorkflow"', html)
+        self.assertIn('id="procurementFilterSync"', html)
+        for page_size in ('30', '50', '100', '300'):
+            self.assertIn(
+                '<option value="%s">%s 条</option>' % (page_size, page_size),
+                html,
+            )
+        self.assertIn("params.set('pageSize', $('procurementPageSize').value || '30')", html)
+        self.assertIn("$('procurementPageSize').value = '30'", html)
+        self.assertIn('id="procurementTbody"', html)
+        self.assertIn('id="btnProcurementPrev"', html)
+        self.assertIn('id="btnProcurementNext"', html)
+        self.assertIn('id="procurementDetailMask"', html)
+        self.assertIn('id="procurementClaimMask"', html)
+        self.assertIn('id="procurementSelectAll"', html)
+        self.assertIn('id="btnProcurementBatchClaim"', html)
+        self.assertIn('id="procurementExecutionMask"', html)
+        self.assertIn('data-procurement-claim=', html)
+        self.assertIn('data-procurement-claim-order=', html)
+        self.assertIn('data-procurement-select=', html)
+        self.assertIn('data-procurement-plan-open', html)
+        self.assertIn('function openProcurementClaimPreview(button)', html)
+        self.assertIn('function openProcurementBatchClaimPreview()', html)
+        self.assertIn('async function confirmProcurementClaimPreview()', html)
+        self.assertIn('function splitProcurementExecutionGroups()', html)
+        self.assertIn('async function saveProcurementExecutionPreview()', html)
+        self.assertIn('function safeProcurementImageUrl(value)', html)
+        self.assertIn('测试版本 · 写入 PostgreSQL 测试库', html)
+        self.assertIn('测试版本 · 资源均为脱敏模拟', html)
+        self.assertIn('采购分单与资源绑定', html)
+        self.assertIn('按明细自动分单', html)
+        self.assertNotIn('执行拆分与资源绑定', html)
+        self.assertIn("api('/api/procurement/claims'", html)
+        self.assertIn("'/splits'", html)
+        self.assertNotIn('.procurement-table-scroll { max-height:', html)
+        self.assertIn('列表按每页数量向下展开', html)
+        self.assertIn("api('/api/procurement/overview')", html)
+        self.assertIn("return '/api/procurement/orders?'", html)
+        self.assertIn("api('/api/procurement/orders/'", html)
+        self.assertIn('function loadProcurementWorkspace(resetPage=false)', html)
+        self.assertIn('function renderProcurementRows(data)', html)
+        self.assertIn('function renderProcurementDetail(data)', html)
+        self.assertIn("$('procurementDetailBody').replaceChildren();", html)
+        self.assertIn('列表不会返回收件人姓名、电话或地址', html)
+        for permission in (
+                'resource.store.read', 'resource.store.configure',
+                'resource.store.credential.update', 'resource.store.clone',
+                'resource.ip.read', 'resource.ip.test',
+                'resource.ip.allocate', 'resource.ip.credential.manage'):
+            self.assertIn(permission, html)
+        self.assertIn("label: '组织与权限'", html)
+        self.assertIn("label: '登录会话'", html)
+        self.assertGreaterEqual(html.count("codes: ['resource.buyer.import']"), 2)
+        self.assertGreaterEqual(html.count("codes: ['system.member.manage']"), 1)
+        self.assertIn('data-permission-primary-toggle=', html)
+        self.assertIn('data-permission-secondary-toggle=', html)
+        self.assertIn('function changePermissionPolicySelection(event)', html)
+        self.assertIn('function hasPrimaryAccess(primary)', html)
+        self.assertIn('!hasPrimaryAccess(button.dataset.primary)', html)
+        self.assertIn('Array.from(selectedPermissionCodesForRole(roleId)).sort()', html)
+        self.assertIn('成员状态、成员角色、会话、数据范围和无权限码入口不在此修改', html)
+        self.assertIn('class="permission-workspace"', html)
+        self.assertIn('class="card permission-policy-card"', html)
+        self.assertIn('id="permissionRoleSearch"', html)
+        self.assertIn('id="permissionRoleList" role="listbox"', html)
+        self.assertIn('id="permissionRoleCount"', html)
+        self.assertIn('function renderPermissionRoleList()', html)
+        self.assertIn('function selectPermissionPolicyRole(roleId)', html)
+        self.assertIn('const permissionPolicyDirtyRoleIds = new Set()', html)
+        self.assertIn('const expandedPermissionPrimaryIds = new Set()', html)
+        self.assertIn('data-permission-primary-expand=', html)
+        self.assertIn('data-permission-expand-all="true"', html)
+        self.assertIn('data-permission-expand-all="false"', html)
+        self.assertIn('.permission-secondary-grid[hidden] { display: none; }', html)
+        self.assertIn('切换角色将丢弃这些调整', html)
+        self.assertNotIn('roleGrid.innerHTML = adminRoles.map', html)
         self.assertIn("requiredRole: 'super_admin'", html)
         self.assertIn('仅超级管理员可查看和修改飞书连接', html)
+        self.assertIn("roles.includes('admin') ? '管理员'", html)
+        self.assertIn("label: '云端服务配置', badge: '仅超管'", html)
+        self.assertIn('管理员默认拥有全部日常业务权限', html)
+        self.assertIn('管理员不含云端服务配置和代理凭证管理权限', html)
+        self.assertIn('id="storeManagementPanel"', html)
+        self.assertIn('id="proxyManagementPanel"', html)
+        self.assertIn('/api/resources/stores', html)
+        self.assertIn('/api/resources/proxies/check/start', html)
+        self.assertIn('普通列表跳过代理账号/密码列', html)
+        self.assertIn('当前阶段只读；配置、克隆和凭证更新尚未开放', html)
         self.assertIn('async function loadLocalSettingsPage()', html)
         self.assertIn('async function loadLarkConnectionPage()', html)
         self.assertNotIn('id="btnSettings"', html)
