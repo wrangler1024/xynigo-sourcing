@@ -418,7 +418,7 @@ def create_app(
 
     app = FastAPI(
         title="Xynigo Auth Service",
-        version="0.12.4",
+        version="0.12.5",
         docs_url=None,
         redoc_url=None,
         lifespan=lifespan,

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Xynigo Sourcing v0.12.4</title>
+<title>Xynigo Sourcing v0.12.5</title>
 <link rel="icon" type="image/png" sizes="260x260" href="/xynigo-x.png?v=6">
 <link rel="icon" type="image/x-icon" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256" href="/favicon.ico?v=6">
 <link rel="shortcut icon" href="/favicon.ico?v=6">
@@ -678,11 +678,42 @@
   .procurement-import-target-grid select, .procurement-import-target-actions .btn { box-sizing: border-box; height: 42px; min-height: 42px; border-radius: 11px; font-size: 12px; font-weight: 800; }
   .procurement-import-target-grid select { padding: 0 34px 0 12px; border-color: var(--line); background-color: #fff; color: var(--navy-700); }
   .procurement-import-target-actions .btn { display: inline-flex; align-items: center; justify-content: center; width: 100%; }
-  .procurement-import-sync-bar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 12px; padding: 12px 14px; border: 1px dashed #9fcdd0; border-radius: 11px; background: #f6fbfb; }
+  .procurement-import-sync-bar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 12px; padding: 12px 14px; border: 1px dashed #9fcdd0; border-radius: 11px; background: #f6fbfb; transition: border-color .3s ease, background .3s ease, box-shadow .3s ease; }
+  .procurement-import-sync-bar.is-running { border-style: solid; border-color: #79cbd0; box-shadow: 0 8px 24px rgba(22,152,160,.10); }
+  .procurement-import-sync-bar.is-completed { border-style: solid; border-color: #9bd9bd; background: #f2fbf7; box-shadow: 0 8px 24px rgba(52,183,131,.10); }
+  .procurement-import-sync-bar.is-warning { border-style: solid; border-color: #f2cf7d; background: #fffaf0; }
+  .procurement-import-sync-bar.is-failed { border-style: solid; border-color: #ffc2b4; background: #fff7f4; }
   .procurement-import-sync-copy { min-width: 0; color: var(--navy-600); font-size: 12px; line-height: 1.55; }
   .procurement-import-sync-copy b { display: block; color: var(--navy-900); font-size: 13px; }
-  .procurement-import-sync-progress { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 8px; color: var(--navy-600); font-size: 11px; }
-  .procurement-import-sync-progress b { display: inline; font-size: inherit; }
+  .procurement-import-sync-progress { --sync-progress: 0%; display: grid; gap: 8px; width: 100%; margin-top: 10px; color: var(--navy-600); font-size: 11px; }
+  .procurement-import-sync-progress[hidden] { display: none; }
+  .procurement-import-sync-phase { display: flex; align-items: center; gap: 8px; min-height: 20px; color: var(--navy-700); font-weight: 800; }
+  .procurement-import-sync-phase-label { color: var(--navy-500); font-size: 9px; letter-spacing: .08em; }
+  .procurement-import-sync-phase-copy { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+  .procurement-import-sync-percent { color: var(--rhino-600); font-variant-numeric: tabular-nums; }
+  .procurement-import-sync-orb { position: relative; flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--rhino-500); box-shadow: 0 0 0 4px rgba(32,174,179,.12); }
+  .procurement-import-sync-progress.is-running .procurement-import-sync-orb { animation: procurement-sync-pulse 1.35s ease-in-out infinite; }
+  .procurement-import-sync-progress.is-completed .procurement-import-sync-orb { width: 18px; height: 18px; background: var(--green-500); box-shadow: 0 0 0 4px rgba(52,183,131,.12); animation: procurement-sync-complete .42s ease-out; }
+  .procurement-import-sync-progress.is-completed .procurement-import-sync-orb::after { content: "✓"; position: absolute; inset: 0; color: #fff; font-size: 11px; font-weight: 900; line-height: 18px; text-align: center; }
+  .procurement-import-sync-progress.is-warning .procurement-import-sync-orb { background: var(--parcel-500); box-shadow: 0 0 0 4px rgba(242,183,71,.14); }
+  .procurement-import-sync-progress.is-failed .procurement-import-sync-orb { background: var(--coral-500); box-shadow: 0 0 0 4px rgba(255,105,74,.12); }
+  .procurement-import-sync-track { height: 6px; overflow: hidden; border-radius: 999px; background: #dce9ed; }
+  .procurement-import-sync-track i { position: relative; display: block; width: var(--sync-progress); height: 100%; overflow: hidden; border-radius: inherit; background: var(--action-gradient); transition: width .55s cubic-bezier(.22,.9,.35,1); }
+  .procurement-import-sync-progress.is-running .procurement-import-sync-track i::after { content: ""; position: absolute; inset: 0; width: 45%; background: linear-gradient(90deg,transparent,rgba(255,255,255,.65),transparent); animation: procurement-sync-shimmer 1.2s linear infinite; }
+  .procurement-import-sync-progress.is-completed .procurement-import-sync-track i { background: var(--green-500); }
+  .procurement-import-sync-progress.is-warning .procurement-import-sync-track i { background: var(--parcel-500); }
+  .procurement-import-sync-progress.is-failed .procurement-import-sync-track i { background: var(--coral-500); }
+  .procurement-import-sync-metrics { display: flex; flex-wrap: wrap; gap: 6px; }
+  .procurement-import-sync-metric { display: inline-flex; align-items: baseline; gap: 4px; padding: 4px 7px; border: 1px solid #dce8ed; border-radius: 999px; background: rgba(255,255,255,.72); color: var(--navy-500); }
+  .procurement-import-sync-metric b { color: var(--navy-800); font-size: inherit; font-variant-numeric: tabular-nums; }
+  .procurement-import-sync-metric.changed { animation: procurement-sync-count .34s ease-out; }
+  @keyframes procurement-sync-pulse { 0%,100% { transform: scale(.88); opacity: .7; } 50% { transform: scale(1.12); opacity: 1; } }
+  @keyframes procurement-sync-shimmer { from { transform: translateX(-120%); } to { transform: translateX(280%); } }
+  @keyframes procurement-sync-count { 0% { transform: translateY(2px); background: #fff; } 55% { transform: translateY(-2px); background: var(--rhino-100); } 100% { transform: translateY(0); } }
+  @keyframes procurement-sync-complete { 0% { transform: scale(.55); opacity: .3; } 70% { transform: scale(1.15); opacity: 1; } 100% { transform: scale(1); } }
+  @media (prefers-reduced-motion: reduce) {
+    .procurement-import-sync-progress *, .procurement-import-sync-bar { animation: none !important; transition: none !important; }
+  }
   @media (max-width: 920px) {
     .procurement-import-grid { grid-template-columns: 1fr; }
     .procurement-import-stats { grid-template-columns: repeat(2,minmax(0,1fr)); }
@@ -1312,7 +1343,7 @@
           <div class="hero-kicker">XYNIGO SOURCING WORKSPACE</div>
           <h1>让小犀帮你把每一单稳稳带回来，<span class="hero-call">Xyni, GO!</span></h1>
           <p id="moduleSummary">批量查询订单与物流状态，异常任务集中处理，结果一键导出。</p>
-          <div class="hero-meta"><span class="hero-chip">测试候选 v0.12.4</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
+          <div class="hero-meta"><span class="hero-chip">测试候选 v0.12.5</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
         </div>
         <div class="hero-lockup" role="img" aria-label="小犀与 Xynigo 完整品牌一体图形">
           <img src="xynigo-logo.png" alt="">
@@ -1346,6 +1377,7 @@
           <div>采购需求区按标准列序写入，前五列固定为“分单日期 / 采购员 / 销售订单号 / 店铺 / 运营”；采购下单区可自由增删、改名和排序，不参与导入校验。</div>
           <div>包裹号为采购单位，完整收货信息紧随采购指导价；订单金额只写首条明细，商品金额逐条计算，分单日期按北京时间写为日期类型。</div>
           <div>系统追踪区仅用于幂等防重；同订单使用淡色分组，商品图、采购链接和紧凑行高自动处理，已有数据与图片会跳过。</div>
+          <div>重复导入只用于查重和中断续传：已导入订单保持原样，不能在这里修改；采购任务认领前修改属于独立修订流程。</div>
         </div>
       </div>
       <div class="resource-state" id="procurementImportState">请选择使用最新版运营采购助手写入 XYP2 后导出的 xlsx。</div>
@@ -1368,8 +1400,8 @@
         <div class="procurement-import-target-actions"><button class="btn" id="btnProcurementImportInspectTarget" type="button" disabled>读取工作表</button><button class="btn" id="btnProcurementImportValidateTarget" type="button" disabled>校验核心字段</button></div>
       </div>
       <div class="resource-state" id="procurementImportTargetState">先解析文件，再粘贴本批要使用的普通飞书共享表格链接。目标表不会固定，可随采购批次更换。</div>
-      <div class="procurement-import-sync-bar">
-        <div class="procurement-import-sync-copy"><b>接口直接导入，无需人工复制粘贴</b><span>确认后会将旧“分单时间”规范为北京时间“分单日期”，安全取消已被“导入批次”覆盖的“分单批次”，固定前五列，并把“包裹号 / 采购状态 / 优先级”紧随其后；同时规范金额与完整收货信息。不改动采购下单区自定义字段，不会覆盖已有单元格。</span><div class="procurement-import-sync-progress" id="procurementImportSyncProgress" hidden></div></div>
+      <div class="procurement-import-sync-bar" id="procurementImportSyncBar">
+        <div class="procurement-import-sync-copy"><b>接口直接导入，无需人工复制粘贴</b><span>确认后会将旧“分单时间”规范为北京时间“分单日期”，安全取消已被“导入批次”覆盖的“分单批次”，固定前五列，并把“包裹号 / 采购状态 / 优先级”紧随其后；同时规范金额与完整收货信息。不改动采购下单区自定义字段，不会覆盖已有单元格；历史订单只查重并整单跳过，不会借本次导入修改。</span><div class="procurement-import-sync-progress" id="procurementImportSyncProgress" role="status" aria-live="polite" hidden></div></div>
         <button class="btn primary" id="btnProcurementImportSyncImages" type="button" disabled>导入数据并补齐图片</button>
       </div>
     </section>
@@ -2810,7 +2842,7 @@ async function cloudFetchJson(path, opts={}) {
   const headers = new Headers(opts.headers || {});
   headers.set('Accept', 'application/json');
   headers.set('X-Xynigo-Source', 'cloud_web_workspace');
-  headers.set('X-Xynigo-Client-Version', '0.12.4-cloud-web');
+  headers.set('X-Xynigo-Client-Version', '0.12.5-cloud-web');
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     headers.set('X-Xynigo-Web-CSRF', 'same-origin');
   }
@@ -6670,6 +6702,8 @@ function invalidateProcurementImportTarget(message, clearSheets=false) {
   $('btnProcurementImportSyncImages').textContent = '导入数据并补齐图片';
   $('procurementImportSyncProgress').hidden = true;
   $('procurementImportSyncProgress').replaceChildren();
+  $('procurementImportSyncBar').classList.remove(
+    'is-running', 'is-completed', 'is-warning', 'is-failed');
   if (clearSheets) {
     $('procurementImportTargetSheet').disabled = true;
     $('procurementImportTargetSheet').innerHTML = '<option value="">先读取工作簿</option>';
@@ -6853,25 +6887,109 @@ $('btnProcurementImportValidateTarget').onclick = async () => {
   }
 };
 
+const procurementImportRunningStates = [
+  'queued','validating','normalizing_headers','formatting_headers',
+  'writing_rows','verifying_rows','formatting_rows','writing_links','writing_images'
+];
+
+const procurementImportRunningCopy = {
+  queued: '导入任务已创建，正在等待执行…',
+  validating: '正在重新校验工作表核心字段和跨批次重复状态…',
+  normalizing_headers: '正在规范包裹号、销售订单金额、商品金额和收件信息字段…',
+  formatting_headers: '正在设置采购需求区、采购下单区和系统追踪区的表头说明…',
+  writing_rows: '正在追加真正缺失的采购数据行…',
+  verifying_rows: '数据已提交，正在回读数量和关键字段…',
+  formatting_rows: '数据回读通过，正在设置订单分组底色和紧凑行高…',
+  writing_links: '正在检查并补齐可点击采购超链接…',
+  writing_images: '数据回读通过，正在检查并补齐订单商品图片…',
+};
+
+function procurementImportProgressPercent(status) {
+  const base = {
+    queued: 5, validating: 12, normalizing_headers: 24,
+    formatting_headers: 36, writing_rows: 48, verifying_rows: 64,
+    formatting_rows: 73, writing_links: 82, writing_images: 88,
+  };
+  if (!procurementImportRunningStates.includes(status.state)) return 100;
+  if (status.state === 'writing_rows') {
+    const total = Math.max(1, Number(status.rowsTotal || 0));
+    return Math.min(62, 48 + Math.round(Number(status.rowsWritten || 0) / total * 14));
+  }
+  if (status.state === 'writing_images') {
+    const total = Math.max(1, Number(status.total || 0));
+    return Math.min(99, 88 + Math.round(Number(status.processed || 0) / total * 11));
+  }
+  return base[status.state] || 3;
+}
+
+function ensureProcurementImportProgressShell(progress) {
+  if (progress.querySelector('[data-sync-metric="rowsTotal"]')) return;
+  progress.innerHTML = `
+    <div class="procurement-import-sync-phase">
+      <span class="procurement-import-sync-orb" aria-hidden="true"></span>
+      <span class="procurement-import-sync-phase-label">执行状态</span>
+      <span class="procurement-import-sync-phase-copy"></span>
+      <span class="procurement-import-sync-percent">0%</span>
+    </div>
+    <div class="procurement-import-sync-track" aria-hidden="true"><i></i></div>
+    <div class="procurement-import-sync-metrics">
+      <span class="procurement-import-sync-metric">数据行 <b data-sync-metric="rowsTotal">0</b></span>
+      <span class="procurement-import-sync-metric">新追加 <b data-sync-metric="rowsWritten">0</b></span>
+      <span class="procurement-import-sync-metric">已存在 <b data-sync-metric="rowsExisting">0</b></span>
+      <span class="procurement-import-sync-metric">新设底色 <b data-sync-metric="rowsStyled">0</b></span>
+      <span class="procurement-import-sync-metric">采购超链接 <b data-sync-metric="linksWritten">0</b></span>
+      <span class="procurement-import-sync-metric">图片进度 <b data-sync-metric="imageProgress">0/0</b></span>
+      <span class="procurement-import-sync-metric">新补图 <b data-sync-metric="written">0</b></span>
+      <span class="procurement-import-sync-metric">失败 <b data-sync-metric="failed">0</b></span>
+    </div>`;
+}
+
+function updateProcurementImportMetric(progress, name, value) {
+  const node = progress.querySelector(`[data-sync-metric="${name}"]`);
+  const text = String(value);
+  if (!node || node.textContent === text) return;
+  node.textContent = text;
+  const metric = node.closest('.procurement-import-sync-metric');
+  metric.classList.remove('changed');
+  void metric.offsetWidth;
+  metric.classList.add('changed');
+}
+
 function renderProcurementImportSyncStatus(status) {
   const progress = $('procurementImportSyncProgress');
+  const syncBar = $('procurementImportSyncBar');
   progress.hidden = false;
-  progress.innerHTML = `<span>数据行 <b>${Number(status.rowsTotal || 0)}</b></span><span>新追加 <b>${Number(status.rowsWritten || 0)}</b></span><span>已存在 <b>${Number(status.rowsExisting || 0)}</b></span><span>新设底色 <b>${Number(status.rowsStyled || 0)}</b></span><span>新设链接 <b>${Number(status.linksWritten || 0)}</b></span><span>图片进度 <b>${Number(status.processed || 0)}/${Number(status.total || 0)}</b></span><span>新补图 <b>${Number(status.written || 0)}</b></span><span>失败 <b>${Number(status.failed || 0)}</b></span>`;
-  const running = ['queued','validating','normalizing_headers','formatting_headers','writing_rows','verifying_rows','formatting_rows','writing_links','writing_images'].includes(status.state);
+  ensureProcurementImportProgressShell(progress);
+  const running = procurementImportRunningStates.includes(status.state);
+  const visualState = running ? 'running' : (
+    status.state === 'completed' ? 'completed' : (
+      status.state === 'partial' ? 'warning' : 'failed'));
+  progress.classList.remove('is-running', 'is-completed', 'is-warning', 'is-failed');
+  progress.classList.add(`is-${visualState}`);
+  syncBar.classList.remove('is-running', 'is-completed', 'is-warning', 'is-failed');
+  syncBar.classList.add(`is-${visualState}`);
+  const percent = procurementImportProgressPercent(status);
+  progress.style.setProperty('--sync-progress', `${percent}%`);
+  progress.querySelector('.procurement-import-sync-percent').textContent = `${percent}%`;
+  const phaseCopy = running
+    ? procurementImportRunningCopy[status.state]
+    : (status.state === 'completed'
+      ? '导入完成，关键数据均已回读确认'
+      : (status.error || '导入未完成'));
+  progress.querySelector('.procurement-import-sync-phase-copy').textContent = phaseCopy;
+  updateProcurementImportMetric(progress, 'rowsTotal', Number(status.rowsTotal || 0));
+  updateProcurementImportMetric(progress, 'rowsWritten', Number(status.rowsWritten || 0));
+  updateProcurementImportMetric(progress, 'rowsExisting', Number(status.rowsExisting || 0));
+  updateProcurementImportMetric(progress, 'rowsStyled', Number(status.rowsStyled || 0));
+  updateProcurementImportMetric(progress, 'linksWritten', Number(status.linksWritten || 0));
+  updateProcurementImportMetric(progress, 'imageProgress', `${Number(status.processed || 0)}/${Number(status.total || 0)}`);
+  updateProcurementImportMetric(progress, 'written', Number(status.written || 0));
+  updateProcurementImportMetric(progress, 'failed', Number(status.failed || 0));
   if (running) {
     $('procurementImportTargetState').className = 'resource-state';
-    const runningCopy = {
-      queued: '导入任务已创建，正在等待执行…',
-      validating: '正在重新校验工作表核心字段和本批重复状态…',
-      normalizing_headers: '正在规范包裹号、销售订单金额、商品金额和收件信息字段…',
-      formatting_headers: '正在设置采购需求区、采购下单区和系统追踪区的表头说明…',
-      writing_rows: `正在向 ${status.targetName || '目标工作表'} 追加缺失的采购数据行…`,
-      verifying_rows: '数据已提交，正在回读数量和关键字段…',
-      formatting_rows: '数据回读通过，正在设置订单分组底色和紧凑行高…',
-      writing_links: '正在把采购链接转换为可点击超链接…',
-      writing_images: `数据回读通过，正在补齐 ${status.targetName || '目标工作表'} 的订单商品图片…`,
-    };
-    $('procurementImportTargetState').textContent = runningCopy[status.state] || '导入处理中…';
+    const targetPrefix = status.targetName ? `${status.targetName}：` : '';
+    $('procurementImportTargetState').textContent = targetPrefix + (
+      procurementImportRunningCopy[status.state] || '导入处理中…');
     $('btnProcurementImportSyncImages').disabled = true;
     $('btnProcurementImportSyncImages').textContent = '导入进行中…';
     return false;
@@ -6883,7 +7001,11 @@ function renderProcurementImportSyncStatus(status) {
     $('procurementImportTargetState').textContent = `导入完成：新追加 ${status.rowsWritten} 行，已存在 ${status.rowsExisting} 行；新设底色 ${status.rowsStyled || 0} 行、采购超链接 ${status.linksWritten || 0} 个；新补图 ${status.written} 张，已有图片跳过 ${status.skippedExisting} 张。关键数据均已回读确认。`;
   } else {
     $('procurementImportTargetState').className = status.state === 'partial' ? 'resource-state warn' : 'resource-state bad';
-    $('procurementImportTargetState').textContent = `${status.error || '导入未完成'}。已追加 ${status.rowsWritten || 0} 行、新补图 ${status.written || 0} 张，失败 ${status.failed || 0} 张；可安全重试，已存在数据和图片会自动跳过。`;
+    const immutableConflict = String(status.error || '').includes('不支持修改已导入订单');
+    const nextStep = immutableConflict
+      ? '该冲突不会通过重复导入消失；采购任务认领前修改请走独立修订流程。'
+      : '可安全重试，已存在数据和图片会自动跳过。';
+    $('procurementImportTargetState').textContent = `${status.error || '导入未完成'}。已追加 ${status.rowsWritten || 0} 行、新补图 ${status.written || 0} 张，失败 ${status.failed || 0} 张；${nextStep}`;
   }
   return true;
 }
@@ -6908,7 +7030,7 @@ $('btnProcurementImportSyncImages').onclick = async () => {
     toast('请先通过目标工作表表头校验'); return;
   }
   const detailCount = Number($('procurementImportDetails').textContent || 0);
-  if (!window.confirm(`确认通过飞书接口规范本批协作表并导入 ${detailCount} 条采购数据？\n\n本次会把“分单时间”规范为北京时间“分单日期”，在确认旧“分单批次”已由系统“导入批次”等值覆盖后取消该列，并固定前五列为“分单日期 / 采购员 / 销售订单号 / 店铺 / 运营”；“包裹号 / 采购状态 / 优先级”紧随其后。同时规范“销售订单金额 / 商品金额”，将“平台订单号”规范为“采购订单号”，并将姓名、国家、州/省、城市、地址1、地址2、邮编、电话按顺序放在采购指导价后。历史合并地址会完整保留在地址1；采购下单区其余字段、顺序和已有数据均不改动。系统追踪区会补入“导入操作人”，自动记录本次导入的当前登录用户。\n\n随后追加本批数据，冻结首行和前五列，设置表头分区、订单分组底色、采购超链接和订单商品图。已存在的数据、链接、图片及采购员手工任务底色不会被覆盖。`)) return;
+  if (!window.confirm(`确认通过飞书接口规范本批协作表并导入 ${detailCount} 条采购数据？\n\n本次会把“分单时间”规范为北京时间“分单日期”，在确认旧“分单批次”已由系统“导入批次”等值覆盖后取消该列，并固定前五列为“分单日期 / 采购员 / 销售订单号 / 店铺 / 运营”；“包裹号 / 采购状态 / 优先级”紧随其后。同时规范“销售订单金额 / 商品金额”，将“平台订单号”规范为“采购订单号”，并将姓名、国家、州/省、城市、地址1、地址2、邮编、电话按顺序放在采购指导价后。历史合并地址会完整保留在地址1；采购下单区其余字段、顺序和已有数据均不改动。系统追踪区会补入“导入操作人”，自动记录本次导入的当前登录用户。\n\n随后追加本批真正缺失的数据，冻结首行和前五列，设置表头分区、订单分组底色、采购超链接和订单商品图。已导入订单只做查重并保持原样；本页面不支持修改历史订单，采购任务认领前修改属于独立修订流程。`)) return;
   const button = $('btnProcurementImportSyncImages');
   button.disabled = true;
   button.textContent = '启动导入…';

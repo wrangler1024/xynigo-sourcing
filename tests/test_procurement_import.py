@@ -358,6 +358,52 @@ def source_workbook():
     return add_test_drawings(buffer.getvalue(), [2, 3])
 
 
+def aggregated_source_workbook():
+    payload = {
+        'd': 'mx', 'c': 'MXN',
+        'i': [
+            ['SOURCE-S', '403511191', 'SKU-CODE-S', '27_447',
+             'Black', 'S', 170.55, 0, 170.55, 4],
+            ['SOURCE-M', '403511191', 'SKU-CODE-M', '27_447',
+             'Black', 'M', 170.55, 0, 170.55, 4],
+            ['SOURCE-L', '403511191', 'SKU-CODE-L', '27_447',
+             'Black', 'L', 170.55, 0, 170.55, 4],
+        ],
+        'r': 0,
+    }
+    remark = '[XYP2]%s[/XYP2]' % json.dumps(
+        payload, ensure_ascii=False, separators=(',', ':'))
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = 'order_'
+    headers = [
+        '店铺账号', '订单号', '包裹号', '下单时间', '付款时间', '订单金额',
+        '币种缩写', '收货人姓名', '收货人国家', '收货人州/省', '收货人城市',
+        '地址1', '地址2', '邮编', '收货人电话', 'SKU', '产品名称', '产品规格',
+        '产品售价', '单个产品数量', '产品图片网址', '客服备注', '产品图片',
+    ]
+    worksheet.append(headers)
+    common = [
+        '聚合测试店铺-测试运营（一组）$', 'GSH-AGGREGATED-001',
+        'XMWU-AGGREGATED-001', '2026-08-26 12:00:00',
+        '2026-08-26 11:59:00', 2046.60, 'MXN', 'Recipient Test',
+        'MEXICO', 'State', 'City', 'Address 1', 'Address 2', '00123',
+        '0012345678',
+    ]
+    for seller_sku, size in (
+            ('SOURCE-S', 'S'), ('SOURCE-M', 'M'), ('SOURCE-L', 'L')):
+        for _index in range(4):
+            worksheet.append(common + [
+                'ERP-' + seller_sku, 'Aggregated product',
+                '%s:Black-%s' % (seller_sku, size), 170.55, 1,
+                'https://img.ltwebstatic.com/test/%s.jpg' % seller_sku.lower(),
+                remark, '',
+            ])
+    buffer = BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
 class ProcurementImportTests(unittest.TestCase):
     def test_parses_compact_xyp2_and_rebuilds_precise_links(self):
         parsed = parse_xyp2_remark('普通备注 ' + xyp2_text())
@@ -495,6 +541,34 @@ class ProcurementImportTests(unittest.TestCase):
                 name for name in archive.namelist()
                 if name.startswith('xl/media/image')]), 2)
 
+    def test_aggregates_repeated_source_rows_without_false_warnings(self):
+        service = ProcurementImportService()
+        result = service.parse(
+            'order_aggregated.xlsx',
+            base64.b64encode(aggregated_source_workbook()).decode('ascii'))
+
+        self.assertEqual(result['sourceRows'], 12)
+        self.assertEqual(result['orderCount'], 1)
+        self.assertEqual(result['detailCount'], 3)
+        self.assertEqual(result['warningCount'], 0)
+        self.assertEqual(result['errorCount'], 0)
+        self.assertEqual(result['issues'], [])
+        self.assertEqual(
+            [row['quantity'] for row in result['preview']], [4, 4, 4])
+        self.assertEqual(
+            [row['itemSalesAmount'] for row in result['preview']],
+            [682.2, 682.2, 682.2])
+
+        plan = service.pending[result['planId']]
+        self.assertEqual(
+            [row.values['商品金额'] for row in plan.rows],
+            [682.2, 682.2, 682.2])
+        self.assertEqual(
+            [row.values['需求数量'] for row in plan.rows], [4, 4, 4])
+        self.assertEqual(plan.rows[0].values['销售订单金额'], 2046.6)
+        self.assertIsNone(plan.rows[1].values['销售订单金额'])
+        self.assertIsNone(plan.rows[2].values['销售订单金额'])
+
     def test_dynamic_sheet_target_appends_rows_and_idempotently_writes_images(self):
         gateway = FakeSheetGateway()
         # 下单/物流截图是可选采购执行字段；现有 32 列表可直接导入。
@@ -595,6 +669,131 @@ class ProcurementImportTests(unittest.TestCase):
         self.assertEqual(len(gateway.append_calls[0]['rows']), 1)
         self.assertEqual(len(gateway.rows), 2)
 
+    def test_cross_batch_mixed_orders_skip_history_and_append_only_new(self):
+        gateway = FakeSheetGateway()
+        service = ProcurementImportService(
+            sheet_gateway=gateway, sleep_fn=lambda _seconds: None)
+        result = service.parse(
+            'order_test.xlsx',
+            base64.b64encode(source_workbook()).decode('ascii'))
+        plan = service.pending[result['planId']]
+        # Turn the second synthetic detail into a separate new order so the
+        # target contains one complete historical order and one absent order.
+        plan.rows[1].values['销售订单号'] = 'GSH-NEW-002'
+        plan.rows[1].values['包裹号'] = 'XMWU-NEW-002'
+        plan.rows[1].values['系统订单键'] = (
+            '测试店铺|GSH-NEW-002|XMWU-NEW-002')
+        historical_rows = []
+        for copy_index in range(7):
+            historical = dict(plan.rows[0].values)
+            historical['导入批次'] = 'older-batch-%d' % copy_index
+            row_number = 8 + copy_index
+            historical_rows.append((row_number, tuple(
+                historical[name] for name in OUTPUT_HEADERS)))
+            gateway.images[row_number] = True
+            gateway.backgrounds[row_number] = '#PRESERVE'
+            gateway.links[row_number] = historical['采购链接']
+        gateway.rows = tuple(historical_rows)
+        service.validate_target(
+            result['planId'],
+            'https://tenant.feishu.cn/sheets/SheetToken123', 'sheetA')
+
+        started = service.start_sheet_sync(
+            result['planId'], confirm_write=True)
+        completed = wait_for_sync(service, started['jobId'])
+        self.assertEqual(completed['state'], 'completed')
+        self.assertEqual(completed['rowsWritten'], 1)
+        self.assertEqual(completed['rowsExisting'], 1)
+        self.assertEqual(completed['rowsStyled'], 1)
+        self.assertEqual(completed['written'], 1)
+        self.assertEqual(completed['skippedExisting'], 0)
+        self.assertEqual(len(gateway.append_calls), 1)
+        self.assertEqual(len(gateway.append_calls[0]['rows']), 1)
+        self.assertEqual(
+            gateway.append_calls[0]['rows'][0][
+                OUTPUT_HEADERS.index('销售订单号')],
+            'GSH-NEW-002')
+        self.assertEqual(len(gateway.rows), 8)
+        self.assertEqual(gateway.presentation_calls[0]['ranges'], ((15, 15),))
+        self.assertEqual([item[1] for item in gateway.writes], [15])
+        self.assertTrue(all(
+            gateway.backgrounds[row_number] == '#PRESERVE'
+            for row_number in range(8, 15)))
+
+    def test_cross_batch_changed_order_aborts_before_append(self):
+        gateway = FakeSheetGateway()
+        service = ProcurementImportService(
+            sheet_gateway=gateway, sleep_fn=lambda _seconds: None)
+        result = service.parse(
+            'order_test.xlsx',
+            base64.b64encode(source_workbook()).decode('ascii'))
+        plan = service.pending[result['planId']]
+        historical_rows = []
+        for index, row in enumerate(plan.rows):
+            historical = dict(row.values)
+            historical['导入批次'] = 'older-batch'
+            if index == 0:
+                historical['需求数量'] = int(historical['需求数量']) + 1
+            historical_rows.append((8 + index, tuple(
+                historical[name] for name in OUTPUT_HEADERS)))
+        gateway.rows = tuple(historical_rows)
+        service.validate_target(
+            result['planId'],
+            'https://tenant.feishu.cn/sheets/SheetToken123', 'sheetA')
+
+        started = service.start_sheet_sync(
+            result['planId'], confirm_write=True)
+        failed = wait_for_sync(service, started['jobId'])
+        self.assertEqual(failed['state'], 'failed')
+        self.assertIn('不支持修改已导入订单', failed['error'])
+        self.assertIn('认领前修改请走独立修订流程', failed['error'])
+        self.assertEqual(gateway.append_calls, [])
+        self.assertEqual(gateway.writes, [])
+
+    def test_cross_batch_all_historical_orders_remain_read_only(self):
+        gateway = FakeSheetGateway()
+        service = ProcurementImportService(
+            sheet_gateway=gateway, sleep_fn=lambda _seconds: None)
+        result = service.parse(
+            'order_test.xlsx',
+            base64.b64encode(source_workbook()).decode('ascii'))
+        plan = service.pending[result['planId']]
+        historical_rows = []
+        row_number = 8
+        for copy_index in range(7):
+            for row in plan.rows:
+                historical = dict(row.values)
+                historical['导入批次'] = 'older-batch-%d' % copy_index
+                historical_rows.append((row_number, tuple(
+                    historical[name] for name in OUTPUT_HEADERS)))
+                gateway.images[row_number] = True
+                gateway.backgrounds[row_number] = '#PRESERVE'
+                gateway.links[row_number] = historical['采购链接']
+                row_number += 1
+        gateway.rows = tuple(historical_rows)
+        service.validate_target(
+            result['planId'],
+            'https://tenant.feishu.cn/sheets/SheetToken123', 'sheetA')
+
+        started = service.start_sheet_sync(
+            result['planId'], confirm_write=True)
+        completed = wait_for_sync(service, started['jobId'])
+        self.assertEqual(completed['state'], 'completed')
+        self.assertEqual(completed['rowsWritten'], 0)
+        self.assertEqual(completed['rowsExisting'], 2)
+        self.assertEqual(completed['rowsStyled'], 0)
+        self.assertEqual(completed['linksWritten'], 0)
+        self.assertEqual(completed['total'], 0)
+        self.assertEqual(completed['written'], 0)
+        self.assertEqual(completed['skippedExisting'], 0)
+        self.assertEqual(gateway.append_calls, [])
+        self.assertEqual(gateway.presentation_calls, [])
+        self.assertEqual(gateway.hyperlink_calls, [])
+        self.assertEqual(gateway.writes, [])
+        self.assertTrue(all(
+            gateway.backgrounds[number] == '#PRESERVE'
+            for number in range(8, 22)))
+
     def test_batch_row_mismatch_aborts_before_any_image_write(self):
         gateway = FakeSheetGateway()
         service = ProcurementImportService(
@@ -649,11 +848,21 @@ class ProcurementImportTests(unittest.TestCase):
         self.assertIn('background: #fdebf5', html)
         self.assertIn('groupIndex % 6', html)
         self.assertIn('系统追踪区仅用于幂等防重', html)
+        self.assertIn('已导入订单保持原样，不能在这里修改', html)
+        self.assertIn('采购任务认领前修改属于独立修订流程', html)
         self.assertNotIn('商品图片缩小 25%', html)
         self.assertIn(
             '.procurement-import-target-grid select, '
             '.procurement-import-target-actions .btn', html)
         self.assertIn('height: 42px; min-height: 42px', html)
+        self.assertIn('id="procurementImportSyncBar"', html)
+        self.assertIn('aria-live="polite"', html)
+        self.assertIn('@keyframes procurement-sync-shimmer', html)
+        self.assertIn('procurementImportProgressPercent(status)', html)
+        self.assertIn('正在重新校验工作表核心字段和跨批次重复状态', html)
+        self.assertIn(
+            '导入完成：新追加 ${status.rowsWritten} 行，已存在 '
+            '${status.rowsExisting} 行；新设底色', html)
         self.assertIn("'/api/assistant/procurement-import/image'", main)
         self.assertIn(
             "'/api/assistant/procurement-import/parse': 'assistant.access'",

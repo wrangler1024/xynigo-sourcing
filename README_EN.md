@@ -33,15 +33,16 @@ workflows contributed by **Samforo**.
   outbound collaboration mirror. The legacy `买家号（统一）` table is migration
   input only.
 
-The current online coordination test release is `v0.12.4`, with update
+The current online coordination test release is `v0.12.5`, with update
 packages for Windows x86_64 and macOS ARM64. The project is under active
 development and is not yet a production hosted SaaS product.
 
-The current coordinated test release is `v0.12.4`. It moves procurement
-collaboration imports into the cloud workspace and makes the desktop launcher
-open that cloud workspace by default, while retaining a dedicated local UI for
-HubStudio/CDP/SHEIN work and troubleshooting. This remains a shared-test
-candidate, not a production release.
+The current coordinated test release is `v0.12.5`. It finalizes procurement
+collaboration imports: identical cross-batch orders are skipped without
+altering historical rows, changed historical orders are blocked before any
+append, and repeated export lines are aggregated before XYP2 quantity and item
+amount validation. This remains a shared-test candidate, not a production
+release.
 
 v0.10.0 adds an opt-in safe parallel mode. When enabled, one order/shipment
 query batch may run alongside either one bound-environment batch or one
