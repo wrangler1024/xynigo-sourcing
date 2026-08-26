@@ -166,14 +166,16 @@ class PurchaseOrderService:
         now = self.clock()
         target_hash = draft_content_hash(draft)
         record = self._find_order(tenant_id, draft.orderKey, lock=True)
+        revised = False
         if record is not None and record.submission_status == "submitted":
             if record.content_hash != target_hash:
-                raise PurchaseServiceError(
-                    "purchase_order_locked",
-                    "采购单已正式提交，内容变化必须走退回重提流程",
-                    409,
+                self._assert_submitted_revision_allowed(
+                    record=record,
+                    actor_user_id=actor_user_id,
                 )
-            return self._payload(record, unchanged=True)
+                revised = True
+            else:
+                return self._payload(record, unchanged=True)
 
         changed = record is None or record.content_hash != target_hash
         if record is None:
@@ -216,7 +218,7 @@ class PurchaseOrderService:
         self._reconcile_lines(record, draft, workflow_status="unclaimed", now=now)
         self._enqueue(record, "order.submitted", now)
         self.session.flush()
-        return self._payload(record, unchanged=False)
+        return self._payload(record, unchanged=False, revised=revised)
 
     def get(self, *, tenant_id: uuid.UUID, order_key: str) -> dict[str, object]:
         """按业务键读取一张采购单（租户内）。"""
@@ -426,6 +428,11 @@ class PurchaseOrderService:
         )
         lines_by_order = self._active_lines_by_order([record.id for record in records])
         splits_by_order = self._splits_by_order([record.id for record in records])
+        from .checkout_service import ProcurementCheckoutService
+
+        purchased_quantities = ProcurementCheckoutService(
+            self.session
+        ).purchased_quantities([record.id for record in records])
         users_by_id = self._users_by_id(
             [
                 user_id
@@ -452,6 +459,7 @@ class PurchaseOrderService:
                     users_by_id,
                     splits_by_order.get(record.id, []),
                     visibility,
+                    purchased_quantities,
                 )
                 for record in records
             ],
@@ -476,6 +484,22 @@ class PurchaseOrderService:
             raise PurchaseServiceError("purchase_order_not_found", "采购单不存在", 404)
         lines = self._active_lines_by_order([record.id]).get(record.id, [])
         splits = self._splits_by_order([record.id]).get(record.id, [])
+        from .checkout_service import ACTIVE_ATTEMPT_STATUSES, ProcurementCheckoutService
+
+        checkout_service = ProcurementCheckoutService(self.session)
+        purchased_quantities = checkout_service.purchased_quantities([record.id])
+        execution_snapshot = checkout_service.order_snapshot(
+            tenant_id=tenant_id,
+            purchase_order_id=record.id,
+        )
+        reserved_quantities: dict[str, int] = defaultdict(int)
+        for attempt in execution_snapshot["checkoutAttempts"]:  # type: ignore[index]
+            if attempt["status"] not in ACTIVE_ATTEMPT_STATUSES:  # type: ignore[index]
+                continue
+            for allocation in attempt["lines"]:  # type: ignore[index]
+                reserved_quantities[str(allocation["purchaseOrderLineId"])] += int(  # type: ignore[index]
+                    allocation["quantity"]  # type: ignore[index]
+                )
         users_by_id = self._users_by_id(
             [
                 user_id
@@ -526,6 +550,7 @@ class PurchaseOrderService:
                 users_by_id,
                 splits,
                 visibility,
+                purchased_quantities,
             ),
             "fieldVisibility": visibility,
             "schemaVersion": record.schema_version,
@@ -545,6 +570,23 @@ class PurchaseOrderService:
                     ),
                     "claimedAt": line.claimed_at.isoformat() if line.claimed_at else None,
                     "updatedAt": line.updated_at.isoformat(),
+                    "requiredQty": int(
+                        line.payload.get("purchaseQty")
+                        or line.payload.get("salesQty")
+                        or 0
+                    ),
+                    "purchasedQty": purchased_quantities.get(line.id, 0),
+                    "reservedQty": reserved_quantities.get(str(line.id), 0),
+                    "remainingQty": max(
+                        0,
+                        int(
+                            line.payload.get("purchaseQty")
+                            or line.payload.get("salesQty")
+                            or 0
+                        )
+                        - purchased_quantities.get(line.id, 0)
+                        - reserved_quantities.get(str(line.id), 0),
+                    ),
                     "payload": line.payload,
                 }
                 for line in lines
@@ -554,6 +596,14 @@ class PurchaseOrderService:
                 lines,
                 splits,
                 users_by_id,
+            ),
+            **execution_snapshot,
+            "checkoutAttemptCount": len(execution_snapshot["checkoutAttempts"]),
+            "formalPurchaseBatchCount": len(execution_snapshot["purchaseBatches"]),
+            "formalTrackingBatchCount": sum(
+                1
+                for batch in execution_snapshot["purchaseBatches"]  # type: ignore[index]
+                if batch["status"] in {"tracking", "completed", "exception"}  # type: ignore[index]
             ),
         }
 
@@ -645,6 +695,7 @@ class PurchaseOrderService:
 
         now = self.clock()
         newly_claimed = 0
+        changed_order_ids: set[uuid.UUID] = set()
         for line in lines:
             if line.workflow_status == "claimed":
                 continue
@@ -653,6 +704,19 @@ class PurchaseOrderService:
             line.claimed_at = now
             line.updated_at = now
             newly_claimed += 1
+            changed_order_ids.add(line.purchase_order_id)
+        if changed_order_ids:
+            changed_orders = list(
+                self.session.scalars(
+                    select(PurchaseOrder)
+                    .where(PurchaseOrder.id.in_(changed_order_ids))
+                    .with_for_update()
+                )
+            )
+            for order in changed_orders:
+                order.sync_status = "pending"
+                order.updated_at = now
+                self._enqueue(order, "order.assignment_changed", now)
         actor = self.session.get(User, actor_user_id)
         self.session.flush()
         return {
@@ -734,7 +798,9 @@ class PurchaseOrderService:
             line.claimed_at = None
             line.updated_at = now
         order.execution_revision += 1
+        order.sync_status = "pending"
         order.updated_at = now
+        self._enqueue(order, "order.execution_changed", now)
         self.session.flush()
         return {
             "purchaseOrderId": str(order.id),
@@ -1219,6 +1285,7 @@ class PurchaseOrderService:
         users_by_id: dict[uuid.UUID, User],
         splits: list[PurchaseSplit] | None = None,
         field_visibility: dict[str, bool] | None = None,
+        purchased_quantities: dict[uuid.UUID, int] | None = None,
     ) -> dict[str, object]:
         draft = record.draft_payload
         visibility = self._field_visibility(field_visibility)
@@ -1229,6 +1296,7 @@ class PurchaseOrderService:
         preview_images: list[str] = []
         required_qty = 0
         purchased_qty = 0
+        purchased_by_line = purchased_quantities or {}
         purchaser_ids: list[uuid.UUID] = []
         for line in lines:
             workflow_counts[line.workflow_status] = (
@@ -1243,8 +1311,11 @@ class PurchaseOrderService:
                 or 0
             )
             required_qty += quantity
-            if line.workflow_status in ("ordered", "logistics_filled", "completed"):
-                purchased_qty += quantity
+            if purchased_quantities is None:
+                if line.workflow_status in ("ordered", "logistics_filled", "completed"):
+                    purchased_qty += quantity
+            else:
+                purchased_qty += purchased_by_line.get(line.id, 0)
             if (
                 line.claimed_by_user_id is not None
                 and line.claimed_by_user_id not in purchaser_ids
@@ -1406,8 +1477,51 @@ class PurchaseOrderService:
                 stored.is_active = False
                 stored.updated_at = now
 
+    def _assert_submitted_revision_allowed(
+        self,
+        *,
+        record: PurchaseOrder,
+        actor_user_id: uuid.UUID,
+    ) -> None:
+        owner_user_id = record.submitted_by_user_id or record.created_by_user_id
+        if owner_user_id is not None and owner_user_id != actor_user_id:
+            raise PurchaseServiceError(
+                "purchase_revision_forbidden",
+                "只能由原提交运营修改采购明细",
+                403,
+            )
+        active_lines = list(
+            self.session.scalars(
+                select(PurchaseOrderLine)
+                .where(
+                    PurchaseOrderLine.purchase_order_id == record.id,
+                    PurchaseOrderLine.is_active.is_(True),
+                )
+                .with_for_update()
+            )
+        )
+        has_split = self.session.scalar(
+            select(PurchaseSplit.id)
+            .where(PurchaseSplit.purchase_order_id == record.id)
+            .limit(1)
+        ) is not None
+        if has_split or any(
+            line.workflow_status != "unclaimed"
+            or line.claimed_by_user_id is not None
+            for line in active_lines
+        ):
+            raise PurchaseServiceError(
+                "purchase_order_in_progress",
+                "采购单已被认领或进入采购执行，不能直接修改，请先由采购退回任务",
+                409,
+            )
+
     def _enqueue(self, record: PurchaseOrder, event_type: str, now: datetime) -> None:
-        dedupe_key = f"{record.id}:{event_type}:{record.draft_revision}"
+        if event_type in {"draft.saved", "order.submitted"}:
+            version_label = f"draft:{record.draft_revision}"
+        else:
+            version_label = f"execution:{record.execution_revision}"
+        dedupe_key = f"{record.id}:{event_type}:{version_label}"
         existing = self.session.scalar(
             select(PurchaseSyncOutbox.id).where(PurchaseSyncOutbox.dedupe_key == dedupe_key)
         )
@@ -1422,14 +1536,23 @@ class PurchaseOrderService:
                 payload={
                     "purchaseOrderId": str(record.id),
                     "draftRevision": record.draft_revision,
+                    "executionRevision": record.execution_revision,
                 },
                 status="pending",
                 attempt_count=0,
                 available_at=now,
+                created_at=now,
+                updated_at=now,
             )
         )
 
-    def _payload(self, record: PurchaseOrder, *, unchanged: bool) -> dict[str, object]:
+    def _payload(
+        self,
+        record: PurchaseOrder,
+        *,
+        unchanged: bool,
+        revised: bool = False,
+    ) -> dict[str, object]:
         submitted_by = None
         if record.submitted_by_user_id is not None:
             user = self.session.get(User, record.submitted_by_user_id)
@@ -1443,6 +1566,7 @@ class PurchaseOrderService:
             "draftRevision": record.draft_revision,
             "contentHash": record.content_hash,
             "unchanged": unchanged,
+            "revised": revised,
             "savedAt": record.updated_at.isoformat(),
             "submittedAt": record.submitted_at.isoformat() if record.submitted_at else None,
             "submittedBy": submitted_by,

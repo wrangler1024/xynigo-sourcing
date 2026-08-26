@@ -6,18 +6,56 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
+import re
 import sys
 import tempfile
 
 
 SETTING_KEYS = {
+    "login_success_path": "XYNIGO_AUTH_LOGIN_SUCCESS_PATH",
     "feishu_pkce_method": "XYNIGO_AUTH_FEISHU_PKCE_METHOD",
+    "feishu_operation_sync_enabled": "XYNIGO_AUTH_FEISHU_OPERATION_SYNC_ENABLED",
+    "feishu_purchase_sync_enabled": "XYNIGO_AUTH_FEISHU_PURCHASE_SYNC_ENABLED",
+    "feishu_operation_base_token": "XYNIGO_AUTH_FEISHU_OPERATION_BASE_TOKEN",
+    "feishu_purchase_base_token": "XYNIGO_AUTH_FEISHU_PURCHASE_BASE_TOKEN",
+    "feishu_purchase_order_table_id": "XYNIGO_AUTH_FEISHU_PURCHASE_ORDER_TABLE_ID",
+    "feishu_purchase_line_table_id": "XYNIGO_AUTH_FEISHU_PURCHASE_LINE_TABLE_ID",
+    "feishu_buyer_account_table_id": "XYNIGO_AUTH_FEISHU_BUYER_ACCOUNT_TABLE_ID",
+    "feishu_environment_result_table_id": (
+        "XYNIGO_AUTH_FEISHU_ENVIRONMENT_RESULT_TABLE_ID"
+    ),
+    "feishu_logistics_result_table_id": (
+        "XYNIGO_AUTH_FEISHU_LOGISTICS_RESULT_TABLE_ID"
+    ),
 }
 
 
 def update_env(path: Path, setting: str, value: str) -> None:
+    if (
+        setting == "login_success_path"
+        and (not value.startswith("/") or value.startswith("//") or any(char.isspace() for char in value))
+    ):
+        raise ValueError("invalid same-origin login success path")
     if setting == "feishu_pkce_method" and value not in {"S256", "plain", "disabled"}:
         raise ValueError("invalid Feishu PKCE method")
+    if setting in {
+        "feishu_operation_sync_enabled",
+        "feishu_purchase_sync_enabled",
+    } and value not in {"true", "false"}:
+        raise ValueError("invalid Feishu sync flag")
+    if setting in {
+        "feishu_operation_base_token",
+        "feishu_purchase_base_token",
+    } and re.fullmatch(r"[A-Za-z0-9]{20,128}", value) is None:
+        raise ValueError("invalid Feishu Base token")
+    if setting in {
+        "feishu_environment_result_table_id",
+        "feishu_logistics_result_table_id",
+        "feishu_buyer_account_table_id",
+        "feishu_purchase_order_table_id",
+        "feishu_purchase_line_table_id",
+    } and not value.startswith("tbl"):
+        raise ValueError("invalid Feishu operation table ID")
 
     env_key = SETTING_KEYS[setting]
     lines = path.read_text(encoding="utf-8").splitlines()

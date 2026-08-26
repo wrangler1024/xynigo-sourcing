@@ -99,6 +99,9 @@ def build_admin_app(tmp_path, directory_client=None):
         database_url=database_url,
         feishu_app_id="cli_test",
         feishu_app_secret="test-secret-not-real",
+        buyer_credential_encryption_key=(
+            "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="
+        ),
         feishu_redirect_uri="http://testserver/v1/auth/feishu/callback",
         allowed_tenant_keys="tenant_allowed",
         cookie_secure=False,

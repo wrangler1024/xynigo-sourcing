@@ -26,19 +26,22 @@ workflows contributed by **Samforo**.
   English codes (for example `XG-MX-0819-001`). A backup/test mode creates
   remark-only environments without cookie imports, account binding, or
   ledger writes.
-- Optional direct Feishu/Lark Base OpenAPI integration through an enterprise
-  custom app, with unified-ledger conflict preflight and post-write readback.
-  Teammate computers do not need `lark-cli`.
+- Buyer-account resources use shared PostgreSQL as the only business source.
+  Listing, vendor-import duplicate checks, checkout reservation, and status
+  decisions use cloud APIs. Complete credentials are stored in an authenticated
+  encrypted envelope, while a new independent Feishu test Base is an authorized
+  outbound collaboration mirror. The legacy `买家号（统一）` table is migration
+  input only.
 
 The current stable release is `v0.10.0`. The project is under active
 development and is not yet a hosted SaaS product.
 
-The current coordinated test candidate is `v0.12.0`. It upgrades the shared
-procurement claim pool and each buyer's execution workspace, adds batch claim,
-store/operator filters, profit summaries, quick checkout and guarded task
-return actions, and reduces HubStudio Local API rate-limit failures during
-concurrent environment creation. It is limited to all current users of the
-shared test environment; it is not a production release.
+The current coordinated test candidate is `v0.12.3`. Building on the v0.12.2
+database source of truth, it encrypts complete buyer-account credentials and
+business metadata in PostgreSQL. Credential reads require a second permission,
+and the independent test Base continuously mirrors 41 authorized fields. The
+runtime no longer reads or writes the legacy unified ledger. This remains a
+shared-test candidate, not a production release.
 
 v0.10.0 adds an opt-in safe parallel mode. When enabled, one order/shipment
 query batch may run alongside either one bound-environment batch or one
@@ -153,41 +156,35 @@ The legacy administrator-only macOS backfill command still requires
 `XYNIGO_LARK_TABLE_ID_US`; the default `--site MX` only preserves the existing
 workflow.
 
-The Settings page does not require users to split Base or table tokens. Direct
-`/base/` links resolve locally; `/wiki/` links use one read-only node lookup
-through the app identity, so the app also needs Wiki node-read permission and
-access to that knowledge space. The target can be reconfigured by confirming a
-new link. Settings also provides a downloadable full unified buyer-ledger
-template: the first 14 columns preserve the API/TSV contract, while eight
-additional columns mirror the existing Feishu operational fields. After
-switching tables, align system fields, types, display styles, and select options
-with the template, then run the read-only field check. The complete URL is never persisted. Local UI
-preferences and the resolved unified Base/table routing identifiers are stored
-in `config.json`, which is ignored by Git. The Feishu App ID/Secret is stored
-in the current user's macOS Keychain or Windows DPAPI-protected storage, while
-the tenant access token remains in process memory. The Web API never returns
-the Secret, complete URL, Base token, or table ID. An authorized teammate computer may store
-the App Secret locally, but it must not be committed, packaged, logged, or
-shown in screenshots. Sensitive input workbooks must remain outside the
-repository.
+The legacy Base link retained in Settings is migration-source configuration
+for super administrators only. The page never reads that table automatically;
+only the explicit read-only verification action accesses its metadata. The
+complete URL is never persisted. Resolved routing identifiers are stored in
+Git-ignored `config.json`, the Feishu App ID/Secret uses macOS Keychain or
+Windows DPAPI-protected storage, and the tenant token remains in process
+memory. The Web API never returns the secret, complete URL, Base token, or
+table ID. Sensitive input workbooks must remain outside the repository.
 
-One enterprise custom app may access multiple authorized Bases. Xynigo
-currently configures one writable target, `买家号（统一）`; future procurement
-tables can use separate routing entries while sharing the same app credential.
-Backup tables are never automatic write targets.
+The cloud worker routes buyer mirrors, environment results, and logistics
+results to three tables in a new independent Base. They share enterprise-app
+authentication but have no relation to the legacy `买家号（统一）` table, which
+is never a daily automatic write target.
 
 ## Security model
 
-- Real credentials are accepted only at runtime and are redacted from progress
-  responses and logs.
+- Real buyer credentials are accepted by authorized APIs, stored in an
+  authenticated encrypted envelope, and decrypted only for permission-gated
+  reads and the Base sync worker.
 - Sensitive temporary payloads use restrictive file permissions where the
   operating system supports them.
 - Real platform writes require explicit confirmation.
-- Feishu writeback is off by default and confirmed separately from HubStudio
-  writes. A full-table dual-key check runs first, and partial failures never
-  repeat successful HubStudio steps.
-- A Feishu write counts as successful only after a matching readback;
-  uncertain outcomes remain retryable.
+- Vendor intake performs PostgreSQL duplicate checks using stable account/order
+  references. Passwords, cookies, and verification keys enter encrypted
+  PostgreSQL and the authorized test Base, but never the outbox payload, logs,
+  error details, Git, or test fixtures.
+- Database transaction outbox events drive Base mirroring. Only a matching
+  post-write readback marks sync complete; uncertain outcomes remain retryable
+  without changing the PostgreSQL fact.
 - Batch resume files contain only irreversible account identifiers and
   non-secret progress metadata.
 - Update and release packages must never contain local `config.json`, logs, or

@@ -54,6 +54,9 @@ def build_test_app(
         database_url=f"sqlite+pysqlite:///{tmp_path / 'identity.sqlite3'}",
         feishu_app_id="cli_test",
         feishu_app_secret="test-secret-not-real",
+        buyer_credential_encryption_key=(
+            "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="
+        ),
         feishu_redirect_uri="http://testserver/v1/auth/feishu/callback",
         feishu_pkce_method=pkce_method,
         allowed_tenant_keys="tenant_allowed",
@@ -90,6 +93,35 @@ def start_local_login(client: TestClient) -> tuple[str, str]:
     return query["state"][0], payload["pollToken"]
 
 
+def test_cloud_workspace_shell_and_assets_are_public_but_api_stays_protected(
+    tmp_path,
+) -> None:
+    app, _database, _oauth = build_test_app(tmp_path)
+
+    with TestClient(app) as client:
+        workspace = client.get("/")
+        assert workspace.status_code == 200
+        assert "<title>Xynigo Sourcing v0.12.3</title>" in workspace.text
+        assert 'src="xynigo-logo.png?v=6"' in workspace.text
+        assert 'href="/favicon.ico?v=6"' in workspace.text
+        assert "const CLOUD_WEB_MODE" in workspace.text
+        csp = workspace.headers["content-security-policy"]
+        assert "script-src 'sha256-" in csp
+        assert "script-src 'unsafe-inline'" not in csp
+        assert "style-src 'unsafe-inline'" in csp
+        assert client.get("/xynigo-logo.png").status_code == 200
+        assert client.get("/xynigo-x.png").status_code == 200
+        x_icon = client.get("/xynigo-x.ico")
+        favicon = client.get("/favicon.ico")
+        assert x_icon.status_code == 200
+        assert favicon.status_code == 200
+        assert favicon.content == x_icon.content
+        assert client.get("/preview-product-a.svg").status_code == 200
+        assert client.get("/assets/not-allowed.js").status_code == 404
+        assert client.get("/v1/auth/web/status").json() == {"authenticated": False}
+        assert client.get("/v1/auth/me").status_code == 401
+
+
 def test_bootstrap_admin_login_creates_hashed_session_and_rbac(tmp_path) -> None:
     app, database, oauth = build_test_app(tmp_path)
 
@@ -113,7 +145,7 @@ def test_bootstrap_admin_login_creates_hashed_session_and_rbac(tmp_path) -> None
             follow_redirects=False,
         )
         assert callback.status_code == 303
-        assert callback.headers["location"] == "/v1/auth/me"
+        assert callback.headers["location"] == "/"
         assert "HttpOnly" in callback.headers["set-cookie"]
         raw_cookie = client.cookies.get("xynigo_session")
         assert raw_cookie
@@ -139,8 +171,20 @@ def test_bootstrap_admin_login_creates_hashed_session_and_rbac(tmp_path) -> None
         assert me.json()["roles"] == ["super_admin"]
         assert "system.lark_connection.manage" in me.json()["permissions"]
         assert me.json()["user"]["name"] == "合成测试用户"
+        web_status = client.get("/v1/auth/web/status")
+        assert web_status.status_code == 200
+        assert web_status.json()["authenticated"] is True
+        assert web_status.json()["identity"]["user"]["name"] == "合成测试用户"
 
-        logout = client.post("/v1/auth/logout")
+        csrf_rejected = client.post("/v1/auth/logout")
+        assert csrf_rejected.status_code == 403
+        assert csrf_rejected.json()["detail"]["code"] == "web_csrf_required"
+        assert client.get("/v1/auth/me").status_code == 200
+
+        logout = client.post(
+            "/v1/auth/logout",
+            headers={"X-Xynigo-Web-CSRF": "same-origin"},
+        )
         assert logout.status_code == 204
         assert client.get("/v1/auth/me").status_code == 401
 

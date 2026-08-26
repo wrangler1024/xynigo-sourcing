@@ -58,6 +58,7 @@ class FakeCloudClient(object):
         self.admin_requests = []
         self.purchase_requests = []
         self.procurement_workspace_requests = []
+        self.buyer_account_requests = []
         self.business_log_requests = []
         self.system_log_requests = []
 
@@ -104,6 +105,14 @@ class FakeCloudClient(object):
         return {
             'ok': True,
             'data': {'page': 1, 'pageSize': 20, 'total': 0, 'items': []},
+        }
+
+    def buyer_account_request(
+            self, path, token, method='GET', payload=None):
+        self.buyer_account_requests.append((path, token, method, payload))
+        return {
+            'ok': True,
+            'data': {'page': 1, 'pageSize': 100, 'total': 0, 'rows': []},
         }
 
     def business_log_request(self, path, token):
@@ -334,6 +343,58 @@ class CloudAuthTests(unittest.TestCase):
             ('/v1/procurement/claims', SESSION_TOKEN, 'POST', payload),
         ])
 
+    def test_buyer_account_proxy_keeps_bearer_session_local(self):
+        client = FakeCloudClient()
+        client.me_result = {
+            **IDENTITY,
+            'permissions': ['resource.buyer.read', 'resource.buyer.import'],
+        }
+        service = LocalAuthService(
+            client=client,
+            store=MemoryAuthSessionStore(SESSION_TOKEN),
+        )
+        listed = service.buyer_account_request(
+            '/v1/resources/buyer-accounts?site=US&selectableOnly=true')
+        snapshot = {'snapshotKey': 'synthetic-snapshot-001', 'accounts': []}
+        synced = service.buyer_account_request(
+            '/v1/resources/buyer-accounts/snapshot',
+            method='PUT',
+            payload=snapshot,
+            permission='resource.buyer.import',
+        )
+        self.assertEqual(listed['data']['rows'], [])
+        self.assertEqual(synced['data']['total'], 0)
+        self.assertEqual(client.buyer_account_requests, [
+            ('/v1/resources/buyer-accounts?site=US&selectableOnly=true',
+             SESSION_TOKEN, 'GET', None),
+            ('/v1/resources/buyer-accounts/snapshot',
+             SESSION_TOKEN, 'PUT', snapshot),
+        ])
+
+    def test_cloud_buyer_account_client_allows_only_fixed_paths(self):
+        client = CloudAuthClient('https://xynigo.example.test')
+        calls = []
+        client._request = lambda path, **kwargs: calls.append((path, kwargs)) or {
+            'ok': True, 'data': {}}
+        client.buyer_account_request(
+            '/v1/resources/buyer-accounts?site=MX', SESSION_TOKEN)
+        client.buyer_account_request(
+            '/v1/resources/buyer-accounts/snapshot', SESSION_TOKEN,
+            method='PUT', payload={'snapshotKey': 'synthetic-001', 'accounts': []})
+        self.assertEqual([item[0] for item in calls], [
+            '/v1/resources/buyer-accounts?site=MX',
+            '/v1/resources/buyer-accounts/snapshot',
+        ])
+        for unsafe_path, method in (
+                ('/v1/admin/members', 'GET'),
+                ('/v1/resources/buyer-accounts/../admin/members', 'GET'),
+                ('https://evil.example.test/v1/resources/buyer-accounts', 'GET'),
+                ('/v1/resources/buyer-accounts/snapshot?unsafe=1', 'PUT')):
+            with self.subTest(path=unsafe_path):
+                with self.assertRaises(LocalAuthError):
+                    client.buyer_account_request(
+                        unsafe_path, SESSION_TOKEN, method=method, payload={})
+
     def test_business_log_proxy_keeps_bearer_session_local(self):
         client = FakeCloudClient()
         service = LocalAuthService(
@@ -437,6 +498,18 @@ class CloudAuthTests(unittest.TestCase):
         client.procurement_workspace_request(
             '/v1/procurement/orders/' + detail_id + '/return', SESSION_TOKEN,
             method='POST', payload={'reason': 'synthetic return'})
+        new_write_paths = [
+            '/v1/procurement/orders/' + detail_id + '/checkout-attempts',
+            '/v1/procurement/checkout-attempts/' + detail_id + '/revise',
+            '/v1/procurement/checkout-attempts/' + detail_id + '/begin',
+            '/v1/procurement/checkout-attempts/' + detail_id + '/abandon',
+            '/v1/procurement/checkout-attempts/' + detail_id + '/payment-result',
+            '/v1/procurement/checkout-attempts/' + detail_id + '/cleanup-result',
+            '/v1/procurement/purchase-batches/' + detail_id + '/shipments',
+        ]
+        for path in new_write_paths:
+            client.procurement_workspace_request(
+                path, SESSION_TOKEN, method='POST', payload={'synthetic': True})
         self.assertEqual([item[0] for item in calls], [
             '/v1/procurement/overview',
             '/v1/procurement/orders?submissionStatus=submitted',
@@ -445,7 +518,7 @@ class CloudAuthTests(unittest.TestCase):
             '/v1/procurement/claims',
             '/v1/procurement/orders/' + detail_id + '/splits',
             '/v1/procurement/orders/' + detail_id + '/return',
-        ])
+        ] + new_write_paths)
         with self.assertRaises(LocalAuthError):
             client.procurement_workspace_request(
                 '/v1/procurement/claims', SESSION_TOKEN)
@@ -772,6 +845,45 @@ class AuthRouteGuardTests(unittest.TestCase):
             '/v1/system-logs?level=error&page=2',
         ])
 
+    def test_buyer_account_routes_forward_only_safe_cloud_paths(self):
+        forwarded = []
+
+        def allow(permission=None, role=None):
+            self.auth.required_permissions.append(permission)
+            self.auth.required_roles.append(role)
+            return IDENTITY
+
+        def forward(path, method='GET', payload=None, permission=None):
+            forwarded.append((path, method, payload, permission))
+            return {'ok': True, 'data': {'rows': [], 'total': 0}}
+
+        self.auth.require = allow
+        self.auth.buyer_account_request = forward
+        with urlopen(
+                self._url('/api/cloud/buyer-accounts?site=US&selectableOnly=true'),
+                timeout=3) as response:
+            listed = json.loads(response.read().decode('utf-8'))
+        self.assertEqual(listed['data']['rows'], [])
+
+        snapshot = {'snapshotKey': 'synthetic-snapshot-001', 'accounts': []}
+        request = Request(
+            self._url('/api/cloud/buyer-accounts/snapshot'),
+            data=json.dumps(snapshot).encode('utf-8'),
+            method='POST',
+            headers={'Content-Type': 'application/json'},
+        )
+        with urlopen(request, timeout=3) as response:
+            synced = json.loads(response.read().decode('utf-8'))
+        self.assertEqual(synced['data']['total'], 0)
+        self.assertEqual(self.auth.required_permissions, [
+            'resource.buyer.read', 'resource.buyer.import'])
+        self.assertEqual(forwarded, [
+            ('/v1/resources/buyer-accounts?site=US&selectableOnly=true',
+             'GET', None, None),
+            ('/v1/resources/buyer-accounts/snapshot',
+             'PUT', snapshot, 'resource.buyer.import'),
+        ])
+
     def test_lark_connection_api_requires_super_admin_permission(self):
         with self.assertRaises(HTTPError) as caught:
             urlopen(self._url('/api/lark/config'), timeout=3)
@@ -786,6 +898,8 @@ class AuthRouteGuardTests(unittest.TestCase):
                 ('/api/progress', 'fulfillment.order.read'),
                 ('/api/export', 'fulfillment.order.export'),
                 ('/api/buyer-library', 'resource.buyer.read'),
+                ('/api/cloud/buyer-accounts', 'resource.buyer.read'),
+                ('/api/cloud/buyer-accounts/snapshot', 'resource.buyer.import'),
                 ('/api/register/progress', 'resource.buyer.import'),
                 ('/api/envbatch/progress', 'resource.environment.create'),
                 ('/api/resources/stores', 'resource.store.read'),
@@ -804,6 +918,12 @@ class AuthRouteGuardTests(unittest.TestCase):
                 ('/api/procurement/orders/00000000-0000-0000-0000-000000000001/splits',
                  'procurement.execution.manage'),
                 ('/api/procurement/orders/00000000-0000-0000-0000-000000000001/return',
+                 'procurement.execution.manage'),
+                ('/api/procurement/orders/00000000-0000-0000-0000-000000000001/checkout-attempts',
+                 'procurement.execution.manage'),
+                ('/api/procurement/checkout-attempts/00000000-0000-0000-0000-000000000001/begin',
+                 'procurement.execution.manage'),
+                ('/api/procurement/purchase-batches/00000000-0000-0000-0000-000000000001/shipments',
                  'procurement.execution.manage')]:
             with self.subTest(path=path):
                 self.auth.required_permissions.clear()
@@ -834,6 +954,20 @@ class AuthRouteGuardTests(unittest.TestCase):
              {'expectedRevision': 0, 'groups': []}),
             ('/api/procurement/orders/%s/return' % order_id,
              {'reason': 'synthetic return'}),
+            ('/api/procurement/orders/%s/checkout-attempts' % order_id,
+             {'idempotencyKey': 'synthetic-checkout-001'}),
+            ('/api/procurement/checkout-attempts/%s/revise' % order_id,
+             {'expectedVersion': 1}),
+            ('/api/procurement/checkout-attempts/%s/begin' % order_id,
+             {'expectedVersion': 1}),
+            ('/api/procurement/checkout-attempts/%s/abandon' % order_id,
+             {'expectedVersion': 1}),
+            ('/api/procurement/checkout-attempts/%s/payment-result' % order_id,
+             {'outcome': 'uncertain'}),
+            ('/api/procurement/checkout-attempts/%s/cleanup-result' % order_id,
+             {'environmentResult': 'deleted'}),
+            ('/api/procurement/purchase-batches/%s/shipments' % order_id,
+             {'shipmentKey': 'synthetic-001'}),
         ]
         for path, payload in requests:
             with self.subTest(path=path):
@@ -848,9 +982,7 @@ class AuthRouteGuardTests(unittest.TestCase):
                 self.assertTrue(result['data']['saved'])
         self.assertEqual(self.auth.required_permissions, [
             'procurement.execution.manage',
-            'procurement.execution.manage',
-            'procurement.execution.manage',
-        ])
+        ] * len(requests))
         self.assertEqual(forwarded, [
             ('/v1/procurement/claims', 'POST',
              {'purchaseOrderIds': [order_id]},
@@ -860,6 +992,24 @@ class AuthRouteGuardTests(unittest.TestCase):
              'procurement.execution.manage'),
             ('/v1/procurement/orders/%s/return' % order_id, 'POST',
              {'reason': 'synthetic return'},
+             'procurement.execution.manage'),
+            ('/v1/procurement/orders/%s/checkout-attempts' % order_id, 'POST',
+             {'idempotencyKey': 'synthetic-checkout-001'},
+             'procurement.execution.manage'),
+            ('/v1/procurement/checkout-attempts/%s/revise' % order_id, 'POST',
+             {'expectedVersion': 1}, 'procurement.execution.manage'),
+            ('/v1/procurement/checkout-attempts/%s/begin' % order_id, 'POST',
+             {'expectedVersion': 1}, 'procurement.execution.manage'),
+            ('/v1/procurement/checkout-attempts/%s/abandon' % order_id, 'POST',
+             {'expectedVersion': 1}, 'procurement.execution.manage'),
+            ('/v1/procurement/checkout-attempts/%s/payment-result' % order_id,
+             'POST', {'outcome': 'uncertain'},
+             'procurement.execution.manage'),
+            ('/v1/procurement/checkout-attempts/%s/cleanup-result' % order_id,
+             'POST', {'environmentResult': 'deleted'},
+             'procurement.execution.manage'),
+            ('/v1/procurement/purchase-batches/%s/shipments' % order_id, 'POST',
+             {'shipmentKey': 'synthetic-001'},
              'procurement.execution.manage'),
         ])
 

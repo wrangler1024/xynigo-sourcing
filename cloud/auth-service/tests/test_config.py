@@ -12,6 +12,9 @@ def production_settings(**overrides):
         "database_url": "postgresql+psycopg://user:password@db/xynigo",
         "feishu_app_id": "cli_test",
         "feishu_app_secret": "test-secret-not-real",
+        "buyer_credential_encryption_key": (
+            "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="
+        ),
         "feishu_redirect_uri": "https://xynigo.example.com/v1/auth/feishu/callback",
         "allowed_tenant_keys": "tenant_allowed",
         "cookie_secure": True,
@@ -36,11 +39,12 @@ def test_success_redirect_cannot_leave_origin() -> None:
         production_settings(login_success_path="https://attacker.example/capture")
 
 
-def test_settings_repr_redacts_database_password_and_app_secret() -> None:
+def test_settings_repr_redacts_database_password_app_secret_and_buyer_key() -> None:
     settings = production_settings()
     rendered = repr(settings)
     assert "password" not in rendered
     assert "test-secret-not-real" not in rendered
+    assert "MDAwMDAwMDAwMDAw" not in rendered
 
 
 def test_production_rejects_wildcard_hosts() -> None:
@@ -62,3 +66,15 @@ def test_system_log_retention_capacity_and_sampling_are_bounded() -> None:
     ):
         with pytest.raises(ValidationError):
             production_settings(**invalid)
+
+
+def test_enabled_purchase_sync_requires_complete_base_coordinates() -> None:
+    with pytest.raises(ValidationError):
+        production_settings(feishu_purchase_sync_enabled=True)
+    settings = production_settings(
+        feishu_purchase_sync_enabled=True,
+        feishu_purchase_base_token="RzcSyntheticBaseToken",
+        feishu_purchase_order_table_id="tblSyntheticMaster",
+        feishu_purchase_line_table_id="tblSyntheticLine",
+    )
+    assert settings.feishu_purchase_sync_enabled is True

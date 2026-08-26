@@ -14,12 +14,19 @@ API：
   POST /api/register/validate 脱敏校验注册凭证文件
   POST /api/register/start  启动低并发注册
   GET  /api/register/progress 注册脱敏进度
-  GET  /api/buyer-library 读取飞书买家号库脱敏元数据
+  GET  /api/buyer-library 从 PostgreSQL 读取买家号脱敏元数据
   POST /api/buyer-library/import/parse 号商 xlsx 入库预检
   POST /api/buyer-library/import/commit 二次确认后写入买家号库
+  POST /api/assistant/procurement-import/parse 店小秘 XYP2 本地解析
+  GET  /api/assistant/procurement-import/image 预览订单商品图片
+  GET  /api/assistant/procurement-import/export 下载采购共享协作表
+  POST /api/assistant/procurement-import/target/inspect 读取普通飞书工作簿
+  POST /api/assistant/procurement-import/target/validate 校验 A:AH 表头
+  POST /api/assistant/procurement-import/sheet-sync 追加 A:AH 数据、样式、链接并补齐 M 列图片
+  GET  /api/assistant/procurement-import/sheet-sync/status 查询导入进度
   POST /api/envbatch/parse  模块三 xlsx 严格解析（只返回脱敏计划）
   POST /api/envbatch/preview/start/retry-row 模块三预览/执行/单步重试
-  GET  /api/envbatch/progress/export-mapping/export-tsv 模块三进度/导出
+  GET  /api/envbatch/progress/export-mapping 模块三进度/安全映射导出
   GET  /api/export          ?format=xlsx|csv 下载结果
   GET/POST /api/config      本机配置（HubStudio 端口等，存 config.json）
 """
@@ -36,11 +43,12 @@ import tempfile
 import threading
 import time
 import webbrowser
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 from . import __version__
-from .buyer_library import BuyerLibraryJob, BuyerLibraryService
+from .buyer_library import BuyerLibraryJob, DatabaseBuyerLibraryService
 from .buyer_ledger_sync import validate_unified_schema
 from .buyer_register import BuyerRegistrationTask, RegistrationOrchestrator
 from .cloud_auth import LocalAuthError, LocalAuthService
@@ -68,9 +76,10 @@ from .lark_credentials import (LarkCredentialError, LarkCredentials,
                                system_credential_store)
 from .lark_links import (LarkLedgerTargetConfig, build_lark_base_link,
                          parse_lark_base_link, resolve_lark_ledger_link)
-from .lark_ledger import LarkLedgerSink
 from .lark_openapi import LarkOpenApiClient
 from .lark_runtime import build_buyer_ledger_service
+from .operation_result_sync import OperationResultSyncQueue
+from .procurement_import import ProcurementImportService
 from .redaction import scrub_text
 from .resource_center import ResourceCenterService
 from .shein_query import QueryOrchestrator, normalize_site
@@ -128,6 +137,8 @@ AUTH_PERMISSION_BY_PATH = {
     '/api/buyer-library': 'resource.buyer.read',
     '/api/buyer-library/import/parse': 'resource.buyer.import',
     '/api/buyer-library/import/commit': 'resource.buyer.import',
+    '/api/cloud/buyer-accounts': 'resource.buyer.read',
+    '/api/cloud/buyer-accounts/snapshot': 'resource.buyer.import',
     '/api/register/progress': 'resource.buyer.import',
     '/api/register/validate': 'resource.buyer.import',
     '/api/register/start': 'resource.buyer.import',
@@ -145,6 +156,15 @@ AUTH_PERMISSION_BY_PATH = {
     '/api/lark/preflight': 'system.lark_connection.manage',
     '/api/extension/pair/approve': 'operations.access',
     '/api/procurement/claims': 'procurement.execution.manage',
+    '/api/assistant/procurement-import/parse': 'assistant.access',
+    '/api/assistant/procurement-import/image': 'assistant.access',
+    '/api/assistant/procurement-import/export': 'assistant.access',
+    '/api/assistant/procurement-import/target/inspect': 'assistant.access',
+    '/api/assistant/procurement-import/target/validate': 'assistant.access',
+    '/api/assistant/procurement-import/image-sync': 'assistant.access',
+    '/api/assistant/procurement-import/image-sync/status': 'assistant.access',
+    '/api/assistant/procurement-import/sheet-sync': 'assistant.access',
+    '/api/assistant/procurement-import/sheet-sync/status': 'assistant.access',
 }
 SUPER_ADMIN_ONLY_PERMISSIONS = frozenset({
     'system.lark_connection.manage',
@@ -160,6 +180,26 @@ AUTH_PERMISSION_BY_PREFIX = (
     ('/api/admin/members', 'system.member.manage'),
     ('/api/envbatch/', 'resource.environment.create'),
 )
+
+
+def procurement_write_path(path):
+    """Return whether a same-origin route is an approved procurement mutation."""
+    uuid_part = (
+        r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
+        r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    )
+    return (
+        path == '/api/procurement/claims'
+        or bool(re.fullmatch(
+            r'/api/procurement/orders/' + uuid_part
+            + r'/(?:splits|return|checkout-attempts)', path))
+        or bool(re.fullmatch(
+            r'/api/procurement/checkout-attempts/' + uuid_part
+            + r'/(?:revise|begin|abandon|payment-result|cleanup-result)', path))
+        or bool(re.fullmatch(
+            r'/api/procurement/purchase-batches/' + uuid_part + r'/shipments',
+            path))
+    )
 
 
 def admin_cloud_write_target(path):
@@ -595,6 +635,11 @@ class AppState(object):
         cfg = load_config()
         self.cfg = cfg
         self.auth = auth_service or LocalAuthService()
+        self.operation_sync_error = ''
+        self.operation_sync = OperationResultSyncQueue(
+            lambda endpoint, payload, permission:
+                self.auth.operation_result_request(
+                    endpoint, payload, permission))
         self.extension_bridge = extension_bridge or ExtensionBridge()
         self.lark_credentials = credential_store or system_credential_store()
         self.hub_runtime_gate = HubRuntimeGate(max_requests=4)
@@ -606,22 +651,22 @@ class AppState(object):
         self.orch = QueryOrchestrator(
             self.hub, log_dir=LOG_DIR,
             concurrency=cfg.get('concurrency', 2))
-        self.reg_job = RegistrationJob(
-            lambda: self.hub,
-            ledger_sink_factory=lambda: LarkLedgerSink(
-                build_buyer_ledger_service(
-                    self.cfg, self.lark_credentials).client))
+        self.reg_job = RegistrationJob(lambda: self.hub)
         self.buyer_library = BuyerLibraryJob(
-            lambda: BuyerLibraryService(
-                build_buyer_ledger_service(
-                    self.cfg, self.lark_credentials).client))
+            lambda: DatabaseBuyerLibraryService(
+                lambda path, method='GET', payload=None:
+                    self.auth.buyer_account_request(
+                        path, method=method, payload=payload,
+                        permission=(
+                            'resource.buyer.read'
+                            if method == 'GET' else
+                            'resource.buyer.import'))))
         self.env_job = EnvBatchJob(
-            lambda: self.hub, lambda: self.cfg,
-            ledger_sync_factory=lambda: build_buyer_ledger_service(
-                self.cfg, self.lark_credentials))
+            lambda: self.hub, lambda: self.cfg)
         self.backup_job = BackupEnvJob(lambda: self.hub, lambda: self.cfg)
         self.resources = ResourceCenterService(
             lambda: self.hub, self.lark_credentials.load)
+        self.procurement_import = ProcurementImportService()
         self.updates = UpdateCoordinator(
             os.environ.get('XYNIGO_INSTALL_DIR'), __version__)
 
@@ -638,6 +683,128 @@ class AppState(object):
 
     def hub_status(self, force=False):
         return self._hub_status.check(force=force)
+
+    @staticmethod
+    def _iso_epoch(value):
+        if not value:
+            return None
+        return datetime.fromtimestamp(float(value), timezone.utc).isoformat()
+
+    @staticmethod
+    def _iso_local_text(value, utc_offset_minutes=None):
+        text = str(value or '').strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.strptime(text, '%Y-%m-%d %H:%M:%S')
+            if utc_offset_minutes is None:
+                return parsed.astimezone().isoformat()
+            zone = timezone(timedelta(minutes=int(utc_offset_minutes)))
+            return parsed.replace(tzinfo=zone).isoformat()
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    def environment_result_payload(self, task_id, account_ids=None):
+        snapshot = self.env_job.snapshot()
+        runner = self.env_job.runner
+        if runner is None:
+            raise ValueError('建环境任务没有可回传结果')
+        selected = set(account_ids or ())
+        rows = [row for row in snapshot.get('rows') or []
+                if not selected or str(row.get('accountId') or '') in selected]
+        if not rows:
+            raise ValueError('建环境任务没有可回传行')
+        return {
+            'source': 'local_executor',
+            'runKey': task_id,
+            'site': runner.site,
+            'purchaseDate': runner.purchase_date,
+            'environmentGroup': runner.purchase_tag,
+            'startedAt': self._iso_epoch(self.env_job.started_at),
+            'completedAt': self._iso_epoch(
+                self.env_job.finished_at or time.time()),
+            'results': [{
+                'accountRef': str(row.get('accountId') or ''),
+                'accountLabel': str(row.get('emailMasked') or ''),
+                'purchaserLabel': str(row.get('buyer') or ''),
+                'environmentName': str(row.get('envName') or ''),
+                'environmentRef': (
+                    str(row.get('containerCode'))
+                    if row.get('containerCode') not in (None, '') else None),
+                'environmentSerial': (
+                    str(row.get('serialNumber'))
+                    if row.get('serialNumber') not in (None, '') else None),
+                'status': ('success' if row.get('state') == 'done'
+                           else 'failed'),
+                'errorStep': str(row.get('errorStep') or ''),
+                'errorSummary': scrub_text(row.get('error') or '')[:300],
+                'bindingAt': self._iso_local_text(row.get('bindingTime')),
+                'recoveredExisting': bool(row.get('recoveredExisting')),
+            } for row in rows],
+            'ipChecks': [{
+                'environmentName': str(item.get('envName') or ''),
+                'ipAddress': str(item.get('ip') or ''),
+                'country': str(item.get('country') or ''),
+                'city': str(item.get('city') or ''),
+                'isp': str(item.get('isp') or ''),
+                'ok': bool(item.get('ok')),
+                'errorSummary': scrub_text(item.get('error') or '')[:300],
+            } for item in snapshot.get('ipChecks') or []
+                if (not selected or any(
+                    str(row.get('envName') or '') ==
+                    str(item.get('envName') or '') for row in rows))],
+        }
+
+    def logistics_result_payload(self, task_id, mode, serials):
+        snapshot = self.orch.snapshot()
+        selected = {str(serial) for serial in serials or ()}
+        rows = [row for row in snapshot.get('rows') or []
+                if str(row.get('serial') or '') in selected]
+        if not rows:
+            raise ValueError('物流查询任务没有可回传行')
+        allowed_states = {'ok', 'fail', 'login', 'inuse', 'stopped', 'pending'}
+        return {
+            'source': 'local_executor',
+            'runKey': task_id,
+            'queryMode': mode,
+            'site': snapshot.get('site') or rows[0].get('site') or 'MX',
+            'startedAt': self._iso_epoch(self.orch.started_at),
+            'completedAt': self._iso_epoch(
+                self.orch.finished_at or time.time()),
+            'results': [{
+                'environmentSerial': str(row.get('serial') or ''),
+                'environmentName': str(row.get('envName') or ''),
+                'status': (row.get('state') if row.get('state') in allowed_states
+                           else 'fail'),
+                'platformOrderNo': str(row.get('orderNo') or ''),
+                'orderTime': str(row.get('orderTime') or ''),
+                'amount': str(row.get('amount') or ''),
+                'platformStatus': str(row.get('status') or ''),
+                'statusLabel': str(row.get('statusCn') or ''),
+                'fulfillmentStage': str(row.get('stage') or ''),
+                'trackingNumbers': [str(item) for item in row.get('tracks') or []],
+                'packageNumbers': [str(item) for item in row.get('pkgs') or []],
+                'carrier': str(row.get('carrier') or ''),
+                'cancelled': bool(row.get('kanDan')),
+                'riskOrder': bool(row.get('riskOrder')),
+                'riskSummary': str(row.get('riskMessage') or ''),
+                'ipAddress': str(row.get('ip') or ''),
+                'timeZone': str(row.get('timeZone') or ''),
+                'utcOffsetMinutes': row.get('utcOffsetMinutes'),
+                'queriedAt': self._iso_local_text(
+                    row.get('time'), row.get('utcOffsetMinutes')),
+                'errorSummary': scrub_text(row.get('error') or '')[:300],
+                'screenshotStatus': str(row.get('screenshotState') or ''),
+            } for row in rows],
+        }
+
+    def enqueue_operation_result(self, endpoint, permission, payload):
+        try:
+            self.operation_sync.enqueue(endpoint, permission, payload)
+            self.operation_sync_error = ''
+        except Exception as exc:
+            self.operation_sync_error = scrub_text(exc)[:200]
+            raise
 
 
 def build_state():
@@ -1168,9 +1335,6 @@ class EnvBatchJob(object):
                 result_rows = runner.run()
                 mapping = mapping_workbook_bytes(result_rows)
                 checks = runner.verify_ips(verify_sample_count)
-                tsv = ledger_tsv_bytes(
-                    result_rows, runtime['site'], purchase_date,
-                    runtime['purchaseTag'])
                 done = sum(row.state == 'done' for row in result_rows)
                 if write_lark_ledger:
                     self._sync_ledger_rows(
@@ -1180,9 +1344,9 @@ class EnvBatchJob(object):
                 with self.lock:
                     self.mapping_data = mapping
                     self.mapping_name = '绑定映射清单_%s.xlsx' % purchase_date
-                    self.tsv_data = tsv
-                    self.tsv_name = ledger_tsv_filename(
-                        runtime['site'], purchase_date)
+                    # 测试版不再为 Web 运行链路生成含凭证的旧台账 TSV。
+                    self.tsv_data = None
+                    self.tsv_name = ''
                     self.ip_checks = checks
                     self.summary = {
                         'total': len(result_rows),
@@ -1248,12 +1412,8 @@ class EnvBatchJob(object):
                         self.runner.purchase_tag)
                 with self.lock:
                     self.mapping_data = mapping_workbook_bytes(result_rows)
-                    self.tsv_data = ledger_tsv_bytes(
-                        result_rows, self.runner.site,
-                        self.runner.purchase_date,
-                        self.runner.purchase_tag)
-                    self.tsv_name = ledger_tsv_filename(
-                        self.runner.site, self.runner.purchase_date)
+                    self.tsv_data = None
+                    self.tsv_name = ''
                     self.summary.update({
                         'total': len(result_rows),
                         'done': sum(row.state == 'done' for row in result_rows),
@@ -1652,8 +1812,7 @@ class Handler(BaseHTTPRequestHandler):
         if (path.startswith('/api/admin/members/')
                 and path.endswith('/roles')):
             return STATE.auth.require('system.role.manage')
-        if (path.startswith('/api/procurement/orders/')
-                and path.endswith(('/splits', '/return'))):
+        if procurement_write_path(path):
             return STATE.auth.require('procurement.execution.manage')
         permission = AUTH_PERMISSION_BY_PATH.get(path)
         if permission is None:
@@ -1809,6 +1968,15 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _inline_bytes(self, data, mime):
+        self.send_response(200)
+        self.send_header('Content-Type', mime)
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('Content-Length', str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def _redirect(self, location):
         self.send_response(302)
         self.send_header('Location', location)
@@ -1862,9 +2030,18 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/progress':
                 snap = STATE.orch.snapshot()
                 snap['hubConnected'] = STATE.hub_status()[0]
+                snap['serverSync'] = (
+                    STATE.operation_sync.snapshot()
+                    if hasattr(STATE, 'operation_sync') else
+                    {'pending': 0, 'rows': []})
                 self._json(snap)
             elif path == '/api/tasks':
-                self._json(STATE.tasks.snapshot())
+                snap = STATE.tasks.snapshot()
+                snap['serverSync'] = (
+                    STATE.operation_sync.snapshot()
+                    if hasattr(STATE, 'operation_sync') else
+                    {'pending': 0, 'rows': []})
+                self._json(snap)
             elif path == '/api/register/progress':
                 snap = STATE.reg_job.snapshot()
                 snap['hubConnected'] = STATE.hub_status()[0]
@@ -1874,6 +2051,26 @@ class Handler(BaseHTTPRequestHandler):
                     site=(query.get('site') or [''])[0],
                     status=(query.get('status') or [''])[0],
                     limit=(query.get('limit') or ['100'])[0]))
+            elif path == '/api/assistant/procurement-import/export':
+                data, name, mime = STATE.procurement_import.export(
+                    (query.get('planId') or [''])[0])
+                self._download(data, name, mime)
+            elif path == '/api/assistant/procurement-import/image':
+                data, mime = STATE.procurement_import.preview_image(
+                    (query.get('planId') or [''])[0],
+                    (query.get('row') or [''])[0])
+                self._inline_bytes(data, mime)
+            elif path == '/api/assistant/procurement-import/image-sync/status':
+                self._json(STATE.procurement_import.image_sync_status(
+                    (query.get('jobId') or [''])[0]))
+            elif path == '/api/assistant/procurement-import/sheet-sync/status':
+                self._json(STATE.procurement_import.sheet_sync_status(
+                    (query.get('jobId') or [''])[0]))
+            elif path == '/api/cloud/buyer-accounts':
+                cloud_path = '/v1/resources/buyer-accounts'
+                if parsed.query:
+                    cloud_path += '?' + parsed.query
+                self._json(STATE.auth.buyer_account_request(cloud_path))
             elif path == '/api/resources/stores':
                 self._json(STATE.resources.stores_snapshot(
                     force=(query.get('refresh') or ['0'])[0] == '1'))
@@ -1898,6 +2095,10 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/envbatch/progress':
                 snap = STATE.env_job.snapshot()
                 snap['hubConnected'] = STATE.hub_status()[0]
+                snap['serverSync'] = (
+                    STATE.operation_sync.snapshot()
+                    if hasattr(STATE, 'operation_sync') else
+                    {'pending': 0, 'rows': []})
                 self._json(snap)
             elif path == '/api/envbatch/preflight':
                 site = (query.get('site') or ['MX'])[0]
@@ -1927,8 +2128,9 @@ class Handler(BaseHTTPRequestHandler):
                     'application/vnd.openxmlformats-officedocument.'
                     'spreadsheetml.sheet')
             elif path == '/api/envbatch/export-tsv':
-                data, name = STATE.env_job.tsv_export()
-                self._download(data, name, 'text/tab-separated-values; charset=utf-8')
+                self._json({
+                    'error': '旧统一台账直贴导出已停用；买家号状态由数据库同步到独立 Base',
+                }, 410)
             elif path == '/api/envbatch/backup/preview':
                 result = STATE.backup_job.preview(
                     (query.get('buyer') or [''])[0],
@@ -2028,13 +2230,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
+        request_identity = None
         try:
-            body = self._body()
+            body = self._body(
+                max_bytes=(28 * 1024 * 1024)
+                if path == '/api/assistant/procurement-import/parse'
+                else 2 * 1024 * 1024)
             if path.startswith('/api/extension/v1/'):
                 return self._handle_extension_post(path, body)
             if path.startswith('/api/'):
                 self._require_same_origin()
-                self._require_auth(path)
+                request_identity = self._require_auth(path)
             if path == '/api/auth/start':
                 self._json(STATE.auth.start_login(), 201)
             elif path == '/api/auth/poll':
@@ -2052,9 +2258,13 @@ class Handler(BaseHTTPRequestHandler):
                 cloud_path, cloud_method = admin_cloud_write_target(path)
                 self._json(STATE.auth.admin_request(
                     cloud_path, method=cloud_method, payload=body))
-            elif (path == '/api/procurement/claims'
-                    or path.startswith('/api/procurement/orders/')
-                    and path.endswith(('/splits', '/return'))):
+            elif path == '/api/cloud/buyer-accounts/snapshot':
+                self._json(STATE.auth.buyer_account_request(
+                    '/v1/resources/buyer-accounts/snapshot',
+                    method='PUT',
+                    payload=body,
+                    permission='resource.buyer.import'))
+            elif procurement_write_path(path):
                 cloud_path = '/v1/procurement/' + path[len('/api/procurement/'):]
                 self._json(STATE.auth.procurement_workspace_request(
                     cloud_path,
@@ -2079,10 +2289,24 @@ class Handler(BaseHTTPRequestHandler):
                                  if str(serial) in env_index]
                 task_id = STATE.tasks.begin(
                     'query', environment_resources(selected_envs))
+                selected_serials = [str(serial) for serial in serials]
+
+                def finish_query():
+                    try:
+                        payload = STATE.logistics_result_payload(
+                            task_id, 'initial', selected_serials)
+                        STATE.enqueue_operation_result(
+                            '/v1/operations/logistics-query-runs',
+                            'fulfillment.order.read', payload)
+                    except Exception as exc:
+                        if hasattr(STATE, 'operation_sync_error'):
+                            STATE.operation_sync_error = scrub_text(exc)[:200]
+                    finally:
+                        STATE.tasks.finish(task_id)
                 try:
                     STATE.orch.start_batch(
                         serials, env_index, site=site,
-                        on_finished=lambda: STATE.tasks.finish(task_id))
+                        on_finished=finish_query)
                 except Exception:
                     STATE.tasks.finish(task_id)
                     raise
@@ -2099,11 +2323,24 @@ class Handler(BaseHTTPRequestHandler):
                 env_index = {serial: env} if env else {}
                 task_id = STATE.tasks.begin(
                     'query', environment_resources([env] if env else []))
+
+                def finish_requery():
+                    try:
+                        payload = STATE.logistics_result_payload(
+                            task_id, 'single_retry', [serial])
+                        STATE.enqueue_operation_result(
+                            '/v1/operations/logistics-query-runs',
+                            'fulfillment.order.read', payload)
+                    except Exception as exc:
+                        if hasattr(STATE, 'operation_sync_error'):
+                            STATE.operation_sync_error = scrub_text(exc)[:200]
+                    finally:
+                        STATE.tasks.finish(task_id)
                 try:
                     STATE.orch.requery(
                         serial, env_index=env_index,
                         force=bool(body.get('force')),
-                        on_finished=lambda: STATE.tasks.finish(task_id))
+                        on_finished=finish_requery)
                 except Exception:
                     STATE.tasks.finish(task_id)
                     raise
@@ -2120,10 +2357,23 @@ class Handler(BaseHTTPRequestHandler):
                             if serial in env_index]
                 task_id = STATE.tasks.begin(
                     'query', environment_resources(selected))
+
+                def finish_failed_requery():
+                    try:
+                        payload = STATE.logistics_result_payload(
+                            task_id, 'failed_retry', retry_serials)
+                        STATE.enqueue_operation_result(
+                            '/v1/operations/logistics-query-runs',
+                            'fulfillment.order.read', payload)
+                    except Exception as exc:
+                        if hasattr(STATE, 'operation_sync_error'):
+                            STATE.operation_sync_error = scrub_text(exc)[:200]
+                    finally:
+                        STATE.tasks.finish(task_id)
                 try:
                     count = STATE.orch.requery_failed(
                         env_index=env_index,
-                        on_finished=lambda: STATE.tasks.finish(task_id))
+                        on_finished=finish_failed_requery)
                 except Exception:
                     STATE.tasks.finish(task_id)
                     raise
@@ -2147,6 +2397,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({'valid': True, 'count': len(plan),
                             'plan': plan})
             elif path == '/api/register/start':
+                if body.get('writeLarkLedger'):
+                    raise ValueError(
+                        '测试版已停用旧买家号台账直写；结果应先写数据库再同步 Base')
                 task_id = STATE.tasks.begin('register')
                 try:
                     count = STATE.reg_job.start(
@@ -2175,6 +2428,30 @@ class Handler(BaseHTTPRequestHandler):
                     body.get('planId'),
                     confirm_write=bool(body.get('confirmWrite')))
                 self._json({'saved': True, **result})
+            elif path == '/api/assistant/procurement-import/parse':
+                self._json(STATE.procurement_import.parse(
+                    body.get('filename'), body.get('contentBase64')))
+            elif path == '/api/assistant/procurement-import/target/inspect':
+                self._json(STATE.procurement_import.inspect_target(
+                    body.get('planId'), body.get('spreadsheetUrl')))
+            elif path == '/api/assistant/procurement-import/target/validate':
+                self._json(STATE.procurement_import.validate_target(
+                    body.get('planId'), body.get('spreadsheetUrl'),
+                    body.get('sheetId')))
+            elif path == '/api/assistant/procurement-import/image-sync':
+                self._json(STATE.procurement_import.start_image_sync(
+                    body.get('planId'),
+                    confirm_write=bool(body.get('confirmWrite')),
+                    operator_name=(
+                        ((request_identity or {}).get('user') or {}).get(
+                            'name') or '')), 202)
+            elif path == '/api/assistant/procurement-import/sheet-sync':
+                self._json(STATE.procurement_import.start_sheet_sync(
+                    body.get('planId'),
+                    confirm_write=bool(body.get('confirmWrite')),
+                    operator_name=(
+                        ((request_identity or {}).get('user') or {}).get(
+                            'name') or '')), 202)
             elif path == '/api/resources/proxies/check/start':
                 count = STATE.resources.start_proxy_checks(
                     body.get('assetIds'),
@@ -2195,7 +2472,22 @@ class Handler(BaseHTTPRequestHandler):
                     site=body.get('site') or 'MX')
                 self._json({'valid': True, 'count': len(rows), 'rows': rows})
             elif path == '/api/envbatch/start':
+                if body.get('writeLarkLedger'):
+                    raise ValueError(
+                        '测试版已停用旧买家号台账直写；建环境结果将写数据库并同步新 Base')
                 task_id = STATE.tasks.begin('env_batch')
+
+                def finish_environment_batch():
+                    try:
+                        payload = STATE.environment_result_payload(task_id)
+                        STATE.enqueue_operation_result(
+                            '/v1/operations/environment-creation-runs',
+                            'resource.environment.create', payload)
+                    except Exception as exc:
+                        if hasattr(STATE, 'operation_sync_error'):
+                            STATE.operation_sync_error = scrub_text(exc)[:200]
+                    finally:
+                        STATE.tasks.finish(task_id)
                 try:
                     count = STATE.env_job.start(
                         body.get('planId'), body.get('assignment'),
@@ -2207,7 +2499,7 @@ class Handler(BaseHTTPRequestHandler):
                         confirm_lark_write=bool(body.get('confirmLarkWrite')),
                         reserve_resources=lambda resources:
                             STATE.tasks.reserve(task_id, resources),
-                        on_finished=lambda: STATE.tasks.finish(task_id))
+                        on_finished=finish_environment_batch)
                 except Exception:
                     STATE.tasks.finish(task_id)
                     raise
@@ -2215,26 +2507,34 @@ class Handler(BaseHTTPRequestHandler):
                             'taskId': task_id})
             elif path == '/api/envbatch/retry-row':
                 task_id = STATE.tasks.begin('env_batch')
+                account_id = str(body.get('accountId') or '')
+
+                def finish_environment_retry():
+                    try:
+                        payload = STATE.environment_result_payload(
+                            task_id, [account_id])
+                        STATE.enqueue_operation_result(
+                            '/v1/operations/environment-creation-runs',
+                            'resource.environment.create', payload)
+                    except Exception as exc:
+                        if hasattr(STATE, 'operation_sync_error'):
+                            STATE.operation_sync_error = scrub_text(exc)[:200]
+                    finally:
+                        STATE.tasks.finish(task_id)
                 try:
                     STATE.env_job.retry_row(
-                        str(body.get('accountId') or ''),
+                        account_id,
                         reserve_resources=lambda resources:
                             STATE.tasks.reserve(task_id, resources),
-                        on_finished=lambda: STATE.tasks.finish(task_id))
+                        on_finished=finish_environment_retry)
                 except Exception:
                     STATE.tasks.finish(task_id)
                     raise
                 self._json({'started': True, 'taskId': task_id})
             elif path == '/api/envbatch/retry-ledger':
-                task_id = STATE.tasks.begin('env_batch')
-                try:
-                    result = STATE.env_job.retry_ledger(
-                        confirm_lark_write=bool(body.get('confirmLarkWrite')),
-                        on_finished=lambda: STATE.tasks.finish(task_id))
-                except Exception:
-                    STATE.tasks.finish(task_id)
-                    raise
-                self._json({'started': True, 'taskId': task_id, **result})
+                self._json({
+                    'error': '旧买家号台账直写已停用；云端会自动重试数据库到新 Base 的同步',
+                }, 410)
             elif path == '/api/envbatch/backup/start':
                 task_id = STATE.tasks.begin('backup_env')
                 try:

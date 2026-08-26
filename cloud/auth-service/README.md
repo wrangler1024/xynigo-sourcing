@@ -81,6 +81,8 @@ uv run pytest
 
 当前隔离测试实例运行在广州多项目共享测试服务器 `shared-test-gz-01`（实例 ID `lhins-b6nu398t`），入口为 `https://xynigo.samforo.icu`。服务器端 PostgreSQL 已迁移，HTTPS、回环端口隔离、备份恢复和容器重启均已验证；它没有接管本地采购服务。
 
+域名根路径现直接提供云端 Web 工作台。云端前端不得独立改版：仓库根目录的 `src/purchase_tool/web/index.html` 是本机与云端的唯一 UI 源，发布前在仓库根目录执行 `python cloud/auth-service/deploy/sync_web_workspace.py`，将原页面和品牌资源同步到认证服务。同步脚本会将 `xynigo-x.ico` 同时发布为 `/xynigo-x.ico` 和 `/favicon.ico`，以保持部署前的浏览器 X 图标。浏览器可在本机 Xynigo 服务未启动时完成飞书登录并使用云端采购、买家号安全摘要、日志和成员会话功能；本机执行器离线只暂停 HubStudio/CDP/SHEIN 等本机能力。登录成功回跳路径必须配置为 `XYNIGO_AUTH_LOGIN_SUCCESS_PATH=/`。
+
 该服务器永久只作为测试环境使用，不得在其上创建生产容器、生产数据库、生产数据卷或生产密钥，也不得因 Xynigo 部署修改 n8n 和其他既有服务。生产环境只能部署到独立实例 `xynigo-prod-gz-01`，使用 `/opt/xynigo-auth-prod`、Compose 项目 `xynigo-auth-prod`、独立网络/数据库/账号/密钥/Cookie/日志/备份和正式飞书 Base/Table。生产 PostgreSQL 必须为空库并执行已批准的 Alembic 迁移，禁止复制测试数据库、测试数据卷或测试数据。完整决策见 [`../../docs/架构决策-20260825-广州腾讯轻量服务器测试与生产双环境隔离.md`](../../docs/架构决策-20260825-广州腾讯轻量服务器测试与生产双环境隔离.md)。
 
 “小犀代采”飞书应用已在安全设置登记完全一致的回调地址：

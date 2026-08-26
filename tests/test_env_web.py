@@ -202,7 +202,7 @@ class EnvWebJobTests(unittest.TestCase):
         self.assertEqual(job._runtime_config()['workers'], 3)
         self.assertEqual(backup._runtime_config()['workers'], 3)
 
-    def test_apply_generates_safe_mapping_and_one_shot_tsv(self):
+    def test_apply_generates_safe_mapping_without_legacy_credential_tsv(self):
         source = source_bytes()
         hub = FakeHub()
         job = EnvBatchJob(lambda: hub, runtime_config)
@@ -221,7 +221,7 @@ class EnvWebJobTests(unittest.TestCase):
         snap = job.snapshot()
         self.assertFalse(snap['running'])
         self.assertTrue(snap['mappingReady'])
-        self.assertTrue(snap['tsvReady'])
+        self.assertFalse(snap['tsvReady'])
         public = json.dumps(snap, ensure_ascii=False)
         for secret in ('web@example.com', 'web-secret-pass',
                        'web-secret-cookie', 'codes.example.test'):
@@ -236,12 +236,6 @@ class EnvWebJobTests(unittest.TestCase):
         self.assertNotIn('web-secret-pass', xml)
         self.assertNotIn('web-secret-cookie', xml)
 
-        tsv, name = job.tsv_export()
-        text = tsv.decode('utf-8-sig')
-        self.assertIn('web-secret-pass', text)
-        self.assertIn('web-secret-cookie', text)
-        self.assertEqual(len(tsv_rows(tsv)), 1)
-        self.assertIn('统一表_MX_20260819_无表头_从站点列开始', name)
         with self.assertRaises(ValueError):
             job.tsv_export()
 
@@ -498,15 +492,9 @@ class EnvWebJobTests(unittest.TestCase):
         self.assertEqual(
             create_body['linkCode'], 'https://proxy.example.test/US')
         self.assertEqual(account_call[-1], 'US')
-        tsv, name = job.tsv_export()
-        row = tsv_rows(tsv)[0]
-        self.assertIn('统一表_US_20260819_无表头_从站点列开始', name)
-        self.assertEqual(row[0], 'US')
-        self.assertEqual(row[4],
-                         '[{"name":"sid","value":"web-secret-cookie"}]')
-        self.assertEqual(
-            row[3], 'https://codes.example.test/get?orderNo=abc123')
-        self.assertEqual(row[-2], '新刚')
+        self.assertFalse(job.snapshot()['tsvReady'])
+        with self.assertRaises(ValueError):
+            job.tsv_export()
 
     def test_preflight_failure_preserves_plan_and_makes_zero_writes(self):
         source = source_bytes()

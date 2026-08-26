@@ -1,0 +1,1653 @@
+# -*- coding: utf-8 -*-
+"""店小秘订单导出 + XYP2 备注转采购共享协作表。
+
+解析计划只保存在本机短时内存。用户显式选择并校验普通飞书电子表格后，
+可通过飞书接口按目标表字段名映射追加采购数据，设置表头分区、
+分组底色与采购链接，并补齐订单商品图；
+不会写采购事实库或店小秘。
+"""
+import base64
+from collections import Counter, OrderedDict, defaultdict, deque
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta, timezone
+import hashlib
+from io import BytesIO
+import json
+import posixpath
+import re
+import threading
+import time
+from urllib.parse import urlencode, urlparse
+from xml.etree import ElementTree
+import zipfile
+
+from .xlsx_cell_images import embed_cell_images
+from .lark_sheet_sync import LarkCliSheetsGateway, LarkSheetSyncError
+
+
+MAX_XLSX_BYTES = 20 * 1024 * 1024
+PLAN_TTL_SECONDS = 30 * 60
+XYP2_OPEN = '[XYP2]'
+XYP2_CLOSE = '[/XYP2]'
+SITE_HOSTS = {'mx': 'www.shein.com.mx', 'us': 'us.shein.com'}
+BEIJING_TIMEZONE = timezone(timedelta(hours=8))
+IMAGE_HOST_RE = re.compile(r'(^|\.)ltwebstatic\.com$', re.I)
+STORE_ASSIGNMENT_RE = re.compile(
+    r'^(.+)\s*-\s*([^-（）()]+?)\s*[（(][^（）()]*[）)]\s*[$¥￥]?\s*$', re.U)
+
+REQUIRED_HEADERS = (
+    '店铺账号', '订单号', '包裹号', '下单时间', '订单金额', '币种缩写',
+    '收货人姓名', '收货人国家', '收货人州/省', '收货人城市', '地址1',
+    '地址2', '邮编', '收货人电话', 'SKU', '产品规格', '产品售价', '单个产品数量',
+    '产品图片网址', '客服备注', '产品图片',
+)
+
+# 新模板为 A:AQ 43 列。飞书直接导入按字段名映射：
+# - 采购需求区：校验核心字段；
+# - 采购下单区：完全由采购自由增删、改名和调序，不参与校验；
+# - 系统追踪区：校验防重所需字段，并补齐导入操作人。
+OUTPUT_HEADERS = (
+    '分单日期', '采购员', '销售订单号', '店铺', '运营', '包裹号',
+    '采购状态', '优先级', '销售订单金额', '商品金额', '订单时间', '商品图片',
+    '采购链接', '主规格', '次规格', '需求数量', '采购指导价',
+    '收货人姓名', '收货人国家', '收货人州/省', '收货人城市',
+    '地址1', '地址2', '邮编', '收货人电话', '采购备注',
+    '下单批次', '买家号', '付款卡号', '采购订单号', '实际付款', '付款时间', '下单截图',
+    '物流商', '物流单号', '物流截图', '跟单状态', '异常备注', '最近更新',
+    '系统订单键', '导入操作人', '导入批次', '数据版本',
+)
+
+RECEIVER_HEADERS = (
+    '收货人姓名', '收货人国家', '收货人州/省', '收货人城市',
+    '地址1', '地址2', '邮编', '收货人电话',
+)
+
+LEGACY_OUTPUT_HEADERS_V1 = (
+    '分单标记', '采购员', '采购状态', '优先级', '销售订单号', '采购单号',
+    '店铺', '运营', '收件人', '国家', '销售金额', '订单时间', '商品图片',
+    '采购链接', '主规格', '次规格', '需求数量', '采购指导价', '采购备注',
+    '下单批次', '买家号', '平台订单号', '实际付款', '付款时间', '物流商',
+    '物流单号', '跟单状态', '异常备注', '最近更新', '系统订单键',
+    '导入批次', '数据版本',
+)
+HEADER_ALIASES = {
+    '分单标记': '分单日期', '分单时间': '分单日期',
+    '采购单号': '包裹号', '销售金额': '销售订单金额',
+    '平台订单号': '采购订单号',
+    '收件人': '收货人姓名', '国家': '收货人国家',
+    '收件地址': '地址1', '电话': '收货人电话',
+}
+DEMAND_REQUIRED_HEADERS = (
+    '分单日期', '采购员', '销售订单号', '店铺', '运营', '包裹号',
+    '采购状态', '优先级', '销售订单金额', '订单时间',
+    '商品图片', '采购链接', '主规格', '次规格', '需求数量',
+    '采购指导价', '采购备注',
+)
+STANDARD_DEMAND_HEADERS = OUTPUT_HEADERS[:OUTPUT_HEADERS.index('采购备注') + 1]
+FIXED_DEMAND_HEADERS = ('分单日期', '采购员', '销售订单号', '店铺', '运营')
+# 这些字段已进入新标准，但允许旧表先通过只读预检；
+# 用户确认导入后由一次结构规范化自动补齐。
+DEMAND_RECOMMENDED_HEADERS = RECEIVER_HEADERS + ('商品金额',)
+DEFAULT_CHECKOUT_HEADERS = (
+    '下单批次', '买家号', '付款卡号', '采购订单号', '实际付款', '付款时间', '下单截图',
+    '物流商', '物流单号', '物流截图', '跟单状态', '异常备注', '最近更新',
+)
+SYSTEM_REQUIRED_HEADERS = ('系统订单键', '导入批次', '数据版本')
+SYSTEM_RECOMMENDED_HEADERS = ('导入操作人',)
+OPTIONAL_WORKFLOW_HEADERS = DEFAULT_CHECKOUT_HEADERS
+CORE_OUTPUT_HEADERS = DEMAND_REQUIRED_HEADERS + SYSTEM_REQUIRED_HEADERS
+
+OUTPUT_WIDTHS = (
+    14, 12, 21, 15, 11, 18, 12, 10, 14, 14, 19, 10.5, 22, 14, 14, 10,
+    14, 18, 12, 14, 14, 30, 24, 10, 18, 34, 12, 16, 18, 20, 14, 19, 16,
+    14, 20, 16, 12, 28, 19, 38, 18, 24, 12,
+)
+# 相邻订单使用高区分浅色：蓝 / 橙 / 绿 / 紫 / 黄 / 粉。
+# 保持深色正文可读，同时避免旧版浅青、浅蓝、浅绿在大表中难以分辨。
+ORDER_GROUP_COLORS = (
+    'D8ECFF', 'FFE1D2', 'E0F3D2', 'EADCF8', 'FFF0B5', 'F7D8E8',
+)
+SHEET_ORDER_GROUP_COLORS = tuple('#' + color for color in ORDER_GROUP_COLORS)
+COLLABORATION_DATA_ROW_HEIGHT = 52
+SHEET_WRITE_CHUNK_ROWS = 40
+SHEET_DTYPES = dict.fromkeys(OUTPUT_HEADERS, 'object')
+SHEET_DTYPES.update({
+    '分单日期': 'datetime64[ns]',
+    '销售订单金额': 'Float64',
+    '商品金额': 'Float64',
+    '需求数量': 'int64',
+    '采购指导价': 'float64',
+    '实际付款': 'Float64',
+})
+SHEET_FORMATS = {
+    '分单日期': 'yyyy-mm-dd',
+    '销售订单金额': '#,##0.00',
+    '商品金额': '#,##0.00',
+    '需求数量': '0',
+    '采购指导价': '#,##0.00',
+    '实际付款': '#,##0.00',
+}
+
+
+class ProcurementImportError(ValueError):
+    pass
+
+
+@dataclass
+class ParsedXyp2Item:
+    seller_sku: str
+    goods_id: str
+    sku_code: str
+    main_attr: str
+    main_spec: str
+    secondary_spec: str
+    original_price: object
+    coupon_rate: object
+    guide_price: float
+    purchase_qty: int
+    purchase_currency: str
+    purchase_link: str
+
+
+@dataclass
+class ParsedXyp2:
+    site: str
+    currency: str
+    mall_code: str
+    rounding_amount: float
+    items: list
+    source_text: str
+
+
+@dataclass
+class SourceRow:
+    row_number: int
+    values: dict
+    match_keys: set
+    order_image: bytes = b''
+
+
+@dataclass
+class CollaborationRow:
+    values: dict
+    order_image: bytes = b''
+    order_image_url: str = ''
+    purchase_currency: str = ''
+    sales_currency: str = ''
+    item_sales_amount: object = None
+    order_group_index: int = 0
+
+
+@dataclass
+class ImportPlan:
+    plan_id: str
+    filename: str
+    rows: list
+    issues: list
+    source_rows: int
+    order_count: int
+    import_batch: str
+    target: object = None
+    created_at: float = field(default_factory=time.time)
+
+
+@dataclass(frozen=True)
+class CollaborationSheetTarget:
+    url: str
+    sheet_id: str
+    sheet_name: str
+    revision: object
+    validated_at: float = field(default_factory=time.time)
+
+
+@dataclass
+class ImageSyncJob:
+    job_id: str
+    plan_id: str
+    state: str = 'queued'
+    target_name: str = ''
+    import_batch: str = ''
+    target_key: str = ''
+    rows_total: int = 0
+    rows_written: int = 0
+    rows_existing: int = 0
+    rows_styled: int = 0
+    links_written: int = 0
+    total: int = 0
+    processed: int = 0
+    written: int = 0
+    skipped_existing: int = 0
+    missing_source: int = 0
+    failed: int = 0
+    errors: list = field(default_factory=list)
+    error: str = ''
+    started_at: float = field(default_factory=time.time)
+    finished_at: object = None
+
+    def public(self):
+        return {
+            'jobId': self.job_id,
+            'planId': self.plan_id,
+            'state': self.state,
+            'targetName': self.target_name,
+            'importBatch': self.import_batch,
+            'rowsTotal': self.rows_total,
+            'rowsWritten': self.rows_written,
+            'rowsExisting': self.rows_existing,
+            'rowsStyled': self.rows_styled,
+            'linksWritten': self.links_written,
+            'total': self.total,
+            'processed': self.processed,
+            'written': self.written,
+            'skippedExisting': self.skipped_existing,
+            'missingSource': self.missing_source,
+            'failed': self.failed,
+            'errors': list(self.errors[:100]),
+            'error': self.error,
+            'startedAt': self.started_at,
+            'finishedAt': self.finished_at,
+        }
+
+
+def _text(value):
+    if value is None:
+        return ''
+    if isinstance(value, datetime):
+        return value.strftime('%Y-%m-%d %H:%M:%S')
+    if isinstance(value, date):
+        return value.strftime('%Y-%m-%d')
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).replace('\r\n', '\n').strip()
+
+
+def _compact_text(value):
+    return re.sub(r'\s+', ' ', _text(value)).strip()
+
+
+def _number(value, field_name, row_number, allow_empty=False):
+    text = _compact_text(value).replace(',', '')
+    if not text and allow_empty:
+        return None
+    try:
+        result = float(text)
+    except (TypeError, ValueError) as exc:
+        raise ProcurementImportError(
+            '第 %d 行“%s”不是有效数字' % (row_number, field_name)) from exc
+    if result < 0:
+        raise ProcurementImportError(
+            '第 %d 行“%s”不能小于 0' % (row_number, field_name))
+    return result
+
+
+def _positive_int(value, field_name, row_number):
+    number = _number(value, field_name, row_number)
+    if not number.is_integer() or number <= 0:
+        raise ProcurementImportError(
+            '第 %d 行“%s”必须是正整数' % (row_number, field_name))
+    return int(number)
+
+
+def _parse_store_assignment(value):
+    source = _compact_text(value)
+    matched = STORE_ASSIGNMENT_RE.match(source)
+    if not matched:
+        return source.rstrip('$¥￥').strip(), ''
+    return _compact_text(matched.group(1)), _compact_text(matched.group(2))
+
+
+def _site_code(country, currency, xyp2_site=''):
+    if xyp2_site in {'MX', 'US'}:
+        return xyp2_site
+    country_text = _compact_text(country).upper()
+    currency_text = _compact_text(currency).upper()
+    if country_text in {'US', 'USA', 'UNITED STATES', 'UNITED STATES OF AMERICA'}:
+        return 'US'
+    if country_text in {'MX', 'MEXICO', 'MÉXICO'}:
+        return 'MX'
+    if currency_text == 'USD':
+        return 'US'
+    if currency_text == 'MXN':
+        return 'MX'
+    return ''
+
+
+def _coupon_text(rate):
+    if rate is None:
+        return '无优惠券'
+    numeric = float(rate)
+    if numeric <= 0:
+        return '无优惠券'
+    percent = numeric * 100 if numeric <= 1 else numeric
+    value = ('%.2f' % percent).rstrip('0').rstrip('.')
+    return '%s%% 优惠券' % value
+
+
+def _safe_optional_number(value):
+    if value is None or value == '':
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if result == result and abs(result) != float('inf') else None
+
+
+def _purchase_link(hostname, mall_code, item, currency):
+    seller_sku, goods_id, sku_code, main_attr, main_spec, secondary_spec, \
+        original_price, coupon_rate, guide_price, _quantity = item[:10]
+    query = OrderedDict((
+        ('mallCode', mall_code), ('goods_id', _compact_text(goods_id)),
+        ('skucode', _compact_text(sku_code)),
+    ))
+    if _compact_text(main_attr):
+        query['main_attr'] = _compact_text(main_attr)
+    fragment = OrderedDict((
+        ('xv', '1'), ('p', _compact_text(main_spec)),
+        ('s', _compact_text(secondary_spec)),
+    ))
+    original = _safe_optional_number(original_price)
+    coupon = _safe_optional_number(coupon_rate)
+    if original is not None:
+        fragment['op'] = str(int(original) if original.is_integer() else original)
+    if coupon is not None:
+        fragment['cr'] = str(int(coupon) if coupon.is_integer() else coupon)
+    fragment['gp'] = str(float(guide_price)).rstrip('0').rstrip('.')
+    fragment['c'] = currency
+    return 'https://%s/x-p-%s.html?%s#%s' % (
+        hostname, _compact_text(goods_id), urlencode(query), urlencode(fragment))
+
+
+def parse_xyp2_remark(value):
+    source = _text(value)
+    start = source.find(XYP2_OPEN)
+    end = source.find(XYP2_CLOSE, start + len(XYP2_OPEN)) if start >= 0 else -1
+    if start < 0 or end < 0:
+        if '[XYNIGO_PURCHASE_V1]' in source:
+            raise ProcurementImportError(
+                '检测到旧版或被截断的 XYNIGO_PURCHASE_V1，请用最新版插件重新提交生成 XYP2')
+        raise ProcurementImportError('未找到完整的 XYP2 标记')
+    source_text = source[start:end + len(XYP2_CLOSE)]
+    try:
+        payload = json.loads(source[start + len(XYP2_OPEN):end])
+    except (TypeError, ValueError) as exc:
+        raise ProcurementImportError('XYP2 JSON 已截断或格式错误') from exc
+    if not isinstance(payload, dict):
+        raise ProcurementImportError('XYP2 根节点格式错误')
+    site_code = _compact_text(payload.get('d')).lower()
+    hostname = SITE_HOSTS.get(site_code)
+    currency = _compact_text(payload.get('c')).upper()
+    mall_code = _compact_text(payload.get('m')) or '1'
+    raw_items = payload.get('i')
+    if (not hostname or not re.fullmatch(r'[A-Z]{3}', currency)
+            or not isinstance(raw_items, list) or not raw_items):
+        raise ProcurementImportError('XYP2 站点、币种或明细数组无效')
+    items = []
+    for index, item in enumerate(raw_items, start=1):
+        if not isinstance(item, list) or len(item) < 10:
+            raise ProcurementImportError('XYP2 第 %d 条明细数组不完整' % index)
+        seller_sku, goods_id, sku_code, main_attr, main_spec, secondary_spec, \
+            original_price, coupon_rate, guide_price, purchase_qty = item[:10]
+        guide_number = _safe_optional_number(guide_price)
+        qty_number = _safe_optional_number(purchase_qty)
+        if (not _compact_text(seller_sku)
+                or not re.fullmatch(r'\d+', _compact_text(goods_id))
+                or not _compact_text(sku_code)
+                or guide_number is None or guide_number <= 0
+                or qty_number is None or not qty_number.is_integer()
+                or qty_number <= 0):
+            raise ProcurementImportError('XYP2 第 %d 条明细字段无效' % index)
+        items.append(ParsedXyp2Item(
+            seller_sku=_compact_text(seller_sku),
+            goods_id=_compact_text(goods_id),
+            sku_code=_compact_text(sku_code),
+            main_attr=_compact_text(main_attr),
+            main_spec=_compact_text(main_spec),
+            secondary_spec=_compact_text(secondary_spec),
+            original_price=_safe_optional_number(original_price),
+            coupon_rate=_safe_optional_number(coupon_rate),
+            guide_price=guide_number,
+            purchase_qty=int(qty_number),
+            purchase_currency=currency,
+            purchase_link=_purchase_link(hostname, mall_code, item, currency),
+        ))
+    rounding = _safe_optional_number(payload.get('r')) or 0.0
+    return ParsedXyp2(
+        site=site_code.upper(), currency=currency, mall_code=mall_code,
+        rounding_amount=rounding, items=items, source_text=source_text)
+
+
+def _row_match_keys(values):
+    keys = set()
+    sku = _compact_text(values.get('SKU')).casefold()
+    if sku:
+        keys.add(sku)
+    spec = _compact_text(values.get('产品规格'))
+    prefix = re.split(r'[:：]', spec, maxsplit=1)[0].strip().casefold()
+    if prefix:
+        keys.add(prefix)
+    for token in re.findall(r'(?<!\d)\d{8,9}(?!\d)', '%s %s' % (sku, spec)):
+        keys.add(token.casefold())
+    return keys
+
+
+def _zip_target(source_part, target):
+    if target.startswith('/'):
+        return target.lstrip('/')
+    return posixpath.normpath(posixpath.join(
+        posixpath.dirname(source_part), target))
+
+
+def _rels_path(source_part):
+    return posixpath.join(
+        posixpath.dirname(source_part), '_rels',
+        posixpath.basename(source_part) + '.rels')
+
+
+def _relationships(archive, source_part):
+    rels_part = _rels_path(source_part)
+    if rels_part not in archive.namelist():
+        return {}
+    root = ElementTree.fromstring(archive.read(rels_part))
+    namespace = '{http://schemas.openxmlformats.org/package/2006/relationships}'
+    return {
+        item.attrib.get('Id'): _zip_target(source_part, item.attrib.get('Target', ''))
+        for item in root.findall(namespace + 'Relationship')
+        if item.attrib.get('Id') and item.attrib.get('Target')
+    }
+
+
+def _worksheet_part(archive, sheet_name):
+    workbook_part = 'xl/workbook.xml'
+    root = ElementTree.fromstring(archive.read(workbook_part))
+    sheet_ns = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
+    rel_id_name = ('{http://schemas.openxmlformats.org/officeDocument/'
+                   '2006/relationships}id')
+    rels = _relationships(archive, workbook_part)
+    for sheet in root.findall('.//' + sheet_ns + 'sheet'):
+        if sheet.attrib.get('name') == sheet_name:
+            return rels.get(sheet.attrib.get(rel_id_name), '')
+    return ''
+
+
+def _source_image_map(source, sheet_name):
+    """Read DrawingML image anchors directly, without requiring Pillow."""
+    images = {}
+    try:
+        with zipfile.ZipFile(BytesIO(source), 'r') as archive:
+            worksheet_part = _worksheet_part(archive, sheet_name)
+            if not worksheet_part:
+                return images
+            worksheet_root = ElementTree.fromstring(
+                archive.read(worksheet_part))
+            office_rel = ('{http://schemas.openxmlformats.org/officeDocument/'
+                          '2006/relationships}id')
+            office_embed = ('{http://schemas.openxmlformats.org/officeDocument/'
+                            '2006/relationships}embed')
+            sheet_ns = ('{http://schemas.openxmlformats.org/'
+                        'spreadsheetml/2006/main}')
+            worksheet_rels = _relationships(archive, worksheet_part)
+            drawing_node = worksheet_root.find(sheet_ns + 'drawing')
+            if drawing_node is None:
+                return images
+            drawing_part = worksheet_rels.get(
+                drawing_node.attrib.get(office_rel), '')
+            if not drawing_part:
+                return images
+            drawing_root = ElementTree.fromstring(archive.read(drawing_part))
+            drawing_rels = _relationships(archive, drawing_part)
+            xdr = ('{http://schemas.openxmlformats.org/drawingml/'
+                   '2006/spreadsheetDrawing}')
+            a = '{http://schemas.openxmlformats.org/drawingml/2006/main}'
+            for anchor in list(drawing_root):
+                origin = anchor.find(xdr + 'from')
+                if origin is None:
+                    continue
+                row_node = origin.find(xdr + 'row')
+                column_node = origin.find(xdr + 'col')
+                blip = anchor.find('.//' + a + 'blip')
+                if row_node is None or column_node is None or blip is None:
+                    continue
+                if int(column_node.text or -1) + 1 != 23:
+                    continue
+                image_part = drawing_rels.get(blip.attrib.get(office_embed), '')
+                if not image_part or image_part not in archive.namelist():
+                    continue
+                raw = archive.read(image_part)
+                if raw.startswith(b'\xff\xd8') and raw.endswith(b'\xff\xd9'):
+                    images[int(row_node.text or 0) + 1] = raw
+    except (KeyError, ValueError, zipfile.BadZipFile, ElementTree.ParseError):
+        return {}
+    return images
+
+
+def parse_export_workbook(source):
+    try:
+        from openpyxl import load_workbook
+        workbook = load_workbook(BytesIO(source), data_only=True)
+    except Exception as exc:
+        raise ProcurementImportError('无法读取 xlsx，请确认文件未损坏且不是旧版 xls') from exc
+    if not workbook.sheetnames:
+        raise ProcurementImportError('xlsx 中没有工作表')
+    worksheet = workbook['order_'] if 'order_' in workbook.sheetnames else workbook.active
+    header_map = {}
+    for column in range(1, worksheet.max_column + 1):
+        name = _compact_text(worksheet.cell(1, column).value)
+        if name and name not in header_map:
+            header_map[name] = column
+    missing = [name for name in REQUIRED_HEADERS if name not in header_map]
+    if missing:
+        raise ProcurementImportError(
+            '店小秘导出模板缺少字段：%s' % '、'.join(missing))
+    source_images = _source_image_map(source, worksheet.title)
+    groups = OrderedDict()
+    for row_number in range(2, worksheet.max_row + 1):
+        values = {
+            name: worksheet.cell(row_number, column).value
+            for name, column in header_map.items()
+        }
+        order_no = _compact_text(values.get('订单号'))
+        package_no = _compact_text(values.get('包裹号'))
+        if not order_no and not package_no:
+            continue
+        if not order_no or not package_no:
+            raise ProcurementImportError(
+                '第 %d 行订单号或包裹号为空' % row_number)
+        source_row = SourceRow(
+            row_number=row_number, values=values,
+            match_keys=_row_match_keys(values),
+            order_image=source_images.get(row_number, b''))
+        groups.setdefault((order_no, package_no), []).append(source_row)
+    if not groups:
+        raise ProcurementImportError('xlsx 中没有有效订单产品行')
+    return groups
+
+
+def _trusted_image_url(value):
+    source = _compact_text(value)
+    try:
+        parsed = urlparse(source)
+    except ValueError:
+        return ''
+    if parsed.scheme != 'https' or not IMAGE_HOST_RE.search(parsed.hostname or ''):
+        return ''
+    return source
+
+
+def _image_mime(data):
+    if data.startswith(b'\xff\xd8'):
+        return 'image/jpeg'
+    if data.startswith(b'\x89PNG\r\n\x1a\n'):
+        return 'image/png'
+    if data.startswith((b'GIF87a', b'GIF89a')):
+        return 'image/gif'
+    if data.startswith(b'RIFF') and data[8:12] == b'WEBP':
+        return 'image/webp'
+    raise ProcurementImportError('订单商品图片格式不受支持')
+
+
+def _select_xyp2(source_rows):
+    parsed = []
+    errors = []
+    for row in source_rows:
+        remark = row.values.get('客服备注')
+        try:
+            parsed.append((row.row_number, parse_xyp2_remark(remark)))
+        except ProcurementImportError as exc:
+            errors.append((row.row_number, str(exc)))
+    if not parsed:
+        raise ProcurementImportError(errors[0][1] if errors else '未找到完整 XYP2')
+    canonical = {item.source_text for _row, item in parsed}
+    if len(canonical) > 1:
+        raise ProcurementImportError('同一采购单的产品行包含不同 XYP2 内容，请重新导出')
+    return parsed[0][1]
+
+
+def _match_source_rows(source_rows, xyp2_items):
+    queues = defaultdict(list)
+    for row in source_rows:
+        for key in row.match_keys:
+            queues[key].append(row)
+    used = defaultdict(int)
+    matched = []
+    warnings = []
+    for index, item in enumerate(xyp2_items):
+        candidates = []
+        for key in (item.seller_sku.casefold(), item.goods_id.casefold()):
+            for row in queues.get(key, ()):
+                if row not in candidates:
+                    candidates.append(row)
+        if candidates:
+            source_row = min(candidates, key=lambda row: used[row.row_number])
+        elif len(source_rows) == len(xyp2_items):
+            source_row = source_rows[index]
+            warnings.append(
+                'XYP2 来源 SKU %s 未精确匹配，已按产品行顺序关联第 %d 行' %
+                (item.seller_sku, source_row.row_number))
+        elif len(source_rows) == 1:
+            source_row = source_rows[0]
+            warnings.append(
+                'XYP2 来源 SKU %s 未精确匹配，已关联唯一产品行' % item.seller_sku)
+        else:
+            raise ProcurementImportError(
+                'XYP2 来源 SKU %s 无法匹配店小秘产品行' % item.seller_sku)
+        used[source_row.row_number] += 1
+        matched.append((item, source_row))
+    return matched, warnings
+
+
+def _purchase_note(source_values, item, rounding_amount, first_detail):
+    """Preserve useful source-only fields in the online sheet's note column."""
+    parts = []
+    source_spec = _compact_text(source_values.get('产品规格'))
+    if source_spec:
+        parts.append('订单规格：%s' % source_spec)
+    if item.original_price not in (None, ''):
+        parts.append('商品原价：%s' % _text(item.original_price))
+    parts.append('优惠券：%s' % _coupon_text(item.coupon_rate))
+    if item.purchase_currency:
+        parts.append('采购币种：%s' % item.purchase_currency)
+    sales_unit_price = _safe_optional_number(source_values.get('产品售价'))
+    if sales_unit_price is not None:
+        parts.append('销售产品单价：%s' % _text(sales_unit_price))
+    if first_detail and rounding_amount:
+        parts.append('凑单补差：%s' % _text(rounding_amount))
+    return '；'.join(parts)
+
+
+def _build_rows(groups):
+    rows = []
+    issues = []
+    for group_index, ((order_no, package_no), source_rows) in enumerate(
+            groups.items()):
+        try:
+            xyp2 = _select_xyp2(source_rows)
+            matches, match_warnings = _match_source_rows(source_rows, xyp2.items)
+        except ProcurementImportError as exc:
+            issues.append({
+                'level': 'error', 'orderNo': order_no,
+                'packageNo': package_no, 'message': str(exc),
+            })
+            continue
+        for message in match_warnings:
+            issues.append({
+                'level': 'warning', 'orderNo': order_no,
+                'packageNo': package_no, 'message': message,
+            })
+        represented_rows = {source.row_number for _item, source in matches}
+        for source in source_rows:
+            if source.row_number not in represented_rows:
+                issues.append({
+                    'level': 'warning', 'orderNo': order_no,
+                    'packageNo': package_no,
+                    'message': '店小秘第 %d 行没有对应 XYP2 采购明细' % source.row_number,
+                })
+        first = source_rows[0]
+        values = first.values
+        try:
+            sales_amount = _number(values.get('订单金额'), '订单金额', first.row_number)
+        except ProcurementImportError as exc:
+            issues.append({
+                'level': 'error', 'orderNo': order_no,
+                'packageNo': package_no, 'message': str(exc),
+            })
+            continue
+        store_name, operator_name = _parse_store_assignment(values.get('店铺账号'))
+        country = _site_code(
+            values.get('收货人国家'), values.get('币种缩写'), xyp2.site)
+        amount_written = False
+        for item, source in matches:
+            try:
+                sales_unit_price = _number(
+                    source.values.get('产品售价'), '产品售价', source.row_number,
+                    allow_empty=True)
+                exported_qty = _positive_int(
+                    source.values.get('单个产品数量'), '单个产品数量', source.row_number)
+            except ProcurementImportError as exc:
+                issues.append({
+                    'level': 'error', 'orderNo': order_no,
+                    'packageNo': package_no, 'message': str(exc),
+                })
+                continue
+            if exported_qty != item.purchase_qty:
+                issues.append({
+                    'level': 'warning', 'orderNo': order_no,
+                    'packageNo': package_no,
+                    'message': ('第 %d 行销售数量 %d 与 XYP2 采购数量 %d 不一致，'
+                                '协作表采用 XYP2 采购数量') % (
+                                    source.row_number, exported_qty,
+                                    item.purchase_qty),
+                })
+            row_values = OrderedDict((
+                ('分单日期', ''), ('采购员', ''),
+                ('销售订单号', order_no), ('店铺', store_name),
+                ('运营', operator_name), ('包裹号', package_no),
+                ('采购状态', '待认领'), ('优先级', ''),
+                # 订单级金额只放在第一条明细，避免共享表 SUM 重复计算。
+                ('销售订单金额',
+                 sales_amount if not amount_written else None),
+                # 明细级金额每行都写，便于按商品统计。
+                ('商品金额', (
+                    round(sales_unit_price * exported_qty, 2)
+                    if sales_unit_price is not None else None)),
+                ('订单时间', _compact_text(values.get('下单时间'))),
+                ('商品图片', ''), ('采购链接', item.purchase_link),
+                ('主规格', item.main_spec), ('次规格', item.secondary_spec),
+                ('需求数量', item.purchase_qty),
+                ('采购指导价', item.guide_price),
+                ('收货人姓名', _compact_text(values.get('收货人姓名'))),
+                ('收货人国家', country),
+                ('收货人州/省', _compact_text(values.get('收货人州/省'))),
+                ('收货人城市', _compact_text(values.get('收货人城市'))),
+                ('地址1', _compact_text(values.get('地址1'))),
+                ('地址2', _compact_text(values.get('地址2'))),
+                ('邮编', _compact_text(values.get('邮编'))),
+                ('收货人电话', _compact_text(values.get('收货人电话'))),
+                ('采购备注', _purchase_note(
+                    source.values, item, xyp2.rounding_amount,
+                    first_detail=not amount_written)),
+                ('下单批次', ''), ('买家号', ''), ('付款卡号', ''),
+                ('采购订单号', ''),
+                ('实际付款', None), ('付款时间', ''), ('下单截图', ''),
+                ('物流商', ''), ('物流单号', ''), ('物流截图', ''),
+                ('跟单状态', ''), ('异常备注', ''), ('最近更新', ''),
+                ('系统订单键', '%s|%s|%s' % (
+                    store_name, order_no, package_no)),
+                ('导入操作人', ''),
+                ('导入批次', ''), ('数据版本', 'XYP2'),
+            ))
+            rows.append(CollaborationRow(
+                values=row_values, order_image=source.order_image,
+                order_image_url=_trusted_image_url(
+                    source.values.get('产品图片网址')),
+                purchase_currency=item.purchase_currency,
+                sales_currency=_compact_text(values.get('币种缩写')).upper(),
+                item_sales_amount=(
+                    round(sales_unit_price * exported_qty, 2)
+                    if sales_unit_price is not None else None),
+                order_group_index=group_index))
+            amount_written = True
+    return rows, issues
+
+
+def export_collaboration_workbook(plan):
+    try:
+        from openpyxl import Workbook
+        from openpyxl.comments import Comment
+        from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+        from openpyxl.utils import get_column_letter
+    except ImportError as exc:
+        raise ProcurementImportError('缺少 openpyxl，无法生成采购协作表') from exc
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = '采购协作区'
+    worksheet.append(list(OUTPUT_HEADERS))
+    image_cells = []
+    header_groups = (
+        (1, OUTPUT_HEADERS.index('采购备注') + 1, '1B7280',
+         '采购需求区',
+         '采购需求区：Xynigo 按字段名写入，核心字段请勿删除或重复。'),
+        (OUTPUT_HEADERS.index('下单批次') + 1,
+         OUTPUT_HEADERS.index('最近更新') + 1, '386FA4',
+         '采购下单区',
+         '采购下单区：不参与导入校验，采购可自行增删、改名或调整字段顺序。'),
+        (OUTPUT_HEADERS.index('系统订单键') + 1,
+         len(OUTPUT_HEADERS), '2F855A', '系统追踪区',
+         '系统追踪区：用于幂等防重和版本追踪，请勿删除或改名。'),
+    )
+    thin = Side(style='thin', color='DCE6ED')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    group_top = Side(style='medium', color='B8C8D2')
+    data_fills = tuple(
+        PatternFill('solid', fgColor=color) for color in ORDER_GROUP_COLORS)
+    for start, end, color, zone_name, zone_note in header_groups:
+        for column in range(start, end + 1):
+            cell = worksheet.cell(1, column)
+            cell.fill = PatternFill('solid', fgColor=color)
+            cell.font = Font(color='FFFFFF', bold=True)
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+            cell.border = border
+            cell.comment = Comment('%s\n%s' % (zone_name, zone_note), 'Xynigo')
+    image_column = OUTPUT_HEADERS.index('商品图片') + 1
+    link_column = OUTPUT_HEADERS.index('采购链接') + 1
+    text_columns = {
+        OUTPUT_HEADERS.index(name) + 1 for name in (
+            '销售订单号', '包裹号', '买家号', '付款卡号', '采购订单号',
+            '物流单号', '系统订单键', '导入操作人', '导入批次')
+    }
+    for row_index, row in enumerate(plan.rows, start=2):
+        output_values = [row.values.get(name) for name in OUTPUT_HEADERS]
+        split_date_index = OUTPUT_HEADERS.index('分单日期')
+        if output_values[split_date_index]:
+            output_values[split_date_index] = date.fromisoformat(
+                _compact_text(output_values[split_date_index])[:10])
+        worksheet.append(output_values)
+        # 订单商品图为单元格内图片，行高和图片列宽共同控制尺寸。
+        # 相比旧版 70pt 缩小 25%，便于每天追加数百单后快速浏览。
+        worksheet.row_dimensions[row_index].height = 52.5
+        group_start = (
+            row_index == 2
+            or plan.rows[row_index - 3].order_group_index
+            != row.order_group_index)
+        purchase_cell = worksheet.cell(row_index, link_column)
+        purchase_cell.value = '打开采购链接'
+        purchase_cell.hyperlink = row.values['采购链接']
+        purchase_cell.style = 'Hyperlink'
+        order_image_cell = worksheet.cell(row_index, image_column)
+        if row.order_image:
+            order_image_cell.value = '订单商品图'
+            image_cells.append((order_image_cell.coordinate, row.order_image))
+        elif row.order_image_url:
+            order_image_cell.value = '查看订单商品图'
+            order_image_cell.hyperlink = row.order_image_url
+            order_image_cell.style = 'Hyperlink'
+        else:
+            order_image_cell.value = '未提供'
+        for column in range(1, len(OUTPUT_HEADERS) + 1):
+            cell = worksheet.cell(row_index, column)
+            cell.fill = data_fills[
+                row.order_group_index % len(data_fills)]
+            cell.border = (
+                Border(left=thin, right=thin, top=group_top, bottom=thin)
+                if group_start else border)
+            cell.alignment = Alignment(
+                vertical='center', horizontal=(
+                    'center' if column == image_column else 'left'),
+                wrap_text=True)
+            if column in text_columns:
+                cell.number_format = '@'
+        worksheet.cell(row_index, split_date_index + 1).number_format = \
+            'yyyy-mm-dd'
+    for index, width in enumerate(OUTPUT_WIDTHS, start=1):
+        worksheet.column_dimensions[get_column_letter(index)].width = width
+    worksheet.freeze_panes = 'F2'
+    worksheet.auto_filter.ref = 'A1:%s%d' % (
+        get_column_letter(len(OUTPUT_HEADERS)), max(1, len(plan.rows) + 1))
+    worksheet.sheet_view.showGridLines = False
+    worksheet.row_dimensions[1].height = 28
+    buffer = BytesIO()
+    workbook.save(buffer)
+    return embed_cell_images(buffer.getvalue(), image_cells)
+
+
+def _canonical_header(value):
+    header = _compact_text(value)
+    return HEADER_ALIASES.get(header, header)
+
+
+def _collaboration_header_contract(headers):
+    actual = tuple(_compact_text(item) for item in headers)
+    while actual and not actual[-1]:
+        actual = actual[:-1]
+    if not actual:
+        raise ProcurementImportError('目标工作表缺少第 1 行表头')
+    canonical = tuple(_canonical_header(item) for item in actual)
+    duplicates = [name for name, count in Counter(canonical).items()
+                  if name and count > 1]
+    if duplicates:
+        raise ProcurementImportError(
+            '目标表表头存在重复字段：%s' % '、'.join(duplicates[:3]))
+    missing_demand = [name for name in DEMAND_REQUIRED_HEADERS
+                      if name not in canonical]
+    missing_system = [name for name in SYSTEM_REQUIRED_HEADERS
+                      if name not in canonical]
+    if missing_demand or missing_system:
+        parts = []
+        if missing_demand:
+            parts.append('采购需求区缺少“%s”' % '、'.join(missing_demand))
+        if missing_system:
+            parts.append('系统追踪区缺少“%s”' % '、'.join(missing_system))
+        raise ProcurementImportError('；'.join(parts))
+    demand_end = canonical.index('采购备注')
+    system_start = min(canonical.index(name) for name in SYSTEM_REQUIRED_HEADERS)
+    if demand_end >= system_start:
+        raise ProcurementImportError(
+            '系统追踪区必须位于采购需求区之后，采购下单字段可在两区之间自由调整')
+    guide_index = canonical.index('采购指导价')
+    receiver_block = canonical[guide_index + 1:guide_index + 1 + len(RECEIVER_HEADERS)]
+    receiver_layout_valid = receiver_block == RECEIVER_HEADERS
+    has_legacy_receiver = any(
+        item in {'收件人', '国家', '收件地址', '电话'} for item in actual)
+    if (all(name in canonical for name in RECEIVER_HEADERS)
+            and not receiver_layout_valid and not has_legacy_receiver):
+        raise ProcurementImportError(
+            '收货人信息必须按规定顺序紧跟在“采购指导价”之后')
+    known_demand_order = tuple(
+        item for item in canonical[:demand_end + 1]
+        if item in STANDARD_DEMAND_HEADERS)
+    return {
+        'headers': actual,
+        'canonicalHeaders': canonical,
+        'demandEnd': demand_end,
+        'systemStart': system_start,
+        'receiverLayoutValid': receiver_layout_valid,
+        'demandLayoutValid': known_demand_order == STANDARD_DEMAND_HEADERS,
+        'fixedDemandLayoutValid': canonical[:len(FIXED_DEMAND_HEADERS)]
+        == FIXED_DEMAND_HEADERS,
+        'deprecatedColumns': [
+            item for item in actual if item == '分单批次'],
+        'missingRecommendedColumns': [
+            name for name in DEMAND_RECOMMENDED_HEADERS + SYSTEM_RECOMMENDED_HEADERS
+            if name not in canonical],
+        'legacyAliases': [
+            {'actual': item, 'canonical': HEADER_ALIASES[item]}
+            for item in actual if item in HEADER_ALIASES],
+    }
+
+
+def _validate_collaboration_headers(headers):
+    return _collaboration_header_contract(headers)['headers']
+
+
+def _row_value_for_target_header(values, header):
+    return values.get(_canonical_header(header))
+
+
+def _column_name(index):
+    result = ''
+    value = int(index)
+    while value > 0:
+        value, remainder = divmod(value - 1, 26)
+        result = chr(65 + remainder) + result
+    return result
+
+
+def _contiguous_ranges(row_numbers):
+    numbers = sorted({int(item) for item in row_numbers if int(item) >= 2})
+    if not numbers:
+        return []
+    result = []
+    start = previous = numbers[0]
+    for number in numbers[1:]:
+        if number == previous + 1:
+            previous = number
+            continue
+        result.append((start, previous))
+        start = previous = number
+    result.append((start, previous))
+    return result
+
+
+def _background_bands(items):
+    """Coalesce adjacent rows that need the same order-group background."""
+    ordered = sorted(items, key=lambda item: int(item['rowNumber']))
+    if not ordered:
+        return []
+    result = []
+    current = {
+        'start': int(ordered[0]['rowNumber']),
+        'end': int(ordered[0]['rowNumber']),
+        'color': str(ordered[0]['color']),
+    }
+    for item in ordered[1:]:
+        number = int(item['rowNumber'])
+        color = str(item['color'])
+        if number == current['end'] + 1 and color == current['color']:
+            current['end'] = number
+            continue
+        result.append(current)
+        current = {'start': number, 'end': number, 'color': color}
+    result.append(current)
+    return result
+
+
+def _sync_signature(values):
+    """Stable line identity using cells that survive Excel → Sheet paste."""
+    return tuple(_compact_text(values.get(name)) for name in (
+        '系统订单键', '销售订单号', '包裹号',
+        '主规格', '次规格', '需求数量', '采购指导价', '采购备注',
+        '导入批次', '数据版本',
+    ))
+
+
+class ProcurementImportService(object):
+    """短时保存解析计划，并显式导入普通飞书采购协作表。"""
+
+    def __init__(self, sheet_gateway=None, sleep_fn=time.sleep):
+        self.lock = threading.Lock()
+        self.pending = {}
+        self.sync_jobs = {}
+        self.sheet_gateway = sheet_gateway or LarkCliSheetsGateway()
+        self.sleep = sleep_fn
+
+    def _clean_pending(self):
+        now = time.time()
+        for plan_id in [
+                key for key, plan in self.pending.items()
+                if now - plan.created_at > PLAN_TTL_SECONDS]:
+            self.pending.pop(plan_id, None)
+        for job_id in [
+                key for key, job in self.sync_jobs.items()
+                if job.finished_at and now - job.finished_at > PLAN_TTL_SECONDS]:
+            self.sync_jobs.pop(job_id, None)
+
+    def _require_plan(self, plan_id):
+        with self.lock:
+            self._clean_pending()
+            plan = self.pending.get(_compact_text(plan_id))
+        if not plan:
+            raise ProcurementImportError('解析计划已过期，请重新选择 xlsx')
+        return plan
+
+    def parse(self, filename, content_base64):
+        name = _compact_text(filename)
+        if not name.lower().endswith('.xlsx'):
+            raise ProcurementImportError('仅支持店小秘导出的 xlsx 文件')
+        try:
+            source = base64.b64decode(
+                _text(content_base64), validate=True)
+        except Exception as exc:
+            raise ProcurementImportError('xlsx 内容编码无效') from exc
+        if not source or len(source) > MAX_XLSX_BYTES:
+            raise ProcurementImportError('xlsx 文件为空或超过 20MB')
+        groups = parse_export_workbook(source)
+        rows, issues = _build_rows(groups)
+        if not rows:
+            first_error = next(
+                (item['message'] for item in issues if item['level'] == 'error'),
+                '没有生成有效采购明细')
+            raise ProcurementImportError(first_error)
+        plan_id = hashlib.sha256(
+            source + str(time.time_ns()).encode('ascii')).hexdigest()
+        batch_stem = posixpath.splitext(posixpath.basename(name))[0]
+        semantic_rows = [
+            [row.values.get(header) for header in OUTPUT_HEADERS
+             if header != '导入批次']
+            for row in rows
+        ]
+        semantic_digest = hashlib.sha256(json.dumps(
+            semantic_rows, ensure_ascii=False, separators=(',', ':'),
+            default=_text).encode('utf-8')).hexdigest()
+        # 同一批业务数据重新解析仍使用同一标识，避免人工重试重复追加。
+        import_batch = '%s-%s' % (batch_stem[:48], semantic_digest[:12])
+        split_date = datetime.now(BEIJING_TIMEZONE).date().isoformat()
+        for row in rows:
+            row.values['分单日期'] = split_date
+            row.values['导入批次'] = import_batch
+        plan = ImportPlan(
+            plan_id=plan_id, filename=name, rows=rows, issues=issues,
+            source_rows=sum(len(group) for group in groups.values()),
+            order_count=len({(row.values['销售订单号'], row.values['包裹号'])
+                             for row in rows}),
+            import_batch=import_batch)
+        with self.lock:
+            self._clean_pending()
+            self.pending[plan_id] = plan
+        warnings = sum(item['level'] == 'warning' for item in issues)
+        errors = sum(item['level'] == 'error' for item in issues)
+        return {
+            'planId': plan_id,
+            'sourceRows': plan.source_rows,
+            'orderCount': plan.order_count,
+            'detailCount': len(rows),
+            'importBatch': import_batch,
+            'orderImageCount': sum(bool(row.order_image) for row in rows),
+            'warningCount': warnings,
+            'errorCount': errors,
+            'issues': issues[:100],
+            'preview': [{
+                'imageIndex': index,
+                'orderNo': row.values['销售订单号'],
+                'packageNo': row.values['包裹号'],
+                'store': row.values['店铺'],
+                'operator': row.values['运营'],
+                'orderGroupIndex': row.order_group_index,
+                'itemSalesAmount': row.item_sales_amount,
+                'salesCurrency': row.sales_currency,
+                'mainSpec': row.values['主规格'],
+                'secondarySpec': row.values['次规格'],
+                'quantity': row.values['需求数量'],
+                'guidePrice': row.values['采购指导价'],
+                'currency': row.purchase_currency,
+                'orderImageReady': bool(row.order_image),
+            } for index, row in enumerate(rows[:50])],
+        }
+
+    def preview_image(self, plan_id, row_index):
+        try:
+            index = int(row_index)
+        except (TypeError, ValueError) as exc:
+            raise ProcurementImportError('订单商品图片行号无效') from exc
+        plan = self._require_plan(plan_id)
+        if index < 0 or index >= len(plan.rows):
+            raise ProcurementImportError('订单商品图片行号超出范围')
+        data = plan.rows[index].order_image
+        if not data:
+            raise ProcurementImportError('该采购明细没有内嵌订单商品图片')
+        return data, _image_mime(data)
+
+    def export(self, plan_id):
+        plan = self._require_plan(plan_id)
+        stamp = time.strftime('%Y%m%d_%H%M')
+        return (
+            export_collaboration_workbook(plan),
+            '采购共享协作表_%s.xlsx' % stamp,
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+
+    def inspect_target(self, plan_id, spreadsheet_url):
+        plan = self._require_plan(plan_id)
+        try:
+            info = self.sheet_gateway.inspect(spreadsheet_url)
+        except LarkSheetSyncError as exc:
+            raise ProcurementImportError(str(exc)) from exc
+        return {
+            'planId': plan.plan_id,
+            'importBatch': plan.import_batch,
+            'spreadsheetUrl': info['url'],
+            'revision': info.get('revision'),
+            'sheets': info['sheets'],
+        }
+
+    def validate_target(self, plan_id, spreadsheet_url, sheet_id):
+        plan = self._require_plan(plan_id)
+        try:
+            info = self.sheet_gateway.inspect(spreadsheet_url)
+            selected = next((
+                item for item in info['sheets']
+                if item['sheetId'] == _compact_text(sheet_id)), None)
+            if not selected:
+                raise ProcurementImportError('所选工作表已不存在，请重新读取')
+            table = self.sheet_gateway.read_table(
+                info['url'], selected['sheetId'])
+            contract = _collaboration_header_contract(table.headers)
+            target_headers = contract['headers']
+        except LarkSheetSyncError as exc:
+            raise ProcurementImportError(str(exc)) from exc
+        target = CollaborationSheetTarget(
+            url=info['url'], sheet_id=selected['sheetId'],
+            sheet_name=selected['sheetName'], revision=table.revision)
+        with self.lock:
+            self._clean_pending()
+            current = self.pending.get(plan.plan_id)
+            if current is not plan:
+                raise ProcurementImportError('解析计划已过期，请重新选择 xlsx')
+            plan.target = target
+        return {
+            'valid': True,
+            'headerCount': len(target_headers),
+            'coreHeaderCount': len(CORE_OUTPUT_HEADERS),
+            'checkoutColumnCount': max(
+                0, contract['systemStart'] - contract['demandEnd'] - 1),
+            'missingRecommendedColumns': contract['missingRecommendedColumns'],
+            'legacyAliases': contract['legacyAliases'],
+            'zones': {
+                'demand': {'start': 1, 'end': contract['demandEnd'] + 1},
+                'checkout': {
+                    'start': contract['demandEnd'] + 2,
+                    'end': contract['systemStart'],
+                },
+                'system': {
+                    'start': contract['systemStart'] + 1,
+                    'end': len(target_headers),
+                },
+            },
+            'importBatch': plan.import_batch,
+            'detailCount': len(plan.rows),
+            'target': {
+                'spreadsheetUrl': target.url,
+                'sheetId': target.sheet_id,
+                'sheetName': target.sheet_name,
+                'revision': target.revision,
+            },
+        }
+
+    def _refresh_target(self, target):
+        """Resolve the selected sheet by ID again before any write.
+
+        ``+table-put`` addresses an existing sub-sheet by name.  Re-reading
+        the workbook prevents a concurrent rename from creating a new sheet
+        under the stale name.
+        """
+        try:
+            info = self.sheet_gateway.inspect(target.url)
+            selected = next((
+                item for item in info['sheets']
+                if item['sheetId'] == target.sheet_id), None)
+            if not selected:
+                raise ProcurementImportError('所选工作表已不存在，请重新读取')
+            table = self.sheet_gateway.read_table(
+                info['url'], selected['sheetId'])
+            _validate_collaboration_headers(table.headers)
+        except LarkSheetSyncError as exc:
+            raise ProcurementImportError(str(exc)) from exc
+        return CollaborationSheetTarget(
+            url=info['url'], sheet_id=selected['sheetId'],
+            sheet_name=selected['sheetName'], revision=table.revision)
+
+    def _normalize_target_structure(self, job_id, target):
+        """Normalize system-owned headers without touching checkout columns."""
+        try:
+            table = self.sheet_gateway.read_table(target.url, target.sheet_id)
+            contract = _collaboration_header_contract(table.headers)
+            needs_normalization = bool(
+                contract['legacyAliases']
+                or contract['deprecatedColumns']
+                or contract['missingRecommendedColumns']
+                or not contract['receiverLayoutValid'])
+            if needs_normalization:
+                self._job_update(job_id, state='normalizing_headers')
+                self.sheet_gateway.normalize_collaboration_headers(
+                    target.url, target.sheet_id, target.sheet_name,
+                    contract['headers'],
+                    max([row_number for row_number, _row in table.rows]
+                        or [1]), rows=table.rows)
+                table = self.sheet_gateway.read_table(
+                    target.url, target.sheet_id)
+                contract = _collaboration_header_contract(table.headers)
+                if (contract['legacyAliases']
+                        or contract['deprecatedColumns']
+                        or contract['missingRecommendedColumns']
+                        or not contract['receiverLayoutValid']):
+                    raise ProcurementImportError(
+                        '协作表字段规范化写后回读失败，已停止导入')
+            if not contract['demandLayoutValid']:
+                self._job_update(job_id, state='normalizing_headers')
+                self.sheet_gateway.reorder_collaboration_headers(
+                    target.url, target.sheet_id, target.sheet_name,
+                    contract['headers'], STANDARD_DEMAND_HEADERS)
+                table = self.sheet_gateway.read_table(
+                    target.url, target.sheet_id)
+                contract = _collaboration_header_contract(table.headers)
+                if not contract['demandLayoutValid']:
+                    raise ProcurementImportError(
+                        '采购需求区字段顺序规范化写后回读失败，已停止导入')
+            self.sheet_gateway.normalize_date_column(
+                target.url, target.sheet_name, contract['headers'], table.rows,
+                header='分单日期', number_format='yyyy-mm-dd')
+            canonical = contract['canonicalHeaders']
+            demand_start = 1
+            demand_end = contract['demandEnd'] + 1
+            system_start = contract['systemStart'] + 1
+            zones = [{
+                'start': _column_name(demand_start),
+                'end': _column_name(demand_end),
+                'color': '#1B7280',
+                'note': ('采购需求区：Xynigo 按字段名写入；'
+                         '核心字段请勿删除或重复。'),
+            }]
+            if system_start > demand_end + 1:
+                zones.append({
+                    'start': _column_name(demand_end + 1),
+                    'end': _column_name(system_start - 1),
+                    'color': '#386FA4',
+                    'note': ('采购下单区：不参与导入校验；'
+                             '采购可自行增删、改名或调整字段顺序。'),
+                })
+            zones.append({
+                'start': _column_name(system_start),
+                'end': _column_name(len(canonical)),
+                'color': '#2F855A',
+                'note': ('系统追踪区：用于幂等防重和版本追踪；'
+                         '请勿删除或改名。'),
+            })
+            self._job_update(job_id, state='formatting_headers')
+            self.sheet_gateway.apply_header_presentation(
+                target.url, target.sheet_id, target.sheet_name, zones)
+            # 表头值写后回读是硬验收；样式/批注是表现层，
+            # 由 CLI 单次声明式写入，不扩张数据区。
+            verified = self.sheet_gateway.read_table(
+                target.url, target.sheet_id)
+            _collaboration_header_contract(verified.headers)
+        except LarkSheetSyncError as exc:
+            raise ProcurementImportError(str(exc)) from exc
+        return CollaborationSheetTarget(
+            url=target.url, sheet_id=target.sheet_id,
+            sheet_name=target.sheet_name, revision=verified.revision)
+
+    def _target_batch_state(self, plan, target):
+        try:
+            table = self.sheet_gateway.read_table(target.url, target.sheet_id)
+            headers = _validate_collaboration_headers(table.headers)
+        except LarkSheetSyncError as exc:
+            raise ProcurementImportError(str(exc)) from exc
+        target_queues = defaultdict(deque)
+        target_counts = Counter()
+        for row_number, raw_values in table.rows:
+            padded = list(raw_values[:len(headers)])
+            padded.extend([''] * (len(headers) - len(padded)))
+            values = {
+                _canonical_header(header): value
+                for header, value in zip(headers, padded)
+            }
+            if _compact_text(values.get('导入批次')) != plan.import_batch:
+                continue
+            signature = _sync_signature(values)
+            target_queues[signature].append(int(row_number))
+            target_counts[signature] += 1
+        expected_counts = Counter(_sync_signature(row.values) for row in plan.rows)
+        unexpected = target_counts - expected_counts
+        if unexpected:
+            duplicated = sum(unexpected.values())
+            raise ProcurementImportError(
+                '目标表中本批已存在 %d 条与解析计划不一致或重复的数据，'
+                '为避免重复导入已停止写入' % duplicated)
+        remaining = Counter(target_counts)
+        missing_rows = []
+        for row in plan.rows:
+            signature = _sync_signature(row.values)
+            if remaining[signature] > 0:
+                remaining[signature] -= 1
+            else:
+                missing_rows.append(row)
+        return table, headers, target_queues, target_counts, expected_counts, missing_rows
+
+    def _prepare_image_sync(self, plan, target):
+        _table, headers, target_queues, target_counts, expected_counts, \
+            missing_rows = self._target_batch_state(plan, target)
+        if missing_rows or target_counts != expected_counts:
+            raise ProcurementImportError(
+                '本批数据写后回读不完整（预期 %d 行，实际 %d 行），'
+                '已停止图片写入，重试时会自动续传缺失数据' % (
+                    len(plan.rows), sum(target_counts.values())))
+        matched = []
+        for index, row in enumerate(plan.rows):
+            signature = _sync_signature(row.values)
+            matched.append({
+                'planIndex': index,
+                'rowNumber': target_queues[signature].popleft(),
+                'row': row,
+            })
+        image_column = _column_name(
+            tuple(_canonical_header(item) for item in headers).index(
+                '商品图片') + 1)
+        try:
+            presence = self.sheet_gateway.image_presence(
+                target.url, target.sheet_id,
+                [item['rowNumber'] for item in matched],
+                column=image_column)
+        except LarkSheetSyncError as exc:
+            raise ProcurementImportError(str(exc)) from exc
+        for item in matched:
+            item['existing'] = bool(presence.get(item['rowNumber']))
+        return matched, headers, image_column
+
+    def _ensure_sheet_presentation(self, job_id, target, matched,
+                                   target_headers):
+        """Apply compact grouping and clickable links with write-back checks.
+
+        A non-default row background is treated as a purchaser's manual task
+        color and is never replaced during an idempotent retry.  Row height and
+        the system-owned purchase-link cell remain safe to normalize.
+        """
+        row_numbers = [item['rowNumber'] for item in matched]
+        try:
+            backgrounds = self.sheet_gateway.row_backgrounds(
+                target.url, target.sheet_id, row_numbers)
+        except LarkSheetSyncError as exc:
+            raise ProcurementImportError(str(exc)) from exc
+        style_items = []
+        expected_colors = {}
+        for item in matched:
+            number = int(item['rowNumber'])
+            current = str(backgrounds.get(number) or '').upper()
+            desired = SHEET_ORDER_GROUP_COLORS[
+                item['row'].order_group_index % len(SHEET_ORDER_GROUP_COLORS)]
+            # 空白或默认白色表示还没有协作底色；其它颜色可能已被采购员
+            # 用来标记任务，重试时必须保留。
+            if current in {'', '#FFFFFF'}:
+                style_items.append({'rowNumber': number, 'color': desired})
+                expected_colors[number] = desired
+        self._job_update(job_id, state='formatting_rows')
+        try:
+            self.sheet_gateway.apply_row_presentation(
+                target.url, target.sheet_name,
+                _background_bands(style_items),
+                _contiguous_ranges(row_numbers),
+                row_height=COLLABORATION_DATA_ROW_HEIGHT,
+                last_column=_column_name(len(target_headers)))
+            if expected_colors:
+                verified = self.sheet_gateway.row_backgrounds(
+                    target.url, target.sheet_id, expected_colors)
+                failed = [
+                    row for row, color in expected_colors.items()
+                    if str(verified.get(row) or '').upper() != color
+                ]
+                if failed:
+                    raise ProcurementImportError(
+                        '采购行底色写后回读失败（%d 行），已停止后续写入' %
+                        len(failed))
+        except LarkSheetSyncError as exc:
+            raise ProcurementImportError(str(exc)) from exc
+        self._job_update(job_id, rows_styled=len(expected_colors))
+
+        expected_links = {
+            int(item['rowNumber']): item['row'].values['采购链接']
+            for item in matched
+        }
+        self._job_update(job_id, state='writing_links')
+        link_column = _column_name(
+            tuple(_canonical_header(item) for item in target_headers).index(
+                '采购链接') + 1)
+        try:
+            presence = self.sheet_gateway.hyperlink_presence(
+                target.url, target.sheet_id, expected_links,
+                column=link_column)
+            missing = [
+                (row, link) for row, link in expected_links.items()
+                if not presence.get(row)
+            ]
+            if missing:
+                self.sheet_gateway.set_hyperlinks(
+                    target.url, target.sheet_id, missing,
+                    column=link_column)
+                verified = self.sheet_gateway.hyperlink_presence(
+                    target.url, target.sheet_id,
+                    dict(missing), column=link_column)
+                failed = [row for row, _link in missing
+                          if not verified.get(row)]
+                if failed:
+                    raise ProcurementImportError(
+                        '采购链接写后回读失败（%d 行），已停止图片写入' %
+                        len(failed))
+        except LarkSheetSyncError as exc:
+            raise ProcurementImportError(str(exc)) from exc
+        self._job_update(job_id, links_written=len(missing))
+
+    def _append_missing_rows(self, job_id, plan, target, missing_rows,
+                             target_headers):
+        if not missing_rows:
+            self._job_update(
+                job_id, rows_total=len(plan.rows), rows_written=0,
+                rows_existing=len(plan.rows))
+            return
+        self._job_update(
+            job_id, state='writing_rows', rows_total=len(plan.rows),
+            rows_existing=len(plan.rows) - len(missing_rows))
+        for offset in range(0, len(missing_rows), SHEET_WRITE_CHUNK_ROWS):
+            chunk = missing_rows[offset:offset + SHEET_WRITE_CHUNK_ROWS]
+            values = [
+                [_row_value_for_target_header(row.values, header)
+                 for header in target_headers]
+                for row in chunk
+            ]
+            try:
+                self.sheet_gateway.append_table_rows(
+                    target.url, target.sheet_name, target_headers, values,
+                    dtypes={
+                        header: SHEET_DTYPES[_canonical_header(header)]
+                        for header in target_headers
+                        if _canonical_header(header) in SHEET_DTYPES
+                    },
+                    formats={
+                        header: SHEET_FORMATS[_canonical_header(header)]
+                        for header in target_headers
+                        if _canonical_header(header) in SHEET_FORMATS
+                    })
+            except LarkSheetSyncError as exc:
+                raise ProcurementImportError(str(exc)) from exc
+            job = self._job_update(job_id)
+            self._job_update(
+                job_id, rows_written=job.rows_written + len(chunk))
+
+        self._job_update(job_id, state='verifying_rows')
+        last_error = None
+        for attempt in range(3):
+            try:
+                _table, _headers, _queues, counts, expected, remaining = \
+                    self._target_batch_state(plan, target)
+                if not remaining and counts == expected:
+                    return
+                last_error = ProcurementImportError(
+                    '本批数据写后回读不完整（预期 %d 行，实际 %d 行）' % (
+                        len(plan.rows), sum(counts.values())))
+            except ProcurementImportError as exc:
+                last_error = exc
+            if attempt < 2:
+                self.sleep(0.4)
+        raise last_error or ProcurementImportError('飞书数据写后回读失败')
+
+    def start_sheet_sync(self, plan_id, confirm_write=False,
+                         operator_name=''):
+        if not confirm_write:
+            raise ProcurementImportError(
+                '导入前必须明确确认规范协作表、追加本批采购数据并补齐订单商品图')
+        plan = self._require_plan(plan_id)
+        if not plan.target:
+            raise ProcurementImportError('请先读取工作表并通过核心采购字段校验')
+        actor = _compact_text(operator_name)
+        if actor:
+            for row in plan.rows:
+                row.values['导入操作人'] = actor[:100]
+        target_key = '%s|%s|%s' % (
+            plan.target.url, plan.target.sheet_id, plan.import_batch)
+        with self.lock:
+            self._clean_pending()
+            running = next((job for job in self.sync_jobs.values()
+                            if (job.plan_id == plan.plan_id
+                                or job.target_key == target_key)
+                            and job.state in {
+                                'queued', 'validating', 'writing_rows',
+                                'normalizing_headers', 'formatting_headers',
+                                'verifying_rows', 'formatting_rows',
+                                'writing_links', 'writing_images'}), None)
+            if running:
+                return running.public()
+            job_id = hashlib.sha256(
+                ('%s:%s' % (plan.plan_id, time.time_ns())).encode('utf-8')
+            ).hexdigest()
+            job = ImageSyncJob(
+                job_id=job_id, plan_id=plan.plan_id,
+                target_name=plan.target.sheet_name,
+                import_batch=plan.import_batch,
+                target_key=target_key,
+                rows_total=len(plan.rows))
+            self.sync_jobs[job_id] = job
+        threading.Thread(
+            target=self._run_sheet_sync,
+            args=(job_id, plan, plan.target), daemon=True).start()
+        return job.public()
+
+    # 保留旧本机调用名，避免服务热更新期间旧页面瞬时报错。
+    def start_image_sync(self, plan_id, confirm_write=False,
+                         operator_name=''):
+        return self.start_sheet_sync(
+            plan_id, confirm_write=confirm_write,
+            operator_name=operator_name)
+
+    def _job_update(self, job_id, **changes):
+        with self.lock:
+            job = self.sync_jobs.get(job_id)
+            if not job:
+                return None
+            for name, value in changes.items():
+                setattr(job, name, value)
+            return job
+
+    def _run_sheet_sync(self, job_id, plan, target):
+        self._job_update(job_id, state='validating')
+        try:
+            target = self._refresh_target(target)
+            target = self._normalize_target_structure(job_id, target)
+            self._job_update(job_id, target_name=target.sheet_name)
+            _table, headers, _queues, _counts, _expected, missing_rows = \
+                self._target_batch_state(plan, target)
+            self._append_missing_rows(
+                job_id, plan, target, missing_rows, headers)
+            matched, headers, image_column = self._prepare_image_sync(
+                plan, target)
+            self._ensure_sheet_presentation(
+                job_id, target, matched, headers)
+            job = self._job_update(job_id)
+            self._job_update(
+                job_id, state='writing_images', total=len(matched),
+                rows_existing=(len(plan.rows) - job.rows_written))
+            for item in matched:
+                job = self._job_update(job_id)
+                if item['existing']:
+                    self._job_update(
+                        job_id, processed=job.processed + 1,
+                        skipped_existing=job.skipped_existing + 1)
+                    continue
+                row = item['row']
+                if not row.order_image:
+                    error_item = {
+                        'rowNumber': item['rowNumber'],
+                        'orderNo': row.values['销售订单号'],
+                        'message': '源文件没有内嵌订单商品图片',
+                    }
+                    self._job_update(
+                        job_id, processed=job.processed + 1,
+                        missing_source=job.missing_source + 1,
+                        failed=job.failed + 1,
+                        errors=job.errors + [error_item])
+                    continue
+                last_error = None
+                verified = False
+                for attempt in range(2):
+                    try:
+                        mime = _image_mime(row.order_image)
+                        self.sheet_gateway.set_image(
+                            target.url, target.sheet_id, item['rowNumber'],
+                            row.order_image, mime, column=image_column)
+                        verified = bool(self.sheet_gateway.verify_image(
+                            target.url, target.sheet_id, item['rowNumber'],
+                            column=image_column))
+                        if verified:
+                            break
+                        last_error = ProcurementImportError('写后回读未发现单元格图片')
+                    except (LarkSheetSyncError, ProcurementImportError) as exc:
+                        last_error = exc
+                    if attempt == 0:
+                        self.sleep(0.5)
+                job = self._job_update(job_id)
+                if verified:
+                    self._job_update(
+                        job_id, processed=job.processed + 1,
+                        written=job.written + 1)
+                else:
+                    error_item = {
+                        'rowNumber': item['rowNumber'],
+                        'orderNo': row.values['销售订单号'],
+                        'message': str(last_error or '图片写入失败')[:200],
+                    }
+                    self._job_update(
+                        job_id, processed=job.processed + 1,
+                        failed=job.failed + 1,
+                        errors=job.errors + [error_item])
+            job = self._job_update(job_id)
+            state = 'completed' if job.failed == 0 else (
+                'partial' if job.written or job.skipped_existing else 'failed')
+            self._job_update(
+                job_id, state=state, finished_at=time.time(),
+                error=('' if job.failed == 0 else '部分订单商品图片未补齐'))
+        except (LarkSheetSyncError, ProcurementImportError, ValueError) as exc:
+            self._job_update(
+                job_id, state='failed', error=str(exc)[:300],
+                finished_at=time.time())
+        except Exception:
+            self._job_update(
+                job_id, state='failed',
+                error='补齐图片任务发生未预期错误，未继续写入',
+                finished_at=time.time())
+
+    def image_sync_status(self, job_id):
+        with self.lock:
+            self._clean_pending()
+            job = self.sync_jobs.get(_compact_text(job_id))
+            if not job:
+                raise ProcurementImportError('导入任务不存在或已过期')
+            return job.public()
+
+    def sheet_sync_status(self, job_id):
+        return self.image_sync_status(job_id)

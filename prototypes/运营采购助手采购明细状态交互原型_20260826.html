@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>运营采购助手｜采购明细状态交互原型</title>
+  <style>
+    :root {
+      --navy:#0b315e; --blue:#356f91; --teal:#1698a0; --teal2:#20aeb3;
+      --orange:#ff694a; --line:#cfe2e8; --muted:#718496; --bg:#eef3f6;
+      --ok:#16845f; --warn:#b26b00; --danger:#c94a35;
+    }
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--navy);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif}
+    button,input{font:inherit} button{cursor:pointer}
+    .prototype-bar{position:sticky;top:0;z-index:10;display:flex;align-items:center;justify-content:space-between;gap:18px;padding:14px 24px;background:#fff;border-bottom:1px solid #dce6eb;box-shadow:0 2px 10px rgba(16,43,69,.06)}
+    .prototype-bar h1{margin:0;font-size:18px}.prototype-bar p{margin:2px 0 0;color:var(--muted);font-size:12px}
+    .controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.controls span{color:var(--muted);font-size:12px}
+    .control{height:32px;padding:0 12px;color:var(--blue);background:#fff;border:1px solid #bfd6df;border-radius:5px}.control.active{color:#fff;background:var(--teal);border-color:var(--teal)}
+    .canvas{padding:26px}.frame{width:min(1280px,100%);margin:0 auto;transition:width .2s ease}.frame.narrow{width:min(920px,100%)}
+    .order-dialog{overflow:hidden;background:#fff;border:1px solid #d6e1e7;border-radius:8px;box-shadow:0 16px 40px rgba(26,54,77,.13)}
+    .order-top{display:flex;align-items:center;justify-content:space-between;padding:15px 20px;border-bottom:1px solid #dbe5ea}.order-top b{font-size:16px}.close{border:0;background:transparent;color:#8795a1;font-size:22px}
+    .order-summary{display:grid;grid-template-columns:1.2fr 1fr 1.1fr .9fr;border-bottom:1px solid #dbe5ea}.order-summary div{min-height:68px;padding:13px 18px;border-right:1px solid #e0e8ec}.order-summary div:last-child{border-right:0}.order-summary span{display:block;color:var(--muted);font-size:11px}.order-summary b{display:block;margin-top:5px;font-size:14px}
+    .status-header{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:14px 20px;background:#e9f7f7;border-bottom:1px solid #bfe3e3}
+    .status-title{min-width:0}.status-title strong{display:block;font-size:17px}.status-title p{margin:2px 0 0;color:#577184;font-size:12px}.status-side{display:flex;align-items:center;gap:9px;flex:0 0 auto}
+    .state-pill,.ability-pill{display:inline-flex;align-items:center;height:28px;padding:0 10px;border-radius:14px;font-size:12px;font-weight:650;white-space:nowrap}.state-pill::before{content:"";width:7px;height:7px;margin-right:6px;border-radius:50%;background:currentColor}.state-pill{color:var(--ok);background:#e7f6ef}.ability-pill{color:var(--teal);background:#fff;border:1px solid #a9d9da}
+    .state-note{max-width:270px;color:#5c7384;font-size:11px;white-space:nowrap}
+    .body{display:grid;grid-template-columns:176px minmax(0,1fr);gap:10px;padding:16px 18px 0}.tabs{display:flex;flex-direction:column;gap:8px}.tab{height:44px;padding:0 16px;text-align:left;color:#334e66;background:#fff;border:1px solid #d4dee4;border-radius:3px}.tab.active{color:#fff;background:linear-gradient(135deg,var(--teal),#4e8ba9);border-color:var(--teal);font-weight:650}.tab .check{float:right}
+    .work{min-width:0}.line-head{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:8px}.line-head h2{margin:0;font-size:14px}.line-head span{color:var(--muted);font-size:12px}.columns,.line-fields{display:grid;grid-template-columns:minmax(220px,2.2fr) minmax(105px,.8fr) minmax(105px,.8fr) minmax(150px,1fr) minmax(92px,.65fr);gap:10px}.columns{padding:0 12px 7px;color:#4d6d84;font-size:12px;font-weight:650}.line-card{padding:12px;background:#f8fcfc;border:1px solid #bfe3e3;border-radius:6px}.line-id{display:flex;align-items:center;gap:10px;margin-bottom:9px}.number{display:inline-grid;width:30px;height:30px;place-items:center;color:#fff;background:#3e9baa;border-radius:5px}.goods{color:var(--teal);font-weight:700;text-decoration:underline}.field{height:40px;padding:0 12px;color:#183b5e;background:#fff;border:1px solid #bfd5df;border-radius:4px;min-width:0}.currency{display:flex}.currency input{width:100%;border-radius:4px 0 0 4px}.currency em{display:grid;min-width:58px;place-items:center;color:#356f91;background:#e9f7f7;border:1px solid #bfd5df;border-left:0;border-radius:0 4px 4px 0;font-style:normal;font-weight:700}.parsed{margin-top:6px;color:var(--ok);font-size:12px}
+    .add{width:100%;height:42px;margin-top:10px;color:var(--teal);background:#f8fcfc;border:1px dashed #9bd1d3;border-radius:4px}
+    .summary-footer{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:14px;margin-top:14px;padding:12px 18px;background:#f8fbfc;border-top:1px solid #d6e4e9}
+    .metrics{display:grid;grid-template-columns:repeat(3,minmax(140px,1fr));min-width:0}.metric{padding:0 14px;border-right:1px solid #dbe6ea}.metric:first-child{padding-left:0}.metric:last-child{border-right:0}.metric span{display:block;color:var(--muted);font-size:11px}.metric b{display:block;margin-top:2px;color:var(--ok);font-size:15px;white-space:nowrap}
+    .actions{display:flex;align-items:center;justify-content:flex-end;gap:8px}.btn{height:36px;padding:0 14px;border-radius:4px;font-weight:650;white-space:nowrap}.btn.secondary{color:var(--blue);background:#fff;border:1px solid #bfd6df}.btn.primary{color:#fff;background:var(--orange);border:1px solid var(--orange)}.btn:disabled{cursor:not-allowed;opacity:.55}.btn.loading:disabled{cursor:wait;opacity:.8}.btn.loading::before{content:"";display:inline-block;width:12px;height:12px;margin-right:7px;vertical-align:-2px;border:2px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+    .design-notes{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;width:min(1280px,100%);margin:18px auto 0}.note{padding:14px 16px;background:#fff;border:1px solid #dae5ea;border-radius:7px}.note b{display:block;margin-bottom:5px}.note p{margin:0;color:#667c8d;font-size:12px}.note.recommended{border-color:#9ed2d4;box-shadow:inset 3px 0 var(--teal)}
+    .frame[data-state="draft"] .state-pill{color:#356f91;background:#edf4fb}.frame[data-state="draft"] .ability-pill{color:#356f91;border-color:#bfd6df}.frame[data-state="syncing"] .state-pill{color:var(--teal);background:#e7f7f7}.frame[data-state="locked"] .state-pill{color:#8b5f12;background:#fff3d8}.frame[data-state="locked"] .ability-pill{color:#8b5f12;border-color:#e3c98f;background:#fffaf0}.frame[data-state="error"] .state-pill{color:var(--danger);background:#fff0ed}.frame[data-state="error"] .ability-pill{color:var(--danger);border-color:#efb8ad;background:#fff8f6}
+    @media(max-width:1060px){.order-summary{grid-template-columns:1fr 1fr}.order-summary div:nth-child(2){border-right:0}.status-header{align-items:flex-start}.status-side{align-items:flex-end;flex-direction:column}.summary-footer{grid-template-columns:1fr}.actions{justify-content:flex-end}.metrics{grid-template-columns:repeat(3,1fr)}.design-notes{grid-template-columns:1fr}.columns,.line-fields{grid-template-columns:minmax(220px,2fr) repeat(4,minmax(90px,1fr))}}
+    @media(max-width:760px){.canvas{padding:10px}.body{grid-template-columns:1fr}.tabs{display:none}.status-header{display:block}.status-side{align-items:flex-start;margin-top:10px}.state-note{white-space:normal}.columns{display:none}.line-fields{grid-template-columns:1fr 1fr}.line-fields>input:first-child{grid-column:1/-1}.metrics{grid-template-columns:1fr 1fr;row-gap:10px}.metric:nth-child(2){border-right:0}.actions{justify-content:stretch}.actions .btn{flex:1}}
+  </style>
+</head>
+<body>
+  <header class="prototype-bar">
+    <div><h1>采购明细状态展示原型</h1><p>状态移出金额区；数量回归明细标题；底部只承载经营指标和操作。</p></div>
+    <div class="controls"><span>状态</span><button class="control" data-state="draft">云端草稿</button><button class="control" data-state="syncing">提交中</button><button class="control active" data-state="submitted">已提交·可修订</button><button class="control" data-state="locked">采购已认领</button><button class="control" data-state="error">修改失败</button><button class="control" id="widthToggle">窄宽预览</button></div>
+  </header>
+  <main class="canvas">
+    <section class="frame" id="frame" data-state="submitted">
+      <div class="order-dialog">
+        <div class="order-top"><b>包裹「XMWU39A60390」详情 - 来源于「SHEIN」</b><button class="close">×</button></div>
+        <div class="order-summary"><div><span>卖家 / 店铺</span><b>江城子 / 周远超</b></div><div><span>销售订单号</span><b>GSH1RG28Y000T9R</b></div><div><span>收件人 / 国家</span><b>Recipient Demo / MX</b></div><div><span>包裹总额</span><b>MXN 323.92</b></div></div>
+        <div class="status-header">
+          <div class="status-title"><strong>运营采购助手</strong><p>采购明细 · 包裹 XMWU39A60390</p></div>
+          <div class="status-side"><div><span class="state-pill" id="statePill">已正式提交</span><span class="ability-pill" id="abilityPill">可修订</span></div><span class="state-note" id="stateNote">采购尚未认领，可修改后提交原采购单</span></div>
+        </div>
+        <div class="body">
+          <nav class="tabs"><button class="tab">收货地址 <span class="check">✓</span></button><button class="tab">报关信息 <span class="check">✓</span></button><button class="tab">物流信息 <span class="check">×</span></button><button class="tab">备注信息</button><button class="tab active">采购明细 <span class="check">✓</span></button></nav>
+          <section class="work">
+            <div class="line-head"><h2>本次采购明细</h2><span>1 条明细 / 1 件</span></div>
+            <div class="columns"><span>采购链接</span><span>主规格</span><span>次规格</span><span>指导价</span><span>采购数量</span></div>
+            <div class="line-card"><div class="line-id"><span class="number">1</span><span class="goods">476295196</span></div><div class="line-fields"><input class="field editable" value="https://www.shein.com.mx/x-p-495051402.html"><input class="field editable" value="Burdeos"><input class="field editable" value="XS"><div class="currency"><input class="field editable" value="54.95"><em>MXN</em></div><input class="field editable" value="1"></div><div class="parsed">已解析 Burdeos / XS</div></div>
+            <button class="add editable">＋ 新增手工明细</button>
+          </section>
+        </div>
+        <footer class="summary-footer">
+          <div class="metrics"><div class="metric"><span>预估采购总额</span><b>MXN 100.00</b></div><div class="metric"><span>预估利润</span><b>MXN 223.92</b></div><div class="metric"><span>利润率</span><b>69.13%</b></div></div>
+          <div class="actions"><button class="btn secondary" id="secondaryAction">复制已提交 XYP2</button><button class="btn primary" id="primaryAction">提交修改</button></div>
+        </footer>
+      </div>
+    </section>
+    <section class="design-notes">
+      <article class="note recommended"><b>推荐：状态放标题区右侧</b><p>状态属于整张采购单，不属于金额指标。标题区同时显示“事实状态 + 当前可操作能力”，信息层级最稳定。</p></article>
+      <article class="note"><b>“1件”放到明细标题</b><p>使用“1 条明细 / 1 件”，避免把数量混入“已提交·可修订”，状态文本更短也更容易扫读。</p></article>
+      <article class="note"><b>ROI 前端隐藏、数据保留</b><p>运营录入界面只展示采购总额、利润、利润率；ROI 继续进入提交数据，留给后续经营分析和报表使用。</p></article>
+    </section>
+  </main>
+  <script>
+    const states={
+      draft:{state:'云端草稿',ability:'可继续编辑',note:'草稿已保存，可继续补充后正式提交',primary:'提交采购单',secondary:'保存采购单',locked:false,loading:false},
+      syncing:{state:'正在提交',ability:'处理中',note:'正在写入 Xynigo 云端，请勿重复操作',primary:'正在提交',secondary:'保存采购单',locked:true,loading:true},
+      submitted:{state:'已正式提交',ability:'可修订',note:'采购尚未认领，可修改后提交原采购单',primary:'提交修改',secondary:'复制已提交 XYP2',locked:false,loading:false},
+      locked:{state:'已正式提交',ability:'采购已认领',note:'采购已开始；如需修改，请先由采购退回任务',primary:'查看采购单',secondary:'复制 XYP2',locked:true,loading:false},
+      error:{state:'修改失败',ability:'可重试',note:'原采购单未变化；修正问题后可再次提交',primary:'重新提交修改',secondary:'复制 XYP2',locked:false,loading:false}
+    };
+    const frame=document.getElementById('frame'),statePill=document.getElementById('statePill'),abilityPill=document.getElementById('abilityPill'),stateNote=document.getElementById('stateNote'),primary=document.getElementById('primaryAction'),secondary=document.getElementById('secondaryAction');
+    function render(key){const s=states[key];frame.dataset.state=key;statePill.textContent=s.state;abilityPill.textContent=s.ability;stateNote.textContent=s.note;primary.textContent=s.primary;secondary.textContent=s.secondary;primary.disabled=s.locked;secondary.disabled=key==='syncing';primary.classList.toggle('loading',s.loading);document.querySelectorAll('.editable').forEach(el=>{if('disabled'in el)el.disabled=key==='locked'||key==='syncing'});document.querySelectorAll('[data-state]').forEach(btn=>btn.classList.toggle('active',btn.dataset.state===key));}
+    document.querySelectorAll('[data-state]').forEach(btn=>btn.addEventListener('click',()=>render(btn.dataset.state)));
+    document.getElementById('widthToggle').addEventListener('click',e=>{frame.classList.toggle('narrow');e.currentTarget.classList.toggle('active');e.currentTarget.textContent=frame.classList.contains('narrow')?'恢复宽屏':'窄宽预览'});
+  </script>
+</body>
+</html>
