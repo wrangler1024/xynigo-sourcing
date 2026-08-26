@@ -1,0 +1,13 @@
+ARG BASE_IMAGE=xynigo-auth-auth:latest
+FROM ${BASE_IMAGE}
+
+# Preserve the complete deployed release and replace only the procurement
+# import implementation, its canonical Web surface, and release identity.
+USER root
+COPY src/xynigo_auth/__init__.py /app/src/xynigo_auth/__init__.py
+COPY src/xynigo_auth/main.py /app/src/xynigo_auth/main.py
+COPY src/xynigo_auth/procurement_import_core.py /app/src/xynigo_auth/procurement_import_core.py
+COPY src/xynigo_auth/procurement_import_sheet.py /app/src/xynigo_auth/procurement_import_sheet.py
+COPY src/xynigo_auth/procurement_import_xlsx.py /app/src/xynigo_auth/procurement_import_xlsx.py
+COPY src/xynigo_auth/web/index.html /app/src/xynigo_auth/web/index.html
+USER xynigo

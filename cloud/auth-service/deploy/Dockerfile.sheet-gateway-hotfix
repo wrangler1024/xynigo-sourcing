@@ -1,0 +1,9 @@
+ARG BASE_IMAGE=xynigo-auth-auth:latest
+FROM ${BASE_IMAGE}
+
+# Preserve the complete deployed application and replace only the Sheets
+# gateway. This is used when another release has landed after the source tree
+# for a narrow gateway fix was prepared.
+USER root
+COPY src/xynigo_auth/procurement_import_sheet.py /app/src/xynigo_auth/procurement_import_sheet.py
+USER xynigo

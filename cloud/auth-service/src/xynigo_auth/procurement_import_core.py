@@ -606,35 +606,63 @@ def _select_xyp2(source_rows):
 
 
 def _match_source_rows(source_rows, xyp2_items):
-    queues = defaultdict(list)
-    for row in source_rows:
-        for key in row.match_keys:
-            queues[key].append(row)
-    used = defaultdict(int)
-    matched = []
+    assignments = [[] for _item in xyp2_items]
+    unmatched_source_rows = []
     warnings = []
-    for index, item in enumerate(xyp2_items):
-        candidates = []
-        for key in (item.seller_sku.casefold(), item.goods_id.casefold()):
-            for row in queues.get(key, ()):
-                if row not in candidates:
-                    candidates.append(row)
-        if candidates:
-            source_row = min(candidates, key=lambda row: used[row.row_number])
-        elif len(source_rows) == len(xyp2_items):
-            source_row = source_rows[index]
+
+    # One XYP2 detail may summarize several exported product rows.  Assign
+    # every exactly matched source row to that detail instead of selecting one
+    # representative and misreporting the remaining rows as unmatched.
+    for source_row in source_rows:
+        scored = []
+        for index, item in enumerate(xyp2_items):
+            seller_key = item.seller_sku.casefold()
+            goods_key = item.goods_id.casefold()
+            score = (2 if seller_key in source_row.match_keys else
+                     1 if goods_key in source_row.match_keys else 0)
+            if score:
+                scored.append((score, index))
+        if not scored:
+            unmatched_source_rows.append(source_row)
+            continue
+        best_score = max(score for score, _index in scored)
+        candidates = [index for score, index in scored if score == best_score]
+        if len(candidates) != 1:
+            raise ProcurementImportError(
+                '店小秘第 %d 行同时匹配多个 XYP2 采购明细，请核对来源 SKU' %
+                source_row.row_number)
+        assignments[candidates[0]].append(source_row)
+
+    unmatched_items = [
+        index for index, sources in enumerate(assignments) if not sources]
+    if unmatched_items and unmatched_source_rows:
+        if len(unmatched_items) == 1:
+            index = unmatched_items[0]
+            assignments[index].extend(unmatched_source_rows)
             warnings.append(
-                'XYP2 来源 SKU %s 未精确匹配，已按产品行顺序关联第 %d 行' %
-                (item.seller_sku, source_row.row_number))
-        elif len(source_rows) == 1:
-            source_row = source_rows[0]
-            warnings.append(
-                'XYP2 来源 SKU %s 未精确匹配，已关联唯一产品行' % item.seller_sku)
+                'XYP2 来源 SKU %s 未精确匹配，已关联剩余 %d 个产品行' %
+                (xyp2_items[index].seller_sku, len(unmatched_source_rows)))
+            unmatched_source_rows = []
+        elif len(unmatched_items) == len(unmatched_source_rows):
+            for index, source_row in zip(unmatched_items, unmatched_source_rows):
+                assignments[index].append(source_row)
+                warnings.append(
+                    'XYP2 来源 SKU %s 未精确匹配，已按产品行顺序关联第 %d 行' %
+                    (xyp2_items[index].seller_sku, source_row.row_number))
+            unmatched_source_rows = []
         else:
             raise ProcurementImportError(
-                'XYP2 来源 SKU %s 无法匹配店小秘产品行' % item.seller_sku)
-        used[source_row.row_number] += 1
-        matched.append((item, source_row))
+                'XYP2 来源 SKU %s 无法唯一匹配店小秘产品行' %
+                xyp2_items[unmatched_items[0]].seller_sku)
+    if unmatched_items and any(not assignments[index] for index in unmatched_items):
+        index = next(index for index in unmatched_items if not assignments[index])
+        raise ProcurementImportError(
+            'XYP2 来源 SKU %s 无法匹配店小秘产品行' %
+            xyp2_items[index].seller_sku)
+    matched = [
+        (item, tuple(assignments[index]))
+        for index, item in enumerate(xyp2_items)
+    ]
     return matched, warnings
 
 
@@ -676,13 +704,17 @@ def _build_rows(groups):
                 'level': 'warning', 'orderNo': order_no,
                 'packageNo': package_no, 'message': message,
             })
-        represented_rows = {source.row_number for _item, source in matches}
+        represented_rows = {
+            source.row_number
+            for _item, matched_sources in matches
+            for source in matched_sources
+        }
         for source in source_rows:
             if source.row_number not in represented_rows:
                 issues.append({
                     'level': 'warning', 'orderNo': order_no,
                     'packageNo': package_no,
-                    'message': '店小秘第 %d 行没有对应 XYP2 采购明细' % source.row_number,
+                    'message': '店小秘第 %d 行未能归入任何 XYP2 采购明细' % source.row_number,
                 })
         first = source_rows[0]
         values = first.values
@@ -698,13 +730,22 @@ def _build_rows(groups):
         country = _site_code(
             values.get('收货人国家'), values.get('币种缩写'), xyp2.site)
         amount_written = False
-        for item, source in matches:
+        for item, matched_sources in matches:
+            source = matched_sources[0]
             try:
-                sales_unit_price = _number(
-                    source.values.get('产品售价'), '产品售价', source.row_number,
-                    allow_empty=True)
-                exported_qty = _positive_int(
-                    source.values.get('单个产品数量'), '单个产品数量', source.row_number)
+                source_amounts = []
+                exported_qty = 0
+                for matched_source in matched_sources:
+                    sales_unit_price = _number(
+                        matched_source.values.get('产品售价'), '产品售价',
+                        matched_source.row_number, allow_empty=True)
+                    source_qty = _positive_int(
+                        matched_source.values.get('单个产品数量'),
+                        '单个产品数量', matched_source.row_number)
+                    exported_qty += source_qty
+                    source_amounts.append(
+                        None if sales_unit_price is None
+                        else sales_unit_price * source_qty)
             except ProcurementImportError as exc:
                 issues.append({
                     'level': 'error', 'orderNo': order_no,
@@ -715,11 +756,29 @@ def _build_rows(groups):
                 issues.append({
                     'level': 'warning', 'orderNo': order_no,
                     'packageNo': package_no,
-                    'message': ('第 %d 行销售数量 %d 与 XYP2 采购数量 %d 不一致，'
-                                '协作表采用 XYP2 采购数量') % (
-                                    source.row_number, exported_qty,
-                                    item.purchase_qty),
+                    'message': ('店小秘第 %s 行合计销售数量 %d 与 XYP2 采购数量 %d '
+                                '不一致；需求数量采用 XYP2，商品金额仍按店小秘'
+                                '销售行计算') % (
+                                    '、'.join(str(matched.row_number)
+                                             for matched in matched_sources),
+                                    exported_qty, item.purchase_qty),
                 })
+            item_sales_amount = (
+                round(sum(source_amounts), 2)
+                if source_amounts and all(
+                    amount is not None for amount in source_amounts)
+                else None
+            )
+            image_source = next(
+                (matched for matched in matched_sources if matched.order_image),
+                source)
+            image_url = next((
+                trusted for trusted in (
+                    _trusted_image_url(
+                        matched.values.get('产品图片网址'))
+                    for matched in matched_sources)
+                if trusted
+            ), '')
             row_values = OrderedDict((
                 ('分单日期', ''), ('采购员', ''),
                 ('销售订单号', order_no), ('店铺', store_name),
@@ -729,9 +788,7 @@ def _build_rows(groups):
                 ('销售订单金额',
                  sales_amount if not amount_written else None),
                 # 明细级金额每行都写，便于按商品统计。
-                ('商品金额', (
-                    round(sales_unit_price * exported_qty, 2)
-                    if sales_unit_price is not None else None)),
+                ('商品金额', item_sales_amount),
                 ('订单时间', _compact_text(values.get('下单时间'))),
                 ('商品图片', ''), ('采购链接', item.purchase_link),
                 ('主规格', item.main_spec), ('次规格', item.secondary_spec),
@@ -759,14 +816,11 @@ def _build_rows(groups):
                 ('导入批次', ''), ('数据版本', 'XYP2'),
             ))
             rows.append(CollaborationRow(
-                values=row_values, order_image=source.order_image,
-                order_image_url=_trusted_image_url(
-                    source.values.get('产品图片网址')),
+                values=row_values, order_image=image_source.order_image,
+                order_image_url=image_url,
                 purchase_currency=item.purchase_currency,
                 sales_currency=_compact_text(values.get('币种缩写')).upper(),
-                item_sales_amount=(
-                    round(sales_unit_price * exported_qty, 2)
-                    if sales_unit_price is not None else None),
+                item_sales_amount=item_sales_amount,
                 order_group_index=group_index))
             amount_written = True
     return rows, issues
@@ -1000,6 +1054,32 @@ def _sync_signature(values):
         '主规格', '次规格', '需求数量', '采购指导价', '采购备注',
         '导入批次', '数据版本',
     ))
+
+
+def _business_signature(values):
+    """Stable line identity shared by the same order across import batches."""
+    return tuple(_compact_text(values.get(name)) for name in (
+        '系统订单键', '销售订单号', '包裹号',
+        '主规格', '次规格', '需求数量', '采购指导价', '采购备注',
+        '数据版本',
+    ))
+
+
+def _exact_counter_multiple(actual, expected):
+    """Return how many complete identical copies ``actual`` contains."""
+    if not expected or set(actual) != set(expected):
+        return 0
+    multiple = None
+    for signature, expected_count in expected.items():
+        actual_count = actual[signature]
+        if actual_count < expected_count or actual_count % expected_count:
+            return 0
+        current = actual_count // expected_count
+        if multiple is None:
+            multiple = current
+        elif multiple != current:
+            return 0
+    return int(multiple or 0)
 
 
 class ProcurementImportService(object):
@@ -1303,8 +1383,9 @@ class ProcurementImportService(object):
             headers = _validate_collaboration_headers(table.headers)
         except LarkSheetSyncError as exc:
             raise ProcurementImportError(str(exc)) from exc
-        target_queues = defaultdict(deque)
-        target_counts = Counter()
+        current_queues = defaultdict(deque)
+        current_counts = Counter()
+        historical_by_order = defaultdict(list)
         for row_number, raw_values in table.rows:
             padded = list(raw_values[:len(headers)])
             padded.extend([''] * (len(headers) - len(padded)))
@@ -1312,31 +1393,92 @@ class ProcurementImportService(object):
                 _canonical_header(header): value
                 for header, value in zip(headers, padded)
             }
-            if _compact_text(values.get('导入批次')) != plan.import_batch:
-                continue
-            signature = _sync_signature(values)
-            target_queues[signature].append(int(row_number))
-            target_counts[signature] += 1
+            batch = _compact_text(values.get('导入批次'))
+            order_key = _compact_text(values.get('系统订单键'))
+            if batch == plan.import_batch:
+                signature = _sync_signature(values)
+                current_queues[signature].append(int(row_number))
+                current_counts[signature] += 1
+            elif order_key:
+                historical_by_order[order_key].append({
+                    'rowNumber': int(row_number),
+                    'values': values,
+                })
         expected_counts = Counter(_sync_signature(row.values) for row in plan.rows)
-        unexpected = target_counts - expected_counts
+        unexpected = current_counts - expected_counts
         if unexpected:
             duplicated = sum(unexpected.values())
             raise ProcurementImportError(
                 '目标表中本批已存在 %d 条与解析计划不一致或重复的数据，'
                 '为避免重复导入已停止写入' % duplicated)
-        remaining = Counter(target_counts)
-        missing_rows = []
-        for row in plan.rows:
+
+        target_queues = defaultdict(deque)
+        target_counts = Counter()
+        historical_row_numbers = set()
+        plan_by_order = defaultdict(list)
+        unmatched_by_order = defaultdict(list)
+        matched_count_by_order = Counter()
+        for index, row in enumerate(plan.rows):
+            order_key = _compact_text(row.values.get('系统订单键'))
+            plan_by_order[order_key].append((index, row))
             signature = _sync_signature(row.values)
-            if remaining[signature] > 0:
-                remaining[signature] -= 1
+            if current_queues[signature]:
+                target_queues[signature].append(
+                    current_queues[signature].popleft())
+                target_counts[signature] += 1
+                matched_count_by_order[order_key] += 1
             else:
-                missing_rows.append(row)
-        return table, headers, target_queues, target_counts, expected_counts, missing_rows
+                unmatched_by_order[order_key].append((index, row))
+
+        missing_rows = []
+        conflicting_orders = 0
+        for order_key, plan_items in plan_by_order.items():
+            unmatched = unmatched_by_order[order_key]
+            historical = historical_by_order.get(order_key, ())
+            if matched_count_by_order[order_key]:
+                # A partially written current batch may resume only when there
+                # is no older copy of the same order. Mixing both sources is
+                # ambiguous and could silently preserve a duplicate detail.
+                if unmatched and historical:
+                    conflicting_orders += 1
+                    continue
+                missing_rows.extend(row for _index, row in unmatched)
+                continue
+            if not historical:
+                missing_rows.extend(row for _index, row in plan_items)
+                continue
+            expected_business = Counter(
+                _business_signature(row.values) for _index, row in plan_items)
+            historical_business = Counter(
+                _business_signature(item['values']) for item in historical)
+            if not _exact_counter_multiple(
+                    historical_business, expected_business):
+                conflicting_orders += 1
+                continue
+            historical_queues = defaultdict(deque)
+            for item in historical:
+                historical_queues[
+                    _business_signature(item['values'])].append(
+                        item['rowNumber'])
+            for _index, row in plan_items:
+                signature = _sync_signature(row.values)
+                historical_row = historical_queues[
+                    _business_signature(row.values)].popleft()
+                target_queues[signature].append(historical_row)
+                historical_row_numbers.add(historical_row)
+                target_counts[signature] += 1
+        if conflicting_orders:
+            raise ProcurementImportError(
+                '目标表中有 %d 个订单已经导入，但本次采购明细与历史记录不同。'
+                '采购协作导入不支持修改已导入订单，已停止写入；'
+                '采购任务认领前修改请走独立修订流程' % conflicting_orders)
+        return (table, headers, target_queues, target_counts,
+                expected_counts, missing_rows, historical_row_numbers)
 
     def _prepare_image_sync(self, plan, target):
         _table, headers, target_queues, target_counts, expected_counts, \
-            missing_rows = self._target_batch_state(plan, target)
+            missing_rows, historical_rows = self._target_batch_state(
+                plan, target)
         if missing_rows or target_counts != expected_counts:
             raise ProcurementImportError(
                 '本批数据写后回读不完整（预期 %d 行，实际 %d 行），'
@@ -1345,14 +1487,22 @@ class ProcurementImportService(object):
         matched = []
         for index, row in enumerate(plan.rows):
             signature = _sync_signature(row.values)
+            row_number = target_queues[signature].popleft()
+            # A cross-batch match proves that the order already exists.  This
+            # import path must not use the new file to alter any historical
+            # business row, link, image or purchaser task color.
+            if row_number in historical_rows:
+                continue
             matched.append({
                 'planIndex': index,
-                'rowNumber': target_queues[signature].popleft(),
+                'rowNumber': row_number,
                 'row': row,
             })
         image_column = _column_name(
             tuple(_canonical_header(item) for item in headers).index(
                 '商品图片') + 1)
+        if not matched:
+            return matched, headers, image_column
         try:
             presence = self.sheet_gateway.image_presence(
                 target.url, target.sheet_id,
@@ -1372,6 +1522,9 @@ class ProcurementImportService(object):
         color and is never replaced during an idempotent retry.  Row height and
         the system-owned purchase-link cell remain safe to normalize.
         """
+        if not matched:
+            self._job_update(job_id, rows_styled=0, links_written=0)
+            return
         row_numbers = [item['rowNumber'] for item in matched]
         try:
             backgrounds = self.sheet_gateway.row_backgrounds(
@@ -1486,7 +1639,8 @@ class ProcurementImportService(object):
         last_error = None
         for attempt in range(3):
             try:
-                _table, _headers, _queues, counts, expected, remaining = \
+                _table, _headers, _queues, counts, expected, remaining, \
+                    _historical = \
                     self._target_batch_state(plan, target)
                 if not remaining and counts == expected:
                     return
@@ -1562,7 +1716,8 @@ class ProcurementImportService(object):
             target = self._refresh_target(target)
             target = self._normalize_target_structure(job_id, target)
             self._job_update(job_id, target_name=target.sheet_name)
-            _table, headers, _queues, _counts, _expected, missing_rows = \
+            _table, headers, _queues, _counts, _expected, missing_rows, \
+                _historical = \
                 self._target_batch_state(plan, target)
             self._append_missing_rows(
                 job_id, plan, target, missing_rows, headers)
