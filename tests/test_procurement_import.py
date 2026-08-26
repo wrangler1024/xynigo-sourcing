@@ -535,7 +535,8 @@ class ProcurementImportTests(unittest.TestCase):
         self.assertEqual(gateway.presentation_calls[0]['height'], 52)
         self.assertEqual(gateway.presentation_calls[0]['lastColumn'], 'AN')
         self.assertEqual(gateway.presentation_calls[0]['bands'], ({
-            'start': 2, 'end': 3, 'color': '#D8ECFF'},))
+            'start': 2, 'end': 3,
+            'color': '#' + ORDER_GROUP_COLORS[0]},))
         self.assertEqual(len(gateway.hyperlink_calls), 1)
         self.assertEqual(
             gateway.append_calls[0]['columns'], gateway.headers)
@@ -633,6 +634,8 @@ class ProcurementImportTests(unittest.TestCase):
         self.assertIn('/api/assistant/procurement-import/target/inspect', html)
         self.assertIn('/api/assistant/procurement-import/target/validate', html)
         self.assertIn('/api/assistant/procurement-import/sheet-sync', html)
+        self.assertIn('function procurementImportResourcePath(path)', html)
+        self.assertIn("'/v1/assistant/procurement-import/'", html)
         self.assertIn('id="procurementImportTargetUrl"', html)
         self.assertIn('无需人工复制粘贴', html)
         self.assertIn('不会覆盖已有单元格', html)
@@ -642,7 +645,15 @@ class ProcurementImportTests(unittest.TestCase):
         self.assertIn('procurement-import-stack', html)
         self.assertIn('procurement-import-order-band-', html)
         self.assertIn('procurement-import-order-band-5', html)
+        self.assertIn('background: #e0f1ff', html)
+        self.assertIn('background: #fdebf5', html)
         self.assertIn('groupIndex % 6', html)
+        self.assertIn('系统追踪区仅用于幂等防重', html)
+        self.assertNotIn('商品图片缩小 25%', html)
+        self.assertIn(
+            '.procurement-import-target-grid select, '
+            '.procurement-import-target-actions .btn', html)
+        self.assertIn('height: 42px; min-height: 42px', html)
         self.assertIn("'/api/assistant/procurement-import/image'", main)
         self.assertIn(
             "'/api/assistant/procurement-import/parse': 'assistant.access'",

@@ -12,7 +12,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ManagedPaths = @(
-    "app", "deps", "python-embed", "run.py", "启动.bat",
+    "app", "deps", "python-embed", "run.py", "启动.bat", "启动-本地执行器.bat",
     "update-helper.ps1", "VERSION.json", "使用说明.txt"
 )
 $LogRoot = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "XynigoSourcing\logs"

@@ -5,17 +5,16 @@ from __future__ import annotations
 
 import argparse
 import os
-from pathlib import Path
 import re
-import sys
 import tempfile
-
+from pathlib import Path
 
 SETTING_KEYS = {
     "login_success_path": "XYNIGO_AUTH_LOGIN_SUCCESS_PATH",
     "feishu_pkce_method": "XYNIGO_AUTH_FEISHU_PKCE_METHOD",
     "feishu_operation_sync_enabled": "XYNIGO_AUTH_FEISHU_OPERATION_SYNC_ENABLED",
     "feishu_purchase_sync_enabled": "XYNIGO_AUTH_FEISHU_PURCHASE_SYNC_ENABLED",
+    "procurement_import_enabled": "XYNIGO_AUTH_PROCUREMENT_IMPORT_ENABLED",
     "feishu_operation_base_token": "XYNIGO_AUTH_FEISHU_OPERATION_BASE_TOKEN",
     "feishu_purchase_base_token": "XYNIGO_AUTH_FEISHU_PURCHASE_BASE_TOKEN",
     "feishu_purchase_order_table_id": "XYNIGO_AUTH_FEISHU_PURCHASE_ORDER_TABLE_ID",
@@ -41,6 +40,7 @@ def update_env(path: Path, setting: str, value: str) -> None:
     if setting in {
         "feishu_operation_sync_enabled",
         "feishu_purchase_sync_enabled",
+        "procurement_import_enabled",
     } and value not in {"true", "false"}:
         raise ValueError("invalid Feishu sync flag")
     if setting in {

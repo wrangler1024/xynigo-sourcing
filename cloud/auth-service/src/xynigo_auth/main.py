@@ -9,20 +9,31 @@ import logging
 import re
 import time
 import uuid
-from contextlib import asynccontextmanager
 from collections.abc import Iterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal
+from urllib.parse import quote
 
-from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
+from fastapi import (
+    Cookie,
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
-from starlette.middleware.trustedhost import TrustedHostMiddleware
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.orm import Session
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .business_log import BusinessLogService
 from .buyer_account_contract import (
@@ -32,6 +43,17 @@ from .buyer_account_contract import (
 )
 from .buyer_account_service import BuyerAccountService
 from .buyer_credential_crypto import BuyerCredentialCipher
+from .checkout_contract import (
+    CheckoutAttemptAbandonBody,
+    CheckoutAttemptBeginBody,
+    CheckoutAttemptCreateBody,
+    CheckoutAttemptReviseBody,
+    CheckoutCleanupResultBody,
+    CheckoutPaymentResultBody,
+    ShipmentUpsertBody,
+    plan_payload,
+)
+from .checkout_service import ProcurementCheckoutService
 from .config import Settings
 from .database import Database
 from .feishu import (
@@ -44,6 +66,11 @@ from .feishu import (
     OAuthClient,
     OAuthProviderError,
 )
+from .feishu_operation_sync import (
+    FeishuOperationBaseClient,
+    FeishuOperationSyncWorker,
+)
+from .feishu_purchase_sync import FeishuPurchaseBaseClient, FeishuPurchaseSyncWorker
 from .models import (
     LocalLoginRequest,
     OAuthLoginAttempt,
@@ -57,22 +84,19 @@ from .models import (
 )
 from .operation_contract import EnvironmentCreationRunBody, LogisticsQueryRunBody
 from .operation_service import OperationResultService
-from .feishu_operation_sync import (
-    FeishuOperationBaseClient,
-    FeishuOperationSyncWorker,
+from .procurement_import_contract import (
+    ProcurementImportParseBody,
+    ProcurementImportSyncBody,
+    ProcurementImportTargetInspectBody,
+    ProcurementImportTargetValidateBody,
 )
-from .feishu_purchase_sync import FeishuPurchaseBaseClient, FeishuPurchaseSyncWorker
-from .checkout_contract import (
-    CheckoutAttemptAbandonBody,
-    CheckoutAttemptBeginBody,
-    CheckoutAttemptCreateBody,
-    CheckoutAttemptReviseBody,
-    CheckoutCleanupResultBody,
-    CheckoutPaymentResultBody,
-    ShipmentUpsertBody,
-    plan_payload,
+from .procurement_import_crypto import ProcurementImportCipher
+from .procurement_import_service import (
+    CloudProcurementImportError,
+    CloudProcurementImportService,
+    ProcurementImportWorker,
 )
-from .checkout_service import ProcurementCheckoutService
+from .procurement_import_sheet import FeishuSheetsGateway
 from .purchase_contract import PurchaseDraft
 from .purchase_service import PurchaseOrderService, PurchaseServiceError
 from .security import hash_token, pkce_challenge, random_url_token
@@ -83,7 +107,6 @@ from .system_log import (
     normalize_route,
     should_capture_http,
 )
-
 
 logger = logging.getLogger(__name__)
 
@@ -295,11 +318,11 @@ class PurchaseSplitPlanBody(BaseModel):
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def as_utc(value: datetime) -> datetime:
-    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 def create_app(
@@ -307,6 +330,7 @@ def create_app(
     oauth_client: OAuthClient | None = None,
     directory_client: DirectoryClient | None = None,
     database: Database | None = None,
+    procurement_import_gateway: FeishuSheetsGateway | None = None,
 ) -> FastAPI:
     settings = settings or Settings()  # type: ignore[call-arg]
     database = database or Database(settings.database_url.get_secret_value())
@@ -352,6 +376,26 @@ def create_app(
             ),
             interval_seconds=settings.feishu_purchase_sync_interval_seconds,
         )
+    procurement_import_service = None
+    procurement_import_worker = None
+    if settings.procurement_import_enabled:
+        procurement_import_gateway = procurement_import_gateway or FeishuSheetsGateway(
+            app_id=settings.feishu_app_id,
+            app_secret=settings.feishu_app_secret.get_secret_value(),
+        )
+        procurement_import_service = CloudProcurementImportService(
+            session_factory=database.session_factory,
+            gateway=procurement_import_gateway,
+            cipher=ProcurementImportCipher(buyer_credential_key),
+            plan_ttl_seconds=settings.procurement_import_plan_ttl_seconds,
+            max_active_plans_per_tenant=(
+                settings.procurement_import_max_active_plans_per_tenant
+            ),
+        )
+        procurement_import_worker = ProcurementImportWorker(
+            service=procurement_import_service,
+            interval_seconds=settings.procurement_import_worker_interval_seconds,
+        )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -359,9 +403,13 @@ def create_app(
             operation_sync_worker.start()
         if purchase_sync_worker is not None:
             purchase_sync_worker.start()
+        if procurement_import_worker is not None:
+            procurement_import_worker.start()
         try:
             yield
         finally:
+            if procurement_import_worker is not None:
+                procurement_import_worker.stop()
             if purchase_sync_worker is not None:
                 purchase_sync_worker.stop()
             if operation_sync_worker is not None:
@@ -370,7 +418,7 @@ def create_app(
 
     app = FastAPI(
         title="Xynigo Auth Service",
-        version="0.12.3",
+        version="0.12.4",
         docs_url=None,
         redoc_url=None,
         lifespan=lifespan,
@@ -382,6 +430,8 @@ def create_app(
     app.state.buyer_credential_cipher = buyer_credential_cipher
     app.state.operation_sync_worker = operation_sync_worker
     app.state.purchase_sync_worker = purchase_sync_worker
+    app.state.procurement_import_service = procurement_import_service
+    app.state.procurement_import_worker = procurement_import_worker
     app.state.last_system_log_prune_at = 0.0
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_host_list)
 
@@ -1164,6 +1214,407 @@ def create_app(
         )
         session.commit()
         return {"ok": True, "data": result}
+
+    def require_procurement_import_runtime() -> CloudProcurementImportService:
+        if procurement_import_service is None:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "procurement_import_cloud_disabled",
+                    "message": "云端采购协作导入尚未启用",
+                },
+            )
+        return procurement_import_service
+
+    def procurement_import_failure(
+        request: Request,
+        session: Session,
+        actor: AdminActor,
+        *,
+        action: str,
+        exc: CloudProcurementImportError,
+        object_id: object | None = None,
+    ) -> None:
+        session.rollback()
+        _add_audit(
+            session,
+            request_id=request.state.request_id,
+            action=action,
+            result="denied" if exc.status in {403, 404, 409, 410, 422} else "failure",
+            outcome=(
+                "validation_failed"
+                if exc.status == 422
+                else "business_conflict"
+                if exc.status in {409, 410}
+                else "not_found"
+                if exc.status == 404
+                else "external_service_failed"
+                if exc.status in {502, 503, 504}
+                else "failure"
+            ),
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            business_object_type="procurement_import",
+            business_object_id=str(object_id or "")[:160] or None,
+            failure_reason=exc.code,
+            details={"reason": exc.code},
+            **_request_log_context(request),
+        )
+        session.commit()
+        raise HTTPException(
+            status_code=exc.status,
+            detail={"code": exc.code, "message": str(exc)},
+        )
+
+    @app.post(
+        "/v1/assistant/procurement-import/parse",
+        status_code=status.HTTP_201_CREATED,
+    )
+    def parse_procurement_import(
+        request: Request,
+        body: ProcurementImportParseBody,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "assistant.procurement_import.parse"
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        runtime = require_procurement_import_runtime()
+        try:
+            result = runtime.parse(
+                session,
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                filename=body.filename,
+                content_base64=body.contentBase64,
+            )
+        except CloudProcurementImportError as exc:
+            procurement_import_failure(
+                request, session, actor, action=action, exc=exc
+            )
+        _add_audit(
+            session,
+            request_id=request.state.request_id,
+            action=action,
+            result="success",
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            business_object_type="procurement_import_plan",
+            business_object_id=result["planId"],
+            change_summary={
+                "sourceRows": result["sourceRows"],
+                "orderCount": result["orderCount"],
+                "detailCount": result["detailCount"],
+                "imageCount": result["orderImageCount"],
+            },
+            details={
+                "sourceRows": result["sourceRows"],
+                "orderCount": result["orderCount"],
+                "detailCount": result["detailCount"],
+            },
+            **_request_log_context(request),
+        )
+        session.commit()
+        return result
+
+    @app.get("/v1/assistant/procurement-import/image")
+    def procurement_import_image(
+        request: Request,
+        session: SessionDep,
+        plan_id: str = Query(alias="planId", min_length=1, max_length=64),
+        row: int = Query(ge=0, le=100_000),
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> Response:
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="assistant.procurement_import.image_read",
+        )
+        runtime = require_procurement_import_runtime()
+        try:
+            data, mime = runtime.preview_image(
+                session,
+                tenant_id=actor.tenant.id,
+                plan_id=plan_id,
+                row=row,
+            )
+        except CloudProcurementImportError as exc:
+            procurement_import_failure(
+                request,
+                session,
+                actor,
+                action="assistant.procurement_import.image_read",
+                exc=exc,
+                object_id=plan_id,
+            )
+        session.commit()
+        return Response(
+            content=data,
+            media_type=mime,
+            headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+        )
+
+    @app.get("/v1/assistant/procurement-import/export")
+    def procurement_import_export(
+        request: Request,
+        session: SessionDep,
+        plan_id: str = Query(alias="planId", min_length=1, max_length=64),
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> Response:
+        action = "assistant.procurement_import.export"
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        runtime = require_procurement_import_runtime()
+        try:
+            data, filename, mime = runtime.export(
+                session, tenant_id=actor.tenant.id, plan_id=plan_id
+            )
+        except CloudProcurementImportError as exc:
+            procurement_import_failure(
+                request,
+                session,
+                actor,
+                action=action,
+                exc=exc,
+                object_id=plan_id,
+            )
+        _add_audit(
+            session,
+            request_id=request.state.request_id,
+            action=action,
+            result="success",
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            business_object_type="procurement_import_plan",
+            business_object_id=plan_id,
+            change_summary={"format": "xlsx"},
+            details={"format": "xlsx"},
+            **_request_log_context(request),
+        )
+        session.commit()
+        return Response(
+            content=data,
+            media_type=mime,
+            headers={
+                "Cache-Control": "private, no-store",
+                "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    @app.post("/v1/assistant/procurement-import/target/inspect")
+    def inspect_procurement_import_target(
+        request: Request,
+        body: ProcurementImportTargetInspectBody,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "assistant.procurement_import.target_inspect"
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        runtime = require_procurement_import_runtime()
+        try:
+            result = runtime.inspect_target(
+                session,
+                tenant_id=actor.tenant.id,
+                plan_id=body.planId,
+                spreadsheet_url=body.spreadsheetUrl,
+            )
+        except CloudProcurementImportError as exc:
+            procurement_import_failure(
+                request,
+                session,
+                actor,
+                action=action,
+                exc=exc,
+                object_id=body.planId,
+            )
+        session.commit()
+        return result
+
+    @app.post("/v1/assistant/procurement-import/target/validate")
+    def validate_procurement_import_target(
+        request: Request,
+        body: ProcurementImportTargetValidateBody,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "assistant.procurement_import.target_validate"
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        runtime = require_procurement_import_runtime()
+        try:
+            result = runtime.validate_target(
+                session,
+                tenant_id=actor.tenant.id,
+                plan_id=body.planId,
+                spreadsheet_url=body.spreadsheetUrl,
+                sheet_id=body.sheetId,
+            )
+        except CloudProcurementImportError as exc:
+            procurement_import_failure(
+                request,
+                session,
+                actor,
+                action=action,
+                exc=exc,
+                object_id=body.planId,
+            )
+        _add_audit(
+            session,
+            request_id=request.state.request_id,
+            action=action,
+            result="success",
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            business_object_type="procurement_import_plan",
+            business_object_id=body.planId,
+            change_summary={
+                "headerCount": result["headerCount"],
+                "detailCount": result["detailCount"],
+            },
+            details={
+                "headerCount": result["headerCount"],
+                "detailCount": result["detailCount"],
+            },
+            **_request_log_context(request),
+        )
+        session.commit()
+        return result
+
+    @app.post(
+        "/v1/assistant/procurement-import/sheet-sync",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def start_procurement_import_sync(
+        request: Request,
+        body: ProcurementImportSyncBody,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "assistant.procurement_import.sheet_sync_start"
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        runtime = require_procurement_import_runtime()
+        try:
+            result = runtime.start_sync(
+                session,
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                actor_name=actor.user.display_name,
+                plan_id=body.planId,
+                confirm_write=body.confirmWrite,
+            )
+        except CloudProcurementImportError as exc:
+            procurement_import_failure(
+                request,
+                session,
+                actor,
+                action=action,
+                exc=exc,
+                object_id=body.planId,
+            )
+        _add_audit(
+            session,
+            request_id=request.state.request_id,
+            action=action,
+            result="success",
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            business_object_type="procurement_import_job",
+            business_object_id=result["jobId"],
+            change_summary={"rowsTotal": result["rowsTotal"]},
+            details={"rowsTotal": result["rowsTotal"]},
+            **_request_log_context(request),
+        )
+        session.commit()
+        return result
+
+    @app.get("/v1/assistant/procurement-import/sheet-sync/status")
+    def procurement_import_sync_status(
+        request: Request,
+        session: SessionDep,
+        job_id: str = Query(alias="jobId", min_length=1, max_length=64),
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="assistant.procurement_import.sheet_sync_status",
+        )
+        runtime = require_procurement_import_runtime()
+        try:
+            result = runtime.status(
+                session, tenant_id=actor.tenant.id, job_id=job_id
+            )
+        except CloudProcurementImportError as exc:
+            procurement_import_failure(
+                request,
+                session,
+                actor,
+                action="assistant.procurement_import.sheet_sync_status",
+                exc=exc,
+                object_id=job_id,
+            )
+        session.commit()
+        return result
 
     @app.get("/v1/resources/buyer-accounts")
     def list_buyer_accounts(
@@ -3921,6 +4372,16 @@ def _authenticated_identity(
 
 def _validation_log_target(method: str, path: str) -> tuple[str | None, str | None]:
     method = method.upper()
+    if path.startswith("/v1/assistant/procurement-import/"):
+        suffix = path.removeprefix("/v1/assistant/procurement-import/")
+        action = {
+            ("POST", "parse"): "assistant.procurement_import.parse",
+            ("POST", "target/inspect"): "assistant.procurement_import.target_inspect",
+            ("POST", "target/validate"): "assistant.procurement_import.target_validate",
+            ("POST", "sheet-sync"): "assistant.procurement_import.sheet_sync_start",
+        }.get((method, suffix))
+        if action:
+            return action, None
     if method == "PUT" and path == "/v1/operations/environment-creation-runs":
         return "resource.environment.result_ingest", None
     if method == "PUT" and path == "/v1/operations/logistics-query-runs":

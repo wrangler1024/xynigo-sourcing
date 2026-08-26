@@ -1,0 +1,14 @@
+ARG BASE_IMAGE=xynigo-auth-auth:latest
+FROM ${BASE_IMAGE}
+
+# Deployment fallback for bandwidth-constrained hosts. The base image already
+# contains the locked runtime; pip verifies it and downloads only newly added
+# packages before the validated application and migration files are replaced.
+USER root
+COPY requirements.lock alembic.ini ./
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock
+
+COPY migrations ./migrations
+COPY src ./src
+
+USER xynigo

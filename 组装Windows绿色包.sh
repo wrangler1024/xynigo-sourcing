@@ -61,20 +61,34 @@ stage = os.environ['STAGE']
 version = os.environ['VERSION']
 channel = os.environ['CHANNEL']
 
-bat = (
-    '@echo off\r\n'
-    'setlocal\r\n'
-    'cd /d "%%~dp0"\r\n'
-    'echo Xynigo Sourcing v%s 启动中...\r\n'
-    'echo 保持此窗口开启；关闭窗口即退出工具。\r\n'
-    'python-embed\\python.exe run.py\r\n'
-    'set "XYNIGO_EXIT_CODE=%%ERRORLEVEL%%"\r\n'
-    'if "%%XYNIGO_EXIT_CODE%%"=="42" exit /b 0\r\n'
-    'if not "%%XYNIGO_EXIT_CODE%%"=="0" echo 启动失败，退出码：%%XYNIGO_EXIT_CODE%%\r\n'
-    'pause\r\n'
-) % version
+def launcher(command, mode_text):
+    return (
+        '@echo off\r\n'
+        'setlocal\r\n'
+        'cd /d "%%~dp0"\r\n'
+        'echo Xynigo Sourcing v%s 启动中...\r\n'
+        'echo %s\r\n'
+        'echo 保持此窗口开启；关闭窗口即退出工具。\r\n'
+        '%s\r\n'
+        'set "XYNIGO_EXIT_CODE=%%ERRORLEVEL%%"\r\n'
+        'if "%%XYNIGO_EXIT_CODE%%"=="42" exit /b 0\r\n'
+        'if not "%%XYNIGO_EXIT_CODE%%"=="0" echo 启动失败，退出码：%%XYNIGO_EXIT_CODE%%\r\n'
+        'pause\r\n'
+    ) % (version, mode_text, command)
+
+
+bat = launcher(
+    'python-embed\\python.exe run.py',
+    '默认打开云端工作台；本地执行器同时运行。',
+)
 with open(os.path.join(stage, '启动.bat'), 'wb') as handle:
     handle.write(bat.encode('gbk'))
+local_bat = launcher(
+    'python-embed\\python.exe run.py --local-ui',
+    '打开本机兼容界面，用于 HubStudio 与故障排查。',
+)
+with open(os.path.join(stage, '启动-本地执行器.bat'), 'wb') as handle:
+    handle.write(local_bat.encode('gbk'))
 
 run_py = '''# -*- coding: utf-8 -*-
 """Windows green-package entry point."""
@@ -114,6 +128,7 @@ version_info = {
     'repository': 'wrangler1024/xynigo-sourcing',
     'managedPaths': [
         'app', 'deps', 'python-embed', 'run.py', '启动.bat',
+        '启动-本地执行器.bat',
         'update-helper.ps1', 'VERSION.json', '使用说明.txt',
     ],
     'preservedPaths': [
@@ -127,11 +142,12 @@ with open(os.path.join(stage, 'VERSION.json'), 'w', encoding='utf-8') as handle:
 guide = '''Xynigo Sourcing v%s Windows 绿色包
 
 1. 必须先完整解压 ZIP，不能直接在压缩包中双击。
-2. 保持 HubStudio 已登录，双击“启动.bat”。
-3. 页面右上角会检查 GitHub 最新稳定版；发现新版本时点击提醒，回到运行窗口输入 Y 更新或 N 暂不更新。
-4. 更新不需要 Git 或 GitHub 账号；校验失败或网络不可用时当前版本会继续运行。
-5. config.json、查询日志、运行数据和用户导入文件不会被更新覆盖或上传。
-6. 更新失败时程序会从本机备份自动回滚并重新启动。
+2. 双击“启动.bat”默认打开云端工作台；本地执行器仍在此窗口运行。
+3. 需要使用旧本机界面或排查 HubStudio 时，双击“启动-本地执行器.bat”。
+4. 页面右上角会检查 GitHub 最新稳定版；发现新版本时点击提醒，回到运行窗口输入 Y 更新或 N 暂不更新。
+5. 更新不需要 Git 或 GitHub 账号；校验失败或网络不可用时当前版本会继续运行。
+6. config.json、查询日志、运行数据和用户导入文件不会被更新覆盖或上传。
+7. 更新失败时程序会从本机备份自动回滚并重新启动。
 ''' % version
 with open(os.path.join(stage, '使用说明.txt'), 'w', encoding='utf-8') as handle:
     handle.write(guide)
@@ -146,6 +162,7 @@ root = Path(os.environ['STAGE'])
 required = [
     'app/purchase_tool/main.py', 'app/purchase_tool/updater.py',
     'python-embed/python.exe', 'deps/openpyxl', 'run.py', '启动.bat',
+    '启动-本地执行器.bat',
     'update-helper.ps1', 'VERSION.json', '使用说明.txt',
 ]
 missing = [name for name in required if not (root / name).exists()]

@@ -34,7 +34,7 @@ wheels = [
 
 [[package]]
 name = "xynigo-sourcing"
-version = "0.12.3"
+version = "0.12.4"
 source = { editable = "." }
 dependencies = [
     { name = "openpyxl" },

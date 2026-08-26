@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "xynigo-auth-service"
-version = "0.12.3"
+version = "0.12.4"
 description = "Xynigo cloud identity, Feishu sign-in, RBAC, and session service"
 requires-python = ">=3.12"
 dependencies = [
@@ -12,6 +12,7 @@ dependencies = [
   "cryptography>=45,<47",
   "fastapi>=0.115,<1",
   "httpx>=0.28,<1",
+  "openpyxl>=3.1,<4",
   "psycopg[binary]>=3.2,<4",
   "pydantic-settings>=2.7,<3",
   "sqlalchemy>=2.0,<3",

@@ -7,6 +7,7 @@ if [ -x ".venv/bin/python" ]; then
 else
   XYNIGO_PYTHON="python3"
 fi
-echo "Xynigo Sourcing 源码版启动中，浏览器将自动打开操作页面..."
+echo "Xynigo Sourcing 源码版启动中，浏览器将默认打开云端工作台..."
+echo "本地执行器同时运行；需要本机界面时使用 --local-ui。"
 echo "保持此窗口开启；关闭窗口即退出工具。"
-"$XYNIGO_PYTHON" -m purchase_tool
+"$XYNIGO_PYTHON" -m purchase_tool "$@"
