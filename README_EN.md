@@ -33,10 +33,11 @@ workflows contributed by **Samforo**.
   outbound collaboration mirror. The legacy `买家号（统一）` table is migration
   input only.
 
-The current stable release is `v0.10.0`. The project is under active
-development and is not yet a hosted SaaS product.
+The current online coordination test release is `v0.12.3`, with update
+packages for Windows x86_64 and macOS ARM64. The project is under active
+development and is not yet a production hosted SaaS product.
 
-The current coordinated test candidate is `v0.12.3`. Building on the v0.12.2
+The current coordinated test release is `v0.12.3`. Building on the v0.12.2
 database source of truth, it encrypts complete buyer-account credentials and
 business metadata in PostgreSQL. Credential reads require a second permission,
 and the independent test Base continuously mirrors 41 authorized fields. The
