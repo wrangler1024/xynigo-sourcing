@@ -13,17 +13,25 @@ from contextlib import asynccontextmanager
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.orm import Session
 
 from .business_log import BusinessLogService
+from .buyer_account_contract import (
+    BuyerAccountPreflightBody,
+    BuyerAccountSnapshotBody,
+    safe_snapshot_items,
+)
+from .buyer_account_service import BuyerAccountService
+from .buyer_credential_crypto import BuyerCredentialCipher
 from .config import Settings
 from .database import Database
 from .feishu import (
@@ -47,6 +55,24 @@ from .models import (
     User,
     UserRole,
 )
+from .operation_contract import EnvironmentCreationRunBody, LogisticsQueryRunBody
+from .operation_service import OperationResultService
+from .feishu_operation_sync import (
+    FeishuOperationBaseClient,
+    FeishuOperationSyncWorker,
+)
+from .feishu_purchase_sync import FeishuPurchaseBaseClient, FeishuPurchaseSyncWorker
+from .checkout_contract import (
+    CheckoutAttemptAbandonBody,
+    CheckoutAttemptBeginBody,
+    CheckoutAttemptCreateBody,
+    CheckoutAttemptReviseBody,
+    CheckoutCleanupResultBody,
+    CheckoutPaymentResultBody,
+    ShipmentUpsertBody,
+    plan_payload,
+)
+from .checkout_service import ProcurementCheckoutService
 from .purchase_contract import PurchaseDraft
 from .purchase_service import PurchaseOrderService, PurchaseServiceError
 from .security import hash_token, pkce_challenge, random_url_token
@@ -60,6 +86,33 @@ from .system_log import (
 
 
 logger = logging.getLogger(__name__)
+
+
+WEB_ROOT = Path(__file__).with_name("web")
+WEB_ROOT_ASSETS = {
+    "/favicon.ico": ("image/x-icon", WEB_ROOT / "favicon.ico"),
+    "/xynigo-logo.png": ("image/png", WEB_ROOT / "xynigo-logo.png"),
+    "/xynigo-x.png": ("image/png", WEB_ROOT / "xynigo-x.png"),
+    "/xynigo-x.ico": ("image/x-icon", WEB_ROOT / "xynigo-x.ico"),
+    "/preview-product-a.svg": ("image/svg+xml", WEB_ROOT / "preview-product-a.svg"),
+    "/preview-product-b.svg": ("image/svg+xml", WEB_ROOT / "preview-product-b.svg"),
+    "/preview-product-c.svg": ("image/svg+xml", WEB_ROOT / "preview-product-c.svg"),
+}
+
+
+def _web_inline_script_csp() -> str:
+    html = (WEB_ROOT / "index.html").read_text(encoding="utf-8")
+    scripts = re.findall(r"<script(?:\s[^>]*)?>(.*?)</script>", html, re.IGNORECASE | re.DOTALL)
+    hashes = [
+        base64.b64encode(hashlib.sha256(script.encode("utf-8")).digest()).decode("ascii")
+        for script in scripts
+    ]
+    if not hashes:
+        raise RuntimeError("cloud Web workspace must contain an inline application script")
+    return " ".join(f"'sha256-{digest}'" for digest in hashes)
+
+
+WEB_INLINE_SCRIPT_CSP = _web_inline_script_csp()
 
 
 SUPER_ADMIN_ROLE = "super_admin"
@@ -267,15 +320,57 @@ def create_app(
         app_id=settings.feishu_app_id,
         app_secret=settings.feishu_app_secret.get_secret_value(),
     )
+    buyer_credential_key = settings.buyer_credential_encryption_key.get_secret_value()
+    buyer_credential_cipher = (
+        BuyerCredentialCipher(buyer_credential_key) if buyer_credential_key else None
+    )
+    operation_sync_worker = None
+    if settings.feishu_operation_sync_enabled:
+        operation_sync_worker = FeishuOperationSyncWorker(
+            session_factory=database.session_factory,
+            client=FeishuOperationBaseClient(
+                app_id=settings.feishu_app_id,
+                app_secret=settings.feishu_app_secret.get_secret_value(),
+                base_token=settings.feishu_operation_base_token,
+            ),
+            buyer_account_table_id=settings.feishu_buyer_account_table_id,
+            environment_table_id=settings.feishu_environment_result_table_id,
+            logistics_table_id=settings.feishu_logistics_result_table_id,
+            buyer_credential_cipher=buyer_credential_cipher,
+            interval_seconds=settings.feishu_operation_sync_interval_seconds,
+        )
+    purchase_sync_worker = None
+    if settings.feishu_purchase_sync_enabled:
+        purchase_sync_worker = FeishuPurchaseSyncWorker(
+            session_factory=database.session_factory,
+            client=FeishuPurchaseBaseClient(
+                app_id=settings.feishu_app_id,
+                app_secret=settings.feishu_app_secret.get_secret_value(),
+                base_token=settings.feishu_purchase_base_token,
+                master_table_id=settings.feishu_purchase_order_table_id,
+                line_table_id=settings.feishu_purchase_line_table_id,
+            ),
+            interval_seconds=settings.feishu_purchase_sync_interval_seconds,
+        )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        yield
-        database.dispose()
+        if operation_sync_worker is not None:
+            operation_sync_worker.start()
+        if purchase_sync_worker is not None:
+            purchase_sync_worker.start()
+        try:
+            yield
+        finally:
+            if purchase_sync_worker is not None:
+                purchase_sync_worker.stop()
+            if operation_sync_worker is not None:
+                operation_sync_worker.stop()
+            database.dispose()
 
     app = FastAPI(
         title="Xynigo Auth Service",
-        version="0.12.1",
+        version="0.12.3",
         docs_url=None,
         redoc_url=None,
         lifespan=lifespan,
@@ -284,6 +379,9 @@ def create_app(
     app.state.database = database
     app.state.oauth_client = oauth_client
     app.state.directory_client = directory_client
+    app.state.buyer_credential_cipher = buyer_credential_cipher
+    app.state.operation_sync_worker = operation_sync_worker
+    app.state.purchase_sync_worker = purchase_sync_worker
     app.state.last_system_log_prune_at = 0.0
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_host_list)
 
@@ -417,16 +515,30 @@ def create_app(
         request.state.client_version = " ".join(
             str(request.headers.get("X-Xynigo-Client-Version") or "").split()
         )[:64]
-        try:
-            response = await call_next(request)
-        except Exception as exc:
-            persist_http_system_log(
-                request,
-                status_code=500,
-                duration_ms=round((time.perf_counter() - started_at) * 1000),
-                exception=exc,
+        cookie_authenticated_mutation = (
+            request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
+            and bool(request.cookies.get(settings.cookie_name))
+            and not request.headers.get("Authorization")
+        )
+        if (
+            cookie_authenticated_mutation
+            and request.headers.get("X-Xynigo-Web-CSRF") != "same-origin"
+        ):
+            response = JSONResponse(
+                status_code=403,
+                content={"detail": {"code": "web_csrf_required"}},
             )
-            raise
+        else:
+            try:
+                response = await call_next(request)
+            except Exception as exc:
+                persist_http_system_log(
+                    request,
+                    status_code=500,
+                    duration_ms=round((time.perf_counter() - started_at) * 1000),
+                    exception=exc,
+                )
+                raise
         persist_http_system_log(
             request,
             status_code=response.status_code,
@@ -435,7 +547,14 @@ def create_app(
         response.headers["X-Request-ID"] = request.state.request_id
         response.headers["X-Trace-ID"] = request.state.trace_id
         response.headers["Cache-Control"] = "no-store"
-        if request.url.path == "/v1/auth/local/complete":
+        if request.url.path == "/":
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'none'; "
+                f"script-src {WEB_INLINE_SCRIPT_CSP}; style-src 'unsafe-inline'; "
+                "img-src 'self' data: https:; connect-src 'self'; "
+                "base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+            )
+        elif request.url.path == "/v1/auth/local/complete":
             response.headers["Content-Security-Policy"] = (
                 "default-src 'none'; "
                 f"script-src 'sha256-{LOCAL_LOGIN_COMPLETE_SCRIPT_HASH}'; "
@@ -499,6 +618,23 @@ def create_app(
             },
         )
 
+    @app.get("/", response_class=FileResponse)
+    def web_workspace() -> FileResponse:
+        """云端 Web 工作台入口；不依赖员工电脑上的本地执行器。"""
+
+        return FileResponse(WEB_ROOT / "index.html", media_type="text/html; charset=utf-8")
+
+    @app.get("/favicon.ico", response_class=FileResponse)
+    @app.get("/xynigo-logo.png", response_class=FileResponse)
+    @app.get("/xynigo-x.png", response_class=FileResponse)
+    @app.get("/xynigo-x.ico", response_class=FileResponse)
+    @app.get("/preview-product-a.svg", response_class=FileResponse)
+    @app.get("/preview-product-b.svg", response_class=FileResponse)
+    @app.get("/preview-product-c.svg", response_class=FileResponse)
+    def canonical_web_asset(request: Request) -> FileResponse:
+        media_type, path = WEB_ROOT_ASSETS[request.url.path]
+        return FileResponse(path, media_type=media_type)
+
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
@@ -512,6 +648,29 @@ def create_app(
     def start_feishu_login(session: SessionDep) -> RedirectResponse:
         url = create_authorization_url(session)
         return RedirectResponse(url=url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
+    @app.get("/v1/auth/web/status")
+    def web_login_status(
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+    ) -> dict[str, object]:
+        """Return a quiet 200 status so the public login shell does not emit a 401."""
+
+        if not session_token:
+            return {"authenticated": False}
+        try:
+            record, user, tenant = _authenticated_identity(session, session_token)
+        except HTTPException:
+            return {"authenticated": False}
+        bind_request_identity(request, user=user, tenant=tenant)
+        _ensure_system_catalog(session, tenant=tenant)
+        record.last_seen_at = utcnow()
+        identity = _identity_payload(session, user, tenant)
+        session.commit()
+        return {"authenticated": True, "identity": identity}
 
     @app.post("/v1/auth/local/start", status_code=status.HTTP_201_CREATED)
     def start_local_login(session: SessionDep) -> dict[str, object]:
@@ -979,6 +1138,297 @@ def create_app(
         session.commit()
         raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": str(exc)})
 
+    def checkout_success(
+        request: Request,
+        session: Session,
+        actor: AdminActor,
+        *,
+        action: str,
+        business_object_id: str | uuid.UUID,
+        summary: dict[str, Any],
+        result: dict[str, object],
+    ) -> dict[str, object]:
+        """只写入状态、版本和计数；资源引用、账号标签及物流号不进审计。"""
+
+        _add_audit(
+            session,
+            request_id=request.state.request_id,
+            action=action,
+            result="success",
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            business_object_id=business_object_id,
+            change_summary=summary,
+            details=summary,
+            **_request_log_context(request),
+        )
+        session.commit()
+        return {"ok": True, "data": result}
+
+    @app.get("/v1/resources/buyer-accounts")
+    def list_buyer_accounts(
+        request: Request,
+        session: SessionDep,
+        site: str = Query(default="", max_length=20),
+        account_status: str = Query(default="", alias="status", max_length=32),
+        credential_status: str = Query(
+            default="", alias="credentialStatus", max_length=32
+        ),
+        keyword: str = Query(default="", max_length=100),
+        selectable_only: bool = Query(default=False, alias="selectableOnly"),
+        include_credentials: bool = Query(default=False, alias="includeCredentials"),
+        page: int = Query(default=1, ge=1, le=100_000),
+        page_size: int = Query(default=100, alias="pageSize", ge=1, le=200),
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "resource.buyer_account.list"
+        actor = authorize_request(
+            request,
+            session,
+            permission="resource.buyer.read",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        if (
+            include_credentials
+            and "resource.buyer.credential.read"
+            not in _permission_code_set(session, actor.user)
+        ):
+            _add_audit(
+                session,
+                request_id=request.state.request_id,
+                action="resource.buyer_account.credential_list",
+                result="denied",
+                outcome="permission_denied",
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                failure_reason="permission_denied",
+                details={"permission": "resource.buyer.credential.read"},
+                **_request_log_context(request),
+            )
+            session.commit()
+            raise HTTPException(status_code=403, detail={"code": "permission_denied"})
+        try:
+            result = BuyerAccountService(
+                session, credential_cipher=buyer_credential_cipher
+            ).list_accounts(
+                tenant_id=actor.tenant.id,
+                site=site,
+                status=account_status,
+                credential_status=credential_status,
+                keyword=keyword,
+                selectable_only=selectable_only,
+                page=page,
+                page_size=page_size,
+                include_credentials=include_credentials,
+            )
+        except PurchaseServiceError as exc:
+            purchase_error(request, session, actor, action, exc)
+        if include_credentials:
+            return checkout_success(
+                request,
+                session,
+                actor,
+                action="resource.buyer_account.credential_list",
+                business_object_id=f"page:{page}",
+                summary={
+                    "page": page,
+                    "returnedCount": len(result.get("rows") or []),
+                    "total": result.get("total"),
+                },
+                result=result,
+            )
+        session.commit()
+        return {"ok": True, "data": result}
+
+    @app.put("/v1/resources/buyer-accounts/snapshot")
+    def sync_buyer_account_snapshot(
+        request: Request,
+        body: BuyerAccountSnapshotBody,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "resource.buyer_account.snapshot_sync"
+        actor = authorize_request(
+            request,
+            session,
+            permission="resource.buyer.import",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        try:
+            result = BuyerAccountService(
+                session, credential_cipher=buyer_credential_cipher
+            ).sync_snapshot(
+                tenant_id=actor.tenant.id,
+                source=body.source,
+                snapshot_key=body.snapshotKey,
+                accounts=safe_snapshot_items(body),
+            )
+        except PurchaseServiceError as exc:
+            purchase_error(request, session, actor, action, exc)
+        return checkout_success(
+            request,
+            session,
+            actor,
+            action=action,
+            business_object_id=body.snapshotKey,
+            summary={
+                "receivedCount": result["receivedCount"],
+                "createdCount": result["createdCount"],
+                "updatedCount": result["updatedCount"],
+                "unchangedCount": result["unchangedCount"],
+                "protectedCount": result["protectedCount"],
+            },
+            result=result,
+        )
+
+    @app.post("/v1/resources/buyer-accounts/preflight")
+    def preflight_buyer_account_import(
+        request: Request,
+        body: BuyerAccountPreflightBody,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="resource.buyer.import",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="resource.buyer_account.import_preflight",
+        )
+        result = BuyerAccountService(session).preflight_import(
+            tenant_id=actor.tenant.id,
+            items=[item.model_dump(mode="python") for item in body.items],
+        )
+        session.commit()
+        return {"ok": True, "data": result}
+
+    @app.put("/v1/operations/environment-creation-runs")
+    def ingest_environment_creation_run(
+        request: Request,
+        body: EnvironmentCreationRunBody,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "resource.environment.result_ingest"
+        actor = authorize_request(
+            request,
+            session,
+            permission="resource.environment.create",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        try:
+            result = OperationResultService(session).ingest_environment_run(
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                client_version=getattr(request.state, "client_version", None) or None,
+                body=body,
+            )
+        except PurchaseServiceError as exc:
+            purchase_error(
+                request,
+                session,
+                actor,
+                action,
+                exc,
+                business_object_id=body.runKey,
+            )
+        _add_audit(
+            session,
+            request_id=request.state.request_id,
+            action=action,
+            result="success",
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            business_object_type="environment_creation_run",
+            business_object_id=result["runId"],
+            change_summary={
+                "totalCount": result["totalCount"],
+                "successCount": result["successCount"],
+                "failedCount": result["failedCount"],
+                "syncStatus": result["syncStatus"],
+                "unchanged": result["unchanged"],
+            },
+            details={
+                "totalCount": result["totalCount"],
+                "successCount": result["successCount"],
+                "failedCount": result["failedCount"],
+                "resourceConflictCount": result.get("resourceConflictCount", 0),
+            },
+            **_request_log_context(request),
+        )
+        session.commit()
+        return {"ok": True, "data": result}
+
+    @app.put("/v1/operations/logistics-query-runs")
+    def ingest_logistics_query_run(
+        request: Request,
+        body: LogisticsQueryRunBody,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "fulfillment.logistics.result_ingest"
+        actor = authorize_request(
+            request,
+            session,
+            permission="fulfillment.order.read",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        try:
+            result = OperationResultService(session).ingest_logistics_run(
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                client_version=getattr(request.state, "client_version", None) or None,
+                body=body,
+            )
+        except PurchaseServiceError as exc:
+            purchase_error(
+                request,
+                session,
+                actor,
+                action,
+                exc,
+                business_object_id=body.runKey,
+            )
+        _add_audit(
+            session,
+            request_id=request.state.request_id,
+            action=action,
+            result="success",
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            business_object_type="logistics_query_run",
+            business_object_id=result["runId"],
+            change_summary={
+                "totalCount": result["totalCount"],
+                "successCount": result["successCount"],
+                "failedCount": result["failedCount"],
+                "syncStatus": result["syncStatus"],
+                "unchanged": result["unchanged"],
+            },
+            details={
+                "totalCount": result["totalCount"],
+                "successCount": result["successCount"],
+                "failedCount": result["failedCount"],
+            },
+            **_request_log_context(request),
+        )
+        session.commit()
+        return {"ok": True, "data": result}
+
     @app.post("/v1/purchase-orders/draft")
     def save_purchase_order_draft(
         request: Request,
@@ -1079,11 +1529,13 @@ def create_app(
                 "submissionStatus": {"after": "submitted"},
                 "draftRevision": {"after": result["draftRevision"]},
                 "unchanged": result["unchanged"],
+                "revised": result.get("revised", False),
             },
             details={
                 "purchaseOrderId": result["purchaseOrderId"],
                 "draftRevision": result["draftRevision"],
                 "unchanged": result["unchanged"],
+                "revised": result.get("revised", False),
             },
             **_request_log_context(request),
         )
@@ -1435,6 +1887,337 @@ def create_app(
         )
         session.commit()
         return {"ok": True, "data": result}
+
+    @app.post("/v1/procurement/orders/{purchase_order_id}/checkout-attempts")
+    def create_checkout_attempt(
+        request: Request,
+        purchase_order_id: uuid.UUID,
+        body: CheckoutAttemptCreateBody,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "procurement.checkout_attempt.create"
+        actor = authorize_request(
+            request,
+            session,
+            permission="procurement.execution.manage",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        try:
+            result = ProcurementCheckoutService(session).create_attempt(
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                purchase_order_id=purchase_order_id,
+                idempotency_key=body.idempotencyKey,
+                expected_execution_revision=body.expectedExecutionRevision,
+                plan=plan_payload(body),
+            )
+        except PurchaseServiceError as exc:
+            purchase_error(
+                request,
+                session,
+                actor,
+                action,
+                exc,
+                business_object_id=purchase_order_id,
+            )
+        return checkout_success(
+            request,
+            session,
+            actor,
+            action=action,
+            business_object_id=result["checkoutAttemptId"],
+            summary={
+                "status": result["status"],
+                "resourceStatus": result["resourceStatus"],
+                "version": result["version"],
+                "executionRevision": result["executionRevision"],
+                "lineCount": len(result["lines"]),  # type: ignore[arg-type]
+                "unchanged": result["unchanged"],
+            },
+            result=result,
+        )
+
+    @app.post("/v1/procurement/checkout-attempts/{attempt_id}/revise")
+    def revise_checkout_attempt(
+        request: Request,
+        attempt_id: uuid.UUID,
+        body: CheckoutAttemptReviseBody,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "procurement.checkout_attempt.revise"
+        actor = authorize_request(
+            request,
+            session,
+            permission="procurement.execution.manage",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        try:
+            result = ProcurementCheckoutService(session).revise_attempt(
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                attempt_id=attempt_id,
+                expected_version=body.expectedVersion,
+                expected_execution_revision=body.expectedExecutionRevision,
+                plan=plan_payload(body),
+            )
+        except PurchaseServiceError as exc:
+            purchase_error(request, session, actor, action, exc, business_object_id=attempt_id)
+        return checkout_success(
+            request,
+            session,
+            actor,
+            action=action,
+            business_object_id=attempt_id,
+            summary={
+                "status": result["status"],
+                "resourceStatus": result["resourceStatus"],
+                "version": result["version"],
+                "executionRevision": result["executionRevision"],
+                "lineCount": len(result["lines"]),  # type: ignore[arg-type]
+                "unchanged": result["unchanged"],
+            },
+            result=result,
+        )
+
+    @app.post("/v1/procurement/checkout-attempts/{attempt_id}/begin")
+    def begin_checkout_attempt(
+        request: Request,
+        attempt_id: uuid.UUID,
+        body: CheckoutAttemptBeginBody,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "procurement.checkout_attempt.begin"
+        actor = authorize_request(
+            request,
+            session,
+            permission="procurement.execution.manage",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        try:
+            result = ProcurementCheckoutService(session).begin_attempt(
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                attempt_id=attempt_id,
+                expected_version=body.expectedVersion,
+            )
+        except PurchaseServiceError as exc:
+            purchase_error(request, session, actor, action, exc, business_object_id=attempt_id)
+        return checkout_success(
+            request,
+            session,
+            actor,
+            action=action,
+            business_object_id=attempt_id,
+            summary={
+                "status": result["status"],
+                "resourceStatus": result["resourceStatus"],
+                "version": result["version"],
+                "executionRevision": result["executionRevision"],
+                "unchanged": result["unchanged"],
+            },
+            result=result,
+        )
+
+    @app.post("/v1/procurement/checkout-attempts/{attempt_id}/abandon")
+    def abandon_checkout_attempt(
+        request: Request,
+        attempt_id: uuid.UUID,
+        body: CheckoutAttemptAbandonBody,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "procurement.checkout_attempt.abandon"
+        actor = authorize_request(
+            request,
+            session,
+            permission="procurement.execution.manage",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        try:
+            result = ProcurementCheckoutService(session).abandon_attempt(
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                attempt_id=attempt_id,
+                expected_version=body.expectedVersion,
+                reason=body.reason,
+            )
+        except PurchaseServiceError as exc:
+            purchase_error(request, session, actor, action, exc, business_object_id=attempt_id)
+        return checkout_success(
+            request,
+            session,
+            actor,
+            action=action,
+            business_object_id=attempt_id,
+            summary={
+                "status": result["status"],
+                "resourceStatus": result["resourceStatus"],
+                "pendingTerminalStatus": result["pendingTerminalStatus"],
+                "version": result["version"],
+                "executionRevision": result["executionRevision"],
+                "unchanged": result["unchanged"],
+            },
+            result=result,
+        )
+
+    @app.post("/v1/procurement/checkout-attempts/{attempt_id}/payment-result")
+    def record_checkout_payment_result(
+        request: Request,
+        attempt_id: uuid.UUID,
+        body: CheckoutPaymentResultBody,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "procurement.checkout_attempt.payment_result"
+        actor = authorize_request(
+            request,
+            session,
+            permission="procurement.execution.manage",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        try:
+            result = ProcurementCheckoutService(session).record_payment_result(
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                attempt_id=attempt_id,
+                expected_version=body.expectedVersion,
+                result=body.model_dump(mode="python"),
+            )
+        except PurchaseServiceError as exc:
+            purchase_error(request, session, actor, action, exc, business_object_id=attempt_id)
+        return checkout_success(
+            request,
+            session,
+            actor,
+            action=action,
+            business_object_id=attempt_id,
+            summary={
+                "outcome": body.outcome,
+                "status": result["status"],
+                "resourceStatus": result["resourceStatus"],
+                "version": result["version"],
+                "executionRevision": result["executionRevision"],
+                "purchaseBatchCreated": "purchaseBatch" in result,
+                "unchanged": result["unchanged"],
+            },
+            result=result,
+        )
+
+    @app.post("/v1/procurement/checkout-attempts/{attempt_id}/cleanup-result")
+    def record_checkout_cleanup_result(
+        request: Request,
+        attempt_id: uuid.UUID,
+        body: CheckoutCleanupResultBody,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "procurement.checkout_attempt.cleanup_result"
+        actor = authorize_request(
+            request,
+            session,
+            permission="procurement.execution.manage",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        try:
+            result = ProcurementCheckoutService(session).record_cleanup_result(
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                attempt_id=attempt_id,
+                expected_version=body.expectedVersion,
+                environment_result=body.environmentResult,
+                buyer_result=body.buyerResult,
+                reason=body.reason,
+            )
+        except PurchaseServiceError as exc:
+            purchase_error(request, session, actor, action, exc, business_object_id=attempt_id)
+        return checkout_success(
+            request,
+            session,
+            actor,
+            action=action,
+            business_object_id=attempt_id,
+            summary={
+                "environmentResult": body.environmentResult,
+                "buyerResult": body.buyerResult,
+                "status": result["status"],
+                "resourceStatus": result["resourceStatus"],
+                "pendingTerminalStatus": result["pendingTerminalStatus"],
+                "version": result["version"],
+                "executionRevision": result["executionRevision"],
+            },
+            result=result,
+        )
+
+    @app.post("/v1/procurement/purchase-batches/{purchase_batch_id}/shipments")
+    def upsert_purchase_batch_shipment(
+        request: Request,
+        purchase_batch_id: uuid.UUID,
+        body: ShipmentUpsertBody,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "procurement.purchase_batch.shipment_upsert"
+        actor = authorize_request(
+            request,
+            session,
+            permission="procurement.execution.manage",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        try:
+            result = ProcurementCheckoutService(session).upsert_shipment(
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                purchase_batch_id=purchase_batch_id,
+                shipment=body.model_dump(mode="python"),
+            )
+        except PurchaseServiceError as exc:
+            purchase_error(
+                request,
+                session,
+                actor,
+                action,
+                exc,
+                business_object_id=purchase_batch_id,
+            )
+        shipment = result["shipment"]
+        return checkout_success(
+            request,
+            session,
+            actor,
+            action=action,
+            business_object_id=purchase_batch_id,
+            summary={
+                "batchStatus": result.get("batchStatus"),
+                "shipmentStatus": shipment["status"],  # type: ignore[index]
+                "shipmentVersion": shipment["version"],  # type: ignore[index]
+                "unchanged": result["unchanged"],
+            },
+            result=result,
+        )
 
     @app.get("/v1/procurement/execution/splits")
     def list_procurement_execution_splits(
@@ -3138,6 +3921,14 @@ def _authenticated_identity(
 
 def _validation_log_target(method: str, path: str) -> tuple[str | None, str | None]:
     method = method.upper()
+    if method == "PUT" and path == "/v1/operations/environment-creation-runs":
+        return "resource.environment.result_ingest", None
+    if method == "PUT" and path == "/v1/operations/logistics-query-runs":
+        return "fulfillment.logistics.result_ingest", None
+    if method == "PUT" and path == "/v1/resources/buyer-accounts/snapshot":
+        return "resource.buyer_account.snapshot_sync", None
+    if method == "POST" and path == "/v1/resources/buyer-accounts/preflight":
+        return "resource.buyer_account.import_preflight", None
     if method == "POST" and path == "/v1/purchase-orders/draft":
         return "purchase_order.draft.save", None
     if method == "POST" and path == "/v1/purchase-orders/submit":
@@ -3154,6 +3945,33 @@ def _validation_log_target(method: str, path: str) -> tuple[str | None, str | No
     )
     if method == "POST" and split_match:
         return "purchase_order.split_plan.save", split_match.group(1)
+    checkout_create_match = re.fullmatch(
+        r"/v1/procurement/orders/([0-9a-fA-F-]{36})/checkout-attempts", path
+    )
+    if method == "POST" and checkout_create_match:
+        return "procurement.checkout_attempt.create", checkout_create_match.group(1)
+    checkout_action_match = re.fullmatch(
+        r"/v1/procurement/checkout-attempts/([0-9a-fA-F-]{36})/"
+        r"(revise|begin|abandon|payment-result|cleanup-result)",
+        path,
+    )
+    if method == "POST" and checkout_action_match:
+        action_by_suffix = {
+            "revise": "procurement.checkout_attempt.revise",
+            "begin": "procurement.checkout_attempt.begin",
+            "abandon": "procurement.checkout_attempt.abandon",
+            "payment-result": "procurement.checkout_attempt.payment_result",
+            "cleanup-result": "procurement.checkout_attempt.cleanup_result",
+        }
+        return (
+            action_by_suffix[checkout_action_match.group(2)],
+            checkout_action_match.group(1),
+        )
+    shipment_match = re.fullmatch(
+        r"/v1/procurement/purchase-batches/([0-9a-fA-F-]{36})/shipments", path
+    )
+    if method == "POST" and shipment_match:
+        return "procurement.purchase_batch.shipment_upsert", shipment_match.group(1)
     if method == "GET" and path == "/v1/procurement/orders":
         return "purchase_order.workspace.list", None
     detail_match = re.fullmatch(

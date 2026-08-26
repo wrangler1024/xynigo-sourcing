@@ -20,7 +20,7 @@ import threading
 import time
 import uuid
 from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 from urllib.request import Request, urlopen
 
 from . import __version__
@@ -32,6 +32,7 @@ KEYCHAIN_ACCOUNT = 'xynigo-cloud-session'
 TOKEN_PATTERN = re.compile(r'^[A-Za-z0-9_-]{32,256}$')
 MAX_RESPONSE_BYTES = 1024 * 1024
 MAX_PROCUREMENT_RESPONSE_BYTES = 4 * 1024 * 1024
+MAX_BUYER_ACCOUNT_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_OPERATION_RESULT_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_BUSINESS_LOG_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_SYSTEM_LOG_RESPONSE_BYTES = 4 * 1024 * 1024
@@ -88,7 +89,35 @@ ERROR_MESSAGES = {
     'purchase_split_allocation_incomplete': '已认领明细必须全部分配到采购分单',
     'purchase_split_quantity_mismatch': '采购分单数量与采购明细数量不一致',
     'purchase_split_started': '采购分单已进入执行流程，不能整体重建',
+    'checkout_idempotency_conflict': '下单请求标识已被其他内容使用，请刷新后重试',
+    'checkout_legacy_split_exists': '当前采购单仍有旧分单，请先人工确认迁移',
+    'checkout_line_not_found': '下单尝试包含不存在或已失效的采购明细',
+    'checkout_line_not_owned': '只能操作本人已认领且未完成的采购明细',
+    'checkout_quantity_unavailable': '采购数量已被其他下单尝试占用，请刷新后重试',
+    'checkout_resource_site_mismatch': '采购资源与采购单站点不一致',
+    'checkout_resource_conflict': 'Hub 环境或买家号已被其他下单尝试占用',
+    'checkout_resource_retained': 'Hub 环境或买家号已绑定成功采购批次，当前不可复用',
+    'checkout_resource_binding_mismatch': '买家号已绑定其他 Hub 环境，请刷新资源后重试',
+    'buyer_account_not_found': '未找到该买家号',
+    'buyer_account_unavailable': '买家号当前不可用于本次下单',
+    'buyer_account_credential_unavailable': '买家号凭证尚未验证或已经失效',
+    'buyer_account_filter_invalid': '买家号筛选条件无效',
     'operation_run_idempotency_conflict': '任务结果标识已被不同数据使用，请人工核对',
+    'checkout_attempt_not_found': '未找到该下单尝试',
+    'checkout_attempt_not_owned': '只能操作本人创建的下单尝试',
+    'checkout_attempt_version_conflict': '下单尝试已被更新，请刷新后重试',
+    'checkout_attempt_not_editable': '下单尝试已开始结算，不能再修改组合',
+    'checkout_attempt_not_ready': '请先完整绑定同站点 Hub 环境和买家号',
+    'checkout_attempt_cannot_abandon': '当前下单尝试不能直接放弃',
+    'checkout_payment_state_invalid': '当前下单尝试不能记录付款结果',
+    'checkout_payment_conflict': '该下单尝试已记录不同的付款结果',
+    'checkout_resource_missing': '付款成功前必须绑定采购资源',
+    'checkout_cleanup_state_invalid': '当前下单尝试没有待确认的资源清理动作',
+    'purchase_batch_platform_order_conflict': '采购平台订单号已绑定其他批次',
+    'purchase_batch_not_found': '未找到该采购批次',
+    'purchase_batch_not_owned': '只能回填本人采购批次的物流信息',
+    'shipment_tracking_conflict': '物流单号已绑定同批次的其他包裹',
+    'shipment_version_conflict': '物流包裹已被更新，请刷新后重试',
     'business_log_not_found': '业务日志不存在或不在当前数据范围',
     'business_log_time_range_invalid': '日志开始时间不能晚于结束时间',
     'system_log_not_found': '系统日志不存在或不在当前租户范围',
@@ -266,17 +295,33 @@ class CloudAuthClient(object):
     def procurement_workspace_request(
             self, path, session_token, method='GET', payload=None):
         parsed = urlparse(str(path or ''))
+        uuid_part = (
+            r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
+            r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+        )
+        order_write = re.fullmatch(
+            r'/v1/procurement/orders/' + uuid_part
+            + r'/(?:splits|return|checkout-attempts)',
+            parsed.path,
+        )
+        attempt_write = re.fullmatch(
+            r'/v1/procurement/checkout-attempts/' + uuid_part
+            + r'/(?:revise|begin|abandon|payment-result|cleanup-result)',
+            parsed.path,
+        )
+        shipment_write = re.fullmatch(
+            r'/v1/procurement/purchase-batches/' + uuid_part + r'/shipments',
+            parsed.path,
+        )
         allowed_path = parsed.path in {
             '/v1/procurement/overview',
             '/v1/procurement/orders',
             '/v1/procurement/claims',
             '/v1/procurement/execution/splits',
         } or re.fullmatch(
-            r'/v1/procurement/orders/[0-9a-fA-F]{8}-'
-            r'[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
-            r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?:/(?:splits|return))?',
+            r'/v1/procurement/orders/' + uuid_part,
             parsed.path,
-        )
+        ) or order_write or attempt_write or shipment_write
         if (parsed.scheme or parsed.netloc or parsed.fragment
                 or not allowed_path):
             raise LocalAuthError(
@@ -287,8 +332,7 @@ class CloudAuthClient(object):
                 'cloud_response_invalid', '云端采购中心接口方法无效', 500)
         is_write_path = (
             parsed.path == '/v1/procurement/claims'
-            or parsed.path.endswith(('/splits', '/return'))
-            and '/v1/procurement/orders/' in parsed.path
+            or bool(order_write or attempt_write or shipment_write)
         )
         if (is_write_path and method != 'POST') or (
                 not is_write_path and method != 'GET'):
@@ -303,22 +347,35 @@ class CloudAuthClient(object):
             source='local_workspace',
         )
 
-    def business_log_request(self, path, session_token):
+    def buyer_account_request(
+            self, path, session_token, method='GET', payload=None):
         parsed = urlparse(str(path or ''))
-        allowed_path = parsed.path == '/v1/business-logs' or re.fullmatch(
-            r'/v1/business-logs/[0-9a-fA-F]{8}-'
-            r'[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
-            r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}',
-            parsed.path,
-        )
-        if (parsed.scheme or parsed.netloc or parsed.fragment
-                or not allowed_path):
+        allowed = parsed.path in {
+            '/v1/resources/buyer-accounts',
+            '/v1/resources/buyer-accounts/preflight',
+            '/v1/resources/buyer-accounts/snapshot',
+        }
+        if parsed.scheme or parsed.netloc or parsed.fragment or not allowed:
             raise LocalAuthError(
-                'cloud_response_invalid', '云端业务日志接口地址无效', 500)
+                'cloud_response_invalid', '云端买家号接口地址无效', 500)
+        method = str(method or 'GET').upper()
+        expected_method = {
+            '/v1/resources/buyer-accounts': 'GET',
+            '/v1/resources/buyer-accounts/preflight': 'POST',
+            '/v1/resources/buyer-accounts/snapshot': 'PUT',
+        }[parsed.path]
+        if method != expected_method:
+            raise LocalAuthError(
+                'cloud_response_invalid', '云端买家号接口方法与地址不匹配', 500)
+        if expected_method != 'GET' and parsed.query:
+            raise LocalAuthError(
+                'cloud_response_invalid', '云端买家号同步接口不接受查询参数', 500)
         return self._request(
             path,
+            method=method,
+            payload=payload if method in ('POST', 'PUT') else None,
             token=session_token,
-            max_response_bytes=MAX_BUSINESS_LOG_RESPONSE_BYTES,
+            max_response_bytes=MAX_BUYER_ACCOUNT_RESPONSE_BYTES,
             source='local_workspace',
         )
 
@@ -343,6 +400,25 @@ class CloudAuthClient(object):
             token=session_token,
             max_response_bytes=MAX_OPERATION_RESULT_RESPONSE_BYTES,
             source='local_executor',
+        )
+
+    def business_log_request(self, path, session_token):
+        parsed = urlparse(str(path or ''))
+        allowed_path = parsed.path == '/v1/business-logs' or re.fullmatch(
+            r'/v1/business-logs/[0-9a-fA-F]{8}-'
+            r'[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
+            r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}',
+            parsed.path,
+        )
+        if (parsed.scheme or parsed.netloc or parsed.fragment
+                or not allowed_path):
+            raise LocalAuthError(
+                'cloud_response_invalid', '云端业务日志接口地址无效', 500)
+        return self._request(
+            path,
+            token=session_token,
+            max_response_bytes=MAX_BUSINESS_LOG_RESPONSE_BYTES,
+            source='local_workspace',
         )
 
     def system_log_request(self, path, session_token):
@@ -833,15 +909,27 @@ class LocalAuthService(object):
                     'cloud_response_invalid', '云端采购中心接口数据无效', 502)
             return result
 
-    def business_log_request(self, path):
+    def buyer_account_request(
+            self, path, method='GET', payload=None,
+            permission='resource.buyer.read'):
         with self.lock:
-            self.require()
+            self.require(permission)
+            parsed = urlparse(str(path or ''))
+            include_credentials = (
+                method == 'GET'
+                and (parse_qs(parsed.query).get('includeCredentials') or [''])[0]
+                .strip().casefold() in {'1', 'true', 'yes'}
+            )
+            if include_credentials:
+                self.require('resource.buyer.credential.read')
             if not self.session_token:
                 raise LocalAuthError('authentication_required', status=401)
             try:
-                result = self.client.business_log_request(
+                result = self.client.buyer_account_request(
                     path,
                     self.session_token,
+                    method=method,
+                    payload=payload,
                 )
             except LocalAuthError as exc:
                 if exc.status == 401:
@@ -856,10 +944,10 @@ class LocalAuthService(object):
                 raise
             if not isinstance(result, dict) or result.get('ok') is not True:
                 raise LocalAuthError(
-                    'cloud_response_invalid', '云端业务日志响应无效', 502)
+                    'cloud_response_invalid', '云端买家号接口响应无效', 502)
             if not isinstance(result.get('data'), dict):
                 raise LocalAuthError(
-                    'cloud_response_invalid', '云端业务日志数据无效', 502)
+                    'cloud_response_invalid', '云端买家号接口数据无效', 502)
             return result
 
     def operation_result_request(self, path, payload, permission):
@@ -891,6 +979,35 @@ class LocalAuthService(object):
             if not isinstance(result.get('data'), dict):
                 raise LocalAuthError(
                     'cloud_response_invalid', '云端业务结果数据无效', 502)
+            return result
+
+    def business_log_request(self, path):
+        with self.lock:
+            self.require()
+            if not self.session_token:
+                raise LocalAuthError('authentication_required', status=401)
+            try:
+                result = self.client.business_log_request(
+                    path,
+                    self.session_token,
+                )
+            except LocalAuthError as exc:
+                if exc.status == 401:
+                    try:
+                        self.store.clear()
+                    except Exception:
+                        self.storage_error = ERROR_MESSAGES[
+                            'credential_store_failed']
+                    self.session_token = None
+                    self.identity = None
+                    self.last_verified = 0.0
+                raise
+            if not isinstance(result, dict) or result.get('ok') is not True:
+                raise LocalAuthError(
+                    'cloud_response_invalid', '云端业务日志响应无效', 502)
+            if not isinstance(result.get('data'), dict):
+                raise LocalAuthError(
+                    'cloud_response_invalid', '云端业务日志数据无效', 502)
             return result
 
     def system_log_request(self, path):

@@ -21,7 +21,7 @@ class FaviconRouteTests(unittest.TestCase):
         self.thread.join(timeout=2)
 
     def test_root_favicon_returns_final_x_icon(self):
-        url = 'http://127.0.0.1:%d/favicon.ico?v=5' % (
+        url = 'http://127.0.0.1:%d/favicon.ico?v=6' % (
             self.server.server_address[1])
         with urllib.request.urlopen(url, timeout=3) as response:
             body = response.read()

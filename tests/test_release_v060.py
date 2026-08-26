@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Release contract tests for Xynigo Sourcing v0.12.1 test candidate."""
+"""Release contract tests for Xynigo Sourcing v0.12.3 test candidate."""
 
 from pathlib import Path
 import hashlib
@@ -12,24 +12,24 @@ import unittest
 from purchase_tool import __version__
 
 
-class ReleaseV0121Tests(unittest.TestCase):
+class ReleaseV0123Tests(unittest.TestCase):
     def test_version_and_packaging_are_aligned(self):
         root = Path(__file__).resolve().parents[1]
-        self.assertEqual(__version__, '0.12.1')
+        self.assertEqual(__version__, '0.12.3')
         pyproject = (root / 'pyproject.toml').read_text(encoding='utf-8')
-        self.assertIn('version = "0.12.1"', pyproject)
+        self.assertIn('version = "0.12.3"', pyproject)
         cloud_project = (root / 'cloud' / 'auth-service' /
                          'pyproject.toml').read_text(encoding='utf-8')
-        self.assertIn('version = "0.12.1"', cloud_project)
+        self.assertIn('version = "0.12.3"', cloud_project)
         cloud_init = (root / 'cloud' / 'auth-service' / 'src' /
                       'xynigo_auth' / '__init__.py').read_text(
                           encoding='utf-8')
-        self.assertIn('__version__ = "0.12.1"', cloud_init)
+        self.assertIn('__version__ = "0.12.3"', cloud_init)
         cloud_main = (root / 'cloud' / 'auth-service' / 'src' /
                       'xynigo_auth' / 'main.py').read_text(encoding='utf-8')
-        self.assertIn('version="0.12.1"', cloud_main)
-        self.assertTrue((root / 'release' / 'v0.12.1.zh-CN.json').is_file())
-        self.assertTrue((root / 'release' / 'v0.12.1.zh-CN.md').is_file())
+        self.assertIn('version="0.12.3"', cloud_main)
+        self.assertTrue((root / 'release' / 'v0.12.3.zh-CN.json').is_file())
+        self.assertTrue((root / 'release' / 'v0.12.3.zh-CN.md').is_file())
         script = (root / '组装Windows绿色包.sh').read_text(encoding='utf-8')
         self.assertIn('v${VERSION}.zip', script)
         self.assertIn('XYNIGO_RELEASE_CHANNEL:-stable', script)
@@ -62,19 +62,19 @@ class ReleaseV0121Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp = Path(temp_dir)
             asset = temp / 'Xynigo_Sourcing_test.zip'
-            asset.write_bytes(b'xynigo-v0.12.1-test-package')
+            asset.write_bytes(b'xynigo-v0.12.3-test-package')
             manifest = temp / 'latest.json'
             sha_file = temp / 'SHA256SUMS.txt'
             subprocess.run(
                 [
                     sys.executable,
                     str(root / 'scripts' / 'update_release_assets.py'),
-                    '--version', '0.12.1',
+                    '--version', '0.12.3',
                     '--channel', 'test',
                     '--platform', 'macos-arm64',
                     '--asset', str(asset),
                     '--notes', str(root / 'release' /
-                                   'v0.12.1.zh-CN.json'),
+                                   'v0.12.3.zh-CN.json'),
                     '--manifest', str(manifest),
                     '--sha-file', str(sha_file),
                 ],
@@ -86,7 +86,7 @@ class ReleaseV0121Tests(unittest.TestCase):
             digest = hashlib.sha256(asset.read_bytes()).hexdigest()
             self.assertEqual(payload['schemaVersion'], 2)
             self.assertEqual(payload['channel'], 'test')
-            self.assertEqual(payload['version'], '0.12.1')
+            self.assertEqual(payload['version'], '0.12.3')
             self.assertEqual(payload['platforms']['macos-arm64']['sha256'],
                              digest)
             self.assertEqual(
@@ -136,9 +136,9 @@ class ReleaseV0121Tests(unittest.TestCase):
         self.assertIn('id="envBoundExports"', html)
         self.assertIn('id="envBackupExports"', html)
         self.assertIn('id="btnEnvBackupResult"', html)
-        self.assertIn('下载飞书直贴 TSV（无表头/含凭证）', html)
-        self.assertIn('从第一空行的「站点」列粘贴', html)
-        self.assertIn('若飞书列顺序被改动请停止粘贴', html)
+        self.assertNotIn('下载飞书直贴 TSV（无表头/含凭证）', html)
+        self.assertNotIn('从第一空行的「站点」列粘贴', html)
+        self.assertIn('旧表直贴已停用', html)
         self.assertIn('composeAssignmentSpec()', html)
         self.assertIn('/api/envbatch/backup/preview', html)
         self.assertIn('/api/envbatch/backup/start', html)
@@ -185,8 +185,8 @@ class ReleaseV0121Tests(unittest.TestCase):
         self.assertIn("cfg.proxySource === 'custom'", html)
         self.assertIn('系统模板固定带表头', html)
         self.assertNotIn('https://proxy.example.test', html)
-        self.assertIn('Xynigo Sourcing v0.12.1', html)
-        self.assertIn('测试候选 v0.12.1', html)
+        self.assertIn('Xynigo Sourcing v0.12.3', html)
+        self.assertIn('测试候选 v0.12.3', html)
         self.assertIn('测试环境 · 数据隔离', html)
         self.assertNotIn('本机数据不出站', html)
         self.assertIn('Xyni, GO!', html)
@@ -198,8 +198,8 @@ class ReleaseV0121Tests(unittest.TestCase):
         self.assertIn('跨境采购协同系统', html)
         self.assertNotIn('跨境代采协同系统', html)
         self.assertIn('src="xynigo-x.ico?v=3"', html)
-        self.assertIn('href="/xynigo-x.png?v=5"', html)
-        self.assertIn('href="/favicon.ico?v=5"', html)
+        self.assertIn('href="/xynigo-x.png?v=6"', html)
+        self.assertIn('href="/favicon.ico?v=6"', html)
         self.assertNotIn('class="logo-x"', html)
         self.assertIn('小犀提示', html)
         self.assertIn('品牌表达', html)
@@ -238,7 +238,10 @@ class ReleaseV0121Tests(unittest.TestCase):
         for parent, label in (
                 ('operations', '运营任务'), ('finance', '应付管理')):
             self.assertIn('data-parent="%s" data-planned="%s"' % (parent, label), html)
-        self.assertIn("planningTitle: '小犀助手暂未开放'", html)
+        self.assertIn(
+            'data-parent="assistant" data-module="procurementimport"', html)
+        self.assertIn("defaultModule: 'procurementimport'", html)
+        self.assertIn('id="procurementImportPanel"', html)
         self.assertIn("$('secondaryTabs').hidden = visibleSecondaryCount === 0", html)
         self.assertIn('id="buyerLibraryPanel"', html)
         self.assertIn('id="vendorImportPanel"', html)
@@ -442,6 +445,9 @@ class ReleaseV0121Tests(unittest.TestCase):
         self.assertIn('id="procurementDetailMask"', html)
         self.assertIn('id="procurementClaimMask"', html)
         self.assertIn('id="procurementExecutionMask"', html)
+        self.assertIn('id="procurementCheckoutMask"', html)
+        self.assertIn('id="procurementCheckoutResource"', html)
+        self.assertIn('id="btnProcurementCheckoutConfirm"', html)
         self.assertIn('data-procurement-claim=', html)
         self.assertIn('data-procurement-claim-order=', html)
         self.assertIn('data-procurement-plan-open', html)
@@ -450,6 +456,15 @@ class ReleaseV0121Tests(unittest.TestCase):
         self.assertIn('async function confirmProcurementClaimPreview()', html)
         self.assertIn('function splitProcurementExecutionGroups()', html)
         self.assertIn('async function saveProcurementExecutionPreview()', html)
+        self.assertIn('async function openProcurementCheckoutDialog(', html)
+        self.assertIn('async function confirmProcurementCheckoutDialog()', html)
+        self.assertIn("api('/api/cloud/buyer-accounts?' + params.toString())", html)
+        self.assertIn("'/checkout-attempts'", html)
+        self.assertIn("'/begin'", html)
+        self.assertIn('idempotencyKey:state.idempotencyKey', html)
+        self.assertIn("selectableOnly:'true'", html)
+        self.assertIn('item.hubEnvironment.ref && item.hubEnvironment.name', html)
+        self.assertNotIn('快捷下单入口已保留：下一步绑定环境与买家号', html)
         self.assertIn('function safeProcurementImageUrl(value)', html)
         self.assertIn('店铺 / 运营', html)
         self.assertIn('收件人 / 国家', html)
@@ -511,6 +526,12 @@ class ReleaseV0121Tests(unittest.TestCase):
         self.assertIn('/api/resources/stores', html)
         self.assertIn('/api/resources/proxies/check/start', html)
         self.assertIn('普通列表跳过代理账号/密码列', html)
+        self.assertIn('id="proxyTypeCatalog"', html)
+        self.assertIn('id="proxyFilterType"', html)
+        self.assertIn('id="proxyFilterScenario"', html)
+        self.assertIn('711 动态住宅代理仅在采购环境创建时通过 API 提取', html)
+        self.assertIn('动态住宅代理按采购任务实时提取，不生成固定库存行', html)
+        self.assertIn('静态住宅 IP 当前暂无使用场景，尚未接入资产台账', html)
         self.assertIn('当前阶段只读；配置、克隆和凭证更新尚未开放', html)
         self.assertIn('async function loadLocalSettingsPage()', html)
         self.assertIn('async function loadLarkConnectionPage()', html)
@@ -529,10 +550,10 @@ class ReleaseV0121Tests(unittest.TestCase):
         self.assertIn("setLarkSaveFeedback('bad', '⚠ 保存失败：'", html)
         self.assertIn('配置已保存，但连接名称获取失败', html)
         self.assertIn('重新验证连接与字段', html)
-        self.assertIn('正在获取当前连接名称并只读检查统一台账字段', html)
+        self.assertIn('正在获取旧迁移源名称并只读检查字段', html)
         self.assertIn('await loadLarkConfigStatus()', html)
         self.assertIn('已安全保存 App Secret', html)
-        self.assertIn('台账目标已配置；留空保持不变', html)
+        self.assertIn('旧迁移源已配置；留空保持不变', html)
         self.assertIn('function renderLarkConnectedTarget(', html)
         self.assertIn('function createLarkTargetLink(text)', html)
         self.assertIn("link.href = '/api/lark/open-target'", html)
@@ -540,20 +561,20 @@ class ReleaseV0121Tests(unittest.TestCase):
         self.assertIn("link.rel = 'noopener noreferrer'", html)
         self.assertIn("link.className = 'config-target-link'", html)
         self.assertIn("event => event.stopPropagation()", html)
-        self.assertIn('已支持重新配置', html)
+        self.assertIn('只读验证旧迁移源', html)
         self.assertIn('/api/lark/template', html)
-        self.assertIn('下载买家号统一台账完整模板', html)
-        self.assertIn('确认重新配置？', html)
+        self.assertIn('下载旧台账兼容模板', html)
+        self.assertIn('确认替换迁移源？', html)
         self.assertNotIn('id="cfgLarkBaseToken"', html)
         self.assertNotIn('id="cfgLarkTableId"', html)
         self.assertIn('包含 table=tbl...', html)
         self.assertIn('body:JSON.stringify({appId, appSecret, ledgerUrl, clearCredential, clearLedgerTarget})', html)
         self.assertIn('/api/lark/config', html)
         self.assertIn('/api/lark/preflight', html)
-        self.assertIn('/api/lark/target-metadata', html)
-        self.assertIn('refreshPending:true', html)
-        self.assertIn('正在自动获取当前连接名称', html)
-        self.assertIn('id="envWriteLedger" disabled', html)
+        self.assertNotIn('/api/lark/target-metadata', html)
+        self.assertNotIn('refreshPending:true', html)
+        self.assertNotIn('正在自动获取当前连接名称', html)
+        self.assertIn('type="hidden" id="envWriteLedger"', html)
         self.assertIn('id="envExecutionState" role="status" aria-live="polite"', html)
         self.assertIn('id="envExecutionTitle"', html)
         self.assertIn('id="envExecutionDetail"', html)
@@ -564,10 +585,9 @@ class ReleaseV0121Tests(unittest.TestCase):
         self.assertIn('function renderEnvExecutionState(snap, mode)', html)
         self.assertIn("'⏳ 正在提交…'", html)
         self.assertIn('执行指令已确认，正在提交买家号建环境任务', html)
-        self.assertIn('执行指令已确认，正在检查飞书台账并提交任务', html)
+        self.assertNotIn('执行指令已确认，正在检查飞书台账并提交任务', html)
         self.assertIn('await paintEnvSubmissionState()', html)
-        self.assertIn('HubStudio 已完成，正在回写飞书台账', html)
-        self.assertIn('const ledgerFailed =', html)
+        self.assertIn('建环境结果将先写数据库，再由云端自动同步独立 Base', html)
         self.assertIn('${taskName}部分失败：HubStudio', html)
         self.assertIn('任务状态暂时无法获取', html)
         self.assertIn('页面每 1.5 秒自动刷新，请勿重复提交', html)
@@ -575,19 +595,17 @@ class ReleaseV0121Tests(unittest.TestCase):
         self.assertIn('id="regWriteLedgerLabel"', html)
         self.assertIn('function larkTargetDisplayName()', html)
         self.assertIn('function renderLarkWriteTargetText()', html)
-        self.assertIn(
-            "larkTargetConfigured && hasPermission('system.lark_connection.manage')\n"
-            '      ? createLarkTargetLink(target)', html)
+        self.assertIn('测试版已停用旧统一台账直写', html)
         self.assertIn('id="authGate" role="dialog"', html)
         self.assertIn('id="authLoginButton"', html)
         self.assertIn('requiredPermission: \'resource.environment.create\'', html)
         self.assertIn('larkTargetBaseName = targetBaseName', html)
-        self.assertIn('回写${larkTargetDisplayName()}', html)
+        self.assertNotIn('回写${larkTargetDisplayName()}', html)
         self.assertNotIn('回写飞书「买家号（统一）」', html)
         self.assertIn('id="btnEnvRetryLedger" disabled', html)
         self.assertIn('writeLarkLedger, confirmLarkWrite', html)
-        self.assertIn('补写本批次飞书台账', html)
-        self.assertIn('body:JSON.stringify({confirmLarkWrite:true})', html)
+        self.assertIn('const writeLarkLedger = false', html)
+        self.assertNotIn('补写本批次飞书台账', html)
         self.assertTrue((root / 'src' / 'purchase_tool' / 'web' /
                          '采购工具买家号入库模板.xlsx').is_file())
         self.assertTrue((root / 'src' / 'purchase_tool' / 'web' /

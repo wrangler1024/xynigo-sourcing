@@ -1,16 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Buyer-account inventory over the configured Feishu Base target.
-
-The public surface is deliberately metadata-only.  Passwords, verification
-links and cookies are accepted for an explicitly confirmed vendor import, but
-never returned by list/preview APIs or written to local state files.
-"""
+"""Buyer-account inventory and encrypted credential import."""
 from datetime import datetime, timedelta, timezone
 import base64
 import hashlib
 from io import BytesIO
 import threading
 import time
+from urllib.parse import urlencode
 
 from .env_batch import parse_vendor_workbook, validate_accounts_site
 from .redaction import mask_email, scrub_text
@@ -45,6 +41,21 @@ STATUS_MAP = {
     '未绑定': '可用',
     '已登录': '已绑定',
     '封号': '停用',
+}
+DATABASE_STATUS_LABELS = {
+    'available': '可用',
+    'reserved': '已预占',
+    'in_use': '使用中',
+    'cleanup_pending': '清理中',
+    'post_payment_hold': '付款后占用',
+    'manual_review': '人工复核',
+    'disabled': '停用',
+}
+DATABASE_CREDENTIAL_LABELS = {
+    'ready': '已验证',
+    'unverified': '未验证',
+    'invalid': '验证失败',
+    'unknown': '待确认',
 }
 
 
@@ -160,6 +171,7 @@ def validate_library_import_schema(fields):
 
 
 class BuyerLibraryService(object):
+    """Legacy Feishu adapter retained only for explicit migration tools."""
     def __init__(self, client):
         self.client = client
 
@@ -316,13 +328,229 @@ class BuyerLibraryService(object):
                 'batchNo': batch_no}
 
 
+class DatabaseBuyerLibraryService(object):
+    """Database-backed runtime adapter; Feishu Base is outbound mirror only."""
+
+    def __init__(self, requester):
+        self.requester = requester
+
+    def _request(self, path, method='GET', payload=None):
+        result = self.requester(path, method, payload)
+        data = result.get('data') if isinstance(result, dict) else None
+        if not isinstance(data, dict):
+            raise BuyerLibraryError('云端买家号接口响应无效')
+        return data
+
+    def list_public(self, site='', status='', limit=100):
+        site = str(site or '').strip().upper()
+        if site and site not in {'MX', 'US'}:
+            raise BuyerLibraryError('站点筛选仅支持 MX 或 US')
+        status = str(status or '').strip()
+        if status in DATABASE_STATUS_LABELS.values():
+            status = next(
+                code for code, label in DATABASE_STATUS_LABELS.items()
+                if label == status)
+        if status and status not in DATABASE_STATUS_LABELS:
+            raise BuyerLibraryError('账号状态筛选无效')
+        try:
+            limit = max(1, min(200, int(limit)))
+        except (TypeError, ValueError) as exc:
+            raise BuyerLibraryError('列表数量参数无效') from exc
+        query = {'page': 1, 'pageSize': limit, 'includeCredentials': 'true'}
+        if site:
+            query['site'] = site
+        if status:
+            query['status'] = status
+        data = self._request(
+            '/v1/resources/buyer-accounts?' + urlencode(query))
+        raw_counts = data.get('counts') if isinstance(
+            data.get('counts'), dict) else {}
+        counts = {
+            'total': int(raw_counts.get('total') or 0),
+            'available': int(raw_counts.get('available') or 0),
+            'reserved': int(raw_counts.get('reserved') or 0),
+            'bound': (
+                int(raw_counts.get('in_use') or 0)
+                + int(raw_counts.get('post_payment_hold') or 0)
+            ),
+            'abnormal': (
+                int(raw_counts.get('cleanup_pending') or 0)
+                + int(raw_counts.get('manual_review') or 0)
+            ),
+            'disabled': int(raw_counts.get('disabled') or 0),
+        }
+        rows = []
+        for item in data.get('rows') or []:
+            if not isinstance(item, dict):
+                continue
+            environment = item.get('hubEnvironment')
+            if not isinstance(environment, dict):
+                environment = {}
+            credentials = item.get('credentials')
+            if not isinstance(credentials, dict):
+                credentials = {}
+            profile = item.get('businessProfile')
+            if not isinstance(profile, dict):
+                profile = {}
+            sync_status = str(item.get('baseSyncStatus') or 'pending')
+            rows.append({
+                'accountId': str(item.get('accountId') or ''),
+                'accountRef': str(item.get('accountRef') or ''),
+                'email': str(credentials.get('accountIdentifier') or ''),
+                'phoneNumber': str(credentials.get('phoneNumber') or ''),
+                'password': str(credentials.get('password') or ''),
+                'cookie': str(credentials.get('cookie') or ''),
+                'verificationKey': str(credentials.get('verificationKey') or ''),
+                'keyUrl': str(credentials.get('verificationKeyLink') or ''),
+                'loginLink': str(credentials.get('loginLink') or ''),
+                'site': str(item.get('site') or ''),
+                'source': str(item.get('source') or 'database'),
+                'vendor': str(item.get('sourceVendorLabel') or ''),
+                'batchNo': str(item.get('sourceBatchRef') or ''),
+                'purchaseDate': str(item.get('sourcePurchaseDate') or ''),
+                'status': DATABASE_STATUS_LABELS.get(
+                    str(item.get('status') or ''),
+                    str(item.get('status') or '待校验')),
+                'statusCode': str(item.get('status') or ''),
+                'sourceAvailabilityStatus': str(
+                    item.get('sourceAvailabilityStatus') or ''),
+                'credentialStatus': DATABASE_CREDENTIAL_LABELS.get(
+                    str(item.get('credentialStatus') or ''),
+                    str(item.get('credentialStatus') or '待确认')),
+                'buyer': str(item.get('operatorLabel') or ''),
+                'envName': str(environment.get('name') or ''),
+                'envRef': str(environment.get('ref') or ''),
+                'bindingTime': str(profile.get('bindingTime') or ''),
+                'firstLoginAt': str(profile.get('firstLoginAt') or ''),
+                'abnormalRecord': str(profile.get('abnormalRecord') or ''),
+                'note': str(profile.get('note') or ''),
+                'sourcePurchaseOrderNo': str(
+                    profile.get('sourcePurchaseOrderNo') or ''),
+                'sourceOperators': list(profile.get('sourceOperators') or []),
+                'lastUsedAt': str(profile.get('lastUsedAt') or ''),
+                'environmentSequence': profile.get('environmentSequence'),
+                'environmentGroupName': str(
+                    profile.get('environmentGroupName') or ''),
+                'sourceAccountId': str(profile.get('sourceAccountId') or ''),
+                'cumulativeOrderCount': profile.get('cumulativeOrderCount'),
+                'migrationStatus': str(profile.get('migrationStatus') or ''),
+                'sourceCreatedAt': str(profile.get('sourceCreatedAt') or ''),
+                'sourceCreatedBy': str(profile.get('sourceCreatedBy') or ''),
+                'baseSyncStatus': sync_status,
+                'baseSyncedAt': str(item.get('baseSyncedAt') or ''),
+            })
+        return {
+            'connected': True,
+            'source': 'postgresql',
+            'counts': counts,
+            'rows': rows,
+            'visible': len(rows),
+            'truncated': bool(data.get('hasMore')),
+        }
+
+    @staticmethod
+    def _source_order_ref(order_no):
+        value = str(order_no or '').strip().casefold()
+        if not value:
+            return None
+        return 'sha256:' + hashlib.sha256(
+            value.encode('utf-8')).hexdigest()
+
+    def import_preflight(self, accounts, site):
+        validate_accounts_site(accounts, site)
+        items = [{
+            'accountRef': account.account_id,
+            'sourceOrderRef': self._source_order_ref(account.order_no),
+        } for account in accounts]
+        result = self._request(
+            '/v1/resources/buyer-accounts/preflight',
+            method='POST', payload={'items': items})
+        conflicts_by_ref = {
+            str(item.get('accountRef') or ''): item
+            for item in result.get('conflicts') or []
+            if isinstance(item, dict)
+        }
+        conflicts = []
+        for account in accounts:
+            conflict = conflicts_by_ref.get(account.account_id)
+            if not conflict:
+                continue
+            messages = []
+            if conflict.get('accountExists'):
+                messages.append('账号已存在')
+            if conflict.get('sourceOrderExists'):
+                messages.append('号商单号已存在')
+            conflicts.append({
+                'accountId': account.account_id,
+                'email': account.email,
+                'message': '、'.join(messages) or '记录已存在',
+            })
+        return {
+            'ready': not conflicts,
+            'total': len(accounts),
+            'conflicts': len(conflicts),
+            'rows': conflicts,
+        }
+
+    def import_accounts(self, accounts, site, vendor_name, batch_no,
+                        purchase_date, confirm_write=False):
+        if not confirm_write:
+            raise BuyerLibraryError('正式入库必须二次确认数据库写入')
+        preflight = self.import_preflight(accounts, site)
+        if preflight['conflicts']:
+            raise BuyerLibraryError(
+                '数据库发现 %d 条重复记录，已阻止整批入库' %
+                preflight['conflicts'])
+        snapshot_material = '\n'.join(sorted(
+            account.account_id for account in accounts))
+        snapshot_key = 'vendor-import-' + hashlib.sha256(
+            ('%s\0%s\0%s\0%s\0%s' % (
+                site, vendor_name, batch_no, purchase_date,
+                snapshot_material)).encode('utf-8')).hexdigest()
+        payload = {
+            'source': 'vendor_import',
+            'snapshotKey': snapshot_key,
+            'accounts': [{
+                'accountRef': account.account_id,
+                'displayLabel': account.safe_email,
+                'site': site,
+                'availabilityStatus': 'available',
+                'credentialStatus': 'unverified',
+                'sourceStatus': '待建环境',
+                'sourceVendorLabel': vendor_name,
+                'sourceBatchRef': batch_no,
+                'sourcePurchaseDate': purchase_date,
+                'sourceOrderRef': self._source_order_ref(account.order_no),
+                'credentials': {
+                    'accountIdentifier': account.email,
+                    'password': account.password,
+                    'cookie': account.cookie_text,
+                    'verificationKeyLink': account.key_url,
+                },
+                'businessProfile': {
+                    'sourcePurchaseOrderNo': account.order_no,
+                },
+            } for account in accounts],
+        }
+        result = self._request(
+            '/v1/resources/buyer-accounts/snapshot',
+            method='PUT', payload=payload)
+        return {
+            'created': int(result.get('createdCount') or 0),
+            'updated': int(result.get('updatedCount') or 0),
+            'received': int(result.get('receivedCount') or 0),
+            'site': site,
+            'batchNo': batch_no,
+        }
+
+
 class BuyerLibraryJob(object):
-    """In-memory vendor-import plans with an explicit remote-write commit."""
+    """In-memory vendor-import plans with an explicit database commit."""
     def __init__(self, service_factory):
         self.service_factory = service_factory
         self.lock = threading.Lock()
-        # Serialize remote writes so two different short-lived plans cannot
-        # both pass the duplicate check before either one reaches Feishu.
+        # Serialize commits so two short-lived plans cannot both pass the
+        # database preflight before either one reaches the snapshot endpoint.
         self.commit_lock = threading.Lock()
         self.pending = {}
 
@@ -393,7 +621,10 @@ class BuyerLibraryJob(object):
             'conflictRows': conflicts[:20],
             'preview': [{
                 'accountId': item.account_id,
-                'emailMasked': item.safe_email,
+                'email': item.email,
+                'password': item.password,
+                'keyUrl': item.key_url,
+                'cookie': item.cookie_text,
                 'cookieReady': bool(item.cookie_text),
             } for item in accounts[:20]],
         }

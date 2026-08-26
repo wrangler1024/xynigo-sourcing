@@ -20,6 +20,7 @@ class Settings(BaseSettings):
 
     environment: Literal["development", "test", "production"] = "production"
     database_url: SecretStr
+    buyer_credential_encryption_key: SecretStr = SecretStr("")
     feishu_app_id: str
     feishu_app_secret: SecretStr
     feishu_redirect_uri: str
@@ -33,9 +34,20 @@ class Settings(BaseSettings):
     system_log_retention_days: int = 30
     system_log_max_rows_per_tenant: int = 100_000
     system_log_runtime_sample_rate: float = 1.0
+    feishu_operation_sync_enabled: bool = False
+    feishu_operation_base_token: str = ""
+    feishu_buyer_account_table_id: str = ""
+    feishu_environment_result_table_id: str = ""
+    feishu_logistics_result_table_id: str = ""
+    feishu_operation_sync_interval_seconds: int = 15
+    feishu_purchase_sync_enabled: bool = False
+    feishu_purchase_base_token: str = ""
+    feishu_purchase_order_table_id: str = ""
+    feishu_purchase_line_table_id: str = ""
+    feishu_purchase_sync_interval_seconds: int = 15
     cookie_name: str = "xynigo_session"
     cookie_secure: bool = True
-    login_success_path: str = "/v1/auth/me"
+    login_success_path: str = "/"
     allowed_hosts: str = "localhost,127.0.0.1"
 
     @field_validator("feishu_app_id", "feishu_redirect_uri")
@@ -51,6 +63,11 @@ class Settings(BaseSettings):
         if not value.get_secret_value().strip():
             raise ValueError("must not be blank")
         return value
+
+    @field_validator("buyer_credential_encryption_key")
+    @classmethod
+    def normalize_buyer_credential_key(cls, value: SecretStr) -> SecretStr:
+        return SecretStr(value.get_secret_value().strip())
 
     @field_validator("session_ttl_seconds")
     @classmethod
@@ -96,6 +113,47 @@ class Settings(BaseSettings):
             raise ValueError("system_log_runtime_sample_rate must be between 0 and 1")
         return value
 
+    @field_validator(
+        "feishu_operation_sync_interval_seconds",
+        "feishu_purchase_sync_interval_seconds",
+    )
+    @classmethod
+    def validate_operation_sync_interval(cls, value: int) -> int:
+        if value < 5 or value > 3600:
+            raise ValueError(
+                "feishu_operation_sync_interval_seconds must be between 5 and 3600"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def validate_operation_sync_target(self) -> "Settings":
+        if self.feishu_operation_sync_enabled and not all(
+            (
+                self.feishu_operation_base_token.strip(),
+                self.feishu_buyer_account_table_id.strip(),
+                self.feishu_environment_result_table_id.strip(),
+                self.feishu_logistics_result_table_id.strip(),
+            )
+        ):
+            raise ValueError(
+                "enabled Feishu operation sync requires base and all table identifiers"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_purchase_sync_target(self) -> "Settings":
+        if self.feishu_purchase_sync_enabled and not all(
+            (
+                self.feishu_purchase_base_token.strip(),
+                self.feishu_purchase_order_table_id.strip(),
+                self.feishu_purchase_line_table_id.strip(),
+            )
+        ):
+            raise ValueError(
+                "enabled Feishu purchase sync requires base and both table identifiers"
+            )
+        return self
+
     @field_validator("login_success_path")
     @classmethod
     def validate_success_path(cls, value: str) -> str:
@@ -115,6 +173,10 @@ class Settings(BaseSettings):
                 raise ValueError("production requires at least one allowed tenant key")
             if not self.allowed_host_list or "*" in self.allowed_host_list:
                 raise ValueError("production requires an explicit allowed host list")
+            if not self.buyer_credential_encryption_key.get_secret_value():
+                raise ValueError(
+                    "production requires buyer credential application encryption"
+                )
         return self
 
     @cached_property

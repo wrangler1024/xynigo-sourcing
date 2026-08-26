@@ -10,12 +10,16 @@ from sqlalchemy import func, select
 from test_auth_flow import build_test_app, start_local_login
 from xynigo_auth.models import (
     AuditEvent,
+    BuyerAccount,
+    CheckoutAttempt,
+    PurchaseBatch,
     PurchaseOrder,
     PurchaseOrderLine,
     PurchaseSplit,
     PurchaseSplitLine,
     PurchaseSyncOutbox,
     Role,
+    SupplierShipment,
     Tenant,
     User,
     UserRole,
@@ -104,6 +108,81 @@ def sample_draft() -> dict[str, object]:
         "submissionStatus": "draft",
         "createdAt": "2026-08-25T10:00:00+08:00",
         "updatedAt": "2026-08-25T10:00:00+08:00",
+    }
+
+
+def claimed_purchase_order(
+    client: TestClient,
+    headers: dict[str, str],
+    *,
+    quantity: int,
+    suffix: str = "",
+) -> tuple[str, str]:
+    draft = sample_draft()
+    if suffix:
+        normalized = suffix.upper()
+        draft.update({
+            "orderKey": f"蓝天-周远超（一组）|GSH{normalized}|XMWU{normalized}",
+            "packageId": f"XMWU{normalized}",
+            "platformOrderNo": f"GSH{normalized}",
+        })
+    draft["items"][0]["salesQty"] = quantity  # type: ignore[index]
+    draft["items"][0]["purchaseQty"] = quantity  # type: ignore[index]
+    draft["guideTotalsByCurrency"] = {"USD": 18.0 * quantity}
+    submitted = client.post("/v1/purchase-orders/submit", json=draft, headers=headers)
+    assert submitted.status_code == 200
+    purchase_order_id = submitted.json()["data"]["purchaseOrderId"]
+    detail = client.get(
+        f"/v1/procurement/orders/{purchase_order_id}", headers=headers
+    )
+    assert detail.status_code == 200
+    line_id = detail.json()["data"]["lines"][0]["purchaseOrderLineId"]
+    claimed = client.post(
+        "/v1/procurement/claims",
+        json={"purchaseOrderLineIds": [line_id]},
+        headers=headers,
+    )
+    assert claimed.status_code == 200
+    return purchase_order_id, line_id
+
+
+def synthetic_resource(
+    client: TestClient,
+    headers: dict[str, str],
+    *,
+    suffix: str = "2001",
+) -> dict[str, str]:
+    synced = client.put(
+        "/v1/resources/buyer-accounts/snapshot",
+            json={
+                "source": "legacy_feishu_migration",
+                "snapshotKey": f"synthetic-snapshot-{suffix}",
+            "accounts": [
+                {
+                    "accountRef": f"synthetic-buyer-{suffix}",
+                    "displayLabel": f"美国买家号 ····{suffix}",
+                    "site": "US",
+                    "availabilityStatus": "available",
+                    "credentialStatus": "ready",
+                    "sourceStatus": "合成可用",
+                }
+            ],
+        },
+        headers=headers,
+    )
+    assert synced.status_code == 200
+    listed = client.get(
+        "/v1/resources/buyer-accounts",
+        params={"keyword": f"synthetic-buyer-{suffix}"},
+        headers=headers,
+    )
+    assert listed.status_code == 200
+    account = listed.json()["data"]["rows"][0]
+    return {
+        "hubEnvironmentRef": f"synthetic-us-{suffix}",
+        "hubEnvironmentName": f"US-PUR-{suffix}",
+        "buyerAccountId": account["accountId"],
+        "site": "US",
     }
 
 
@@ -204,9 +283,18 @@ def test_submit_sets_authenticated_actor_and_is_idempotent(tmp_path) -> None:
     changed = deepcopy(draft)
     changed["items"][0]["guidePrice"] = 19.0  # type: ignore[index]
     changed["guideTotalsByCurrency"] = {"USD": 19.0}
-    conflict = client.post("/v1/purchase-orders/submit", json=changed, headers=headers)
-    assert conflict.status_code == 409
-    assert conflict.json()["detail"]["code"] == "purchase_order_locked"
+    revised = client.post("/v1/purchase-orders/submit", json=changed, headers=headers)
+    assert revised.status_code == 200
+    assert revised.json()["data"]["unchanged"] is False
+    assert revised.json()["data"]["revised"] is True
+    assert revised.json()["data"]["draftRevision"] == 2
+
+    revised_retry = client.post(
+        "/v1/purchase-orders/submit", json=changed, headers=headers
+    )
+    assert revised_retry.status_code == 200
+    assert revised_retry.json()["data"]["unchanged"] is True
+    assert revised_retry.json()["data"]["revised"] is False
 
     with database.session_factory() as session:
         order = session.scalar(select(PurchaseOrder))
@@ -217,7 +305,39 @@ def test_submit_sets_authenticated_actor_and_is_idempotent(tmp_path) -> None:
         line = session.scalar(select(PurchaseOrderLine))
         assert line is not None
         assert line.workflow_status == "unclaimed"
-        assert session.scalar(select(func.count(PurchaseSyncOutbox.id))) == 1
+        assert line.payload["guidePrice"] == 19.0
+        assert session.scalar(select(func.count(PurchaseSyncOutbox.id))) == 2
+    client.close()
+
+
+def test_submit_rejects_revision_after_procurement_claim(tmp_path) -> None:
+    client, database, headers = authenticated_client(tmp_path)
+    purchase_order_id, _line_id = claimed_purchase_order(
+        client, headers, quantity=1
+    )
+    changed = sample_draft()
+    changed["items"][0]["guidePrice"] = 19.0  # type: ignore[index]
+    changed["guideTotalsByCurrency"] = {"USD": 19.0}
+
+    conflict = client.post(
+        "/v1/purchase-orders/submit", json=changed, headers=headers
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["code"] == "purchase_order_in_progress"
+
+    with database.session_factory() as session:
+        order = session.get(PurchaseOrder, uuid.UUID(purchase_order_id))
+        assert order is not None
+        assert order.draft_revision == 1
+        line = session.scalar(
+            select(PurchaseOrderLine).where(
+                PurchaseOrderLine.purchase_order_id == order.id,
+                PurchaseOrderLine.is_active.is_(True),
+            )
+        )
+        assert line is not None
+        assert line.workflow_status == "claimed"
+        assert line.payload["guidePrice"] == 18.0
     client.close()
 
 
@@ -845,6 +965,535 @@ def test_purchase_routes_require_explicit_permission(tmp_path) -> None:
     )
     assert return_response.status_code == 403
     assert return_response.json()["detail"]["code"] == "permission_denied"
+    checkout_response = client.post(
+        "/v1/procurement/orders/00000000-0000-0000-0000-000000000001/checkout-attempts",
+        json={
+            "idempotencyKey": "permission-checkout-001",
+            "expectedExecutionRevision": 0,
+            "lines": [{
+                "purchaseOrderLineId": "00000000-0000-0000-0000-000000000002",
+                "quantity": 1,
+            }],
+        },
+        headers=headers,
+    )
+    assert checkout_response.status_code == 403
+    assert checkout_response.json()["detail"]["code"] == "permission_denied"
     with database.session_factory() as session:
         assert session.scalar(select(PurchaseOrder)) is None
+    client.close()
+
+
+def test_checkout_attempt_reserves_quantity_idempotently_and_releases_on_abandon(
+    tmp_path,
+) -> None:
+    client, database, headers = authenticated_client(tmp_path)
+    purchase_order_id, line_id = claimed_purchase_order(
+        client, headers, quantity=3
+    )
+    payload = {
+        "idempotencyKey": "synthetic-checkout-reserve-001",
+        "expectedExecutionRevision": 0,
+        "resource": synthetic_resource(client, headers),
+        "note": "脱敏数量占用测试",
+        "lines": [{"purchaseOrderLineId": line_id, "quantity": 2}],
+    }
+
+    created = client.post(
+        f"/v1/procurement/orders/{purchase_order_id}/checkout-attempts",
+        json=payload,
+        headers=headers,
+    )
+    assert created.status_code == 200
+    attempt = created.json()["data"]
+    assert attempt["status"] == "ready"
+    assert attempt["resourceStatus"] == "reserved"
+    assert attempt["version"] == 1
+    assert attempt["executionRevision"] == 1
+    assert attempt["unchanged"] is False
+    with database.session_factory() as session:
+        account = session.scalar(select(BuyerAccount))
+        assert account is not None
+        assert account.status == "reserved"
+        assert str(account.current_checkout_attempt_id) == attempt["checkoutAttemptId"]
+
+    invalidated = client.put(
+        "/v1/resources/buyer-accounts/snapshot",
+        json={
+            "source": "legacy_feishu_migration",
+            "snapshotKey": "synthetic-snapshot-2001-invalidated",
+            "accounts": [{
+                "accountRef": "synthetic-buyer-2001",
+                "displayLabel": "美国买家号 ····2001",
+                "site": "US",
+                "availabilityStatus": "available",
+                "credentialStatus": "invalid",
+            }],
+        },
+        headers=headers,
+    )
+    assert invalidated.status_code == 200
+    blocked_begin = client.post(
+        f"/v1/procurement/checkout-attempts/{attempt['checkoutAttemptId']}/begin",
+        json={"expectedVersion": 1},
+        headers=headers,
+    )
+    assert blocked_begin.status_code == 409
+    assert (
+        blocked_begin.json()["detail"]["code"]
+        == "buyer_account_credential_unavailable"
+    )
+    restored = client.put(
+        "/v1/resources/buyer-accounts/snapshot",
+        json={
+            "source": "legacy_feishu_migration",
+            "snapshotKey": "synthetic-snapshot-2001-restored",
+            "accounts": [{
+                "accountRef": "synthetic-buyer-2001",
+                "displayLabel": "美国买家号 ····2001",
+                "site": "US",
+                "availabilityStatus": "available",
+                "credentialStatus": "ready",
+            }],
+        },
+        headers=headers,
+    )
+    assert restored.status_code == 200
+
+    source_disabled = client.put(
+        "/v1/resources/buyer-accounts/snapshot",
+        json={
+            "source": "legacy_feishu_migration",
+            "snapshotKey": "synthetic-snapshot-2001-source-disabled",
+            "accounts": [{
+                "accountRef": "synthetic-buyer-2001",
+                "displayLabel": "美国买家号 ····2001",
+                "site": "US",
+                "availabilityStatus": "disabled",
+                "credentialStatus": "ready",
+            }],
+        },
+        headers=headers,
+    )
+    assert source_disabled.status_code == 200
+    assert source_disabled.json()["data"]["protectedCount"] == 1
+    with database.session_factory() as session:
+        account = session.scalar(select(BuyerAccount))
+        assert account is not None
+        assert account.status == "reserved"
+        assert account.source_availability_status == "disabled"
+        assert str(account.current_checkout_attempt_id) == attempt["checkoutAttemptId"]
+    blocked_by_source = client.post(
+        f"/v1/procurement/checkout-attempts/{attempt['checkoutAttemptId']}/begin",
+        json={"expectedVersion": 1},
+        headers=headers,
+    )
+    assert blocked_by_source.status_code == 409
+    assert blocked_by_source.json()["detail"]["code"] == "buyer_account_unavailable"
+    source_restored = client.put(
+        "/v1/resources/buyer-accounts/snapshot",
+        json={
+            "source": "legacy_feishu_migration",
+            "snapshotKey": "synthetic-snapshot-2001-source-restored",
+            "accounts": [{
+                "accountRef": "synthetic-buyer-2001",
+                "displayLabel": "美国买家号 ····2001",
+                "site": "US",
+                "availabilityStatus": "available",
+                "credentialStatus": "ready",
+            }],
+        },
+        headers=headers,
+    )
+    assert source_restored.status_code == 200
+
+    retry = client.post(
+        f"/v1/procurement/orders/{purchase_order_id}/checkout-attempts",
+        json=payload,
+        headers=headers,
+    )
+    assert retry.status_code == 200
+    assert retry.json()["data"]["checkoutAttemptId"] == attempt["checkoutAttemptId"]
+    assert retry.json()["data"]["unchanged"] is True
+
+    overbooked = client.post(
+        f"/v1/procurement/orders/{purchase_order_id}/checkout-attempts",
+        json={
+            **payload,
+            "idempotencyKey": "synthetic-checkout-reserve-002",
+            "expectedExecutionRevision": 1,
+            "lines": [{"purchaseOrderLineId": line_id, "quantity": 2}],
+        },
+        headers=headers,
+    )
+    assert overbooked.status_code == 409
+    assert overbooked.json()["detail"]["code"] == "checkout_quantity_unavailable"
+
+    resource_conflict = client.post(
+        f"/v1/procurement/orders/{purchase_order_id}/checkout-attempts",
+        json={
+            **payload,
+            "idempotencyKey": "synthetic-checkout-resource-001",
+            "expectedExecutionRevision": 1,
+            "lines": [{"purchaseOrderLineId": line_id, "quantity": 1}],
+        },
+        headers=headers,
+    )
+    assert resource_conflict.status_code == 409
+    assert resource_conflict.json()["detail"]["code"] == "buyer_account_unavailable"
+
+    detail = client.get(
+        f"/v1/procurement/orders/{purchase_order_id}", headers=headers
+    ).json()["data"]
+    assert detail["lines"][0]["requiredQty"] == 3
+    assert detail["lines"][0]["purchasedQty"] == 0
+    assert detail["lines"][0]["reservedQty"] == 2
+    assert detail["lines"][0]["remainingQty"] == 1
+
+    abandoned = client.post(
+        f"/v1/procurement/checkout-attempts/{attempt['checkoutAttemptId']}/abandon",
+        json={"expectedVersion": 1, "reason": "合成测试主动放弃"},
+        headers=headers,
+    )
+    assert abandoned.status_code == 200
+    assert abandoned.json()["data"]["status"] == "abandoned"
+    assert abandoned.json()["data"]["resourceStatus"] == "released"
+    assert abandoned.json()["data"]["executionRevision"] == 2
+    with database.session_factory() as session:
+        account = session.scalar(select(BuyerAccount))
+        assert account is not None
+        assert account.status == "available"
+        assert account.current_checkout_attempt_id is None
+
+    replacement = client.post(
+        f"/v1/procurement/orders/{purchase_order_id}/checkout-attempts",
+        json={
+            **payload,
+            "idempotencyKey": "synthetic-checkout-reserve-003",
+            "expectedExecutionRevision": 2,
+            "lines": [{"purchaseOrderLineId": line_id, "quantity": 3}],
+        },
+        headers=headers,
+    )
+    assert replacement.status_code == 200
+    assert replacement.json()["data"]["lines"][0]["quantity"] == 3
+    with database.session_factory() as session:
+        assert session.scalar(select(func.count(CheckoutAttempt.id))) == 2
+    client.close()
+
+
+def test_checkout_binding_rejects_unknown_wrong_site_and_unverified_buyers(
+    tmp_path,
+) -> None:
+    client, database, headers = authenticated_client(tmp_path)
+    purchase_order_id, line_id = claimed_purchase_order(
+        client, headers, quantity=1
+    )
+
+    def attempt(account_id: str, key: str):
+        return client.post(
+            f"/v1/procurement/orders/{purchase_order_id}/checkout-attempts",
+            json={
+                "idempotencyKey": key,
+                "expectedExecutionRevision": 0,
+                "resource": {
+                    "hubEnvironmentRef": "synthetic-us-validation",
+                    "hubEnvironmentName": "US-PUR-VALIDATION",
+                    "buyerAccountId": account_id,
+                    "site": "US",
+                },
+                "lines": [{"purchaseOrderLineId": line_id, "quantity": 1}],
+            },
+            headers=headers,
+        )
+
+    unknown = attempt(
+        "00000000-0000-0000-0000-000000000999",
+        "synthetic-checkout-unknown-buyer",
+    )
+    assert unknown.status_code == 404
+    assert unknown.json()["detail"]["code"] == "buyer_account_not_found"
+
+    synced = client.put(
+        "/v1/resources/buyer-accounts/snapshot",
+            json={
+                "source": "legacy_feishu_migration",
+                "snapshotKey": "synthetic-validation-buyers",
+            "accounts": [
+                {
+                    "accountRef": "synthetic-buyer-mx-validation",
+                    "displayLabel": "墨西哥买家号 ····91",
+                    "site": "MX",
+                    "credentialStatus": "ready",
+                },
+                {
+                    "accountRef": "synthetic-buyer-us-unverified",
+                    "displayLabel": "美国买家号 ····92",
+                    "site": "US",
+                    "credentialStatus": "unverified",
+                },
+            ],
+        },
+        headers=headers,
+    )
+    assert synced.status_code == 200
+    listed = client.get(
+        "/v1/resources/buyer-accounts", headers=headers
+    ).json()["data"]["rows"]
+    ids = {row["accountRef"]: row["accountId"] for row in listed}
+
+    wrong_site = attempt(
+        ids["synthetic-buyer-mx-validation"],
+        "synthetic-checkout-wrong-site",
+    )
+    assert wrong_site.status_code == 422
+    assert wrong_site.json()["detail"]["code"] == "checkout_resource_site_mismatch"
+
+    unverified = attempt(
+        ids["synthetic-buyer-us-unverified"],
+        "synthetic-checkout-unverified",
+    )
+    assert unverified.status_code == 409
+    assert (
+        unverified.json()["detail"]["code"]
+        == "buyer_account_credential_unavailable"
+    )
+    with database.session_factory() as session:
+        assert session.scalar(select(CheckoutAttempt)) is None
+    client.close()
+
+
+def test_paid_checkout_creates_formal_batch_and_shipment_completes_line(
+    tmp_path,
+) -> None:
+    client, database, headers = authenticated_client(tmp_path)
+    purchase_order_id, line_id = claimed_purchase_order(
+        client, headers, quantity=1
+    )
+    created = client.post(
+        f"/v1/procurement/orders/{purchase_order_id}/checkout-attempts",
+        json={
+            "idempotencyKey": "synthetic-paid-checkout-001",
+            "expectedExecutionRevision": 0,
+            "resource": synthetic_resource(client, headers),
+            "lines": [{"purchaseOrderLineId": line_id, "quantity": 1}],
+        },
+        headers=headers,
+    )
+    assert created.status_code == 200
+    attempt_id = created.json()["data"]["checkoutAttemptId"]
+    begun = client.post(
+        f"/v1/procurement/checkout-attempts/{attempt_id}/begin",
+        json={"expectedVersion": 1},
+        headers=headers,
+    )
+    assert begun.status_code == 200
+    assert begun.json()["data"]["status"] == "checkout"
+
+    paid = client.post(
+        f"/v1/procurement/checkout-attempts/{attempt_id}/payment-result",
+        json={
+            "expectedVersion": 2,
+            "outcome": "paid",
+            "environmentLoggedIn": True,
+            "platform": "SHEIN",
+            "platformOrderNo": "GSHBUY202608260001",
+            "actualAmount": "18.00",
+            "currency": "USD",
+            "discountAmount": "2.00",
+            "couponSummary": "synthetic coupon",
+            "paidAt": "2026-08-26T12:00:00+08:00",
+        },
+        headers=headers,
+    )
+    assert paid.status_code == 200
+    paid_data = paid.json()["data"]
+    assert paid_data["status"] == "paid"
+    assert paid_data["resourceStatus"] == "retained"
+    assert paid_data["executionRevision"] == 3
+    batch = paid_data["purchaseBatch"]
+    assert batch["status"] == "paid"
+    assert batch["actualAmount"] == 18.0
+    with database.session_factory() as session:
+        account = session.scalar(select(BuyerAccount))
+        assert account is not None
+        assert account.status == "post_payment_hold"
+        assert account.current_checkout_attempt_id is None
+        assert account.hub_environment_ref == "synthetic-us-2001"
+        assert account.hub_environment_name == "US-PUR-2001"
+
+    other_order_id, other_line_id = claimed_purchase_order(
+        client,
+        headers,
+        quantity=1,
+        suffix="RETAINED20260826",
+    )
+    retained_resource = client.post(
+        f"/v1/procurement/orders/{other_order_id}/checkout-attempts",
+        json={
+            "idempotencyKey": "synthetic-retained-resource-001",
+            "expectedExecutionRevision": 0,
+            "resource": synthetic_resource(client, headers),
+            "lines": [{"purchaseOrderLineId": other_line_id, "quantity": 1}],
+        },
+        headers=headers,
+    )
+    assert retained_resource.status_code == 409
+    assert retained_resource.json()["detail"]["code"] == "checkout_resource_retained"
+    with database.session_factory() as session:
+        account = session.scalar(select(BuyerAccount))
+        assert account is not None
+        assert account.hub_environment_ref == "synthetic-us-2001"
+        assert account.hub_environment_name == "US-PUR-2001"
+
+    shipment_path = (
+        f"/v1/procurement/purchase-batches/{batch['purchaseBatchId']}/shipments"
+    )
+    shipment = {
+        "shipmentKey": "synthetic-package-001",
+        "expectedVersion": 0,
+        "packageNo": "PKG-SYNTHETIC-001",
+        "carrierCode": "USPS",
+        "carrierName": "Synthetic Carrier",
+        "trackingNo": "SYNTHETIC/TRACK/001",
+        "status": "pending_pickup",
+    }
+    tracking = client.post(shipment_path, json=shipment, headers=headers)
+    assert tracking.status_code == 200
+    assert tracking.json()["data"]["batchStatus"] == "tracking"
+    assert tracking.json()["data"]["shipment"]["version"] == 1
+    duplicate = client.post(shipment_path, json=shipment, headers=headers)
+    assert duplicate.status_code == 200
+    assert duplicate.json()["data"]["unchanged"] is True
+
+    delivered = client.post(
+        shipment_path,
+        json={
+            **shipment,
+            "expectedVersion": 1,
+            "status": "delivered",
+            "shippedAt": "2026-08-27T08:00:00+08:00",
+            "deliveredAt": "2026-08-29T18:00:00+08:00",
+        },
+        headers=headers,
+    )
+    assert delivered.status_code == 200
+    assert delivered.json()["data"]["batchStatus"] == "completed"
+    assert delivered.json()["data"]["shipment"]["version"] == 2
+
+    detail = client.get(
+        f"/v1/procurement/orders/{purchase_order_id}", headers=headers
+    ).json()["data"]
+    assert detail["lines"][0]["workflowStatus"] == "completed"
+    assert detail["lines"][0]["purchasedQty"] == 1
+    assert detail["lines"][0]["reservedQty"] == 0
+    assert detail["formalPurchaseBatchCount"] == 1
+    assert detail["purchaseBatches"][0]["status"] == "completed"
+    with database.session_factory() as session:
+        assert session.scalar(select(func.count(PurchaseBatch.id))) == 1
+        assert session.scalar(select(func.count(SupplierShipment.id))) == 1
+        audits = list(session.scalars(select(AuditEvent)))
+        assert all("trackingNo" not in str(event.details) for event in audits)
+        assert all("buyerAccountRef" not in str(event.details) for event in audits)
+        assert all("platformOrderNo" not in str(event.details) for event in audits)
+    client.close()
+
+
+def test_failed_checkout_keeps_lock_until_environment_cleanup_succeeds(
+    tmp_path,
+) -> None:
+    client, database, headers = authenticated_client(tmp_path)
+    purchase_order_id, line_id = claimed_purchase_order(
+        client, headers, quantity=1
+    )
+    plan = {
+        "idempotencyKey": "synthetic-failed-checkout-001",
+        "expectedExecutionRevision": 0,
+        "resource": synthetic_resource(client, headers),
+        "lines": [{"purchaseOrderLineId": line_id, "quantity": 1}],
+    }
+    created = client.post(
+        f"/v1/procurement/orders/{purchase_order_id}/checkout-attempts",
+        json=plan,
+        headers=headers,
+    )
+    attempt_id = created.json()["data"]["checkoutAttemptId"]
+    assert client.post(
+        f"/v1/procurement/checkout-attempts/{attempt_id}/begin",
+        json={"expectedVersion": 1},
+        headers=headers,
+    ).status_code == 200
+    failed = client.post(
+        f"/v1/procurement/checkout-attempts/{attempt_id}/payment-result",
+        json={
+            "expectedVersion": 2,
+            "outcome": "failed",
+            "environmentLoggedIn": True,
+            "reason": "合成支付拒绝",
+        },
+        headers=headers,
+    )
+    assert failed.status_code == 200
+    assert failed.json()["data"]["status"] == "cleanup_pending"
+    assert failed.json()["data"]["pendingTerminalStatus"] == "failed"
+
+    blocked = client.post(
+        f"/v1/procurement/orders/{purchase_order_id}/checkout-attempts",
+        json={
+            **plan,
+            "idempotencyKey": "synthetic-failed-checkout-002",
+            "expectedExecutionRevision": 3,
+        },
+        headers=headers,
+    )
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"]["code"] == "checkout_quantity_unavailable"
+
+    cleanup_failed = client.post(
+        f"/v1/procurement/checkout-attempts/{attempt_id}/cleanup-result",
+        json={
+            "expectedVersion": 3,
+            "environmentResult": "delete_failed",
+            "buyerResult": "manual_review",
+            "reason": "合成环境删除失败",
+        },
+        headers=headers,
+    )
+    assert cleanup_failed.status_code == 200
+    assert cleanup_failed.json()["data"]["status"] == "manual_review"
+    assert cleanup_failed.json()["data"]["pendingTerminalStatus"] == "failed"
+
+    cleaned = client.post(
+        f"/v1/procurement/checkout-attempts/{attempt_id}/cleanup-result",
+        json={
+            "expectedVersion": 4,
+            "environmentResult": "deleted",
+            "buyerResult": "reusable",
+            "reason": "合成环境清理完成",
+        },
+        headers=headers,
+    )
+    assert cleaned.status_code == 200
+    assert cleaned.json()["data"]["status"] == "failed"
+    assert cleaned.json()["data"]["resourceStatus"] == "released"
+    assert cleaned.json()["data"]["executionRevision"] == 5
+    with database.session_factory() as session:
+        account = session.scalar(select(BuyerAccount))
+        assert account is not None
+        assert account.status == "available"
+        assert account.current_checkout_attempt_id is None
+
+    replacement = client.post(
+        f"/v1/procurement/orders/{purchase_order_id}/checkout-attempts",
+        json={
+            **plan,
+            "idempotencyKey": "synthetic-failed-checkout-003",
+            "expectedExecutionRevision": 5,
+        },
+        headers=headers,
+    )
+    assert replacement.status_code == 200
+    with database.session_factory() as session:
+        attempts = list(session.scalars(select(CheckoutAttempt)))
+        assert [item.status for item in attempts] == ["failed", "ready"]
     client.close()

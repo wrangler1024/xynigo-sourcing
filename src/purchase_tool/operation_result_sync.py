@@ -183,18 +183,15 @@ class OperationResultSyncQueue(object):
                         current['attemptCount'] = attempts
                         current['lastErrorCode'] = str(code)[:128]
                         current['nextAttemptAt'] = int(
-                            self.clock() + min(
-                                900, 15 * (2 ** min(6, attempts - 1))))
+                            self.clock() + min(900, 15 * (2 ** min(6, attempts - 1))))
                         self._persist_locked()
                     break
                 else:
                     with self.lock:
                         self.items = [
                             entry for entry in self.items
-                            if not (entry.get('endpoint') ==
-                                    snapshot['endpoint']
-                                    and entry.get('runKey') ==
-                                    snapshot['runKey'])
+                            if not (entry.get('endpoint') == snapshot['endpoint']
+                                    and entry.get('runKey') == snapshot['runKey'])
                         ]
                         self._persist_locked()
                     completed += 1

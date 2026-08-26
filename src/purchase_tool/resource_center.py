@@ -41,6 +41,51 @@ PROXY_METADATA_FIELDS = (
     '最近验证时间',
 )
 
+# Business taxonomy is deliberately independent from the provider name.  The
+# catalog describes all confirmed proxy types even when a type is dynamic (and
+# therefore has no fixed inventory rows) or has not been put into use yet.
+PROXY_TYPE_DEFINITIONS = (
+    {
+        'code': 'dynamic_residential',
+        'label': '动态住宅代理',
+        'provider': '711',
+        'usage_scenario_code': 'procurement',
+        'usage_scenario': '采购场景',
+        'acquisition_mode_code': 'api_dynamic',
+        'acquisition_mode': 'API 动态提取',
+        'access_requirement': '711 白名单需添加当前执行器所在网络的出口 IP',
+        'usage_status': '采购使用中',
+        'inventory_mode': 'dynamic',
+    },
+    {
+        'code': 'static_datacenter',
+        'label': '静态数据中心 IP',
+        'provider': 'Webshare',
+        'usage_scenario_code': 'store_environment',
+        'usage_scenario': '绑定店铺环境',
+        'acquisition_mode_code': 'static_inventory',
+        'acquisition_mode': '静态资产台账',
+        'access_requirement': '按资产凭证连接',
+        'usage_status': '店铺环境使用中',
+        'inventory_mode': 'fixed',
+    },
+    {
+        'code': 'static_residential',
+        'label': '静态住宅 IP',
+        'provider': '待配置',
+        'usage_scenario_code': 'none',
+        'usage_scenario': '暂无使用场景',
+        'acquisition_mode_code': 'not_connected',
+        'acquisition_mode': '尚未接入',
+        'access_requirement': '待确认',
+        'usage_status': '未启用',
+        'inventory_mode': 'not_connected',
+    },
+)
+PROXY_TYPE_BY_CODE = {
+    item['code']: item for item in PROXY_TYPE_DEFINITIONS
+}
+
 PROXY_CHECK_HOST = 'api.ipify.org'
 PROXY_CHECK_PATH = '/?format=json'
 PROXY_CHECK_PORT = 443
@@ -60,6 +105,63 @@ def _text(value):
 
 def _normalized_name(value):
     return ''.join(str(value or '').strip().casefold().split())
+
+
+def _proxy_type_code(proxy):
+    explicit = str(
+        proxy.get('proxy_type_code') or proxy.get('proxy_type') or ''
+    ).strip().casefold()
+    explicit_compact = explicit.replace('_', '').replace('-', '').replace(' ', '')
+    aliases = {
+        'dynamicresidential': 'dynamic_residential',
+        '动态住宅代理': 'dynamic_residential',
+        '动态住宅ip': 'dynamic_residential',
+        'staticdatacenter': 'static_datacenter',
+        '静态数据中心ip': 'static_datacenter',
+        '静态机房ip': 'static_datacenter',
+        'staticresidential': 'static_residential',
+        '静态住宅ip': 'static_residential',
+        '静态住宅代理': 'static_residential',
+    }
+    if explicit in PROXY_TYPE_BY_CODE:
+        return explicit
+    if explicit_compact in aliases:
+        return aliases[explicit_compact]
+
+    provider = _normalized_name(proxy.get('source') or proxy.get('provider'))
+    if '711' in provider:
+        return 'dynamic_residential'
+    if 'webshare' in provider:
+        return 'static_datacenter'
+    if '静态住宅' in provider:
+        return 'static_residential'
+    return 'unclassified'
+
+
+def _proxy_classification(proxy):
+    code = _proxy_type_code(proxy)
+    definition = PROXY_TYPE_BY_CODE.get(code)
+    if definition is None:
+        return {
+            'code': 'unclassified',
+            'label': '类型待确认',
+            'usage_scenario_code': 'pending',
+            'usage_scenario': '使用场景待确认',
+            'acquisition_mode_code': 'pending',
+            'acquisition_mode': '获取方式待确认',
+            'access_requirement': '待确认',
+            'health_check_supported': False,
+        }
+    classified = dict(definition)
+    # P1 health checks load credentials from the Webshare fixed-asset ledger.
+    # Dynamic 711 extraction and not-yet-connected proxy types must not enter
+    # that credential-loading path.
+    classified['health_check_supported'] = (
+        code == 'static_datacenter'
+        and 'webshare' in _normalized_name(
+            proxy.get('source') or proxy.get('provider'))
+    )
+    return classified
 
 
 def _stable_id(prefix, *parts):
@@ -847,11 +949,21 @@ class ResourceCenterService(object):
                 (proxy['host'], proxy['port']), set())
             conflict = len(shops_for_endpoint) > 1
             latest = self.check_job.latest(proxy['asset_id'])
+            classification = _proxy_classification(proxy)
             public_proxies.append({
                 'assetId': proxy['asset_id'],
                 'addressMasked': '%s:%s' % (
                     mask_ip(proxy['host']), _mask_port(proxy['port'])),
                 'provider': proxy.get('source') or 'Webshare',
+                'proxyTypeCode': classification['code'],
+                'proxyType': classification['label'],
+                'usageScenarioCode': classification['usage_scenario_code'],
+                'usageScenario': classification['usage_scenario'],
+                'acquisitionModeCode': classification['acquisition_mode_code'],
+                'acquisitionMode': classification['acquisition_mode'],
+                'accessRequirement': classification['access_requirement'],
+                'healthCheckSupported': classification[
+                    'health_check_supported'],
                 'country': proxy.get('country') or '',
                 'protocol': proxy.get('protocol') or 'SOCKS5',
                 'assetStatus': proxy.get('asset_status') or '待确认',
@@ -903,6 +1015,43 @@ class ResourceCenterService(object):
                             for row in public_proxies),
             'conflicts': sum(row['conflict'] for row in public_proxies),
         }
+        proxy_type_catalog = []
+        for definition in PROXY_TYPE_DEFINITIONS:
+            code = definition['code']
+            count = sum(
+                row['proxyTypeCode'] == code for row in public_proxies)
+            if definition['inventory_mode'] == 'dynamic':
+                asset_count = None
+                inventory_summary = '动态提取，不计固定库存'
+            elif code == 'static_datacenter':
+                provider_ready = any(
+                    (sources.get(source_name) or {}).get('ready')
+                    for source_name in ('proxyLedger', 'proxyProvider')
+                )
+                asset_count = count if provider_ready else None
+                inventory_summary = (
+                    '%s 条固定资产' % count if provider_ready
+                    else '固定资产来源未就绪')
+            elif count:
+                asset_count = count
+                inventory_summary = '%s 条固定资产' % count
+            else:
+                asset_count = None
+                inventory_summary = '尚未接入资产台账'
+            proxy_type_catalog.append({
+                'typeCode': code,
+                'typeLabel': definition['label'],
+                'provider': definition['provider'],
+                'usageScenarioCode': definition['usage_scenario_code'],
+                'usageScenario': definition['usage_scenario'],
+                'acquisitionModeCode': definition['acquisition_mode_code'],
+                'acquisitionMode': definition['acquisition_mode'],
+                'accessRequirement': definition['access_requirement'],
+                'usageStatus': definition['usage_status'],
+                'inventoryMode': definition['inventory_mode'],
+                'assetCount': asset_count,
+                'inventorySummary': inventory_summary,
+            })
         return {
             'generatedAt': datetime.now(timezone.utc).isoformat(timespec='seconds'),
             'sources': sources,
@@ -910,6 +1059,7 @@ class ResourceCenterService(object):
             'proxies': public_proxies,
             'storeStats': store_stats,
             'proxyStats': proxy_stats,
+            'proxyTypeCatalog': proxy_type_catalog,
         }
 
     def stores_snapshot(self, force=False):
@@ -952,6 +1102,8 @@ class ResourceCenterService(object):
             'sources': snapshot['sources'],
             'stats': stats,
             'rows': rows,
+            'typeCatalog': [dict(item) for item in
+                            snapshot['proxyTypeCatalog']],
             'checkDefaults': {
                 'concurrency': 10, 'timeoutSec': 8,
                 'retryCount': 1, 'maxItems': MAX_PROXY_CHECK_ITEMS,
@@ -962,13 +1114,20 @@ class ResourceCenterService(object):
 
     def _load_selected_endpoints(self, asset_ids):
         snapshot = self._snapshot(force=False)
+        known_assets = {row['assetId'] for row in snapshot['proxies']}
         protocol_by_asset = {
             row['assetId']: row.get('protocol') or 'SOCKS5'
             for row in snapshot['proxies']
+            if row.get('healthCheckSupported')
         }
-        unknown = set(asset_ids) - set(protocol_by_asset)
+        requested = set(asset_ids)
+        unknown = requested - known_assets
         if unknown:
             raise ValueError('所选代理 IP 已变化，请刷新列表后重试')
+        unsupported = requested - set(protocol_by_asset)
+        if unsupported:
+            raise ValueError(
+                '所选代理类型不支持固定资产本机检测；711 动态住宅代理在采购环境创建时由 API 提取')
         try:
             return self.reader.load_proxy_endpoints(
                 asset_ids, protocol_by_asset=protocol_by_asset)
@@ -1017,9 +1176,12 @@ class ResourceCenterService(object):
     def proxy_export(self):
         rows = self.proxies_snapshot()['rows']
         headers = [
-            'assetId', 'addressMasked', 'provider', 'country', 'protocol',
-            'assetStatus', 'checkStatus', 'occupiedShop', 'department',
-            'browser', 'envSerial', 'lastCheckDevice', 'lastCheckAt',
-            'latencyMs', 'lastResult', 'failureCount', 'conflict', 'remark',
+            'assetId', 'addressMasked', 'proxyTypeCode', 'proxyType',
+            'provider', 'usageScenarioCode', 'usageScenario',
+            'acquisitionModeCode', 'acquisitionMode', 'accessRequirement',
+            'country', 'protocol', 'assetStatus', 'checkStatus',
+            'occupiedShop', 'department', 'browser', 'envSerial',
+            'lastCheckDevice', 'lastCheckAt', 'latencyMs', 'lastResult',
+            'failureCount', 'conflict', 'remark',
         ]
         return self._csv_bytes(headers, rows)

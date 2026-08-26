@@ -141,6 +141,71 @@ class ResourceCenterTests(unittest.TestCase):
         self.assertEqual(refreshed['rows'][0]['checkStatus'], '正常')
         self.assertEqual(refreshed['rows'][0]['historyCount'], 1)
 
+    def test_proxy_snapshot_exposes_business_taxonomy_without_fake_inventory(self):
+        snapshot = self.service().proxies_snapshot()
+        row = snapshot['rows'][0]
+        self.assertEqual(row['proxyTypeCode'], 'static_datacenter')
+        self.assertEqual(row['proxyType'], '静态数据中心 IP')
+        self.assertEqual(row['provider'], 'Webshare')
+        self.assertEqual(row['usageScenario'], '绑定店铺环境')
+        self.assertEqual(row['acquisitionMode'], '静态资产台账')
+        self.assertTrue(row['healthCheckSupported'])
+
+        catalog = {item['typeCode']: item for item in snapshot['typeCatalog']}
+        self.assertEqual(set(catalog), {
+            'dynamic_residential', 'static_datacenter', 'static_residential'})
+        self.assertEqual(catalog['dynamic_residential']['provider'], '711')
+        self.assertEqual(
+            catalog['dynamic_residential']['usageScenario'], '采购场景')
+        self.assertEqual(
+            catalog['dynamic_residential']['acquisitionMode'], 'API 动态提取')
+        self.assertIsNone(catalog['dynamic_residential']['assetCount'])
+        self.assertEqual(
+            catalog['dynamic_residential']['inventorySummary'],
+            '动态提取，不计固定库存')
+        self.assertEqual(catalog['static_datacenter']['assetCount'], 1)
+        self.assertEqual(
+            catalog['static_residential']['usageScenario'], '暂无使用场景')
+        self.assertIsNone(catalog['static_residential']['assetCount'])
+
+        encoded = json.dumps(snapshot, ensure_ascii=False)
+        self.assertNotIn('rotgbapi.711proxy.com', encoded)
+
+    def test_dynamic_711_row_is_classified_but_cannot_load_webshare_credentials(self):
+        class DynamicReader(FakeReader):
+            def list_proxy_rows(self):
+                return [{
+                    'asset_id': _stable_id(
+                        'ip', '711', '198.51.100.7', 10080),
+                    'host': '198.51.100.7',
+                    'port': 10080,
+                    'shop_name': '',
+                    'department': '采购部',
+                    'shop_type': '',
+                    'platform': 'SHEIN',
+                    'browser': 'HubStudio',
+                    'env_serial': '',
+                    'source': '711',
+                    'asset_status': '动态提取',
+                    'remark': '',
+                }]
+
+            def list_proxy_metadata(self):
+                return {}
+
+        service = ResourceCenterService(
+            lambda: FakeHub(), lambda: None, reader=DynamicReader(),
+            checker=AlwaysOkChecker(), cache_ttl=60)
+        snapshot = service.proxies_snapshot()
+        row = snapshot['rows'][0]
+        self.assertEqual(row['proxyTypeCode'], 'dynamic_residential')
+        self.assertEqual(row['usageScenario'], '采购场景')
+        self.assertEqual(row['acquisitionMode'], 'API 动态提取')
+        self.assertIn('白名单', row['accessRequirement'])
+        self.assertFalse(row['healthCheckSupported'])
+        with self.assertRaisesRegex(ValueError, '不支持固定资产本机检测'):
+            service.start_proxy_checks([row['assetId']])
+
     def test_proxy_job_retries_once_and_checks_duplicate_endpoint_once(self):
         checker = RetryChecker()
         endpoints = [
@@ -162,6 +227,8 @@ class ResourceCenterTests(unittest.TestCase):
         proxy_csv = service.proxy_export().decode('utf-8-sig')
         self.assertIn('墨西哥一店', store_csv)
         self.assertIn('203.***.***.9:***80', proxy_csv)
+        self.assertIn('静态数据中心 IP', proxy_csv)
+        self.assertIn('绑定店铺环境', proxy_csv)
         self.assertNotIn('203.0.113.9', proxy_csv)
         self.assertNotIn('sensitive-password', store_csv + proxy_csv)
 

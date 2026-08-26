@@ -7,7 +7,8 @@ import unittest
 from openpyxl import Workbook
 
 from purchase_tool.buyer_library import (
-    BuyerLibraryError, BuyerLibraryJob, BuyerLibraryService)
+    BuyerLibraryError, BuyerLibraryJob, BuyerLibraryService,
+    DatabaseBuyerLibraryService)
 from purchase_tool.env_batch import BuyerAccount, VENDOR_TEMPLATE_HEADERS
 
 
@@ -91,6 +92,92 @@ def workbook_base64():
 
 
 class BuyerLibraryTests(unittest.TestCase):
+    def test_database_runtime_list_requests_and_maps_complete_rows(self):
+        calls = []
+
+        def requester(path, method, payload):
+            calls.append((path, method, payload))
+            return {'ok': True, 'data': {
+                'counts': {
+                    'total': 3, 'available': 1, 'reserved': 1,
+                    'in_use': 1, 'cleanup_pending': 0,
+                    'post_payment_hold': 0, 'manual_review': 0,
+                    'disabled': 0,
+                },
+                'rows': [{
+                    'accountId': '00000000-0000-0000-0000-000000000001',
+                    'accountRef': 'sha256-buyer-safe-0001',
+                    'displayLabel': 'bu***1@example.test',
+                    'credentials': {
+                        'accountIdentifier': 'buyer1@example.test',
+                        'phoneNumber': '+1-555-0101',
+                        'password': 'synthetic-password-1',
+                        'cookie': 'synthetic-cookie-1',
+                        'verificationKey': 'synthetic-key-1',
+                        'verificationKeyLink': 'https://example.test/key/1',
+                        'loginLink': 'https://example.test/login/1',
+                    },
+                    'businessProfile': {
+                        'sourcePurchaseOrderNo': 'SYNTHETIC-ORDER-1',
+                        'environmentSequence': 1,
+                    },
+                    'site': 'US', 'status': 'available',
+                    'sourceAvailabilityStatus': 'available',
+                    'credentialStatus': 'ready', 'source': 'vendor_import',
+                    'sourceVendorLabel': '测试号商',
+                    'sourceBatchRef': 'batch-safe',
+                    'sourcePurchaseDate': '2026-08-26',
+                    'operatorLabel': '采购员甲',
+                    'hubEnvironment': {'ref': 'hub-safe', 'name': 'US-SAFE-001'},
+                    'baseSyncStatus': 'completed',
+                    'baseSyncedAt': '2026-08-26T10:00:00+00:00',
+                }],
+                'hasMore': False,
+            }}
+
+        result = DatabaseBuyerLibraryService(requester).list_public(
+            'US', 'available', 100)
+        self.assertEqual(result['source'], 'postgresql')
+        self.assertEqual(result['counts']['bound'], 1)
+        self.assertEqual(result['rows'][0]['status'], '可用')
+        self.assertEqual(result['rows'][0]['email'], 'buyer1@example.test')
+        self.assertEqual(result['rows'][0]['password'], 'synthetic-password-1')
+        self.assertEqual(result['rows'][0]['baseSyncStatus'], 'completed')
+        self.assertIn('status=available', calls[0][0])
+        self.assertIn('includeCredentials=true', calls[0][0])
+        self.assertEqual(calls[0][1], 'GET')
+
+    def test_database_import_sends_credentials_for_server_side_encryption(self):
+        calls = []
+
+        def requester(path, method, payload):
+            calls.append((path, method, copy.deepcopy(payload)))
+            if path.endswith('/preflight'):
+                return {'ok': True, 'data': {
+                    'ready': True, 'conflictCount': 0, 'conflicts': []}}
+            return {'ok': True, 'data': {
+                'receivedCount': 1, 'createdCount': 1,
+                'updatedCount': 0, 'unchangedCount': 0}}
+
+        service = DatabaseBuyerLibraryService(requester)
+        item = account()
+        result = service.import_accounts(
+            [item], 'MX', '测试号商', 'batch-safe', '2026-08-26',
+            confirm_write=True)
+        self.assertEqual(result['created'], 1)
+        snapshot = calls[-1][2]
+        self.assertEqual(snapshot['source'], 'vendor_import')
+        self.assertEqual(snapshot['accounts'][0]['displayLabel'], item.safe_email)
+        self.assertEqual(snapshot['accounts'][0]['credentialStatus'], 'unverified')
+        credentials = snapshot['accounts'][0]['credentials']
+        self.assertEqual(credentials['accountIdentifier'], item.email)
+        self.assertEqual(credentials['password'], item.password)
+        self.assertEqual(credentials['cookie'], item.cookie_text)
+        self.assertEqual(credentials['verificationKeyLink'], item.key_url)
+        self.assertEqual(
+            snapshot['accounts'][0]['businessProfile']['sourcePurchaseOrderNo'],
+            item.order_no)
+
     def test_public_list_masks_credentials_and_maps_legacy_status(self):
         client = FakeClient([{'record_id': 'rec-secret', 'fields': {
             '站点': 'MX', '邮箱账号': 'alpha@example.test',
@@ -146,7 +233,7 @@ class BuyerLibraryTests(unittest.TestCase):
         with self.assertRaisesRegex(BuyerLibraryError, '来源类型'):
             BuyerLibraryService(client).import_preflight([account()], 'MX')
 
-    def test_job_preview_is_masked_and_commit_is_explicit(self):
+    def test_job_preview_is_complete_and_commit_is_explicit(self):
         client = FakeClient()
         job = BuyerLibraryJob(lambda: BuyerLibraryService(client))
         result = job.parse(
@@ -154,9 +241,9 @@ class BuyerLibraryTests(unittest.TestCase):
             'batch-a', '2026-08-24')
         self.assertTrue(result['libraryReady'])
         self.assertEqual(result['count'], 1)
-        self.assertIn('ne***@example.test', result['preview'][0]['emailMasked'])
-        self.assertNotIn('local-secret', repr(result))
-        self.assertNotIn('cookie-secret', repr(result))
+        self.assertEqual(result['preview'][0]['email'], 'newbuyer@example.test')
+        self.assertEqual(result['preview'][0]['password'], 'local-secret')
+        self.assertIn('cookie-secret', result['preview'][0]['cookie'])
         with self.assertRaisesRegex(BuyerLibraryError, '二次确认'):
             job.commit(result['planId'])
 
