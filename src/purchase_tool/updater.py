@@ -31,11 +31,11 @@ USER_AGENT = 'Xynigo-Sourcing-Updater'
 SKIP_ONCE_ENV = 'XYNIGO_SKIP_UPDATE_ONCE'
 SKIP_ONCE_FILE = 'skip-update-once'
 WINDOWS_MANAGED_PATHS = (
-    'app', 'deps', 'python-embed', 'run.py', '启动.bat',
+    'app', 'deps', 'python-embed', 'run.py', '启动.bat', '启动-本地执行器.bat',
     'update-helper.ps1', 'VERSION.json', '使用说明.txt',
 )
 MACOS_MANAGED_PATHS = (
-    'runtime', '启动-Mac.command', 'update-helper.sh',
+    'runtime', '启动-Mac.command', '启动-本地执行器-Mac.command', 'update-helper.sh',
     'VERSION.json', '使用说明.txt',
 )
 # Kept as a public compatibility alias for v0.5.0 callers/tests.

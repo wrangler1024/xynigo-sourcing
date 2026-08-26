@@ -51,7 +51,7 @@ from . import __version__
 from .buyer_library import BuyerLibraryJob, DatabaseBuyerLibraryService
 from .buyer_ledger_sync import validate_unified_schema
 from .buyer_register import BuyerRegistrationTask, RegistrationOrchestrator
-from .cloud_auth import LocalAuthError, LocalAuthService
+from .cloud_auth import DEFAULT_AUTH_BASE_URL, LocalAuthError, LocalAuthService
 from .excel_export import EXPORT_HEAD, export_bytes
 from .env_batch import (BACKUP_MAX_COUNT, BACKUP_REMARK, BUYER_CODES,
                         BUYER_ROSTER, BatchEnvOrchestrator,
@@ -2665,6 +2665,22 @@ def quote(name):
     return _q(name)
 
 
+def browser_launch_url(local_url, argv=None, auth_service=None):
+    """Choose the page opened by the desktop launcher.
+
+    The local HTTP service continues to run for HubStudio/CDP/SHEIN work, but
+    the employee-facing default is the cloud workspace.  ``--local-ui`` is an
+    explicit compatibility and troubleshooting entry point.
+    """
+    if '--local-ui' in (argv or ()):  # Keep the local UI opt-in explicit.
+        return str(local_url)
+    client = getattr(auth_service, 'client', None)
+    cloud_url = str(
+        getattr(client, 'base_url', '') or DEFAULT_AUTH_BASE_URL
+    ).strip().rstrip('/')
+    return cloud_url or DEFAULT_AUTH_BASE_URL
+
+
 def main(argv=None):
     global STATE
     argv = argv or sys.argv[1:]
@@ -2682,8 +2698,13 @@ def main(argv=None):
     if server is None:
         print('端口 %s-%s 均被占用，退出' % (port, port + 9))
         sys.exit(1)
-    url = 'http://127.0.0.1:%s' % port
-    print('Xynigo Sourcing v%s  服务运行中：%s' % (__version__, url))
+    local_url = 'http://127.0.0.1:%s' % port
+    launch_url = browser_launch_url(local_url, argv, STATE.auth)
+    print('Xynigo Sourcing v%s  本地执行器运行中：%s' % (
+        __version__, local_url))
+    print('浏览器工作台：%s' % launch_url)
+    if launch_url != local_url:
+        print('需要本机界面时使用 --local-ui 启动。')
     print('保持此窗口开启；关闭窗口即退出工具。')
     ok, err = STATE.hub_status(force=True)
     if ok:
@@ -2695,17 +2716,17 @@ def main(argv=None):
         def _open():
             ok = False
             try:
-                ok = webbrowser.open(url)
+                ok = webbrowser.open(launch_url)
             except Exception:
                 pass
             if not ok and hasattr(os, 'startfile'):   # Windows 兜底
                 try:
-                    os.startfile(url)
+                    os.startfile(launch_url)
                     ok = True
                 except Exception:
                     pass
             if not ok:
-                print('浏览器未能自动打开，请手动访问：%s' % url)
+                print('浏览器未能自动打开，请手动访问：%s' % launch_url)
         threading.Timer(0.6, _open).start()
     try:
         server.serve_forever()

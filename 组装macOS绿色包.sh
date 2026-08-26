@@ -60,6 +60,7 @@ platform_key = os.environ['PLATFORM']
 launcher = '''#!/bin/bash
 cd "$(dirname "$0")"
 echo "Xynigo Sourcing v%s 启动中..."
+echo "默认打开云端工作台；本地执行器同时运行。"
 echo "保持此窗口开启；关闭窗口即退出工具。"
 ./runtime/xynigo-sourcing
 XYNIGO_EXIT_CODE=$?
@@ -71,6 +72,22 @@ echo "按回车键关闭窗口。"
 read -r
 ''' % version
 (stage / '启动-Mac.command').write_text(launcher, encoding='utf-8')
+local_launcher = '''#!/bin/bash
+cd "$(dirname "$0")"
+echo "Xynigo Sourcing v%s 本地执行器启动中..."
+echo "打开本机兼容界面，用于 HubStudio 与故障排查。"
+echo "保持此窗口开启；关闭窗口即退出工具。"
+./runtime/xynigo-sourcing --local-ui
+XYNIGO_EXIT_CODE=$?
+if [ "$XYNIGO_EXIT_CODE" -eq 42 ]; then exit 0; fi
+if [ "$XYNIGO_EXIT_CODE" -ne 0 ]; then
+  echo "启动失败，退出码：$XYNIGO_EXIT_CODE"
+fi
+echo "按回车键关闭窗口。"
+read -r
+''' % version
+(stage / '启动-本地执行器-Mac.command').write_text(
+    local_launcher, encoding='utf-8')
 version_info = {
     'schemaVersion': 2,
     'product': 'Xynigo Sourcing',
@@ -79,7 +96,8 @@ version_info = {
     'platform': platform_key,
     'repository': 'wrangler1024/xynigo-sourcing',
     'managedPaths': [
-        'runtime', '启动-Mac.command', 'update-helper.sh',
+        'runtime', '启动-Mac.command', '启动-本地执行器-Mac.command',
+        'update-helper.sh',
         'VERSION.json', '使用说明.txt',
     ],
     'preservedPaths': [
@@ -93,15 +111,17 @@ guide = '''Xynigo Sourcing v%s macOS %s 绿色包
 
 1. 必须先完整解压 ZIP，不能直接在压缩包中双击。
 2. 首次运行右键“启动-Mac.command”选择“打开”。
-3. 保持 HubStudio 已登录，启动工具后在浏览器中操作。
-4. 页面右上角会检查 GitHub 最新稳定版；发现新版本时点击提醒，回到运行窗口输入 Y 更新或 N 暂不更新。
-5. 更新不需要 Git 或 GitHub 账号；校验失败或网络不可用时当前版本会继续运行。
-6. config.json、查询日志、运行数据和用户导入文件不会被更新覆盖或上传。
-7. 更新失败时会从本机备份自动回滚并重新启动。
+3. 双击“启动-Mac.command”默认打开云端工作台；本地执行器仍在此窗口运行。
+4. 需要使用旧本机界面或排查 HubStudio 时，打开“启动-本地执行器-Mac.command”。
+5. 页面右上角会检查 GitHub 最新稳定版；发现新版本时点击提醒，回到运行窗口输入 Y 更新或 N 暂不更新。
+6. 更新不需要 Git 或 GitHub 账号；校验失败或网络不可用时当前版本会继续运行。
+7. config.json、查询日志、运行数据和用户导入文件不会被更新覆盖或上传。
+8. 更新失败时会从本机备份自动回滚并重新启动。
 ''' % (version, platform_key)
 (stage / '使用说明.txt').write_text(guide, encoding='utf-8')
 PY
-chmod +x "$STAGE/启动-Mac.command" "$STAGE/update-helper.sh" \
+chmod +x "$STAGE/启动-Mac.command" "$STAGE/启动-本地执行器-Mac.command" \
+  "$STAGE/update-helper.sh" \
   "$STAGE/runtime/xynigo-sourcing"
 
 echo "[4/7] Ad-hoc sign and verify runtime ..."
@@ -116,7 +136,8 @@ from pathlib import Path
 
 root = Path(os.environ['STAGE'])
 required = [
-    'runtime/xynigo-sourcing', '启动-Mac.command', 'update-helper.sh',
+    'runtime/xynigo-sourcing', '启动-Mac.command',
+    '启动-本地执行器-Mac.command', 'update-helper.sh',
     'VERSION.json', '使用说明.txt',
 ]
 missing = [name for name in required if not (root / name).exists()]

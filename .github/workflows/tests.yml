@@ -7,6 +7,9 @@ on:
 permissions:
   contents: read
 
+env:
+  XYNIGO_RELEASE_CHANNEL: test
+
 jobs:
   unit-tests:
     runs-on: ubuntu-latest
@@ -77,6 +80,7 @@ jobs:
                   assert 'Xynigo-Sourcing/VERSION.json' in names
                   assert 'Xynigo-Sourcing/update-helper.sh' in names
                   assert 'Xynigo-Sourcing/启动-Mac.command' in names
+                  assert 'Xynigo-Sourcing/启动-本地执行器-Mac.command' in names
                   assert not any(name.endswith('/config.json') for name in names)
                   bundle.extractall(tmp)
               root = Path(tmp) / 'Xynigo-Sourcing'
@@ -122,6 +126,7 @@ jobs:
               names = set(bundle.namelist())
               assert 'Xynigo-Sourcing/VERSION.json' in names
               assert 'Xynigo-Sourcing/update-helper.ps1' in names
+              assert 'Xynigo-Sourcing/启动-本地执行器.bat' in names
               assert not any(name.endswith('/config.json') for name in names)
           PY
       - uses: actions/upload-artifact@v7

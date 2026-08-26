@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Xynigo Sourcing v0.12.3</title>
+<title>Xynigo Sourcing v0.12.4</title>
 <link rel="icon" type="image/png" sizes="260x260" href="/xynigo-x.png?v=6">
 <link rel="icon" type="image/x-icon" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256" href="/favicon.ico?v=6">
 <link rel="shortcut icon" href="/favicon.ico?v=6">
@@ -661,12 +661,12 @@
   .procurement-import-stack { display: grid; gap: 4px; min-width: 0; }
   .procurement-import-stack b { display: block; overflow-wrap: anywhere; color: var(--navy-900); line-height: 1.35; }
   .procurement-import-stack small { display: block; overflow-wrap: anywhere; color: var(--navy-500); font-size: 10px; line-height: 1.35; }
-  .procurement-import-order-band-0 td { background: #d8ecff; }
-  .procurement-import-order-band-1 td { background: #ffe1d2; }
-  .procurement-import-order-band-2 td { background: #e0f3d2; }
-  .procurement-import-order-band-3 td { background: #eadcf8; }
-  .procurement-import-order-band-4 td { background: #fff0b5; }
-  .procurement-import-order-band-5 td { background: #f7d8e8; }
+  .procurement-import-order-band-0 td { background: #e0f1ff; }
+  .procurement-import-order-band-1 td { background: #fff1e6; }
+  .procurement-import-order-band-2 td { background: #d8f8e5; }
+  .procurement-import-order-band-3 td { background: #f3ecfd; }
+  .procurement-import-order-band-4 td { background: #fff8d7; }
+  .procurement-import-order-band-5 td { background: #fdebf5; }
   .procurement-import-order-start td { border-top: 2px solid #b8c8d2; }
   .procurement-import-issues { margin-top: 12px; display: grid; gap: 6px; }
   .procurement-import-issue { padding: 8px 10px; border-radius: 8px; background: var(--parcel-100); color: var(--amber); font-size: 12px; line-height: 1.5; }
@@ -675,6 +675,9 @@
   .procurement-import-target-grid .field { min-width: 0; }
   .procurement-import-target-grid input, .procurement-import-target-grid select { width: 100%; }
   .procurement-import-target-actions { display: grid; grid-template-columns: repeat(2,minmax(112px,1fr)); gap: 8px; }
+  .procurement-import-target-grid select, .procurement-import-target-actions .btn { box-sizing: border-box; height: 42px; min-height: 42px; border-radius: 11px; font-size: 12px; font-weight: 800; }
+  .procurement-import-target-grid select { padding: 0 34px 0 12px; border-color: var(--line); background-color: #fff; color: var(--navy-700); }
+  .procurement-import-target-actions .btn { display: inline-flex; align-items: center; justify-content: center; width: 100%; }
   .procurement-import-sync-bar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 12px; padding: 12px 14px; border: 1px dashed #9fcdd0; border-radius: 11px; background: #f6fbfb; }
   .procurement-import-sync-copy { min-width: 0; color: var(--navy-600); font-size: 12px; line-height: 1.55; }
   .procurement-import-sync-copy b { display: block; color: var(--navy-900); font-size: 13px; }
@@ -1309,7 +1312,7 @@
           <div class="hero-kicker">XYNIGO SOURCING WORKSPACE</div>
           <h1>让小犀帮你把每一单稳稳带回来，<span class="hero-call">Xyni, GO!</span></h1>
           <p id="moduleSummary">批量查询订单与物流状态，异常任务集中处理，结果一键导出。</p>
-          <div class="hero-meta"><span class="hero-chip">测试候选 v0.12.3</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
+          <div class="hero-meta"><span class="hero-chip">测试候选 v0.12.4</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
         </div>
         <div class="hero-lockup" role="img" aria-label="小犀与 Xynigo 完整品牌一体图形">
           <img src="xynigo-logo.png" alt="">
@@ -1336,17 +1339,13 @@
           <b>选择店小秘订单导出文件</b>
           <p class="hint">模板需包含“产品图片网址、客服备注、产品图片”，客服备注必须保留完整 <span class="mono">[XYP2]...[/XYP2]</span>。</p>
           <input id="procurementImportFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
-          <div class="action-row" style="margin-top:14px"><button class="btn primary" id="btnProcurementImportParse" type="button">解析并生成</button><span class="hint">只在本机短时内存处理，不写店小秘、飞书或采购事实库。</span></div>
+          <div class="action-row" style="margin-top:14px"><button class="btn primary" id="btnProcurementImportParse" type="button">解析并生成</button><span class="hint">只在当前运行环境短时处理，不写店小秘或采购事实库；云端计划加密保存并到期自动清除。</span></div>
         </div>
         <div class="procurement-import-rules">
           <b>共享表兼容规则</b>
-          <div>表头分为“采购需求区 / 采购下单区 / 系统追踪区”；采购需求按标准顺序规范，固定前五列为“分单日期 / 采购员 / 销售订单号 / 店铺 / 运营”。</div>
-          <div>采购下单区不参与校验，采购可自行增删、改名和调整字段顺序；系统区只保留防重所需字段。</div>
-          <div>包裹号是采购单位；收货人姓名、国家、州/省、城市、地址1、地址2、邮编和电话会按顺序放在采购指导价后。</div>
-          <div>销售订单金额只写订单第一条明细，避免求和重复；商品金额按“产品售价 × 数量”在每条明细体现。</div>
-          <div>分单日期按北京时间生成并以真实日期类型写入；系统“导入批次”继续用于幂等防重，不再设置重复的“分单批次”列。</div>
-          <div>商品图片缩小 25% 并使用紧凑行高；采购链接为可点击超链接。下单截图、物流截图等所有下单区字段均不参与校验。</div>
-          <div>只写订单商品图片，不读取采购商品图；下载后从 A 列选择完整数据行，可直接粘贴到飞书 A 列。</div>
+          <div>采购需求区按标准列序写入，前五列固定为“分单日期 / 采购员 / 销售订单号 / 店铺 / 运营”；采购下单区可自由增删、改名和排序，不参与导入校验。</div>
+          <div>包裹号为采购单位，完整收货信息紧随采购指导价；订单金额只写首条明细，商品金额逐条计算，分单日期按北京时间写为日期类型。</div>
+          <div>系统追踪区仅用于幂等防重；同订单使用淡色分组，商品图、采购链接和紧凑行高自动处理，已有数据与图片会跳过。</div>
         </div>
       </div>
       <div class="resource-state" id="procurementImportState">请选择使用最新版运营采购助手写入 XYP2 后导出的 xlsx。</div>
@@ -2620,7 +2619,7 @@ const PERMISSION_MENU_GROUPS = [
     id: 'assistant', label: '小犀助手', secondary: [
       {
         id: 'moduleentry', label: '采购协作导入', badge: '试用',
-        note: '本机解析店小秘 xlsx 与 XYP2，生成单张采购共享协作表；不执行外部写入。',
+        note: '解析店小秘 xlsx 与 XYP2，预览和下载不执行外部写入；飞书导入仍需二次确认。',
         codes: ['assistant.access']
       }
     ]
@@ -2776,6 +2775,10 @@ const CLOUD_WEB_MODE = location.protocol !== 'file:' && (
   || !['127.0.0.1', 'localhost', '::1'].includes(location.hostname)
 );
 const CLOUD_EXECUTOR_OFFLINE_MESSAGE = 'Xynigo 本机执行器未启动；云端工作台仍可使用，HubStudio/CDP 等本机能力暂不可执行。';
+function procurementImportResourcePath(path) {
+  if (!CLOUD_WEB_MODE) return path;
+  return '/v1/assistant/procurement-import/' + path.slice('/api/assistant/procurement-import/'.length);
+}
 const CLOUD_BUYER_STATUS_LABELS = {
   available:'可用', reserved:'已预占', in_use:'使用中', cleanup_pending:'清理中',
   post_payment_hold:'付款后占用', manual_review:'人工复核', disabled:'停用'
@@ -2790,6 +2793,8 @@ function cloudApiError(payload, status) {
   const known = {
     authentication_required:'请先使用飞书登录', session_invalid:'登录会话已失效，请重新登录',
     permission_denied:'当前角色没有执行此操作的权限', web_csrf_required:'页面安全校验失败，请刷新后重试',
+    procurement_import_cloud_disabled:'云端采购协作导入尚未启用',
+    procurement_import_plan_expired:'解析计划已过期，请重新选择 xlsx',
     purchase_claim_conflict:'采购任务已被其他成员处理，请刷新后重试',
     purchase_order_not_found:'采购单不存在或不属于当前组织'
   };
@@ -2805,7 +2810,7 @@ async function cloudFetchJson(path, opts={}) {
   const headers = new Headers(opts.headers || {});
   headers.set('Accept', 'application/json');
   headers.set('X-Xynigo-Source', 'cloud_web_workspace');
-  headers.set('X-Xynigo-Client-Version', '0.12.3-cloud-web');
+  headers.set('X-Xynigo-Client-Version', '0.12.4-cloud-web');
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     headers.set('X-Xynigo-Web-CSRF', 'same-origin');
   }
@@ -2932,6 +2937,10 @@ async function cloudWebApi(path, opts={}) {
   if (path.startsWith('/api/admin/')) {
     const mapped = cloudAdminTarget(path, opts);
     return cloudFetchJson(mapped.target, mapped.opts);
+  }
+  if (path === '/api/assistant/procurement-import'
+      || path.startsWith('/api/assistant/procurement-import/')) {
+    return cloudFetchJson(procurementImportResourcePath(path), opts);
   }
   return cloudLocalStub(path, opts);
 }
@@ -6699,7 +6708,7 @@ $('btnProcurementImportParse').onclick = async () => {
   $('procurementImportIssueList').replaceChildren();
   $('procurementImportTbody').innerHTML = '<tr><td colspan="7" class="empty-tip">正在解析 XYP2 并准备订单商品图片…</td></tr>';
   $('procurementImportState').className = 'resource-state';
-  $('procurementImportState').textContent = '正在本机解析 XYP2 和导出文件内嵌的订单商品图片…';
+  $('procurementImportState').textContent = '正在解析 XYP2 和导出文件内嵌的订单商品图片…';
   try {
     const contentBase64 = bytesToBase64(new Uint8Array(await file.arrayBuffer()));
     const result = await api('/api/assistant/procurement-import/parse', {
@@ -6720,7 +6729,7 @@ $('btnProcurementImportParse').onclick = async () => {
     $('procurementImportIssueCount').textContent = (result.warningCount || 0) + (result.errorCount || 0);
     const preview = result.preview || [];
     $('procurementImportTbody').innerHTML = preview.length ? preview.map((row, previewIndex) => {
-      const imageUrl = `/api/assistant/procurement-import/image?planId=${encodeURIComponent(procurementImportPlanId)}&row=${encodeURIComponent(row.imageIndex)}`;
+      const imageUrl = procurementImportResourcePath(`/api/assistant/procurement-import/image?planId=${encodeURIComponent(procurementImportPlanId)}&row=${encodeURIComponent(row.imageIndex)}`);
       const imagePreview = row.orderImageReady
         ? `<a class="procurement-import-thumb-link" href="${imageUrl}" target="_blank" rel="noopener" title="打开订单商品图片"><img class="procurement-import-thumb" src="${imageUrl}" alt="订单商品图" loading="lazy" data-procurement-preview-image></a>`
         : '<span class="procurement-import-thumb-empty">仅图片网址<br>未内嵌</span>';
@@ -6760,7 +6769,7 @@ $('btnProcurementImportParse').onclick = async () => {
 
 $('btnProcurementImportDownload').onclick = () => {
   if (!procurementImportPlanId) { toast('解析计划已失效，请重新解析'); return; }
-  window.location.href = '/api/assistant/procurement-import/export?planId=' + encodeURIComponent(procurementImportPlanId);
+  window.location.href = procurementImportResourcePath('/api/assistant/procurement-import/export?planId=' + encodeURIComponent(procurementImportPlanId));
 };
 
 $('procurementImportTargetUrl').oninput = () => {

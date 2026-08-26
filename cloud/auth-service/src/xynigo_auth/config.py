@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     feishu_purchase_order_table_id: str = ""
     feishu_purchase_line_table_id: str = ""
     feishu_purchase_sync_interval_seconds: int = 15
+    procurement_import_enabled: bool = False
+    procurement_import_plan_ttl_seconds: int = 30 * 60
+    procurement_import_worker_interval_seconds: int = 2
+    procurement_import_max_active_plans_per_tenant: int = 5
     cookie_name: str = "xynigo_session"
     cookie_secure: bool = True
     login_success_path: str = "/"
@@ -124,6 +128,44 @@ class Settings(BaseSettings):
                 "feishu_operation_sync_interval_seconds must be between 5 and 3600"
             )
         return value
+
+    @field_validator("procurement_import_plan_ttl_seconds")
+    @classmethod
+    def validate_procurement_import_ttl(cls, value: int) -> int:
+        if value < 300 or value > 24 * 60 * 60:
+            raise ValueError(
+                "procurement_import_plan_ttl_seconds must be between 300 and 86400"
+            )
+        return value
+
+    @field_validator("procurement_import_worker_interval_seconds")
+    @classmethod
+    def validate_procurement_import_worker_interval(cls, value: int) -> int:
+        if value < 1 or value > 60:
+            raise ValueError(
+                "procurement_import_worker_interval_seconds must be between 1 and 60"
+            )
+        return value
+
+    @field_validator("procurement_import_max_active_plans_per_tenant")
+    @classmethod
+    def validate_procurement_import_active_plan_limit(cls, value: int) -> int:
+        if value < 1 or value > 50:
+            raise ValueError(
+                "procurement_import_max_active_plans_per_tenant must be between 1 and 50"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def validate_procurement_import_security(self) -> "Settings":
+        if (
+            self.procurement_import_enabled
+            and not self.buyer_credential_encryption_key.get_secret_value()
+        ):
+            raise ValueError(
+                "cloud procurement import requires application-layer encryption"
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_operation_sync_target(self) -> "Settings":

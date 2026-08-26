@@ -46,6 +46,8 @@ def build_test_app(
     open_id: str = "ou_admin",
     bootstrap: str = "ou_admin",
     pkce_method: str = "S256",
+    procurement_import_enabled: bool = False,
+    procurement_import_gateway=None,
 ):
     database = Database(f"sqlite+pysqlite:///{tmp_path / 'identity.sqlite3'}")
     Base.metadata.create_all(database.engine)
@@ -63,6 +65,8 @@ def build_test_app(
         bootstrap_super_admin_open_ids=bootstrap,
         cookie_secure=False,
         allowed_hosts="testserver",
+        procurement_import_enabled=procurement_import_enabled,
+        procurement_import_worker_interval_seconds=1,
     )
     oauth = FakeOAuthClient(
         FeishuIdentity(
@@ -73,7 +77,12 @@ def build_test_app(
             avatar_url=None,
         )
     )
-    app = create_app(settings=settings, oauth_client=oauth, database=database)
+    app = create_app(
+        settings=settings,
+        oauth_client=oauth,
+        database=database,
+        procurement_import_gateway=procurement_import_gateway,
+    )
     return app, database, oauth
 
 
@@ -101,7 +110,7 @@ def test_cloud_workspace_shell_and_assets_are_public_but_api_stays_protected(
     with TestClient(app) as client:
         workspace = client.get("/")
         assert workspace.status_code == 200
-        assert "<title>Xynigo Sourcing v0.12.3</title>" in workspace.text
+        assert "<title>Xynigo Sourcing v0.12.4</title>" in workspace.text
         assert 'src="xynigo-logo.png?v=6"' in workspace.text
         assert 'href="/favicon.ico?v=6"' in workspace.text
         assert "const CLOUD_WEB_MODE" in workspace.text

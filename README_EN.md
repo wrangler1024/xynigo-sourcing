@@ -33,16 +33,15 @@ workflows contributed by **Samforo**.
   outbound collaboration mirror. The legacy `买家号（统一）` table is migration
   input only.
 
-The current online coordination test release is `v0.12.3`, with update
+The current online coordination test release is `v0.12.4`, with update
 packages for Windows x86_64 and macOS ARM64. The project is under active
 development and is not yet a production hosted SaaS product.
 
-The current coordinated test release is `v0.12.3`. Building on the v0.12.2
-database source of truth, it encrypts complete buyer-account credentials and
-business metadata in PostgreSQL. Credential reads require a second permission,
-and the independent test Base continuously mirrors 41 authorized fields. The
-runtime no longer reads or writes the legacy unified ledger. This remains a
-shared-test candidate, not a production release.
+The current coordinated test release is `v0.12.4`. It moves procurement
+collaboration imports into the cloud workspace and makes the desktop launcher
+open that cloud workspace by default, while retaining a dedicated local UI for
+HubStudio/CDP/SHEIN work and troubleshooting. This remains a shared-test
+candidate, not a production release.
 
 v0.10.0 adds an opt-in safe parallel mode. When enabled, one order/shipment
 query batch may run alongside either one bound-environment batch or one
@@ -129,8 +128,11 @@ python -m pip install -e .
 python -m purchase_tool
 ```
 
-The local UI opens at `http://127.0.0.1:8765`. If the port is occupied, the
-application tries the next available port.
+The desktop launcher starts the local executor in the background and opens the
+cloud workspace at `https://xynigo.samforo.icu` by default. The local service
+continues to listen on `http://127.0.0.1:8765` (or the next available port) for
+HubStudio/CDP/SHEIN capabilities. Run `python -m purchase_tool --local-ui`, or
+use the package's dedicated local-executor launcher, to open the legacy local UI.
 
 On macOS, `启动-Mac.command` provides the same local development entry point.
 

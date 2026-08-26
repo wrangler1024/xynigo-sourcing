@@ -20,11 +20,13 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -1190,6 +1192,118 @@ class OperationalSyncOutbox(Base):
         ),
         CheckConstraint("attempt_count >= 0", name="ck_operational_sync_attempt_count"),
         Index("ix_operational_sync_pending", "status", "available_at"),
+    )
+
+
+class ProcurementImportPlan(Base):
+    """Encrypted, short-lived XYP2 collaboration import plan."""
+
+    __tablename__ = "procurement_import_plans"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    created_by_user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    import_batch: Mapped[str] = mapped_column(String(128), nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    encrypted_payload: Mapped[bytes | None] = mapped_column(LargeBinary)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="parsed")
+    source_row_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    order_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    detail_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    image_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('parsed', 'validated', 'expired')",
+            name="ck_procurement_import_plan_status",
+        ),
+        CheckConstraint(
+            "source_row_count >= 0 AND order_count >= 0 AND "
+            "detail_count >= 0 AND image_count >= 0",
+            name="ck_procurement_import_plan_counts",
+        ),
+        Index(
+            "ix_procurement_import_plan_tenant_expiry",
+            "tenant_id",
+            "expires_at",
+        ),
+    )
+
+
+class ProcurementImportJob(Base):
+    """Durable progress for an idempotent ordinary-Sheet import run."""
+
+    __tablename__ = "procurement_import_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    plan_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("procurement_import_plans.id", ondelete="CASCADE"), nullable=False
+    )
+    created_by_user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    target_key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    progress: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    last_error_code: Mapped[str | None] = mapped_column(String(128))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('queued', 'validating', 'normalizing_headers', "
+            "'formatting_headers', 'writing_rows', 'verifying_rows', "
+            "'formatting_rows', 'writing_links', 'writing_images', "
+            "'completed', 'partial', 'failed')",
+            name="ck_procurement_import_job_state",
+        ),
+        Index(
+            "ix_procurement_import_job_pending",
+            "state",
+            "created_at",
+        ),
+        Index(
+            "ix_procurement_import_job_target",
+            "tenant_id",
+            "target_key_hash",
+        ),
+        Index(
+            "uq_procurement_import_job_active_target",
+            "tenant_id",
+            "target_key_hash",
+            unique=True,
+            postgresql_where=text(
+                "state IN ('queued', 'validating', 'normalizing_headers', "
+                "'formatting_headers', 'writing_rows', 'verifying_rows', "
+                "'formatting_rows', 'writing_links', 'writing_images')"
+            ),
+            sqlite_where=text(
+                "state IN ('queued', 'validating', 'normalizing_headers', "
+                "'formatting_headers', 'writing_rows', 'verifying_rows', "
+                "'formatting_rows', 'writing_links', 'writing_images')"
+            ),
+        ),
     )
 
 

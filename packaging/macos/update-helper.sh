@@ -45,7 +45,7 @@ if [ -z "$state_dir" ]; then
 fi
 
 managed_paths=(
-  "runtime" "启动-Mac.command" "update-helper.sh"
+  "runtime" "启动-Mac.command" "启动-本地执行器-Mac.command" "update-helper.sh"
   "VERSION.json" "使用说明.txt"
 )
 mkdir -p "$state_dir/logs"
@@ -152,7 +152,9 @@ if [ "$failed" -eq 0 ]; then
 fi
 
 if [ "$failed" -eq 0 ]; then
-  chmod +x "$install_dir/启动-Mac.command" "$install_dir/update-helper.sh"
+  chmod +x "$install_dir/启动-Mac.command" \
+    "$install_dir/启动-本地执行器-Mac.command" \
+    "$install_dir/update-helper.sh"
   chmod +x "$install_dir/runtime/xynigo-sourcing"
   write_log "更新安装成功，用户配置和本地数据未被修改。"
   start_xynigo
