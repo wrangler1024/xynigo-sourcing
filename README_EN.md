@@ -33,11 +33,10 @@ workflows contributed by **Samforo**.
 The current stable release is `v0.10.0`. The project is under active
 development and is not yet a hosted SaaS product.
 
-The current coordinated test candidate is `v0.12.0`. It upgrades the shared
-procurement claim pool and each buyer's execution workspace, adds batch claim,
-store/operator filters, profit summaries, quick checkout and guarded task
-return actions, and reduces HubStudio Local API rate-limit failures during
-concurrent environment creation. It is limited to all current users of the
+The current coordinated test candidate is `v0.12.1`. Building on the v0.12.0
+procurement and environment-creation improvements, it durably and
+idempotently reports real daily buyer-environment creation and shipment lookup
+results to the shared service. It is limited to all current users of the
 shared test environment; it is not a production release.
 
 v0.10.0 adds an opt-in safe parallel mode. When enabled, one order/shipment

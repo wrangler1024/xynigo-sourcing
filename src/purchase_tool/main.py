@@ -36,6 +36,7 @@ import tempfile
 import threading
 import time
 import webbrowser
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -71,6 +72,7 @@ from .lark_links import (LarkLedgerTargetConfig, build_lark_base_link,
 from .lark_ledger import LarkLedgerSink
 from .lark_openapi import LarkOpenApiClient
 from .lark_runtime import build_buyer_ledger_service
+from .operation_result_sync import OperationResultSyncQueue
 from .redaction import scrub_text
 from .resource_center import ResourceCenterService
 from .shein_query import QueryOrchestrator, normalize_site
@@ -595,6 +597,11 @@ class AppState(object):
         cfg = load_config()
         self.cfg = cfg
         self.auth = auth_service or LocalAuthService()
+        self.operation_sync_error = ''
+        self.operation_sync = OperationResultSyncQueue(
+            lambda endpoint, payload, permission:
+                self.auth.operation_result_request(
+                    endpoint, payload, permission))
         self.extension_bridge = extension_bridge or ExtensionBridge()
         self.lark_credentials = credential_store or system_credential_store()
         self.hub_runtime_gate = HubRuntimeGate(max_requests=4)
@@ -638,6 +645,130 @@ class AppState(object):
 
     def hub_status(self, force=False):
         return self._hub_status.check(force=force)
+
+    @staticmethod
+    def _iso_epoch(value):
+        if not value:
+            return None
+        return datetime.fromtimestamp(float(value), timezone.utc).isoformat()
+
+    @staticmethod
+    def _iso_local_text(value, utc_offset_minutes=None):
+        text = str(value or '').strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.strptime(text, '%Y-%m-%d %H:%M:%S')
+            if utc_offset_minutes is None:
+                return parsed.astimezone().isoformat()
+            zone = timezone(timedelta(minutes=int(utc_offset_minutes)))
+            return parsed.replace(tzinfo=zone).isoformat()
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    def environment_result_payload(self, task_id, account_ids=None):
+        snapshot = self.env_job.snapshot()
+        runner = self.env_job.runner
+        if runner is None:
+            raise ValueError('建环境任务没有可回传结果')
+        selected = set(account_ids or ())
+        rows = [row for row in snapshot.get('rows') or []
+                if not selected or str(row.get('accountId') or '') in selected]
+        if not rows:
+            raise ValueError('建环境任务没有可回传行')
+        return {
+            'source': 'local_executor',
+            'runKey': task_id,
+            'site': runner.site,
+            'purchaseDate': runner.purchase_date,
+            'environmentGroup': runner.purchase_tag,
+            'startedAt': self._iso_epoch(self.env_job.started_at),
+            'completedAt': self._iso_epoch(
+                self.env_job.finished_at or time.time()),
+            'results': [{
+                'accountRef': str(row.get('accountId') or ''),
+                'accountLabel': str(row.get('emailMasked') or ''),
+                'purchaserLabel': str(row.get('buyer') or ''),
+                'environmentName': str(row.get('envName') or ''),
+                'environmentRef': (
+                    str(row.get('containerCode'))
+                    if row.get('containerCode') not in (None, '') else None),
+                'environmentSerial': (
+                    str(row.get('serialNumber'))
+                    if row.get('serialNumber') not in (None, '') else None),
+                'status': ('success' if row.get('state') == 'done'
+                           else 'failed'),
+                'errorStep': str(row.get('errorStep') or ''),
+                'errorSummary': scrub_text(row.get('error') or '')[:300],
+                'bindingAt': self._iso_local_text(row.get('bindingTime')),
+                'recoveredExisting': bool(row.get('recoveredExisting')),
+            } for row in rows],
+            'ipChecks': [{
+                'environmentName': str(item.get('envName') or ''),
+                'ipAddress': str(item.get('ip') or ''),
+                'country': str(item.get('country') or ''),
+                'city': str(item.get('city') or ''),
+                'isp': str(item.get('isp') or ''),
+                'ok': bool(item.get('ok')),
+                'errorSummary': scrub_text(item.get('error') or '')[:300],
+            } for item in snapshot.get('ipChecks') or []
+                if (not selected or any(
+                    str(row.get('envName') or '') ==
+                    str(item.get('envName') or '') for row in rows))],
+        }
+
+    def logistics_result_payload(self, task_id, mode, serials):
+        snapshot = self.orch.snapshot()
+        selected = {str(serial) for serial in serials or ()}
+        rows = [row for row in snapshot.get('rows') or []
+                if str(row.get('serial') or '') in selected]
+        if not rows:
+            raise ValueError('物流查询任务没有可回传行')
+        allowed_states = {'ok', 'fail', 'login', 'inuse', 'stopped', 'pending'}
+        return {
+            'source': 'local_executor',
+            'runKey': task_id,
+            'queryMode': mode,
+            'site': snapshot.get('site') or rows[0].get('site') or 'MX',
+            'startedAt': self._iso_epoch(self.orch.started_at),
+            'completedAt': self._iso_epoch(
+                self.orch.finished_at or time.time()),
+            'results': [{
+                'environmentSerial': str(row.get('serial') or ''),
+                'environmentName': str(row.get('envName') or ''),
+                'status': (row.get('state')
+                           if row.get('state') in allowed_states else 'fail'),
+                'platformOrderNo': str(row.get('orderNo') or ''),
+                'orderTime': str(row.get('orderTime') or ''),
+                'amount': str(row.get('amount') or ''),
+                'platformStatus': str(row.get('status') or ''),
+                'statusLabel': str(row.get('statusCn') or ''),
+                'fulfillmentStage': str(row.get('stage') or ''),
+                'trackingNumbers': [
+                    str(item) for item in row.get('tracks') or []],
+                'packageNumbers': [
+                    str(item) for item in row.get('pkgs') or []],
+                'carrier': str(row.get('carrier') or ''),
+                'cancelled': bool(row.get('kanDan')),
+                'riskOrder': bool(row.get('riskOrder')),
+                'riskSummary': str(row.get('riskMessage') or ''),
+                'ipAddress': str(row.get('ip') or ''),
+                'timeZone': str(row.get('timeZone') or ''),
+                'utcOffsetMinutes': row.get('utcOffsetMinutes'),
+                'queriedAt': self._iso_local_text(
+                    row.get('time'), row.get('utcOffsetMinutes')),
+                'errorSummary': scrub_text(row.get('error') or '')[:300],
+                'screenshotStatus': str(row.get('screenshotState') or ''),
+            } for row in rows],
+        }
+
+    def enqueue_operation_result(self, endpoint, permission, payload):
+        try:
+            self.operation_sync.enqueue(endpoint, permission, payload)
+            self.operation_sync_error = ''
+        except Exception as exc:
+            self.operation_sync_error = scrub_text(exc)[:200]
+            raise
 
 
 def build_state():
@@ -1862,9 +1993,12 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/progress':
                 snap = STATE.orch.snapshot()
                 snap['hubConnected'] = STATE.hub_status()[0]
+                snap['serverSync'] = STATE.operation_sync.snapshot()
                 self._json(snap)
             elif path == '/api/tasks':
-                self._json(STATE.tasks.snapshot())
+                snap = STATE.tasks.snapshot()
+                snap['serverSync'] = STATE.operation_sync.snapshot()
+                self._json(snap)
             elif path == '/api/register/progress':
                 snap = STATE.reg_job.snapshot()
                 snap['hubConnected'] = STATE.hub_status()[0]
@@ -1898,6 +2032,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/envbatch/progress':
                 snap = STATE.env_job.snapshot()
                 snap['hubConnected'] = STATE.hub_status()[0]
+                snap['serverSync'] = STATE.operation_sync.snapshot()
                 self._json(snap)
             elif path == '/api/envbatch/preflight':
                 site = (query.get('site') or ['MX'])[0]
@@ -2079,10 +2214,23 @@ class Handler(BaseHTTPRequestHandler):
                                  if str(serial) in env_index]
                 task_id = STATE.tasks.begin(
                     'query', environment_resources(selected_envs))
+                selected_serials = [str(serial) for serial in serials]
+
+                def finish_query():
+                    try:
+                        payload = STATE.logistics_result_payload(
+                            task_id, 'initial', selected_serials)
+                        STATE.enqueue_operation_result(
+                            '/v1/operations/logistics-query-runs',
+                            'fulfillment.order.read', payload)
+                    except Exception as exc:
+                        STATE.operation_sync_error = scrub_text(exc)[:200]
+                    finally:
+                        STATE.tasks.finish(task_id)
                 try:
                     STATE.orch.start_batch(
                         serials, env_index, site=site,
-                        on_finished=lambda: STATE.tasks.finish(task_id))
+                        on_finished=finish_query)
                 except Exception:
                     STATE.tasks.finish(task_id)
                     raise
@@ -2099,11 +2247,23 @@ class Handler(BaseHTTPRequestHandler):
                 env_index = {serial: env} if env else {}
                 task_id = STATE.tasks.begin(
                     'query', environment_resources([env] if env else []))
+
+                def finish_requery():
+                    try:
+                        payload = STATE.logistics_result_payload(
+                            task_id, 'single_retry', [serial])
+                        STATE.enqueue_operation_result(
+                            '/v1/operations/logistics-query-runs',
+                            'fulfillment.order.read', payload)
+                    except Exception as exc:
+                        STATE.operation_sync_error = scrub_text(exc)[:200]
+                    finally:
+                        STATE.tasks.finish(task_id)
                 try:
                     STATE.orch.requery(
                         serial, env_index=env_index,
                         force=bool(body.get('force')),
-                        on_finished=lambda: STATE.tasks.finish(task_id))
+                        on_finished=finish_requery)
                 except Exception:
                     STATE.tasks.finish(task_id)
                     raise
@@ -2120,10 +2280,22 @@ class Handler(BaseHTTPRequestHandler):
                             if serial in env_index]
                 task_id = STATE.tasks.begin(
                     'query', environment_resources(selected))
+
+                def finish_failed_requery():
+                    try:
+                        payload = STATE.logistics_result_payload(
+                            task_id, 'failed_retry', retry_serials)
+                        STATE.enqueue_operation_result(
+                            '/v1/operations/logistics-query-runs',
+                            'fulfillment.order.read', payload)
+                    except Exception as exc:
+                        STATE.operation_sync_error = scrub_text(exc)[:200]
+                    finally:
+                        STATE.tasks.finish(task_id)
                 try:
                     count = STATE.orch.requery_failed(
                         env_index=env_index,
-                        on_finished=lambda: STATE.tasks.finish(task_id))
+                        on_finished=finish_failed_requery)
                 except Exception:
                     STATE.tasks.finish(task_id)
                     raise
@@ -2196,6 +2368,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({'valid': True, 'count': len(rows), 'rows': rows})
             elif path == '/api/envbatch/start':
                 task_id = STATE.tasks.begin('env_batch')
+
+                def finish_environment_batch():
+                    try:
+                        payload = STATE.environment_result_payload(task_id)
+                        STATE.enqueue_operation_result(
+                            '/v1/operations/environment-creation-runs',
+                            'resource.environment.create', payload)
+                    except Exception as exc:
+                        STATE.operation_sync_error = scrub_text(exc)[:200]
+                    finally:
+                        STATE.tasks.finish(task_id)
                 try:
                     count = STATE.env_job.start(
                         body.get('planId'), body.get('assignment'),
@@ -2207,7 +2390,7 @@ class Handler(BaseHTTPRequestHandler):
                         confirm_lark_write=bool(body.get('confirmLarkWrite')),
                         reserve_resources=lambda resources:
                             STATE.tasks.reserve(task_id, resources),
-                        on_finished=lambda: STATE.tasks.finish(task_id))
+                        on_finished=finish_environment_batch)
                 except Exception:
                     STATE.tasks.finish(task_id)
                     raise
@@ -2215,12 +2398,25 @@ class Handler(BaseHTTPRequestHandler):
                             'taskId': task_id})
             elif path == '/api/envbatch/retry-row':
                 task_id = STATE.tasks.begin('env_batch')
+                account_id = str(body.get('accountId') or '')
+
+                def finish_environment_retry():
+                    try:
+                        payload = STATE.environment_result_payload(
+                            task_id, [account_id])
+                        STATE.enqueue_operation_result(
+                            '/v1/operations/environment-creation-runs',
+                            'resource.environment.create', payload)
+                    except Exception as exc:
+                        STATE.operation_sync_error = scrub_text(exc)[:200]
+                    finally:
+                        STATE.tasks.finish(task_id)
                 try:
                     STATE.env_job.retry_row(
-                        str(body.get('accountId') or ''),
+                        account_id,
                         reserve_resources=lambda resources:
                             STATE.tasks.reserve(task_id, resources),
-                        on_finished=lambda: STATE.tasks.finish(task_id))
+                        on_finished=finish_environment_retry)
                 except Exception:
                     STATE.tasks.finish(task_id)
                     raise

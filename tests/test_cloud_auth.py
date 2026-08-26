@@ -58,6 +58,7 @@ class FakeCloudClient(object):
         self.admin_requests = []
         self.purchase_requests = []
         self.procurement_workspace_requests = []
+        self.operation_result_requests = []
         self.business_log_requests = []
         self.system_log_requests = []
 
@@ -115,6 +116,11 @@ class FakeCloudClient(object):
                 'total': 0, 'items': [],
             },
         }
+
+    def operation_result_request(
+            self, path, token, method='PUT', payload=None):
+        self.operation_result_requests.append((path, token, method, payload))
+        return {'ok': True, 'data': {'accepted': True}}
 
     def system_log_request(self, path, token):
         self.system_log_requests.append((path, token))
@@ -347,6 +353,51 @@ class CloudAuthTests(unittest.TestCase):
             ('/v1/business-logs?module=procurement&page=1', SESSION_TOKEN),
         ])
         self.assertNotIn(SESSION_TOKEN, json.dumps(result))
+
+    def test_operation_result_proxy_keeps_bearer_session_local(self):
+        client = FakeCloudClient()
+        client.me_result = {
+            **IDENTITY,
+            'permissions': ['fulfillment.order.read'],
+        }
+        service = LocalAuthService(
+            client=client,
+            store=MemoryAuthSessionStore(SESSION_TOKEN),
+        )
+        body = {'runKey': 'query-synthetic0001', 'results': []}
+        result = service.operation_result_request(
+            '/v1/operations/logistics-query-runs', body,
+            'fulfillment.order.read')
+        self.assertTrue(result['data']['accepted'])
+        self.assertEqual(client.operation_result_requests, [(
+            '/v1/operations/logistics-query-runs', SESSION_TOKEN, 'PUT', body,
+        )])
+        self.assertNotIn(SESSION_TOKEN, json.dumps(result))
+
+    def test_cloud_operation_result_client_allows_only_exact_put_paths(self):
+        client = CloudAuthClient('https://xynigo.example.test')
+        calls = []
+        client._request = lambda path, **kwargs: calls.append(
+            (path, kwargs)) or {'ok': True, 'data': {}}
+        body = {'runKey': 'query-synthetic0001', 'results': []}
+        for path in (
+                '/v1/operations/environment-creation-runs',
+                '/v1/operations/logistics-query-runs'):
+            client.operation_result_request(
+                path, SESSION_TOKEN, method='PUT', payload=body)
+        self.assertEqual([item[0] for item in calls], [
+            '/v1/operations/environment-creation-runs',
+            '/v1/operations/logistics-query-runs',
+        ])
+        self.assertTrue(all(item[1]['method'] == 'PUT' for item in calls))
+        for unsafe_path in (
+                '/v1/operations/logistics-query-runs?unsafe=1',
+                '/v1/operations/../admin/members',
+                'https://evil.example.test/v1/operations/logistics-query-runs'):
+            with self.subTest(path=unsafe_path):
+                with self.assertRaises(LocalAuthError):
+                    client.operation_result_request(
+                        unsafe_path, SESSION_TOKEN, payload=body)
 
     def test_cloud_business_log_client_allows_only_read_paths(self):
         client = CloudAuthClient('https://xynigo.example.test')
