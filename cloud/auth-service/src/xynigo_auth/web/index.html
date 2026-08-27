@@ -390,7 +390,7 @@
   .local-executor-decision p { margin: 4px 0 0; color: var(--navy-500); font-size: 9px; }
   .local-executor-decision.recommended { border-color: #bce5d2; background: var(--green-100); }
   .local-executor-decision.recommended b { color: var(--green); }
-  .local-executor-device-layout { display: grid; grid-template-columns: minmax(330px,.82fr) minmax(0,1.18fr); gap: 16px; align-items: start; }
+  .local-executor-device-layout { display: grid; grid-template-columns: minmax(330px,.82fr) minmax(0,1.18fr); gap: 16px; align-items: stretch; }
   .local-executor-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
   .local-executor-card-head p { margin: 4px 0 0; color: var(--navy-500); font-size: 9px; line-height: 1.55; }
   .local-executor-device-list { margin-top: 12px; display: grid; gap: 8px; }
@@ -411,16 +411,16 @@
   .local-executor-pairing-status.ok { color: var(--green); font-weight: 800; }
   .local-executor-pairing-status.bad { color: var(--coral-500); font-weight: 800; }
   .local-executor-command { margin-top: 8px; padding: 8px 9px; border-radius: 8px; background: #0e2946; color: #eaf6f6; font: 8px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; overflow-wrap: anywhere; }
-  .local-executor-config-grid { margin-top: 12px; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
+  .local-executor-config-grid { margin-top: 10px; display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 8px; align-items: end; }
   .local-executor-config-grid .field { margin: 0; min-width: 0; }
   .local-executor-config-grid .field.wide { grid-column: span 2; }
+  .local-executor-config-grid .field label { min-height: 28px; margin-bottom: 5px; display: flex; align-items: flex-end; line-height: 1.25; }
   .local-executor-config-grid input, .local-executor-config-grid select { width: 100%; min-height: 39px; }
-  .local-executor-config-check { min-height: 39px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 9px; display: flex; align-items: center; gap: 7px; color: var(--navy-700); font-size: 9px; background: #fbfcfd; }
+  .local-executor-config-check { min-height: 39px; padding: 8px; border: 1px solid var(--line); border-radius: 9px; display: flex; align-items: center; gap: 6px; color: var(--navy-700); font-size: 9px; line-height: 1.25; background: #fbfcfd; }
   .local-executor-config-check input { width: auto; min-height: 0; }
-  .local-executor-config-scope { grid-column: 1 / -1; padding: 9px 10px; border: 1px dashed #bdd7df; border-radius: 9px; background: #f6fbfc; color: var(--navy-500); font-size: 9px; line-height: 1.6; }
-  .local-executor-config-scope b { color: var(--navy-800); }
-  .local-executor-config-actions { margin-top: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .local-executor-config-state { margin-top: 10px; padding: 9px 10px; border-radius: 9px; background: #f5f8fa; color: var(--navy-500); font-size: 9px; line-height: 1.55; }
+  .local-executor-config-actions { margin-top: 10px; display: flex; align-items: stretch; gap: 8px; }
+  .local-executor-config-actions .btn { min-height: 39px; padding: 8px 11px; }
+  .local-executor-config-state { min-width: 0; min-height: 39px; margin: 0; padding: 7px 9px; border-radius: 9px; display: flex; flex: 1 1 auto; align-items: center; background: #f5f8fa; color: var(--navy-500); font-size: 9px; line-height: 1.35; }
   .local-executor-config-state.ok { border: 1px solid #bce5d2; background: var(--green-100); color: var(--green); }
   .local-executor-config-state.bad { border: 1px solid #f4c2b7; background: var(--coral-100); color: var(--coral-500); }
   @keyframes update-pulse { 50% { transform: translateY(-2px); box-shadow: 0 4px 10px rgba(255,105,74,.28); } }
@@ -1513,21 +1513,20 @@
       </article>
 
       <article class="card">
-        <div class="local-executor-card-head"><div><div class="card-title">设备运行配置 <span class="legend">云端下发 · 本机生效 · 版本冲突保护</span></div><p>这里只管理所选电脑执行 HubStudio 任务所需的端口、并发和安全策略；配置仍以本机 config.json 为准。</p></div><span class="legend" id="localExecutorConfigRevision">尚未读取</span></div>
+        <div class="local-executor-card-head"><div><div class="card-title">设备运行配置</div><p>端口、并发与安全策略；业务参数按任务选择，本机 config.json 仍是事实源。</p></div><span class="legend" id="localExecutorConfigRevision">尚未读取</span></div>
         <div class="local-executor-config-grid">
           <div class="field"><label for="executorConfigHubPort">HubStudio Local API 端口</label><input id="executorConfigHubPort" type="number" min="1" max="65535" disabled></div>
           <div class="field"><label for="executorConfigConcurrency">查询并发数</label><input id="executorConfigConcurrency" type="number" min="1" max="5" disabled></div>
           <div class="field"><label for="executorConfigEnvWorkers">建环境并发数</label><input id="executorConfigEnvWorkers" type="number" min="1" max="10" disabled></div>
           <div class="field"><label for="executorConfigVerifyCount">新建完成抽检数</label><input id="executorConfigVerifyCount" type="number" min="0" max="10" disabled></div>
           <label class="local-executor-config-check"><input id="executorConfigSafeParallel" type="checkbox" disabled>查物流与建环境安全并行</label>
-          <div class="local-executor-config-scope"><b>业务参数已从设备配置移出：</b>采购站点与 HubStudio 分组在“资源中心 → 环境创建”中按任务选择；采购员分配由云端任务和本批操作决定，不再保存为某台电脑的固定模板。</div>
         </div>
         <div class="local-executor-config-actions">
           <button class="btn primary" id="btnLocalExecutorReadConfig" type="button" disabled>读取设备配置</button>
           <button class="btn" id="btnLocalExecutorSaveConfig" type="button" disabled>保存设备配置</button>
           <button class="btn" id="btnLocalExecutorCancelTask" type="button" hidden>取消当前请求</button>
+          <div class="local-executor-config-state" id="localExecutorConfigState">请选择一台在线设备后读取。业务参数及敏感信息不会在这里传输。</div>
         </div>
-        <div class="local-executor-config-state" id="localExecutorConfigState">请选择一台在线设备后读取配置。业务分配参数及代理链接、Cookie、账号密码和飞书凭证不会在这里显示或传输。</div>
       </article>
     </section>
 
@@ -6908,7 +6907,7 @@ function setLocalExecutorConfigInputsEnabled(enabled) {
   $('btnLocalExecutorSaveConfig').disabled = !enabled || !canWrite;
 }
 
-function resetLocalExecutorConfig(message='请选择一台在线设备后读取配置。业务分配参数及代理链接、Cookie、账号密码和飞书凭证不会在这里显示或传输。') {
+function resetLocalExecutorConfig(message='请选择一台在线设备后读取。业务参数及敏感信息不会在这里传输。') {
   localExecutorConfigRevision = '';
   $('localExecutorConfigRevision').textContent = '尚未读取';
   setLocalExecutorConfigInputsEnabled(false);
