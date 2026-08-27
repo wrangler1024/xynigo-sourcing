@@ -179,6 +179,15 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
         self.assertIn("代理提取链接、Cookie、账号密码和飞书凭证不会", self.html)
         self.assertIn('data-module="localsettings" data-local-only="1"', self.html)
 
+    def test_topbar_hub_status_uses_cloud_executor_heartbeat(self):
+        self.assertIn('function renderCloudExecutorHubStatus()', self.html)
+        self.assertIn("item.connectivity === 'online'", self.html)
+        self.assertIn("device.hubStatus === 'ready'", self.html)
+        self.assertIn('🟢 HubStudio 已连接', self.html)
+        self.assertIn('🟠 执行器在线 · HubStudio 未连接', self.html)
+        self.assertIn('☁ 本地执行器均离线', self.html)
+        self.assertNotIn('☁ 本机执行器离线', self.html)
+
 
 if __name__ == "__main__":
     unittest.main()

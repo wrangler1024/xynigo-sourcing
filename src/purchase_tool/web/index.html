@@ -3633,7 +3633,36 @@ $('updateCheck').onclick = async () => {
   setTimeout(pollUpdateStatus, 500);
 };
 
+function renderCloudExecutorHubStatus() {
+  const pill = $('hubStatus');
+  const onlineDevices = localExecutorDevices.filter(item =>
+    item.status !== 'revoked' && item.connectivity === 'online');
+  if (!onlineDevices.length) {
+    pill.className = 'pill bad';
+    pill.textContent = '☁ 本地执行器均离线';
+    pill.title = CLOUD_EXECUTOR_OFFLINE_MESSAGE;
+    return;
+  }
+  const selected = localExecutorSelectedDevice();
+  const device = selected && selected.connectivity === 'online'
+    ? selected : onlineDevices[0];
+  if (device.hubStatus === 'ready') {
+    pill.className = 'pill ok';
+    pill.textContent = '🟢 HubStudio 已连接';
+    pill.title = `${device.displayName || '本地执行器'}在线，HubStudio Local API 正常。`;
+    return;
+  }
+  pill.className = 'pill checking';
+  pill.textContent = '🟠 执行器在线 · HubStudio 未连接';
+  pill.title = `${device.displayName || '本地执行器'}已在线，但尚未报告 HubStudio 可用。`;
+}
+
 function setHubStatus(connected) {
+  if (CLOUD_WEB_MODE) {
+    hubConnected = connected;
+    renderCloudExecutorHubStatus();
+    return;
+  }
   if (connected === hubConnected && $('hubStatus').className !== 'pill checking') {
     if (connected === null) return;
     if ((connected && $('hubStatus').className === 'pill ok')
@@ -3641,12 +3670,7 @@ function setHubStatus(connected) {
   }
   hubConnected = connected;
   const pill = $('hubStatus');
-  if (CLOUD_WEB_MODE && connected !== true) {
-    pill.className = 'pill bad';
-    pill.textContent = '☁ 本机执行器离线';
-    pill.title = CLOUD_EXECUTOR_OFFLINE_MESSAGE;
-  }
-  else if (connected === null) { pill.className = 'pill checking'; pill.textContent = '⏳ 正在检测 HubStudio…'; }
+  if (connected === null) { pill.className = 'pill checking'; pill.textContent = '⏳ 正在检测 HubStudio…'; }
   else if (connected) { pill.className = 'pill ok'; pill.textContent = '🟢 HubStudio 已连接'; }
   else { pill.className = 'pill bad'; pill.textContent = '🔴 HubStudio 未连接，点此重试'; }
 }
@@ -6962,6 +6986,7 @@ function updateLocalExecutorSummary() {
   $('localExecutorEntryText').textContent = online
     ? `本地执行器 · ${onlineDevices.length} 台在线`
     : (activeDevices.length ? '本地执行器 · 已离线' : '本地执行器 · 待连接');
+  if (CLOUD_WEB_MODE) renderCloudExecutorHubStatus();
   const step = online ? 'pair' : (activeDevices.length ? 'start' : 'download');
   $('localExecutorStepDownload').classList.toggle('current', step === 'download');
   $('localExecutorStepStart').classList.toggle('current', step === 'start');
@@ -8476,6 +8501,15 @@ $('btnGroupAll').onclick = async () => {
 };
 
 $('hubStatus').onclick = async () => {
+  if (CLOUD_WEB_MODE) {
+    await loadLocalExecutorDevices(true);
+    const online = localExecutorDevices.filter(item =>
+      item.status !== 'revoked' && item.connectivity === 'online');
+    toast(online.length
+      ? `已刷新：${online.length} 台本地执行器在线`
+      : '当前没有在线的本地执行器');
+    return;
+  }
   setHubStatus(null);
   try {
     const j = await api('/api/hub-status');
