@@ -43,6 +43,72 @@ jobs:
       - run: python -m pip install -e .
       - run: python -m unittest discover -s tests -v
 
+  windows-standard-installer:
+    runs-on: windows-latest
+    env:
+      XYNIGO_RELEASE_CHANNEL: test
+      XYNIGO_PROXY_LINK: https://proxy.example.test/{region}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.x"
+          cache-dependency-path: packaging/windows/launcher/go.sum
+      - run: choco install nsis --version=3.12.0 -y --no-progress
+      - name: Build standard installer
+        shell: bash
+        env:
+          NSIS_WINDOWS_PATH: C:\Program Files (x86)\NSIS\makensis.exe
+        run: |
+          export XYNIGO_MAKENSIS_BIN="$(cygpath -u "$NSIS_WINDOWS_PATH")"
+          bash 组装Windows标准安装包.sh
+      - name: Verify per-user install, upgrade and safe uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installer = Get-Item "dist\Xynigo_Sourcing_Windows_Setup_v*.exe"
+          $installDir = Join-Path $env:LOCALAPPDATA "Programs\Xynigo Sourcing"
+          $greenDir = Join-Path $env:RUNNER_TEMP "Xynigo green source"
+          New-Item -ItemType Directory -Force -Path "$greenDir\运行数据" | Out-Null
+          Set-Content -Path "$greenDir\VERSION.json" -Value '{"version":"0.12.4"}' -Encoding UTF8
+          Set-Content -Path "$greenDir\config.json" -Value '{"keep":true}' -Encoding UTF8
+          Set-Content -Path "$greenDir\运行数据\keep.txt" -Value 'keep' -Encoding UTF8
+          $installArgs = "/S /MIGRATEDIR=`"$greenDir`""
+          $installerProcess = Start-Process -FilePath $installer.FullName -ArgumentList $installArgs -Wait -PassThru
+          if ($installerProcess.ExitCode -ne 0) { throw "installer failed: $($installerProcess.ExitCode)" }
+          if (-not (Test-Path "$installDir\Xynigo.cmd")) { throw "standard launcher missing" }
+          if (-not (Test-Path "$installDir\Xynigo.exe")) { throw "tray/status launcher missing" }
+          if (-not (Test-Path "$installDir\xynigo-logo.png")) { throw "brand asset missing" }
+          if (-not (Test-Path "$installDir\current-version.txt")) { throw "version marker missing" }
+          $protocol = (Get-Item "HKCU:\Software\Classes\xynigo\shell\open\command").GetValue('')
+          if ($protocol -notmatch 'Xynigo\.exe.*--protocol') { throw "xynigo protocol missing" }
+          if (-not (Test-Path "$installDir\config.json")) { throw "green config was not migrated" }
+          if (-not (Test-Path "$installDir\运行数据\keep.txt")) { throw "green runtime data was not migrated" }
+          $upgrade = Start-Process -FilePath $installer.FullName -ArgumentList "/S" -Wait -PassThru
+          if ($upgrade.ExitCode -ne 0) { throw "reinstall failed: $($upgrade.ExitCode)" }
+          if (-not (Test-Path "$installDir\config.json")) { throw "upgrade removed config" }
+          if (-not (Test-Path "$installDir\运行数据\keep.txt")) { throw "upgrade removed runtime data" }
+          $uninstaller = Get-Item "$installDir\卸载 Xynigo Sourcing.exe"
+          $uninstall = Start-Process -FilePath $uninstaller.FullName -ArgumentList "/S" -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "uninstall failed: $($uninstall.ExitCode)" }
+          Start-Sleep -Seconds 1
+          if (Test-Path "$installDir\versions") { throw "uninstall kept managed versions" }
+          if (-not (Test-Path "$installDir\config.json")) { throw "uninstall removed config" }
+          if (-not (Test-Path "$installDir\运行数据\keep.txt")) { throw "uninstall removed runtime data" }
+          if (Test-Path "HKCU:\Software\Classes\xynigo") { throw "protocol registration remained" }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: xynigo-sourcing-windows-standard-installer
+          path: |
+            dist/Xynigo_Sourcing_Windows_Setup_v*.exe
+            dist/Xynigo_Sourcing_Windows_Setup_v*.json
+            dist/Xynigo_Sourcing_Windows_Setup_v*.sha256
+          if-no-files-found: error
+
   macos-package:
     runs-on: macos-15
     env:
@@ -58,6 +124,7 @@ jobs:
       - run: python -m unittest discover -s tests -v
       - run: python scripts/audit_public_release.py
       - run: bash 组装macOS绿色包.sh
+      - run: bash 组装macOS标准安装包.sh
       - name: Verify macOS package
         env:
           EXPECTED_PLATFORM: macos-arm64
@@ -93,6 +160,41 @@ jobs:
                   [str(binary), '--package-self-test'], text=True)
               assert os.environ['EXPECTED_PLATFORM'] in output
           PY
+      - name: Verify macOS standard app and installer payload
+        run: |
+          set -euo pipefail
+          package="$(find dist -maxdepth 1 -name 'Xynigo_Sourcing_macOS_Standard_v*.pkg' -print -quit)"
+          test -n "$package"
+          payload_list="$RUNNER_TEMP/xynigo-standard-payload.txt"
+          pkgutil --payload-files "$package" > "$payload_list"
+          grep -Fq 'Applications/Xynigo Sourcing.app/Contents/MacOS/xynigo-launcher' "$payload_list"
+          grep -Fq 'Applications/Xynigo Sourcing.app/Contents/Resources/runtime/xynigo-sourcing' "$payload_list"
+          if grep -Eiq 'LaunchAgents|LaunchDaemons|LoginItems' "$payload_list"; then
+            echo 'unexpected autostart payload' >&2
+            exit 1
+          fi
+          expanded="$RUNNER_TEMP/xynigo-standard-expanded"
+          pkgutil --expand-full "$package" "$expanded"
+          app="$(find "$expanded" -type d -name 'Xynigo Sourcing.app' -print -quit)"
+          test -n "$app"
+          codesign --verify --deep --strict "$app"
+          test "$(plutil -extract CFBundleIdentifier raw "$app/Contents/Info.plist")" = 'icu.samforo.xynigo.sourcing'
+          plutil -p "$app/Contents/Info.plist" | grep -Fq 'xynigo'
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          metadata_path = next(Path('dist').glob(
+              'Xynigo_Sourcing_macOS_Standard_v*.json'))
+          metadata = json.loads(metadata_path.read_text(encoding='utf-8'))
+          assert metadata['installMode'] == 'standard_system_application'
+          assert metadata['dataDirectory'].endswith('XynigoSourcing')
+          assert metadata['autoStart'] is False
+          assert metadata['developerIdApplicationSigned'] is False
+          assert metadata['developerIdInstallerSigned'] is False
+          assert metadata['notarized'] is False
+          assert metadata['releaseEligible'] is False
+          PY
       - uses: actions/upload-artifact@v7
         with:
           name: xynigo-sourcing-macos-arm64
@@ -107,6 +209,10 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.x"
+          cache-dependency-path: packaging/windows/launcher/go.sum
       - run: bash 组装Windows绿色包.sh
       - run: python scripts/audit_public_release.py
       - name: Verify release assets
@@ -127,6 +233,9 @@ jobs:
               assert 'Xynigo-Sourcing/VERSION.json' in names
               assert 'Xynigo-Sourcing/update-helper.ps1' in names
               assert 'Xynigo-Sourcing/启动-本地执行器.bat' in names
+              assert 'Xynigo-Sourcing/Xynigo.exe' in names
+              assert 'Xynigo-Sourcing/xynigo-logo.png' in names
+              assert 'Xynigo-Sourcing/xynigo-x.ico' in names
               assert not any(name.endswith('/config.json') for name in names)
           PY
       - uses: actions/upload-artifact@v7

@@ -156,6 +156,16 @@ class ParallelRouteTests(unittest.TestCase):
         self.assertIn('后台任务运行中', body['error'])
         self.orch.callback()
 
+    def test_local_config_write_is_blocked_during_cloud_config_task(self):
+        task_id = self.state.tasks.begin('config')
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+                main_module, 'CONFIG_PATH', tmp + '/config.json'):
+            status, body = self.post_error(
+                '/api/config', {'importBuyerPlan': '1:新刚'})
+        self.state.tasks.finish(task_id)
+        self.assertEqual(status, 409)
+        self.assertIn('云端配置请求正在处理', body['error'])
+
 
 if __name__ == '__main__':
     unittest.main()

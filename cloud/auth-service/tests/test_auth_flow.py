@@ -110,7 +110,7 @@ def test_cloud_workspace_shell_and_assets_are_public_but_api_stays_protected(
     with TestClient(app) as client:
         workspace = client.get("/")
         assert workspace.status_code == 200
-        assert "<title>Xynigo Sourcing v0.12.5</title>" in workspace.text
+        assert "<title>Xynigo Sourcing v0.12.6</title>" in workspace.text
         assert 'src="xynigo-logo.png?v=6"' in workspace.text
         assert 'href="/favicon.ico?v=6"' in workspace.text
         assert "const CLOUD_WEB_MODE" in workspace.text
@@ -129,6 +129,50 @@ def test_cloud_workspace_shell_and_assets_are_public_but_api_stays_protected(
         assert client.get("/assets/not-allowed.js").status_code == 404
         assert client.get("/v1/auth/web/status").json() == {"authenticated": False}
         assert client.get("/v1/auth/me").status_code == 401
+        assert client.get("/v1/local-executor/releases/latest").status_code == 401
+
+
+def test_authenticated_member_can_read_immutable_local_executor_release(
+    tmp_path,
+) -> None:
+    app, _database, _oauth = build_test_app(tmp_path)
+
+    with TestClient(app) as client:
+        state, _challenge = start_login(client)
+        callback = client.get(
+            "/v1/auth/feishu/callback",
+            params={"code": "authorization-code", "state": state},
+            follow_redirects=False,
+        )
+        assert callback.status_code == 303
+
+        response = client.get("/v1/local-executor/releases/latest")
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store"
+        assert response.headers["x-content-type-options"] == "nosniff"
+        payload = response.json()
+        assert payload["schemaVersion"] == 1
+        assert payload["version"] == "0.12.6"
+        assert payload["channel"] == "test"
+        assert payload["releaseUrl"].endswith("/releases/tag/v0.12.6")
+        assert set(payload["platforms"]) == {"windows-x86_64", "macos-arm64"}
+        for platform, info in payload["platforms"].items():
+            assert info["size"] > 1_000_000
+            assert len(info["sha256"]) == 64
+            assert info["installMode"].startswith("standard")
+            assert info["internalUnsignedTest"] is True
+            assert info["downloadUrl"].startswith(
+                "https://github.com/wrangler1024/xynigo-sourcing/"
+                "releases/download/v0.12.6/"
+            ), platform
+            fallback = info["greenFallback"]
+            assert fallback["assetName"].endswith(".zip")
+            assert fallback["installMode"] == "green_package"
+            assert len(fallback["sha256"]) == 64
+            assert fallback["downloadUrl"].startswith(
+                "https://github.com/wrangler1024/xynigo-sourcing/"
+                "releases/download/v0.12.6/"
+            )
 
 
 def test_bootstrap_admin_login_creates_hashed_session_and_rbac(tmp_path) -> None:

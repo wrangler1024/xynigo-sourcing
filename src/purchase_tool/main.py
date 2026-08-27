@@ -5,6 +5,7 @@
 API：
   GET  /                    操作页面
   GET  /api/hub-status      探测 HubStudio 是否在线
+  GET  /executor-status.json 托盘状态中心读取本机安全状态
   GET  /api/groups          分组列表
   GET  /api/group-envs      指定分组的环境序号（查全部分组用）
   POST /api/query           {serials:[...],site:"MX|US"} 或 {group:"分组名",site}
@@ -43,6 +44,7 @@ import tempfile
 import threading
 import time
 import webbrowser
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -69,8 +71,12 @@ from .env_batch import (BACKUP_MAX_COUNT, BACKUP_REMARK, BUYER_CODES,
                         validate_assignment_template,
                         validate_backup_count,
                         validate_proxy_link, validate_purchase_tag)
+from .executor_channel import (
+    CloudExecutorClient, ExecutorChannelStateStore, ExecutorChannelWorker,
+    system_executor_credential_store)
 from .extension_bridge import ExtensionBridge, ExtensionBridgeError
 from .hub_api import HubStudioApi, DEFAULT_PORT
+from .instance_guard import acquire_executor_instance_guard
 from .lark_credentials import (LarkCredentialError, LarkCredentials,
                                public_credential_status,
                                system_credential_store)
@@ -101,8 +107,10 @@ ENV_TEMPLATE_XLSX = os.path.join(
     BASE_DIR, 'web', '采购工具买家号入库模板.xlsx')
 LARK_LEDGER_TEMPLATE_XLSX = os.path.join(
     BASE_DIR, 'web', '买家号统一台账模板.xlsx')
-CONFIG_PATH = os.path.join(os.getcwd(), 'config.json')
-LOG_DIR = os.path.join(os.getcwd(), '查询日志')
+DATA_DIR = os.path.abspath(
+    os.environ.get('XYNIGO_DATA_DIR') or os.getcwd())
+CONFIG_PATH = os.path.join(DATA_DIR, 'config.json')
+LOG_DIR = os.path.join(DATA_DIR, '查询日志')
 
 CONFIG_FIELDS = frozenset({
     'hubPort', 'serverPort', 'concurrency', 'importBuyerPlan',
@@ -669,6 +677,36 @@ class AppState(object):
         self.procurement_import = ProcurementImportService()
         self.updates = UpdateCoordinator(
             os.environ.get('XYNIGO_INSTALL_DIR'), __version__)
+        self.config_lock = threading.RLock()
+        self.executor_channel = ExecutorChannelWorker(
+            client=CloudExecutorClient(),
+            credential_store=system_executor_credential_store(),
+            state_store=ExecutorChannelStateStore(),
+            config_getter=lambda: dict(self.cfg),
+            public_config_getter=public_config,
+            config_writer=self.apply_cloud_config,
+            task_coordinator=self.tasks,
+            hub_status_getter=self.hub_status,
+        )
+
+    def apply_cloud_config(self, submitted):
+        """Validate and atomically apply a non-secret cloud config task."""
+        with self.config_lock:
+            old_cfg = dict(self.cfg)
+            cfg = updated_config(old_cfg, submitted)
+            save_config(cfg)
+            self.cfg = cfg
+            reconnect_needed = (
+                cfg.get('hubPort') != old_cfg.get('hubPort')
+                or cfg.get('concurrency') != old_cfg.get('concurrency'))
+            if reconnect_needed:
+                try:
+                    self.reconnect_hub()
+                except Exception:
+                    # The config write itself is durable. The next heartbeat
+                    # reports Hub offline without rolling the file back.
+                    pass
+            return dict(cfg)
 
     def reconnect_hub(self):
         self.orch.close()
@@ -683,6 +721,52 @@ class AppState(object):
 
     def hub_status(self, force=False):
         return self._hub_status.check(force=force)
+
+    def local_executor_status(self):
+        """Return the non-sensitive status contract used by the Windows tray.
+
+        This endpoint is intentionally independent from the cloud user session so
+        the local status center remains useful while the user is signed out.  It
+        never returns device credentials, cloud sessions, config values, task
+        identifiers, HubStudio response bodies or user data.
+        """
+        channel = ExecutorChannelStateStore().load()
+        tasks = self.tasks.snapshot()
+        hub_ok, _hub_error = self.hub_status(force=False)
+        channel_status = str(channel.get('status') or 'not_paired')
+        paired = bool(channel.get('executorId')) and channel_status not in {
+            'not_paired', 'revoked', 'credential_error'}
+        safe_tasks = [{
+            'kind': str(item.get('kind') or ''),
+            'label': str(item.get('label') or '后台任务'),
+            'elapsedSec': int(item.get('elapsedSec') or 0),
+        } for item in (tasks.get('tasks') or [])]
+        return {
+            'schemaVersion': 1,
+            'product': 'Xynigo Sourcing 本地执行器',
+            'version': __version__,
+            'executor': {
+                'running': True,
+                'paired': paired,
+                'displayName': str(channel.get('displayName') or ''),
+                'platform': str(channel.get('platform') or ''),
+                'architecture': str(channel.get('architecture') or ''),
+            },
+            'cloudChannel': {
+                'status': channel_status,
+                'lastPollAt': channel.get('lastPollAt'),
+                'lastErrorCode': str(channel.get('lastErrorCode') or ''),
+            },
+            'hubStudio': {
+                'connected': bool(hub_ok),
+                'status': 'ready' if hub_ok else 'offline',
+            },
+            'tasks': {
+                'activeCount': len(safe_tasks),
+                'safeParallel': bool(tasks.get('safeParallel')),
+                'items': safe_tasks,
+            },
+        }
 
     @staticmethod
     def _iso_epoch(value):
@@ -2009,6 +2093,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._file(EXTENSION_CONNECT_HTML, 'text/html')
             elif path == '/extension-connect.js':
                 self._file(EXTENSION_CONNECT_JS, 'text/javascript')
+            elif path == '/executor-status.json':
+                payload = STATE.local_executor_status()
+                payload['localPort'] = int(self.server.server_port)
+                self._json(payload)
             elif path == '/api/auth/status':
                 self._json(STATE.auth.status(force=True))
             elif path == '/api/hub-status':
@@ -2232,6 +2320,24 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         request_identity = None
         try:
+            if path == '/executor-control/shutdown':
+                expected = str(os.environ.get('XYNIGO_LAUNCHER_TOKEN') or '')
+                submitted = str(
+                    self.headers.get('X-Xynigo-Launcher') or '')
+                peer = str((self.client_address or ('',))[0])
+                if (not expected or peer not in ('127.0.0.1', '::1')
+                        or not secrets.compare_digest(expected, submitted)):
+                    return self._json({
+                        'error': '本地启动器控制请求无效',
+                        'code': 'launcher_control_forbidden',
+                    }, 403)
+                self._json({'stopping': True})
+                threading.Thread(
+                    target=self.server.shutdown,
+                    name='xynigo-launcher-shutdown',
+                    daemon=True,
+                ).start()
+                return
             body = self._body(
                 max_bytes=(28 * 1024 * 1024)
                 if path == '/api/assistant/procurement-import/parse'
@@ -2553,24 +2659,31 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({'started': True, 'count': count,
                             'taskId': task_id})
             elif path == '/api/config':
-                old_cfg = load_config()
-                cfg = updated_config(old_cfg, body)
-                runtime_fields = {
-                    'hubPort', 'concurrency', 'envCreateWorkers',
-                    'safeParallelTasks',
-                }
-                if (STATE.tasks.running()
-                        and any(cfg.get(name) != old_cfg.get(name)
-                                for name in runtime_fields)):
-                    raise RuntimeError(
-                        '后台任务运行中，不能修改端口、并发数或并行模式')
-                save_config(cfg)
-                STATE.cfg = cfg
-                reconnect_needed = (
-                    cfg.get('hubPort') != old_cfg.get('hubPort')
-                    or cfg.get('concurrency') != old_cfg.get('concurrency'))
-                connected = (STATE.reconnect_hub() if reconnect_needed
-                             else STATE.hub_status()[0])
+                lock = getattr(STATE, 'config_lock', None)
+                with lock if lock is not None else nullcontext():
+                    old_cfg = load_config()
+                    cfg = updated_config(old_cfg, body)
+                    task_snapshot = STATE.tasks.snapshot()
+                    if any(item.get('kind') == 'config'
+                           for item in task_snapshot.get('tasks') or []):
+                        raise RuntimeError(
+                            '云端配置请求正在处理，不能同时修改本机配置')
+                    runtime_fields = {
+                        'hubPort', 'concurrency', 'envCreateWorkers',
+                        'safeParallelTasks',
+                    }
+                    if (STATE.tasks.running()
+                            and any(cfg.get(name) != old_cfg.get(name)
+                                    for name in runtime_fields)):
+                        raise RuntimeError(
+                            '后台任务运行中，不能修改端口、并发数或并行模式')
+                    save_config(cfg)
+                    STATE.cfg = cfg
+                    reconnect_needed = (
+                        cfg.get('hubPort') != old_cfg.get('hubPort')
+                        or cfg.get('concurrency') != old_cfg.get('concurrency'))
+                    connected = (STATE.reconnect_hub() if reconnect_needed
+                                 else STATE.hub_status()[0])
                 self._json({'saved': True, 'hubConnected': connected})
             elif path == '/api/lark/config':
                 credentials = submitted_lark_credentials(body)
@@ -2684,9 +2797,17 @@ def browser_launch_url(local_url, argv=None, auth_service=None):
 def main(argv=None):
     global STATE
     argv = argv or sys.argv[1:]
+    instance_guard = acquire_executor_instance_guard()
+    if not instance_guard.acquired:
+        print('Xynigo 本地执行器已经在运行，本次启动不再创建第二个实例。')
+        return
     port = load_config()['serverPort']
     no_browser = '--no-browser' in argv
-    STATE = build_state()
+    try:
+        STATE = build_state()
+    except Exception:
+        instance_guard.close()
+        raise
     server = None
     for p in [port + i for i in range(10)]:
         try:
@@ -2712,6 +2833,7 @@ def main(argv=None):
     else:
         print('HubStudio 连接：失败 —— %s' % err)
     STATE.updates.check_async()
+    STATE.executor_channel.start()
     if not no_browser:
         def _open():
             ok = False
@@ -2732,3 +2854,7 @@ def main(argv=None):
         server.serve_forever()
     except KeyboardInterrupt:
         pass
+    finally:
+        STATE.executor_channel.stop()
+        server.server_close()
+        instance_guard.close()

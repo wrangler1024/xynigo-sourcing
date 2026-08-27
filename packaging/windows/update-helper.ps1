@@ -12,7 +12,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ManagedPaths = @(
-    "app", "deps", "python-embed", "run.py", "启动.bat", "启动-本地执行器.bat",
+    "app", "deps", "python-embed", "run.py", "Xynigo.exe",
+    "xynigo-logo.png", "xynigo-x.ico", "启动.bat", "启动-本地执行器.bat",
+    "配对本地执行器.bat",
     "update-helper.ps1", "VERSION.json", "使用说明.txt"
 )
 $LogRoot = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "XynigoSourcing\logs"
@@ -43,17 +45,22 @@ function Invoke-WithRetry([scriptblock]$Action, [string]$Description) {
 
 function Start-Xynigo([string]$Root) {
     if ($NoRestart) { return }
-    $Launcher = Join-Path $Root "启动.bat"
-    if (-not (Test-Path -LiteralPath $Launcher)) {
-        Write-UpdateLog "找不到启动.bat，无法自动重启。"
-        return
-    }
     if ([string]::IsNullOrWhiteSpace($StateDir)) {
         $StateDir = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "XynigoSourcing"
     }
     New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
     Set-Content -LiteralPath (Join-Path $StateDir "skip-update-once") -Value "1" -Encoding ASCII
     $env:XYNIGO_SKIP_UPDATE_ONCE = "1"
+    $StatusCenter = Join-Path $Root "Xynigo.exe"
+    if (Test-Path -LiteralPath $StatusCenter) {
+        Start-Process -FilePath $StatusCenter -ArgumentList @("--show") -WorkingDirectory $Root
+        return
+    }
+    $Launcher = Join-Path $Root "启动.bat"
+    if (-not (Test-Path -LiteralPath $Launcher)) {
+        Write-UpdateLog "找不到启动.bat，无法自动重启。"
+        return
+    }
     Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", ('"{0}"' -f $Launcher)) -WorkingDirectory $Root
 }
 

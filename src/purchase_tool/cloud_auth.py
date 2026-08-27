@@ -123,6 +123,16 @@ ERROR_MESSAGES = {
     'system_log_not_found': '系统日志不存在或不在当前租户范围',
     'system_log_time_range_invalid': '系统日志开始时间不能晚于结束时间',
     'credential_store_failed': '无法安全保存登录会话',
+    'pairing_code_invalid': '配对码无效，请在云端重新生成',
+    'pairing_code_expired': '配对码已过期，请在云端重新生成',
+    'pairing_code_consumed': '配对码已经使用，请在云端重新生成',
+    'executor_authentication_required': '本地执行器尚未完成设备配对',
+    'executor_credential_invalid': '本地执行器设备凭证无效，请重新配对',
+    'executor_revoked': '本地执行器设备已被撤销，请重新配对',
+    'executor_lease_invalid': '本地执行器任务租约无效',
+    'executor_lease_expired': '本地执行器任务租约已过期',
+    'executor_task_cancel_requested': '云端已请求取消当前任务',
+    'config_revision_conflict': '本地配置已变化，请重新读取后再保存',
 }
 
 
@@ -456,14 +466,17 @@ class MemoryAuthSessionStore(object):
 
 
 class MacKeychainAuthSessionStore(object):
-    def __init__(self, runner=subprocess.run, security_bin='/usr/bin/security'):
+    def __init__(self, runner=subprocess.run, security_bin='/usr/bin/security',
+                 account=KEYCHAIN_ACCOUNT, service=KEYCHAIN_SERVICE):
         self.runner = runner
         self.security_bin = security_bin
+        self.account = str(account)
+        self.service = str(service)
 
     def load(self):
         proc = self.runner(
             [self.security_bin, 'find-generic-password',
-             '-a', KEYCHAIN_ACCOUNT, '-s', KEYCHAIN_SERVICE, '-w'],
+             '-a', self.account, '-s', self.service, '-w'],
             capture_output=True, text=True)
         if proc.returncode != 0:
             return None
@@ -473,7 +486,7 @@ class MacKeychainAuthSessionStore(object):
         token = _validated_token(token)
         command = (
             'add-generic-password -a %s -s %s -U -X %s\n' %
-            (KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE, token.encode('utf-8').hex()))
+            (self.account, self.service, token.encode('utf-8').hex()))
         try:
             proc = self.runner(
                 [self.security_bin, '-i'], input=command,
@@ -486,7 +499,7 @@ class MacKeychainAuthSessionStore(object):
     def clear(self):
         proc = self.runner(
             [self.security_bin, 'delete-generic-password',
-             '-a', KEYCHAIN_ACCOUNT, '-s', KEYCHAIN_SERVICE],
+             '-a', self.account, '-s', self.service],
             capture_output=True, text=True)
         if proc.returncode not in (0, 44):
             error = (proc.stderr or '').casefold()

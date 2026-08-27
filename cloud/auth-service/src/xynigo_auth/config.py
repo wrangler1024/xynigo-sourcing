@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     procurement_import_plan_ttl_seconds: int = 30 * 60
     procurement_import_worker_interval_seconds: int = 2
     procurement_import_max_active_plans_per_tenant: int = 5
+    executor_pairing_ttl_seconds: int = 5 * 60
+    executor_poll_timeout_seconds: int = 25
+    executor_lease_seconds: int = 45
+    executor_online_window_seconds: int = 60
     cookie_name: str = "xynigo_session"
     cookie_secure: bool = True
     login_success_path: str = "/"
@@ -153,6 +157,36 @@ class Settings(BaseSettings):
         if value < 1 or value > 50:
             raise ValueError(
                 "procurement_import_max_active_plans_per_tenant must be between 1 and 50"
+            )
+        return value
+
+    @field_validator("executor_pairing_ttl_seconds")
+    @classmethod
+    def validate_executor_pairing_ttl(cls, value: int) -> int:
+        if value < 60 or value > 10 * 60:
+            raise ValueError("executor_pairing_ttl_seconds must be between 60 and 600")
+        return value
+
+    @field_validator("executor_poll_timeout_seconds")
+    @classmethod
+    def validate_executor_poll_timeout(cls, value: int) -> int:
+        if value < 5 or value > 25:
+            raise ValueError("executor_poll_timeout_seconds must be between 5 and 25")
+        return value
+
+    @field_validator("executor_lease_seconds")
+    @classmethod
+    def validate_executor_lease(cls, value: int) -> int:
+        if value < 30 or value > 120:
+            raise ValueError("executor_lease_seconds must be between 30 and 120")
+        return value
+
+    @field_validator("executor_online_window_seconds")
+    @classmethod
+    def validate_executor_online_window(cls, value: int) -> int:
+        if value < 30 or value > 5 * 60:
+            raise ValueError(
+                "executor_online_window_seconds must be between 30 and 300"
             )
         return value
 
