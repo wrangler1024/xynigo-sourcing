@@ -267,15 +267,6 @@ class ExecutorChannelWorker(object):
     def start(self):
         if self.thread and self.thread.is_alive():
             return True
-        try:
-            credential = self.credential_store.load()
-        except LocalAuthError as exc:
-            self.state_store.update(status='credential_error',
-                                    lastErrorCode=exc.code)
-            return False
-        if not credential:
-            self.state_store.update(status='not_paired', lastErrorCode='')
-            return False
         self.stop_event.clear()
         self.thread = threading.Thread(
             target=self._run, name='xynigo-executor-channel', daemon=True)
@@ -289,13 +280,38 @@ class ExecutorChannelWorker(object):
 
     def _run(self):
         backoff = 1.0
-        self.state_store.update(status='connecting', lastErrorCode='')
+        credential = None
         while not self.stop_event.is_set():
             try:
-                credential = self.credential_store.load()
                 if not credential:
-                    self.state_store.update(status='not_paired')
-                    return
+                    credential = self.credential_store.load()
+                    if not credential:
+                        state = self.state_store.load()
+                        state_status = str(state.get('status') or '')
+                        paired = bool(state.get('executorId')) and (
+                            state_status != 'revoked')
+                        desired_status = (
+                            'credential_error' if paired
+                            else ('revoked' if state_status == 'revoked'
+                                  else 'not_paired'))
+                        desired_error = (
+                            'executor_credential_unavailable'
+                            if paired else str(state.get('lastErrorCode') or ''))
+                        if (state_status != desired_status
+                                or str(state.get('lastErrorCode') or '')
+                                != desired_error):
+                            self.state_store.update(
+                                status=desired_status,
+                                lastErrorCode=desired_error,
+                            )
+                        # An already-running executor must notice a later
+                        # xynigo://pair process. Missing unpaired credentials
+                        # are cheap to recheck; a paired-but-unavailable
+                        # Keychain item backs off to avoid repeated prompts.
+                        self._wait(30.0 if paired else 1.0)
+                        continue
+                    self.state_store.update(
+                        status='connecting', lastErrorCode='')
                 if self.pending_finish:
                     self._flush_pending_finish(credential)
                 cfg = self.config_getter()
@@ -319,7 +335,10 @@ class ExecutorChannelWorker(object):
                     finally:
                         self.state_store.update(
                             status='revoked', lastErrorCode=exc.code)
-                    return
+                    credential = None
+                    backoff = 1.0
+                    self._wait(1.0)
+                    continue
                 self.state_store.update(
                     status='offline', lastErrorCode=exc.code)
                 self._wait(backoff + self.random() * min(1.0, backoff / 4.0))

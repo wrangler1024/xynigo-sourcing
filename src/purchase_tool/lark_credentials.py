@@ -15,6 +15,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
 
 
 KEYCHAIN_SERVICE = 'io.xynigo.sourcing.feishu'
@@ -76,19 +77,30 @@ class MacKeychainCredentialStore(object):
     def __init__(self, runner=subprocess.run, security_bin='/usr/bin/security'):
         self.runner = runner
         self.security_bin = security_bin
+        self._lock = threading.RLock()
+        self._loaded = False
+        self._cached_credentials = None
 
     def load(self):
-        proc = self.runner(
-            [self.security_bin, 'find-generic-password',
-             '-a', KEYCHAIN_ACCOUNT, '-s', KEYCHAIN_SERVICE, '-w'],
-            capture_output=True, text=True)
-        if proc.returncode != 0:
-            return None
-        try:
-            payload = json.loads((proc.stdout or '').strip())
-        except Exception as exc:
-            raise LarkCredentialError('macOS 钥匙串中的飞书凭证已损坏') from exc
-        return _credentials_from_payload(payload)
+        with self._lock:
+            if self._loaded:
+                return self._cached_credentials
+            proc = self.runner(
+                [self.security_bin, 'find-generic-password',
+                 '-a', KEYCHAIN_ACCOUNT, '-s', KEYCHAIN_SERVICE, '-w'],
+                capture_output=True, text=True)
+            self._loaded = True
+            if proc.returncode != 0:
+                self._cached_credentials = None
+                return None
+            try:
+                payload = json.loads((proc.stdout or '').strip())
+                self._cached_credentials = _credentials_from_payload(payload)
+            except Exception as exc:
+                self._loaded = False
+                raise LarkCredentialError(
+                    'macOS 钥匙串中的飞书凭证已损坏') from exc
+            return self._cached_credentials
 
     def save(self, app_id, app_secret):
         credentials = LarkCredentials(app_id, app_secret)
@@ -112,6 +124,9 @@ class MacKeychainCredentialStore(object):
                 '保存飞书应用凭证到 macOS 钥匙串超时') from exc
         if proc.returncode != 0:
             raise LarkCredentialError('无法保存飞书应用凭证到 macOS 钥匙串')
+        with self._lock:
+            self._cached_credentials = credentials
+            self._loaded = True
 
     def clear(self):
         proc = self.runner(
@@ -123,6 +138,9 @@ class MacKeychainCredentialStore(object):
             error = (proc.stderr or '').casefold()
             if 'could not be found' not in error:
                 raise LarkCredentialError('无法清除 macOS 钥匙串中的飞书凭证')
+        with self._lock:
+            self._cached_credentials = None
+            self._loaded = True
 
 
 class _DataBlob(ctypes.Structure):

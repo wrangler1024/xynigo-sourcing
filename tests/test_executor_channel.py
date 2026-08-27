@@ -29,6 +29,8 @@ class FakeExecutorClient(object):
         self.finishes = []
         self.renewals = []
         self.pair_calls = []
+        self.poll_calls = []
+        self.poll_callback = None
 
     def pair(self, code, name, system, architecture):
         self.pair_calls.append((code, name, system, architecture))
@@ -36,6 +38,13 @@ class FakeExecutorClient(object):
             'executorId': '00000000-0000-0000-0000-000000000001',
             'deviceCredential': DEVICE_CREDENTIAL,
         }
+
+    def poll(self, credential, revision, hub_status, wait_seconds=25):
+        self.poll_calls.append(
+            (credential, revision, hub_status, wait_seconds))
+        if self.poll_callback:
+            self.poll_callback()
+        return {'task': None}
 
     def start(self, credential, task_id, lease_token):
         self.started.append((credential, task_id, lease_token))
@@ -261,6 +270,73 @@ class PairingTests(unittest.TestCase):
         self.assertIn("sys.argv[1] == 'pair'", windows_script)
         self.assertIn('配对本地执行器-Mac.command', updater)
         self.assertIn('配对本地执行器.bat', updater)
+
+
+class ExecutorChannelLifecycleTests(unittest.TestCase):
+    def build_worker(self, credential_store, state_store, client):
+        return ExecutorChannelWorker(
+            client=client,
+            credential_store=credential_store,
+            state_store=state_store,
+            config_getter=lambda: {'concurrency': 2},
+            public_config_getter=lambda config: dict(config),
+            config_writer=lambda config: dict(config),
+            task_coordinator=LocalTaskCoordinator(lambda: True),
+            hub_status_getter=lambda _force=False: (True, ''),
+        )
+
+    def test_running_unpaired_worker_detects_later_pairing(self):
+        class DelayedCredentialStore(object):
+            def __init__(self):
+                self.loads = 0
+
+            def load(self):
+                self.loads += 1
+                return DEVICE_CREDENTIAL if self.loads >= 2 else None
+
+            def clear(self):
+                return None
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = DelayedCredentialStore()
+            state_store = ExecutorChannelStateStore(
+                os.path.join(directory, 'executor-channel.json'))
+            client = FakeExecutorClient()
+            worker = self.build_worker(store, state_store, client)
+            worker._wait = lambda _seconds: None
+            client.poll_callback = worker.stop_event.set
+            self.assertTrue(worker.start())
+            worker.thread.join(timeout=2)
+            self.assertFalse(worker.thread.is_alive())
+            self.assertEqual(store.loads, 2)
+            self.assertEqual(len(client.poll_calls), 1)
+            self.assertEqual(client.poll_calls[0][0], DEVICE_CREDENTIAL)
+            self.assertEqual(state_store.load()['status'], 'online')
+
+    def test_worker_reuses_loaded_credential_between_polls(self):
+        class CountingCredentialStore(MemoryAuthSessionStore):
+            def __init__(self):
+                super().__init__(DEVICE_CREDENTIAL)
+                self.loads = 0
+
+            def load(self):
+                self.loads += 1
+                return super().load()
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = CountingCredentialStore()
+            state_store = ExecutorChannelStateStore(
+                os.path.join(directory, 'executor-channel.json'))
+            client = FakeExecutorClient()
+            worker = self.build_worker(store, state_store, client)
+            client.poll_callback = lambda: (
+                worker.stop_event.set()
+                if len(client.poll_calls) >= 2 else None)
+            self.assertTrue(worker.start())
+            worker.thread.join(timeout=2)
+            self.assertFalse(worker.thread.is_alive())
+            self.assertEqual(len(client.poll_calls), 2)
+            self.assertEqual(store.loads, 1)
 
 
 if __name__ == '__main__':
