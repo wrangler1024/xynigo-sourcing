@@ -86,8 +86,9 @@ class ExecutorChannelStateTests(unittest.TestCase):
             loaded = store.load()
             self.assertEqual(set(loaded), CHANNEL_STATE_FIELDS)
             self.assertNotIn(DEVICE_CREDENTIAL, json.dumps(loaded))
-            mode = stat.S_IMODE(os.stat(path).st_mode)
-            self.assertEqual(mode & 0o077, 0)
+            if os.name != 'nt':
+                mode = stat.S_IMODE(os.stat(path).st_mode)
+                self.assertEqual(mode & 0o077, 0)
             with self.assertRaises(ValueError):
                 store.save({'deviceCredential': DEVICE_CREDENTIAL})
             with self.assertRaises(ValueError):
