@@ -28,12 +28,12 @@ TEST_PROXY = 'https://proxy.example.test/{region}'
 
 
 class ConfigTests(unittest.TestCase):
-    def test_safe_parallel_mode_is_explicit_boolean_and_defaults_off(self):
+    def test_safe_parallel_mode_is_explicit_boolean_and_defaults_on(self):
         default = default_config()
-        self.assertFalse(default['safeParallelTasks'])
-        enabled = updated_config(default, {'safeParallelTasks': True})
-        self.assertTrue(enabled['safeParallelTasks'])
-        self.assertTrue(public_config(enabled)['safeParallelTasks'])
+        self.assertTrue(default['safeParallelTasks'])
+        disabled = updated_config(default, {'safeParallelTasks': False})
+        self.assertFalse(disabled['safeParallelTasks'])
+        self.assertFalse(public_config(disabled)['safeParallelTasks'])
         with self.assertRaisesRegex(ValueError, '布尔值'):
             updated_config(default, {'safeParallelTasks': 'true'})
 

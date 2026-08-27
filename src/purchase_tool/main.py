@@ -253,7 +253,7 @@ def default_config():
         'purchaseTags': {'MX': mx_tag, 'US': us_tag},
         'proxyLink': os.environ.get('XYNIGO_PROXY_LINK', ''),
         'envCreateWorkers': 5,
-        'safeParallelTasks': False,
+        'safeParallelTasks': True,
         # Base/table identifiers are local routing configuration.  The App
         # Secret lives in Keychain/DPAPI and is never written to config.json.
         'larkBuyerBaseToken': os.environ.get('XYNIGO_LARK_BASE_TOKEN', ''),

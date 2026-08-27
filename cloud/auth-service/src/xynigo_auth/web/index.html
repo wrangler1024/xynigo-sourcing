@@ -326,7 +326,7 @@
     width: 8px; height: 8px; border-radius: 50%; background: #d9941e;
     box-shadow: 0 0 0 4px rgba(217,148,30,.12);
   }
-  .local-executor-layout { display: grid; grid-template-columns: minmax(0,1.35fr) minmax(310px,.65fr); gap: 16px; align-items: start; }
+  .local-executor-layout { display: grid; grid-template-columns: minmax(0,1fr); gap: 16px; }
   .local-executor-status {
     padding: 16px 18px; border: 1px solid #f1d28b; border-radius: 14px;
     display: flex; align-items: center; justify-content: space-between; gap: 14px;
@@ -377,21 +377,11 @@
   .local-executor-feedback { margin-top: 11px; padding: 9px 10px; border-radius: 9px; background: #f5f8fa; color: var(--navy-500); font-size: 9px; }
   .local-executor-feedback.ok { border: 1px solid #bce5d2; background: var(--green-100); color: var(--green); }
   .local-executor-feedback.bad { border: 1px solid #f4c2b7; background: var(--coral-100); color: var(--coral-500); }
-  .local-executor-guide { margin-top: 15px; display: grid; gap: 8px; }
-  .local-executor-guide-item { padding: 10px 11px; border: 1px solid var(--line); border-radius: 10px; display: grid; grid-template-columns: 26px minmax(0,1fr); gap: 8px; background: #fbfcfd; }
-  .local-executor-guide-index { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; background: #eef3f5; color: var(--navy-700); font-size: 9px; font-weight: 900; }
-  .local-executor-guide-item b { display: block; font-size: 10px; }
-  .local-executor-guide-item p { margin: 3px 0 0; color: var(--navy-500); font-size: 9px; }
   .local-executor-safety { margin-top: 13px; padding: 10px 11px; border: 1px solid #f1d28b; border-radius: 10px; background: var(--parcel-100); color: #815510; font-size: 9px; }
   .local-executor-safety b { display: block; margin-bottom: 2px; }
-  .local-executor-decisions { margin-top: 14px; display: grid; gap: 8px; }
-  .local-executor-decision { padding: 10px 11px; border: 1px solid var(--line); border-radius: 10px; background: #fbfcfd; }
-  .local-executor-decision b { display: block; font-size: 10px; }
-  .local-executor-decision p { margin: 4px 0 0; color: var(--navy-500); font-size: 9px; }
-  .local-executor-decision.recommended { border-color: #bce5d2; background: var(--green-100); }
-  .local-executor-decision.recommended b { color: var(--green); }
-  .local-executor-device-layout { display: grid; grid-template-columns: minmax(330px,.82fr) minmax(0,1.18fr); gap: 16px; align-items: stretch; }
+  .local-executor-device-layout { display: grid; grid-template-columns: minmax(290px,.68fr) minmax(0,1.32fr); gap: 16px; align-items: stretch; }
   .local-executor-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .local-executor-card-head .card-title { margin-bottom: 0; }
   .local-executor-card-head p { margin: 4px 0 0; color: var(--navy-500); font-size: 9px; line-height: 1.55; }
   .local-executor-device-list { margin-top: 12px; display: grid; gap: 8px; }
   .local-executor-device { width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 11px; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 10px; align-items: center; background: #fbfcfd; color: inherit; text-align: left; cursor: pointer; }
@@ -411,13 +401,23 @@
   .local-executor-pairing-status.ok { color: var(--green); font-weight: 800; }
   .local-executor-pairing-status.bad { color: var(--coral-500); font-weight: 800; }
   .local-executor-command { margin-top: 8px; padding: 8px 9px; border-radius: 8px; background: #0e2946; color: #eaf6f6; font: 8px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; overflow-wrap: anywhere; }
-  .local-executor-config-grid { margin-top: 10px; display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 8px; align-items: end; }
+  .local-executor-config-grid { margin-top: 10px; display: grid; grid-template-columns: minmax(112px,1.3fr) repeat(3,minmax(76px,1fr)) minmax(108px,1.2fr); gap: 8px; align-items: end; }
   .local-executor-config-grid .field { margin: 0; min-width: 0; }
   .local-executor-config-grid .field.wide { grid-column: span 2; }
-  .local-executor-config-grid .field label { min-height: 28px; margin-bottom: 5px; display: flex; align-items: flex-end; line-height: 1.25; }
+  .local-executor-config-grid .field label { min-height: 14px; margin-bottom: 5px; display: flex; align-items: flex-end; line-height: 1.25; white-space: nowrap; }
   .local-executor-config-grid input, .local-executor-config-grid select { width: 100%; min-height: 39px; }
-  .local-executor-config-check { min-height: 39px; padding: 8px; border: 1px solid var(--line); border-radius: 9px; display: flex; align-items: center; gap: 6px; color: var(--navy-700); font-size: 9px; line-height: 1.25; background: #fbfcfd; }
-  .local-executor-config-check input { width: auto; min-height: 0; }
+  .local-executor-config-switch { min-height: 39px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 9px; display: flex; align-items: center; justify-content: space-between; gap: 7px; color: var(--navy-700); background: #fbfcfd; cursor: pointer; }
+  .local-executor-config-switch:has(input:focus-visible) { border-color: var(--rhino-500); box-shadow: 0 0 0 3px rgba(32,174,179,.12); }
+  .local-executor-config-switch:has(input:disabled) { cursor: not-allowed; opacity: .66; }
+  .local-executor-switch-copy { min-width: 0; }
+  .local-executor-switch-copy b, .local-executor-switch-copy small { display: block; white-space: nowrap; }
+  .local-executor-switch-copy b { color: var(--navy-700); font-size: 9px; line-height: 1.2; }
+  .local-executor-switch-copy small { margin-top: 2px; color: var(--navy-500); font-size: 7px; line-height: 1.2; }
+  .local-executor-config-switch input { position: absolute; width: 1px; height: 1px; min-height: 0; overflow: hidden; opacity: 0; }
+  .local-executor-switch-track { position: relative; flex: 0 0 auto; width: 34px; height: 19px; border-radius: 999px; background: #c9d4dc; transition: background .16s ease; }
+  .local-executor-switch-track::after { content: ""; position: absolute; left: 2px; top: 2px; width: 15px; height: 15px; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(8,37,72,.22); transition: transform .16s ease; }
+  .local-executor-config-switch input:checked + .local-executor-switch-track { background: var(--rhino-500); }
+  .local-executor-config-switch input:checked + .local-executor-switch-track::after { transform: translateX(15px); }
   .local-executor-config-actions { margin-top: 10px; display: flex; align-items: stretch; gap: 8px; }
   .local-executor-config-actions .btn { min-height: 39px; padding: 8px 11px; }
   .local-executor-config-state { min-width: 0; min-height: 39px; margin: 0; padding: 7px 9px; border-radius: 9px; display: flex; flex: 1 1 auto; align-items: center; background: #f5f8fa; color: var(--navy-500); font-size: 9px; line-height: 1.35; }
@@ -1495,7 +1495,7 @@
 
     <section class="local-executor-device-layout">
       <article class="card">
-        <div class="local-executor-card-head"><div><div class="card-title">已绑定设备</div><p>在线状态来自本地执行器主动发起的 HTTPS 长轮询；云端不访问员工电脑端口。</p></div><button class="btn" id="btnLocalExecutorRefreshDevices" type="button">刷新状态</button></div>
+        <div class="local-executor-card-head"><div><div class="card-title">已绑定设备</div><p>状态来自执行器 HTTPS 长轮询；云端不访问员工电脑端口。</p></div><button class="btn" id="btnLocalExecutorRefreshDevices" type="button">刷新状态</button></div>
         <div class="local-executor-device-list" id="localExecutorDeviceList"><div class="local-executor-empty">正在读取设备列表…</div></div>
         <div class="local-executor-actions">
           <button class="btn" id="btnLocalExecutorLaunch" type="button" hidden>启动 Xynigo</button>
@@ -1515,11 +1515,11 @@
       <article class="card">
         <div class="local-executor-card-head"><div><div class="card-title">设备运行配置</div><p>端口、并发与安全策略；业务参数按任务选择，本机 config.json 仍是事实源。</p></div><span class="legend" id="localExecutorConfigRevision">尚未读取</span></div>
         <div class="local-executor-config-grid">
-          <div class="field"><label for="executorConfigHubPort">HubStudio Local API 端口</label><input id="executorConfigHubPort" type="number" min="1" max="65535" disabled></div>
+          <div class="field"><label for="executorConfigHubPort">HubStudio API 端口</label><input id="executorConfigHubPort" type="number" min="1" max="65535" disabled></div>
           <div class="field"><label for="executorConfigConcurrency">查询并发数</label><input id="executorConfigConcurrency" type="number" min="1" max="5" disabled></div>
           <div class="field"><label for="executorConfigEnvWorkers">建环境并发数</label><input id="executorConfigEnvWorkers" type="number" min="1" max="10" disabled></div>
           <div class="field"><label for="executorConfigVerifyCount">新建完成抽检数</label><input id="executorConfigVerifyCount" type="number" min="0" max="10" disabled></div>
-          <label class="local-executor-config-check"><input id="executorConfigSafeParallel" type="checkbox" disabled>查物流与建环境安全并行</label>
+          <label class="local-executor-config-switch"><span class="local-executor-switch-copy"><b>安全并行</b><small>查物流 + 建环境</small></span><input id="executorConfigSafeParallel" type="checkbox" aria-label="查物流与建环境安全并行" checked disabled><span class="local-executor-switch-track" aria-hidden="true"></span></label>
         </div>
         <div class="local-executor-config-actions">
           <button class="btn primary" id="btnLocalExecutorReadConfig" type="button" disabled>读取设备配置</button>
@@ -1552,21 +1552,8 @@
           <button class="btn" id="btnLocalExecutorRefreshRelease" type="button">重新读取</button>
         </div>
         <div class="local-executor-feedback" id="localExecutorFeedback">正在从云端读取与当前版本绑定的发布清单…</div>
-        <div class="local-executor-guide" id="localExecutorInstallGuide"></div>
         <div class="local-executor-safety"><b>系统安全边界</b>网页只提供经过版本绑定的下载地址和安装指引，不会自动运行程序，也不会要求关闭 Gatekeeper、SmartScreen 或系统防护。</div>
       </article>
-
-      <aside class="card">
-        <div class="card-title">安装与连接说明</div>
-        <div class="local-executor-decisions">
-          <div class="local-executor-decision recommended"><b>首次安装与在线更新分开</b><p>当前页面负责首次下载安装；只有执行器已经运行后，原“检查更新”流程才负责版本升级。</p></div>
-          <div class="local-executor-decision recommended"><b>标准包不可用时使用绿色版</b><p>发布清单可绑定同版本绿色版兜底；Web 会显示真实文件、SHA-256 和启动方式，不会把绿色版伪装成已签名安装包。</p></div>
-          <div class="local-executor-decision"><b>下载不等于安装成功</b><p>点击下载后只展示安装步骤，不会把设备状态改成在线。</p></div>
-          <div class="local-executor-decision recommended"><b>设备状态来自真实心跳</b><p>设备配对、主动长轮询、在线状态、配置读取与保存均通过独立设备凭证完成。</p></div>
-          <div class="local-executor-decision"><b>断网不覆盖本地配置</b><p>写入前校验配置版本；断线、超时或版本冲突时保留原 config.json，并显示明确结果。</p></div>
-          <div class="local-executor-decision"><b>升级必须保留用户数据</b><p>正式安装器和更新器必须保留配置、查询日志、运行数据和可回滚副本。</p></div>
-        </div>
-      </aside>
     </section>
   </div>
 
@@ -2625,7 +2612,7 @@ let envBuyerCounts = {};                     // 绑号模式：姓名 → 数量
 let envMode = 'bound';                       // bound=绑号环境 / backup=备用·测试环境
 let envBackup = { buyer: '', count: 10, type: '备用' };
 let backupRunning = false;
-let safeParallelTasks = false;
+let safeParallelTasks = true;
 // 采购/买家号相关分组白名单：模块一、模块三均暂时隐藏店铺/后台分组
 const BUYER_GROUP_PATTERN = /采购|买家号|Registration/i;
 // 站点默认采购分组：本机未配置时下拉直接选中并记住，免得在 HubStudio 长列表里翻找
@@ -6641,40 +6628,6 @@ $('systemLogTbody').addEventListener('click', async event => {
 
 /* ---------- 模块切换与注册 ---------- */
 
-const LOCAL_EXECUTOR_INSTALL_GUIDES = {
-  'macos-arm64': [
-    ['打开下载文件', '双击 ZIP 解压，将 Xynigo Sourcing 文件夹移动到“应用程序”或固定工作目录。'],
-    ['启动本地执行器', '双击“启动-本地执行器-Mac.command”；如系统提示，请按企业安全规范核对来源。'],
-    ['保持运行', '终端窗口代表本地执行器进程，关闭窗口会停止本地能力。']
-  ],
-  'windows-x86_64': [
-    ['打开下载文件', '将 ZIP 解压到固定目录，不要直接在压缩包内运行。'],
-    ['启动绿色版执行器', '双击“Xynigo.exe”打开品牌状态中心；执行器会驻留系统托盘，不依赖黑色命令窗口。'],
-    ['配对并保持运行', '在状态中心输入云端配对码；绿色版不注册系统协议，启动必须由用户明确操作。']
-  ]
-};
-
-const LOCAL_EXECUTOR_LEGACY_GREEN_INSTALL_GUIDES = {
-  'windows-x86_64': [
-    ['打开下载文件', '将 ZIP 解压到固定目录，不要直接在压缩包内运行。'],
-    ['启动兼容执行器', '双击“启动.bat”；命令窗口代表本地执行器进程，关闭窗口会停止本机能力。'],
-    ['完成设备配对', '运行“配对本地执行器.bat”，输入云端生成的一次性配对码。']
-  ]
-};
-
-const LOCAL_EXECUTOR_STANDARD_INSTALL_GUIDES = {
-  'windows-x86_64': [
-    ['运行已签名安装包', '双击 .exe，先核对发布者与页面显示一致，再进入 Xynigo 品牌安装向导。'],
-    ['迁移旧版数据（可选）', '已有绿色包时可在向导中选择旧目录；只迁移配置、日志、运行数据和导入文件。'],
-    ['打开状态中心', '安装完成后启动 Xynigo 状态中心；后台执行器驻留系统托盘，不再依赖黑色命令窗口。']
-  ],
-  'macos-arm64': [
-    ['运行标准安装包', '打开 .pkg 并核对开发者签名与公证状态。'],
-    ['启动本地执行器', '从“应用程序”打开 Xynigo Sourcing；首次使用时可选择迁移旧数据。'],
-    ['保持运行', '应用会打开 Terminal 运行本地执行器；关闭窗口会停止本机能力，不影响云端工作台。']
-  ]
-};
-
 function detectLocalExecutorPlatform() {
   const source = `${navigator.userAgent || ''} ${navigator.platform || ''}`;
   if (/Windows/i.test(source)) return 'windows-x86_64';
@@ -6734,32 +6687,6 @@ function resolveLocalExecutorDownloadAsset(platform, info) {
   return {asset:info, usingGreenFallback:false, blockedStandard:standard};
 }
 
-function renderLocalExecutorInstallGuide(platform, info=null) {
-  const guide = $('localExecutorInstallGuide');
-  guide.replaceChildren();
-  const standard = info && String(info.installMode || '').startsWith('standard');
-  const rows = standard
-    ? LOCAL_EXECUTOR_STANDARD_INSTALL_GUIDES[platform]
-    : (platform === 'windows-x86_64' && info && info.launcherFile !== 'Xynigo.exe'
-      ? LOCAL_EXECUTOR_LEGACY_GREEN_INSTALL_GUIDES[platform]
-      : LOCAL_EXECUTOR_INSTALL_GUIDES[platform]);
-  (rows || []).forEach((item, index) => {
-    const row = document.createElement('div');
-    row.className = 'local-executor-guide-item';
-    const number = document.createElement('span');
-    number.className = 'local-executor-guide-index';
-    number.textContent = String(index + 1);
-    const copy = document.createElement('div');
-    const title = document.createElement('b');
-    title.textContent = item[0];
-    const description = document.createElement('p');
-    description.textContent = item[1];
-    copy.append(title, description);
-    row.append(number, copy);
-    guide.appendChild(row);
-  });
-}
-
 function renderLocalExecutorPlatform(platform) {
   const platforms = localExecutorRelease && localExecutorRelease.platforms;
   const info = platforms && platforms[platform];
@@ -6805,7 +6732,6 @@ function renderLocalExecutorPlatform(platform) {
     : (standardInstaller ? '签名校验未通过' : '下载地址不可用');
   download.setAttribute('aria-disabled', downloadAllowed ? 'false' : 'true');
   $('btnLocalExecutorCopySha').disabled = !asset.sha256;
-  renderLocalExecutorInstallGuide(platform, asset);
   updateLocalExecutorPairingAction();
   return {...selection, downloadAllowed};
 }
@@ -6920,7 +6846,7 @@ function applyLocalExecutorConfig(config, revision) {
   $('executorConfigConcurrency').value = Number(config.concurrency || 2);
   $('executorConfigEnvWorkers').value = Number(config.envCreateWorkers || 5);
   $('executorConfigVerifyCount').value = Number(config.verifySampleCount ?? 3);
-  $('executorConfigSafeParallel').checked = config.safeParallelTasks === true;
+  $('executorConfigSafeParallel').checked = config.safeParallelTasks !== false;
   localExecutorConfigRevision = String(revision || '');
   $('localExecutorConfigRevision').textContent = localExecutorConfigRevision
     ? `版本 ${localExecutorConfigRevision.slice(0, 10)}…` : '版本未知';
@@ -8792,7 +8718,7 @@ async function loadLocalSettingsPage() {
     const cfg = await api('/api/config');
     $('cfgPort').value = cfg.hubPort || 6873;
     $('cfgConcurrency').value = cfg.concurrency || 2;
-    safeParallelTasks = !!cfg.safeParallelTasks;
+    safeParallelTasks = cfg.safeParallelTasks !== false;
     $('cfgSafeParallel').checked = safeParallelTasks;
     setHiddenQueryColumns(cfg.hiddenQueryColumns || []);
     $('cfgHideEnvName').checked = hiddenQueryColumns.has('envName');

@@ -46,7 +46,6 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
             "localExecutorSignature",
             "localExecutorAssetSha",
             "localExecutorDownload",
-            "localExecutorInstallGuide",
             "btnLocalExecutorRefreshRelease",
         ):
             with self.subTest(element_id=element_id):
@@ -92,8 +91,6 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
             '未签名 · 禁止团队分发',
             'Developer ID Installer 签名、Apple 公证和 stapling 校验',
             'Windows 标准安装包当前不可用，且发布清单没有可用绿色版兜底资产',
-            '后台执行器驻留系统托盘，不再依赖黑色命令窗口',
-            '应用会打开 Terminal 运行本地执行器',
         ):
             self.assertIn(text, self.html)
         self.assertIn('info.developerIdInstallerSigned', self.html)
@@ -114,7 +111,6 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
             '下载绿色版执行器（Xynigo.exe）',
             '绿色版 · Xynigo.exe 状态中心',
             'Xynigo.exe --pair',
-            '双击“Xynigo.exe”打开品牌状态中心',
         ):
             self.assertIn(source, self.html)
         self.assertIn('info.authenticodeTimestamped', self.html)
@@ -123,10 +119,8 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
     def test_cloud_install_flow_keeps_installation_explicit_and_uses_real_heartbeat(self):
         for text in (
             "用户确认后下载 · 不静默安装",
-            "下载不等于安装成功",
             "当前页面不会猜测本机状态",
-            "设备状态来自真实心跳",
-            "主动长轮询",
+            "HTTPS 长轮询",
             "不会自动运行程序",
             "Gatekeeper、SmartScreen",
         ):
@@ -211,9 +205,15 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
         self.assertIn('业务参数按任务选择', card)
         self.assertNotIn('local-executor-config-scope', card)
         self.assertIn(
-            'grid-template-columns: repeat(5,minmax(0,1fr))', self.html)
+            'grid-template-columns: minmax(112px,1.3fr) '
+            'repeat(3,minmax(76px,1fr)) minmax(108px,1.2fr)', self.html)
         self.assertIn(
             'gap: 16px; align-items: stretch', self.html)
+        self.assertIn('class="local-executor-config-switch"', card)
+        self.assertIn('aria-label="查物流与建环境安全并行" checked', card)
+        self.assertNotIn('HubStudio Local API 端口', card)
+        self.assertNotIn('localExecutorInstallGuide', self.html)
+        self.assertNotIn('安装与连接说明', self.html)
         actions_start = self.html.index(
             '<div class="local-executor-config-actions">', card_start)
         actions_end = self.html.index('</div>', actions_start)
