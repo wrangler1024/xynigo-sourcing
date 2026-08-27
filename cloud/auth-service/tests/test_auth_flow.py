@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from urllib.parse import parse_qs, urlparse
 
+import httpx
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -48,6 +50,7 @@ def build_test_app(
     pkce_method: str = "S256",
     procurement_import_enabled: bool = False,
     procurement_import_gateway=None,
+    local_executor_download_transport=None,
 ):
     database = Database(f"sqlite+pysqlite:///{tmp_path / 'identity.sqlite3'}")
     Base.metadata.create_all(database.engine)
@@ -82,6 +85,7 @@ def build_test_app(
         oauth_client=oauth,
         database=database,
         procurement_import_gateway=procurement_import_gateway,
+        local_executor_download_transport=local_executor_download_transport,
     )
     return app, database, oauth
 
@@ -130,6 +134,9 @@ def test_cloud_workspace_shell_and_assets_are_public_but_api_stays_protected(
         assert client.get("/v1/auth/web/status").json() == {"authenticated": False}
         assert client.get("/v1/auth/me").status_code == 401
         assert client.get("/v1/local-executor/releases/latest").status_code == 401
+        assert client.get(
+            "/v1/local-executor/releases/macos-arm64/primary/download"
+        ).status_code == 401
 
 
 def test_authenticated_member_can_read_immutable_local_executor_release(
@@ -161,18 +168,75 @@ def test_authenticated_member_can_read_immutable_local_executor_release(
             assert len(info["sha256"]) == 64
             assert info["installMode"].startswith("standard")
             assert info["internalUnsignedTest"] is True
-            assert info["downloadUrl"].startswith(
-                "https://github.com/wrangler1024/xynigo-sourcing/"
-                "releases/download/v0.12.6/"
-            ), platform
+            assert info["downloadUrl"] == (
+                f"/v1/local-executor/releases/{platform}/primary/download"
+            )
+            assert "github.com" not in info["downloadUrl"]
             fallback = info["greenFallback"]
             assert fallback["assetName"].endswith(".zip")
             assert fallback["installMode"] == "green_package"
             assert len(fallback["sha256"]) == 64
-            assert fallback["downloadUrl"].startswith(
-                "https://github.com/wrangler1024/xynigo-sourcing/"
-                "releases/download/v0.12.6/"
+            assert fallback["downloadUrl"] == (
+                f"/v1/local-executor/releases/{platform}/green/download"
             )
+
+
+def test_authenticated_member_downloads_allowlisted_asset_through_system_origin(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from xynigo_auth import local_executor_release as release_catalog
+
+    payload = b"synthetic-installer-payload"
+    digest = hashlib.sha256(payload).hexdigest()
+    monkeypatch.setattr(
+        release_catalog,
+        "_PLATFORMS",
+        {
+            "macos-arm64": {
+                "label": "macOS Apple Silicon",
+                "installMode": "standard_system_application",
+                "assetName": "Xynigo_Test.pkg",
+                "sha256": digest,
+                "size": len(payload),
+                "internalUnsignedTest": True,
+            }
+        },
+    )
+
+    def upstream(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "github.com"
+        assert request.url.path.endswith("/Xynigo_Test.pkg")
+        return httpx.Response(
+            200,
+            content=payload,
+            headers={"Content-Length": str(len(payload))},
+            request=request,
+        )
+
+    app, _database, _oauth = build_test_app(
+        tmp_path,
+        local_executor_download_transport=httpx.MockTransport(upstream),
+    )
+    with TestClient(app) as client:
+        state, _challenge = start_login(client)
+        callback = client.get(
+            "/v1/auth/feishu/callback",
+            params={"code": "authorization-code", "state": state},
+            follow_redirects=False,
+        )
+        assert callback.status_code == 303
+
+        response = client.get(
+            "/v1/local-executor/releases/macos-arm64/primary/download"
+        )
+        assert response.status_code == 200
+        assert response.content == payload
+        assert response.headers["content-length"] == str(len(payload))
+        assert response.headers["content-disposition"].endswith(
+            "Xynigo_Test.pkg"
+        )
+        assert response.headers["x-xynigo-asset-sha256"] == digest
 
 
 def test_bootstrap_admin_login_creates_hashed_session_and_rbac(tmp_path) -> None:

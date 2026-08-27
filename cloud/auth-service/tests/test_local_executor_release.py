@@ -1,7 +1,10 @@
 import pytest
 
 import xynigo_auth.local_executor_release as release_catalog
-from xynigo_auth.local_executor_release import validate_release_platforms
+from xynigo_auth.local_executor_release import (
+    resolve_local_executor_release_asset,
+    validate_release_platforms,
+)
 
 
 def test_windows_standard_installer_requires_signature_timestamp_and_publisher():
@@ -118,11 +121,26 @@ def test_standard_installer_can_keep_a_valid_green_fallback(monkeypatch):
     )
     payload = release_catalog.latest_local_executor_release()
     windows = payload["platforms"]["windows-x86_64"]
-    assert windows["downloadUrl"].endswith("/Xynigo_Setup.exe")
-    assert windows["greenFallback"]["downloadUrl"].endswith(
-        "/Xynigo_Green.zip"
+    assert windows["downloadUrl"] == (
+        "/v1/local-executor/releases/windows-x86_64/primary/download"
+    )
+    assert windows["greenFallback"]["downloadUrl"] == (
+        "/v1/local-executor/releases/windows-x86_64/green/download"
     )
     assert windows["greenFallback"]["launcherFile"] == "Xynigo.exe"
+    assert "github.com" not in str(windows)
+    primary = resolve_local_executor_release_asset(
+        "windows-x86_64", "primary"
+    )
+    fallback = resolve_local_executor_release_asset(
+        "windows-x86_64", "green"
+    )
+    assert primary is not None
+    assert fallback is not None
+    assert primary["sourceDownloadUrl"].endswith("/Xynigo_Setup.exe")
+    assert fallback["sourceDownloadUrl"].endswith("/Xynigo_Green.zip")
+    assert resolve_local_executor_release_asset("unknown", "primary") is None
+    assert resolve_local_executor_release_asset("windows-x86_64", "other") is None
 
 
 @pytest.mark.parametrize("field,value", [

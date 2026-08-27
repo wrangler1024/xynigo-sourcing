@@ -1542,7 +1542,7 @@
           <div class="local-executor-release-row"><label>SHA-256</label><strong class="mono" id="localExecutorAssetSha">—</strong></div>
         </div>
         <div class="local-executor-actions">
-          <a class="btn primary local-executor-download" id="localExecutorDownload" href="#" target="_blank" rel="noopener noreferrer" aria-disabled="true">准备下载…</a>
+          <a class="btn primary local-executor-download" id="localExecutorDownload" href="#" download aria-disabled="true">准备下载…</a>
           <button class="btn" id="btnLocalExecutorCopySha" type="button" disabled>复制 SHA-256</button>
           <a class="btn" id="localExecutorReleaseNotes" href="#" target="_blank" rel="noopener noreferrer" aria-disabled="true">查看版本说明</a>
           <button class="btn" id="btnLocalExecutorRefreshRelease" type="button">重新读取</button>
@@ -4108,7 +4108,7 @@ function renderProcurementDetail(data) {
     `</div></section>` +
     `<section class="procurement-detail-section"><div class="table-title-row"><h4>采购明细 <span class="legend">认领与分单写入 PostgreSQL 测试库</span></h4>${canPlan ? '<button class="btn-mini procurement-plan-entry" type="button" data-procurement-plan-open>创建采购分单</button>' : '<span class="legend">请先认领至少一条明细</span>'}</div><div id="procurementPlanResult" class="procurement-plan-result"></div><div class="procurement-lines-wrap"><table><thead><tr><th>行</th><th>商品</th><th>SKU / 变体</th><th>规格</th><th>销售 / 采购数量</th><th>原价 / 指导价</th><th>采购状态</th><th>goodsId / skuCode</th><th>采购链接</th><th>操作</th></tr></thead><tbody>${lineRows}</tbody></table></div></section>` +
     `<section class="procurement-detail-section"><h4>技术信息</h4><div class="procurement-detail-grid">` +
-      procurementDetailField('稳定订单键', data.orderKey, true) +
+      procurementDetailField('系统订单键', data.systemOrderKey, true) +
       procurementDetailField('内容哈希', data.contentHash, true) +
       procurementDetailField('采购分单版本', data.executionRevision) +
     `</div></section>`;
@@ -4408,7 +4408,7 @@ function procurementExecutionPageFilteredRows() {
     if (keyword) {
       const operator = row.operator && row.operator.name || '';
       const purchasers = (row.purchasers || []).map(item => item.name).join(' ');
-      const searchable = [row.packageId, row.platformOrderNo, row.orderKey, row.storeName,
+      const searchable = [row.packageId, row.platformOrderNo, row.systemOrderKey, row.storeName,
         operator, purchasers].join(' ').toLowerCase();
       if (!searchable.includes(keyword)) return false;
     }
@@ -6767,8 +6767,9 @@ function renderLocalExecutorPlatform(platform) {
   $('localExecutorAssetSha').textContent = String(asset.sha256 || '—');
   const download = $('localExecutorDownload');
   const downloadAllowed = Boolean(asset.downloadUrl)
-    && (!standardInstaller || trustedStandardInstaller);
+    && (!standardInstaller || trustedStandardInstaller || internalUnsignedTest);
   download.href = downloadAllowed ? String(asset.downloadUrl) : '#';
+  download.download = downloadAllowed ? String(asset.assetName || '') : '';
   download.textContent = downloadAllowed
     ? (standardInstaller ? '下载标准安装包'
       : (asset.launcherFile === 'Xynigo.exe'
@@ -7384,8 +7385,10 @@ $('localExecutorDownload').onclick = event => {
   setLocalExecutorFeedback(
     'ok',
     standardInstaller
-      ? '已开始下载签名标准安装包。下载不等于安装成功，请核对发布者后完成安装并打开状态中心。'
-      : `绿色版下载已由浏览器发起${localExecutorUsingGreenFallback ? '；这是标准安装包不可用时的兜底版本' : ''}。请完整解压后${portableStatusCenter ? '双击 Xynigo.exe' : '运行启动.bat'}。`
+      ? (isLocalExecutorInternalUnsignedTest(activeAsset)
+        ? '已通过系统入口开始下载内部测试安装包。下载完成后请核对 SHA-256，再按群教程手动确认系统安全提示。'
+        : '已通过系统入口开始下载签名标准安装包。下载不等于安装成功，请核对发布者后完成安装并打开状态中心。')
+      : `绿色版已通过系统入口开始下载${localExecutorUsingGreenFallback ? '；这是标准安装包不可用时的兜底版本' : ''}。请完整解压后${portableStatusCenter ? '双击 Xynigo.exe' : '运行启动.bat'}。`
   );
 };
 $('localExecutorReleaseNotes').onclick = event => {

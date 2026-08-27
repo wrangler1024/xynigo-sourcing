@@ -62,6 +62,21 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
             "download.href = downloadAllowed ? String(asset.downloadUrl) : '#'",
             self.html,
         )
+        self.assertIn(
+            "trustedStandardInstaller || internalUnsignedTest",
+            self.html,
+        )
+        self.assertIn(
+            "download.download = downloadAllowed ? String(asset.assetName || '') : ''",
+            self.html,
+        )
+        download_markup = re.search(
+            r'<a class="btn primary local-executor-download"[^>]+>',
+            self.html,
+        )
+        self.assertIsNotNone(download_markup)
+        self.assertIn(" download", download_markup.group(0))
+        self.assertNotIn("target=", download_markup.group(0))
 
     def test_standard_installers_require_platform_signatures_and_truthful_launchers(self):
         for text in (
@@ -82,6 +97,7 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
         self.assertIn('internalUnsignedTest', self.html)
         self.assertIn('内部未签名测试包 · 需手动确认系统安全提示', self.html)
         self.assertIn('下载前请核对 SHA-256', self.html)
+        self.assertIn('已通过系统入口开始下载内部测试安装包', self.html)
 
     def test_standard_download_has_a_green_xynigo_exe_fallback(self):
         for source in (

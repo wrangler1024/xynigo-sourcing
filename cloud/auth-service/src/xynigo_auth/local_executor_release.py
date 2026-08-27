@@ -166,22 +166,57 @@ def _release_download_url(asset_name: str) -> str:
     )
 
 
+def _system_download_path(platform_key: str, variant: str) -> str:
+    encoded_platform = quote(platform_key, safe="_-.")
+    encoded_variant = quote(variant, safe="_-")
+    return (
+        f"/v1/local-executor/releases/{encoded_platform}/"
+        f"{encoded_variant}/download"
+    )
+
+
+def resolve_local_executor_release_asset(
+    platform_key: str,
+    variant: str,
+) -> dict[str, object] | None:
+    """Resolve one reviewed asset without accepting a caller-supplied URL."""
+
+    platform = _PLATFORMS.get(platform_key)
+    if platform is None or variant not in {"primary", "green"}:
+        return None
+    source: dict[str, object] | None
+    if variant == "primary":
+        source = platform
+    else:
+        fallback = platform.get("greenFallback")
+        source = fallback if isinstance(fallback, dict) else None
+    if source is None:
+        return None
+    asset_name = str(source.get("assetName") or "")
+    if not asset_name:
+        return None
+    return {
+        **source,
+        "platformKey": platform_key,
+        "variant": variant,
+        "sourceDownloadUrl": _release_download_url(asset_name),
+    }
+
+
 def latest_local_executor_release() -> dict[str, object]:
     """Return a fresh JSON-safe copy of the immutable release catalog."""
 
     platforms: dict[str, dict[str, object]] = {}
     for platform_key, source in _PLATFORMS.items():
-        asset_name = str(source["assetName"])
         platform = {
             **source,
-            "downloadUrl": _release_download_url(asset_name),
+            "downloadUrl": _system_download_path(platform_key, "primary"),
         }
         fallback = source.get("greenFallback")
         if isinstance(fallback, dict):
-            fallback_asset_name = str(fallback["assetName"])
             platform["greenFallback"] = {
                 **fallback,
-                "downloadUrl": _release_download_url(fallback_asset_name),
+                "downloadUrl": _system_download_path(platform_key, "green"),
             }
         platforms[platform_key] = platform
     return {
