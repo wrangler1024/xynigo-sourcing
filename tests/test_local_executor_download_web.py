@@ -197,7 +197,7 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
         card_end = self.html.index(
             '<div class="local-executor-config-actions">', card_start)
         card = self.html[card_start:card_end]
-        payload_start = self.html.index('function localExecutorConfigPayload()')
+        payload_start = self.html.index('const LOCAL_EXECUTOR_NUMBER_FIELDS')
         payload_end = self.html.index(
             'function updateLocalExecutorSummary()', payload_start)
         payload = self.html[payload_start:payload_end]
@@ -230,6 +230,7 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
             'gap: 16px; align-items: stretch', self.html)
         self.assertIn('class="local-executor-config-switch"', card)
         self.assertIn('aria-label="查物流与建环境安全并行" checked', card)
+        self.assertIn('class="field local-executor-switch-field"', card)
         self.assertNotIn('HubStudio Local API 端口', card)
         self.assertNotIn('localExecutorInstallGuide', self.html)
         self.assertNotIn('安装与连接说明', self.html)
@@ -240,6 +241,36 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
             'id="localExecutorConfigState"',
             self.html[actions_start:actions_end],
         )
+
+    def test_executor_number_steppers_validate_ranges_and_surface_unsaved_changes(self):
+        ranges = {
+            'executorConfigHubPort': ('1', '65535'),
+            'executorConfigConcurrency': ('1', '5'),
+            'executorConfigEnvWorkers': ('1', '10'),
+            'executorConfigVerifyCount': ('0', '10'),
+        }
+        for element_id, (minimum, maximum) in ranges.items():
+            with self.subTest(element_id=element_id):
+                self.assertRegex(
+                    self.html,
+                    rf'id="{element_id}" type="number" min="{minimum}" '
+                    rf'max="{maximum}" step="1" inputmode="numeric"',
+                )
+                self.assertIn(f'data-target="{element_id}"', self.html)
+        self.assertEqual(
+            self.html.count('data-executor-number-step="-1"'), 4)
+        self.assertEqual(
+            self.html.count('data-executor-number-step="1"'), 4)
+        for source in (
+            'function validateLocalExecutorConfigInputs()',
+            'function syncLocalExecutorNumberSteppers()',
+            'function updateLocalExecutorConfigDirtyState',
+            "button.textContent = '请修正输入'",
+            "button.textContent = dirty ? '保存修改（未保存）' : '暂无修改'",
+            '有未保存的修改，请点击“保存修改（未保存）”',
+            '#btnLocalExecutorSaveConfig.attention',
+        ):
+            self.assertIn(source, self.html)
 
     def test_topbar_hub_status_uses_cloud_executor_heartbeat(self):
         self.assertIn('function renderCloudExecutorHubStatus()', self.html)
