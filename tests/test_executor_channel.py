@@ -124,8 +124,8 @@ class ExecutorTaskApplicationTests(unittest.TestCase):
         holder = {'config': dict(config)}
 
         def public_config(cfg):
-            return {key: value for key, value in cfg.items()
-                    if key != 'proxyLink'}
+            return {key: cfg[key] for key in (
+                'concurrency', 'safeParallelTasks') if key in cfg}
 
         def write_config(submitted):
             allowed = {'concurrency', 'safeParallelTasks'}
@@ -172,6 +172,23 @@ class ExecutorTaskApplicationTests(unittest.TestCase):
         self.assertNotIn('private.invalid', json.dumps(summary))
         self.assertFalse(coordinator.running())
 
+    def test_legacy_business_preferences_do_not_change_device_revision(self):
+        worker, _client, holder, _coordinator = self.build_worker({
+            'concurrency': 2,
+            'safeParallelTasks': False,
+            'purchaseSite': 'MX',
+            'purchaseTags': {'MX': 'MX采购', 'US': 'US采购'},
+            'importBuyerPlan': '1:新刚',
+        })
+        first = worker._apply_task('config.read.v1', {})[2]
+        holder['config']['purchaseSite'] = 'US'
+        holder['config']['purchaseTags']['US'] = '美国采购'
+        holder['config']['importBuyerPlan'] = '2:志恒'
+        second = worker._apply_task('config.read.v1', {})[2]
+        self.assertEqual(first['configRevision'], second['configRevision'])
+        self.assertEqual(first['config'], second['config'])
+        self.assertNotIn('purchaseSite', second['config'])
+
     def test_write_checks_revision_and_applies_under_local_gate(self):
         initial = {
             'concurrency': 2,
@@ -179,12 +196,16 @@ class ExecutorTaskApplicationTests(unittest.TestCase):
             'proxyLink': 'https://private.invalid/secret',
         }
         worker, client, holder, coordinator = self.build_worker(initial)
+        public_initial = {
+            'concurrency': 2,
+            'safeParallelTasks': False,
+        }
         worker._execute_task(DEVICE_CREDENTIAL, {
             'id': 'task-write',
             'type': 'config.write.v1',
             'leaseToken': LEASE_TOKEN,
             'payload': {
-                'expectedRevision': config_revision(initial),
+                'expectedRevision': config_revision(public_initial),
                 'config': {
                     'concurrency': 3,
                     'safeParallelTasks': True,
@@ -195,6 +216,8 @@ class ExecutorTaskApplicationTests(unittest.TestCase):
         self.assertTrue(holder['config']['safeParallelTasks'])
         self.assertEqual(client.finishes[0]['resultCode'],
                          'config_write_succeeded')
+        self.assertNotIn(
+            'proxyLink', client.finishes[0]['resultSummary']['config'])
         self.assertFalse(coordinator.running())
 
     def test_revision_conflict_keeps_original_config(self):

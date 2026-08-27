@@ -176,8 +176,43 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
         self.assertIn('已配对并收到真实心跳', self.html)
         self.assertIn('长期设备凭证不会进入此链接', self.html)
         self.assertIn("网页不会通过协议直接执行采购任务", self.html)
-        self.assertIn("代理提取链接、Cookie、账号密码和飞书凭证不会", self.html)
+        self.assertIn(
+            "业务分配参数及代理链接、Cookie、账号密码和飞书凭证不会",
+            self.html,
+        )
         self.assertIn('data-module="localsettings" data-local-only="1"', self.html)
+
+    def test_cloud_executor_config_is_limited_to_device_runtime_settings(self):
+        card_start = self.html.index('<div class="card-title">设备运行配置')
+        card_end = self.html.index(
+            '<div class="local-executor-config-actions">', card_start)
+        card = self.html[card_start:card_end]
+        payload_start = self.html.index('function localExecutorConfigPayload()')
+        payload_end = self.html.index(
+            'function updateLocalExecutorSummary()', payload_start)
+        payload = self.html[payload_start:payload_end]
+        for required in (
+            'executorConfigHubPort',
+            'executorConfigConcurrency',
+            'executorConfigEnvWorkers',
+            'executorConfigVerifyCount',
+            'executorConfigSafeParallel',
+        ):
+            self.assertIn(required, card)
+            self.assertIn(required, payload)
+        for legacy in (
+            'executorConfigPurchaseSite',
+            'executorConfigMxTag',
+            'executorConfigUsTag',
+            'executorConfigBuyerPlan',
+            'purchaseSite',
+            'purchaseTags',
+            'importBuyerPlan',
+        ):
+            self.assertNotIn(legacy, card)
+            self.assertNotIn(legacy, payload)
+        self.assertIn('业务参数已从设备配置移出', card)
+        self.assertIn('采购员分配由云端任务和本批操作决定', card)
 
     def test_topbar_hub_status_uses_cloud_executor_heartbeat(self):
         self.assertIn('function renderCloudExecutorHubStatus()', self.html)

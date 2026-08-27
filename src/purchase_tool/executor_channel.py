@@ -315,7 +315,7 @@ class ExecutorChannelWorker(object):
                 if self.pending_finish:
                     self._flush_pending_finish(credential)
                 cfg = self.config_getter()
-                revision = config_revision(cfg)
+                revision = config_revision(self.public_config_getter(cfg))
                 hub_ok, _hub_message = self.hub_status_getter(False)
                 response = self.client.poll(
                     credential, revision,
@@ -406,12 +406,13 @@ class ExecutorChannelWorker(object):
 
     def _apply_task(self, task_type, payload):
         current = self.config_getter()
-        current_revision = config_revision(current)
+        current_public = self.public_config_getter(current)
+        current_revision = config_revision(current_public)
         if task_type == 'config.read.v1':
             return (
                 'succeeded', 'config_read_succeeded', {
                     'configRevision': current_revision,
-                    'config': self.public_config_getter(current),
+                    'config': current_public,
                 })
         if task_type != 'config.write.v1':
             raise LocalAuthError(
@@ -424,11 +425,12 @@ class ExecutorChannelWorker(object):
         if not isinstance(submitted, dict):
             raise ValueError('配置任务缺少配置对象')
         updated = self.config_writer(submitted)
-        revision = config_revision(updated)
+        updated_public = self.public_config_getter(updated)
+        revision = config_revision(updated_public)
         return (
             'succeeded', 'config_write_succeeded', {
                 'configRevision': revision,
-                'config': self.public_config_getter(updated),
+                'config': updated_public,
             })
 
     def _flush_pending_finish(self, credential):

@@ -128,6 +128,17 @@ CONFIG_REQUEST_FIELDS = (CONFIG_FIELDS - {
     'larkBuyerBaseName', 'larkBuyerTableName',
     'larkBuyerTargetVerified'}) | {'proxyClear'}
 
+# Cloud device configuration is intentionally narrower than the legacy local
+# config.json contract. Business choices belong to each environment/purchase
+# task, not to a machine-wide executor profile.
+EXECUTOR_RUNTIME_CONFIG_FIELDS = (
+    'hubPort',
+    'concurrency',
+    'envCreateWorkers',
+    'verifySampleCount',
+    'safeParallelTasks',
+)
+
 PUBLIC_AUTH_API_PATHS = frozenset({
     '/api/auth/status',
     '/api/auth/start',
@@ -354,6 +365,16 @@ def public_config(cfg):
     return result
 
 
+def public_executor_config(cfg):
+    """Return only device runtime and safety settings for cloud control."""
+    public = public_config(cfg)
+    return {
+        key: public[key]
+        for key in EXECUTOR_RUNTIME_CONFIG_FIELDS
+        if key in public
+    }
+
+
 def updated_config(old_cfg, body):
     if not isinstance(body, dict):
         raise ValueError('配置请求必须是 JSON 对象')
@@ -442,6 +463,49 @@ def updated_config(old_cfg, body):
             cfg['proxyLink'] = validate_proxy_link(submitted_proxy)
         else:
             cfg['proxyLink'] = str(old_cfg.get('proxyLink') or '').strip()
+    return cfg
+
+
+def updated_executor_config(old_cfg, body):
+    """Apply cloud-managed device fields without touching business history."""
+    if not isinstance(body, dict):
+        raise ValueError('设备配置请求必须是 JSON 对象')
+    unknown = set(body) - set(EXECUTOR_RUNTIME_CONFIG_FIELDS)
+    if unknown:
+        raise ValueError('设备配置包含不允许保存的字段')
+    defaults = default_config()
+    cfg = dict(defaults)
+    cfg.update({key: value for key, value in (old_cfg or {}).items()
+                if key in CONFIG_FIELDS})
+    integer_ranges = {
+        'hubPort': (1, 65535),
+        'concurrency': (1, 5),
+        'envCreateWorkers': (1, 10),
+        'verifySampleCount': (0, 10),
+    }
+    for key, (minimum, maximum) in integer_ranges.items():
+        raw = body[key] if key in body else cfg.get(key, defaults[key])
+        try:
+            if isinstance(raw, bool):
+                raise ValueError
+            value = int(raw)
+        except (TypeError, ValueError):
+            if key in body:
+                raise ValueError('%s 必须是整数' % key) from None
+            value = int(defaults[key])
+        if not minimum <= value <= maximum:
+            if key in body:
+                raise ValueError('%s 超出允许范围' % key)
+            value = int(defaults[key])
+        cfg[key] = value
+    parallel = body.get(
+        'safeParallelTasks',
+        cfg.get('safeParallelTasks', defaults['safeParallelTasks']))
+    if not isinstance(parallel, bool):
+        if 'safeParallelTasks' in body:
+            raise ValueError('安全并行模式必须是布尔值')
+        parallel = bool(defaults['safeParallelTasks'])
+    cfg['safeParallelTasks'] = parallel
     return cfg
 
 
@@ -683,7 +747,7 @@ class AppState(object):
             credential_store=system_executor_credential_store(),
             state_store=ExecutorChannelStateStore(),
             config_getter=lambda: dict(self.cfg),
-            public_config_getter=public_config,
+            public_config_getter=public_executor_config,
             config_writer=self.apply_cloud_config,
             task_coordinator=self.tasks,
             hub_status_getter=self.hub_status,
@@ -693,7 +757,7 @@ class AppState(object):
         """Validate and atomically apply a non-secret cloud config task."""
         with self.config_lock:
             old_cfg = dict(self.cfg)
-            cfg = updated_config(old_cfg, submitted)
+            cfg = updated_executor_config(old_cfg, submitted)
             save_config(cfg)
             self.cfg = cfg
             reconnect_needed = (

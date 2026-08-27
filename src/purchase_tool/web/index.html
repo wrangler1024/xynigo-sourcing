@@ -416,6 +416,8 @@
   .local-executor-config-grid input, .local-executor-config-grid select { width: 100%; min-height: 39px; }
   .local-executor-config-check { min-height: 39px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 9px; display: flex; align-items: center; gap: 7px; color: var(--navy-700); font-size: 9px; background: #fbfcfd; }
   .local-executor-config-check input { width: auto; min-height: 0; }
+  .local-executor-config-scope { grid-column: 1 / -1; padding: 9px 10px; border: 1px dashed #bdd7df; border-radius: 9px; background: #f6fbfc; color: var(--navy-500); font-size: 9px; line-height: 1.6; }
+  .local-executor-config-scope b { color: var(--navy-800); }
   .local-executor-config-actions { margin-top: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .local-executor-config-state { margin-top: 10px; padding: 9px 10px; border-radius: 9px; background: #f5f8fa; color: var(--navy-500); font-size: 9px; line-height: 1.55; }
   .local-executor-config-state.ok { border: 1px solid #bce5d2; background: var(--green-100); color: var(--green); }
@@ -1510,24 +1512,21 @@
       </article>
 
       <article class="card">
-        <div class="local-executor-card-head"><div><div class="card-title">本机运行配置 <span class="legend">读取后编辑 · 版本冲突保护</span></div><p>配置仍保存在所选电脑的 config.json；云端只排队传递非敏感字段和短期结果。</p></div><span class="legend" id="localExecutorConfigRevision">尚未读取</span></div>
+        <div class="local-executor-card-head"><div><div class="card-title">设备运行配置 <span class="legend">云端下发 · 本机生效 · 版本冲突保护</span></div><p>这里只管理所选电脑执行 HubStudio 任务所需的端口、并发和安全策略；配置仍以本机 config.json 为准。</p></div><span class="legend" id="localExecutorConfigRevision">尚未读取</span></div>
         <div class="local-executor-config-grid">
           <div class="field"><label for="executorConfigHubPort">HubStudio Local API 端口</label><input id="executorConfigHubPort" type="number" min="1" max="65535" disabled></div>
           <div class="field"><label for="executorConfigConcurrency">查询并发数</label><input id="executorConfigConcurrency" type="number" min="1" max="5" disabled></div>
           <div class="field"><label for="executorConfigEnvWorkers">建环境并发数</label><input id="executorConfigEnvWorkers" type="number" min="1" max="10" disabled></div>
           <div class="field"><label for="executorConfigVerifyCount">新建完成抽检数</label><input id="executorConfigVerifyCount" type="number" min="0" max="10" disabled></div>
-          <div class="field"><label for="executorConfigPurchaseSite">默认采购站点</label><select id="executorConfigPurchaseSite" disabled><option value="MX">墨西哥 MX</option><option value="US">美国 US</option></select></div>
           <label class="local-executor-config-check"><input id="executorConfigSafeParallel" type="checkbox" disabled>查物流与建环境安全并行</label>
-          <div class="field"><label for="executorConfigMxTag">墨西哥采购分组</label><input id="executorConfigMxTag" maxlength="12" disabled></div>
-          <div class="field"><label for="executorConfigUsTag">美国采购分组</label><input id="executorConfigUsTag" maxlength="12" disabled></div>
-          <div class="field wide"><label for="executorConfigBuyerPlan">采购员分配模板</label><input id="executorConfigBuyerPlan" maxlength="200" disabled></div>
+          <div class="local-executor-config-scope"><b>业务参数已从设备配置移出：</b>采购站点与 HubStudio 分组在“资源中心 → 环境创建”中按任务选择；采购员分配由云端任务和本批操作决定，不再保存为某台电脑的固定模板。</div>
         </div>
         <div class="local-executor-config-actions">
-          <button class="btn primary" id="btnLocalExecutorReadConfig" type="button" disabled>从所选电脑读取</button>
-          <button class="btn" id="btnLocalExecutorSaveConfig" type="button" disabled>保存到所选电脑</button>
+          <button class="btn primary" id="btnLocalExecutorReadConfig" type="button" disabled>读取设备配置</button>
+          <button class="btn" id="btnLocalExecutorSaveConfig" type="button" disabled>保存设备配置</button>
           <button class="btn" id="btnLocalExecutorCancelTask" type="button" hidden>取消当前请求</button>
         </div>
-        <div class="local-executor-config-state" id="localExecutorConfigState">请选择一台在线设备后读取配置。代理提取链接、Cookie、账号密码和飞书凭证不会在这里显示或传输。</div>
+        <div class="local-executor-config-state" id="localExecutorConfigState">请选择一台在线设备后读取配置。业务分配参数及代理链接、Cookie、账号密码和飞书凭证不会在这里显示或传输。</div>
       </article>
     </section>
 
@@ -6903,14 +6902,12 @@ function setLocalExecutorConfigInputsEnabled(enabled) {
   const canWrite = hasPermission('executor.config.write');
   [
     'executorConfigHubPort', 'executorConfigConcurrency', 'executorConfigEnvWorkers',
-    'executorConfigVerifyCount', 'executorConfigPurchaseSite',
-    'executorConfigSafeParallel', 'executorConfigMxTag', 'executorConfigUsTag',
-    'executorConfigBuyerPlan'
+    'executorConfigVerifyCount', 'executorConfigSafeParallel'
   ].forEach(id => { $(id).disabled = !enabled || !canWrite; });
   $('btnLocalExecutorSaveConfig').disabled = !enabled || !canWrite;
 }
 
-function resetLocalExecutorConfig(message='请选择一台在线设备后读取配置。代理提取链接、Cookie、账号密码和飞书凭证不会在这里显示或传输。') {
+function resetLocalExecutorConfig(message='请选择一台在线设备后读取配置。业务分配参数及代理链接、Cookie、账号密码和飞书凭证不会在这里显示或传输。') {
   localExecutorConfigRevision = '';
   $('localExecutorConfigRevision').textContent = '尚未读取';
   setLocalExecutorConfigInputsEnabled(false);
@@ -6919,17 +6916,11 @@ function resetLocalExecutorConfig(message='请选择一台在线设备后读取�
 
 function applyLocalExecutorConfig(config, revision) {
   config = config && typeof config === 'object' ? config : {};
-  const tags = config.purchaseTags && typeof config.purchaseTags === 'object'
-    ? config.purchaseTags : {};
   $('executorConfigHubPort').value = Number(config.hubPort || 6873);
   $('executorConfigConcurrency').value = Number(config.concurrency || 2);
   $('executorConfigEnvWorkers').value = Number(config.envCreateWorkers || 5);
   $('executorConfigVerifyCount').value = Number(config.verifySampleCount ?? 3);
-  $('executorConfigPurchaseSite').value = ['MX', 'US'].includes(config.purchaseSite) ? config.purchaseSite : 'MX';
   $('executorConfigSafeParallel').checked = config.safeParallelTasks === true;
-  $('executorConfigMxTag').value = String(tags.MX || '');
-  $('executorConfigUsTag').value = String(tags.US || '');
-  $('executorConfigBuyerPlan').value = String(config.importBuyerPlan || '1:新刚');
   localExecutorConfigRevision = String(revision || '');
   $('localExecutorConfigRevision').textContent = localExecutorConfigRevision
     ? `版本 ${localExecutorConfigRevision.slice(0, 10)}…` : '版本未知';
@@ -6949,12 +6940,6 @@ function localExecutorConfigPayload() {
     concurrency: integer('executorConfigConcurrency', 1, 5, '查询并发数'),
     envCreateWorkers: integer('executorConfigEnvWorkers', 1, 10, '建环境并发数'),
     verifySampleCount: integer('executorConfigVerifyCount', 0, 10, '抽检数'),
-    purchaseSite: $('executorConfigPurchaseSite').value,
-    purchaseTags: {
-      MX: $('executorConfigMxTag').value.trim(),
-      US: $('executorConfigUsTag').value.trim()
-    },
-    importBuyerPlan: $('executorConfigBuyerPlan').value.trim(),
     safeParallelTasks: $('executorConfigSafeParallel').checked
   };
 }
