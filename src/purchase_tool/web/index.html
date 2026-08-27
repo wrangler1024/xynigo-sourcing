@@ -6984,8 +6984,13 @@ function updateLocalExecutorSummary() {
     ? `状态：${selected.connectivity === 'online' ? '在线' : selected.connectivity === 'revoked' ? '已撤销' : '离线'}`
     : '状态：未连接';
   $('localExecutorEntryText').textContent = online
-    ? `本地执行器 · ${onlineDevices.length} 台在线`
-    : (activeDevices.length ? '本地执行器 · 已离线' : '本地执行器 · 待连接');
+    ? '本地执行器在线'
+    : (activeDevices.length ? '本地执行器离线' : '本地执行器待连接');
+  entry.title = online
+    ? '本地执行器在线，点击查看设备状态'
+    : (activeDevices.length
+      ? '已绑定的本地执行器当前离线，点击查看'
+      : '下载、安装或连接本地执行器');
   if (CLOUD_WEB_MODE) renderCloudExecutorHubStatus();
   const step = online ? 'pair' : (activeDevices.length ? 'start' : 'download');
   $('localExecutorStepDownload').classList.toggle('current', step === 'download');

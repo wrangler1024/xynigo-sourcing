@@ -202,6 +202,15 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
             self.html,
         )
 
+    def test_topbar_executor_status_does_not_expose_device_count(self):
+        self.assertIn("? '本地执行器在线'", self.html)
+        self.assertIn("activeDevices.length ? '本地执行器离线'", self.html)
+        self.assertIn(": '本地执行器待连接'", self.html)
+        self.assertNotIn(
+            "? `本地执行器 · ${onlineDevices.length} 台在线`",
+            self.html,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
