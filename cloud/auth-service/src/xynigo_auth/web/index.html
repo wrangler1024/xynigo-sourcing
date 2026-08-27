@@ -6803,16 +6803,25 @@ async function loadLocalExecutorRelease(force=false) {
     localExecutorReleaseLoaded = true;
     $('localExecutorPlatform').disabled = false;
     const detected = detectLocalExecutorPlatform();
-    const selected = localExecutorSelectedPlatform && release.platforms[localExecutorSelectedPlatform]
+    const preservedSelection = Boolean(
+      localExecutorSelectedPlatform && release.platforms[localExecutorSelectedPlatform]);
+    const defaultPlatform = release.platforms['windows-x86_64']
+      ? 'windows-x86_64' : (detected && release.platforms[detected] ? detected : supported[0]);
+    const selected = preservedSelection
       ? localExecutorSelectedPlatform
-      : (detected && release.platforms[detected] ? detected : supported[0]);
+      : defaultPlatform;
     const selection = renderLocalExecutorPlatform(selected);
     const notes = $('localExecutorReleaseNotes');
     notes.href = String(release.releaseUrl || '#');
     notes.setAttribute('aria-disabled', release.releaseUrl ? 'false' : 'true');
-    const detectionNote = detected
-      ? `已识别当前平台；可信发布清单为 v${release.version}。`
-      : `无法自动识别当前系统，请手动选择平台；可信发布清单为 v${release.version}。`;
+    const selectedLabel = String(release.platforms[selected].label || selected);
+    const detectedLabel = detected && release.platforms[detected]
+      ? String(release.platforms[detected].label || detected) : '';
+    const detectionNote = detected && selected === detected
+      ? `已识别当前平台 ${detectedLabel}；可信发布清单为 v${release.version}。`
+      : (preservedSelection
+        ? `已保留手动选择 ${selectedLabel}${detectedLabel ? `；当前浏览器识别为 ${detectedLabel}` : ''}。可信发布清单为 v${release.version}。`
+        : `团队默认显示 ${selectedLabel}${detectedLabel && selected !== detected ? `；当前浏览器识别为 ${detectedLabel}，Mac 用户可手动切换` : ''}。可信发布清单为 v${release.version}。`);
     if (selection && selection.usingGreenFallback) {
       const fallbackLauncher = selection.asset && selection.asset.launcherFile === 'Xynigo.exe'
         ? '带 Xynigo.exe 状态中心的绿色版' : '绿色兼容包';

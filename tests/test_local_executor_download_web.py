@@ -59,6 +59,12 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
         self.assertIn("'windows-x86_64'", self.html)
         self.assertIn("'macos-arm64'", self.html)
         self.assertIn(
+            "const defaultPlatform = release.platforms['windows-x86_64']",
+            self.html,
+        )
+        self.assertIn('团队默认显示 ${selectedLabel}', self.html)
+        self.assertIn('Mac 用户可手动切换', self.html)
+        self.assertIn(
             "download.href = downloadAllowed ? String(asset.downloadUrl) : '#'",
             self.html,
         )
