@@ -46,6 +46,7 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
             "localExecutorSignature",
             "localExecutorAssetSha",
             "localExecutorDownload",
+            "localExecutorGreenDownload",
             "btnLocalExecutorRefreshRelease",
         ):
             with self.subTest(element_id=element_id):
@@ -82,6 +83,13 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
         self.assertIsNotNone(download_markup)
         self.assertIn(" download", download_markup.group(0))
         self.assertNotIn("target=", download_markup.group(0))
+        green_markup = re.search(
+            r'<a class="btn local-executor-download local-executor-green-download"[^>]+>',
+            self.html,
+        )
+        self.assertIsNotNone(green_markup)
+        self.assertIn(" download", green_markup.group(0))
+        self.assertNotIn("target=", green_markup.group(0))
 
     def test_standard_installers_require_platform_signatures_and_truthful_launchers(self):
         for text in (
@@ -107,14 +115,25 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
             'greenFallback',
             'resolveLocalExecutorDownloadAsset',
             'localExecutorUsingGreenFallback',
+            'localExecutorGreenDownloadAsset',
             '标准安装包当前不可用，已自动切换',
             '下载绿色版执行器（Xynigo.exe）',
+            '下载绿色包（兜底）',
             '绿色版 · Xynigo.exe 状态中心',
             'Xynigo.exe --pair',
         ):
             self.assertIn(source, self.html)
         self.assertIn('info.authenticodeTimestamped', self.html)
         self.assertIn('info.publisher', self.html)
+        self.assertIn(
+            "greenDownload.href = greenDownloadAllowed ? String(greenAsset.downloadUrl) : '#'",
+            self.html,
+        )
+        self.assertIn(
+            'greenDownload.hidden = !greenDownloadAllowed || selection.usingGreenFallback',
+            self.html,
+        )
+        self.assertIn('SHA-256：${greenAsset.sha256}', self.html)
 
     def test_cloud_install_flow_keeps_installation_explicit_and_uses_real_heartbeat(self):
         for text in (

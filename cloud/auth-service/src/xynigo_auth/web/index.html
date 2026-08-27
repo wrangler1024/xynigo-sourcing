@@ -373,6 +373,7 @@
   .local-executor-release-row strong { overflow-wrap: anywhere; }
   .local-executor-actions { margin-top: 15px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .local-executor-download[aria-disabled="true"] { pointer-events: none; opacity: .5; }
+  .local-executor-green-download { border-color: #b9dfe3; background: var(--rhino-100); color: #126f74; }
   .local-executor-action-note { color: var(--navy-500); font-size: 9px; }
   .local-executor-feedback { margin-top: 11px; padding: 9px 10px; border-radius: 9px; background: #f5f8fa; color: var(--navy-500); font-size: 9px; }
   .local-executor-feedback.ok { border: 1px solid #bce5d2; background: var(--green-100); color: var(--green); }
@@ -1547,6 +1548,7 @@
         </div>
         <div class="local-executor-actions">
           <a class="btn primary local-executor-download" id="localExecutorDownload" href="#" download aria-disabled="true">准备下载…</a>
+          <a class="btn local-executor-download local-executor-green-download" id="localExecutorGreenDownload" href="#" download aria-disabled="true" hidden>下载绿色包（兜底）</a>
           <button class="btn" id="btnLocalExecutorCopySha" type="button" disabled>复制 SHA-256</button>
           <a class="btn" id="localExecutorReleaseNotes" href="#" target="_blank" rel="noopener noreferrer" aria-disabled="true">查看版本说明</a>
           <button class="btn" id="btnLocalExecutorRefreshRelease" type="button">重新读取</button>
@@ -2939,6 +2941,7 @@ let localExecutorRelease = null;
 let localExecutorReleaseLoaded = false;
 let localExecutorSelectedPlatform = '';
 let localExecutorDownloadAsset = null;
+let localExecutorGreenDownloadAsset = null;
 let localExecutorUsingGreenFallback = false;
 let localExecutorDevices = [];
 let localExecutorSelectedDeviceId = '';
@@ -6731,6 +6734,19 @@ function renderLocalExecutorPlatform(platform) {
         ? '下载绿色版执行器（Xynigo.exe）' : `下载 ${info.label || platform} 绿色包`))
     : (standardInstaller ? '签名校验未通过' : '下载地址不可用');
   download.setAttribute('aria-disabled', downloadAllowed ? 'false' : 'true');
+  const greenDownload = $('localExecutorGreenDownload');
+  const greenAsset = info.greenFallback && typeof info.greenFallback === 'object'
+    ? info.greenFallback : null;
+  const greenDownloadAllowed = Boolean(greenAsset && greenAsset.downloadUrl
+    && greenAsset.assetName && greenAsset.sha256);
+  localExecutorGreenDownloadAsset = greenDownloadAllowed ? greenAsset : null;
+  greenDownload.href = greenDownloadAllowed ? String(greenAsset.downloadUrl) : '#';
+  greenDownload.download = greenDownloadAllowed ? String(greenAsset.assetName) : '';
+  greenDownload.hidden = !greenDownloadAllowed || selection.usingGreenFallback;
+  greenDownload.setAttribute(
+    'aria-disabled', greenDownloadAllowed && !selection.usingGreenFallback ? 'false' : 'true');
+  greenDownload.title = greenDownloadAllowed
+    ? `绿色包：${greenAsset.assetName} · SHA-256 ${greenAsset.sha256}` : '';
   $('btnLocalExecutorCopySha').disabled = !asset.sha256;
   updateLocalExecutorPairingAction();
   return {...selection, downloadAllowed};
@@ -6743,6 +6759,7 @@ async function loadLocalExecutorRelease(force=false) {
   $('localExecutorPlatform').disabled = true;
   $('btnLocalExecutorRefreshRelease').disabled = true;
   $('localExecutorDownload').setAttribute('aria-disabled', 'true');
+  $('localExecutorGreenDownload').setAttribute('aria-disabled', 'true');
   setLocalExecutorFeedback('', '正在从云端读取与当前版本绑定的发布清单…');
   try {
     const release = await api('/api/local-executor/releases/latest');
@@ -6794,7 +6811,9 @@ async function loadLocalExecutorRelease(force=false) {
   } catch (error) {
     localExecutorRelease = null;
     localExecutorDownloadAsset = null;
+    localExecutorGreenDownloadAsset = null;
     localExecutorUsingGreenFallback = false;
+    $('localExecutorGreenDownload').hidden = true;
     $('localExecutorReleaseVersion').textContent = '读取失败';
     $('localExecutorAssetName').textContent = '—';
     $('localExecutorAssetSize').textContent = '—';
@@ -7344,6 +7363,21 @@ $('localExecutorDownload').onclick = event => {
         ? '已通过系统入口开始下载内部测试安装包。下载完成后请核对 SHA-256，再按群教程手动确认系统安全提示。'
         : '已通过系统入口开始下载签名标准安装包。下载不等于安装成功，请核对发布者后完成安装并打开状态中心。')
       : `绿色版已通过系统入口开始下载${localExecutorUsingGreenFallback ? '；这是标准安装包不可用时的兜底版本' : ''}。请完整解压后${portableStatusCenter ? '双击 Xynigo.exe' : '运行启动.bat'}。`
+  );
+};
+$('localExecutorGreenDownload').onclick = event => {
+  const greenAsset = localExecutorGreenDownloadAsset;
+  if (!localExecutorReleaseLoaded || !localExecutorSelectedPlatform || !greenAsset
+      || event.currentTarget.getAttribute('aria-disabled') === 'true') {
+    event.preventDefault();
+    return;
+  }
+  const platform = localExecutorRelease.platforms[localExecutorSelectedPlatform] || {};
+  const portableStatusCenter = greenAsset.launcherFile === 'Xynigo.exe';
+  setLocalExecutorFeedback(
+    'ok',
+    `已通过系统入口开始下载 ${platform.label || localExecutorSelectedPlatform} 绿色包：${greenAsset.assetName}。`
+      + `SHA-256：${greenAsset.sha256}。请完整解压后${portableStatusCenter ? '双击 Xynigo.exe' : '运行启动脚本'}。`
   );
 };
 $('localExecutorReleaseNotes').onclick = event => {
