@@ -211,6 +211,30 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
             self.html,
         )
 
+    def test_online_executor_badge_matches_connected_pill_style(self):
+        match = re.search(
+            r"\.local-executor-entry\.online\s*\{([^}]+)\}", self.html
+        )
+        self.assertIsNotNone(match)
+        style = match.group(1)
+        for declaration in (
+            "padding: 8px 11px",
+            "border: 0",
+            "border-radius: 999px",
+            "gap: 7px",
+            "background: var(--green-100)",
+            "color: var(--green)",
+            "font-size: 12px",
+            "font-weight: 800",
+        ):
+            self.assertIn(declaration, style)
+        self.assertIn(
+            ".local-executor-entry.online .local-executor-entry-dot "
+            "{ width: 12px; height: 12px; background: var(--green); "
+            "box-shadow: none; }",
+            self.html,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

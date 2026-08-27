@@ -344,8 +344,13 @@
   .local-executor-status.ok .local-executor-status-icon { background: var(--green); }
   .local-executor-status.ok h3 { color: var(--green); }
   .local-executor-status.ok p { color: #39755a; }
-  .local-executor-entry.online { border-color: #bce5d2; background: var(--green-100); color: var(--green); }
-  .local-executor-entry.online .local-executor-entry-dot { background: var(--green); box-shadow: 0 0 0 4px rgba(41,160,107,.12); }
+  .local-executor-entry.online {
+    min-height: 0; padding: 8px 11px; border: 0; border-radius: 999px; gap: 7px;
+    background: var(--green-100); color: var(--green); font-size: 12px; font-weight: 800;
+    box-shadow: none;
+  }
+  .local-executor-entry.online:hover { border-color: transparent; background: var(--green-100); }
+  .local-executor-entry.online .local-executor-entry-dot { width: 12px; height: 12px; background: var(--green); box-shadow: none; }
   .local-executor-steps { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
   .local-executor-step { position: relative; min-height: 78px; padding: 13px 13px 13px 49px; border: 1px solid var(--line); border-radius: 13px; background: #fff; }
   .local-executor-step-number { position: absolute; left: 13px; top: 14px; width: 27px; height: 27px; border-radius: 8px; display: grid; place-items: center; background: #eef2f6; color: var(--navy-500); font-size: 10px; font-weight: 900; }
