@@ -71,7 +71,21 @@ from .feishu_operation_sync import (
     FeishuOperationSyncWorker,
 )
 from .feishu_purchase_sync import FeishuPurchaseBaseClient, FeishuPurchaseSyncWorker
+from .executor_contract import (
+    ExecutorConfigWriteBody,
+    ExecutorPairBody,
+    ExecutorPollBody,
+    ExecutorTaskCancelBody,
+    ExecutorTaskFinishBody,
+    ExecutorTaskLeaseBody,
+    ExecutorTaskProgressBody,
+    ExecutorTaskStartBody,
+    PairingCodeCreateBody,
+)
+from .executor_service import ExecutorChannelService, ExecutorServiceError
+from .local_executor_release import latest_local_executor_release
 from .models import (
+    LocalExecutor,
     LocalLoginRequest,
     OAuthLoginAttempt,
     Permission,
@@ -186,6 +200,11 @@ PERMISSION_CATALOG: tuple[tuple[str, str], ...] = (
     ("procurement.request.save", "运营采购单草稿保存"),
     ("procurement.request.submit", "运营采购单正式提交"),
     ("procurement.execution.manage", "采购任务认领与分单管理"),
+    ("executor.device.read", "本地执行器设备查看"),
+    ("executor.device.pair", "本地执行器设备配对"),
+    ("executor.device.revoke", "本地执行器设备撤销"),
+    ("executor.config.read", "本地执行器配置查看"),
+    ("executor.config.write", "本地执行器配置修改"),
 )
 SUPER_ADMIN_ONLY_PERMISSIONS = frozenset({
     "system.lark_connection.manage",
@@ -440,6 +459,36 @@ def create_app(
 
     SessionDep = Annotated[Session, Depends(get_session)]
 
+    def executor_channel(session: Session) -> ExecutorChannelService:
+        return ExecutorChannelService(
+            session,
+            pairing_ttl_seconds=settings.executor_pairing_ttl_seconds,
+            lease_seconds=settings.executor_lease_seconds,
+            online_window_seconds=settings.executor_online_window_seconds,
+        )
+
+    def authenticated_executor(
+        request: Request,
+        session: Session,
+        authorization: str | None,
+    ) -> tuple[ExecutorChannelService, LocalExecutor]:
+        # Device credentials are intentionally isolated from user sessions.
+        # Rejecting cookies also prevents a browser session from accidentally
+        # becoming a device session when both are present.
+        if request.headers.get("Cookie"):
+            raise ExecutorServiceError("executor_cookie_not_allowed", status_code=401)
+        scheme, separator, raw_credential = str(authorization or "").partition(" ")
+        if not separator or scheme.casefold() != "bearer" or not raw_credential.strip():
+            raise ExecutorServiceError(
+                "executor_authentication_required", status_code=401
+            )
+        service = executor_channel(session)
+        executor = service.authenticate(raw_credential.strip())
+        request.state.tenant_id = executor.tenant_id
+        request.state.actor_name = executor.display_name
+        request.state.log_source = "local_executor_device"
+        return service, executor
+
     def bind_request_identity(request: Request, *, user: User, tenant: Tenant) -> None:
         request.state.tenant_id = tenant.id
         request.state.actor_user_id = user.id
@@ -668,6 +717,20 @@ def create_app(
             },
         )
 
+    @app.exception_handler(ExecutorServiceError)
+    async def executor_service_error_handler(
+        request: Request,
+        exc: ExecutorServiceError,
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "detail": {"code": exc.code},
+                "requestId": request.state.request_id,
+                "traceId": request.state.trace_id,
+            },
+        )
+
     @app.get("/", response_class=FileResponse)
     def web_workspace() -> FileResponse:
         """云端 Web 工作台入口；不依赖员工电脑上的本地执行器。"""
@@ -693,6 +756,30 @@ def create_app(
     def readyz(session: SessionDep) -> dict[str, str]:
         session.execute(text("SELECT 1"))
         return {"status": "ready"}
+
+    @app.get("/v1/local-executor/releases/latest")
+    def local_executor_latest_release(
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> JSONResponse:
+        """Return the reviewed installer catalog for authenticated members."""
+
+        raw_token = _request_session_token(session_token, authorization)
+        record, user, tenant = _authenticated_identity(session, raw_token)
+        bind_request_identity(request, user=user, tenant=tenant)
+        record.last_seen_at = utcnow()
+        session.commit()
+        return JSONResponse(
+            latest_local_executor_release(),
+            headers={
+                "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
 
     @app.get("/v1/auth/feishu/start", response_class=RedirectResponse)
     def start_feishu_login(session: SessionDep) -> RedirectResponse:
@@ -1145,6 +1232,419 @@ def create_app(
             authorization=authorization,
             audit_action="admin.authorization",
         )
+
+    def append_executor_audit(
+        request: Request,
+        session: Session,
+        actor: AdminActor,
+        *,
+        action: str,
+        object_id: uuid.UUID | str | None,
+        summary: dict[str, Any],
+    ) -> None:
+        _add_audit(
+            session,
+            request_id=request.state.request_id,
+            action=action,
+            result="success",
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            module="local_executor",
+            category="configuration",
+            business_object_type="local_executor",
+            business_object_id=object_id,
+            change_summary=summary,
+            details=summary,
+            **_request_log_context(request),
+        )
+        session.commit()
+
+    @app.get("/v1/executors")
+    def list_local_executors(
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="executor.device.read",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="executor.device.list",
+        )
+        items = executor_channel(session).list_executors(tenant_id=actor.tenant.id)
+        session.commit()
+        return {"items": items}
+
+    @app.post(
+        "/v1/executors/pairing-codes",
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_executor_pairing_code(
+        body: PairingCodeCreateBody,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="executor.device.pair",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="executor.pairing_code.create",
+        )
+        record, raw_code = executor_channel(session).create_pairing_code(
+            tenant_id=actor.tenant.id,
+            user_id=actor.user.id,
+            display_name_hint=body.displayNameHint,
+        )
+        append_executor_audit(
+            request,
+            session,
+            actor,
+            action="executor.pairing_code.create",
+            object_id=record.id,
+            summary={"expiresInSeconds": settings.executor_pairing_ttl_seconds},
+        )
+        return {
+            "pairingRequestId": str(record.id),
+            "pairingCode": f"{raw_code[:4]}-{raw_code[4:]}",
+            "expiresAt": record.expires_at.isoformat(),
+            "expiresIn": settings.executor_pairing_ttl_seconds,
+        }
+
+    @app.get("/v1/executors/pairing-codes/{pairing_id}")
+    def get_executor_pairing_status(
+        pairing_id: uuid.UUID,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="executor.device.pair",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="executor.pairing_code.status.read",
+        )
+        return executor_channel(session).pairing_status(
+            tenant_id=actor.tenant.id,
+            user_id=actor.user.id,
+            pairing_id=pairing_id,
+        )
+
+    @app.post("/v1/executor-channel/pair", status_code=status.HTTP_201_CREATED)
+    def pair_local_executor(
+        body: ExecutorPairBody,
+        request: Request,
+        session: SessionDep,
+    ) -> dict[str, object]:
+        if request.headers.get("Cookie"):
+            raise ExecutorServiceError("executor_cookie_not_allowed", status_code=401)
+        executor, credential = executor_channel(session).pair(body)
+        request.state.tenant_id = executor.tenant_id
+        request.state.actor_name = executor.display_name
+        request.state.log_source = "local_executor_device"
+        return {
+            "executorId": str(executor.id),
+            "deviceCredential": credential,
+            "credentialType": "Bearer",
+            "protocolVersion": executor.protocol_version,
+            "pollPath": "/v1/executor-channel/poll",
+        }
+
+    @app.post("/v1/executors/{executor_id}/revoke")
+    def revoke_local_executor(
+        executor_id: uuid.UUID,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="executor.device.revoke",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="executor.device.revoke",
+        )
+        service = executor_channel(session)
+        executor = service.revoke(
+            tenant_id=actor.tenant.id, executor_id=executor_id
+        )
+        append_executor_audit(
+            request,
+            session,
+            actor,
+            action="executor.device.revoke",
+            object_id=executor.id,
+            summary={"status": "revoked"},
+        )
+        return {"executor": service.executor_payload(executor)}
+
+    @app.get("/v1/executors/{executor_id}/runtime-summary")
+    def local_executor_runtime_summary(
+        executor_id: uuid.UUID,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="executor.device.read",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="executor.runtime_summary.read",
+        )
+        payload = executor_channel(session).runtime_summary(
+            tenant_id=actor.tenant.id, executor_id=executor_id
+        )
+        session.commit()
+        return payload
+
+    @app.post(
+        "/v1/executors/{executor_id}/config/read",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def read_local_executor_config(
+        executor_id: uuid.UUID,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="executor.config.read",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="executor.config.read.request",
+        )
+        service = executor_channel(session)
+        task = service.create_config_task(
+            tenant_id=actor.tenant.id,
+            user_id=actor.user.id,
+            executor_id=executor_id,
+            task_type="config.read.v1",
+            payload={},
+        )
+        append_executor_audit(
+            request,
+            session,
+            actor,
+            action="executor.config.read.request",
+            object_id=executor_id,
+            summary={"taskId": str(task.id)},
+        )
+        return {"task": service.task_payload(task)}
+
+    @app.put(
+        "/v1/executors/{executor_id}/config",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def write_local_executor_config(
+        executor_id: uuid.UUID,
+        body: ExecutorConfigWriteBody,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="executor.config.write",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="executor.config.write.request",
+        )
+        service = executor_channel(session)
+        task = service.create_config_task(
+            tenant_id=actor.tenant.id,
+            user_id=actor.user.id,
+            executor_id=executor_id,
+            task_type="config.write.v1",
+            payload={
+                "expectedRevision": body.expectedRevision,
+                "config": body.config,
+            },
+            idempotency_key=body.idempotencyKey,
+        )
+        append_executor_audit(
+            request,
+            session,
+            actor,
+            action="executor.config.write.request",
+            object_id=executor_id,
+            summary={"taskId": str(task.id), "expectedRevision": body.expectedRevision},
+        )
+        return {"task": service.task_payload(task)}
+
+    @app.get("/v1/executor-tasks/{task_id}")
+    def get_executor_task(
+        task_id: uuid.UUID,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="executor.device.read",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="executor.task.read",
+        )
+        service = executor_channel(session)
+        task = service.get_task(tenant_id=actor.tenant.id, task_id=task_id)
+        session.commit()
+        return {"task": service.task_payload(task)}
+
+    @app.post("/v1/executor-tasks/{task_id}/cancel")
+    def cancel_executor_task(
+        task_id: uuid.UUID,
+        body: ExecutorTaskCancelBody,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="executor.config.write",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="executor.task.cancel",
+        )
+        service = executor_channel(session)
+        current = service.get_task(tenant_id=actor.tenant.id, task_id=task_id)
+        if body.expectedStatus and current.status != body.expectedStatus:
+            raise ExecutorServiceError("executor_task_state_conflict", status_code=409)
+        task = service.cancel_task(tenant_id=actor.tenant.id, task_id=task_id)
+        append_executor_audit(
+            request,
+            session,
+            actor,
+            action="executor.task.cancel",
+            object_id=task.executor_id,
+            summary={"taskId": str(task.id), "status": task.status},
+        )
+        return {"task": service.task_payload(task)}
+
+    @app.post("/v1/executor-channel/poll")
+    def poll_executor_channel(
+        body: ExecutorPollBody,
+        request: Request,
+        session: SessionDep,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        service, executor = authenticated_executor(request, session, authorization)
+        if body.waitSeconds > settings.executor_poll_timeout_seconds:
+            body = body.model_copy(
+                update={"waitSeconds": settings.executor_poll_timeout_seconds}
+            )
+        return service.poll(
+            executor=executor,
+            body=body,
+            trace_id=request.state.trace_id,
+        )
+
+    @app.post("/v1/executor-channel/tasks/{task_id}/start")
+    def start_executor_task(
+        task_id: uuid.UUID,
+        body: ExecutorTaskStartBody,
+        request: Request,
+        session: SessionDep,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        service, executor = authenticated_executor(request, session, authorization)
+        task = service.start_task(
+            executor=executor,
+            task_id=task_id,
+            lease_token=body.leaseToken,
+            trace_id=request.state.trace_id,
+        )
+        return {"task": service.task_payload(task)}
+
+    @app.put("/v1/executor-channel/tasks/{task_id}/lease")
+    def renew_executor_task_lease(
+        task_id: uuid.UUID,
+        body: ExecutorTaskLeaseBody,
+        request: Request,
+        session: SessionDep,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        service, executor = authenticated_executor(request, session, authorization)
+        task = service.renew_lease(
+            executor=executor,
+            task_id=task_id,
+            lease_token=body.leaseToken,
+        )
+        return {"task": service.task_payload(task)}
+
+    @app.post("/v1/executor-channel/tasks/{task_id}/progress")
+    def report_executor_task_progress(
+        task_id: uuid.UUID,
+        body: ExecutorTaskProgressBody,
+        request: Request,
+        session: SessionDep,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        service, executor = authenticated_executor(request, session, authorization)
+        task = service.progress(
+            executor=executor,
+            task_id=task_id,
+            body=body,
+            trace_id=request.state.trace_id,
+        )
+        return {"task": service.task_payload(task)}
+
+    @app.post("/v1/executor-channel/tasks/{task_id}/finish")
+    def finish_executor_task(
+        task_id: uuid.UUID,
+        body: ExecutorTaskFinishBody,
+        request: Request,
+        session: SessionDep,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        service, executor = authenticated_executor(request, session, authorization)
+        task = service.finish(
+            executor=executor,
+            task_id=task_id,
+            body=body,
+            trace_id=request.state.trace_id,
+        )
+        return {"task": service.task_payload(task)}
 
     def purchase_error(
         request: Request,

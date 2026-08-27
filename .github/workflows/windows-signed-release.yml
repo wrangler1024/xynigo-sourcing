@@ -1,0 +1,124 @@
+name: windows-signed-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing immutable release tag, for example v0.13.0
+        required: true
+        type: string
+      publish:
+        description: Upload the verified signed installer to the existing GitHub Release
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build-sign-verify:
+    runs-on: windows-latest
+    env:
+      XYNIGO_RELEASE_CHANNEL: test
+      XYNIGO_PROXY_LINK: https://proxy.example.test/{region}
+      XYNIGO_WINDOWS_SIGNING_PFX_BASE64: ${{ secrets.XYNIGO_WINDOWS_SIGNING_PFX_BASE64 }}
+      XYNIGO_WINDOWS_SIGNING_PFX_PASSWORD: ${{ secrets.XYNIGO_WINDOWS_SIGNING_PFX_PASSWORD }}
+      XYNIGO_WINDOWS_TIMESTAMP_URL: ${{ vars.XYNIGO_WINDOWS_TIMESTAMP_URL }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.release_tag }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.x"
+          cache-dependency-path: packaging/windows/launcher/go.sum
+      - run: choco install nsis --version=3.12.0 -y --no-progress
+      - name: Verify tag and application version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          version="$(PYTHONPATH=src python -c 'from purchase_tool import __version__; print(__version__)')"
+          test "$RELEASE_TAG" = "v$version"
+      - name: Require trusted signing certificate
+        shell: pwsh
+        run: |
+          if (-not $env:XYNIGO_WINDOWS_SIGNING_PFX_BASE64) {
+            throw "Trusted Authenticode certificate secret is not configured."
+          }
+      - name: Build and sign native launcher
+        shell: bash
+        run: bash packaging/windows/build-launcher.sh "dist/Xynigo.exe"
+      - name: Authenticode-sign native launcher
+        shell: pwsh
+        run: .\packaging\windows\sign-windows-artifacts.ps1 -Path "dist\Xynigo.exe"
+      - name: Build installer with signed launcher
+        shell: bash
+        env:
+          NSIS_WINDOWS_PATH: C:\Program Files (x86)\NSIS\makensis.exe
+          XYNIGO_WINDOWS_LAUNCHER_BIN: ${{ github.workspace }}\dist\Xynigo.exe
+        run: |
+          export XYNIGO_MAKENSIS_BIN="$(cygpath -u "$NSIS_WINDOWS_PATH")"
+          export XYNIGO_WINDOWS_LAUNCHER_BIN="$(cygpath -u "$XYNIGO_WINDOWS_LAUNCHER_BIN")"
+          bash 组装Windows标准安装包.sh
+      - name: Authenticode-sign installer and finalize metadata
+        shell: pwsh
+        run: |
+          $installer = Get-Item "dist\Xynigo_Sourcing_Windows_Setup_v*.exe"
+          $metadata = Get-Item "dist\Xynigo_Sourcing_Windows_Setup_v*.json"
+          .\packaging\windows\sign-windows-artifacts.ps1 `
+            -Path $installer.FullName `
+            -MetadataPath $metadata.FullName `
+            -MarkReleaseEligible
+          $sha = (Get-FileHash -Algorithm SHA256 $installer.FullName).Hash.ToLowerInvariant()
+          "$sha  $($installer.Name)" | Set-Content "dist\$($installer.BaseName).sha256" -Encoding ASCII
+      - name: Verify signed install, tray launcher and uninstall data retention
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installer = Get-Item "dist\Xynigo_Sourcing_Windows_Setup_v*.exe"
+          $installDir = Join-Path $env:LOCALAPPDATA "Programs\Xynigo Sourcing"
+          $greenDir = Join-Path $env:RUNNER_TEMP "Xynigo green source"
+          New-Item -ItemType Directory -Force -Path "$greenDir\运行数据" | Out-Null
+          Set-Content -Path "$greenDir\VERSION.json" -Value '{"version":"legacy"}' -Encoding UTF8
+          Set-Content -Path "$greenDir\config.json" -Value '{"keep":true}' -Encoding UTF8
+          Set-Content -Path "$greenDir\运行数据\keep.txt" -Value 'keep' -Encoding UTF8
+          $result = Start-Process $installer.FullName -ArgumentList "/S /MIGRATEDIR=`"$greenDir`"" -Wait -PassThru
+          if ($result.ExitCode -ne 0) { throw "installer failed" }
+          if (-not (Test-Path "$installDir\Xynigo.exe")) { throw "tray launcher missing" }
+          if (-not (Test-Path "$installDir\xynigo-logo.png")) { throw "brand asset missing" }
+          $launcherSignature = Get-AuthenticodeSignature "$installDir\Xynigo.exe"
+          if ($launcherSignature.Status -ne "Valid") { throw "installed launcher signature invalid" }
+          $protocol = (Get-Item "HKCU:\Software\Classes\xynigo\shell\open\command").GetValue('')
+          if ($protocol -notmatch 'Xynigo\.exe.*--protocol') { throw "protocol does not use signed launcher" }
+          if (-not (Test-Path "$installDir\config.json")) { throw "config migration failed" }
+          $uninstaller = Get-Item "$installDir\卸载 Xynigo Sourcing.exe"
+          $uninstall = Start-Process $uninstaller.FullName -ArgumentList "/S" -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "uninstall failed" }
+          if (-not (Test-Path "$installDir\config.json")) { throw "uninstall removed config" }
+          if (-not (Test-Path "$installDir\运行数据\keep.txt")) { throw "uninstall removed runtime data" }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: xynigo-signed-windows-installer-${{ inputs.release_tag }}
+          path: |
+            dist/Xynigo_Sourcing_Windows_Setup_v*.exe
+            dist/Xynigo_Sourcing_Windows_Setup_v*.json
+            dist/Xynigo_Sourcing_Windows_Setup_v*.sha256
+          if-no-files-found: error
+      - name: Upload signed installer to existing GitHub Release
+        if: ${{ inputs.publish }}
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          gh release view "$RELEASE_TAG" >/dev/null
+          gh release upload "$RELEASE_TAG" \
+            dist/Xynigo_Sourcing_Windows_Setup_v*.exe \
+            dist/Xynigo_Sourcing_Windows_Setup_v*.json \
+            dist/Xynigo_Sourcing_Windows_Setup_v*.sha256

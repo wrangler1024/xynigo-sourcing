@@ -1,0 +1,266 @@
+"""Strict wire contracts for the cloud-to-local executor P1 channel.
+
+The device credential travels only in the Authorization header.  Payloads are
+deliberately small and configuration writes are limited to the non-secret
+fields already supported by the desktop executor.
+"""
+
+from __future__ import annotations
+
+import re
+import uuid
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+PAIRING_CODE_PATTERN = re.compile(r"^[A-HJ-NP-Z2-9]{8}$")
+REVISION_PATTERN = re.compile(r"^[a-f0-9]{64}$")
+STABLE_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]{1,127}$")
+
+
+class StrictBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class PairingCodeCreateBody(StrictBody):
+    displayNameHint: str | None = Field(default=None, max_length=128)
+
+    @field_validator("displayNameHint")
+    @classmethod
+    def normalize_hint(cls, value: str | None) -> str | None:
+        normalized = " ".join(str(value or "").split())
+        return normalized or None
+
+
+class ExecutorPairBody(StrictBody):
+    pairingCode: str = Field(min_length=8, max_length=11)
+    displayName: str = Field(min_length=1, max_length=128)
+    platform: Literal["windows", "macos"]
+    architecture: Literal["x86_64", "arm64"]
+    clientVersion: str = Field(min_length=1, max_length=64)
+    protocolVersion: int = Field(default=1, ge=1, le=10)
+    capabilities: list[Literal["config.read.v1", "config.write.v1"]] = Field(
+        default_factory=lambda: ["config.read.v1", "config.write.v1"],
+        max_length=16,
+    )
+    devicePublicKey: str | None = Field(default=None, max_length=8192)
+
+    @field_validator("pairingCode")
+    @classmethod
+    def normalize_code(cls, value: str) -> str:
+        normalized = re.sub(r"[\s-]", "", value).upper()
+        if not PAIRING_CODE_PATTERN.fullmatch(normalized):
+            raise ValueError("pairing code format is invalid")
+        return normalized
+
+    @field_validator("displayName", "clientVersion")
+    @classmethod
+    def normalize_text(cls, value: str) -> str:
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("must not be blank")
+        return normalized
+
+    @field_validator("capabilities")
+    @classmethod
+    def unique_capabilities(cls, value: list[str]) -> list[str]:
+        return sorted(set(value))
+
+
+class ExecutorPollBody(StrictBody):
+    waitSeconds: int = Field(default=25, ge=0, le=25)
+    configRevision: str | None = None
+    hubStatus: Literal["unknown", "ready", "offline", "limited"] = "unknown"
+    clientVersion: str = Field(min_length=1, max_length=64)
+    protocolVersion: int = Field(default=1, ge=1, le=10)
+    capabilities: list[Literal["config.read.v1", "config.write.v1"]] = Field(
+        default_factory=list,
+        max_length=16,
+    )
+
+    @field_validator("configRevision")
+    @classmethod
+    def validate_revision(cls, value: str | None) -> str | None:
+        normalized = str(value or "").strip().lower()
+        if not normalized:
+            return None
+        if not REVISION_PATTERN.fullmatch(normalized):
+            raise ValueError("config revision format is invalid")
+        return normalized
+
+    @field_validator("clientVersion")
+    @classmethod
+    def normalize_client_version(cls, value: str) -> str:
+        return " ".join(value.split())
+
+    @field_validator("capabilities")
+    @classmethod
+    def unique_capabilities(cls, value: list[str]) -> list[str]:
+        return sorted(set(value))
+
+
+class ExecutorConfigWriteBody(StrictBody):
+    expectedRevision: str
+    config: dict[str, Any]
+    idempotencyKey: str | None = Field(default=None, min_length=8, max_length=128)
+
+    @field_validator("expectedRevision")
+    @classmethod
+    def validate_revision(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not REVISION_PATTERN.fullmatch(normalized):
+            raise ValueError("expected revision format is invalid")
+        return normalized
+
+    @field_validator("config")
+    @classmethod
+    def validate_safe_config(cls, value: dict[str, Any]) -> dict[str, Any]:
+        allowed = {
+            "hubPort",
+            "serverPort",
+            "concurrency",
+            "importBuyerPlan",
+            "verifySampleCount",
+            "hiddenQueryColumns",
+            "purchaseSite",
+            "purchaseTag",
+            "purchaseTags",
+            "envCreateWorkers",
+            "safeParallelTasks",
+        }
+        if set(value) - allowed:
+            raise ValueError("config contains unsupported or sensitive fields")
+        integer_ranges = {
+            "hubPort": (1, 65535),
+            "serverPort": (1, 65535),
+            "concurrency": (1, 5),
+            "verifySampleCount": (0, 10),
+            "envCreateWorkers": (1, 10),
+        }
+        for key, (minimum, maximum) in integer_ranges.items():
+            if key not in value:
+                continue
+            item = value[key]
+            if isinstance(item, bool) or not isinstance(item, int):
+                raise ValueError(f"{key} must be an integer")
+            if item < minimum or item > maximum:
+                raise ValueError(f"{key} is outside the supported range")
+        if "safeParallelTasks" in value and not isinstance(
+            value["safeParallelTasks"], bool
+        ):
+            raise ValueError("safeParallelTasks must be a boolean")
+        if "purchaseSite" in value and value["purchaseSite"] not in {"MX", "US"}:
+            raise ValueError("purchaseSite is unsupported")
+        if "hiddenQueryColumns" in value:
+            hidden = value["hiddenQueryColumns"]
+            if not isinstance(hidden, list) or any(
+                item not in {"envName", "ip"} for item in hidden
+            ):
+                raise ValueError("hiddenQueryColumns is invalid")
+        if "purchaseTags" in value:
+            tags = value["purchaseTags"]
+            if not isinstance(tags, dict) or set(tags) - {"MX", "US"}:
+                raise ValueError("purchaseTags is invalid")
+            if any(not isinstance(item, str) or len(item) > 12 for item in tags.values()):
+                raise ValueError("purchaseTags contains an invalid label")
+        for key, maximum in {
+            "purchaseTag": 12,
+            "importBuyerPlan": 200,
+        }.items():
+            if key in value and (
+                not isinstance(value[key], str) or len(value[key]) > maximum
+            ):
+                raise ValueError(f"{key} is invalid")
+        # Keep the task envelope bounded before it reaches the durable queue.
+        if len(str(value)) > 32_000:
+            raise ValueError("config payload is too large")
+        return value
+
+
+class ExecutorTaskStartBody(StrictBody):
+    leaseToken: str = Field(min_length=32, max_length=256)
+
+
+class ExecutorTaskLeaseBody(ExecutorTaskStartBody):
+    pass
+
+
+class ExecutorTaskProgressBody(ExecutorTaskStartBody):
+    phase: str = Field(min_length=1, max_length=64)
+    current: int | None = Field(default=None, ge=0)
+    total: int | None = Field(default=None, ge=0)
+    stableCode: str | None = Field(default=None, max_length=128)
+
+    @field_validator("phase")
+    @classmethod
+    def normalize_phase(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not STABLE_CODE_PATTERN.fullmatch(normalized):
+            raise ValueError("phase format is invalid")
+        return normalized
+
+    @field_validator("stableCode")
+    @classmethod
+    def validate_stable_code(cls, value: str | None) -> str | None:
+        normalized = str(value or "").strip().lower()
+        if normalized and not STABLE_CODE_PATTERN.fullmatch(normalized):
+            raise ValueError("stable code format is invalid")
+        return normalized or None
+
+    @model_validator(mode="after")
+    def validate_progress(self) -> "ExecutorTaskProgressBody":
+        if self.current is not None and self.total is not None and self.current > self.total:
+            raise ValueError("progress current cannot exceed total")
+        return self
+
+
+class ExecutorTaskFinishBody(ExecutorTaskStartBody):
+    outcome: Literal["succeeded", "failed"]
+    resultCode: str = Field(min_length=2, max_length=128)
+    resultSummary: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("resultCode")
+    @classmethod
+    def validate_result_code(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not STABLE_CODE_PATTERN.fullmatch(normalized):
+            raise ValueError("result code format is invalid")
+        return normalized
+
+    @field_validator("resultSummary")
+    @classmethod
+    def validate_result_summary(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if len(str(value)) > 64_000:
+            raise ValueError("result summary is too large")
+        forbidden = {
+            "proxylink",
+            "password",
+            "cookie",
+            "authorization",
+            "credential",
+            "appsecret",
+            "token",
+        }
+
+        def check(node: Any) -> None:
+            if isinstance(node, dict):
+                for key, item in node.items():
+                    normalized = re.sub(r"[^a-z0-9]", "", str(key).casefold())
+                    if any(word in normalized for word in forbidden):
+                        raise ValueError("result summary contains a sensitive field")
+                    check(item)
+            elif isinstance(node, list):
+                for item in node:
+                    check(item)
+
+        check(value)
+        return value
+
+
+class ExecutorTaskCancelBody(StrictBody):
+    expectedStatus: Literal["queued", "leased", "running", "cancel_requested"] | None = None
+
+
+def task_uuid(value: str | uuid.UUID) -> uuid.UUID:
+    return value if isinstance(value, uuid.UUID) else uuid.UUID(str(value))

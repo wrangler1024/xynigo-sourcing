@@ -16,6 +16,18 @@ if '--package-self-test' in sys.argv:
         __version__, current_platform_key()))
     sys.exit(0)
 
+if len(sys.argv) > 1 and sys.argv[1] == 'pair':
+    from purchase_tool.executor_channel import pair_cli
+    sys.exit(pair_cli(sys.argv[2:]))
+
+if len(sys.argv) > 1 and sys.argv[1] == 'protocol':
+    from purchase_tool.executor_protocol import protocol_cli
+    sys.exit(protocol_cli(sys.argv[2:]))
+
+if len(sys.argv) > 1 and sys.argv[1] == 'migrate':
+    from purchase_tool.data_migration import migration_cli
+    sys.exit(migration_cli(sys.argv[2:]))
+
 try:
     os.environ.setdefault('XYNIGO_INSTALL_DIR', str(INSTALL_ROOT))
     from purchase_tool import bootstrap  # noqa: F401

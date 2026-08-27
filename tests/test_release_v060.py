@@ -31,7 +31,8 @@ class ReleaseV0125Tests(unittest.TestCase):
         self.assertTrue((root / 'release' / 'v0.12.5.zh-CN.json').is_file())
         self.assertTrue((root / 'release' / 'v0.12.5.zh-CN.md').is_file())
         script = (root / '组装Windows绿色包.sh').read_text(encoding='utf-8')
-        self.assertIn('v${VERSION}.zip', script)
+        self.assertIn('v${VERSION}${BUILD_SUFFIX}.zip', script)
+        self.assertIn('XYNIGO_BUILD_LABEL', script)
         self.assertIn('XYNIGO_RELEASE_CHANNEL:-stable', script)
         self.assertIn('--channel "$CHANNEL"', script)
         self.assertIn("'channel': channel", script)
@@ -256,7 +257,9 @@ class ReleaseV0125Tests(unittest.TestCase):
         self.assertIn(
             'data-parent="system" data-module="larkconnection" '
             'data-required-role="super_admin"', html)
-        self.assertIn('>本机设置<span class="secondary-status">现有</span>', html)
+        self.assertIn('data-module="localsettings" data-local-only="1"', html)
+        self.assertIn(
+            '>本机设置<span class="secondary-status">本机兼容</span>', html)
         self.assertIn('>飞书连接<span class="secondary-status restricted">超管</span>', html)
         self.assertIn(
             'data-parent="system" data-planned="云端服务配置"', html)

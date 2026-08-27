@@ -1307,6 +1307,183 @@ class ProcurementImportJob(Base):
     )
 
 
+class LocalExecutor(Base):
+    """A tenant-bound local executor authenticated by a device credential."""
+
+    __tablename__ = "local_executors"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    display_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    platform: Mapped[str] = mapped_column(String(32), nullable=False)
+    architecture: Mapped[str] = mapped_column(String(32), nullable=False)
+    client_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    protocol_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    capabilities: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    credential_digest: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    device_public_key: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    config_revision: Mapped[str | None] = mapped_column(String(128))
+    hub_status: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("platform IN ('windows', 'macos')", name="ck_local_executor_platform"),
+        CheckConstraint(
+            "architecture IN ('x86_64', 'arm64')",
+            name="ck_local_executor_architecture",
+        ),
+        CheckConstraint("protocol_version >= 1", name="ck_local_executor_protocol"),
+        CheckConstraint(
+            "status IN ('active', 'revoked')", name="ck_local_executor_status"
+        ),
+        CheckConstraint(
+            "hub_status IN ('unknown', 'ready', 'offline', 'limited')",
+            name="ck_local_executor_hub_status",
+        ),
+        Index("ix_local_executor_tenant_status", "tenant_id", "status"),
+        Index("ix_local_executor_last_seen", "last_seen_at"),
+    )
+
+
+class ExecutorPairingCode(Base):
+    """Short-lived single-use code that binds one executor to a tenant."""
+
+    __tablename__ = "executor_pairing_codes"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    created_by_user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    display_name_hint: Mapped[str | None] = mapped_column(String(128))
+    code_digest: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    executor_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("local_executors.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_executor_pairing_expiry", "tenant_id", "expires_at"),
+    )
+
+
+class ExecutorTask(Base):
+    """Durable cloud task leased to one local executor."""
+
+    __tablename__ = "executor_tasks"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    executor_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("local_executors.id", ondelete="CASCADE"), nullable=False
+    )
+    task_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    payload_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    payload_envelope: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    lease_token_digest: Mapped[str | None] = mapped_column(String(64))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_by_user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    result_code: Mapped[str | None] = mapped_column(String(128))
+    result_summary: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "executor_id",
+            "idempotency_key",
+            name="uq_executor_task_idempotency",
+        ),
+        CheckConstraint(
+            "task_type IN ('config.read.v1', 'config.write.v1')",
+            name="ck_executor_task_type",
+        ),
+        CheckConstraint(
+            "status IN ('queued', 'leased', 'running', 'succeeded', 'failed', "
+            "'uncertain', 'cancel_requested', 'cancelled')",
+            name="ck_executor_task_status",
+        ),
+        CheckConstraint("payload_version >= 1", name="ck_executor_task_payload_version"),
+        CheckConstraint("priority >= 0", name="ck_executor_task_priority"),
+        CheckConstraint("attempt >= 0", name="ck_executor_task_attempt"),
+        Index("ix_executor_task_queue", "executor_id", "status", "priority", "created_at"),
+        Index("ix_executor_task_lease", "status", "lease_until"),
+    )
+
+
+class ExecutorTaskEvent(Base):
+    """Append-only, redacted executor task state and progress event."""
+
+    __tablename__ = "executor_task_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("executor_tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    executor_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("local_executors.id", ondelete="CASCADE"), nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    phase: Mapped[str | None] = mapped_column(String(64))
+    progress_current: Mapped[int | None] = mapped_column(Integer)
+    progress_total: Mapped[int | None] = mapped_column(Integer)
+    stable_code: Mapped[str | None] = mapped_column(String(128))
+    trace_id: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "progress_current IS NULL OR progress_current >= 0",
+            name="ck_executor_task_event_current",
+        ),
+        CheckConstraint(
+            "progress_total IS NULL OR progress_total >= 0",
+            name="ck_executor_task_event_total",
+        ),
+        Index("ix_executor_task_event_task", "task_id", "created_at"),
+    )
+
+
 class PurchaseSyncOutbox(Base):
     """飞书镜像同步发件箱。与采购业务变更同一事务写入。"""
 

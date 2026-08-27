@@ -34,6 +34,10 @@
 | `purchase_orders` | 租户隔离的运营采购单、草稿版本与提交身份 |
 | `purchase_order_lines` | 采购明细快照、稳定行键和采购流转状态 |
 | `purchase_sync_outbox` | PostgreSQL 事务内生成的飞书镜像同步事件 |
+| `local_executors` | 租户设备身份、能力、最近心跳和配置摘要；只保存设备凭证摘要 |
+| `executor_pairing_codes` | 5 分钟有效、单次消费的设备配对码摘要 |
+| `executor_tasks` | 本地执行器配置任务、租约、状态和脱敏短期结果 |
+| `executor_task_events` | 任务领取、开始、进度、结束和不确定状态的追加事件 |
 
 `0003_purchase_request_foundation` 及上述三张采购表已于 2026-08-25 迁移到隔离测试实例。首次手工提交验收后，测试实例有 1 张主单、1 条明细和 1 条待处理 Outbox；飞书同步 Worker 尚未实现，`syncStatus=pending` 不代表 Base 已写入。
 
@@ -47,6 +51,20 @@ Web 采购中心 P0 读取与采购执行测试接口已部署到隔离测试实
 4. 本地服务通过 `/v1/auth/local/poll` 单次换取会话，保存到系统安全存储；页面只收到脱敏用户、角色和权限摘要。
 5. 登录完成页会尝试自动关闭；本地主页面在成功领取会话后也会主动关闭其持有的飞书授权窗口。浏览器不允许关闭手动打开的标签时，完成页只显示安全的手动关闭提示。
 6. 本地业务 API 再校验云端会话与具体权限；退出时云端撤销会话并清理本机安全存储。
+
+## 本地执行器设备通道 P1
+
+本地执行器设备会话与上面的用户登录会话完全分离。云端 Web 以用户权限管理设备；执行器只主动访问 HTTPS 443，不要求公网入站端口，也不以 Web 直连 `localhost` 作为主路径。
+
+- Web 通过 `POST /v1/executors/pairing-codes` 生成 5 分钟一次性配对码；执行器调用 `POST /v1/executor-channel/pair` 单次换取设备凭证。数据库只保存配对码和设备凭证 SHA-256 摘要，原始设备凭证只返回一次。
+- 设备调用 `POST /v1/executor-channel/poll` 做最长 25 秒长轮询并上报版本、能力、Hub 状态和本机配置摘要。60 秒内有心跳视为在线。
+- 首期任务类型只有 `config.read.v1` 和 `config.write.v1`。领取后租约为 45 秒，执行器每 15 秒续租；领取、开始、续租、进度与结束均按设备和任务归属校验。
+- 配置写入必须提交 `expectedRevision`。云端在入队时先比对最后心跳摘要，本地执行器在真正写文件前再次按实时 `config.json` 计算摘要；任一层不一致都拒绝覆盖。
+- 已领取但未开始的过期配置任务可重新排队；已开始的读取任务可安全重试；已开始的写任务租约失效后转 `uncertain`，不自动重复写入。
+- 设备接口只接受独立 Bearer，并明确拒绝浏览器 Cookie。代理链接、密码、Cookie、Token、飞书凭证和租约令牌不得进入普通设备状态、任务结果或日志。
+- Web 用户接口：`GET /v1/executors`、生成配对码、撤销、运行摘要、配置读写和任务查询/取消；对应权限为 `executor.device.read/pair/revoke` 与 `executor.config.read/write`。
+
+本地迁移 head 为 `0015_executor_channel_p1`。该纵切面尚未部署共享测试，部署前必须先备份并验证 `alembic current == alembic heads`。
 
 ## 成员、角色与会话管理 API
 
@@ -62,7 +80,7 @@ Web 采购中心 P0 读取与采购执行测试接口已部署到隔离测试实
 
 后端固定维护三个系统角色：`super_admin`（超级管理员）、`admin`（管理员）和默认无权限的 `member`（成员）。系统角色不能重命名或删除；`super_admin` 与 `admin` 的权限集由后端锁定。`admin` 自动获得目录中的全部日常业务与常规管理权限，但明确不包含 `system.lark_connection.manage`、`system.integration.manage` 和代理凭证高敏权限 `resource.ip.credential.manage`；这三项只能由 `super_admin` 持有，不能通过角色策略授予其他角色。具有 `system.role.manage` 的管理员可以创建、重命名自定义角色，角色代码由后端生成；已分配成员的角色必须先解除授权才能删除。非超级管理员的角色管理员不能授予自身没有的权限，也不能把超级管理员角色分配给任何成员。
 
-当前目录共 28 项权限，其中 `workbench.access`、`procurement.access`、`operations.access`、`finance.access`、`assistant.access`、`analytics.access` 分别控制工作台、采购中心、运营中心、财务中心、小犀助手和数据分析的一级模块入口；8 项 `resource.store.*`、`resource.ip.*` 权限裁决店铺与代理 IP 能力，3 项 `procurement.request.*` 权限裁决运营采购单的读取、草稿保存与正式提交。`admin` 固定拥有其中 25 项，`super_admin` 拥有全部 28 项。它们只裁决已实现能力及入口可见性；尚未开发的写入功能与数据范围不会因获得权限而自动开放。
+当前本地目录共 35 项权限，其中 `workbench.access`、`procurement.access`、`operations.access`、`finance.access`、`assistant.access`、`analytics.access` 分别控制工作台、采购中心、运营中心、财务中心、小犀助手和数据分析的一级模块入口；5 项 `executor.*` 权限分别裁决设备查看、配对、撤销、配置读取和配置写入。`admin` 固定排除三项高敏权限，因而拥有 32 项；`super_admin` 拥有全部 35 项。它们只裁决已实现能力及入口可见性；尚未开发的写入功能与数据范围不会因获得权限而自动开放。
 
 公网 Nginx 对登录创建接口单独限流。轮询请求只接受摘要匹配、未过期且尚未消费的令牌，并使用数据库行锁保证同一登录请求最多签发一个会话。
 
@@ -75,7 +93,7 @@ uv sync --extra test
 uv run pytest
 ```
 
-当前本地工作区为 35 项通过，包含旧库新增权限时的目录升级回归。覆盖待审批默认值、手机号精确解析、新增成员的角色预分配与权限上限、内置管理员高敏权限边界、手机号/飞书标识不落响应和审计、跨租户拒绝、自定义角色生命周期、会话撤销、采购单租户隔离、幂等与提交锁定，以及 Web 采购中心概览/列表/详情、隐私字段与详情审计；测试不会访问真实飞书或生产数据库。
+当前云端工作区为 87 项通过。执行器专项覆盖配对码单次消费/过期、凭证摘要、设备 Cookie 隔离、跨租户不可见、租约领取/过期接管、配置读写、重复回执幂等、离线、revision 冲突、敏感字段拒绝和设备撤销；其余测试继续覆盖身份、权限、采购、资源、日志和导入链路。测试不会访问真实飞书或生产数据库。
 
 ## 腾讯轻量服务器测试部署
 

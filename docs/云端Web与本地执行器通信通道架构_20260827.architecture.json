@@ -1,0 +1,245 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Xynigo 云端 Web 与本地执行器通信通道",
+    "subtitle": "统一云端入口 · 设备配对 · 主动 HTTPS 长轮询 · 任务租约 · 本地配置落盘",
+    "output": "docs/云端Web与本地执行器通信通道架构_20260827.html",
+    "animation": "none",
+    "visual_preset": "blueprint",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/wrangler1024/xynigo-sourcing",
+      "revision": "bad70b001e36e2e348ce55ba26bf49ffe7d4c015"
+    },
+    "viewBox": [1560, 940],
+    "views": [
+      {
+        "id": "device_pairing",
+        "label": "设备配对与撤销",
+        "focus": ["cloud_web", "edge_api", "device_service", "executor", "secure_store"],
+        "note": "一次性配对码换取可撤销设备凭证；长期凭证只进入钥匙串或 DPAPI。"
+      },
+      {
+        "id": "config_roundtrip",
+        "label": "云端保存本机配置",
+        "focus": ["cloud_web", "edge_api", "device_service", "task_service", "postgres", "executor", "config_file"],
+        "note": "云端创建短时配置指令，在线执行器领取、校验、原子写盘并回报配置修订号。"
+      },
+      {
+        "id": "business_execution",
+        "label": "本机业务执行",
+        "focus": ["cloud_web", "task_service", "executor", "hubstudio", "shein"],
+        "note": "云端只调度；HubStudio、CDP 与 SHEIN 操作仍在采购电脑本地完成。"
+      },
+      {
+        "id": "recovery_audit",
+        "label": "断网恢复与审计",
+        "focus": ["task_service", "postgres", "executor", "audit"],
+        "note": "租约、幂等键、有限重试和不确定结果接管共同避免重复外部副作用。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "cloud_web",
+      "type": "frontend",
+      "label": "云端 Web 工作台",
+      "sublabel": "xynigo.samforo.icu",
+      "tag": "唯一用户入口",
+      "pos": [45, 330],
+      "size": [170, 76],
+      "sources": [
+        {"path": "docs/项目记忆.md", "line": 180, "end_line": 195, "label": "统一入口决策"}
+      ]
+    },
+    {
+      "id": "edge_api",
+      "type": "security",
+      "label": "云端 API 与鉴权",
+      "sublabel": "HTTPS · Cookie/CSRF · RBAC",
+      "tag": "租户边界",
+      "pos": [290, 330],
+      "size": [180, 76],
+      "sources": [
+        {"path": "docs/当前开发交接.md", "line": 37, "end_line": 46, "label": "云端工作台边界"}
+      ]
+    },
+    {
+      "id": "device_service",
+      "type": "backend",
+      "label": "设备控制服务",
+      "sublabel": "配对 · 心跳 · 撤销 · 能力",
+      "tag": "新增 P0",
+      "pos": [545, 210],
+      "size": [190, 78],
+      "sources": [
+        {"path": "docs/后端实施交接.md", "line": 163, "end_line": 180, "label": "设备通道路线"}
+      ]
+    },
+    {
+      "id": "task_service",
+      "type": "messagebus",
+      "label": "任务与租约服务",
+      "sublabel": "长轮询 · 幂等 · 续租 · 接管",
+      "tag": "新增 P0",
+      "pos": [545, 450],
+      "size": [190, 78],
+      "sources": [
+        {"path": "docs/后端实施交接.md", "line": 169, "end_line": 180, "label": "首期任务模型"}
+      ]
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "设备 · 指令 · 租约 · 修订号",
+      "tag": "唯一控制事实源",
+      "pos": [815, 450],
+      "size": [180, 78],
+      "sources": [
+        {"path": "docs/项目记忆.md", "line": 156, "end_line": 163, "label": "云端事实源"}
+      ]
+    },
+    {
+      "id": "audit",
+      "type": "cloud",
+      "label": "脱敏审计与运行日志",
+      "sublabel": "操作人 · 设备 · 结果 · traceId",
+      "tag": "不记录凭证明文",
+      "pos": [815, 210],
+      "size": [180, 78],
+      "sources": [
+        {"path": "docs/项目记忆.md", "line": 120, "end_line": 122, "label": "日志边界"}
+      ]
+    },
+    {
+      "id": "executor",
+      "type": "backend",
+      "label": "Xynigo 本地执行器",
+      "sublabel": "主动出站 · 领取 · 执行 · 回报",
+      "tag": "采购电脑",
+      "pos": [1080, 330],
+      "size": [200, 82],
+      "sources": [
+        {"path": "docs/项目记忆.md", "line": 142, "end_line": 160, "label": "目标架构"}
+      ]
+    },
+    {
+      "id": "secure_store",
+      "type": "security",
+      "label": "系统安全存储",
+      "sublabel": "Keychain / CurrentUser DPAPI",
+      "tag": "设备凭证",
+      "pos": [1080, 115],
+      "size": [200, 74],
+      "sources": [
+        {"path": "cloud/auth-service/README.md", "line": 13, "end_line": 18, "label": "安全存储"}
+      ]
+    },
+    {
+      "id": "config_file",
+      "type": "database",
+      "label": "本地 config.json",
+      "sublabel": "白名单校验 · 原子替换",
+      "tag": "本机配置事实源",
+      "pos": [1080, 550],
+      "size": [200, 74],
+      "sources": [
+        {"path": "src/purchase_tool/main.py", "line": 274, "end_line": 318, "label": "配置读写"}
+      ]
+    },
+    {
+      "id": "hubstudio",
+      "type": "external",
+      "label": "HubStudio Local API",
+      "sublabel": "环境 · 浏览器 · CDP",
+      "tag": "127.0.0.1",
+      "pos": [1350, 330],
+      "size": [170, 76],
+      "sources": [
+        {"path": "src/purchase_tool/hub_api.py", "line": 32, "end_line": 42, "label": "本机 API 客户端"}
+      ]
+    },
+    {
+      "id": "shein",
+      "type": "external",
+      "label": "SHEIN 站点",
+      "sublabel": "登录态 · 下单 · 查单 · 物流",
+      "tag": "外部副作用",
+      "pos": [1350, 550],
+      "size": [170, 76]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "security-group",
+      "label": "用户浏览器边界",
+      "wraps": ["cloud_web"],
+      "pad": 20
+    },
+    {
+      "kind": "region",
+      "label": "Xynigo 云端控制面 · HTTPS 443",
+      "wraps": ["edge_api", "device_service", "task_service", "postgres", "audit"],
+      "pad": 28
+    },
+    {
+      "kind": "security-group",
+      "label": "采购电脑本地可信边界 · 无公网入站",
+      "wraps": ["executor", "secure_store", "config_file", "hubstudio"],
+      "pad": 26
+    }
+  ],
+  "connections": [
+    {"id": "web_api", "from": "cloud_web", "to": "edge_api", "label": "同源 HTTPS", "variant": "security"},
+    {"id": "api_device", "from": "edge_api", "to": "device_service", "label": "租户 + RBAC", "variant": "security"},
+    {"id": "api_task", "from": "edge_api", "to": "task_service", "label": "创建指令", "variant": "emphasis"},
+    {"id": "device_task", "from": "device_service", "to": "task_service"},
+    {"id": "task_state", "from": "task_service", "to": "postgres", "label": "事务状态", "variant": "security"},
+    {"id": "audit_write", "from": "device_service", "to": "audit", "label": "脱敏事件", "variant": "dashed"},
+    {"id": "executor_poll", "from": "executor", "to": "device_service", "label": "长轮询 · 心跳 · 结果", "variant": "emphasis"},
+    {"id": "executor_credential", "from": "executor", "to": "secure_store", "label": "读设备凭证", "variant": "security"},
+    {"id": "executor_config", "from": "executor", "to": "config_file", "variant": "security"},
+    {"id": "executor_hub", "from": "executor", "to": "hubstudio", "variant": "emphasis"},
+    {"id": "hub_shein", "from": "hubstudio", "to": "shein", "variant": "emphasis"}
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "统一入口原则",
+      "items": [
+        "云端 Web 是唯一用户界面，本机执行器不再承担完整业务 UI",
+        "浏览器只访问同源云端 API，不把 localhost 直连作为主链路",
+        "执行器离线时云端读取功能可用，本机操作明确暂停"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "轮询与租约",
+      "items": [
+        "空闲长轮询 20–25 秒，服务端有任务立即返回，避免固定 1.5 秒刷接口",
+        "任务领取使用 lease_until、attempt、幂等键和 payload_version",
+        "断网或重启只重领安全任务；外部结果不确定必须人工接管"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "本地配置边界",
+      "items": [
+        "config.json 继续是本机事实源，云端不保存完整副本",
+        "设置指令仅对在线目标设备生效，并使用 expectedRevision 防覆盖",
+        "代理链接与应用 Secret 不进入普通任务日志或响应"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "上线闸门",
+      "items": [
+        "先用合成执行器完成配对、撤销、断网、重放和租约过期测试",
+        "再用 Windows/macOS 各一台设备灰度配置读写，不开放真实下单",
+        "设备通道可单独关闭，本地兼容入口和原配置必须可回退"
+      ]
+    }
+  ]
+}

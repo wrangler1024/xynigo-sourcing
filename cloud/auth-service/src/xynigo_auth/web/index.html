@@ -314,6 +314,107 @@
   .update-check:hover:not(:disabled) { border-color: #9bc3d3; background: #f3f9fb; color: var(--tech-blue-dark); }
   .update-check.busy { cursor: wait; opacity: .75; }
   .update-check.available { border-color: var(--tech-blue); background: var(--action-gradient); color: #fff; box-shadow: 0 7px 16px rgba(55,132,158,.2); }
+  .local-executor-entry {
+    min-height: 38px; padding: 7px 12px; border: 1px solid #f1d28b; border-radius: 11px;
+    display: inline-flex; align-items: center; gap: 8px; background: var(--parcel-100);
+    color: #815510; font-size: 11px; font-weight: 900; white-space: nowrap; cursor: pointer;
+  }
+  .local-executor-entry[hidden] { display: none; }
+  .local-executor-entry:hover { border-color: var(--parcel-500); background: #fff1cc; }
+  .local-executor-entry-dot {
+    width: 8px; height: 8px; border-radius: 50%; background: #d9941e;
+    box-shadow: 0 0 0 4px rgba(217,148,30,.12);
+  }
+  .local-executor-layout { display: grid; grid-template-columns: minmax(0,1.35fr) minmax(310px,.65fr); gap: 16px; align-items: start; }
+  .local-executor-status {
+    padding: 16px 18px; border: 1px solid #f1d28b; border-radius: 14px;
+    display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    background: var(--parcel-100); color: #815510;
+  }
+  .local-executor-status-copy { display: flex; align-items: center; gap: 12px; }
+  .local-executor-status-icon {
+    flex: 0 0 auto; width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center;
+    background: #fff; color: #9a650d; font-size: 18px; font-weight: 900;
+  }
+  .local-executor-status h3 { margin: 0; color: #6f4709; font-size: 13px; }
+  .local-executor-status p { margin: 3px 0 0; color: #8a682a; font-size: 10px; }
+  .local-executor-status-meta { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
+  .local-executor-status-meta span { padding: 6px 8px; border-radius: 8px; background: rgba(255,255,255,.7); font-size: 9px; font-weight: 800; }
+  .local-executor-status.ok { border-color: #bce5d2; background: var(--green-100); }
+  .local-executor-status.ok .local-executor-status-icon { background: var(--green); }
+  .local-executor-status.ok h3 { color: var(--green); }
+  .local-executor-status.ok p { color: #39755a; }
+  .local-executor-entry.online { border-color: #bce5d2; background: var(--green-100); color: var(--green); }
+  .local-executor-entry.online .local-executor-entry-dot { background: var(--green); box-shadow: 0 0 0 4px rgba(41,160,107,.12); }
+  .local-executor-steps { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
+  .local-executor-step { position: relative; min-height: 78px; padding: 13px 13px 13px 49px; border: 1px solid var(--line); border-radius: 13px; background: #fff; }
+  .local-executor-step-number { position: absolute; left: 13px; top: 14px; width: 27px; height: 27px; border-radius: 8px; display: grid; place-items: center; background: #eef2f6; color: var(--navy-500); font-size: 10px; font-weight: 900; }
+  .local-executor-step.current { border-color: #a9dadd; background: var(--rhino-100); }
+  .local-executor-step.current .local-executor-step-number { background: var(--action-gradient); color: #fff; }
+  .local-executor-step b { display: block; color: var(--navy-950); font-size: 10px; }
+  .local-executor-step span:last-child { display: block; margin-top: 4px; color: var(--navy-500); font-size: 9px; }
+  .local-executor-platform-grid { margin-top: 15px; display: grid; grid-template-columns: minmax(0,1fr) 190px; gap: 10px; }
+  .local-executor-platform-card { padding: 14px; border: 1px solid #d9e5eb; border-radius: 12px; display: flex; align-items: center; gap: 12px; background: #fbfcfd; }
+  .local-executor-platform-logo { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; background: var(--navy-950); color: #fff; font-size: 20px; font-weight: 900; }
+  .local-executor-platform-card b { display: block; font-size: 11px; }
+  .local-executor-platform-card small { display: block; margin-top: 3px; color: var(--navy-500); font-size: 9px; }
+  .local-executor-platform-select label { display: block; margin-bottom: 6px; color: var(--navy-500); font-size: 9px; font-weight: 800; }
+  .local-executor-platform-select select { width: 100%; height: 42px; padding: 0 10px; border: 1px solid #d9e5eb; border-radius: 10px; background: #fff; color: var(--navy-700); font-size: 10px; font-weight: 750; }
+  .local-executor-release { margin-top: 13px; border: 1px solid var(--line); border-radius: 11px; overflow: hidden; }
+  .local-executor-release-row { min-height: 38px; padding: 8px 11px; display: grid; grid-template-columns: 100px minmax(0,1fr); gap: 10px; align-items: center; border-top: 1px solid var(--line); font-size: 10px; }
+  .local-executor-release-row:first-child { border-top: 0; }
+  .local-executor-release-row label { color: var(--navy-500); }
+  .local-executor-release-row strong { overflow-wrap: anywhere; }
+  .local-executor-actions { margin-top: 15px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .local-executor-download[aria-disabled="true"] { pointer-events: none; opacity: .5; }
+  .local-executor-action-note { color: var(--navy-500); font-size: 9px; }
+  .local-executor-feedback { margin-top: 11px; padding: 9px 10px; border-radius: 9px; background: #f5f8fa; color: var(--navy-500); font-size: 9px; }
+  .local-executor-feedback.ok { border: 1px solid #bce5d2; background: var(--green-100); color: var(--green); }
+  .local-executor-feedback.bad { border: 1px solid #f4c2b7; background: var(--coral-100); color: var(--coral-500); }
+  .local-executor-guide { margin-top: 15px; display: grid; gap: 8px; }
+  .local-executor-guide-item { padding: 10px 11px; border: 1px solid var(--line); border-radius: 10px; display: grid; grid-template-columns: 26px minmax(0,1fr); gap: 8px; background: #fbfcfd; }
+  .local-executor-guide-index { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; background: #eef3f5; color: var(--navy-700); font-size: 9px; font-weight: 900; }
+  .local-executor-guide-item b { display: block; font-size: 10px; }
+  .local-executor-guide-item p { margin: 3px 0 0; color: var(--navy-500); font-size: 9px; }
+  .local-executor-safety { margin-top: 13px; padding: 10px 11px; border: 1px solid #f1d28b; border-radius: 10px; background: var(--parcel-100); color: #815510; font-size: 9px; }
+  .local-executor-safety b { display: block; margin-bottom: 2px; }
+  .local-executor-decisions { margin-top: 14px; display: grid; gap: 8px; }
+  .local-executor-decision { padding: 10px 11px; border: 1px solid var(--line); border-radius: 10px; background: #fbfcfd; }
+  .local-executor-decision b { display: block; font-size: 10px; }
+  .local-executor-decision p { margin: 4px 0 0; color: var(--navy-500); font-size: 9px; }
+  .local-executor-decision.recommended { border-color: #bce5d2; background: var(--green-100); }
+  .local-executor-decision.recommended b { color: var(--green); }
+  .local-executor-device-layout { display: grid; grid-template-columns: minmax(330px,.82fr) minmax(0,1.18fr); gap: 16px; align-items: start; }
+  .local-executor-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .local-executor-card-head p { margin: 4px 0 0; color: var(--navy-500); font-size: 9px; line-height: 1.55; }
+  .local-executor-device-list { margin-top: 12px; display: grid; gap: 8px; }
+  .local-executor-device { width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 11px; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 10px; align-items: center; background: #fbfcfd; color: inherit; text-align: left; cursor: pointer; }
+  .local-executor-device:hover { border-color: #a9dadd; background: #f7fbfc; }
+  .local-executor-device.active { border-color: var(--rhino-500); background: var(--rhino-100); box-shadow: 0 0 0 3px rgba(32,174,179,.08); }
+  .local-executor-device b { display: block; color: var(--navy-950); font-size: 10px; }
+  .local-executor-device small { display: block; margin-top: 4px; color: var(--navy-500); font-size: 8px; }
+  .local-executor-connectivity { padding: 4px 7px; border-radius: 999px; background: #eef3f5; color: var(--navy-500); font-size: 8px; font-weight: 900; }
+  .local-executor-connectivity.online { background: var(--green-100); color: var(--green); }
+  .local-executor-connectivity.revoked { background: var(--coral-100); color: var(--coral-500); }
+  .local-executor-empty { padding: 19px 14px; border: 1px dashed #c9d6de; border-radius: 11px; background: #fbfcfd; color: var(--navy-500); font-size: 9px; line-height: 1.65; text-align: center; }
+  .local-executor-pairing { margin-top: 12px; padding: 12px; border: 1px solid #b9dfe3; border-radius: 11px; background: var(--rhino-100); }
+  .local-executor-pairing[hidden] { display: none; }
+  .local-executor-pairing-code { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .local-executor-pairing-code strong { color: #126f74; font: 900 23px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; letter-spacing: .08em; }
+  .local-executor-pairing p { margin: 9px 0 0; color: var(--navy-700); font-size: 9px; line-height: 1.7; }
+  .local-executor-pairing-status.ok { color: var(--green); font-weight: 800; }
+  .local-executor-pairing-status.bad { color: var(--coral-500); font-weight: 800; }
+  .local-executor-command { margin-top: 8px; padding: 8px 9px; border-radius: 8px; background: #0e2946; color: #eaf6f6; font: 8px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; overflow-wrap: anywhere; }
+  .local-executor-config-grid { margin-top: 12px; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
+  .local-executor-config-grid .field { margin: 0; min-width: 0; }
+  .local-executor-config-grid .field.wide { grid-column: span 2; }
+  .local-executor-config-grid input, .local-executor-config-grid select { width: 100%; min-height: 39px; }
+  .local-executor-config-check { min-height: 39px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 9px; display: flex; align-items: center; gap: 7px; color: var(--navy-700); font-size: 9px; background: #fbfcfd; }
+  .local-executor-config-check input { width: auto; min-height: 0; }
+  .local-executor-config-actions { margin-top: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .local-executor-config-state { margin-top: 10px; padding: 9px 10px; border-radius: 9px; background: #f5f8fa; color: var(--navy-500); font-size: 9px; line-height: 1.55; }
+  .local-executor-config-state.ok { border: 1px solid #bce5d2; background: var(--green-100); color: var(--green); }
+  .local-executor-config-state.bad { border: 1px solid #f4c2b7; background: var(--coral-100); color: var(--coral-500); }
   @keyframes update-pulse { 50% { transform: translateY(-2px); box-shadow: 0 4px 10px rgba(255,105,74,.28); } }
   .icon-button { width: 38px; height: 38px; padding: 0; border: 1px solid var(--line); border-radius: 11px; display: grid; place-items: center; background: #fff; color: var(--navy-700); cursor: pointer; }
   main { max-width: 1500px; margin: 0 auto; padding: 24px 28px 36px; gap: 16px; }
@@ -1047,6 +1148,12 @@
   #envThead th { position: sticky; top: 0; z-index: 1; background: var(--surface); box-shadow: inset 0 -1px 0 var(--line); }
   @media (max-width: 760px) {
     .settings-grid { grid-template-columns: 1fr; }
+    .local-executor-layout, .local-executor-platform-grid, .local-executor-device-layout { grid-template-columns: 1fr; }
+    .local-executor-steps { grid-template-columns: 1fr; }
+    .local-executor-status { align-items: flex-start; flex-direction: column; }
+    .local-executor-status-meta { justify-content: flex-start; }
+    .local-executor-config-grid { grid-template-columns: 1fr; }
+    .local-executor-config-grid .field.wide { grid-column: auto; }
     .settings-field.full { grid-column: auto; }
     .admin-toolbar .push { margin-left: 0; }
     .member-invite-form { grid-template-columns: 1fr; align-items: stretch; }
@@ -1248,7 +1355,8 @@
         <button class="secondary-tab" data-parent="analytics" data-planned="采购效率" disabled hidden>采购效率<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="analytics" data-planned="履约质量" disabled hidden>履约质量<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="analytics" data-planned="资源健康" disabled hidden>资源健康<span class="secondary-status planned">规划</span></button>
-        <button class="secondary-tab" data-parent="system" data-module="localsettings" hidden>本机设置<span class="secondary-status">现有</span></button>
+        <button class="secondary-tab" data-parent="system" data-module="localexecutor" data-cloud-only="1" hidden>本地执行器<span class="secondary-status">新增</span></button>
+        <button class="secondary-tab" data-parent="system" data-module="localsettings" data-local-only="1" hidden>本机设置<span class="secondary-status">本机兼容</span></button>
         <button class="secondary-tab" data-parent="system" data-module="larkconnection" data-required-role="super_admin" hidden>飞书连接<span class="secondary-status restricted">超管</span></button>
         <button class="secondary-tab" data-parent="system" data-module="organizationaccess" hidden>组织与权限<span class="secondary-status">云端</span></button>
         <button class="secondary-tab" data-parent="system" data-module="sessionmanagement" hidden>登录会话<span class="secondary-status">云端</span></button>
@@ -1314,6 +1422,9 @@
         </div>
       </div>
       <div class="topbar-right">
+        <button class="local-executor-entry" id="localExecutorEntry" type="button" title="下载、安装或连接本地执行器" hidden>
+          <span class="local-executor-entry-dot" aria-hidden="true"></span><span id="localExecutorEntryText">本地执行器 · 待连接</span>
+        </button>
         <button class="update-check" id="updateCheck" type="button" title="手动检查更新" aria-label="检查更新">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-4M4 4v5h5M4 13a8 8 0 0 0 14.9 4M20 20v-5h-5"/></svg>
           <span id="updateCheckText">检查更新</span>
@@ -1356,6 +1467,102 @@
       <h2 id="planningTitle">模块入口已迁移</h2>
       <p id="planningDescription">本轮只迁移新系统导航与视觉外壳，未接入演示数据。现有正式功能保持原 API 与操作流程。</p>
       <span class="planning-note">功能规划中 · 不影响现有模块</span>
+    </section>
+  </div>
+
+  <div class="module-panel hidden" id="localExecutorPanel">
+    <section class="local-executor-status" id="localExecutorStatus">
+      <div class="local-executor-status-copy">
+        <div class="local-executor-status-icon" id="localExecutorStatusIcon" aria-hidden="true">!</div>
+        <div><h3 id="localExecutorStatusTitle">正在读取本地执行器设备状态</h3><p id="localExecutorStatusDescription">设备在线状态以云端最近心跳为准；当前页面不会猜测本机状态。</p></div>
+      </div>
+      <div class="local-executor-status-meta"><span id="localExecutorStatusDevice">设备：读取中</span><span id="localExecutorStatusVersion">版本：待检测</span><span id="localExecutorStatusConnectivity">状态：读取中</span></div>
+    </section>
+
+    <section class="local-executor-steps" aria-label="本地执行器接入步骤">
+      <article class="local-executor-step current" id="localExecutorStepDownload"><span class="local-executor-step-number">1</span><b>下载执行器</b><span>识别系统并取得可信发布包</span></article>
+      <article class="local-executor-step" id="localExecutorStepStart"><span class="local-executor-step-number">2</span><b>安装并启动</b><span>保留已有配置与运行数据</span></article>
+      <article class="local-executor-step" id="localExecutorStepPair"><span class="local-executor-step-number">3</span><b>配对并在线</b><span>一次性配对码绑定设备身份</span></article>
+    </section>
+
+    <section class="local-executor-device-layout">
+      <article class="card">
+        <div class="local-executor-card-head"><div><div class="card-title">已绑定设备</div><p>在线状态来自本地执行器主动发起的 HTTPS 长轮询；云端不访问员工电脑端口。</p></div><button class="btn" id="btnLocalExecutorRefreshDevices" type="button">刷新状态</button></div>
+        <div class="local-executor-device-list" id="localExecutorDeviceList"><div class="local-executor-empty">正在读取设备列表…</div></div>
+        <div class="local-executor-actions">
+          <button class="btn" id="btnLocalExecutorLaunch" type="button" hidden>启动 Xynigo</button>
+          <button class="btn primary" id="btnLocalExecutorPair" type="button">生成 5 分钟配对码</button>
+          <button class="btn danger" id="btnLocalExecutorRevoke" type="button" disabled>撤销所选设备</button>
+        </div>
+        <div class="local-executor-pairing" id="localExecutorPairing" hidden>
+          <div class="local-executor-pairing-code"><strong id="localExecutorPairingCode">—</strong><button class="btn" id="btnLocalExecutorCopyPairing" type="button">复制配对码</button></div>
+          <p id="localExecutorPairingExpiry">配对码仅显示一次，并在 5 分钟后失效。</p>
+          <p id="localExecutorPairingHelp">绿色包请在已解压目录运行下面命令，或使用内置的“配对本地执行器”启动脚本。</p>
+          <div class="local-executor-actions"><button class="btn primary" id="btnLocalExecutorOpenPair" type="button" hidden>打开 Xynigo 并配对</button></div>
+          <p class="local-executor-pairing-status" id="localExecutorPairingStatus">长期设备凭证不会进入此链接；页面只等待本次配对请求和真实心跳。</p>
+          <div class="local-executor-command" id="localExecutorPairingCommand">—</div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="local-executor-card-head"><div><div class="card-title">本机运行配置 <span class="legend">读取后编辑 · 版本冲突保护</span></div><p>配置仍保存在所选电脑的 config.json；云端只排队传递非敏感字段和短期结果。</p></div><span class="legend" id="localExecutorConfigRevision">尚未读取</span></div>
+        <div class="local-executor-config-grid">
+          <div class="field"><label for="executorConfigHubPort">HubStudio Local API 端口</label><input id="executorConfigHubPort" type="number" min="1" max="65535" disabled></div>
+          <div class="field"><label for="executorConfigConcurrency">查询并发数</label><input id="executorConfigConcurrency" type="number" min="1" max="5" disabled></div>
+          <div class="field"><label for="executorConfigEnvWorkers">建环境并发数</label><input id="executorConfigEnvWorkers" type="number" min="1" max="10" disabled></div>
+          <div class="field"><label for="executorConfigVerifyCount">新建完成抽检数</label><input id="executorConfigVerifyCount" type="number" min="0" max="10" disabled></div>
+          <div class="field"><label for="executorConfigPurchaseSite">默认采购站点</label><select id="executorConfigPurchaseSite" disabled><option value="MX">墨西哥 MX</option><option value="US">美国 US</option></select></div>
+          <label class="local-executor-config-check"><input id="executorConfigSafeParallel" type="checkbox" disabled>查物流与建环境安全并行</label>
+          <div class="field"><label for="executorConfigMxTag">墨西哥采购分组</label><input id="executorConfigMxTag" maxlength="12" disabled></div>
+          <div class="field"><label for="executorConfigUsTag">美国采购分组</label><input id="executorConfigUsTag" maxlength="12" disabled></div>
+          <div class="field wide"><label for="executorConfigBuyerPlan">采购员分配模板</label><input id="executorConfigBuyerPlan" maxlength="200" disabled></div>
+        </div>
+        <div class="local-executor-config-actions">
+          <button class="btn primary" id="btnLocalExecutorReadConfig" type="button" disabled>从所选电脑读取</button>
+          <button class="btn" id="btnLocalExecutorSaveConfig" type="button" disabled>保存到所选电脑</button>
+          <button class="btn" id="btnLocalExecutorCancelTask" type="button" hidden>取消当前请求</button>
+        </div>
+        <div class="local-executor-config-state" id="localExecutorConfigState">请选择一台在线设备后读取配置。代理提取链接、Cookie、账号密码和飞书凭证不会在这里显示或传输。</div>
+      </article>
+    </section>
+
+    <section class="local-executor-layout">
+      <article class="card">
+        <div class="card-title">下载适合这台电脑的本地执行器 <span class="legend">用户确认后下载 · 不静默安装</span></div>
+        <div class="local-executor-platform-grid">
+          <div class="local-executor-platform-card"><div class="local-executor-platform-logo" id="localExecutorPlatformLogo">…</div><div><b id="localExecutorPlatformTitle">正在识别当前平台</b><small id="localExecutorPlatformSubtitle">正在读取可信发布清单</small></div></div>
+          <div class="local-executor-platform-select"><label for="localExecutorPlatform">选择其他平台</label><select id="localExecutorPlatform" disabled><option value="macos-arm64">macOS ARM64</option><option value="windows-x86_64">Windows x86_64</option></select></div>
+        </div>
+        <div class="local-executor-release">
+          <div class="local-executor-release-row"><label>推荐版本</label><strong id="localExecutorReleaseVersion">读取中…</strong></div>
+          <div class="local-executor-release-row"><label>下载文件</label><strong id="localExecutorAssetName">—</strong></div>
+          <div class="local-executor-release-row"><label>文件大小</label><strong id="localExecutorAssetSize">—</strong></div>
+          <div class="local-executor-release-row"><label>安装方式</label><strong id="localExecutorInstallMode">—</strong></div>
+          <div class="local-executor-release-row"><label>数字签名</label><strong id="localExecutorSignature">—</strong></div>
+          <div class="local-executor-release-row"><label>SHA-256</label><strong class="mono" id="localExecutorAssetSha">—</strong></div>
+        </div>
+        <div class="local-executor-actions">
+          <a class="btn primary local-executor-download" id="localExecutorDownload" href="#" target="_blank" rel="noopener noreferrer" aria-disabled="true">准备下载…</a>
+          <button class="btn" id="btnLocalExecutorCopySha" type="button" disabled>复制 SHA-256</button>
+          <a class="btn" id="localExecutorReleaseNotes" href="#" target="_blank" rel="noopener noreferrer" aria-disabled="true">查看版本说明</a>
+          <button class="btn" id="btnLocalExecutorRefreshRelease" type="button">重新读取</button>
+        </div>
+        <div class="local-executor-feedback" id="localExecutorFeedback">正在从云端读取与当前版本绑定的发布清单…</div>
+        <div class="local-executor-guide" id="localExecutorInstallGuide"></div>
+        <div class="local-executor-safety"><b>系统安全边界</b>网页只提供经过版本绑定的下载地址和安装指引，不会自动运行程序，也不会要求关闭 Gatekeeper、SmartScreen 或系统防护。</div>
+      </article>
+
+      <aside class="card">
+        <div class="card-title">安装与连接说明</div>
+        <div class="local-executor-decisions">
+          <div class="local-executor-decision recommended"><b>首次安装与在线更新分开</b><p>当前页面负责首次下载安装；只有执行器已经运行后，原“检查更新”流程才负责版本升级。</p></div>
+          <div class="local-executor-decision recommended"><b>标准包不可用时使用绿色版</b><p>发布清单可绑定同版本绿色版兜底；Web 会显示真实文件、SHA-256 和启动方式，不会把绿色版伪装成已签名安装包。</p></div>
+          <div class="local-executor-decision"><b>下载不等于安装成功</b><p>点击下载后只展示安装步骤，不会把设备状态改成在线。</p></div>
+          <div class="local-executor-decision recommended"><b>设备状态来自真实心跳</b><p>设备配对、主动长轮询、在线状态、配置读取与保存均通过独立设备凭证完成。</p></div>
+          <div class="local-executor-decision"><b>断网不覆盖本地配置</b><p>写入前校验配置版本；断线、超时或版本冲突时保留原 config.json，并显示明确结果。</p></div>
+          <div class="local-executor-decision"><b>升级必须保留用户数据</b><p>正式安装器和更新器必须保留配置、查询日志、运行数据和可回滚副本。</p></div>
+        </div>
+      </aside>
     </section>
   </div>
 
@@ -2525,8 +2732,13 @@ const FEATURE_MODULES = {
     requiredPermission: 'resource.ip.read',
     summary: '集中查看代理资产占用关系，并在本机完成不启动浏览器环境的批量健康检测。'
   },
+  localexecutor: {
+    label: '本地执行器', primary: 'system', cloudOnly: true,
+    requiredPermission: 'executor.device.read',
+    summary: '从云端下载与当前系统匹配的本地执行器，并按安全指引完成安装、启动和后续设备连接。'
+  },
   localsettings: {
-    label: '本机设置', primary: 'system',
+    label: '本机设置', primary: 'system', localOnly: true,
     summary: '管理当前电脑的 HubStudio 连接、查询展示和环境创建偏好。'
   },
   larkconnection: {
@@ -2683,6 +2895,13 @@ const PERMISSION_MENU_GROUPS = [
         codes: ['system.member.manage']
       },
       {
+        id: 'localexecutor', label: '本地执行器', badge: 'P1',
+        note: '设备查看、生成配对码、撤销设备、读取配置和保存配置分别授权。',
+        codes: ['executor.device.read', 'executor.device.pair',
+          'executor.device.revoke', 'executor.config.read',
+          'executor.config.write']
+      },
+      {
         id: 'externalservices', label: '云端服务配置', badge: '仅超管',
         note: '仅超级管理员可访问；前端隐藏之外，本地与云端后端仍会拒绝管理员。',
         codes: ['system.integration.manage']
@@ -2725,6 +2944,25 @@ let updatePollTimer = null;
 let lastUpdateDecision = '';
 let manualUpdateCheck = false;
 let currentUpdateInfo = {state: 'idle', enabled: false};
+let localExecutorRelease = null;
+let localExecutorReleaseLoaded = false;
+let localExecutorSelectedPlatform = '';
+let localExecutorDownloadAsset = null;
+let localExecutorUsingGreenFallback = false;
+let localExecutorDevices = [];
+let localExecutorSelectedDeviceId = '';
+let localExecutorDeviceLoading = false;
+let localExecutorDeviceTimer = null;
+let localExecutorPairingExpiresAt = 0;
+let localExecutorPairingTimer = null;
+let localExecutorPairingRequestId = '';
+let localExecutorProtocolPairingTimer = null;
+let localExecutorProtocolPairingDeadline = 0;
+let localExecutorConfigRevision = '';
+let localExecutorConfigTaskId = '';
+let localExecutorConfigTaskTimer = null;
+let localExecutorLaunchTimer = null;
+let localExecutorLaunchDeadline = 0;
 let storeManagementRows = [];
 let proxyManagementRows = [];
 let proxyVisibleRows = [];
@@ -2828,7 +3066,19 @@ function cloudApiError(payload, status) {
     procurement_import_cloud_disabled:'云端采购协作导入尚未启用',
     procurement_import_plan_expired:'解析计划已过期，请重新选择 xlsx',
     purchase_claim_conflict:'采购任务已被其他成员处理，请刷新后重试',
-    purchase_order_not_found:'采购单不存在或不属于当前组织'
+    purchase_order_not_found:'采购单不存在或不属于当前组织',
+    executor_not_found:'本地执行器设备不存在或不属于当前组织',
+    executor_offline:'所选本地执行器当前离线，请先启动执行器',
+    executor_revoked:'本地执行器设备已被撤销，请重新配对',
+    executor_task_busy:'所选执行器已有配置请求正在处理，请稍后重试',
+    executor_task_not_found:'本地执行器请求不存在',
+    executor_task_state_conflict:'本地执行器请求状态已变化，请刷新后重试',
+    executor_task_cancel_requested:'本地执行器请求已进入取消流程',
+    config_revision_conflict:'本地配置已被其他操作修改，请重新读取后再保存',
+    pairing_code_invalid:'配对码无效，请重新生成',
+    pairing_code_expired:'配对码已过期，请重新生成',
+    pairing_code_consumed:'配对码已经使用，请重新生成',
+    pairing_request_not_found:'配对请求不存在或已不可访问，请重新生成'
   };
   const error = new Error(known[code] || payload && payload.error
     || detail && detail.message || `请求失败 HTTP ${status}`);
@@ -2946,6 +3196,36 @@ async function cloudWebApi(path, opts={}) {
       : {authenticated:!!status.authenticated, identity:status.identity || null, loginPending:false};
   }
   if (path === '/api/auth/logout') return cloudFetchJson('/v1/auth/logout', opts);
+  if (path === '/api/local-executor/releases/latest') {
+    return cloudFetchJson('/v1/local-executor/releases/latest', opts);
+  }
+  if (path === '/api/local-executor/devices') {
+    return cloudFetchJson('/v1/executors', opts);
+  }
+  if (path === '/api/local-executor/pairing-codes') {
+    return cloudFetchJson('/v1/executors/pairing-codes', opts);
+  }
+  const executorPairingMatch = path.match(/^\/api\/local-executor\/pairing-codes\/([0-9a-f-]{36})$/i);
+  if (executorPairingMatch) {
+    return cloudFetchJson(`/v1/executors/pairing-codes/${executorPairingMatch[1]}`, opts);
+  }
+  const executorDeviceMatch = path.match(/^\/api\/local-executor\/devices\/([0-9a-f-]{36})(?:\/(revoke|runtime-summary|config|config-read))?$/i);
+  if (executorDeviceMatch) {
+    const deviceId = executorDeviceMatch[1];
+    const action = executorDeviceMatch[2] || '';
+    const target = action === 'revoke' ? `/v1/executors/${deviceId}/revoke`
+      : action === 'runtime-summary' ? `/v1/executors/${deviceId}/runtime-summary`
+      : action === 'config-read' ? `/v1/executors/${deviceId}/config/read`
+      : action === 'config' ? `/v1/executors/${deviceId}/config`
+      : `/v1/executors/${deviceId}`;
+    return cloudFetchJson(target, opts);
+  }
+  const executorTaskMatch = path.match(/^\/api\/local-executor\/tasks\/([0-9a-f-]{36})(?:\/(cancel))?$/i);
+  if (executorTaskMatch) {
+    const target = `/v1/executor-tasks/${executorTaskMatch[1]}`
+      + (executorTaskMatch[2] ? '/cancel' : '');
+    return cloudFetchJson(target, opts);
+  }
   if (path.startsWith('/api/procurement/')) {
     return cloudFetchJson('/v1/procurement/' + path.slice('/api/procurement/'.length), opts);
   }
@@ -3051,6 +3331,8 @@ function hasPermission(permission) {
 function hasFeatureAccess(module) {
   const info = FEATURE_MODULES[module];
   if (!info || !authIdentity) return false;
+  if (info.cloudOnly && !CLOUD_WEB_MODE) return false;
+  if (info.localOnly && CLOUD_WEB_MODE) return false;
   if (info.requiredRole && !hasRole(info.requiredRole)) return false;
   if (Array.isArray(info.requiredPermissionsAny)
       && !info.requiredPermissionsAny.some(hasPermission)) return false;
@@ -3123,7 +3405,12 @@ async function initializeAuthenticatedWorkspace(identity) {
   document.body.classList.remove('auth-locked');
   $('appShell').removeAttribute('inert');
   $('authGate').hidden = true;
-  if (CLOUD_WEB_MODE) setHubStatus(false);
+  $('localExecutorEntry').hidden = !CLOUD_WEB_MODE || !hasFeatureAccess('localexecutor');
+  $('updateCheck').hidden = CLOUD_WEB_MODE;
+  if (CLOUD_WEB_MODE) {
+    setHubStatus(false);
+    loadLocalExecutorDevices(false);
+  }
   if (activeModule && hasFeatureAccess(activeModule)) {
     activateFeatureTab(activeModule);
   } else {
@@ -6326,6 +6613,784 @@ $('systemLogTbody').addEventListener('click', async event => {
 
 /* ---------- 模块切换与注册 ---------- */
 
+const LOCAL_EXECUTOR_INSTALL_GUIDES = {
+  'macos-arm64': [
+    ['打开下载文件', '双击 ZIP 解压，将 Xynigo Sourcing 文件夹移动到“应用程序”或固定工作目录。'],
+    ['启动本地执行器', '双击“启动-本地执行器-Mac.command”；如系统提示，请按企业安全规范核对来源。'],
+    ['保持运行', '终端窗口代表本地执行器进程，关闭窗口会停止本地能力。']
+  ],
+  'windows-x86_64': [
+    ['打开下载文件', '将 ZIP 解压到固定目录，不要直接在压缩包内运行。'],
+    ['启动绿色版执行器', '双击“Xynigo.exe”打开品牌状态中心；执行器会驻留系统托盘，不依赖黑色命令窗口。'],
+    ['配对并保持运行', '在状态中心输入云端配对码；绿色版不注册系统协议，启动必须由用户明确操作。']
+  ]
+};
+
+const LOCAL_EXECUTOR_LEGACY_GREEN_INSTALL_GUIDES = {
+  'windows-x86_64': [
+    ['打开下载文件', '将 ZIP 解压到固定目录，不要直接在压缩包内运行。'],
+    ['启动兼容执行器', '双击“启动.bat”；命令窗口代表本地执行器进程，关闭窗口会停止本机能力。'],
+    ['完成设备配对', '运行“配对本地执行器.bat”，输入云端生成的一次性配对码。']
+  ]
+};
+
+const LOCAL_EXECUTOR_STANDARD_INSTALL_GUIDES = {
+  'windows-x86_64': [
+    ['运行已签名安装包', '双击 .exe，先核对发布者与页面显示一致，再进入 Xynigo 品牌安装向导。'],
+    ['迁移旧版数据（可选）', '已有绿色包时可在向导中选择旧目录；只迁移配置、日志、运行数据和导入文件。'],
+    ['打开状态中心', '安装完成后启动 Xynigo 状态中心；后台执行器驻留系统托盘，不再依赖黑色命令窗口。']
+  ],
+  'macos-arm64': [
+    ['运行标准安装包', '打开 .pkg 并核对开发者签名与公证状态。'],
+    ['启动本地执行器', '从“应用程序”打开 Xynigo Sourcing；首次使用时可选择迁移旧数据。'],
+    ['保持运行', '应用会打开 Terminal 运行本地执行器；关闭窗口会停止本机能力，不影响云端工作台。']
+  ]
+};
+
+function detectLocalExecutorPlatform() {
+  const source = `${navigator.userAgent || ''} ${navigator.platform || ''}`;
+  if (/Windows/i.test(source)) return 'windows-x86_64';
+  if (/Macintosh|Mac OS|MacIntel/i.test(source)) return 'macos-arm64';
+  return '';
+}
+
+function formatLocalExecutorSize(bytes) {
+  const value = Number(bytes || 0);
+  if (!Number.isFinite(value) || value <= 0) return '—';
+  return `${(value / 1024 / 1024).toFixed(2)} MiB`;
+}
+
+function setLocalExecutorFeedback(kind, message) {
+  const feedback = $('localExecutorFeedback');
+  feedback.className = `local-executor-feedback${kind ? ` ${kind}` : ''}`;
+  feedback.textContent = message;
+}
+
+function isLocalExecutorStandardAsset(info) {
+  return !!(info && String(info.installMode || '').startsWith('standard'));
+}
+
+function isLocalExecutorStandardReady(platform, info) {
+  if (!isLocalExecutorStandardAsset(info)) return true;
+  if (platform === 'macos-arm64') {
+    return Boolean(info.developerIdInstallerSigned && info.notarized
+      && info.stapled && info.publisher);
+  }
+  return Boolean(info.authenticodeSigned && info.authenticodeTimestamped
+    && info.publisher);
+}
+
+function resolveLocalExecutorDownloadAsset(platform, info) {
+  const standard = isLocalExecutorStandardAsset(info);
+  const primaryAllowed = Boolean(info && info.downloadUrl)
+    && (!standard || isLocalExecutorStandardReady(platform, info));
+  if (primaryAllowed) {
+    return {asset:info, usingGreenFallback:false, blockedStandard:false};
+  }
+  const fallback = info && info.greenFallback;
+  const fallbackAllowed = fallback && fallback.installMode === 'green_package'
+    && fallback.downloadUrl && fallback.assetName && fallback.sha256;
+  if (fallbackAllowed) {
+    return {
+      asset:{...info, ...fallback, label:info.label},
+      usingGreenFallback:true,
+      blockedStandard:standard,
+    };
+  }
+  return {asset:info, usingGreenFallback:false, blockedStandard:standard};
+}
+
+function renderLocalExecutorInstallGuide(platform, info=null) {
+  const guide = $('localExecutorInstallGuide');
+  guide.replaceChildren();
+  const standard = info && String(info.installMode || '').startsWith('standard');
+  const rows = standard
+    ? LOCAL_EXECUTOR_STANDARD_INSTALL_GUIDES[platform]
+    : (platform === 'windows-x86_64' && info && info.launcherFile !== 'Xynigo.exe'
+      ? LOCAL_EXECUTOR_LEGACY_GREEN_INSTALL_GUIDES[platform]
+      : LOCAL_EXECUTOR_INSTALL_GUIDES[platform]);
+  (rows || []).forEach((item, index) => {
+    const row = document.createElement('div');
+    row.className = 'local-executor-guide-item';
+    const number = document.createElement('span');
+    number.className = 'local-executor-guide-index';
+    number.textContent = String(index + 1);
+    const copy = document.createElement('div');
+    const title = document.createElement('b');
+    title.textContent = item[0];
+    const description = document.createElement('p');
+    description.textContent = item[1];
+    copy.append(title, description);
+    row.append(number, copy);
+    guide.appendChild(row);
+  });
+}
+
+function renderLocalExecutorPlatform(platform) {
+  const platforms = localExecutorRelease && localExecutorRelease.platforms;
+  const info = platforms && platforms[platform];
+  if (!info) return null;
+  const selection = resolveLocalExecutorDownloadAsset(platform, info);
+  const asset = selection.asset || info;
+  localExecutorDownloadAsset = asset;
+  localExecutorUsingGreenFallback = selection.usingGreenFallback;
+  localExecutorSelectedPlatform = platform;
+  $('localExecutorPlatform').value = platform;
+  $('localExecutorPlatformLogo').textContent = platform === 'macos-arm64' ? '⌘' : '⊞';
+  $('localExecutorPlatformTitle').textContent = String(info.label || platform);
+  $('localExecutorPlatformSubtitle').textContent = String(info.minimumSystem || '请核对系统版本');
+  $('localExecutorReleaseVersion').textContent = `v${localExecutorRelease.version} · ${localExecutorRelease.channel || 'test'} 渠道`;
+  $('localExecutorAssetName').textContent = String(asset.assetName || '—');
+  $('localExecutorAssetSize').textContent = formatLocalExecutorSize(asset.size);
+  const standardInstaller = isLocalExecutorStandardAsset(asset);
+  const macosInstaller = platform === 'macos-arm64';
+  const trustedStandardInstaller = isLocalExecutorStandardReady(platform, asset);
+  $('localExecutorInstallMode').textContent = standardInstaller
+    ? (macosInstaller ? '标准安装包 · 原生启动器' : '标准安装包 · 状态中心与托盘')
+    : (asset.launcherFile === 'Xynigo.exe'
+      ? '绿色版 · Xynigo.exe 状态中心' : '绿色包 · 兼容回退');
+  const internalSignature = asset.signatureTrust === 'organization_self_signed';
+  $('localExecutorSignature').textContent = standardInstaller
+    ? (trustedStandardInstaller
+      ? `${internalSignature ? '内部自签名' : '已签名'} · ${String(asset.publisher || '发布者')}`
+      : (macosInstaller ? '未签名或未公证 · 禁止团队分发' : '未签名 · 禁止团队分发'))
+    : 'SHA-256 完整性校验';
+  $('localExecutorAssetSha').textContent = String(asset.sha256 || '—');
+  const download = $('localExecutorDownload');
+  const downloadAllowed = Boolean(asset.downloadUrl)
+    && (!standardInstaller || trustedStandardInstaller);
+  download.href = downloadAllowed ? String(asset.downloadUrl) : '#';
+  download.textContent = downloadAllowed
+    ? (standardInstaller ? '下载标准安装包'
+      : (asset.launcherFile === 'Xynigo.exe'
+        ? '下载绿色版执行器（Xynigo.exe）' : `下载 ${info.label || platform} 绿色包`))
+    : (standardInstaller ? '签名校验未通过' : '下载地址不可用');
+  download.setAttribute('aria-disabled', downloadAllowed ? 'false' : 'true');
+  $('btnLocalExecutorCopySha').disabled = !asset.sha256;
+  renderLocalExecutorInstallGuide(platform, asset);
+  updateLocalExecutorPairingAction();
+  return {...selection, downloadAllowed};
+}
+
+async function loadLocalExecutorRelease(force=false) {
+  if (!CLOUD_WEB_MODE) return;
+  if (localExecutorReleaseLoaded && !force) return;
+  localExecutorReleaseLoaded = false;
+  $('localExecutorPlatform').disabled = true;
+  $('btnLocalExecutorRefreshRelease').disabled = true;
+  $('localExecutorDownload').setAttribute('aria-disabled', 'true');
+  setLocalExecutorFeedback('', '正在从云端读取与当前版本绑定的发布清单…');
+  try {
+    const release = await api('/api/local-executor/releases/latest');
+    if (!release || release.schemaVersion !== 1 || !release.version
+        || !release.platforms || typeof release.platforms !== 'object') {
+      throw new Error('发布清单格式无效');
+    }
+    const supported = Object.keys(release.platforms).filter(
+      key => ['windows-x86_64', 'macos-arm64'].includes(key));
+    if (!supported.length) throw new Error('发布清单没有可用平台');
+    localExecutorRelease = release;
+    localExecutorReleaseLoaded = true;
+    $('localExecutorPlatform').disabled = false;
+    const detected = detectLocalExecutorPlatform();
+    const selected = localExecutorSelectedPlatform && release.platforms[localExecutorSelectedPlatform]
+      ? localExecutorSelectedPlatform
+      : (detected && release.platforms[detected] ? detected : supported[0]);
+    const selection = renderLocalExecutorPlatform(selected);
+    const notes = $('localExecutorReleaseNotes');
+    notes.href = String(release.releaseUrl || '#');
+    notes.setAttribute('aria-disabled', release.releaseUrl ? 'false' : 'true');
+    const detectionNote = detected
+      ? `已识别当前平台；可信发布清单为 v${release.version}。`
+      : `无法自动识别当前系统，请手动选择平台；可信发布清单为 v${release.version}。`;
+    if (selection && selection.usingGreenFallback) {
+      const fallbackLauncher = selection.asset && selection.asset.launcherFile === 'Xynigo.exe'
+        ? '带 Xynigo.exe 状态中心的绿色版' : '绿色兼容包';
+      setLocalExecutorFeedback('',
+        `${detectionNote} 标准安装包当前不可用，已自动切换到${fallbackLauncher}。`);
+    } else if (selection && selection.blockedStandard && !selection.downloadAllowed) {
+      setLocalExecutorFeedback('bad', selected === 'macos-arm64'
+        ? 'macOS 标准安装包必须通过 Developer ID Installer 签名、Apple 公证和 stapling 校验，当前资产不可下载。'
+        : 'Windows 标准安装包当前不可用，且发布清单没有可用绿色版兜底资产。');
+    } else {
+      setLocalExecutorFeedback('ok', detectionNote);
+    }
+  } catch (error) {
+    localExecutorRelease = null;
+    localExecutorDownloadAsset = null;
+    localExecutorUsingGreenFallback = false;
+    $('localExecutorReleaseVersion').textContent = '读取失败';
+    $('localExecutorAssetName').textContent = '—';
+    $('localExecutorAssetSize').textContent = '—';
+    $('localExecutorInstallMode').textContent = '—';
+    $('localExecutorSignature').textContent = '—';
+    $('localExecutorAssetSha').textContent = '—';
+    $('btnLocalExecutorCopySha').disabled = true;
+    setLocalExecutorFeedback('bad', `发布清单读取失败：${error.message}`);
+  } finally {
+    $('btnLocalExecutorRefreshRelease').disabled = false;
+  }
+}
+
+function localExecutorSelectedDevice() {
+  return localExecutorDevices.find(item => item.id === localExecutorSelectedDeviceId) || null;
+}
+
+function localExecutorTime(value) {
+  if (!value) return '从未在线';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '时间未知' : date.toLocaleString('zh-CN', {hour12:false});
+}
+
+function setLocalExecutorConfigState(kind, message) {
+  const node = $('localExecutorConfigState');
+  node.className = `local-executor-config-state${kind ? ` ${kind}` : ''}`;
+  node.textContent = message;
+}
+
+function setLocalExecutorConfigInputsEnabled(enabled) {
+  const canWrite = hasPermission('executor.config.write');
+  [
+    'executorConfigHubPort', 'executorConfigConcurrency', 'executorConfigEnvWorkers',
+    'executorConfigVerifyCount', 'executorConfigPurchaseSite',
+    'executorConfigSafeParallel', 'executorConfigMxTag', 'executorConfigUsTag',
+    'executorConfigBuyerPlan'
+  ].forEach(id => { $(id).disabled = !enabled || !canWrite; });
+  $('btnLocalExecutorSaveConfig').disabled = !enabled || !canWrite;
+}
+
+function resetLocalExecutorConfig(message='请选择一台在线设备后读取配置。代理提取链接、Cookie、账号密码和飞书凭证不会在这里显示或传输。') {
+  localExecutorConfigRevision = '';
+  $('localExecutorConfigRevision').textContent = '尚未读取';
+  setLocalExecutorConfigInputsEnabled(false);
+  setLocalExecutorConfigState('', message);
+}
+
+function applyLocalExecutorConfig(config, revision) {
+  config = config && typeof config === 'object' ? config : {};
+  const tags = config.purchaseTags && typeof config.purchaseTags === 'object'
+    ? config.purchaseTags : {};
+  $('executorConfigHubPort').value = Number(config.hubPort || 6873);
+  $('executorConfigConcurrency').value = Number(config.concurrency || 2);
+  $('executorConfigEnvWorkers').value = Number(config.envCreateWorkers || 5);
+  $('executorConfigVerifyCount').value = Number(config.verifySampleCount ?? 3);
+  $('executorConfigPurchaseSite').value = ['MX', 'US'].includes(config.purchaseSite) ? config.purchaseSite : 'MX';
+  $('executorConfigSafeParallel').checked = config.safeParallelTasks === true;
+  $('executorConfigMxTag').value = String(tags.MX || '');
+  $('executorConfigUsTag').value = String(tags.US || '');
+  $('executorConfigBuyerPlan').value = String(config.importBuyerPlan || '1:新刚');
+  localExecutorConfigRevision = String(revision || '');
+  $('localExecutorConfigRevision').textContent = localExecutorConfigRevision
+    ? `版本 ${localExecutorConfigRevision.slice(0, 10)}…` : '版本未知';
+  setLocalExecutorConfigInputsEnabled(!!localExecutorConfigRevision);
+}
+
+function localExecutorConfigPayload() {
+  const integer = (id, minimum, maximum, label) => {
+    const value = Number($(id).value);
+    if (!Number.isInteger(value) || value < minimum || value > maximum) {
+      throw new Error(`${label}必须是 ${minimum}-${maximum} 的整数`);
+    }
+    return value;
+  };
+  return {
+    hubPort: integer('executorConfigHubPort', 1, 65535, 'HubStudio 端口'),
+    concurrency: integer('executorConfigConcurrency', 1, 5, '查询并发数'),
+    envCreateWorkers: integer('executorConfigEnvWorkers', 1, 10, '建环境并发数'),
+    verifySampleCount: integer('executorConfigVerifyCount', 0, 10, '抽检数'),
+    purchaseSite: $('executorConfigPurchaseSite').value,
+    purchaseTags: {
+      MX: $('executorConfigMxTag').value.trim(),
+      US: $('executorConfigUsTag').value.trim()
+    },
+    importBuyerPlan: $('executorConfigBuyerPlan').value.trim(),
+    safeParallelTasks: $('executorConfigSafeParallel').checked
+  };
+}
+
+function updateLocalExecutorSummary() {
+  const activeDevices = localExecutorDevices.filter(item => item.status !== 'revoked');
+  const onlineDevices = activeDevices.filter(item => item.connectivity === 'online');
+  const selected = localExecutorSelectedDevice()
+    || onlineDevices[0] || activeDevices[0] || localExecutorDevices[0] || null;
+  if (selected && selected.id !== localExecutorSelectedDeviceId) {
+    localExecutorSelectedDeviceId = selected.id;
+  }
+  const statusNode = $('localExecutorStatus');
+  const entry = $('localExecutorEntry');
+  const online = onlineDevices.length > 0;
+  statusNode.classList.toggle('ok', online);
+  entry.classList.toggle('online', online);
+  $('localExecutorStatusIcon').textContent = online ? '✓' : '!';
+  $('localExecutorStatusTitle').textContent = online
+    ? `${onlineDevices.length} 台本地执行器在线`
+    : (activeDevices.length ? '已绑定设备当前均离线' : '尚未绑定本地执行器');
+  $('localExecutorStatusDescription').textContent = online
+    ? '云端已收到设备心跳，可以安全读取或保存所选电脑的本地配置。'
+    : (activeDevices.length
+      ? '请确认所选电脑上的执行器窗口保持运行；离线时云端不会排队配置写入。'
+      : '下载安装后生成一次性配对码，在执行器目录完成设备绑定。');
+  $('localExecutorStatusDevice').textContent = selected
+    ? `设备：${selected.displayName}` : '设备：未绑定';
+  $('localExecutorStatusVersion').textContent = selected
+    ? `版本：v${selected.clientVersion || '未知'}` : '版本：待检测';
+  $('localExecutorStatusConnectivity').textContent = selected
+    ? `状态：${selected.connectivity === 'online' ? '在线' : selected.connectivity === 'revoked' ? '已撤销' : '离线'}`
+    : '状态：未连接';
+  $('localExecutorEntryText').textContent = online
+    ? `本地执行器 · ${onlineDevices.length} 台在线`
+    : (activeDevices.length ? '本地执行器 · 已离线' : '本地执行器 · 待连接');
+  const step = online ? 'pair' : (activeDevices.length ? 'start' : 'download');
+  $('localExecutorStepDownload').classList.toggle('current', step === 'download');
+  $('localExecutorStepStart').classList.toggle('current', step === 'start');
+  $('localExecutorStepPair').classList.toggle('current', step === 'pair');
+}
+
+function renderLocalExecutorDevices() {
+  const list = $('localExecutorDeviceList');
+  if (!localExecutorDevices.length) {
+    list.innerHTML = '<div class="local-executor-empty">尚未绑定设备。下载安装执行器后，点击下方按钮生成一次性配对码。</div>';
+  } else {
+    list.innerHTML = localExecutorDevices.map(item => {
+      const label = item.connectivity === 'online' ? '在线'
+        : item.connectivity === 'revoked' ? '已撤销' : '离线';
+      const platform = item.platform === 'macos' ? 'macOS' : 'Windows';
+      return `<button class="local-executor-device${item.id === localExecutorSelectedDeviceId ? ' active' : ''}" type="button" data-executor-device="${esc(item.id)}"><span><b>${esc(item.displayName || '未命名设备')}</b><small>${esc(platform)} · ${esc(item.architecture || '')} · v${esc(item.clientVersion || '未知')} · 最近心跳 ${esc(localExecutorTime(item.lastSeenAt))}</small></span><span class="local-executor-connectivity ${esc(item.connectivity || 'offline')}">${label}</span></button>`;
+    }).join('');
+  }
+  updateLocalExecutorSummary();
+  const selected = localExecutorSelectedDevice();
+  const online = selected && selected.connectivity === 'online';
+  $('btnLocalExecutorLaunch').hidden = detectLocalExecutorPlatform() !== 'windows-x86_64';
+  $('btnLocalExecutorLaunch').disabled = !!online || !!localExecutorLaunchDeadline;
+  $('btnLocalExecutorLaunch').textContent = online ? '执行器已运行'
+    : (localExecutorLaunchDeadline ? '等待启动…' : '启动 Xynigo');
+  $('btnLocalExecutorPair').disabled = !hasPermission('executor.device.pair')
+    || !!localExecutorProtocolPairingDeadline;
+  $('btnLocalExecutorReadConfig').disabled = !online || !!localExecutorConfigTaskId
+    || !hasPermission('executor.config.read');
+  $('btnLocalExecutorRevoke').disabled = !selected || selected.status === 'revoked'
+    || !hasPermission('executor.device.revoke');
+}
+
+function stopLocalExecutorLaunchWait(message='') {
+  if (localExecutorLaunchTimer) clearTimeout(localExecutorLaunchTimer);
+  localExecutorLaunchTimer = null;
+  localExecutorLaunchDeadline = 0;
+  renderLocalExecutorDevices();
+  if (message) toast(message);
+}
+
+async function waitForLaunchedExecutor() {
+  localExecutorLaunchTimer = null;
+  await loadLocalExecutorDevices(false);
+  const selected = localExecutorSelectedDevice();
+  const anyOnline = localExecutorDevices.some(item => item.connectivity === 'online');
+  if ((selected && selected.connectivity === 'online') || anyOnline) {
+    stopLocalExecutorLaunchWait('已收到本地执行器心跳');
+    return;
+  }
+  if (Date.now() >= localExecutorLaunchDeadline) {
+    stopLocalExecutorLaunchWait('尚未检测到 Xynigo。若浏览器未询问是否打开，请先安装或手动启动本地执行器。');
+    return;
+  }
+  localExecutorLaunchTimer = setTimeout(waitForLaunchedExecutor, 2000);
+}
+
+function launchLocalExecutorByProtocol() {
+  if (localExecutorLaunchDeadline) return;
+  localExecutorLaunchDeadline = Date.now() + 30000;
+  $('btnLocalExecutorLaunch').disabled = true;
+  $('btnLocalExecutorLaunch').textContent = '等待启动…';
+  setLocalExecutorConfigState('', '已请求 Windows 打开 Xynigo；正在等待云端收到设备心跳。网页不会通过协议直接执行采购任务。');
+  window.location.href = 'xynigo://start';
+  localExecutorLaunchTimer = setTimeout(waitForLaunchedExecutor, 2000);
+}
+
+function scheduleLocalExecutorDeviceRefresh() {
+  if (localExecutorDeviceTimer) clearTimeout(localExecutorDeviceTimer);
+  localExecutorDeviceTimer = null;
+  if (activeModule === 'localexecutor' && authReady && CLOUD_WEB_MODE) {
+    localExecutorDeviceTimer = setTimeout(() => loadLocalExecutorDevices(false), 15000);
+  }
+}
+
+async function loadLocalExecutorDevices(force=false) {
+  if (!CLOUD_WEB_MODE || localExecutorDeviceLoading) return;
+  localExecutorDeviceLoading = true;
+  $('btnLocalExecutorRefreshDevices').disabled = true;
+  try {
+    const payload = await api('/api/local-executor/devices');
+    localExecutorDevices = Array.isArray(payload.items) ? payload.items : [];
+    if (localExecutorSelectedDeviceId
+        && !localExecutorDevices.some(item => item.id === localExecutorSelectedDeviceId)) {
+      localExecutorSelectedDeviceId = '';
+      resetLocalExecutorConfig();
+    }
+    renderLocalExecutorDevices();
+  } catch (error) {
+    if (force) toast(`设备状态读取失败：${error.message}`);
+    $('localExecutorDeviceList').innerHTML = `<div class="local-executor-empty">设备状态读取失败：${esc(error.message)}</div>`;
+  } finally {
+    localExecutorDeviceLoading = false;
+    $('btnLocalExecutorRefreshDevices').disabled = false;
+    scheduleLocalExecutorDeviceRefresh();
+  }
+}
+
+function updatePairingExpiry() {
+  if (localExecutorPairingTimer) clearTimeout(localExecutorPairingTimer);
+  localExecutorPairingTimer = null;
+  if (!localExecutorPairingExpiresAt) return;
+  const remaining = Math.max(0, Math.ceil((localExecutorPairingExpiresAt - Date.now()) / 1000));
+  $('localExecutorPairingExpiry').textContent = remaining
+    ? `配对码仅显示一次，剩余 ${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')}。`
+    : '配对码已过期，请重新生成。';
+  if (remaining) localExecutorPairingTimer = setTimeout(updatePairingExpiry, 1000);
+  else {
+    localExecutorPairingExpiresAt = 0;
+    $('localExecutorPairingCode').textContent = '已过期';
+    $('btnLocalExecutorCopyPairing').disabled = true;
+    updateLocalExecutorPairingAction();
+  }
+}
+
+function localExecutorPairCommand(code) {
+  const info = localExecutorDownloadAsset;
+  const standard = info && String(info.installMode || '').startsWith('standard');
+  if (standard && localExecutorSelectedPlatform === 'macos-arm64') {
+    return 'open -a Terminal "/Applications/Xynigo Sourcing.app/Contents/Resources/配对本地执行器.command"';
+  }
+  if (localExecutorSelectedPlatform === 'windows-x86_64') {
+    return info && info.launcherFile === 'Xynigo.exe'
+      ? `Xynigo.exe --pair ${code}`
+      : `python-embed\\python.exe run.py pair ${code}`;
+  }
+  return `./runtime/xynigo-sourcing pair ${code}`;
+}
+
+function localExecutorProtocolPairingAvailable() {
+  const info = localExecutorDownloadAsset;
+  return !!(info && String(info.installMode || '').startsWith('standard'));
+}
+
+function setLocalExecutorPairingStatus(kind, message) {
+  const node = $('localExecutorPairingStatus');
+  node.className = `local-executor-pairing-status${kind ? ` ${kind}` : ''}`;
+  node.textContent = message;
+}
+
+function updateLocalExecutorPairingAction() {
+  const button = $('btnLocalExecutorOpenPair');
+  const standard = localExecutorProtocolPairingAvailable();
+  const code = $('localExecutorPairingCode').textContent;
+  const validCode = /^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/.test(code);
+  const active = !!localExecutorPairingExpiresAt
+    && localExecutorPairingExpiresAt > Date.now();
+  button.hidden = !standard;
+  button.disabled = !standard || !active || !validCode
+    || !localExecutorPairingRequestId || !!localExecutorProtocolPairingDeadline;
+  button.textContent = localExecutorSelectedPlatform === 'macos-arm64'
+    ? '在 Mac 上打开 Xynigo 并配对' : '打开 Xynigo 并配对';
+  $('localExecutorPairingHelp').textContent = standard
+    ? '标准安装包可一键打开 Xynigo；若浏览器未弹出系统确认，可复制配对码并使用下方本地配对入口。'
+    : (info && info.launcherFile === 'Xynigo.exe'
+      ? '绿色版请先完整解压并双击 Xynigo.exe，再在状态中心输入配对码；也可运行下方命令。'
+      : '绿色包请先完整解压，再使用内置的“配对本地执行器”脚本。');
+}
+
+function stopLocalExecutorProtocolPairing(message='', kind='', succeeded=false) {
+  if (localExecutorProtocolPairingTimer) {
+    clearTimeout(localExecutorProtocolPairingTimer);
+  }
+  localExecutorProtocolPairingTimer = null;
+  localExecutorProtocolPairingDeadline = 0;
+  if (succeeded) {
+    if (localExecutorPairingTimer) clearTimeout(localExecutorPairingTimer);
+    localExecutorPairingTimer = null;
+    localExecutorPairingExpiresAt = 0;
+    $('localExecutorPairingCode').textContent = '已使用';
+    $('localExecutorPairingExpiry').textContent = '配对码已使用，不能再次绑定其他设备。';
+    $('btnLocalExecutorCopyPairing').disabled = true;
+  }
+  if (message) setLocalExecutorPairingStatus(kind, message);
+  renderLocalExecutorDevices();
+  updateLocalExecutorPairingAction();
+  if (message) toast(message);
+}
+
+async function waitForLocalExecutorProtocolPairing() {
+  localExecutorProtocolPairingTimer = null;
+  if (!localExecutorProtocolPairingDeadline || !localExecutorPairingRequestId) return;
+  try {
+    const pairing = await api(
+      `/api/local-executor/pairing-codes/${localExecutorPairingRequestId}`);
+    if (pairing.status === 'expired') {
+      stopLocalExecutorProtocolPairing('配对码已过期，请重新生成。', 'bad');
+      return;
+    }
+    if (pairing.status === 'consumed' && pairing.executorId) {
+      await loadLocalExecutorDevices(false);
+      const device = localExecutorDevices.find(item => item.id === pairing.executorId);
+      if (device) localExecutorSelectedDeviceId = device.id;
+      if (device && device.connectivity === 'online') {
+        stopLocalExecutorProtocolPairing(
+          `${device.displayName || 'Mac 执行器'}已配对并收到真实心跳。`,
+          'ok', true);
+        return;
+      }
+      setLocalExecutorPairingStatus(
+        '', '设备身份已经创建，正在等待 Mac 本地执行器首次 HTTPS 心跳…');
+    } else {
+      setLocalExecutorPairingStatus(
+        '', '正在等待 macOS 打开 Xynigo 并使用本次一次性配对码…');
+    }
+  } catch (error) {
+    setLocalExecutorPairingStatus(
+      '', `暂时无法读取配对状态，仍会继续等待：${error.message}`);
+  }
+  if (Date.now() >= localExecutorProtocolPairingDeadline) {
+    stopLocalExecutorProtocolPairing(
+      '尚未收到 Mac 执行器心跳。若浏览器未询问是否打开 Xynigo，请确认已安装标准版后重试。',
+      'bad');
+    return;
+  }
+  localExecutorProtocolPairingTimer = setTimeout(
+    waitForLocalExecutorProtocolPairing, 2000);
+}
+
+function openLocalExecutorPairingByProtocol() {
+  if (localExecutorProtocolPairingDeadline) return;
+  const code = $('localExecutorPairingCode').textContent;
+  if (!localExecutorProtocolPairingAvailable()
+      || !localExecutorPairingRequestId
+      || !/^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/.test(code)
+      || localExecutorPairingExpiresAt <= Date.now()) {
+    toast('当前没有可用的一键配对请求，请重新生成配对码。');
+    return;
+  }
+  localExecutorProtocolPairingDeadline = Date.now() + 60000;
+  $('btnLocalExecutorPair').disabled = true;
+  updateLocalExecutorPairingAction();
+  setLocalExecutorPairingStatus(
+    '', '已请求 macOS 打开 Xynigo；正在等待本次配对请求和真实设备心跳。');
+  window.location.href = `xynigo://pair?code=${encodeURIComponent(code)}`;
+  localExecutorProtocolPairingTimer = setTimeout(
+    waitForLocalExecutorProtocolPairing, 2000);
+}
+
+async function createLocalExecutorPairingCode() {
+  const button = $('btnLocalExecutorPair');
+  button.disabled = true;
+  try {
+    const payload = await api('/api/local-executor/pairing-codes', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({displayNameHint:'采购电脑'})
+    });
+    const code = String(payload.pairingCode || '');
+    if (!code) throw new Error('云端没有返回配对码');
+    localExecutorPairingRequestId = String(payload.pairingRequestId || '');
+    $('localExecutorPairing').hidden = false;
+    $('localExecutorPairingCode').textContent = code;
+    $('localExecutorPairingCommand').textContent = localExecutorPairCommand(code);
+    $('btnLocalExecutorCopyPairing').disabled = false;
+    localExecutorPairingExpiresAt = new Date(payload.expiresAt).getTime()
+      || Date.now() + Number(payload.expiresIn || 300) * 1000;
+    setLocalExecutorPairingStatus(
+      '', '长期设备凭证不会进入此链接；页面只等待本次配对请求和真实心跳。');
+    updateLocalExecutorPairingAction();
+    updatePairingExpiry();
+  } catch (error) {
+    toast(`配对码生成失败：${error.message}`);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function stopLocalExecutorConfigTaskPolling() {
+  if (localExecutorConfigTaskTimer) clearTimeout(localExecutorConfigTaskTimer);
+  localExecutorConfigTaskTimer = null;
+  localExecutorConfigTaskId = '';
+  $('btnLocalExecutorCancelTask').hidden = true;
+  renderLocalExecutorDevices();
+}
+
+async function pollLocalExecutorConfigTask(taskId, action, deadline) {
+  localExecutorConfigTaskTimer = null;
+  try {
+    const payload = await api(`/api/local-executor/tasks/${taskId}`);
+    const task = payload.task || {};
+    const terminal = ['succeeded', 'failed', 'uncertain', 'cancelled'].includes(task.status);
+    if (!terminal) {
+      if (Date.now() >= deadline) throw new Error('等待本地执行器响应超时，可稍后刷新设备状态查看结果');
+      setLocalExecutorConfigState('', `请求已发送到本地执行器，当前状态：${task.status || 'queued'}…`);
+      localExecutorConfigTaskTimer = setTimeout(
+        () => pollLocalExecutorConfigTask(taskId, action, deadline), 1000);
+      return;
+    }
+    if (task.status !== 'succeeded') {
+      throw new Error(task.resultCode === 'lease_expired_after_start'
+        ? '连接中断，云端无法确认配置是否已经写入，请重新读取核对'
+        : `本地执行器返回：${task.resultCode || task.status}`);
+    }
+    const result = task.resultSummary || {};
+    if (!result.configRevision || !result.config) throw new Error('本地执行器返回的配置结果不完整');
+    applyLocalExecutorConfig(result.config, result.configRevision);
+    setLocalExecutorConfigState('ok', action === 'read'
+      ? '已从所选电脑读取最新配置。修改后可保存，保存前会再次校验配置版本。'
+      : '配置已原子写入所选电脑；敏感字段保持原值，未经过云端。');
+    await loadLocalExecutorDevices(false);
+  } catch (error) {
+    setLocalExecutorConfigState('bad', error.message);
+    if (error.code === 'config_revision_conflict') resetLocalExecutorConfig(error.message);
+  } finally {
+    if (!localExecutorConfigTaskTimer) stopLocalExecutorConfigTaskPolling();
+  }
+}
+
+async function startLocalExecutorConfigTask(action) {
+  const device = localExecutorSelectedDevice();
+  if (!device || device.connectivity !== 'online') {
+    setLocalExecutorConfigState('bad', '请选择一台在线设备。');
+    return;
+  }
+  if (localExecutorConfigTaskId) return;
+  let path = `/api/local-executor/devices/${device.id}/config-read`;
+  let options = {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'
+  };
+  if (action === 'write') {
+    if (!localExecutorConfigRevision) {
+      setLocalExecutorConfigState('bad', '保存前必须先读取所选电脑的最新配置。');
+      return;
+    }
+    let config;
+    try { config = localExecutorConfigPayload(); }
+    catch (error) { setLocalExecutorConfigState('bad', error.message); return; }
+    path = `/api/local-executor/devices/${device.id}/config`;
+    options = {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        expectedRevision:localExecutorConfigRevision,
+        idempotencyKey:(crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`),
+        config
+      })
+    };
+  }
+  $('btnLocalExecutorReadConfig').disabled = true;
+  $('btnLocalExecutorSaveConfig').disabled = true;
+  setLocalExecutorConfigState('', action === 'read'
+    ? '正在请求所选电脑读取 config.json…'
+    : '正在请求所选电脑校验版本并原子保存…');
+  try {
+    const payload = await api(path, options);
+    localExecutorConfigTaskId = String(payload.task && payload.task.id || '');
+    if (!localExecutorConfigTaskId) throw new Error('云端没有返回配置请求编号');
+    $('btnLocalExecutorCancelTask').hidden = false;
+    pollLocalExecutorConfigTask(
+      localExecutorConfigTaskId, action, Date.now() + 90000);
+  } catch (error) {
+    setLocalExecutorConfigState('bad', error.message);
+    stopLocalExecutorConfigTaskPolling();
+  }
+}
+
+$('localExecutorPlatform').onchange = event => {
+  renderLocalExecutorPlatform(event.target.value);
+  const code = $('localExecutorPairingCode').textContent;
+  if (localExecutorPairingExpiresAt && code && code !== '—' && code !== '已过期') {
+    $('localExecutorPairingCommand').textContent = localExecutorPairCommand(code);
+  }
+};
+$('btnLocalExecutorRefreshRelease').onclick = () => loadLocalExecutorRelease(true);
+$('btnLocalExecutorRefreshDevices').onclick = () => loadLocalExecutorDevices(true);
+$('btnLocalExecutorLaunch').onclick = launchLocalExecutorByProtocol;
+$('btnLocalExecutorPair').onclick = createLocalExecutorPairingCode;
+$('btnLocalExecutorOpenPair').onclick = openLocalExecutorPairingByProtocol;
+$('btnLocalExecutorCopyPairing').onclick = async () => {
+  const code = $('localExecutorPairingCode').textContent;
+  if (!localExecutorPairingExpiresAt || !code) return;
+  try {
+    await navigator.clipboard.writeText(code);
+    toast('配对码已复制');
+  } catch (_) {
+    toast('浏览器未允许复制，请手动选择配对码');
+  }
+};
+$('localExecutorDeviceList').onclick = event => {
+  const button = event.target.closest('[data-executor-device]');
+  if (!button || button.dataset.executorDevice === localExecutorSelectedDeviceId) return;
+  localExecutorSelectedDeviceId = button.dataset.executorDevice;
+  resetLocalExecutorConfig();
+  renderLocalExecutorDevices();
+};
+$('btnLocalExecutorReadConfig').onclick = () => startLocalExecutorConfigTask('read');
+$('btnLocalExecutorSaveConfig').onclick = () => startLocalExecutorConfigTask('write');
+$('btnLocalExecutorCancelTask').onclick = async () => {
+  if (!localExecutorConfigTaskId) return;
+  const button = $('btnLocalExecutorCancelTask');
+  button.disabled = true;
+  try {
+    await api(`/api/local-executor/tasks/${localExecutorConfigTaskId}/cancel`, {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'
+    });
+    setLocalExecutorConfigState('', '已请求取消；正在等待本地执行器确认。');
+  } catch (error) {
+    setLocalExecutorConfigState('bad', `取消失败：${error.message}`);
+  } finally {
+    button.disabled = false;
+  }
+};
+$('btnLocalExecutorRevoke').onclick = async () => {
+  const device = localExecutorSelectedDevice();
+  if (!device || device.status === 'revoked') return;
+  if (!confirm(`撤销“${device.displayName}”后，该电脑必须重新配对才能连接云端。确定继续吗？`)) return;
+  const button = $('btnLocalExecutorRevoke');
+  button.disabled = true;
+  try {
+    await api(`/api/local-executor/devices/${device.id}/revoke`, {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'
+    });
+    resetLocalExecutorConfig('设备已撤销；该电脑下次轮询会清除设备凭证并停止连接。');
+    await loadLocalExecutorDevices(true);
+  } catch (error) {
+    toast(`撤销失败：${error.message}`);
+  } finally {
+    button.disabled = false;
+  }
+};
+$('localExecutorDownload').onclick = event => {
+  if (!localExecutorReleaseLoaded || !localExecutorSelectedPlatform
+      || event.currentTarget.getAttribute('aria-disabled') === 'true') {
+    event.preventDefault();
+    return;
+  }
+  const info = localExecutorRelease.platforms[localExecutorSelectedPlatform] || {};
+  const activeAsset = localExecutorDownloadAsset || info;
+  const standardInstaller = String(activeAsset.installMode || '').startsWith('standard');
+  const portableStatusCenter = activeAsset.launcherFile === 'Xynigo.exe';
+  setLocalExecutorFeedback(
+    'ok',
+    standardInstaller
+      ? '已开始下载签名标准安装包。下载不等于安装成功，请核对发布者后完成安装并打开状态中心。'
+      : `绿色版下载已由浏览器发起${localExecutorUsingGreenFallback ? '；这是标准安装包不可用时的兜底版本' : ''}。请完整解压后${portableStatusCenter ? '双击 Xynigo.exe' : '运行启动.bat'}。`
+  );
+};
+$('localExecutorReleaseNotes').onclick = event => {
+  if (event.currentTarget.getAttribute('aria-disabled') === 'true') event.preventDefault();
+};
+$('btnLocalExecutorCopySha').onclick = async () => {
+  const info = localExecutorDownloadAsset;
+  if (!info || !info.sha256) return;
+  try {
+    await navigator.clipboard.writeText(String(info.sha256));
+    toast('SHA-256 已复制');
+  } catch (_) {
+    toast('浏览器未允许复制，请手动选择 SHA-256 文本');
+  }
+};
+$('localExecutorEntry').onclick = () => openFeatureTab('localexecutor');
+
 function setFeaturePanel(module) {
   const info = FEATURE_MODULES[module];
   if (!info) return;
@@ -6333,6 +7398,7 @@ function setFeaturePanel(module) {
     'localsettings', 'larkconnection', 'organizationaccess', 'sessionmanagement'
   ].includes(module);
   activeModule = module;
+  if (module !== 'localexecutor') scheduleLocalExecutorDeviceRefresh();
   document.querySelectorAll('[data-module]').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.module === module);
   });
@@ -6349,6 +7415,7 @@ function setFeaturePanel(module) {
   $('proxyManagementPanel').classList.toggle('hidden', module !== 'proxymanagement');
   $('businessLogsPanel').classList.toggle('hidden', module !== 'businesslogs');
   $('systemLogsPanel').classList.toggle('hidden', module !== 'systemlogs');
+  $('localExecutorPanel').classList.toggle('hidden', module !== 'localexecutor');
   $('settingsPanel').classList.toggle('hidden', !isSettingsModule);
   document.querySelectorAll('#settingsPanel [data-settings-view]').forEach(section => {
     section.hidden = section.dataset.settingsView !== module;
@@ -6367,6 +7434,10 @@ function setFeaturePanel(module) {
   else if (module === 'proxymanagement') { loadProxyManagement(false); pollProxyChecks(); }
   else if (module === 'businesslogs' && !businessLogsLoaded) loadBusinessLogs(true);
   else if (module === 'systemlogs' && !systemLogsLoaded) loadSystemLogs(true);
+  else if (module === 'localexecutor') {
+    loadLocalExecutorRelease(false);
+    loadLocalExecutorDevices(false);
+  }
   else if (module === 'localsettings' && !localSettingsPageLoaded) {
     localSettingsPageLoaded = true;
     loadLocalSettingsPage().then(loaded => {
@@ -6397,6 +7468,8 @@ function syncPrimaryNavigation(primary) {
   let visibleSecondaryCount = 0;
   document.querySelectorAll('#secondaryTabs [data-parent]').forEach(btn => {
     btn.hidden = btn.dataset.parent !== primary
+      || (btn.dataset.cloudOnly === '1' && !CLOUD_WEB_MODE)
+      || (btn.dataset.localOnly === '1' && CLOUD_WEB_MODE)
       || (btn.dataset.module && btn.dataset.permissionHidden === '1');
     if (!btn.hidden) visibleSecondaryCount += 1;
   });
@@ -6571,6 +7644,7 @@ function setPlannedPrimary(primary) {
   $('envPanel').classList.add('hidden');
   $('storeManagementPanel').classList.add('hidden');
   $('proxyManagementPanel').classList.add('hidden');
+  $('localExecutorPanel').classList.add('hidden');
   $('settingsPanel').classList.add('hidden');
   $('planningPanel').classList.remove('hidden');
   $('planningTitle').textContent = info.planningTitle || `${info.label}入口已完成迁移`;

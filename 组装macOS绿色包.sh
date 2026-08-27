@@ -88,6 +88,21 @@ read -r
 ''' % version
 (stage / '启动-本地执行器-Mac.command').write_text(
     local_launcher, encoding='utf-8')
+pair_launcher = '''#!/bin/bash
+cd "$(dirname "$0")"
+echo "Xynigo 本地执行器设备配对"
+echo "请从云端 Web 的“系统管理 → 本地执行器”复制 8 位配对码。"
+read -r -p "配对码：" XYNIGO_PAIR_CODE
+if [ -z "$XYNIGO_PAIR_CODE" ]; then
+  echo "未输入配对码。"
+else
+  ./runtime/xynigo-sourcing pair "$XYNIGO_PAIR_CODE"
+fi
+echo "按回车键关闭窗口。"
+read -r
+'''
+(stage / '配对本地执行器-Mac.command').write_text(
+    pair_launcher, encoding='utf-8')
 version_info = {
     'schemaVersion': 2,
     'product': 'Xynigo Sourcing',
@@ -97,6 +112,7 @@ version_info = {
     'repository': 'wrangler1024/xynigo-sourcing',
     'managedPaths': [
         'runtime', '启动-Mac.command', '启动-本地执行器-Mac.command',
+        '配对本地执行器-Mac.command',
         'update-helper.sh',
         'VERSION.json', '使用说明.txt',
     ],
@@ -112,15 +128,17 @@ guide = '''Xynigo Sourcing v%s macOS %s 绿色包
 1. 必须先完整解压 ZIP，不能直接在压缩包中双击。
 2. 首次运行右键“启动-Mac.command”选择“打开”。
 3. 双击“启动-Mac.command”默认打开云端工作台；本地执行器仍在此窗口运行。
-4. 需要使用旧本机界面或排查 HubStudio 时，打开“启动-本地执行器-Mac.command”。
-5. 页面右上角会检查 GitHub 最新稳定版；发现新版本时点击提醒，回到运行窗口输入 Y 更新或 N 暂不更新。
-6. 更新不需要 Git 或 GitHub 账号；校验失败或网络不可用时当前版本会继续运行。
-7. config.json、查询日志、运行数据和用户导入文件不会被更新覆盖或上传。
-8. 更新失败时会从本机备份自动回滚并重新启动。
+4. 首次连接云端时，在 Web 生成配对码，再打开“配对本地执行器-Mac.command”输入配对码。
+5. 需要使用旧本机界面或排查 HubStudio 时，打开“启动-本地执行器-Mac.command”。
+6. 页面右上角会检查 GitHub 最新稳定版；发现新版本时点击提醒，回到运行窗口输入 Y 更新或 N 暂不更新。
+7. 更新不需要 Git 或 GitHub 账号；校验失败或网络不可用时当前版本会继续运行。
+8. config.json、查询日志、运行数据和用户导入文件不会被更新覆盖或上传。
+9. 更新失败时会从本机备份自动回滚并重新启动。
 ''' % (version, platform_key)
 (stage / '使用说明.txt').write_text(guide, encoding='utf-8')
 PY
 chmod +x "$STAGE/启动-Mac.command" "$STAGE/启动-本地执行器-Mac.command" \
+  "$STAGE/配对本地执行器-Mac.command" \
   "$STAGE/update-helper.sh" \
   "$STAGE/runtime/xynigo-sourcing"
 
@@ -137,7 +155,8 @@ from pathlib import Path
 root = Path(os.environ['STAGE'])
 required = [
     'runtime/xynigo-sourcing', '启动-Mac.command',
-    '启动-本地执行器-Mac.command', 'update-helper.sh',
+    '启动-本地执行器-Mac.command', '配对本地执行器-Mac.command',
+    'update-helper.sh',
     'VERSION.json', '使用说明.txt',
 ]
 missing = [name for name in required if not (root / name).exists()]

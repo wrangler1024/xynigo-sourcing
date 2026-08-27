@@ -1,0 +1,256 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Xynigo 当前架构与未来复杂场景扩展方向",
+    "subtitle": "50 人以内内部系统保持轻量；通过传输适配、事件通知和水平扩展逐级演进",
+    "output": "Xynigo未来复杂场景可扩展架构_20260827.html",
+    "animation": "none",
+    "visual_preset": "blueprint",
+    "quality_profile": "showcase",
+    "viewBox": [1680, 860],
+    "views": [
+      {
+        "id": "current-path",
+        "label": "当前内部使用主链路",
+        "focus": ["team-users", "cloud-web", "control-plane", "postgres", "executor", "hubstudio"],
+        "note": "50 人以内保持 HTTPS 长轮询、PostgreSQL 任务租约和本地主动出站。"
+      },
+      {
+        "id": "plugin-path",
+        "label": "双插件与外部协作",
+        "focus": ["operations-plugin", "hub-plugin", "control-plane", "executor", "external-systems"],
+        "note": "运营插件独立访问云端；Hub 插件经本地执行器取得最小必要数据。"
+      },
+      {
+        "id": "future-realtime",
+        "label": "未来实时通信扩展",
+        "focus": ["control-plane", "realtime-gateway", "executor"],
+        "note": "WebSocket 首先只做任务可用通知，长轮询继续作为断线降级通道。"
+      },
+      {
+        "id": "future-scale",
+        "label": "未来水平扩展",
+        "focus": ["control-plane", "postgres", "realtime-gateway", "async-workers"],
+        "note": "多实例后再引入 Redis Pub/Sub 与异步 Worker，不提前建设 Kafka。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "team-users",
+      "type": "external",
+      "label": "Xynigo 团队用户",
+      "sublabel": "运营 / 采购 / 管理员 · ≤50 人",
+      "tag": "当前",
+      "pos": [40, 290],
+      "size": [150, 68]
+    },
+    {
+      "id": "operations-plugin",
+      "type": "frontend",
+      "label": "运营采购助手",
+      "sublabel": "独立云端登录与采购需求提交",
+      "tag": "当前",
+      "pos": [250, 90],
+      "size": [180, 68]
+    },
+    {
+      "id": "cloud-web",
+      "type": "frontend",
+      "label": "云端 Web 工作台",
+      "sublabel": "统一入口 / 权限 / 配置 / 设备状态",
+      "tag": "当前",
+      "pos": [250, 290],
+      "size": [180, 68]
+    },
+    {
+      "id": "control-plane",
+      "type": "backend",
+      "label": "云端控制面",
+      "sublabel": "FastAPI · 任务租约 · 幂等 · 审计",
+      "tag": "当前核心",
+      "pos": [520, 290],
+      "size": [200, 68]
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "身份、设备、任务与采购事实源",
+      "tag": "当前核心",
+      "pos": [520, 510],
+      "size": [200, 68]
+    },
+    {
+      "id": "executor",
+      "type": "backend",
+      "label": "本地执行器",
+      "sublabel": "主动 HTTPS 长轮询 · 断网续作",
+      "tag": "当前",
+      "pos": [820, 290],
+      "size": [200, 68]
+    },
+    {
+      "id": "hub-plugin",
+      "type": "frontend",
+      "label": "HubStudio 采购助手",
+      "sublabel": "地址填写 / 采购结果确认回传",
+      "tag": "P2",
+      "pos": [820, 90],
+      "size": [200, 68]
+    },
+    {
+      "id": "hubstudio",
+      "type": "external",
+      "label": "HubStudio / SHEIN",
+      "sublabel": "Local API / CDP / 下单页面",
+      "tag": "本机边界",
+      "pos": [1120, 290],
+      "size": [190, 68]
+    },
+    {
+      "id": "external-systems",
+      "type": "external",
+      "label": "外部协作与服务",
+      "sublabel": "飞书 / 物流 / 对象存储",
+      "tag": "受控网关",
+      "pos": [1120, 510],
+      "size": [190, 68]
+    },
+    {
+      "id": "realtime-gateway",
+      "type": "cloud",
+      "label": "实时连接网关",
+      "sublabel": "WebSocket 通知 · 多实例后接 Redis Pub/Sub",
+      "tag": "未来按需",
+      "pos": [820, 510],
+      "size": [200, 68]
+    },
+    {
+      "id": "async-workers",
+      "type": "backend",
+      "label": "异步 Worker 集群",
+      "sublabel": "Outbox / 飞书投影 / 重试 / 对账",
+      "tag": "未来复杂业务",
+      "pos": [820, 690],
+      "size": [200, 68]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "当前轻量架构 · 50 人以内",
+      "wraps": ["cloud-web", "control-plane", "postgres", "executor"]
+    },
+    {
+      "kind": "region",
+      "label": "未来按指标触发的扩展能力",
+      "wraps": ["realtime-gateway", "async-workers"]
+    },
+    {
+      "kind": "security-group",
+      "label": "本机可信边界",
+      "wraps": ["executor", "hub-plugin", "hubstudio"]
+    }
+  ],
+  "connections": [
+    {
+      "id": "users-to-web",
+      "from": "team-users",
+      "to": "cloud-web",
+      "label": "HTTPS",
+      "variant": "emphasis"
+    },
+    {
+      "id": "operations-to-control",
+      "from": "operations-plugin",
+      "to": "control-plane",
+      "label": "短期 Bearer",
+      "variant": "security"
+    },
+    {
+      "id": "web-to-control",
+      "from": "cloud-web",
+      "to": "control-plane",
+      "variant": "emphasis"
+    },
+    {
+      "id": "control-to-db",
+      "from": "control-plane",
+      "to": "postgres"
+    },
+    {
+      "id": "executor-to-control",
+      "from": "executor",
+      "to": "control-plane",
+      "variant": "emphasis"
+    },
+    {
+      "id": "executor-to-hub",
+      "from": "executor",
+      "to": "hubstudio",
+      "label": "Local API / CDP"
+    },
+    {
+      "id": "hub-plugin-to-executor",
+      "from": "hub-plugin",
+      "to": "executor",
+      "variant": "security"
+    },
+    {
+      "id": "control-to-realtime",
+      "from": "control-plane",
+      "to": "realtime-gateway",
+      "variant": "dashed"
+    },
+    {
+      "id": "realtime-to-executor",
+      "from": "realtime-gateway",
+      "to": "executor",
+      "variant": "dashed"
+    },
+    {
+      "id": "db-to-workers",
+      "from": "postgres",
+      "to": "async-workers",
+      "variant": "dashed"
+    },
+    {
+      "id": "workers-to-external",
+      "from": "async-workers",
+      "to": "external-systems",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "当前目标",
+      "items": [
+        "50 人以内内部使用，优先可靠、简单和可维护",
+        "HTTPS 长轮询 + PostgreSQL 租约已足够",
+        "业务任务与传输协议解耦，长轮询始终可降级"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "未来扩展触发条件",
+      "items": [
+        "亚秒级通知、高频实时状态或持续日志流",
+        "云端多实例导致设备连接需要跨实例路由",
+        "外部投影、重试和对账任务形成独立吞吐压力"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "扩展边界",
+      "items": [
+        "WebSocket 先做通知，不取代 PostgreSQL 任务事实",
+        "多实例后才引入 Redis Pub/Sub",
+        "没有明确吞吐与事件留存需求前不引入 Kafka",
+        "指标、告警、Trace 与脱敏审计随阶段持续增强"
+      ]
+    }
+  ]
+}

@@ -31,11 +31,13 @@ USER_AGENT = 'Xynigo-Sourcing-Updater'
 SKIP_ONCE_ENV = 'XYNIGO_SKIP_UPDATE_ONCE'
 SKIP_ONCE_FILE = 'skip-update-once'
 WINDOWS_MANAGED_PATHS = (
-    'app', 'deps', 'python-embed', 'run.py', '启动.bat', '启动-本地执行器.bat',
-    'update-helper.ps1', 'VERSION.json', '使用说明.txt',
+    'app', 'deps', 'python-embed', 'run.py', 'Xynigo.exe',
+    'xynigo-logo.png', 'xynigo-x.ico', '启动.bat', '启动-本地执行器.bat',
+    '配对本地执行器.bat', 'update-helper.ps1', 'VERSION.json', '使用说明.txt',
 )
 MACOS_MANAGED_PATHS = (
-    'runtime', '启动-Mac.command', '启动-本地执行器-Mac.command', 'update-helper.sh',
+    'runtime', '启动-Mac.command', '启动-本地执行器-Mac.command',
+    '配对本地执行器-Mac.command', 'update-helper.sh',
     'VERSION.json', '使用说明.txt',
 )
 # Kept as a public compatibility alias for v0.5.0 callers/tests.
@@ -467,10 +469,14 @@ class UpdateCoordinator(object):
     def __init__(self, install_dir, current_version, client=None,
                  input_fn=input, output=print, focus_fn=None, exit_fn=None,
                  check_interval=900, environ=None, skip_marker_path=None):
+        environ = os.environ if environ is None else environ
+        self.install_mode = str(
+            environ.get('XYNIGO_INSTALL_MODE') or 'green').strip().casefold()
         self.install_dir = (Path(install_dir).resolve()
                             if install_dir else None)
         self.current_version = normalize_version(current_version)
-        self.enabled = self.install_dir is not None
+        self.enabled = (
+            self.install_dir is not None and self.install_mode != 'standard')
         self.client = client or (GitHubUpdateClient()
                                  if self.enabled else None)
         self.input_fn = input_fn
@@ -485,8 +491,11 @@ class UpdateCoordinator(object):
         self.last_checked = 0.0
         self.decision = ''
         self.state = 'idle' if self.enabled else 'disabled'
-        self.message = ('等待检查更新' if self.enabled
-                        else '源码开发模式不执行绿色包更新')
+        self.message = (
+            '等待检查更新' if self.enabled
+            else '标准安装包更新由系统安装程序管理'
+            if self.install_mode == 'standard'
+            else '源码开发模式不执行绿色包更新')
         if (self.enabled
                 and consume_skip_once(environ, skip_marker_path)):
             self.state = 'current'
