@@ -14,9 +14,9 @@ from . import __version__
 
 
 REPOSITORY = "wrangler1024/xynigo-sourcing"
-RELEASE_VERSION = "0.12.5"
+RELEASE_VERSION = "0.12.6"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-08-27T02:14:04Z"
+RELEASE_PUBLISHED_AT = "2026-08-27T15:31:07Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,20 +31,47 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "assetName": "Xynigo_Sourcing_Windows_20260826_v0.12.5.zip",
-        "sha256": "c34af3acafee5f576cab64c6ff177f02cf4f07323ced12e60e789628b9f0827c",
-        "size": 13_757_639,
-        "installMode": "green_package",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.12.6.exe",
+        "sha256": "e45a5030290e5b2e0fca9bf3eafd9d857114128025d3fa7fadb2b57aae3628e4",
+        "size": 14_867_776,
+        "installMode": "standard_per_user",
+        "internalUnsignedTest": True,
+        "authenticodeSigned": False,
+        "authenticodeTimestamped": False,
+        "statusCenter": True,
+        "trayMenu": True,
+        "launcherFile": "Xynigo.exe",
+        "greenFallback": {
+            "assetName": "Xynigo_Sourcing_Windows_20260827_v0.12.6.zip",
+            "sha256": "1dc9b9f6d4943898cbcf313d5110b7e7bffe85096974798570f4bf117069f271",
+            "size": 18_226_858,
+            "installMode": "green_package",
+            "launcherFile": "Xynigo.exe",
+            "statusCenter": True,
+            "trayMenu": True,
+        },
     },
     "macos-arm64": {
         "label": "macOS Apple Silicon",
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "assetName": "Xynigo_Sourcing_macOS_arm64_20260826_v0.12.5.zip",
-        "sha256": "b00eab1647507dd9e194e0fb319674716e0aebdce7c8b7480a735f43dc0c89df",
-        "size": 10_198_352,
-        "installMode": "green_package",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.12.6.pkg",
+        "sha256": "39df44182bde84fd8c576d73a014a3dee1017943225c244b7b453399bd3ee8e4",
+        "size": 11_353_665,
+        "installMode": "standard_system_application",
+        "internalUnsignedTest": True,
+        "developerIdApplicationSigned": False,
+        "developerIdInstallerSigned": False,
+        "notarized": False,
+        "stapled": False,
+        "greenFallback": {
+            "assetName": "Xynigo_Sourcing_macOS_arm64_20260827_v0.12.6.zip",
+            "sha256": "6e372fc922d187b8373119631110511c17c9ea4ffa96dc049625e0619ae496b9",
+            "size": 10_238_732,
+            "installMode": "green_package",
+            "launcherFile": "启动-Mac.command",
+        },
     },
 }
 
@@ -70,28 +97,39 @@ def _validate_green_asset(
 
 def validate_release_platforms(
     platforms: dict[str, dict[str, object]],
+    *,
+    allow_unsigned_internal_test: bool = False,
 ) -> None:
-    """Fail closed if a standard installer lacks platform trust evidence."""
+    """Validate installer trust, with one explicit internal-test escape hatch."""
 
     for platform_key, source in platforms.items():
         install_mode = str(source.get("installMode") or "")
         if install_mode.startswith("standard"):
+            trusted = False
             if platform_key == "windows-x86_64":
-                if not (
+                trusted = bool(
                     source.get("authenticodeSigned") is True
                     and source.get("authenticodeTimestamped") is True
                     and str(source.get("publisher") or "").strip()
+                )
+                if not trusted and not (
+                    allow_unsigned_internal_test
+                    and source.get("internalUnsignedTest") is True
                 ):
                     raise RuntimeError(
                         "Windows standard installer requires Authenticode, "
                         "an RFC 3161 timestamp, and a publisher"
                     )
             elif platform_key == "macos-arm64":
-                if not (
+                trusted = bool(
                     source.get("developerIdInstallerSigned") is True
                     and source.get("notarized") is True
                     and source.get("stapled") is True
                     and str(source.get("publisher") or "").strip()
+                )
+                if not trusted and not (
+                    allow_unsigned_internal_test
+                    and source.get("internalUnsignedTest") is True
                 ):
                     raise RuntimeError(
                         "macOS standard installer requires Developer ID Installer, "
@@ -114,7 +152,10 @@ def validate_release_platforms(
             )
 
 
-validate_release_platforms(_PLATFORMS)
+validate_release_platforms(
+    _PLATFORMS,
+    allow_unsigned_internal_test=RELEASE_CHANNEL == "test",
+)
 
 
 def _release_download_url(asset_name: str) -> str:
@@ -159,7 +200,8 @@ def latest_local_executor_release() -> dict[str, object]:
         "platforms": platforms,
         "notesZh": [
             "当前为团队线上协同测试版，安装与启动均需用户明确确认。",
-            "标准安装包不可用时，Web 自动选择同版本绿色包；绿色包仍需完整解压并由用户明确启动。",
+            "本次按内部快速迭代策略提供未签名标准安装包；下载前必须核对 SHA-256，并按飞书开发群教程手动确认系统安全提示。",
+            "同版本绿色包继续作为回退入口；绿色包仍需完整解压并由用户明确启动。",
             "首次安装与已安装后的在线更新是两条独立流程。",
             "升级必须保留本地配置、查询日志和运行数据。",
         ],

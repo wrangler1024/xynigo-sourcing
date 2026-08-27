@@ -110,7 +110,7 @@ def test_cloud_workspace_shell_and_assets_are_public_but_api_stays_protected(
     with TestClient(app) as client:
         workspace = client.get("/")
         assert workspace.status_code == 200
-        assert "<title>Xynigo Sourcing v0.12.5</title>" in workspace.text
+        assert "<title>Xynigo Sourcing v0.12.6</title>" in workspace.text
         assert 'src="xynigo-logo.png?v=6"' in workspace.text
         assert 'href="/favicon.ico?v=6"' in workspace.text
         assert "const CLOUD_WEB_MODE" in workspace.text
@@ -152,19 +152,27 @@ def test_authenticated_member_can_read_immutable_local_executor_release(
         assert response.headers["x-content-type-options"] == "nosniff"
         payload = response.json()
         assert payload["schemaVersion"] == 1
-        assert payload["version"] == "0.12.5"
+        assert payload["version"] == "0.12.6"
         assert payload["channel"] == "test"
-        assert payload["releaseUrl"].endswith("/releases/tag/v0.12.5")
+        assert payload["releaseUrl"].endswith("/releases/tag/v0.12.6")
         assert set(payload["platforms"]) == {"windows-x86_64", "macos-arm64"}
         for platform, info in payload["platforms"].items():
             assert info["size"] > 1_000_000
             assert len(info["sha256"]) == 64
-            assert info["assetName"].endswith(".zip")
-            assert info["installMode"] == "green_package"
+            assert info["installMode"].startswith("standard")
+            assert info["internalUnsignedTest"] is True
             assert info["downloadUrl"].startswith(
                 "https://github.com/wrangler1024/xynigo-sourcing/"
-                "releases/download/v0.12.5/"
+                "releases/download/v0.12.6/"
             ), platform
+            fallback = info["greenFallback"]
+            assert fallback["assetName"].endswith(".zip")
+            assert fallback["installMode"] == "green_package"
+            assert len(fallback["sha256"]) == 64
+            assert fallback["downloadUrl"].startswith(
+                "https://github.com/wrangler1024/xynigo-sourcing/"
+                "releases/download/v0.12.6/"
+            )
 
 
 def test_bootstrap_admin_login_creates_hashed_session_and_rbac(tmp_path) -> None:

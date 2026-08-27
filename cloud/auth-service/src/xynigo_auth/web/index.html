@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Xynigo Sourcing v0.12.5</title>
+<title>Xynigo Sourcing v0.12.6</title>
 <link rel="icon" type="image/png" sizes="260x260" href="/xynigo-x.png?v=6">
 <link rel="icon" type="image/x-icon" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256" href="/favicon.ico?v=6">
 <link rel="shortcut icon" href="/favicon.ico?v=6">
@@ -1454,7 +1454,7 @@
           <div class="hero-kicker">XYNIGO SOURCING WORKSPACE</div>
           <h1>让小犀帮你把每一单稳稳带回来，<span class="hero-call">Xyni, GO!</span></h1>
           <p id="moduleSummary">批量查询订单与物流状态，异常任务集中处理，结果一键导出。</p>
-          <div class="hero-meta"><span class="hero-chip">测试候选 v0.12.5</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
+          <div class="hero-meta"><span class="hero-chip">内部测试 v0.12.6</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
         </div>
         <div class="hero-lockup" role="img" aria-label="小犀与 Xynigo 完整品牌一体图形">
           <img src="xynigo-logo.png" alt="">
@@ -3092,7 +3092,7 @@ async function cloudFetchJson(path, opts={}) {
   const headers = new Headers(opts.headers || {});
   headers.set('Accept', 'application/json');
   headers.set('X-Xynigo-Source', 'cloud_web_workspace');
-  headers.set('X-Xynigo-Client-Version', '0.12.5-cloud-web');
+  headers.set('X-Xynigo-Client-Version', '0.12.6-cloud-web');
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     headers.set('X-Xynigo-Web-CSRF', 'same-origin');
   }
@@ -6680,10 +6680,16 @@ function isLocalExecutorStandardReady(platform, info) {
     && info.publisher);
 }
 
+function isLocalExecutorInternalUnsignedTest(info) {
+  return Boolean(localExecutorRelease && localExecutorRelease.channel === 'test'
+    && info && info.internalUnsignedTest === true);
+}
+
 function resolveLocalExecutorDownloadAsset(platform, info) {
   const standard = isLocalExecutorStandardAsset(info);
   const primaryAllowed = Boolean(info && info.downloadUrl)
-    && (!standard || isLocalExecutorStandardReady(platform, info));
+    && (!standard || isLocalExecutorStandardReady(platform, info)
+      || isLocalExecutorInternalUnsignedTest(info));
   if (primaryAllowed) {
     return {asset:info, usingGreenFallback:false, blockedStandard:false};
   }
@@ -6745,6 +6751,7 @@ function renderLocalExecutorPlatform(platform) {
   const standardInstaller = isLocalExecutorStandardAsset(asset);
   const macosInstaller = platform === 'macos-arm64';
   const trustedStandardInstaller = isLocalExecutorStandardReady(platform, asset);
+  const internalUnsignedTest = isLocalExecutorInternalUnsignedTest(asset);
   $('localExecutorInstallMode').textContent = standardInstaller
     ? (macosInstaller ? '标准安装包 · 原生启动器' : '标准安装包 · 状态中心与托盘')
     : (asset.launcherFile === 'Xynigo.exe'
@@ -6753,7 +6760,9 @@ function renderLocalExecutorPlatform(platform) {
   $('localExecutorSignature').textContent = standardInstaller
     ? (trustedStandardInstaller
       ? `${internalSignature ? '内部自签名' : '已签名'} · ${String(asset.publisher || '发布者')}`
-      : (macosInstaller ? '未签名或未公证 · 禁止团队分发' : '未签名 · 禁止团队分发'))
+      : (internalUnsignedTest
+        ? '内部未签名测试包 · 需手动确认系统安全提示'
+        : (macosInstaller ? '未签名或未公证 · 禁止团队分发' : '未签名 · 禁止团队分发')))
     : 'SHA-256 完整性校验';
   $('localExecutorAssetSha').textContent = String(asset.sha256 || '—');
   const download = $('localExecutorDownload');
@@ -6812,6 +6821,9 @@ async function loadLocalExecutorRelease(force=false) {
       setLocalExecutorFeedback('bad', selected === 'macos-arm64'
         ? 'macOS 标准安装包必须通过 Developer ID Installer 签名、Apple 公证和 stapling 校验，当前资产不可下载。'
         : 'Windows 标准安装包当前不可用，且发布清单没有可用绿色版兜底资产。');
+    } else if (selection && isLocalExecutorInternalUnsignedTest(selection.asset)) {
+      setLocalExecutorFeedback('',
+        `${detectionNote} 当前为内部未签名测试包；下载前请核对 SHA-256，并按群教程手动确认系统安全提示。`);
     } else {
       setLocalExecutorFeedback('ok', detectionNote);
     }

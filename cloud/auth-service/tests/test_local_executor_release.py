@@ -65,6 +65,33 @@ def test_green_fallback_does_not_claim_platform_signing():
     })
 
 
+def test_unsigned_standard_installer_requires_explicit_internal_test_gate():
+    platforms = {
+        "windows-x86_64": {
+            "installMode": "standard_per_user",
+            "internalUnsignedTest": True,
+        },
+        "macos-arm64": {
+            "installMode": "standard_system_application",
+            "internalUnsignedTest": True,
+        },
+    }
+    with pytest.raises(RuntimeError):
+        validate_release_platforms(platforms)
+    validate_release_platforms(
+        platforms,
+        allow_unsigned_internal_test=True,
+    )
+
+
+def test_internal_test_gate_does_not_accept_unmarked_unsigned_installer():
+    with pytest.raises(RuntimeError):
+        validate_release_platforms(
+            {"windows-x86_64": {"installMode": "standard_per_user"}},
+            allow_unsigned_internal_test=True,
+        )
+
+
 def test_standard_installer_can_keep_a_valid_green_fallback(monkeypatch):
     platform = {
         "label": "Windows x86_64",

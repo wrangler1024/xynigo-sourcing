@@ -79,6 +79,9 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
         self.assertIn('info.notarized', self.html)
         self.assertIn('info.stapled', self.html)
         self.assertIn('trustedStandardInstaller', self.html)
+        self.assertIn('internalUnsignedTest', self.html)
+        self.assertIn('内部未签名测试包 · 需手动确认系统安全提示', self.html)
+        self.assertIn('下载前请核对 SHA-256', self.html)
 
     def test_standard_download_has_a_green_xynigo_exe_fallback(self):
         for source in (
