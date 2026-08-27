@@ -53,8 +53,13 @@ function Start-Xynigo([string]$Root) {
     $env:XYNIGO_SKIP_UPDATE_ONCE = "1"
     $StatusCenter = Join-Path $Root "Xynigo.exe"
     if (Test-Path -LiteralPath $StatusCenter) {
-        Start-Process -FilePath $StatusCenter -ArgumentList @("--show") -WorkingDirectory $Root
-        return
+        try {
+            Start-Process -FilePath $StatusCenter -ArgumentList @("--show") -WorkingDirectory $Root
+            return
+        }
+        catch {
+            Write-UpdateLog "Xynigo.exe 未能启动，回退到兼容启动脚本。"
+        }
     }
     $Launcher = Join-Path $Root "启动.bat"
     if (-not (Test-Path -LiteralPath $Launcher)) {
