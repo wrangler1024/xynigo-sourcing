@@ -97,7 +97,12 @@ import os
 from pathlib import Path
 
 def quote(value):
-    return str(value).replace('\\', '/').replace('"', '$\\"')
+    value = str(value)
+    if os.name == 'nt':
+        value = value.replace('/', '\\')
+    else:
+        value = value.replace('\\', '/')
+    return value.replace('"', '$\\"')
 
 root = Path(os.environ['ROOT'])
 defines = {
