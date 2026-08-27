@@ -123,10 +123,10 @@ lines = [
     '!define %s "%s"' % (name, quote(value))
     for name, value in defines.items()
 ]
-lines.append('!include "%s"' % quote(
-    root / 'packaging/windows/xynigo-standard-installer.nsi'))
+template = (root / 'packaging/windows/xynigo-standard-installer.nsi').read_text(
+    encoding='utf-8')
 Path(os.environ['WRAPPER']).write_text(
-    '\n'.join(lines) + '\n', encoding='utf-8')
+    '\n'.join(lines) + '\n' + template, encoding='utf-8')
 PY
 rm -f "$OUTPUT_FILE" "$METADATA_FILE" "$SHA_FILE"
 "$MAKENSIS_BIN" -V3 "$WRAPPER"
