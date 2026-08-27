@@ -39,6 +39,12 @@ def test_success_redirect_cannot_leave_origin() -> None:
         production_settings(login_success_path="https://attacker.example/capture")
 
 
+def test_local_executor_asset_directory_must_be_absolute() -> None:
+    with pytest.raises(ValidationError):
+        production_settings(local_executor_asset_dir="relative/release-assets")
+    assert production_settings().local_executor_asset_dir == "/app/release-assets"
+
+
 def test_settings_repr_redacts_database_password_app_secret_and_buyer_key() -> None:
     settings = production_settings()
     rendered = repr(settings)

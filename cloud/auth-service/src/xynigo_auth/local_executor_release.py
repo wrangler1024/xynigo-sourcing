@@ -199,7 +199,6 @@ def resolve_local_executor_release_asset(
         **source,
         "platformKey": platform_key,
         "variant": variant,
-        "sourceDownloadUrl": _release_download_url(asset_name),
     }
 
 
@@ -228,9 +227,8 @@ def latest_local_executor_release() -> dict[str, object]:
         "releaseUrl": (
             f"https://github.com/{REPOSITORY}/releases/tag/v{RELEASE_VERSION}"
         ),
-        "manifestUrl": (
-            f"https://github.com/{REPOSITORY}/releases/download/"
-            f"v{RELEASE_VERSION}/Xynigo_Sourcing_v{RELEASE_VERSION}_update.json"
+        "manifestUrl": _release_download_url(
+            f"Xynigo_Sourcing_v{RELEASE_VERSION}_update.json"
         ),
         "platforms": platforms,
         "notesZh": [

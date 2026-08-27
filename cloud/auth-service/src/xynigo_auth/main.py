@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 from urllib.parse import quote
 
-import httpx
 from fastapi import (
     Cookie,
     Depends,
@@ -35,14 +34,12 @@ from fastapi.responses import (
     HTMLResponse,
     JSONResponse,
     RedirectResponse,
-    StreamingResponse,
 )
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.orm import Session
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from . import __version__
 from .business_log import BusinessLogService
 from .buyer_account_contract import (
     BuyerAccountPreflightBody,
@@ -361,7 +358,6 @@ def create_app(
     directory_client: DirectoryClient | None = None,
     database: Database | None = None,
     procurement_import_gateway: FeishuSheetsGateway | None = None,
-    local_executor_download_transport: httpx.BaseTransport | None = None,
 ) -> FastAPI:
     settings = settings or Settings()  # type: ignore[call-arg]
     database = database or Database(settings.database_url.get_secret_value())
@@ -795,7 +791,7 @@ def create_app(
 
     @app.get(
         "/v1/local-executor/releases/{platform_key}/{variant}/download",
-        response_class=StreamingResponse,
+        response_class=FileResponse,
     )
     def download_local_executor_release(
         platform_key: str,
@@ -806,8 +802,8 @@ def create_app(
             str | None, Cookie(alias=settings.cookie_name)
         ] = None,
         authorization: Annotated[str | None, Header()] = None,
-    ) -> StreamingResponse:
-        """Stream one allowlisted immutable installer through the system origin."""
+    ) -> FileResponse:
+        """Serve one verified immutable installer through the system origin."""
 
         raw_token = _request_session_token(session_token, authorization)
         record, user, tenant = _authenticated_identity(session, raw_token)
@@ -821,78 +817,37 @@ def create_app(
         record.last_seen_at = utcnow()
         session.commit()
 
-        source_url = str(asset["sourceDownloadUrl"])
         expected_size = int(asset["size"])
         asset_name = str(asset["assetName"])
-        client = httpx.Client(
-            transport=local_executor_download_transport,
-            follow_redirects=True,
-            timeout=httpx.Timeout(90.0, connect=10.0),
-            headers={
-                "Accept": "application/octet-stream",
-                "Accept-Encoding": "identity",
-                "User-Agent": f"Xynigo-Cloud/{__version__}",
-            },
-        )
         try:
-            upstream = client.send(
-                client.build_request("GET", source_url),
-                stream=True,
-            )
-        except httpx.HTTPError:
-            client.close()
-            logger.warning(
-                "local executor asset upstream request failed",
+            asset_root = Path(settings.local_executor_asset_dir).resolve(strict=True)
+            asset_path = (asset_root / asset_name).resolve(strict=True)
+            if asset_path.parent != asset_root or not asset_path.is_file():
+                raise OSError("asset path is outside the reviewed directory")
+            if asset_path.stat().st_size != expected_size:
+                raise OSError("asset size does not match the release catalog")
+            digest = hashlib.sha256()
+            with asset_path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            if digest.hexdigest() != str(asset["sha256"]):
+                raise OSError("asset digest does not match the release catalog")
+        except OSError:
+            logger.error(
+                "local executor asset storage validation failed",
                 extra={"platform": platform_key, "variant": variant},
             )
             raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={"code": "local_executor_download_unavailable"},
             ) from None
 
-        final_host = str(upstream.url.host or "").casefold()
-        trusted_host = final_host == "github.com" or final_host.endswith(
-            ".githubusercontent.com"
-        )
-        reported_size = upstream.headers.get("Content-Length")
-        invalid_size = bool(reported_size) and reported_size != str(expected_size)
-        if (
-            upstream.status_code != status.HTTP_200_OK
-            or not trusted_host
-            or invalid_size
-        ):
-            upstream.close()
-            client.close()
-            logger.warning(
-                "local executor asset upstream validation failed",
-                extra={
-                    "platform": platform_key,
-                    "variant": variant,
-                    "status": upstream.status_code,
-                    "host": final_host,
-                },
-            )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail={"code": "local_executor_download_unavailable"},
-            )
-
-        def iter_asset() -> Iterator[bytes]:
-            try:
-                yield from upstream.iter_bytes(chunk_size=64 * 1024)
-            finally:
-                upstream.close()
-                client.close()
-
-        return StreamingResponse(
-            iter_asset(),
+        return FileResponse(
+            asset_path,
+            filename=asset_name,
             media_type="application/octet-stream",
             headers={
                 "Cache-Control": "private, no-store",
-                "Content-Disposition": (
-                    f"attachment; filename*=UTF-8''{quote(asset_name)}"
-                ),
-                "Content-Length": str(expected_size),
                 "X-Content-Type-Options": "nosniff",
                 "X-Xynigo-Asset-SHA256": str(asset["sha256"]),
             },

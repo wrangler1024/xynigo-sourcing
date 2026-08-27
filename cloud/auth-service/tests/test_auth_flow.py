@@ -4,7 +4,6 @@ import hashlib
 from dataclasses import dataclass, field
 from urllib.parse import parse_qs, urlparse
 
-import httpx
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -50,7 +49,7 @@ def build_test_app(
     pkce_method: str = "S256",
     procurement_import_enabled: bool = False,
     procurement_import_gateway=None,
-    local_executor_download_transport=None,
+    local_executor_asset_dir: str | None = None,
 ):
     database = Database(f"sqlite+pysqlite:///{tmp_path / 'identity.sqlite3'}")
     Base.metadata.create_all(database.engine)
@@ -70,6 +69,9 @@ def build_test_app(
         allowed_hosts="testserver",
         procurement_import_enabled=procurement_import_enabled,
         procurement_import_worker_interval_seconds=1,
+        local_executor_asset_dir=(
+            local_executor_asset_dir or str(tmp_path / "release-assets")
+        ),
     )
     oauth = FakeOAuthClient(
         FeishuIdentity(
@@ -85,7 +87,6 @@ def build_test_app(
         oauth_client=oauth,
         database=database,
         procurement_import_gateway=procurement_import_gateway,
-        local_executor_download_transport=local_executor_download_transport,
     )
     return app, database, oauth
 
@@ -204,19 +205,12 @@ def test_authenticated_member_downloads_allowlisted_asset_through_system_origin(
         },
     )
 
-    def upstream(request: httpx.Request) -> httpx.Response:
-        assert request.url.host == "github.com"
-        assert request.url.path.endswith("/Xynigo_Test.pkg")
-        return httpx.Response(
-            200,
-            content=payload,
-            headers={"Content-Length": str(len(payload))},
-            request=request,
-        )
-
+    asset_root = tmp_path / "release-assets"
+    asset_root.mkdir()
+    (asset_root / "Xynigo_Test.pkg").write_bytes(payload)
     app, _database, _oauth = build_test_app(
         tmp_path,
-        local_executor_download_transport=httpx.MockTransport(upstream),
+        local_executor_asset_dir=str(asset_root),
     )
     with TestClient(app) as client:
         state, _challenge = start_login(client)
@@ -233,9 +227,7 @@ def test_authenticated_member_downloads_allowlisted_asset_through_system_origin(
         assert response.status_code == 200
         assert response.content == payload
         assert response.headers["content-length"] == str(len(payload))
-        assert response.headers["content-disposition"].endswith(
-            "Xynigo_Test.pkg"
-        )
+        assert "Xynigo_Test.pkg" in response.headers["content-disposition"]
         assert response.headers["x-xynigo-asset-sha256"] == digest
 
 

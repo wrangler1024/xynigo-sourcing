@@ -137,8 +137,8 @@ def test_standard_installer_can_keep_a_valid_green_fallback(monkeypatch):
     )
     assert primary is not None
     assert fallback is not None
-    assert primary["sourceDownloadUrl"].endswith("/Xynigo_Setup.exe")
-    assert fallback["sourceDownloadUrl"].endswith("/Xynigo_Green.zip")
+    assert primary["assetName"] == "Xynigo_Setup.exe"
+    assert fallback["assetName"] == "Xynigo_Green.zip"
     assert resolve_local_executor_release_asset("unknown", "primary") is None
     assert resolve_local_executor_release_asset("windows-x86_64", "other") is None
 

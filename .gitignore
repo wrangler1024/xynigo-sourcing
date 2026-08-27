@@ -9,6 +9,7 @@ __pycache__/
 .pytest_cache/
 build/
 dist/
+cloud/auth-service/release-assets/
 .cache/
 .codex_tmp/
 
