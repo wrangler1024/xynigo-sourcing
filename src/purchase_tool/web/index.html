@@ -7057,13 +7057,13 @@ function launchLocalExecutorByProtocol() {
 function scheduleLocalExecutorDeviceRefresh() {
   if (localExecutorDeviceTimer) clearTimeout(localExecutorDeviceTimer);
   localExecutorDeviceTimer = null;
-  if (activeModule === 'localexecutor' && authReady && CLOUD_WEB_MODE) {
+  if (authReady && CLOUD_WEB_MODE && hasFeatureAccess('localexecutor')) {
     localExecutorDeviceTimer = setTimeout(() => loadLocalExecutorDevices(false), 15000);
   }
 }
 
 async function loadLocalExecutorDevices(force=false) {
-  if (!CLOUD_WEB_MODE || localExecutorDeviceLoading) return;
+  if (!CLOUD_WEB_MODE || !authReady || localExecutorDeviceLoading) return;
   localExecutorDeviceLoading = true;
   $('btnLocalExecutorRefreshDevices').disabled = true;
   try {

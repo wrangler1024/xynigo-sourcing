@@ -188,6 +188,20 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
         self.assertIn('☁ 本地执行器均离线', self.html)
         self.assertNotIn('☁ 本机执行器离线', self.html)
 
+    def test_topbar_executor_status_refreshes_outside_executor_page(self):
+        self.assertIn(
+            "if (authReady && CLOUD_WEB_MODE && hasFeatureAccess('localexecutor'))",
+            self.html,
+        )
+        self.assertIn(
+            "if (!CLOUD_WEB_MODE || !authReady || localExecutorDeviceLoading) return;",
+            self.html,
+        )
+        self.assertNotIn(
+            "activeModule === 'localexecutor' && authReady && CLOUD_WEB_MODE",
+            self.html,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
