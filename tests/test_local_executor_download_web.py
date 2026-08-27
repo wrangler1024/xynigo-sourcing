@@ -218,7 +218,8 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
         self.assertIn('function renderCloudExecutorHubStatus()', self.html)
         self.assertIn("item.connectivity === 'online'", self.html)
         self.assertIn("device.hubStatus === 'ready'", self.html)
-        self.assertIn('🟢 HubStudio 已连接', self.html)
+        self.assertIn("pill.textContent = 'HubStudio 已连接'", self.html)
+        self.assertNotIn('🟢 HubStudio 已连接', self.html)
         self.assertIn('🟠 执行器在线 · HubStudio 未连接', self.html)
         self.assertIn('☁ 本地执行器均离线', self.html)
         self.assertNotIn('☁ 本机执行器离线', self.html)
@@ -267,6 +268,12 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
             ".local-executor-entry.online .local-executor-entry-dot "
             "{ width: 12px; height: 12px; background: var(--green); "
             "box-shadow: none; }",
+            self.html,
+        )
+        self.assertIn(
+            '#hubStatus.pill.ok::before { content: ""; flex: 0 0 auto; '
+            'width: 12px; height: 12px; border-radius: 50%; '
+            'background: var(--green); }',
             self.html,
         )
 

@@ -289,6 +289,7 @@
   .topbar-right { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; }
   .pill { display: inline-flex; align-items: center; gap: 7px; padding: 8px 11px; font-size: 12px; font-weight: 800; }
   .pill.ok { background: var(--green-100); }
+  #hubStatus.pill.ok::before { content: ""; flex: 0 0 auto; width: 12px; height: 12px; border-radius: 50%; background: var(--green); }
   .update-notice {
     min-height: 38px; padding: 7px 12px; border: 1px solid #f1d28b; border-radius: 11px;
     display: inline-flex; align-items: center; gap: 7px; background: var(--parcel-100);
@@ -3652,7 +3653,7 @@ function renderCloudExecutorHubStatus() {
     ? selected : onlineDevices[0];
   if (device.hubStatus === 'ready') {
     pill.className = 'pill ok';
-    pill.textContent = '🟢 HubStudio 已连接';
+    pill.textContent = 'HubStudio 已连接';
     pill.title = `${device.displayName || '本地执行器'}在线，HubStudio Local API 正常。`;
     return;
   }
@@ -3675,7 +3676,7 @@ function setHubStatus(connected) {
   hubConnected = connected;
   const pill = $('hubStatus');
   if (connected === null) { pill.className = 'pill checking'; pill.textContent = '⏳ 正在检测 HubStudio…'; }
-  else if (connected) { pill.className = 'pill ok'; pill.textContent = '🟢 HubStudio 已连接'; }
+  else if (connected) { pill.className = 'pill ok'; pill.textContent = 'HubStudio 已连接'; }
   else { pill.className = 'pill bad'; pill.textContent = '🔴 HubStudio 未连接，点此重试'; }
 }
 
