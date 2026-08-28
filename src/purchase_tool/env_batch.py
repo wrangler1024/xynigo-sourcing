@@ -222,6 +222,21 @@ def validate_purchase_tag(value):
     return tag
 
 
+def validate_purchase_group_site(value, site):
+    """Reject a group that explicitly names the opposite purchase site."""
+    tag = validate_purchase_tag(value)
+    site = normalize_env_site(site)
+    mx_named = bool(re.search(
+        r'墨西哥|(?<![A-Za-z0-9])MX(?![A-Za-z0-9])', tag, re.I))
+    us_named = bool(re.search(
+        r'美国|(?<![A-Za-z0-9])US(?![A-Za-z0-9])', tag, re.I))
+    if site == 'US' and mx_named:
+        raise EnvBatchError('美国站不能使用墨西哥采购分组，请重新选择')
+    if site == 'MX' and us_named:
+        raise EnvBatchError('墨西哥站不能使用美国采购分组，请重新选择')
+    return tag
+
+
 # 内置默认动态代理提取链接（Jeff 2026-08-20 决策：前期写死，降低同事端配置成本；
 # 运行时可在设置页用自定义链接覆盖，清除配置即回落到本默认值）。
 DEFAULT_PROXY_LINK = (
@@ -267,7 +282,7 @@ def envbatch_preflight(hub, purchase_tag, proxy_link, site='MX'):
     problems = []
     tag = ''
     try:
-        tag = validate_purchase_tag(purchase_tag)
+        tag = validate_purchase_group_site(purchase_tag, site)
         result['purchaseTag'] = tag
     except EnvBatchError as exc:
         problems.append(str(exc))

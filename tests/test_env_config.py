@@ -15,10 +15,11 @@ import purchase_tool.main as main_module
 from purchase_tool.main import (
     Handler, default_config, effective_proxy_link, load_config,
     lark_target_link, public_config, public_executor_config, public_lark_config,
-    public_lark_runtime_status, save_config,
+    public_envbatch_preferences, public_lark_runtime_status, save_config,
     purchase_tag_for_site,
     refreshed_lark_target_labels, resolve_submitted_lark_target,
-    updated_config, updated_executor_config, updated_lark_config)
+    updated_config, updated_envbatch_preferences, updated_executor_config,
+    updated_lark_config)
 from purchase_tool.lark_credentials import MemoryCredentialStore
 from purchase_tool.lark_links import resolve_lark_ledger_link
 
@@ -171,6 +172,40 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(updated[key], old[key])
         with self.assertRaisesRegex(ValueError, '不允许'):
             updated_executor_config(old, {'purchaseSite': 'MX'})
+
+    def test_environment_preferences_only_expose_and_update_site_groups(self):
+        old = default_config()
+        old.update({
+            'purchaseSite': 'MX',
+            'purchaseTags': {'MX': '希音墨西哥采购', 'US': ''},
+            'proxyLink': TEST_PROXY,
+        })
+        updated = updated_envbatch_preferences(old, {
+            'purchaseSite': 'US',
+            'purchaseTags': {'US': '美国采购分组'},
+        })
+        self.assertEqual(updated['purchaseSite'], 'US')
+        self.assertEqual(updated['purchaseTags']['MX'], '希音墨西哥采购')
+        self.assertEqual(updated['purchaseTags']['US'], '美国采购分组')
+        public = public_envbatch_preferences(updated)
+        self.assertEqual(public['purchaseSite'], 'US')
+        self.assertEqual(public['purchaseTags']['US'], '美国采购分组')
+        self.assertNotIn('hubPort', public)
+        self.assertNotIn('proxyLink', json.dumps(public, ensure_ascii=False))
+        with self.assertRaisesRegex(ValueError, '只允许'):
+            updated_envbatch_preferences(old, {'hubPort': 6874})
+        with self.assertRaisesRegex(ValueError, '没有可保存'):
+            updated_envbatch_preferences(old, {})
+        with self.assertRaisesRegex(ValueError, '美国站不能使用墨西哥'):
+            updated_envbatch_preferences(old, {
+                'purchaseSite': 'US',
+                'purchaseTags': {'US': '希音墨西哥采购'},
+            })
+        with self.assertRaisesRegex(ValueError, '墨西哥站不能使用美国'):
+            updated_envbatch_preferences(old, {
+                'purchaseSite': 'MX',
+                'purchaseTags': {'MX': '美国采购分组'},
+            })
 
     def test_lark_config_preserves_blanks_and_never_returns_identifiers(self):
         old = default_config()
@@ -368,6 +403,8 @@ class ConfigRouteTests(unittest.TestCase):
                  'proxyLink': TEST_PROXY,
                  'larkBuyerBaseToken': 'bascnPublicSafeExample',
                  'larkBuyerTableId': 'tblPublicSafeExample'},
+            config_lock=threading.RLock(),
+            tasks=SimpleNamespace(snapshot=lambda: {'tasks': []}),
             auth=SimpleNamespace(require=lambda permission=None, role=None: {
                 'roles': ['super_admin'],
                 'permissions': ['system.lark_connection.manage'],
@@ -418,6 +455,35 @@ class ConfigRouteTests(unittest.TestCase):
         self.assertNotIn(TEST_PROXY, preflight_text)
         self.assertTrue(json.loads(preflight_text)['ready'])
         self.assertEqual(json.loads(preflight_us_text)['site'], 'US')
+
+    def test_environment_preferences_persist_us_site_and_group(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = str(Path(tmp) / 'config.json')
+            initial = default_config()
+            initial['purchaseTags'] = {
+                'MX': '希音墨西哥采购',
+                'US': '',
+            }
+            initial['purchaseTag'] = '希音墨西哥采购'
+            with patch.object(main_module, 'CONFIG_PATH', config_path):
+                save_config(initial)
+                main_module.STATE.cfg = initial
+                response = self._post_json('/api/envbatch/preferences', {
+                    'purchaseSite': 'US',
+                    'purchaseTags': {'US': '美国采购分组'},
+                })
+                reloaded = load_config()
+                persisted = json.loads(
+                    self._get_json('/api/envbatch/preferences'))
+        self.assertTrue(response['saved'])
+        self.assertEqual(response['purchaseSite'], 'US')
+        self.assertEqual(response['purchaseTags']['US'], '美国采购分组')
+        self.assertEqual(reloaded['purchaseSite'], 'US')
+        self.assertEqual(reloaded['purchaseTags']['MX'], '希音墨西哥采购')
+        self.assertEqual(reloaded['purchaseTags']['US'], '美国采购分组')
+        self.assertEqual(persisted['purchaseSite'], 'US')
+        self.assertNotIn('hubPort', persisted)
+        self.assertNotIn(TEST_PROXY, json.dumps(persisted))
 
     def test_lark_unified_ledger_template_is_downloadable(self):
         url = 'http://127.0.0.1:%d/api/lark/template' % (

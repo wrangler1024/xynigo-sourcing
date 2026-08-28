@@ -71,7 +71,8 @@ from .env_batch import (BACKUP_MAX_COUNT, BACKUP_REMARK, BUYER_CODES,
                         validate_accounts_site,
                         validate_assignment_template,
                         validate_backup_count,
-                        validate_proxy_link, validate_purchase_tag)
+                        validate_proxy_link, validate_purchase_group_site,
+                        validate_purchase_tag)
 from .executor_channel import (
     CloudExecutorClient, ExecutorChannelStateStore, ExecutorChannelWorker,
     system_executor_credential_store)
@@ -404,6 +405,35 @@ def public_executor_config(cfg):
         for key in EXECUTOR_RUNTIME_CONFIG_FIELDS
         if key in public
     }
+
+
+def public_envbatch_preferences(cfg):
+    """Return only non-secret preferences needed by environment creation."""
+    public = public_config(cfg)
+    fields = (
+        'purchaseSite', 'purchaseTags', 'importBuyerPlan',
+        'verifySampleCount', 'buyers', 'buyerDefaultSplit', 'backupMaxCount',
+    )
+    return {key: public[key] for key in fields if key in public}
+
+
+def updated_envbatch_preferences(old_cfg, body):
+    """Apply the site/group choices exposed to environment operators."""
+    if not isinstance(body, dict):
+        raise ValueError('环境偏好请求必须是 JSON 对象')
+    allowed = {'purchaseSite', 'purchaseTags'}
+    unknown = set(body) - allowed
+    if unknown:
+        raise ValueError('环境偏好只允许修改站点和采购分组')
+    if not body:
+        raise ValueError('环境偏好没有可保存的字段')
+    updated = updated_config(old_cfg, body)
+    submitted_tags = body.get('purchaseTags')
+    if isinstance(submitted_tags, dict):
+        for site, value in submitted_tags.items():
+            if str(value or '').strip():
+                validate_purchase_group_site(value, site)
+    return updated
 
 
 def updated_config(old_cfg, body):
@@ -2675,6 +2705,8 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/envbatch/preflight':
                 site = (query.get('site') or ['MX'])[0]
                 self._json(STATE.env_job.preflight(site))
+            elif path == '/api/envbatch/preferences':
+                self._json(public_envbatch_preferences(STATE.cfg))
             elif path == '/api/envbatch/template':
                 if not os.path.isfile(ENV_TEMPLATE_XLSX):
                     return self._json({'error': '填写模板未打包'}, 404)
@@ -3156,6 +3188,25 @@ class Handler(BaseHTTPRequestHandler):
                     raise
                 self._json({'started': True, 'count': count,
                             'taskId': task_id})
+            elif path == '/api/envbatch/preferences':
+                lock = getattr(STATE, 'config_lock', None)
+                with lock if lock is not None else nullcontext():
+                    task_service = getattr(STATE, 'tasks', None)
+                    task_snapshot = (
+                        task_service.snapshot() if task_service is not None
+                        else {'tasks': []})
+                    if any(item.get('kind') in ('env_batch', 'backup_env')
+                           for item in task_snapshot.get('tasks') or []):
+                        raise RuntimeError(
+                            '环境创建任务运行中，不能切换站点或采购分组')
+                    old_cfg = load_config()
+                    cfg = updated_envbatch_preferences(old_cfg, body)
+                    save_config(cfg)
+                    STATE.cfg = cfg
+                self._json({
+                    'saved': True,
+                    **public_envbatch_preferences(cfg),
+                })
             elif path == '/api/config':
                 lock = getattr(STATE, 'config_lock', None)
                 with lock if lock is not None else nullcontext():

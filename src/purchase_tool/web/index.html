@@ -2665,6 +2665,14 @@ let safeParallelTasks = true;
 const BUYER_GROUP_PATTERN = /采购|买家号|Registration/i;
 // 站点默认采购分组：本机未配置时下拉直接选中并记住，免得在 HubStudio 长列表里翻找
 const SITE_DEFAULT_GROUPS = { MX: '希音墨西哥采购', US: '美国采购分组' };
+function envGroupCompatibleWithSite(groupName, site) {
+  const name = String(groupName || '');
+  const mxNamed = /墨西哥|(?:^|[^A-Za-z0-9])MX(?:$|[^A-Za-z0-9])/i.test(name);
+  const usNamed = /美国|(?:^|[^A-Za-z0-9])US(?:$|[^A-Za-z0-9])/i.test(name);
+  if (site === 'US') return !mxNamed;
+  if (site === 'MX') return !usNamed;
+  return false;
+}
 const PRIMARY_MODULES = {
   workbench: {
     label: '工作台', hint: '概览 · 待办 · 连接', defaultModule: null,
@@ -8951,7 +8959,7 @@ async function loadEnvGroups() {
   refreshAssignUi();
   try {
     const [cfg, result] = await Promise.all([
-      api('/api/config'), api('/api/groups')
+      api('/api/envbatch/preferences'), api('/api/groups')
     ]);
     envBuyers = normalizeEnvBuyers(cfg.buyers);
     envDefaultSplit = normalizeEnvDefaultSplit(cfg.buyerDefaultSplit);
@@ -8961,13 +8969,14 @@ async function loadEnvGroups() {
     if (cfg.importBuyerPlan) envImportBuyerPlan = cfg.importBuyerPlan;
     $('envVerify').checked = Number(cfg.verifySampleCount == null ? 1 : cfg.verifySampleCount) > 0;
     // 买家号环境分组过滤：Hub 里店铺/后台/运营分组太多，只留采购与买家号相关
-    const groups = Array.from(new Set(
+    const allGroups = Array.from(new Set(
       (result.groups || []).map(group => String(group || '').trim()).filter(Boolean)
     )).filter(name => BUYER_GROUP_PATTERN.test(name));
     const configuredSite = ['MX', 'US'].includes(cfg.purchaseSite)
       ? cfg.purchaseSite : 'MX';
     siteSel.value = configuredSite;
     const site = siteSel.value;
+    const groups = allGroups.filter(name => envGroupCompatibleWithSite(name, site));
     sel.innerHTML = '';
     const placeholder = document.createElement('option');
     placeholder.value = '';
@@ -8992,7 +9001,7 @@ async function loadEnvGroups() {
         sel.value = fallback;
         if (!configured) {
           try {
-            await api('/api/config', {
+            await api('/api/envbatch/preferences', {
               method:'POST', headers:{'Content-Type':'application/json'},
               body:JSON.stringify({purchaseSite:site, purchaseTags:{[site]:fallback}})
             });
@@ -9024,11 +9033,12 @@ $('envSite').onchange = async e => {
   envGroupSaving = true;
   envPreflightReady = false;
   e.target.disabled = true;
+  $('envSiteGroup').value = '';
   $('envSiteGroup').disabled = true;
   $('btnEnvStart').disabled = true;
   $('btnEnvPreview').disabled = true;
   try {
-    await api('/api/config', {
+    await api('/api/envbatch/preferences', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({purchaseSite:site})
     });
@@ -9055,7 +9065,7 @@ $('envSiteGroup').onchange = async e => {
   $('btnEnvStart').disabled = true;
   $('btnEnvPreview').disabled = true;
   try {
-    await api('/api/config', {
+    await api('/api/envbatch/preferences', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
         purchaseSite:$('envSite').value,

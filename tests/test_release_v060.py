@@ -120,6 +120,7 @@ class ReleaseV0127Tests(unittest.TestCase):
         self.assertIn('async function loadEnvGroups()', html)
         self.assertIn('id="envSite"', html)
         self.assertIn('purchaseTags:{[$(\'envSite\').value]:selected}', html)
+        self.assertIn("api('/api/envbatch/preferences'", html)
         self.assertIn('site:$(\'envSite\').value', html)
         self.assertIn('option.textContent = group', html)
         self.assertNotIn('option.textContent = `墨西哥站 · ${group}`', html)
@@ -154,6 +155,7 @@ class ReleaseV0127Tests(unittest.TestCase):
         # 分组默认选中站点标准分组 + 日期控件（2026-08-19 Jeff 指示）
         self.assertIn('type="date" id="envDate"', html)
         self.assertIn('SITE_DEFAULT_GROUPS', html)
+        self.assertIn('function envGroupCompatibleWithSite(groupName, site)', html)
         self.assertIn("MX: '希音墨西哥采购'", html)
         self.assertIn("US: '美国采购分组'", html)
         self.assertIn('function envPurchaseDate()', html)

@@ -31,6 +31,7 @@ from purchase_tool.hub_api import HubStudioApi
 
 
 TEST_TAG = 'MX-Purchase'
+TEST_US_TAG = 'US-Purchase'
 TEST_PROXY = 'https://proxy.example.test/{region}'
 
 
@@ -64,7 +65,7 @@ class FakeHub(object):
         self.fail_create_with_link = fail_create_with_link
 
     def group_list(self):
-        return [TEST_TAG]
+        return [TEST_TAG, TEST_US_TAG]
 
     def env_list(self, tag=None):
         with self.lock:
@@ -399,9 +400,18 @@ class EnvBatchTests(unittest.TestCase):
         self.assertTrue(ready['groupFound'])
         self.assertNotIn(TEST_PROXY, json.dumps(ready))
         us_ready = envbatch_preflight(
-            hub, TEST_TAG, TEST_PROXY, site='US')
+            hub, TEST_US_TAG, TEST_PROXY, site='US')
         self.assertTrue(us_ready['ready'])
         self.assertEqual(us_ready['site'], 'US')
+
+        wrong_us_group = envbatch_preflight(
+            hub, TEST_TAG, TEST_PROXY, site='US')
+        self.assertFalse(wrong_us_group['ready'])
+        self.assertIn('美国站不能使用墨西哥', wrong_us_group['message'])
+        wrong_mx_group = envbatch_preflight(
+            hub, TEST_US_TAG, TEST_PROXY, site='MX')
+        self.assertFalse(wrong_mx_group['ready'])
+        self.assertIn('墨西哥站不能使用美国', wrong_mx_group['message'])
 
         no_proxy = envbatch_preflight(hub, TEST_TAG, '')
         self.assertFalse(no_proxy['ready'])

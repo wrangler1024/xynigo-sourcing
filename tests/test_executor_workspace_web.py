@@ -17,6 +17,7 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             "'/api/query'",
             "'/api/progress'",
             "'/api/envbatch/'",
+            "api('/api/envbatch/preferences')",
             "'/api/buyer-library/import/'",
             "'/api/resources/stores'",
             "'/api/resources/proxies'",
@@ -26,6 +27,14 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             html.index("if (isCloudWorkspaceRpcPath(path))"),
             html.index("return cloudLocalStub(path, opts);"),
         )
+        env_groups = html[
+            html.index("async function loadEnvGroups()"):
+            html.index("function inferQuerySite(groupName)")
+        ]
+        self.assertIn("/api/envbatch/preferences", env_groups)
+        self.assertNotIn("api('/api/config'", env_groups)
+        self.assertIn("envGroupCompatibleWithSite(name, site)", env_groups)
+        self.assertIn("$('envSiteGroup').value = '';", env_groups)
 
     def test_binary_results_no_longer_navigate_to_cloud_local_api_paths(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")
