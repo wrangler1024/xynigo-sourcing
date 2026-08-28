@@ -11,7 +11,7 @@ def test_windows_standard_installer_requires_signature_timestamp_and_publisher()
     valid = {
         "windows-x86_64": {
             "installMode": "standard_per_user",
-            "runtimeId": "0.12.7-testbuild001",
+            "runtimeId": "0.12.8-testbuild001",
             "authenticodeSigned": True,
             "authenticodeTimestamped": True,
             "publisher": "Example Trusted Publisher",
@@ -33,7 +33,7 @@ def test_windows_standard_installer_requires_versioned_runtime_id():
     valid = {
         "windows-x86_64": {
             "installMode": "standard_per_user",
-            "runtimeId": "0.12.7-build001",
+            "runtimeId": "0.12.8-build001",
             "authenticodeSigned": True,
             "authenticodeTimestamped": True,
             "publisher": "Example Trusted Publisher",
@@ -91,7 +91,7 @@ def test_unsigned_standard_installer_requires_explicit_internal_test_gate():
     platforms = {
         "windows-x86_64": {
             "installMode": "standard_per_user",
-            "runtimeId": "0.12.7-testbuild001",
+            "runtimeId": "0.12.8-testbuild001",
             "internalUnsignedTest": True,
         },
         "macos-arm64": {
@@ -119,7 +119,7 @@ def test_standard_installer_can_keep_a_valid_green_fallback(monkeypatch):
     platform = {
         "label": "Windows x86_64",
         "installMode": "standard_per_user",
-        "runtimeId": "0.12.7-testbuild001",
+        "runtimeId": "0.12.8-testbuild001",
         "assetName": "Xynigo_Setup.exe",
         "sha256": "c" * 64,
         "size": 2,
@@ -182,7 +182,7 @@ def test_invalid_green_fallback_is_rejected(field, value):
         validate_release_platforms({
             "windows-x86_64": {
                 "installMode": "standard_per_user",
-                "runtimeId": "0.12.7-testbuild001",
+                "runtimeId": "0.12.8-testbuild001",
                 "authenticodeSigned": True,
                 "authenticodeTimestamped": True,
                 "publisher": "Xynigo Internal",

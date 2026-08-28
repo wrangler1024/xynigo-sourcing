@@ -14,9 +14,9 @@ from . import __version__
 
 
 REPOSITORY = "wrangler1024/xynigo-sourcing"
-RELEASE_VERSION = "0.12.7"
+RELEASE_VERSION = "0.12.8"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-08-28T14:38:39Z"
+RELEASE_PUBLISHED_AT = "2026-08-28T15:00:00Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,8 +31,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.12.7-f8d203614fc5",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.12.7_hotfix11.exe",
+        "runtimeId": "0.12.8-candidate0001",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.12.8.exe",
         "sha256": "54320a6d475dd681d247468b568cd1479942109e6a84fc428b8666064aea17ac",
         "size": 15_055_297,
         "installMode": "standard_per_user",
@@ -43,7 +43,7 @@ _PLATFORMS = {
         "trayMenu": True,
         "launcherFile": "Xynigo.exe",
         "greenFallback": {
-            "assetName": "Xynigo_Sourcing_Windows_20260828_v0.12.7.zip",
+            "assetName": "Xynigo_Sourcing_Windows_20260828_v0.12.8.zip",
             "sha256": "256efb5d4d0b947a48883dbd905e6b0d5035daa305126dc3857d899be4d3c3b4",
             "size": 18_158_605,
             "installMode": "green_package",
@@ -57,7 +57,7 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.12.7_hotfix7.pkg",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.12.8.pkg",
         "sha256": "35cc3a77a27090ed00726ea26ea40fcdf503b7e69178ac4144620ac7146166b0",
         "size": 19_399_200,
         "installMode": "standard_system_application",
@@ -67,7 +67,7 @@ _PLATFORMS = {
         "notarized": False,
         "stapled": False,
         "greenFallback": {
-            "assetName": "Xynigo_Sourcing_macOS_arm64_20260828_v0.12.7.zip",
+            "assetName": "Xynigo_Sourcing_macOS_arm64_20260828_v0.12.8.zip",
             "sha256": "11a5039fa658d0dfc228cb2583bba73e8307344341223fd7ed0caa55e0248919",
             "size": 10_263_121,
             "installMode": "green_package",
@@ -246,10 +246,10 @@ def latest_local_executor_release() -> dict[str, object]:
         ),
         "platforms": platforms,
         "notesZh": [
-            "Windows hotfix11 修复云端 Web 美国站切换与 HubStudio 采购分组保存未进入本地执行器的问题。",
-            "环境分组现在按墨西哥/美国站点过滤，后端预检会阻断把美国账号建入墨西哥分组等交叉配置。",
-            "已安装 hotfix10 的同事可直接在线升级；更早标准版需从云端覆盖安装 hotfix11。",
+            "v0.12.8 收口 v0.12.7 已验证热修复，不再复用同一版本号追加不同安装资产。",
+            "云端 Web 通过 workspace.rpc.v1 调度当前用户配对的执行器，设备与任务保持 owner 隔离。",
+            "Windows 包包含定版状态中心、不可变运行时修订目录和受控在线更新；Mac 包包含冻结运行时可信 CA。",
+            "覆盖安装保留配置、日志、运行数据和设备配对；绿色包继续作为显式回退。",
             "本次按内部快速迭代策略提供未签名标准安装包；下载前必须核对 SHA-256，并按飞书开发群教程手动确认系统安全提示。",
-            "当前先支持 Windows 标准安装包在线更新；macOS 标准安装包仍按原流程覆盖安装。",
         ],
     }
