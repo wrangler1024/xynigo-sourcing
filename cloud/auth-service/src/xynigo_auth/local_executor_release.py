@@ -16,7 +16,7 @@ from . import __version__
 REPOSITORY = "wrangler1024/xynigo-sourcing"
 RELEASE_VERSION = "0.12.7"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-08-28T11:06:19Z"
+RELEASE_PUBLISHED_AT = "2026-08-28T14:38:39Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,10 +31,10 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.12.7-2abf86732761",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.12.7_hotfix10.exe",
-        "sha256": "ddde1902b84f79954edccdd1a1db0f76b09ded63c08a9d3e57ab16e45b18aeba",
-        "size": 15_059_897,
+        "runtimeId": "0.12.7-f8d203614fc5",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.12.7_hotfix11.exe",
+        "sha256": "54320a6d475dd681d247468b568cd1479942109e6a84fc428b8666064aea17ac",
+        "size": 15_055_297,
         "installMode": "standard_per_user",
         "internalUnsignedTest": True,
         "authenticodeSigned": False,
@@ -246,9 +246,9 @@ def latest_local_executor_release() -> dict[str, object]:
         ),
         "platforms": platforms,
         "notesZh": [
-            "Windows hotfix10 是在线升级引导版；hotfix9 及更早标准版需要最后手动覆盖安装一次。",
-            "安装引导版后，可在云端 Web 右上角检查并确认更新，执行器会自动下载、校验、静默安装和重启。",
-            "在线升级同时核对固定下载入口、文件大小与 SHA-256，并保留本地配置、查询日志和运行数据。",
+            "Windows hotfix11 修复云端 Web 美国站切换与 HubStudio 采购分组保存未进入本地执行器的问题。",
+            "环境分组现在按墨西哥/美国站点过滤，后端预检会阻断把美国账号建入墨西哥分组等交叉配置。",
+            "已安装 hotfix10 的同事可直接在线升级；更早标准版需从云端覆盖安装 hotfix11。",
             "本次按内部快速迭代策略提供未签名标准安装包；下载前必须核对 SHA-256，并按飞书开发群教程手动确认系统安全提示。",
             "当前先支持 Windows 标准安装包在线更新；macOS 标准安装包仍按原流程覆盖安装。",
         ],
