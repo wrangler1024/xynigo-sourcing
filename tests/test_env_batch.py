@@ -631,14 +631,16 @@ class EnvBatchTests(unittest.TestCase):
             return workbook_bytes([row])
         mx_cookie = '[{"name":"sid","domain":".shein.com.mx"}]'
         us_cookie = '[{"name":"sid","domain":".us.shein.com"}]'
-        from purchase_tool.env_batch import detect_cookie_site
+        from purchase_tool.env_batch import (count_mixed_site_accounts,
+                                              detect_cookie_site,
+                                              validate_accounts_site)
         self.assertEqual(detect_cookie_site(mx_cookie), 'MX')
         self.assertEqual(detect_cookie_site(us_cookie), 'US')
         self.assertIsNone(detect_cookie_site('[{"name":"sid"}]'))
         self.assertEqual(
             detect_cookie_site(mx_cookie + us_cookie), 'CONFLICT')
 
-        # 站点一致放行；冲突整批拒收（无 Cookie 标记不拦截）
+        # 站点一致放行；纯错站拒收（无 Cookie 标记不拦截）。
         accounts = parse_vendor_workbook(
             BytesIO(rows_with_cookie(mx_cookie)))
         plan = build_batch_plan(accounts, '1:新刚', purchase_date='20260819')
@@ -656,8 +658,11 @@ class EnvBatchTests(unittest.TestCase):
         both = parse_vendor_workbook(BytesIO(rows_with_cookie(
             '[{"name":"a","domain":".shein.com.mx"},'
             '{"name":"b","domain":".us.shein.com"}]')))
-        with self.assertRaisesRegex(EnvBatchError, '数据异常'):
-            build_batch_plan(both, '1:新刚', purchase_date='20260819')
+        mixed_plan = build_batch_plan(
+            both, '1:新刚', purchase_date='20260819')
+        self.assertEqual(len(mixed_plan), 1)
+        self.assertEqual(mixed_plan[0].account.cookie_text,
+                         both[0].cookie_text)
 
         mixed_cookie = (
             '[{"name":"a","domain":".shein.com.mx"},'
@@ -674,10 +679,14 @@ class EnvBatchTests(unittest.TestCase):
         ]
         aggregate_accounts = parse_vendor_workbook(
             BytesIO(workbook_bytes(aggregate_rows)))
+        self.assertEqual(count_mixed_site_accounts(aggregate_accounts), 3)
+        # 通用台账导入仍可使用严格模式；仅环境创建显式兼容混合登录态。
         with self.assertRaisesRegex(
                 EnvBatchError, '共 3 行数据异常.*第1行、第3-4行'):
-            build_batch_plan(
-                aggregate_accounts, '4:新刚', purchase_date='20260819')
+            validate_accounts_site(aggregate_accounts, 'MX')
+        aggregate_plan = build_batch_plan(
+            aggregate_accounts, '4:新刚', purchase_date='20260819')
+        self.assertEqual(len(aggregate_plan), 4)
 
     def test_bound_parallel_run_creates_all_rows(self):
         rows = []

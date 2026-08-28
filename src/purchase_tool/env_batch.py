@@ -150,8 +150,15 @@ def _format_row_ranges(row_numbers):
         for start, end in ranges)
 
 
-def validate_accounts_site(accounts, site):
-    """所选站点与账号 Cookie 域标记冲突时整批拒收（无标记不拦截）。"""
+def count_mixed_site_accounts(accounts):
+    """统计同时携带 MX/US 登录域 Cookie 的账号，不返回任何凭证内容。"""
+    return sum(
+        detect_cookie_site(account.cookie_text) == 'CONFLICT'
+        for account in accounts)
+
+
+def validate_accounts_site(accounts, site, *, allow_mixed=False):
+    """校验账号 Cookie 站点；可显式兼容同时包含所选站点的混合登录态。"""
     site = normalize_env_site(site)
     conflicts = []
     mismatches = []
@@ -161,12 +168,15 @@ def validate_accounts_site(accounts, site):
             conflicts.append(account.row_number)
         elif detected is not None and detected != site:
             mismatches.append((account.row_number, detected))
-    if not conflicts and not mismatches:
+    rejected_conflicts = [] if allow_mixed else conflicts
+    if not rejected_conflicts and not mismatches:
         return
-    issue_rows = conflicts + [row_number for row_number, _detected in mismatches]
+    issue_rows = rejected_conflicts + [
+        row_number for row_number, _detected in mismatches]
     details = []
-    if conflicts:
-        details.append('墨西哥与美国登录域混合 %d 行' % len(conflicts))
+    if rejected_conflicts:
+        details.append(
+            '墨西哥与美国登录域混合 %d 行' % len(rejected_conflicts))
     if mismatches:
         detected_counts = {}
         for _row_number, detected in mismatches:
@@ -733,7 +743,9 @@ def build_batch_plan(accounts, assignment_spec, existing_envs=None,
     if not re.fullmatch(r'20\d{6}', purchase_date):
         raise EnvBatchError('购买日期必须是 YYYYMMDD')
     assignments = assign_buyers(accounts, assignment_spec)
-    validate_accounts_site(accounts, site)
+    # 采购现阶段只能取得同时含 MX/US 登录域的 Cookie。环境创建按
+    # 用户所选站点继续执行并原样写入 Cookie；纯错站数据仍整批拒收。
+    validate_accounts_site(accounts, site, allow_mixed=True)
     existing_envs = list(existing_envs or [])
     if all_existing_envs is not None:
         validate_global_order_dedup(

@@ -79,6 +79,9 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             "error.code === 'executor_task_busy'",
             "filename:file.name, contentBase64, site:$('envSite').value",
             "站点已变更，请重新选择 xlsx",
+            "mixedSiteCookieCount",
+            "混合登录态（允许）",
+            "将按当前选择的",
         ):
             self.assertIn(marker, html)
         initializer = html[

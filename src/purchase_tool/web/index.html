@@ -125,7 +125,7 @@
   .stat-grid { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
   .stat-chip { background: var(--gray-bg); border-radius: 8px; padding: 8px 14px; font-size: 13px; }
   .stat-chip b { display: block; font-size: 15px; }
-  .stat-chip.ok b { color: var(--green); } .stat-chip.bad b { color: var(--red); } .stat-chip.blue b { color: var(--blue); }
+  .stat-chip.ok b { color: var(--green); } .stat-chip.bad b { color: var(--red); } .stat-chip.blue b { color: var(--blue); } .stat-chip.warn b { color: var(--amber); }
   .dots { display: inline-flex; gap: 4px; align-items: center; vertical-align: middle; }
   .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--gray-bg); border: 1px solid var(--border); }
   .dot.done { background: var(--green); border-color: var(--green); }
@@ -8641,12 +8641,18 @@ $('envFile').onchange = async e => {
     });
     envPlanId = result.planId;
     envAccountCount = result.count;
+    const mixedSiteCookieCount = Number(result.mixedSiteCookieCount || 0);
     if (!applyAssignmentTemplate(envImportBuyerPlan)) splitEnvEvenly(envDefaultSplit);
     refreshAssignUi();
-    $('envStats').innerHTML = `<div class="stat-chip blue"><b>${result.count}</b>账号总数</div><div class="stat-chip ok"><b>${result.cookieCount}/${result.count}</b>Cookie 覆盖</div><div class="stat-chip"><b>${result.passwordKindCount}</b>密码种类</div><div class="stat-chip ok"><b>${result.duplicateCount}</b>文件内重复</div><div class="stat-chip ok"><b>${result.issueCount}</b>格式问题</div><div class="stat-chip"><b>${result.orderCount}</b>单号已提取</div>`;
-    $('envPlan').textContent = `已校验 ${result.count} 行（仅显示脱敏信息）：\n` + result.preview.map(x => `${x.emailMasked} · 单号 ${x.orderMasked} · Cookie ${Math.ceil(x.cookieBytes / 1024)}KB`).join('\n') + (result.count > result.preview.length ? `\n…… 共 ${result.count} 行` : '') + '\n\n页面已清空文件内容；服务端等待确认期间仅短时保存在内存。';
+    $('envStats').innerHTML = `<div class="stat-chip blue"><b>${result.count}</b>账号总数</div><div class="stat-chip ok"><b>${result.cookieCount}/${result.count}</b>Cookie 覆盖</div><div class="stat-chip ${mixedSiteCookieCount ? 'warn' : 'ok'}"><b>${mixedSiteCookieCount}</b>混合登录态（允许）</div><div class="stat-chip"><b>${result.passwordKindCount}</b>密码种类</div><div class="stat-chip ok"><b>${result.duplicateCount}</b>文件内重复</div><div class="stat-chip ok"><b>${result.issueCount}</b>格式问题</div><div class="stat-chip"><b>${result.orderCount}</b>单号已提取</div>`;
+    const mixedNotice = mixedSiteCookieCount
+      ? `\n\n⚠ 临时兼容：${mixedSiteCookieCount} 行同时包含墨西哥与美国登录域，将按当前选择的 ${$('envSite').value} 站建环境并原样写入 Cookie。`
+      : '';
+    $('envPlan').textContent = `已校验 ${result.count} 行（仅显示脱敏信息）：\n` + result.preview.map(x => `${x.emailMasked} · 单号 ${x.orderMasked} · Cookie ${Math.ceil(x.cookieBytes / 1024)}KB`).join('\n') + (result.count > result.preview.length ? `\n…… 共 ${result.count} 行` : '') + mixedNotice + '\n\n页面已清空文件内容；服务端等待确认期间仅短时保存在内存。';
     await refreshEnvPreflight();
-    toast(`号商名单校验通过：${result.count} 行`);
+    toast(mixedSiteCookieCount
+      ? `校验通过：${result.count} 行，其中 ${mixedSiteCookieCount} 行混合登录态已临时允许`
+      : `号商名单校验通过：${result.count} 行`);
   } catch (err) {
     $('envPlan').textContent = '文件校验失败：' + err.message;
   } finally {

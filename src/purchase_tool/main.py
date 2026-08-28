@@ -62,6 +62,7 @@ from .env_batch import (BACKUP_MAX_COUNT, BACKUP_REMARK, BUYER_CODES,
                         ResumeStateStore, backup_env_names,
                         backup_result_tsv_bytes,
                         batch_fingerprint, build_batch_plan,
+                        count_mixed_site_accounts,
                         envbatch_preflight,
                         mapping_workbook_bytes, normalize_backup_type,
                         normalize_buyer, parse_assignment,
@@ -1339,9 +1340,10 @@ class EnvBatchJob(object):
         source = self._decode_xlsx(content_base64)
         accounts = parse_vendor_workbook(BytesIO(source))
         site = normalize_env_site(site)
-        # 站点是文件验收条件；必须在保存短期解析计划前一次汇总所有
-        # Cookie 混站/错站行，避免用户到正式执行才看到第一个错误。
-        validate_accounts_site(accounts, site)
+        # 环境创建临时兼容号商提供的 MX/US 混合登录态，Cookie 原文
+        # 不裁剪；仅 Cookie 完全属于另一站时在保存计划前整批拒收。
+        validate_accounts_site(accounts, site, allow_mixed=True)
+        mixed_site_cookie_count = count_mixed_site_accounts(accounts)
         token = secrets.token_urlsafe(24)
         with self.lock:
             self._clean_pending()
@@ -1361,6 +1363,7 @@ class EnvBatchJob(object):
             'site': site,
             'count': len(accounts),
             'cookieCount': sum(bool(item.cookie_text) for item in accounts),
+            'mixedSiteCookieCount': mixed_site_cookie_count,
             'passwordKindCount': len({item.password for item in accounts}),
             'duplicateCount': 0,
             'issueCount': 0,
@@ -1522,8 +1525,9 @@ class EnvBatchJob(object):
             verify_sample_count = min(verify_sample_count, account_count)
         parse_assignment(assignment, account_count)
         runtime = self._runtime_config(site)
-        # 正式执行同步校验：站点与账号 Cookie 域冲突在消费计划前整批拒收
-        validate_accounts_site(pending['accounts'], runtime['site'])
+        # 正式执行同步复核：允许混合登录态，纯错站仍在消费计划前拒收。
+        validate_accounts_site(
+            pending['accounts'], runtime['site'], allow_mixed=True)
         hub = self.hub_getter()
         # Must finish every read-only prerequisite before consuming planId or
         # launching a worker that can issue HubStudio writes.

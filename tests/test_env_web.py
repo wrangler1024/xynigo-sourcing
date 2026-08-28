@@ -190,7 +190,7 @@ class EnvWebJobTests(unittest.TestCase):
                        'web-secret-cookie', 'codes.example.test'):
             self.assertNotIn(secret, rendered)
 
-    def test_parse_rejects_all_mixed_site_rows_before_storing_plan(self):
+    def test_parse_accepts_and_reports_mixed_site_rows_for_environment(self):
         workbook = Workbook()
         sheet = workbook.active
         mixed = ('[{"name":"mx","domain":".shein.com.mx"},'
@@ -203,10 +203,29 @@ class EnvWebJobTests(unittest.TestCase):
         source = BytesIO()
         workbook.save(source)
         job = EnvBatchJob(lambda: FakeHub(), runtime_config)
-        with self.assertRaisesRegex(
-                ValueError, '共 2 行数据异常.*第1-2行'):
+        parsed = job.parse(
+            'mixed.xlsx', base64.b64encode(source.getvalue()).decode('ascii'),
+            site='MX')
+        self.assertEqual(parsed['count'], 2)
+        self.assertEqual(parsed['mixedSiteCookieCount'], 2)
+        self.assertIn(parsed['planId'], job.pending)
+        self.assertEqual(
+            job.pending[parsed['planId']]['accounts'][0].cookie_text, mixed)
+
+    def test_parse_still_rejects_cookie_that_only_belongs_to_other_site(self):
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append([
+            'us-only@example.com', 'secret-pass',
+            'https://codes.example.test/get?orderNo=abc001',
+            '[{"name":"us","domain":".us.shein.com"}]'])
+        source = BytesIO()
+        workbook.save(source)
+        job = EnvBatchJob(lambda: FakeHub(), runtime_config)
+        with self.assertRaisesRegex(ValueError, 'Cookie仅US站.*所选MX站'):
             job.parse(
-                'mixed.xlsx', base64.b64encode(source.getvalue()).decode('ascii'),
+                'us-only.xlsx',
+                base64.b64encode(source.getvalue()).decode('ascii'),
                 site='MX')
         self.assertEqual(job.pending, {})
 
