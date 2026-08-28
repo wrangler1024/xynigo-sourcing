@@ -1348,7 +1348,10 @@ def create_app(
             authorization=authorization,
             audit_action="executor.device.list",
         )
-        items = executor_channel(session).list_executors(tenant_id=actor.tenant.id)
+        items = executor_channel(session).list_executors(
+            tenant_id=actor.tenant.id,
+            user_id=actor.user.id,
+        )
         session.commit()
         return {"items": items}
 
@@ -1457,7 +1460,9 @@ def create_app(
         )
         service = executor_channel(session)
         executor = service.revoke(
-            tenant_id=actor.tenant.id, executor_id=executor_id
+            tenant_id=actor.tenant.id,
+            user_id=actor.user.id,
+            executor_id=executor_id,
         )
         append_executor_audit(
             request,
@@ -1488,7 +1493,9 @@ def create_app(
             audit_action="executor.runtime_summary.read",
         )
         payload = executor_channel(session).runtime_summary(
-            tenant_id=actor.tenant.id, executor_id=executor_id
+            tenant_id=actor.tenant.id,
+            user_id=actor.user.id,
+            executor_id=executor_id,
         )
         session.commit()
         return payload
@@ -1595,7 +1602,11 @@ def create_app(
             audit_action="executor.task.read",
         )
         service = executor_channel(session)
-        task = service.get_task(tenant_id=actor.tenant.id, task_id=task_id)
+        task = service.get_task(
+            tenant_id=actor.tenant.id,
+            user_id=actor.user.id,
+            task_id=task_id,
+        )
         session.commit()
         return {"task": service.task_payload(task)}
 
@@ -1619,10 +1630,18 @@ def create_app(
             audit_action="executor.task.cancel",
         )
         service = executor_channel(session)
-        current = service.get_task(tenant_id=actor.tenant.id, task_id=task_id)
+        current = service.get_task(
+            tenant_id=actor.tenant.id,
+            user_id=actor.user.id,
+            task_id=task_id,
+        )
         if body.expectedStatus and current.status != body.expectedStatus:
             raise ExecutorServiceError("executor_task_state_conflict", status_code=409)
-        task = service.cancel_task(tenant_id=actor.tenant.id, task_id=task_id)
+        task = service.cancel_task(
+            tenant_id=actor.tenant.id,
+            user_id=actor.user.id,
+            task_id=task_id,
+        )
         append_executor_audit(
             request,
             session,

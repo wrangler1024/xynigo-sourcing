@@ -216,11 +216,16 @@ class ExecutorChannelService:
             raise ExecutorServiceError("executor_revoked", status_code=401)
         return executor
 
-    def list_executors(self, *, tenant_id: uuid.UUID) -> list[dict[str, Any]]:
+    def list_executors(
+        self, *, tenant_id: uuid.UUID, user_id: uuid.UUID
+    ) -> list[dict[str, Any]]:
         rows = list(
             self.session.scalars(
                 select(LocalExecutor)
-                .where(LocalExecutor.tenant_id == tenant_id)
+                .where(
+                    LocalExecutor.tenant_id == tenant_id,
+                    LocalExecutor.owner_user_id == user_id,
+                )
                 .order_by(LocalExecutor.created_at.desc())
             )
         )
@@ -228,20 +233,35 @@ class ExecutorChannelService:
         return [self.executor_payload(row, now=now) for row in rows]
 
     def require_executor(
-        self, *, tenant_id: uuid.UUID, executor_id: uuid.UUID
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+        executor_id: uuid.UUID,
     ) -> LocalExecutor:
         executor = self.session.scalar(
             select(LocalExecutor).where(
                 LocalExecutor.id == executor_id,
                 LocalExecutor.tenant_id == tenant_id,
+                LocalExecutor.owner_user_id == user_id,
             )
         )
         if executor is None:
             raise ExecutorServiceError("executor_not_found", status_code=404)
         return executor
 
-    def revoke(self, *, tenant_id: uuid.UUID, executor_id: uuid.UUID) -> LocalExecutor:
-        executor = self.require_executor(tenant_id=tenant_id, executor_id=executor_id)
+    def revoke(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+        executor_id: uuid.UUID,
+    ) -> LocalExecutor:
+        executor = self.require_executor(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            executor_id=executor_id,
+        )
         if executor.status != "revoked":
             now = utcnow()
             executor.status = "revoked"
@@ -268,9 +288,17 @@ class ExecutorChannelService:
         return executor
 
     def runtime_summary(
-        self, *, tenant_id: uuid.UUID, executor_id: uuid.UUID
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+        executor_id: uuid.UUID,
     ) -> dict[str, Any]:
-        executor = self.require_executor(tenant_id=tenant_id, executor_id=executor_id)
+        executor = self.require_executor(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            executor_id=executor_id,
+        )
         tasks = list(
             self.session.scalars(
                 select(ExecutorTask)
@@ -294,7 +322,11 @@ class ExecutorChannelService:
         payload: dict[str, Any],
         idempotency_key: str | None = None,
     ) -> ExecutorTask:
-        executor = self.require_executor(tenant_id=tenant_id, executor_id=executor_id)
+        executor = self.require_executor(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            executor_id=executor_id,
+        )
         now = utcnow()
         if executor.status != "active":
             raise ExecutorServiceError("executor_revoked", status_code=409)
@@ -344,19 +376,28 @@ class ExecutorChannelService:
         self.session.commit()
         return task
 
-    def get_task(self, *, tenant_id: uuid.UUID, task_id: uuid.UUID) -> ExecutorTask:
+    def get_task(
+        self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, task_id: uuid.UUID
+    ) -> ExecutorTask:
         task = self.session.scalar(
             select(ExecutorTask).where(
                 ExecutorTask.id == task_id,
                 ExecutorTask.tenant_id == tenant_id,
+                ExecutorTask.created_by_user_id == user_id,
             )
         )
         if task is None:
             raise ExecutorServiceError("executor_task_not_found", status_code=404)
         return task
 
-    def cancel_task(self, *, tenant_id: uuid.UUID, task_id: uuid.UUID) -> ExecutorTask:
-        task = self.get_task(tenant_id=tenant_id, task_id=task_id)
+    def cancel_task(
+        self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, task_id: uuid.UUID
+    ) -> ExecutorTask:
+        task = self.get_task(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            task_id=task_id,
+        )
         now = utcnow()
         if task.status in TERMINAL_TASK_STATUSES:
             return task

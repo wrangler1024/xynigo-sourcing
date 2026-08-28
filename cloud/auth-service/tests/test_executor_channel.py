@@ -447,6 +447,98 @@ def test_web_device_access_is_tenant_isolated(tmp_path) -> None:
         assert listed.json()["items"] == []
 
 
+def test_web_device_and_task_access_is_owner_isolated_within_tenant(tmp_path) -> None:
+    app, database, _oauth = build_test_app(tmp_path)
+
+    with TestClient(app) as web_client:
+        login(web_client)
+        with database.session_factory() as session:
+            tenant = session.scalar(
+                select(Tenant).where(Tenant.feishu_tenant_key == "tenant_allowed")
+            )
+            assert tenant is not None
+            other_user = User(
+                tenant_id=tenant.id,
+                feishu_open_id="ou_same_tenant_other",
+                display_name="Same tenant other user",
+                status="active",
+            )
+            session.add(other_user)
+            session.flush()
+            other_executor = LocalExecutor(
+                tenant_id=tenant.id,
+                owner_user_id=other_user.id,
+                display_name="Other member device",
+                platform="windows",
+                architecture="x86_64",
+                client_version="0.12.7",
+                protocol_version=1,
+                capabilities=["config.read.v1", "config.write.v1"],
+                credential_digest=hash_token(
+                    "same-tenant-other-device-credential-" + "x" * 40
+                ),
+                status="active",
+                hub_status="ready",
+                last_seen_at=datetime.now(UTC),
+            )
+            session.add(other_executor)
+            session.flush()
+            other_task = ExecutorTask(
+                tenant_id=tenant.id,
+                executor_id=other_executor.id,
+                task_type="config.read.v1",
+                idempotency_key="same-tenant-other-task",
+                payload_envelope={},
+                created_by_user_id=other_user.id,
+            )
+            session.add(other_task)
+            session.commit()
+            other_executor_id = str(other_executor.id)
+            other_task_id = str(other_task.id)
+
+        listed = web_client.get("/v1/executors")
+        assert listed.status_code == 200
+        assert listed.json()["items"] == []
+
+        protected_requests = (
+            web_client.get(
+                f"/v1/executors/{other_executor_id}/runtime-summary"
+            ),
+            web_client.post(
+                f"/v1/executors/{other_executor_id}/config/read",
+                json={},
+                headers=CSRF,
+            ),
+            web_client.put(
+                f"/v1/executors/{other_executor_id}/config",
+                json={
+                    "expectedRevision": REVISION_A,
+                    "config": {"concurrency": 2},
+                },
+                headers=CSRF,
+            ),
+            web_client.post(
+                f"/v1/executors/{other_executor_id}/revoke",
+                json={},
+                headers=CSRF,
+            ),
+        )
+        for response in protected_requests:
+            assert response.status_code == 404
+            assert response.json()["detail"]["code"] == "executor_not_found"
+
+        task_status = web_client.get(f"/v1/executor-tasks/{other_task_id}")
+        assert task_status.status_code == 404
+        assert task_status.json()["detail"]["code"] == "executor_task_not_found"
+        task_cancel = web_client.post(
+            f"/v1/executor-tasks/{other_task_id}/cancel",
+            json={},
+            headers=CSRF,
+        )
+        assert task_cancel.status_code == 404
+        assert task_cancel.json()["detail"]["code"] == "executor_task_not_found"
+
+
 def test_started_config_write_becomes_uncertain_after_lease_expiry(tmp_path) -> None:
     app, database, _oauth = build_test_app(tmp_path)
 
