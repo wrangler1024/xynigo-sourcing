@@ -128,16 +128,10 @@ jobs:
           if ($launcher.HasExited) { throw "tray/status launcher exited during startup: $($launcher.ExitCode)" }
           $orphan.Refresh()
           if (-not $orphan.HasExited) { throw "new launcher did not replace orphan executor PID $orphanPid" }
-          $managed = @(Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe'" | Where-Object {
-            $prefix = $installDir.TrimEnd('\') + '\'
-            $commandLine = [string]$_.CommandLine
-            $pathInRoot = ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase))
-            $commandInRoot = ($commandLine.IndexOf($prefix, [StringComparison]::OrdinalIgnoreCase) -ge 0)
-            ($pathInRoot -or $commandInRoot) -and
-            $_.CommandLine -match '(?i)run\.py"?\s+--no-browser'
-          })
-          if ($managed.Count -ne 1) { throw "expected exactly one managed executor, found $($managed.Count)" }
-          if ($managed[0].ProcessId -eq $orphanPid) { throw "launcher adopted the orphan executor" }
+          $managedPids = @(Get-NetTCPConnection -State Listen -LocalPort 8765 -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty OwningProcess -Unique)
+          if ($managedPids.Count -ne 1) { throw "expected exactly one status listener, found $($managedPids.Count)" }
+          if ($managedPids[0] -eq $orphanPid) { throw "launcher adopted the orphan executor" }
           & taskkill.exe /PID $launcher.Id /T /F | Out-Null
           $protocol = (Get-Item "HKCU:\Software\Classes\xynigo\shell\open\command").GetValue('')
           if ($protocol -notmatch 'Xynigo\.exe.*--protocol') { throw "xynigo protocol missing" }

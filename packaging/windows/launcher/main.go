@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -708,7 +709,10 @@ func (app *launcherApp) ensureExecutor() {
 		// A standard-package upgrade can replace the launcher while the old
 		// Python child keeps running. Never adopt that process: it may advertise
 		// an old capability set even though the UI itself is the new version.
-		if err := terminateManagedExecutors(app.root); err != nil {
+		app.mu.Lock()
+		port := statusPort(app.statusURL)
+		app.mu.Unlock()
+		if err := terminateManagedExecutors(app.root, port); err != nil {
 			app.showExecutorStartFailure()
 			return
 		}
@@ -730,6 +734,11 @@ func managedExecutorStopScript() string {
 	return `& { ` +
 		`$root = $env:XYNIGO_TERMINATE_ROOT; ` +
 		`if ([string]::IsNullOrWhiteSpace($root)) { exit 2 }; ` +
+		`$port = 0; [void][int]::TryParse($env:XYNIGO_TERMINATE_PORT, [ref]$port); ` +
+		`$listenerPids = @(); ` +
+		`if ($port -gt 0) { $listenerPids = @(Get-NetTCPConnection -State Listen ` +
+		`-LocalPort $port -ErrorAction SilentlyContinue | ` +
+		`Select-Object -ExpandProperty OwningProcess -Unique) }; ` +
 		`$prefix = [IO.Path]::GetFullPath($root).TrimEnd('\') + '\'; ` +
 		`Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe'" | ` +
 		`Where-Object { ` +
@@ -737,12 +746,25 @@ func managedExecutorStopScript() string {
 		`$pathInRoot = ($_.ExecutablePath -and ` +
 		`$_.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)); ` +
 		`$commandInRoot = ($commandLine.IndexOf($prefix, [StringComparison]::OrdinalIgnoreCase) -ge 0); ` +
-		`($pathInRoot -or $commandInRoot) -and ` +
-		`$commandLine -match '(?i)run\.py"?\s+--no-browser' } | ` +
+		`$ownsStatusPort = ($listenerPids -contains $_.ProcessId); ` +
+		`$ownsStatusPort -or (($pathInRoot -or $commandInRoot) -and ` +
+		`$commandLine -match '(?i)run\.py"?\s+--no-browser') } | ` +
 		`ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } }`
 }
 
-func terminateManagedExecutors(root string) error {
+func statusPort(rawURL string) int {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme != "http" || (parsed.Hostname() != "127.0.0.1" && parsed.Hostname() != "localhost") {
+		return 0
+	}
+	port, err := strconv.Atoi(parsed.Port())
+	if err != nil || port < 1 || port > 65535 {
+		return 0
+	}
+	return port
+}
+
+func terminateManagedExecutors(root string, port int) error {
 	command := exec.Command(
 		"powershell.exe",
 		"-NoLogo",
@@ -751,7 +773,11 @@ func terminateManagedExecutors(root string) error {
 		"-ExecutionPolicy", "Bypass",
 		"-Command", managedExecutorStopScript(),
 	)
-	command.Env = append(os.Environ(), "XYNIGO_TERMINATE_ROOT="+root)
+	command.Env = append(
+		os.Environ(),
+		"XYNIGO_TERMINATE_ROOT="+root,
+		fmt.Sprintf("XYNIGO_TERMINATE_PORT=%d", port),
+	)
 	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
 	if err := command.Run(); err != nil {
 		return errors.New("无法结束安装目录内的旧版本本地执行器")
@@ -866,7 +892,7 @@ func (app *launcherApp) stopExecutor() {
 	token := app.launcherToken
 	app.mu.Unlock()
 	if cmd == nil {
-		_ = terminateManagedExecutors(app.root)
+		_ = terminateManagedExecutors(app.root, statusPort(statusURL))
 		return
 	}
 	if statusURL != "" {
@@ -887,7 +913,7 @@ func (app *launcherApp) stopExecutor() {
 		}
 	}
 	_ = cmd.Process.Kill()
-	_ = terminateManagedExecutors(app.root)
+	_ = terminateManagedExecutors(app.root, statusPort(statusURL))
 }
 
 func (app *launcherApp) performPair(raw string) {

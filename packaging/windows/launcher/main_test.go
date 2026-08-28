@@ -45,7 +45,10 @@ func TestManagedExecutorStopScriptIsScopedToInstallRoot(t *testing.T) {
 		"ExecutablePath",
 		"StartsWith",
 		"IndexOf",
+		"Get-NetTCPConnection",
+		"OwningProcess",
 		"XYNIGO_TERMINATE_ROOT",
+		"XYNIGO_TERMINATE_PORT",
 		`run\.py"?\s+--no-browser`,
 	} {
 		if !strings.Contains(script, required) {
@@ -55,6 +58,21 @@ func TestManagedExecutorStopScriptIsScopedToInstallRoot(t *testing.T) {
 	for _, forbidden := range []string{"taskkill", "/IM pythonw.exe"} {
 		if strings.Contains(strings.ToLower(script), strings.ToLower(forbidden)) {
 			t.Fatalf("managedExecutorStopScript() must not contain broad kill %q", forbidden)
+		}
+	}
+}
+
+func TestStatusPortOnlyAcceptsLoopbackHTTP(t *testing.T) {
+	if got, want := statusPort("http://127.0.0.1:8765/executor-status.json"), 8765; got != want {
+		t.Fatalf("statusPort(loopback) = %d, want %d", got, want)
+	}
+	for _, raw := range []string{
+		"https://127.0.0.1:8765/executor-status.json",
+		"http://example.test:8765/executor-status.json",
+		"http://127.0.0.1:not-a-port/executor-status.json",
+	} {
+		if got := statusPort(raw); got != 0 {
+			t.Fatalf("statusPort(%q) = %d, want 0", raw, got)
 		}
 	}
 }
