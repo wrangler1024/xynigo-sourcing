@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import io
+import hashlib
 import json
 import subprocess
 import tempfile
@@ -61,6 +62,8 @@ class FakeCloudClient(object):
         self.buyer_account_requests = []
         self.business_log_requests = []
         self.system_log_requests = []
+        self.release_catalog_tokens = []
+        self.release_downloads = []
 
     def start_login(self):
         self.start_calls += 1
@@ -134,6 +137,21 @@ class FakeCloudClient(object):
                 'total': 0, 'items': [],
             },
         }
+
+    def local_executor_release_catalog(self, token):
+        self.release_catalog_tokens.append(token)
+        return {'schemaVersion': 1, 'version': '0.12.7', 'platforms': {}}
+
+    def download_local_executor_release(
+            self, path, token, target, *, expected_size, expected_hash,
+            progress=None):
+        self.release_downloads.append(
+            (path, token, expected_size, expected_hash))
+        data = b'x' * expected_size
+        Path(target).write_bytes(data)
+        if progress:
+            progress(expected_size, expected_size)
+        return Path(target)
 
 
 class QueueRunner(object):
@@ -451,6 +469,85 @@ class CloudAuthTests(unittest.TestCase):
             ('/v1/system-logs?level=error&page=1', SESSION_TOKEN),
         ])
         self.assertNotIn(SESSION_TOKEN, json.dumps(result))
+
+    def test_standard_update_catalog_and_download_keep_session_local(self):
+        client = FakeCloudClient()
+        service = LocalAuthService(
+            client=client,
+            store=MemoryAuthSessionStore(SESSION_TOKEN),
+        )
+        service.identity = IDENTITY
+        service.last_verified = time.time()
+        catalog = service.local_executor_release_catalog()
+        self.assertEqual(catalog['schemaVersion'], 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / 'installer.exe'
+            service.download_local_executor_release(
+                '/v1/local-executor/releases/'
+                'windows-x86_64/primary/download',
+                target,
+                expected_size=1_000_000,
+                expected_hash='a' * 64,
+            )
+            self.assertEqual(target.stat().st_size, 1_000_000)
+        self.assertEqual(client.release_catalog_tokens, [SESSION_TOKEN])
+        self.assertEqual(client.release_downloads[0][1], SESSION_TOKEN)
+
+    def test_cloud_client_streams_only_allowlisted_verified_installer(self):
+        data = b'z' * 1_000_000
+        digest = hashlib.sha256(data).hexdigest()
+        requests = []
+
+        class Response(object):
+            headers = {
+                'Content-Length': str(len(data)),
+                'X-Xynigo-Asset-SHA256': digest,
+            }
+
+            def __init__(self):
+                self.offset = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, size):
+                chunk = data[self.offset:self.offset + size]
+                self.offset += len(chunk)
+                return chunk
+
+        def opener(request, timeout=0):
+            requests.append((request, timeout))
+            return Response()
+
+        client = CloudAuthClient(
+            'https://xynigo.example.test', opener=opener)
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / 'installer.exe'
+            client.download_local_executor_release(
+                '/v1/local-executor/releases/'
+                'windows-x86_64/primary/download',
+                SESSION_TOKEN,
+                target,
+                expected_size=len(data),
+                expected_hash=digest,
+            )
+            self.assertEqual(target.read_bytes(), data)
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(
+            requests[0][0].get_header('Authorization'),
+            'Bearer ' + SESSION_TOKEN)
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(LocalAuthError):
+                client.download_local_executor_release(
+                    'https://evil.example.test/installer.exe',
+                    SESSION_TOKEN,
+                    Path(tmp) / 'bad.exe',
+                    expected_size=len(data),
+                    expected_hash=digest,
+                )
 
     def test_cloud_system_log_client_allows_only_read_paths(self):
         client = CloudAuthClient('https://xynigo.example.test')

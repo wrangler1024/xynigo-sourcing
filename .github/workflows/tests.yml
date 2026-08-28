@@ -168,10 +168,26 @@ jobs:
           if ($protocol -notmatch 'Xynigo\.exe.*--protocol') { throw "xynigo protocol missing" }
           if (-not (Test-Path "$installDir\config.json")) { throw "green config was not migrated" }
           if (-not (Test-Path "$installDir\运行数据\keep.txt")) { throw "green runtime data was not migrated" }
-          $upgrade = Start-Process -FilePath $installer.FullName -ArgumentList "/S" -Wait -PassThru
-          if ($upgrade.ExitCode -ne 0) { throw "reinstall failed: $($upgrade.ExitCode)" }
+          # Exercise the standard-package online handoff: the installer stops
+          # the launcher without killing itself, switches the immutable
+          # runtime pointer, and starts a fresh status center.
+          $onlineLauncher = Start-Process -FilePath "$installDir\Xynigo.exe" -ArgumentList "--background" -PassThru
+          Start-Sleep -Seconds 2
+          $upgrade = Start-Process -FilePath $installer.FullName -ArgumentList "/S /ONLINEUPDATE=1" -Wait -PassThru
+          if ($upgrade.ExitCode -ne 0) { throw "online reinstall failed: $($upgrade.ExitCode)" }
+          $onlineRestarted = $false
+          for ($attempt = 0; $attempt -lt 30; $attempt++) {
+            $statusCenters = @(Get-Process -Name Xynigo -ErrorAction SilentlyContinue)
+            if ($statusCenters.Count -eq 1 -and $statusCenters[0].Id -ne $onlineLauncher.Id) {
+              $onlineRestarted = $true
+              break
+            }
+            Start-Sleep -Milliseconds 500
+          }
+          if (-not $onlineRestarted) { throw "online installer did not restart the status center" }
           if (-not (Test-Path "$installDir\config.json")) { throw "upgrade removed config" }
           if (-not (Test-Path "$installDir\运行数据\keep.txt")) { throw "upgrade removed runtime data" }
+          & taskkill.exe /IM Xynigo.exe /T /F | Out-Null
           $uninstaller = Get-Item "$installDir\卸载 Xynigo Sourcing.exe"
           $uninstall = Start-Process -FilePath $uninstaller.FullName -ArgumentList "/S" -Wait -PassThru
           if ($uninstall.ExitCode -ne 0) { throw "uninstall failed: $($uninstall.ExitCode)" }

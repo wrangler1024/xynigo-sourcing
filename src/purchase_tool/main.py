@@ -96,7 +96,7 @@ from .resource_center import ResourceCenterService
 from .shein_query import QueryOrchestrator, normalize_site
 from .task_runtime import (HubRuntimeGate, LocalTaskCoordinator,
                            environment_resources)
-from .updater import UpdateCoordinator
+from .updater import StandardInstallerUpdateClient, UpdateCoordinator
 from .workspace_rpc import WorkspaceRpcClient
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -803,8 +803,18 @@ class AppState(object):
         self.resources = ResourceCenterService(
             lambda: self.hub, self.lark_credentials.load)
         self.procurement_import = ProcurementImportService()
+        install_mode = str(
+            os.environ.get('XYNIGO_INSTALL_MODE') or 'green'
+        ).strip().casefold()
+        update_client = (
+            StandardInstallerUpdateClient(self.auth)
+            if install_mode == 'standard' and os.name == 'nt' else None)
         self.updates = UpdateCoordinator(
-            os.environ.get('XYNIGO_INSTALL_DIR'), __version__)
+            os.environ.get('XYNIGO_INSTALL_DIR'),
+            __version__,
+            client=update_client,
+            current_runtime_id=os.environ.get('XYNIGO_RUNTIME_ID'),
+        )
         self.config_lock = threading.RLock()
         self.executor_channel = ExecutorChannelWorker(
             client=CloudExecutorClient(),

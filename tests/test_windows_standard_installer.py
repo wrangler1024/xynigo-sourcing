@@ -115,6 +115,7 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
     def test_launchers_pin_data_root_and_pairing_stays_explicit(self):
         self.assertIn('XYNIGO_DATA_DIR=%CD%', self.launcher)
         self.assertIn('XYNIGO_INSTALL_MODE=standard', self.launcher)
+        self.assertIn('XYNIGO_RUNTIME_ID=%XYNIGO_ACTIVE_VERSION%', self.launcher)
         self.assertIn('current-version.txt', self.launcher)
         self.assertIn('run.py" %*', self.launcher)
         self.assertIn('set /p XYNIGO_PAIR_CODE=', self.pair_launcher)
@@ -207,6 +208,14 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
         self.assertNotIn('Delete "$INSTDIR\\config.json"', self.installer)
         self.assertNotIn('RMDir /r "$INSTDIR\\运行数据"', self.installer)
 
+    def test_standard_installer_has_verified_online_upgrade_handoff(self):
+        self.assertIn('/ONLINEUPDATE=', self.installer)
+        self.assertIn('Function .onInstSuccess', self.installer)
+        self.assertIn('Exec \'"$INSTDIR\\Xynigo.exe" --show\'', self.installer)
+        self.assertIn(
+            'taskkill.exe" /IM Xynigo.exe /F', self.installer)
+        self.assertIn('XYNIGO_RUNTIME_ID="+runtimeID', self.gui_launcher)
+
     def test_builder_marks_unsigned_artifact_as_not_release_eligible(self):
         self.assertIn("'authenticodeSigned': False", self.builder)
         self.assertIn("'releaseEligible': False", self.builder)
@@ -245,7 +254,7 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
             self.assertIn(source, self.signer)
         self.assertNotIn('New-SelfSignedCertificate', self.signer)
 
-    def test_standard_install_disables_legacy_green_updater(self):
+    def test_standard_install_without_online_client_requires_bootstrap(self):
         with tempfile.TemporaryDirectory() as directory:
             coordinator = UpdateCoordinator(
                 directory,
@@ -254,7 +263,7 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
             )
         snapshot = coordinator.snapshot()
         self.assertFalse(snapshot['enabled'])
-        self.assertIn('系统安装程序', snapshot['message'])
+        self.assertIn('覆盖安装一次', snapshot['message'])
 
 
 class WindowsStandardInstallerArtifactTests(unittest.TestCase):

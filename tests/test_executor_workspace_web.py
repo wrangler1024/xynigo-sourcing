@@ -82,6 +82,10 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             "mixedSiteCookieCount",
             "混合登录态（允许）",
             "将按当前选择的",
+            "'/api/update/'",
+            "CLOUD_WEB_MODE ? 900000 : 30000",
+            "已确认在线升级；执行器正在后台下载、校验并自动重启",
+            "需要最后一次覆盖安装在线升级引导版",
         ):
             self.assertIn(marker, html)
         initializer = html[

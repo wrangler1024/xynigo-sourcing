@@ -140,6 +140,7 @@ Var MigrateDir
 Var MigrationCheckbox
 Var MigrationDirectory
 Var MigrationBrowse
+Var OnlineUpdate
 
 Function MigrationPageCreate
   !insertmacro MUI_HEADER_TEXT "$(MigrationPageTitle)" "$(MigrationPageSubtitle)"
@@ -228,6 +229,12 @@ Function .onInit
     StrCpy $MigrateDir ""
     ClearErrors
   ${EndIf}
+  ClearErrors
+  ${GetOptions} $0 "/ONLINEUPDATE=" $OnlineUpdate
+  ${If} ${Errors}
+    StrCpy $OnlineUpdate "0"
+    ClearErrors
+  ${EndIf}
   ${IfNot} ${RunningX64}
     MessageBox MB_ICONSTOP "$(UnsupportedArchitecture)"
     Abort
@@ -267,7 +274,15 @@ Section "$(CoreSectionName)" SEC_CORE
 
   ; A user-initiated upgrade may run while the tray owns the executor.
   ; Stop only this user's Xynigo launcher/process tree before replacement.
-  nsExec::ExecToStack '"$SYSDIR\taskkill.exe" /IM Xynigo.exe /T /F'
+  ${If} $OnlineUpdate == "1"
+    ; The verified installer is launched by the Python child. Killing the
+    ; whole launcher tree would also kill this installer, so online mode only
+    ; stops the status-center process after the child has requested exit.
+    nsExec::ExecToStack '"$SYSDIR\taskkill.exe" /IM Xynigo.exe /F'
+    Sleep 800
+  ${Else}
+    nsExec::ExecToStack '"$SYSDIR\taskkill.exe" /IM Xynigo.exe /T /F'
+  ${EndIf}
   Pop $0
   Pop $1
 
@@ -331,6 +346,12 @@ Section "$(CoreSectionName)" SEC_CORE
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoModify" 1
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoRepair" 1
 SectionEnd
+
+Function .onInstSuccess
+  ${If} $OnlineUpdate == "1"
+    Exec '"$INSTDIR\Xynigo.exe" --show'
+  ${EndIf}
+FunctionEnd
 
 Section /o "$(DesktopSectionName)" SEC_DESKTOP
   SetShellVarContext current

@@ -11,6 +11,7 @@ def test_windows_standard_installer_requires_signature_timestamp_and_publisher()
     valid = {
         "windows-x86_64": {
             "installMode": "standard_per_user",
+            "runtimeId": "0.12.7-testbuild001",
             "authenticodeSigned": True,
             "authenticodeTimestamped": True,
             "publisher": "Example Trusted Publisher",
@@ -24,6 +25,24 @@ def test_windows_standard_installer_requires_signature_timestamp_and_publisher()
     ):
         candidate = {"windows-x86_64": dict(valid["windows-x86_64"])}
         candidate["windows-x86_64"][field] = False if field != "publisher" else ""
+        with pytest.raises(RuntimeError):
+            validate_release_platforms(candidate)
+
+
+def test_windows_standard_installer_requires_versioned_runtime_id():
+    valid = {
+        "windows-x86_64": {
+            "installMode": "standard_per_user",
+            "runtimeId": "0.12.7-build001",
+            "authenticodeSigned": True,
+            "authenticodeTimestamped": True,
+            "publisher": "Example Trusted Publisher",
+        }
+    }
+    validate_release_platforms(valid)
+    for runtime_id in ("", "0.12.6-build001", "../bad"):
+        candidate = {"windows-x86_64": dict(valid["windows-x86_64"])}
+        candidate["windows-x86_64"]["runtimeId"] = runtime_id
         with pytest.raises(RuntimeError):
             validate_release_platforms(candidate)
 
@@ -72,6 +91,7 @@ def test_unsigned_standard_installer_requires_explicit_internal_test_gate():
     platforms = {
         "windows-x86_64": {
             "installMode": "standard_per_user",
+            "runtimeId": "0.12.7-testbuild001",
             "internalUnsignedTest": True,
         },
         "macos-arm64": {
@@ -99,6 +119,7 @@ def test_standard_installer_can_keep_a_valid_green_fallback(monkeypatch):
     platform = {
         "label": "Windows x86_64",
         "installMode": "standard_per_user",
+        "runtimeId": "0.12.7-testbuild001",
         "assetName": "Xynigo_Setup.exe",
         "sha256": "c" * 64,
         "size": 2,
@@ -161,6 +182,7 @@ def test_invalid_green_fallback_is_rejected(field, value):
         validate_release_platforms({
             "windows-x86_64": {
                 "installMode": "standard_per_user",
+                "runtimeId": "0.12.7-testbuild001",
                 "authenticodeSigned": True,
                 "authenticodeTimestamped": True,
                 "publisher": "Xynigo Internal",

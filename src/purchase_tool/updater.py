@@ -12,6 +12,7 @@ import json
 import os
 import platform
 from pathlib import Path
+import re
 import shutil
 import stat
 import subprocess
@@ -64,6 +65,7 @@ class ReleaseInfo:
     assets: tuple
     platform_key: str = 'windows-x86_64'
     managed_paths: tuple = WINDOWS_MANAGED_PATHS
+    runtime_id: str = ''
 
 
 @dataclass(frozen=True)
@@ -90,6 +92,30 @@ def version_key(value):
 
 def is_newer(latest, current):
     return version_key(latest) > version_key(current)
+
+
+RUNTIME_ID_PATTERN = re.compile(r'[0-9A-Za-z][0-9A-Za-z._-]{2,95}')
+
+
+def normalize_runtime_id(value):
+    runtime_id = str(value or '').strip()
+    if not RUNTIME_ID_PATTERN.fullmatch(runtime_id):
+        raise UpdateError('构建修订号格式无效')
+    return runtime_id
+
+
+def is_release_newer(release, current_version, current_runtime_id=''):
+    latest_key = version_key(release.version)
+    current_key = version_key(current_version)
+    if latest_key != current_key:
+        return latest_key > current_key
+    latest_runtime_id = str(
+        release.runtime_id or release.manifest.get('runtimeId') or '').strip()
+    current_runtime_id = str(current_runtime_id or '').strip()
+    if not latest_runtime_id or not current_runtime_id:
+        return False
+    return normalize_runtime_id(latest_runtime_id) != normalize_runtime_id(
+        current_runtime_id)
 
 
 def current_platform_key(system=None, machine=None):
@@ -318,7 +344,8 @@ class GitHubUpdateClient(object):
             manifest=selected_manifest,
             assets=assets,
             platform_key=platform_key,
-            managed_paths=managed_paths_for_platform(platform_key))
+            managed_paths=managed_paths_for_platform(platform_key),
+            runtime_id=str(selected_manifest.get('runtimeId') or ''))
 
     def prepare_update(self, release, output=print):
         asset_name = str(release.manifest.get('assetName') or '')
@@ -420,6 +447,126 @@ class GitHubUpdateClient(object):
             raise UpdateError('无法启动更新替换程序：%s' % exc) from exc
 
 
+class StandardInstallerUpdateClient(object):
+    """Authenticated updater for managed standard-install packages."""
+
+    def __init__(self, auth_service, platform_key=None):
+        self.auth_service = auth_service
+        self.platform_key = platform_key
+
+    def get_latest_release(self):
+        platform_key = self.platform_key or current_platform_key()
+        catalog = self.auth_service.local_executor_release_catalog()
+        if not isinstance(catalog, dict) or catalog.get('schemaVersion') != 1:
+            raise UpdateError('云端标准安装包清单无效')
+        version = normalize_version(catalog.get('version'))
+        platforms = catalog.get('platforms')
+        package = platforms.get(platform_key) if isinstance(platforms, dict) else None
+        if not isinstance(package, dict):
+            raise UpdateError('云端尚未提供当前平台标准安装包')
+        install_mode = str(package.get('installMode') or '')
+        if not install_mode.startswith('standard'):
+            raise UpdateError('云端当前平台不是标准安装包')
+        runtime_id = normalize_runtime_id(package.get('runtimeId'))
+        if not runtime_id.startswith(version + '-'):
+            raise UpdateError('标准安装包构建修订与版本不一致')
+        notes = catalog.get('notesZh') or []
+        if not isinstance(notes, list):
+            notes = []
+        return ReleaseInfo(
+            version=version,
+            tag='v' + version,
+            notes_zh=tuple(str(item) for item in notes[:8]),
+            manifest=dict(package),
+            assets=(),
+            platform_key=platform_key,
+            managed_paths=(),
+            runtime_id=runtime_id,
+        )
+
+    def prepare_update(self, release, output=print):
+        if not release.platform_key.startswith('windows-'):
+            raise UpdateError('当前标准安装包在线升级仅支持 Windows')
+        asset_name = str(release.manifest.get('assetName') or '').strip()
+        download_path = str(release.manifest.get('downloadUrl') or '').strip()
+        expected_hash = str(release.manifest.get('sha256') or '').strip().lower()
+        try:
+            expected_size = int(release.manifest.get('size') or 0)
+        except (TypeError, ValueError) as exc:
+            raise UpdateError('标准安装包文件大小无效') from exc
+        if (not asset_name.endswith('.exe') or '/' in asset_name
+                or '\\' in asset_name):
+            raise UpdateError('标准安装包文件名无效')
+        expected_path = (
+            '/v1/local-executor/releases/%s/primary/download' %
+            release.platform_key)
+        if download_path != expected_path:
+            raise UpdateError('标准安装包下载地址无效')
+        if (len(expected_hash) != 64
+                or any(ch not in '0123456789abcdef' for ch in expected_hash)):
+            raise UpdateError('标准安装包 SHA-256 无效')
+        if expected_size < 1_000_000 or expected_size > 300 * 1024 * 1024:
+            raise UpdateError('标准安装包文件大小超出允许范围')
+
+        work_dir = Path(tempfile.mkdtemp(prefix='xynigo-standard-update-'))
+        installer = work_dir / asset_name
+        last_percent = [-1]
+
+        def progress(received, total):
+            total = total or expected_size
+            if not total:
+                return
+            percent = min(100, int(received * 100 / total))
+            if percent == 100 or percent >= last_percent[0] + 10:
+                last_percent[0] = percent
+                output('下载进度：%d%%' % percent)
+
+        try:
+            self.auth_service.download_local_executor_release(
+                download_path,
+                installer,
+                expected_size=expected_size,
+                expected_hash=expected_hash,
+                progress=progress,
+            )
+            if not installer.is_file() or installer.stat().st_size != expected_size:
+                raise UpdateError('下载文件大小不一致')
+            if sha256_file(installer).lower() != expected_hash:
+                raise UpdateError('SHA-256 校验失败，已拒绝更新')
+            return PreparedUpdate(
+                release=release,
+                work_dir=work_dir,
+                package_root=installer,
+                helper_path=installer,
+            )
+        except Exception:
+            shutil.rmtree(str(work_dir), ignore_errors=True)
+            raise
+
+    @staticmethod
+    def launch_installer(prepared, install_dir, current_version):
+        del install_dir, current_version
+        if os.name != 'nt':
+            raise UpdateError('Windows 标准安装包只能在 Windows 上升级')
+        installer = Path(prepared.package_root).resolve()
+        if not installer.is_file() or installer.suffix.casefold() != '.exe':
+            raise UpdateError('已校验的标准安装包不存在')
+        command = [str(installer), '/S', '/ONLINEUPDATE=1']
+        flags = (
+            getattr(subprocess, 'DETACHED_PROCESS', 0x00000008)
+            | getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0x00000200)
+        )
+        try:
+            subprocess.Popen(
+                command,
+                cwd=str(prepared.work_dir),
+                close_fds=True,
+                creationflags=flags,
+            )
+        except OSError as exc:
+            raise UpdateError('无法启动标准安装包：%s' % exc) from exc
+
+
 def bring_console_to_front():
     """Restore and activate the green-package console on Windows or macOS."""
     if os.name == 'nt':
@@ -467,34 +614,45 @@ class UpdateCoordinator(object):
     BUSY_STATES = ('checking', 'prompting', 'downloading', 'restarting')
 
     def __init__(self, install_dir, current_version, client=None,
+                 current_runtime_id=None,
                  input_fn=input, output=print, focus_fn=None, exit_fn=None,
-                 check_interval=900, environ=None, skip_marker_path=None):
+                 check_interval=900, environ=None, skip_marker_path=None,
+                 standard_install_delay=1.0):
         environ = os.environ if environ is None else environ
         self.install_mode = str(
             environ.get('XYNIGO_INSTALL_MODE') or 'green').strip().casefold()
         self.install_dir = (Path(install_dir).resolve()
                             if install_dir else None)
         self.current_version = normalize_version(current_version)
+        self.current_runtime_id = str(
+            current_runtime_id
+            or environ.get('XYNIGO_RUNTIME_ID')
+            or self.current_version).strip()
+        self.standard_mode = self.install_mode == 'standard'
         self.enabled = (
-            self.install_dir is not None and self.install_mode != 'standard')
-        self.client = client or (GitHubUpdateClient()
-                                 if self.enabled else None)
+            self.install_dir is not None
+            and (not self.standard_mode or client is not None))
+        self.client = client or (
+            GitHubUpdateClient() if self.enabled and not self.standard_mode
+            else None)
         self.input_fn = input_fn
         self.output = output
         self.focus_fn = focus_fn or bring_console_to_front
         self.exit_fn = exit_fn or os._exit
         self.check_interval = max(10, int(check_interval))
+        self.standard_install_delay = max(0.0, float(standard_install_delay))
         self.lock = threading.RLock()
         self.release = None
         self.latest_version = ''
+        self.latest_runtime_id = ''
         self.notes = ()
         self.last_checked = 0.0
         self.decision = ''
         self.state = 'idle' if self.enabled else 'disabled'
         self.message = (
             '等待检查更新' if self.enabled
-            else '标准安装包更新由系统安装程序管理'
-            if self.install_mode == 'standard'
+            else '当前标准安装包不具备在线升级引导，请从云端覆盖安装一次'
+            if self.standard_mode
             else '源码开发模式不执行绿色包更新')
         if (self.enabled
                 and consume_skip_once(environ, skip_marker_path)):
@@ -507,8 +665,13 @@ class UpdateCoordinator(object):
             return {
                 'enabled': self.enabled,
                 'state': self.state,
+                'installMode': self.install_mode,
+                'confirmationMode': (
+                    'direct' if self.standard_mode else 'console'),
                 'currentVersion': self.current_version,
+                'currentRuntimeId': self.current_runtime_id,
                 'latestVersion': self.latest_version,
+                'latestRuntimeId': self.latest_runtime_id,
                 'notes': list(self.notes),
                 'message': self.message,
                 'decision': self.decision,
@@ -536,15 +699,20 @@ class UpdateCoordinator(object):
             self.message = '正在检查新版本…'
         try:
             release = self.client.get_latest_release()
-            available = is_newer(release.version, self.current_version)
+            available = is_release_newer(
+                release, self.current_version, self.current_runtime_id)
             with self.lock:
                 self.release = release
                 self.latest_version = release.version
+                self.latest_runtime_id = str(
+                    release.runtime_id
+                    or release.manifest.get('runtimeId') or '')
                 self.notes = tuple(release.notes_zh[:8])
                 self.last_checked = time.monotonic()
                 self.state = 'available' if available else 'current'
-                self.message = ('发现新版本 v%s' % release.version
-                                if available else '当前已是最新稳定版')
+                self.message = (
+                    '发现可在线升级的新构建 v%s' % release.version
+                    if available else '当前已是最新构建')
         except Exception as exc:
             with self.lock:
                 self.last_checked = time.monotonic()
@@ -556,18 +724,32 @@ class UpdateCoordinator(object):
         with self.lock:
             if not self.enabled or self.state != 'available' or not self.release:
                 return False
-            self.state = 'prompting'
-            self.message = '请在运行窗口输入 Y 或 N'
-        threading.Thread(target=self._prompt_worker, daemon=True).start()
+            if self.standard_mode:
+                self.state = 'downloading'
+                self.decision = 'accepted'
+                self.message = '已确认在线升级，正在下载并校验标准安装包…'
+                worker = self._install_worker
+            else:
+                self.state = 'prompting'
+                self.message = '请在运行窗口输入 Y 或 N'
+                worker = self._prompt_worker
+        threading.Thread(target=worker, daemon=True).start()
         return True
 
     def prompt_now(self):
         with self.lock:
             if not self.enabled or self.state != 'available' or not self.release:
                 return False
-            self.state = 'prompting'
-            self.message = '请在运行窗口输入 Y 或 N'
-        return self._prompt_worker()
+            if self.standard_mode:
+                self.state = 'downloading'
+                self.decision = 'accepted'
+                self.message = '已确认在线升级，正在下载并校验标准安装包…'
+                worker = self._install_worker
+            else:
+                self.state = 'prompting'
+                self.message = '请在运行窗口输入 Y 或 N'
+                worker = self._prompt_worker
+        return worker()
 
     def _prompt_worker(self):
         release = self.release
@@ -602,6 +784,25 @@ class UpdateCoordinator(object):
                 self.state = 'downloading'
                 self.decision = 'accepted'
                 self.message = '正在下载并校验更新包…'
+            return self._install_worker(release=release)
+        except Exception as exc:
+            with self.lock:
+                self.state = 'available' if self.release else 'error'
+                self.message = '更新失败：%s' % exc
+            self.output('更新失败：%s' % exc)
+            self.output('当前版本继续运行，可稍后重试。')
+            self.output('==============================================')
+            return False
+
+    def _install_worker(self, release=None):
+        release = release or self.release
+        try:
+            if release is None:
+                raise UpdateError('当前没有可安装的新版本')
+            # Cloud workspace RPC must finish recording the accepted response
+            # before the executor exits to hand control to the installer.
+            if self.standard_mode and self.standard_install_delay:
+                time.sleep(self.standard_install_delay)
             self.output('正在下载并校验更新包，请勿关闭窗口……')
             prepared = self.client.prepare_update(release, output=self.output)
             self.client.launch_installer(

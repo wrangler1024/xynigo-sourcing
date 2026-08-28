@@ -10,19 +10,21 @@ import zipfile
 from purchase_tool.updater import (
     GitHubUpdateClient, MACOS_MANAGED_PATHS, MANAGED_PATHS,
     NetworkTransport, ReleaseAsset, ReleaseInfo, UpdateError,
-    UpdateCoordinator, check_for_updates_at_startup,
-    current_platform_key, is_newer,
+    StandardInstallerUpdateClient, UpdateCoordinator,
+    check_for_updates_at_startup,
+    current_platform_key, is_newer, is_release_newer,
     safe_extract_zip, select_platform_manifest, sha256_file,
 )
 
 
-def release(version='0.6.0', manifest=None, assets=()):
+def release(version='0.6.0', manifest=None, assets=(), runtime_id=''):
     return ReleaseInfo(
         version=version,
         tag='v' + version,
         notes_zh=('更新说明一', '更新说明二'),
         manifest=manifest or {},
-        assets=tuple(assets))
+        assets=tuple(assets),
+        runtime_id=runtime_id)
 
 
 class FakeClient(object):
@@ -74,6 +76,41 @@ class WritingTransport(object):
             progress(len(self.data), len(self.data))
 
 
+class FakeStandardAuth(object):
+    def __init__(self, data):
+        self.data = data
+        self.digest = __import__('hashlib').sha256(data).hexdigest()
+        self.downloads = []
+
+    def local_executor_release_catalog(self):
+        return {
+            'schemaVersion': 1,
+            'version': '0.12.7',
+            'notesZh': ['标准安装包在线升级'],
+            'platforms': {
+                'windows-x86_64': {
+                    'runtimeId': '0.12.7-newbuild001',
+                    'installMode': 'standard_per_user',
+                    'assetName': 'Xynigo_Setup.exe',
+                    'downloadUrl': (
+                        '/v1/local-executor/releases/'
+                        'windows-x86_64/primary/download'),
+                    'sha256': self.digest,
+                    'size': len(self.data),
+                },
+            },
+        }
+
+    def download_local_executor_release(
+            self, path, target, *, expected_size, expected_hash,
+            progress=None):
+        self.downloads.append((path, expected_size, expected_hash))
+        Path(target).write_bytes(self.data)
+        if progress:
+            progress(len(self.data), len(self.data))
+        return Path(target)
+
+
 class UpdaterTests(unittest.TestCase):
     def test_platform_detection_supports_windows_and_apple_silicon(self):
         self.assertEqual(
@@ -114,6 +151,16 @@ class UpdaterTests(unittest.TestCase):
     def test_semantic_version_comparison(self):
         self.assertTrue(is_newer('0.5.1', '0.5.0'))
         self.assertFalse(is_newer('v0.5.0', '0.5.0'))
+        same_build = release(
+            '0.12.7', runtime_id='0.12.7-build001',
+            manifest={'runtimeId': '0.12.7-build001'})
+        new_build = release(
+            '0.12.7', runtime_id='0.12.7-build002',
+            manifest={'runtimeId': '0.12.7-build002'})
+        self.assertFalse(is_release_newer(
+            same_build, '0.12.7', '0.12.7-build001'))
+        self.assertTrue(is_release_newer(
+            new_build, '0.12.7', '0.12.7-build001'))
 
     def test_no_new_version_continues_startup(self):
         output = []
@@ -219,6 +266,52 @@ class UpdaterTests(unittest.TestCase):
         self.assertTrue(client.launched)
         self.assertEqual(exit_codes, [42])
         self.assertEqual(status['state'], 'restarting')
+
+    def test_standard_coordinator_confirms_in_web_and_updates_same_version(self):
+        exit_codes = []
+        client = FakeClient(latest=release(
+            '0.12.7',
+            manifest={'runtimeId': '0.12.7-build002'},
+            runtime_id='0.12.7-build002'))
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = UpdateCoordinator(
+                tmp,
+                '0.12.7',
+                client=client,
+                current_runtime_id='0.12.7-build001',
+                input_fn=lambda _prompt: self.fail('standard updater must not prompt'),
+                focus_fn=lambda: self.fail('standard updater has no console'),
+                output=lambda _line: None,
+                exit_fn=exit_codes.append,
+                environ={'XYNIGO_INSTALL_MODE': 'standard'},
+                skip_marker_path=Path(tmp) / 'no-marker',
+                standard_install_delay=0,
+            )
+            checked = manager.check_now()
+            installed = manager.prompt_now()
+            status = manager.snapshot()
+        self.assertEqual(checked['state'], 'available')
+        self.assertEqual(checked['confirmationMode'], 'direct')
+        self.assertTrue(installed)
+        self.assertTrue(client.prepared)
+        self.assertTrue(client.launched)
+        self.assertEqual(exit_codes, [42])
+        self.assertEqual(status['state'], 'restarting')
+
+    def test_standard_client_downloads_authenticated_installer_and_checks_hash(self):
+        data = b'x' * 1_100_000
+        auth = FakeStandardAuth(data)
+        client = StandardInstallerUpdateClient(
+            auth, platform_key='windows-x86_64')
+        info = client.get_latest_release()
+        self.assertEqual(info.runtime_id, '0.12.7-newbuild001')
+        prepared = client.prepare_update(info, output=lambda _line: None)
+        try:
+            self.assertEqual(prepared.package_root.read_bytes(), data)
+            self.assertEqual(len(auth.downloads), 1)
+        finally:
+            import shutil
+            shutil.rmtree(str(prepared.work_dir), ignore_errors=True)
 
     def test_source_mode_keeps_green_package_update_disabled(self):
         manager = UpdateCoordinator(None, '0.6.0')

@@ -893,10 +893,15 @@ func (app *launcherApp) startExecutor() error {
 	}
 	cmd := exec.Command(pythonw, runPy, "--no-browser")
 	cmd.Dir = app.root
+	runtimeID := ""
+	if installMode == "standard" {
+		runtimeID = filepath.Base(runtimeRoot)
+	}
 	cmd.Env = append(os.Environ(),
 		"XYNIGO_DATA_DIR="+app.root,
 		"XYNIGO_INSTALL_DIR="+app.root,
 		"XYNIGO_INSTALL_MODE="+installMode,
+		"XYNIGO_RUNTIME_ID="+runtimeID,
 		"XYNIGO_LAUNCHER_TOKEN="+app.launcherToken,
 		"PYTHONUTF8=1",
 		"PYTHONIOENCODING=utf-8",

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ctypes
 import ctypes.wintypes
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -272,6 +273,94 @@ class CloudAuthClient(object):
 
     def logout(self, session_token):
         return self._request('/v1/auth/logout', method='POST', token=session_token)
+
+    def local_executor_release_catalog(self, session_token):
+        return self._request(
+            '/v1/local-executor/releases/latest', token=session_token)
+
+    def download_local_executor_release(
+            self, path, session_token, target, *, expected_size,
+            expected_hash, progress=None):
+        parsed = urlparse(str(path or ''))
+        if (parsed.scheme or parsed.netloc or parsed.query or parsed.fragment
+                or not re.fullmatch(
+                    r'/v1/local-executor/releases/'
+                    r'(?:windows-x86_64|macos-arm64)/primary/download',
+                    parsed.path)):
+            raise LocalAuthError(
+                'cloud_response_invalid', '云端安装包下载地址无效', 500)
+        expected_size = int(expected_size)
+        expected_hash = str(expected_hash or '').strip().lower()
+        if (expected_size < 1_000_000 or expected_size > 300 * 1024 * 1024
+                or len(expected_hash) != 64
+                or any(ch not in '0123456789abcdef' for ch in expected_hash)):
+            raise LocalAuthError(
+                'cloud_response_invalid', '云端安装包校验信息无效', 500)
+        target = Path(target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        partial = target.with_name(target.name + '.part')
+        request_id = uuid.uuid4().hex
+        request = Request(
+            urljoin(self.base_url + '/', parsed.path.lstrip('/')),
+            headers={
+                'Accept': 'application/octet-stream',
+                'Authorization': 'Bearer ' + _validated_token(session_token),
+                'User-Agent': 'Xynigo-Local-Executor/' + __version__,
+                'X-Request-ID': request_id,
+                'X-Trace-ID': request_id,
+                'X-Xynigo-Source': 'local_executor_standard_updater',
+                'X-Xynigo-Client-Version': __version__,
+            },
+            method='GET',
+        )
+        digest = hashlib.sha256()
+        received = 0
+        try:
+            response = self.opener(request, timeout=max(60.0, self.timeout))
+            with response:
+                content_length = int(
+                    response.headers.get('Content-Length') or 0)
+                response_hash = str(
+                    response.headers.get('X-Xynigo-Asset-SHA256') or ''
+                ).strip().lower()
+                if content_length and content_length != expected_size:
+                    raise LocalAuthError(
+                        'cloud_response_invalid', '云端安装包大小不一致', 502)
+                if response_hash and response_hash != expected_hash:
+                    raise LocalAuthError(
+                        'cloud_response_invalid', '云端安装包摘要不一致', 502)
+                with open(partial, 'wb') as handle:
+                    while True:
+                        chunk = response.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        received += len(chunk)
+                        if received > expected_size:
+                            raise LocalAuthError(
+                                'cloud_response_invalid',
+                                '云端安装包超过可信大小', 502)
+                        handle.write(chunk)
+                        digest.update(chunk)
+                        if progress:
+                            progress(received, expected_size)
+            if received != expected_size or digest.hexdigest() != expected_hash:
+                raise LocalAuthError(
+                    'cloud_response_invalid', '云端安装包校验失败', 502)
+            os.replace(str(partial), str(target))
+            return target
+        except HTTPError as exc:
+            code = 'session_invalid' if exc.code == 401 else 'cloud_unreachable'
+            raise LocalAuthError(code, status=exc.code) from None
+        except LocalAuthError:
+            raise
+        except (URLError, TimeoutError, OSError, ValueError):
+            raise LocalAuthError('cloud_unreachable', status=503) from None
+        finally:
+            if partial.exists():
+                try:
+                    partial.unlink()
+                except OSError:
+                    pass
 
     def admin_request(self, path, session_token, method='GET', payload=None):
         parsed = urlparse(str(path or ''))
@@ -1071,6 +1160,48 @@ class LocalAuthService(object):
                 raise LocalAuthError(
                     'cloud_response_invalid', '云端系统日志数据无效', 502)
             return result
+
+    def local_executor_release_catalog(self):
+        with self.lock:
+            self.require()
+            if not self.session_token:
+                raise LocalAuthError('authentication_required', status=401)
+            try:
+                result = self.client.local_executor_release_catalog(
+                    self.session_token)
+            except LocalAuthError as exc:
+                if exc.status == 401:
+                    self.session_token = None
+                    self.identity = None
+                    self.last_verified = 0.0
+                raise
+            if not isinstance(result, dict):
+                raise LocalAuthError(
+                    'cloud_response_invalid', '云端安装包清单无效', 502)
+            return result
+
+    def download_local_executor_release(
+            self, path, target, *, expected_size, expected_hash,
+            progress=None):
+        with self.lock:
+            self.require()
+            if not self.session_token:
+                raise LocalAuthError('authentication_required', status=401)
+            try:
+                return self.client.download_local_executor_release(
+                    path,
+                    self.session_token,
+                    target,
+                    expected_size=expected_size,
+                    expected_hash=expected_hash,
+                    progress=progress,
+                )
+            except LocalAuthError as exc:
+                if exc.status == 401:
+                    self.session_token = None
+                    self.identity = None
+                    self.last_verified = 0.0
+                raise
 
     def logout(self):
         with self.lock:

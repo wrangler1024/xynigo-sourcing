@@ -3238,7 +3238,8 @@ const CLOUD_WORKSPACE_RPC_PREFIXES = [
   '/api/tasks', '/api/query', '/api/stop', '/api/requery',
   '/api/requery-failed', '/api/screenshot', '/api/export', '/api/register/',
   '/api/buyer-library/import/', '/api/resources/stores',
-  '/api/resources/proxies', '/api/envbatch/', '/api/lark/', '/api/hub-api-key'
+  '/api/resources/proxies', '/api/envbatch/', '/api/lark/', '/api/hub-api-key',
+  '/api/update/'
 ];
 
 function isCloudWorkspaceRpcPath(path) {
@@ -3611,7 +3612,7 @@ async function initializeAuthenticatedWorkspace(identity) {
   $('appShell').removeAttribute('inert');
   $('authGate').hidden = true;
   $('localExecutorEntry').hidden = !CLOUD_WEB_MODE || !hasFeatureAccess('localexecutor');
-  $('updateCheck').hidden = CLOUD_WEB_MODE;
+  $('updateCheck').hidden = CLOUD_WEB_MODE && !hasFeatureAccess('localexecutor');
   if (CLOUD_WEB_MODE) {
     setHubStatus(false);
     loadLocalExecutorDevices(false);
@@ -3780,7 +3781,10 @@ function renderUpdateStatus(info) {
     toast('已暂不更新；需要时可再次点击右上角版本提醒');
   }
   if (manualUpdateCheck && ['available', 'current', 'error', 'disabled'].includes(info.state)) {
-    toast(info.message || (info.state === 'available' ? `发现 ${latest}` : '检查更新完成'));
+    const manualMessage = CLOUD_WEB_MODE && info.state === 'disabled'
+      ? '当前执行器需要最后一次覆盖安装在线升级引导版；安装后即可直接在线升级'
+      : info.message;
+    toast(manualMessage || (info.state === 'available' ? `发现 ${latest}` : '检查更新完成'));
     manualUpdateCheck = false;
   }
   lastUpdateDecision = info.decision || '';
@@ -3789,11 +3793,15 @@ function renderUpdateStatus(info) {
 async function pollUpdateStatus() {
   clearTimeout(updatePollTimer);
   if (!authReady) return;
-  let delay = 30000;
+  // Cloud status checks become executor tasks. Keep idle traffic aligned with
+  // the updater's 15-minute release-check interval, while active updates stay
+  // responsive and an available release remains visible.
+  let delay = CLOUD_WEB_MODE ? 900000 : 30000;
   try {
     const info = await api('/api/update/status');
     renderUpdateStatus(info);
     if (['checking', 'prompting', 'downloading', 'restarting'].includes(info.state)) delay = 1200;
+    else if (CLOUD_WEB_MODE && info.state === 'available') delay = 30000;
   } catch (err) {
     delay = 60000;
   }
@@ -3806,7 +3814,9 @@ async function requestUpdatePrompt() {
   try {
     const info = await api('/api/update/prompt', {method:'POST'});
     renderUpdateStatus(info);
-    toast('运行窗口正在置前，请在黑窗口输入 Y 更新或 N 暂不更新');
+    toast(info.confirmationMode === 'direct'
+      ? '已确认在线升级；执行器正在后台下载、校验并自动重启'
+      : '运行窗口正在置前，请在黑窗口输入 Y 更新或 N 暂不更新');
   } catch (err) {
     toast(err.message);
   }

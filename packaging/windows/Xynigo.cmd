@@ -13,6 +13,7 @@ if not defined XYNIGO_ACTIVE_VERSION (
   pause
   exit /b 2
 )
+set "XYNIGO_RUNTIME_ID=%XYNIGO_ACTIVE_VERSION%"
 set "XYNIGO_RUNTIME=%CD%\versions\%XYNIGO_ACTIVE_VERSION%"
 if not exist "%XYNIGO_RUNTIME%\python-embed\python.exe" (
   echo Xynigo 运行时缺失：%XYNIGO_RUNTIME%

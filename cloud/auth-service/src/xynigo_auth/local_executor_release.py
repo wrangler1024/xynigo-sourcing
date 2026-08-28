@@ -31,6 +31,7 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
+        "runtimeId": "0.12.7-92b32ee67388",
         "assetName": "Xynigo_Sourcing_Windows_Setup_v0.12.7_hotfix9.exe",
         "sha256": "c600b73b96d50ecd058d432eee32afe1383d7bb3f54cc4d02a5f792f8c1f05fd",
         "size": 15_057_802,
@@ -107,6 +108,19 @@ def validate_release_platforms(
         if install_mode.startswith("standard"):
             trusted = False
             if platform_key == "windows-x86_64":
+                runtime_id = str(source.get("runtimeId") or "").strip()
+                if (
+                    not runtime_id.startswith(RELEASE_VERSION + "-")
+                    or len(runtime_id) > 96
+                    or any(
+                        character not in
+                        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+                        for character in runtime_id
+                    )
+                ):
+                    raise RuntimeError(
+                        "Windows standard installer requires runtimeId"
+                    )
                 trusted = bool(
                     source.get("authenticodeSigned") is True
                     and source.get("authenticodeTimestamped") is True

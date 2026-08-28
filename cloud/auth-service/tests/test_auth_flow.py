@@ -172,6 +172,8 @@ def test_authenticated_member_can_read_immutable_local_executor_release(
             assert info["downloadUrl"] == (
                 f"/v1/local-executor/releases/{platform}/primary/download"
             )
+            if platform == "windows-x86_64":
+                assert info["runtimeId"].startswith("0.12.7-")
             assert "github.com" not in info["downloadUrl"]
             fallback = info["greenFallback"]
             assert fallback["assetName"].endswith(".zip")
