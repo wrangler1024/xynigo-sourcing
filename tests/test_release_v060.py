@@ -99,6 +99,35 @@ class ReleaseV0128Tests(unittest.TestCase):
                 '%s  %s\n' % (digest, asset.name),
             )
 
+    def test_rebuilding_sole_platform_refreshes_legacy_manifest_hash(self):
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            asset = temp / 'Xynigo_Sourcing_macOS_test.zip'
+            manifest = temp / 'latest.json'
+            sha_file = temp / 'SHA256SUMS.txt'
+            command = [
+                sys.executable,
+                str(root / 'scripts' / 'update_release_assets.py'),
+                '--version', '0.12.8',
+                '--channel', 'test',
+                '--platform', 'macos-arm64',
+                '--asset', str(asset),
+                '--notes', str(root / 'release' / 'v0.12.8.zh-CN.json'),
+                '--manifest', str(manifest),
+                '--sha-file', str(sha_file),
+            ]
+            asset.write_bytes(b'first-macos-build')
+            subprocess.run(command, check=True, capture_output=True, text=True)
+            asset.write_bytes(b'second-macos-build')
+            subprocess.run(command, check=True, capture_output=True, text=True)
+
+            payload = json.loads(manifest.read_text(encoding='utf-8'))
+            current = payload['platforms']['macos-arm64']
+            self.assertEqual(payload['assetName'], current['assetName'])
+            self.assertEqual(payload['sha256'], current['sha256'])
+            self.assertEqual(payload['size'], current['size'])
+
     def test_web_bundle_contains_module_three_and_template(self):
         root = Path(__file__).resolve().parents[1]
         html = (root / 'src' / 'purchase_tool' / 'web' / 'index.html').read_text(

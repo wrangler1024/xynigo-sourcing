@@ -54,7 +54,12 @@ def main():
 
     # v0.5.0 Windows clients only understand the top-level package fields.
     # Keep those fields pointed at Windows whenever it is available.
-    if args.platform.startswith('windows-') or 'assetName' not in manifest:
+    # Rebuilding the same sole platform must refresh the legacy top-level
+    # fields as well.  The macOS standard-package job intentionally rebuilds
+    # its reviewed green payload, so leaving these fields on the first archive
+    # would advertise a stale hash to legacy clients.  In a combined manifest
+    # Windows remains the legacy default.
+    if args.platform.startswith('windows-') or len(platforms) == 1:
         manifest.update(package)
 
     args.manifest.parent.mkdir(parents=True, exist_ok=True)
