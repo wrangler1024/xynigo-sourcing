@@ -16,7 +16,7 @@ from . import __version__
 REPOSITORY = "wrangler1024/xynigo-sourcing"
 RELEASE_VERSION = "0.12.7"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-08-28T05:40:58Z"
+RELEASE_PUBLISHED_AT = "2026-08-28T06:41:20Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,9 +31,9 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.12.7_hotfix5.exe",
-        "sha256": "c30d661c55324577afc3f0ba9fdde9d87e5ed04fd2d7a6a32749942d49b4a73d",
-        "size": 14_926_717,
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.12.7_hotfix6.exe",
+        "sha256": "2656611bbe2ea34ac4feef5808b1ec128cd1d678d6593e90bbacacb7f97ff60f",
+        "size": 14_928_466,
         "installMode": "standard_per_user",
         "internalUnsignedTest": True,
         "authenticodeSigned": False,
@@ -56,9 +56,9 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.12.7.pkg",
-        "sha256": "6f3608f4abba564572387da19ccb2c694526cb1400d417015fb1e2ab79c41334",
-        "size": 11_377_490,
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.12.7_hotfix6.pkg",
+        "sha256": "8fcc24a4de6cece2da82bb63fca50f66ac7603e78540b7cbdef0cb223f6089e6",
+        "size": 19_265_817,
         "installMode": "standard_system_application",
         "internalUnsignedTest": True,
         "developerIdApplicationSigned": False,
