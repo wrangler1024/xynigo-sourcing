@@ -239,6 +239,10 @@ jobs:
               output = subprocess.check_output(
                   [str(binary), '--package-self-test'], text=True)
               assert os.environ['EXPECTED_PLATFORM'] in output
+              cloud_output = subprocess.check_output(
+                  [str(binary), '--cloud-tls-self-test'], text=True,
+                  timeout=30)
+              assert 'cloud TLS self-test OK' in cloud_output
           PY
       - name: Verify macOS standard app and installer payload
         run: |

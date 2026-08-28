@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import re
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -21,7 +22,9 @@ import time
 import uuid
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urljoin, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPSHandler, Request, build_opener
+
+import certifi
 
 from . import __version__
 
@@ -151,7 +154,7 @@ def _validated_token(value):
 
 
 class CloudAuthClient(object):
-    def __init__(self, base_url=None, timeout=10.0, opener=urlopen):
+    def __init__(self, base_url=None, timeout=10.0, opener=None):
         base_url = str(base_url or DEFAULT_AUTH_BASE_URL).strip().rstrip('/')
         parsed = urlparse(base_url)
         local_http = parsed.scheme == 'http' and parsed.hostname in {
@@ -163,6 +166,9 @@ class CloudAuthClient(object):
             raise ValueError('云端认证地址不能包含路径、查询或片段')
         self.base_url = base_url
         self.timeout = float(timeout)
+        if opener is None:
+            context = ssl.create_default_context(cafile=certifi.where())
+            opener = build_opener(HTTPSHandler(context=context)).open
         self.opener = opener
 
     def _request(self, path, method='GET', payload=None, token=None,

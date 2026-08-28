@@ -39,7 +39,7 @@ unzip -q "$EMB" -d "$STAGE/python-embed"
 
 echo "[2/8] Install pure-Python dependencies ..."
 python3 -m pip install --quiet --upgrade --target "$STAGE/deps" \
-  "websocket-client>=1.6,<2" "openpyxl>=3.1,<4"
+  "certifi>=2024.8.30,<2027" "websocket-client>=1.6,<2" "openpyxl>=3.1,<4"
 
 echo "[3/8] Copy application and updater ..."
 mkdir -p "$STAGE/app"

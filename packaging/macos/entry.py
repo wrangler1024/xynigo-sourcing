@@ -16,6 +16,15 @@ if '--package-self-test' in sys.argv:
         __version__, current_platform_key()))
     sys.exit(0)
 
+if '--cloud-tls-self-test' in sys.argv:
+    from purchase_tool.cloud_auth import CloudAuthClient
+
+    result = CloudAuthClient(timeout=15.0)._request('/healthz')
+    if result.get('status') != 'ok':
+        raise SystemExit('cloud TLS self-test returned an invalid response')
+    print('Xynigo cloud TLS self-test OK')
+    sys.exit(0)
+
 if len(sys.argv) > 1 and sys.argv[1] == 'pair':
     from purchase_tool.executor_channel import pair_cli
     sys.exit(pair_cli(sys.argv[2:]))
