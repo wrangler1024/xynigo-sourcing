@@ -190,6 +190,26 @@ class EnvWebJobTests(unittest.TestCase):
                        'web-secret-cookie', 'codes.example.test'):
             self.assertNotIn(secret, rendered)
 
+    def test_parse_rejects_all_mixed_site_rows_before_storing_plan(self):
+        workbook = Workbook()
+        sheet = workbook.active
+        mixed = ('[{"name":"mx","domain":".shein.com.mx"},'
+                 '{"name":"us","domain":".us.shein.com"}]')
+        for index, cookie in enumerate((mixed, mixed), start=1):
+            sheet.append([
+                'mixed%d@example.com' % index, 'secret-pass',
+                'https://codes.example.test/get?orderNo=abc00%d' % index,
+                cookie])
+        source = BytesIO()
+        workbook.save(source)
+        job = EnvBatchJob(lambda: FakeHub(), runtime_config)
+        with self.assertRaisesRegex(
+                ValueError, '共 2 行数据异常.*第1-2行'):
+            job.parse(
+                'mixed.xlsx', base64.b64encode(source.getvalue()).decode('ascii'),
+                site='MX')
+        self.assertEqual(job.pending, {})
+
     def test_safe_parallel_mode_caps_environment_workers_at_three(self):
         cfg = {
             'purchaseTag': TEST_TAG,
@@ -669,8 +689,11 @@ class BackupEnvJobTests(unittest.TestCase):
         workbook.save(output)
         hub = FakeHub()
         job = EnvBatchJob(lambda: hub, runtime_config)
+        # 解析时按 US 站校验通过；正式执行仍须按当次选择的 MX 站复核，
+        # 防止解析后切换站点绕过防混站保护。
         parsed = job.parse(
-            'vendor.xlsx', base64.b64encode(output.getvalue()).decode('ascii'))
+            'vendor.xlsx', base64.b64encode(output.getvalue()).decode('ascii'),
+            site='US')
         with self.assertRaisesRegex(ValueError, '不一致'):
             job.start(
                 parsed['planId'], '1:新刚', '20260819',

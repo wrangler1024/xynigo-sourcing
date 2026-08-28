@@ -1335,9 +1335,13 @@ class EnvBatchJob(object):
             raise ValueError('xlsx 超过 20MB，拒绝载入')
         return data
 
-    def parse(self, filename, content_base64):
+    def parse(self, filename, content_base64, site='MX'):
         source = self._decode_xlsx(content_base64)
         accounts = parse_vendor_workbook(BytesIO(source))
+        site = normalize_env_site(site)
+        # 站点是文件验收条件；必须在保存短期解析计划前一次汇总所有
+        # Cookie 混站/错站行，避免用户到正式执行才看到第一个错误。
+        validate_accounts_site(accounts, site)
         token = secrets.token_urlsafe(24)
         with self.lock:
             self._clean_pending()
@@ -1345,6 +1349,7 @@ class EnvBatchJob(object):
                 'filename': os.path.basename(str(filename or '号商名单.xlsx')),
                 'source': source,
                 'accounts': accounts,
+                'site': site,
                 'createdAt': time.time(),
             }
         timer = threading.Timer(
@@ -1353,6 +1358,7 @@ class EnvBatchJob(object):
         timer.start()
         return {
             'planId': token,
+            'site': site,
             'count': len(accounts),
             'cookieCount': sum(bool(item.cookie_text) for item in accounts),
             'passwordKindCount': len({item.password for item in accounts}),
@@ -3046,7 +3052,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({'stopping': True})
             elif path == '/api/envbatch/parse':
                 result = STATE.env_job.parse(
-                    body.get('filename'), body.get('contentBase64'))
+                    body.get('filename'), body.get('contentBase64'),
+                    site=body.get('site') or 'MX')
                 self._json(result)
             elif path == '/api/envbatch/preview':
                 rows = STATE.env_job.preview(

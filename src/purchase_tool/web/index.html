@@ -8635,7 +8635,9 @@ $('envFile').onchange = async e => {
     const contentBase64 = bytesToBase64(bytes);
     const result = await api('/api/envbatch/parse', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({filename:file.name, contentBase64})
+      body:JSON.stringify({
+        filename:file.name, contentBase64, site:$('envSite').value
+      })
     });
     envPlanId = result.planId;
     envAccountCount = result.count;
@@ -8998,6 +9000,11 @@ async function loadEnvGroups() {
 $('envSite').onchange = async e => {
   const site = e.target.value;
   if (envSubmitting || envRunning || envGroupSaving) return;
+  if (envPlanId) {
+    envPlanId = null;
+    envAccountCount = 0;
+    $('envPlan').textContent = '站点已变更，请重新选择 xlsx 并执行 Cookie 站点校验。';
+  }
   envGroupSaving = true;
   envPreflightReady = false;
   e.target.disabled = true;

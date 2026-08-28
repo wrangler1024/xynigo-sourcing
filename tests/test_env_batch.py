@@ -659,6 +659,26 @@ class EnvBatchTests(unittest.TestCase):
         with self.assertRaisesRegex(EnvBatchError, '数据异常'):
             build_batch_plan(both, '1:新刚', purchase_date='20260819')
 
+        mixed_cookie = (
+            '[{"name":"a","domain":".shein.com.mx"},'
+            '{"name":"b","domain":".us.shein.com"}]')
+        aggregate_rows = [
+            ['mix1@example.com', 'pass',
+             'https://codes.example.test/?orderNo=abc001', mixed_cookie],
+            ['ok@example.com', 'pass',
+             'https://codes.example.test/?orderNo=abc002', mx_cookie],
+            ['mix3@example.com', 'pass',
+             'https://codes.example.test/?orderNo=abc003', mixed_cookie],
+            ['mix4@example.com', 'pass',
+             'https://codes.example.test/?orderNo=abc004', mixed_cookie],
+        ]
+        aggregate_accounts = parse_vendor_workbook(
+            BytesIO(workbook_bytes(aggregate_rows)))
+        with self.assertRaisesRegex(
+                EnvBatchError, '共 3 行数据异常.*第1行、第3-4行'):
+            build_batch_plan(
+                aggregate_accounts, '4:新刚', purchase_date='20260819')
+
     def test_bound_parallel_run_creates_all_rows(self):
         rows = []
         for i in range(5):

@@ -132,19 +132,53 @@ def detect_cookie_site(cookie_text):
     return next(iter(hits)) if hits else None
 
 
+def _format_row_ranges(row_numbers):
+    numbers = sorted(set(int(number) for number in row_numbers))
+    if not numbers:
+        return ''
+    ranges = []
+    start = previous = numbers[0]
+    for number in numbers[1:]:
+        if number == previous + 1:
+            previous = number
+            continue
+        ranges.append((start, previous))
+        start = previous = number
+    ranges.append((start, previous))
+    return '、'.join(
+        '第%d行' % start if start == end else '第%d-%d行' % (start, end)
+        for start, end in ranges)
+
+
 def validate_accounts_site(accounts, site):
     """所选站点与账号 Cookie 域标记冲突时整批拒收（无标记不拦截）。"""
     site = normalize_env_site(site)
+    conflicts = []
+    mismatches = []
     for account in accounts:
         detected = detect_cookie_site(account.cookie_text)
         if detected == 'CONFLICT':
-            raise EnvBatchError(
-                '第 %d 行 Cookie 同时包含墨西哥与美国登录域，数据异常，'
-                '整批拒收：%s' % (account.row_number, account.safe_email))
-        if detected is not None and detected != site:
-            raise EnvBatchError(
-                '第 %d 行账号 Cookie 属于%s站，与所选%s站不一致，整批拒收：%s' %
-                (account.row_number, detected, site, account.safe_email))
+            conflicts.append(account.row_number)
+        elif detected is not None and detected != site:
+            mismatches.append((account.row_number, detected))
+    if not conflicts and not mismatches:
+        return
+    issue_rows = conflicts + [row_number for row_number, _detected in mismatches]
+    details = []
+    if conflicts:
+        details.append('墨西哥与美国登录域混合 %d 行' % len(conflicts))
+    if mismatches:
+        detected_counts = {}
+        for _row_number, detected in mismatches:
+            detected_counts[detected] = detected_counts.get(detected, 0) + 1
+        details.append('、'.join(
+            'Cookie仅%s站、与所选%s站不一致 %d 行' %
+            (detected, site, count)
+            for detected, count in sorted(detected_counts.items())))
+    raise EnvBatchError(
+        'Cookie 站点校验失败：共 %d 行数据异常（%s），'
+        '行号 %s；整批拒收' % (
+            len(issue_rows), '；'.join(details), _format_row_ranges(issue_rows)))
 
 
 def normalize_backup_type(value):

@@ -77,6 +77,8 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             "if (CLOUD_WEB_MODE && envProgressLoaded && !envRunning && !backupRunning) return;",
             "if (groupLoadInFlight) return groupLoadInFlight;",
             "error.code === 'executor_task_busy'",
+            "filename:file.name, contentBase64, site:$('envSite').value",
+            "站点已变更，请重新选择 xlsx",
         ):
             self.assertIn(marker, html)
         initializer = html[
