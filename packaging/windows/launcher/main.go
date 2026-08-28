@@ -265,6 +265,9 @@ func writeCommand(root, command string) error {
 }
 
 func (app *launcherApp) buildWindow() error {
+	if err := walk.Resources.SetRootDirPath(app.root); err != nil {
+		return fmt.Errorf("无法定位状态中心资源目录：%w", err)
+	}
 	white := walk.RGB(255, 255, 255)
 	navy := walk.RGB(8, 37, 72)
 	muted := walk.RGB(83, 113, 139)
@@ -273,11 +276,9 @@ func (app *launcherApp) buildWindow() error {
 	canvas := walk.RGB(244, 247, 250)
 	green := walk.RGB(20, 132, 93)
 
-	// Declarative Walk treats string images as resource names and resolves
-	// them relative to the executable directory. Passing an absolute path here
-	// makes its resource manager prepend the executable directory a second
-	// time (for example, C:\\...\\Xynigo Sourcing\\C:\\...), so the status
-	// center fails before the executor can start.
+	// Declarative Walk resolves string images relative to its global resource
+	// root. Pinning it above makes startup independent of the browser, shortcut,
+	// terminal or installer working directory.
 	logo := "xynigo-logo.png"
 	icon := "xynigo-x.ico"
 	window := MainWindow{
