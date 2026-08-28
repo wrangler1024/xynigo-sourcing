@@ -106,6 +106,9 @@ class OperationResultService:
             created_at=now,
         )
         self.session.add(run)
+        # No ORM relationship links these rows, so SQLAlchemy cannot infer
+        # that the parent must be inserted before the result batch.
+        self.session.flush()
         ip_checks = {item.environmentName: item for item in body.ipChecks}
         resource_conflicts = 0
         for item in body.results:
@@ -296,6 +299,7 @@ class OperationResultService:
             created_at=now,
         )
         self.session.add(run)
+        self.session.flush()
         mode_label = {
             "initial": "首次查询",
             "single_retry": "单条重查",
