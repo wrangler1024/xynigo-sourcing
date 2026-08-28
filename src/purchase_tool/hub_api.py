@@ -47,6 +47,23 @@ def _safe_api_message(value):
         r'\1=[REDACTED]', text)
 
 
+def _windows_hidden_process_kwargs():
+    """Prevent diagnostic console tools from flashing a visible window."""
+    if os.name != 'nt':
+        return {}
+    kwargs = {}
+    creation_flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+    if creation_flags:
+        kwargs['creationflags'] = creation_flags
+    startup_info_type = getattr(subprocess, 'STARTUPINFO', None)
+    if startup_info_type is not None:
+        startup_info = startup_info_type()
+        startup_info.dwFlags |= getattr(subprocess, 'STARTF_USESHOWWINDOW', 0)
+        startup_info.wShowWindow = getattr(subprocess, 'SW_HIDE', 0)
+        kwargs['startupinfo'] = startup_info
+    return kwargs
+
+
 def _default_client_running():
     """Best-effort process check; never reads command arguments or secrets."""
     try:
@@ -62,7 +79,8 @@ def _default_client_running():
         if os.name == 'nt':
             result = subprocess.run(
                 ['tasklist', '/FI', 'IMAGENAME eq HubStudio.exe', '/NH'],
-                capture_output=True, text=True, check=False, timeout=3)
+                capture_output=True, text=True, check=False, timeout=3,
+                **_windows_hidden_process_kwargs())
             return 'hubstudio.exe' in (result.stdout or '').casefold()
         result = subprocess.run(
             ['pgrep', '-x', 'Hubstudio'], stdout=subprocess.DEVNULL,
@@ -229,10 +247,6 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
 
     def capability_snapshot(self):
         """Return a non-sensitive, reason-coded Local API capability view."""
-        try:
-            client_running = bool(self.client_running_getter())
-        except Exception:
-            client_running = False
         failures = []
         probe_ports = [self.port]
         probe_ports.extend(
@@ -292,6 +306,13 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
                     }
         self.port = self.configured_port
         self.base = self._base_for_port(self.port)
+        # Only spawn an OS process diagnostic after every Local API candidate
+        # is unreachable.  The healthy path is authoritative and must not run
+        # tasklist.exe every time the status-center cache expires.
+        try:
+            client_running = bool(self.client_running_getter())
+        except Exception:
+            client_running = False
         timeout_seen = any(
             error.reason_code == 'hubstudio_local_api_timeout'
             for _port, error in failures)

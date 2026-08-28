@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 import json
 from pathlib import Path
+from unittest import mock
 import unittest
 from urllib.error import URLError
 
+from purchase_tool import hub_api
 from purchase_tool.hub_api import HubStudioLocalApiAdapter
 from purchase_tool.hub_api_key import (
     HubApiKeyStoreError, SystemHubApiKeyStore, _wrap_key)
@@ -85,6 +87,58 @@ class MemoryTokenBackend(object):
 
 
 class HubStudioLocalApiAdapterTests(unittest.TestCase):
+    def test_healthy_api_does_not_spawn_client_process_diagnostic(self):
+        process_checks = []
+        adapter = HubStudioLocalApiAdapter(
+            opener=FakeLocalApiOpener(),
+            client_running_getter=lambda: process_checks.append(True),
+            retries=1, timeout=1)
+
+        capability = adapter.capability_snapshot()
+
+        self.assertTrue(capability['available'])
+        self.assertEqual(process_checks, [])
+
+    def test_unreachable_api_checks_client_process_once(self):
+        process_checks = []
+
+        def client_running():
+            process_checks.append(True)
+            return True
+
+        adapter = HubStudioLocalApiAdapter(
+            opener=FakeLocalApiOpener(unavailable_ports={6873, 6874, 6875}),
+            client_running_getter=client_running, retries=1, timeout=1)
+
+        capability = adapter.capability_snapshot()
+
+        self.assertFalse(capability['available'])
+        self.assertEqual(process_checks, [True])
+
+    def test_windows_process_diagnostic_is_created_without_a_console(self):
+        class StartupInfo(object):
+            def __init__(self):
+                self.dwFlags = 0
+                self.wShowWindow = 1
+
+        with mock.patch.object(hub_api.os, 'name', 'nt'), \
+                mock.patch.object(
+                    hub_api.subprocess, 'CREATE_NO_WINDOW', 0x08000000,
+                    create=True), \
+                mock.patch.object(
+                    hub_api.subprocess, 'STARTF_USESHOWWINDOW', 0x00000001,
+                    create=True), \
+                mock.patch.object(
+                    hub_api.subprocess, 'SW_HIDE', 0, create=True), \
+                mock.patch.object(
+                    hub_api.subprocess, 'STARTUPINFO', StartupInfo,
+                    create=True):
+            kwargs = hub_api._windows_hidden_process_kwargs()
+
+        self.assertEqual(kwargs['creationflags'], 0x08000000)
+        self.assertEqual(kwargs['startupinfo'].dwFlags, 0x00000001)
+        self.assertEqual(kwargs['startupinfo'].wShowWindow, 0)
+
     def test_available_adapter_lists_locates_opens_and_closes_mock_environment(self):
         opener = FakeLocalApiOpener()
         adapter = HubStudioLocalApiAdapter(
