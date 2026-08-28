@@ -2600,6 +2600,7 @@ let envRunning = false;
 let envSubmitting = false;
 let envProgressLoaded = false;
 let envPollInFlight = false;
+let envRetryAccountId = '';
 let envPreflightReady = false;
 let envGroupSaving = false;
 let larkReady = false;
@@ -6313,7 +6314,11 @@ function renderEnvBatch(snap) {
     if (r.state === 'done') state = '<span class="badge ok">✔ 完成</span>';
     else if (r.state === 'failed') state = `<span class="badge fail">⚠ ${esc(ENV_STEP_LABEL[r.errorStep] || r.errorStep)}：${esc(r.error)}</span>`;
     else if (r.state === 'running' || ENV_STEPS.includes(r.state)) state = `<span class="spinner"></span>${esc(ENV_STEP_LABEL[r.state] || '执行中')}…`;
-    const retry = r.state === 'failed' ? `<button class="btn-mini" data-env-retry="${esc(r.accountId)}">🔄 重试此步</button>` : '';
+    const retryPending = envRetryAccountId === String(r.accountId || '');
+    const retryDisabled = envRunning || envSubmitting || !!envRetryAccountId;
+    const retry = r.state === 'failed'
+      ? `<button class="btn-mini" data-env-retry="${esc(r.accountId)}"${retryDisabled ? ' disabled' : ''}>${retryPending ? '⏳ 重试中…' : '🔄 重试此步'}</button>`
+      : '';
     const archived = completed.has('remarked') ? '已写入 HubStudio（敏感内容不回传页面）' : '—';
     return `<tr class="${r.state === 'done' ? 'row-success' : (r.state === 'failed' ? 'row-fail' : 'row-running')}">
       <td>${esc(r.emailMasked)}</td><td>${esc(r.buyer)}</td><td class="mono">${esc(r.envName)}</td><td class="mono">${esc(r.serialNumber) || '—'}</td>
@@ -8789,14 +8794,42 @@ $('envDate').onchange = () => refreshAssignUi();
 
 $('envTbody').addEventListener('click', async e => {
   const button = e.target.closest('[data-env-retry]');
-  if (!button) return;
+  if (!button || button.disabled || envRetryAccountId) return;
+  const accountId = String(button.dataset.envRetry || '');
+  envRetryAccountId = accountId;
+  button.disabled = true;
+  button.textContent = '⏳ 正在提交重试…';
+  setEnvExecutionState(
+    'submitting', '失败步骤重试正在提交',
+    '本次只继续失败账号的未完成步骤；已经完成的步骤不会重复执行。');
   try {
     await api('/api/envbatch/retry-row', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({accountId:button.dataset.envRetry})
+      body:JSON.stringify({accountId})
     });
-    toast('从失败步骤继续；已完成步骤不会重复执行');
-  } catch (err) { toast(err.message); }
+    envRunning = true;
+    envProgressLoaded = false;
+    setEnvExecutionState(
+      'running', '失败步骤重试已受理，正在后台执行',
+      '页面已恢复进度刷新；完成后该行会自动更新，不需要重复点击。');
+    updateEnvButtons();
+    pollEnvBatch();
+    setTimeout(pollEnvBatch, 400);
+    toast('重试已受理；正在从失败步骤继续');
+  } catch (err) {
+    envProgressLoaded = false;
+    setEnvExecutionState(
+      'warning', '重试响应失败，正在核对后台状态',
+      `${err.message}。页面会主动读取一次后台进度，请勿立即重复提交。`);
+    pollEnvBatch();
+    toast(err.message);
+  } finally {
+    envRetryAccountId = '';
+    if (!envRunning && button.isConnected) {
+      button.disabled = false;
+      button.textContent = '🔄 重试此步';
+    }
+  }
 });
 
 $('btnEnvMapping').onclick = async () => {

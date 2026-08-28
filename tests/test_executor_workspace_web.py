@@ -70,6 +70,7 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             "let groupLoadInFlight = null;",
             "let envProgressLoaded = false;",
             "let envPollInFlight = false;",
+            "let envRetryAccountId = '';",
             "if (queryPollInFlight) return;",
             "if (CLOUD_WEB_MODE && queryProgressLoaded && !isRunning) return;",
             "if (envPollInFlight) return;",
@@ -90,6 +91,31 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         ]
         self.assertIn("loadGroups();", query_panel)
         self.assertIn("loadEnvGroups().then(() => refreshEnvPreflight());", query_panel)
+
+    def test_environment_retry_restores_progress_polling_and_blocks_double_clicks(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        retry_handler = html[
+            html.index("$('envTbody').addEventListener('click'"):
+            html.index("$('btnEnvMapping').onclick")
+        ]
+        for marker in (
+            "button.disabled || envRetryAccountId",
+            "button.textContent = '⏳ 正在提交重试…';",
+            "envRunning = true;",
+            "envProgressLoaded = false;",
+            "pollEnvBatch();",
+            "setTimeout(pollEnvBatch, 400);",
+            "重试已受理；正在从失败步骤继续",
+        ):
+            self.assertIn(marker, retry_handler)
+        self.assertLess(
+            retry_handler.index("button.disabled = true;"),
+            retry_handler.index("await api('/api/envbatch/retry-row'"),
+        )
+        self.assertLess(
+            retry_handler.index("envRunning = true;"),
+            retry_handler.index("toast('重试已受理；正在从失败步骤继续')"),
+        )
 
 
 if __name__ == "__main__":
