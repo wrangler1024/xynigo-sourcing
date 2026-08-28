@@ -96,6 +96,7 @@ from .shein_query import QueryOrchestrator, normalize_site
 from .task_runtime import (HubRuntimeGate, LocalTaskCoordinator,
                            environment_resources)
 from .updater import UpdateCoordinator
+from .workspace_rpc import WorkspaceRpcClient
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INDEX_HTML = os.path.join(BASE_DIR, 'web', 'index.html')
@@ -182,6 +183,7 @@ AUTH_PERMISSION_BY_PATH = {
     '/api/resources/proxies/check/stop': 'resource.ip.test',
     '/api/lark/config': 'system.lark_connection.manage',
     '/api/lark/open-target': 'system.lark_connection.manage',
+    '/api/lark/target-url': 'system.lark_connection.manage',
     '/api/lark/target-metadata': 'system.lark_connection.manage',
     '/api/lark/preflight': 'system.lark_connection.manage',
     '/api/hub-api-key': 'system.integration.manage',
@@ -812,6 +814,7 @@ class AppState(object):
             config_writer=self.apply_cloud_config,
             task_coordinator=self.tasks,
             hub_status_getter=self.hub_status,
+            user_session_installer=self.auth.install_executor_session,
         )
 
     def apply_cloud_config(self, submitted):
@@ -2303,6 +2306,11 @@ class Handler(BaseHTTPRequestHandler):
             }, 500)
 
     def _require_auth(self, path):
+        if self._internal_executor_rpc_allowed():
+            return {
+                'user': {'id': 'executor-channel', 'name': '云端执行器'},
+                'tenant': {}, 'roles': [], 'permissions': [],
+            }
         if path in PUBLIC_AUTH_API_PATHS:
             return None
         if (path.startswith('/api/admin/members/')
@@ -2331,10 +2339,28 @@ class Handler(BaseHTTPRequestHandler):
 
     def _require_same_origin(self):
         """Reject browser cross-site writes to the loopback executor."""
+        if self._internal_executor_rpc_allowed():
+            return
         fetch_site = str(self.headers.get('Sec-Fetch-Site') or '').casefold()
         if fetch_site == 'cross-site':
             raise LocalAuthError(
                 'origin_forbidden', '拒绝来自外部网页的本机写入请求', 403)
+
+    def _internal_executor_rpc_allowed(self):
+        expected = str(getattr(self.server, 'executor_rpc_token', '') or '')
+        submitted = str(self.headers.get('X-Xynigo-Executor-RPC') or '')
+        peer = str((self.client_address or ('',))[0]).casefold()
+        host = str(self.headers.get('Host') or '').partition(':')[0].casefold()
+        origin = str(self.headers.get('Origin') or '').strip()
+        return bool(
+            expected
+            and len(submitted) >= 32
+            and secrets.compare_digest(expected, submitted)
+            and peer in {'127.0.0.1', '::1'}
+            and host in {'127.0.0.1', 'localhost'}
+            and not origin
+            and self.headers.get('X-Xynigo-Source') == 'executor_workspace_rpc'
+        )
         origin = str(self.headers.get('Origin') or '').strip()
         if not origin:
             # Native clients and existing local scripts do not send Origin.
@@ -2710,6 +2736,8 @@ class Handler(BaseHTTPRequestHandler):
                     STATE.cfg, STATE.lark_credentials))
             elif path == '/api/lark/open-target':
                 self._redirect(lark_target_link(STATE.cfg))
+            elif path == '/api/lark/target-url':
+                self._json({'url': lark_target_link(STATE.cfg)})
             elif path == '/api/business-logs' or path.startswith(
                     '/api/business-logs/'):
                 cloud_path = '/v1/business-logs' + path[
@@ -2776,10 +2804,15 @@ class Handler(BaseHTTPRequestHandler):
                     daemon=True,
                 ).start()
                 return
+            large_body_paths = {
+                '/api/assistant/procurement-import/parse',
+                '/api/buyer-library/import/parse',
+                '/api/envbatch/parse',
+                '/api/register/validate',
+            }
             body = self._body(
                 max_bytes=(28 * 1024 * 1024)
-                if path == '/api/assistant/procurement-import/parse'
-                else 2 * 1024 * 1024)
+                if path in large_body_paths else 2 * 1024 * 1024)
             if path.startswith(PURCHASE_ASSISTANT_API_PREFIX + '/'):
                 return self._handle_purchase_assistant_post(path, body)
             if path.startswith('/api/extension/v1/'):
@@ -3264,6 +3297,10 @@ def main(argv=None):
         print('端口 %s-%s 均被占用，退出' % (port, port + 9))
         sys.exit(1)
     local_url = 'http://127.0.0.1:%s' % port
+    executor_rpc_token = secrets.token_urlsafe(48)
+    server.executor_rpc_token = executor_rpc_token
+    STATE.executor_channel.workspace_rpc_executor = WorkspaceRpcClient(
+        local_url, executor_rpc_token).execute
     launch_url = browser_launch_url(local_url, argv, STATE.auth)
     print('Xynigo Sourcing v%s  本地执行器运行中：%s' % (
         __version__, local_url))

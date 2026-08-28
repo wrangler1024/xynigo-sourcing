@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import secrets
+import hashlib
+import json
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -17,6 +19,10 @@ from .executor_contract import (
     ExecutorPollBody,
     ExecutorTaskFinishBody,
     ExecutorTaskProgressBody,
+)
+from .executor_payload_crypto import (
+    ExecutorPayloadCipher,
+    ExecutorPayloadCipherError,
 )
 from .models import (
     ExecutorPairingCode,
@@ -81,12 +87,14 @@ class ExecutorChannelService:
         pairing_ttl_seconds: int = 300,
         lease_seconds: int = 45,
         online_window_seconds: int = 60,
+        payload_cipher: ExecutorPayloadCipher | None = None,
         sleep_fn=time.sleep,
     ) -> None:
         self.session = session
         self.pairing_ttl_seconds = pairing_ttl_seconds
         self.lease_seconds = lease_seconds
         self.online_window_seconds = online_window_seconds
+        self.payload_cipher = payload_cipher
         self.sleep = sleep_fn
 
     def create_pairing_code(
@@ -334,12 +342,15 @@ class ExecutorChannelService:
             raise ExecutorServiceError("executor_offline", status_code=409)
         if task_type not in set(executor.capabilities or []):
             raise ExecutorServiceError("executor_capability_missing", status_code=409)
+        if task_type == "workspace.rpc.v1" and self.payload_cipher is None:
+            raise ExecutorServiceError("executor_payload_encryption_unavailable", status_code=503)
         if task_type == "config.write.v1":
             expected = str(payload.get("expectedRevision") or "")
             if not executor.config_revision or executor.config_revision != expected:
                 raise ExecutorServiceError("config_revision_conflict", status_code=409)
 
         key = idempotency_key or uuid.uuid4().hex
+        payload_hash = self._payload_hash(payload)
         existing = self.session.scalar(
             select(ExecutorTask).where(
                 ExecutorTask.tenant_id == tenant_id,
@@ -348,7 +359,12 @@ class ExecutorChannelService:
             )
         )
         if existing is not None:
-            if existing.task_type != task_type or existing.payload_envelope != payload:
+            same_payload = (
+                existing.payload_envelope.get("payloadHash") == payload_hash
+                if task_type == "workspace.rpc.v1"
+                else existing.payload_envelope == payload
+            )
+            if existing.task_type != task_type or not same_payload:
                 raise ExecutorServiceError("executor_task_idempotency_conflict", status_code=409)
             return existing
 
@@ -367,11 +383,27 @@ class ExecutorChannelService:
             task_type=task_type,
             idempotency_key=key,
             payload_version=1,
-            payload_envelope=payload,
+            payload_envelope=(
+                {} if task_type == "workspace.rpc.v1" else payload
+            ),
             created_by_user_id=user_id,
         )
         self.session.add(task)
         self.session.flush()
+        if task_type == "workspace.rpc.v1":
+            try:
+                task.payload_envelope = {
+                    "schemaVersion": 1,
+                    "payloadHash": payload_hash,
+                    "encryptedPayload": self.payload_cipher.encrypt(
+                        payload,
+                        tenant_id=task.tenant_id,
+                        task_id=task.id,
+                        purpose="request",
+                    ),
+                }
+            except ExecutorPayloadCipherError as exc:
+                raise ExecutorServiceError(str(exc), status_code=503) from exc
         self._event(task, "queued")
         self.session.commit()
         return task
@@ -531,7 +563,7 @@ class ExecutorChannelService:
             if (
                 task.status == body.outcome
                 and task.result_code == body.resultCode
-                and task.result_summary == body.resultSummary
+                and self._result_summary(task) == body.resultSummary
             ):
                 return task
             raise ExecutorServiceError("executor_task_finish_conflict", status_code=409)
@@ -542,7 +574,26 @@ class ExecutorChannelService:
         task.status = body.outcome
         task.finished_at = now
         task.result_code = body.resultCode
-        task.result_summary = body.resultSummary
+        if task.task_type == "workspace.rpc.v1":
+            if self.payload_cipher is None:
+                raise ExecutorServiceError(
+                    "executor_payload_encryption_unavailable", status_code=503
+                )
+            try:
+                task.result_summary = {
+                    "schemaVersion": 1,
+                    "resultHash": self._payload_hash(body.resultSummary),
+                    "encryptedResult": self.payload_cipher.encrypt(
+                        body.resultSummary,
+                        tenant_id=task.tenant_id,
+                        task_id=task.id,
+                        purpose="result",
+                    ),
+                }
+            except ExecutorPayloadCipherError as exc:
+                raise ExecutorServiceError(str(exc), status_code=503) from exc
+        else:
+            task.result_summary = body.resultSummary
         task.lease_until = None
         if body.outcome == "succeeded" and task.task_type.startswith("config."):
             revision = str(body.resultSummary.get("configRevision") or "")
@@ -577,8 +628,7 @@ class ExecutorChannelService:
             "createdAt": executor.created_at.isoformat() if executor.created_at else None,
         }
 
-    @staticmethod
-    def task_payload(task: ExecutorTask) -> dict[str, Any]:
+    def task_payload(self, task: ExecutorTask) -> dict[str, Any]:
         return {
             "id": str(task.id),
             "executorId": str(task.executor_id),
@@ -588,7 +638,7 @@ class ExecutorChannelService:
             "cancellationRequested": task.cancel_requested_at is not None,
             "leaseUntil": task.lease_until.isoformat() if task.lease_until else None,
             "resultCode": task.result_code,
-            "resultSummary": task.result_summary or {},
+            "resultSummary": self._result_summary(task),
             "createdAt": task.created_at.isoformat() if task.created_at else None,
             "startedAt": task.started_at.isoformat() if task.started_at else None,
             "finishedAt": task.finished_at.isoformat() if task.finished_at else None,
@@ -627,11 +677,26 @@ class ExecutorChannelService:
         task.attempt += 1
         self._event(task, "leased", trace_id=trace_id)
         self.session.commit()
+        payload = task.payload_envelope
+        if task.task_type == "workspace.rpc.v1":
+            if self.payload_cipher is None:
+                raise ExecutorServiceError(
+                    "executor_payload_encryption_unavailable", status_code=503
+                )
+            try:
+                payload = self.payload_cipher.decrypt(
+                    task.payload_envelope.get("encryptedPayload"),
+                    tenant_id=task.tenant_id,
+                    task_id=task.id,
+                    purpose="request",
+                )
+            except ExecutorPayloadCipherError as exc:
+                raise ExecutorServiceError(str(exc), status_code=503) from exc
         return {
             "id": str(task.id),
             "type": task.task_type,
             "payloadVersion": task.payload_version,
-            "payload": task.payload_envelope,
+            "payload": payload,
             "attempt": task.attempt,
             "leaseUntil": task.lease_until.isoformat(),
             "cancellationRequested": False,
@@ -710,6 +775,34 @@ class ExecutorChannelService:
                 raise ExecutorServiceError("executor_result_invalid", status_code=422)
         elif config is not None:
             raise ExecutorServiceError("executor_result_invalid", status_code=422)
+
+    @staticmethod
+    def _payload_hash(payload: dict[str, Any]) -> str:
+        raw = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(raw).hexdigest()
+
+    def _result_summary(self, task: ExecutorTask) -> dict[str, Any]:
+        summary = task.result_summary or {}
+        if task.task_type != "workspace.rpc.v1" or not summary:
+            return summary
+        if self.payload_cipher is None:
+            raise ExecutorServiceError(
+                "executor_payload_encryption_unavailable", status_code=503
+            )
+        try:
+            return self.payload_cipher.decrypt(
+                summary.get("encryptedResult"),
+                tenant_id=task.tenant_id,
+                task_id=task.id,
+                purpose="result",
+            )
+        except ExecutorPayloadCipherError as exc:
+            raise ExecutorServiceError(str(exc), status_code=503) from exc
 
     @staticmethod
     def _require_lease(

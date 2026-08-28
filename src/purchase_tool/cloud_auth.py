@@ -756,6 +756,20 @@ class LocalAuthService(object):
             self.last_verified = now
             return self._status(True, identity)
 
+    def install_executor_session(self, token):
+        """Install the owner session issued to an authenticated device."""
+        token = _validated_token(token)
+        with self.lock:
+            try:
+                self.store.save(token)
+            except Exception:
+                raise LocalAuthError('credential_store_failed') from None
+            self.session_token = token
+            self.identity = None
+            self.last_verified = 0.0
+            self.storage_error = None
+        return True
+
     def start_login(self):
         with self.lock:
             if self.storage_error:

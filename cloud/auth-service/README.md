@@ -58,13 +58,13 @@ Web 采购中心 P0 读取与采购执行测试接口已部署到隔离测试实
 
 - Web 通过 `POST /v1/executors/pairing-codes` 生成 5 分钟一次性配对码；执行器调用 `POST /v1/executor-channel/pair` 单次换取设备凭证。数据库只保存配对码和设备凭证 SHA-256 摘要，原始设备凭证只返回一次。
 - 设备调用 `POST /v1/executor-channel/poll` 做最长 25 秒长轮询并上报版本、能力、Hub 状态和本机配置摘要。60 秒内有心跳视为在线。
-- 首期任务类型只有 `config.read.v1` 和 `config.write.v1`。领取后租约为 45 秒，执行器每 15 秒续租；领取、开始、续租、进度与结束均按设备和任务归属校验。
+- 任务类型包含 `config.read.v1`、`config.write.v1` 和 `workspace.rpc.v1`。后者只允许云端白名单中的物流、买家号、环境、店铺、代理与飞书连接动作；请求和结果使用部署密钥做独立域 AES-GCM 加密后才进入任务表。领取后租约为 45 秒，执行器每 15 秒续租；领取、开始、续租、进度与结束均按设备和任务归属校验。
 - 配置写入必须提交 `expectedRevision`。云端在入队时先比对最后心跳摘要，本地执行器在真正写文件前再次按实时 `config.json` 计算摘要；任一层不一致都拒绝覆盖。
 - 已领取但未开始的过期配置任务可重新排队；已开始的读取任务可安全重试；已开始的写任务租约失效后转 `uncertain`，不自动重复写入。
-- 设备接口只接受独立 Bearer，并明确拒绝浏览器 Cookie。代理链接、密码、Cookie、Token、飞书凭证和租约令牌不得进入普通设备状态、任务结果或日志。
+- 设备接口只接受独立 Bearer，并明确拒绝浏览器 Cookie。设备凭证可换取所属用户的短期本机执行会话，使数据库查重与结果回传不再依赖旧本机登录入口。代理链接、密码、Cookie、Token、飞书凭证和租约令牌不得进入普通设备状态或日志；业务任务中的敏感正文和结果必须加密存储。
 - Web 用户接口：`GET /v1/executors`、生成配对码、撤销、运行摘要、配置读写和任务查询/取消；对应权限为 `executor.device.read/pair/revoke` 与 `executor.config.read/write`。
 
-本地迁移 head 为 `0015_executor_channel_p1`。该纵切面尚未部署共享测试，部署前必须先备份并验证 `alembic current == alembic heads`。
+本地迁移 head 为 `0017_executor_workspace_rpc`。部署前必须先备份并验证 `alembic current == alembic heads`。
 
 ## 成员、角色与会话管理 API
 
@@ -97,7 +97,7 @@ uv run pytest
 
 ## 腾讯轻量服务器测试部署
 
-当前隔离测试实例运行在广州多项目共享测试服务器 `shared-test-gz-01`（实例 ID `lhins-b6nu398t`），入口为 `https://xynigo.samforo.icu`。服务器端 PostgreSQL 已迁移，HTTPS、回环端口隔离、备份恢复和容器重启均已验证；它没有接管本地采购服务。
+当前隔离测试实例运行在广州多项目共享测试服务器 `shared-test-gz-01`（实例 ID `lhins-b6nu398t`），入口为 `https://xynigo.samforo.icu`。服务器端 PostgreSQL 已迁移，HTTPS、回环端口隔离、备份恢复和容器重启均已验证；HubStudio/CDP/SHEIN 动作由配对后的员工电脑执行，云端不直接访问本机端口。
 
 域名根路径现直接提供云端 Web 工作台。云端前端不得独立改版：仓库根目录的 `src/purchase_tool/web/index.html` 是本机与云端的唯一 UI 源，发布前在仓库根目录执行 `python cloud/auth-service/deploy/sync_web_workspace.py`，将原页面和品牌资源同步到认证服务。同步脚本会将 `xynigo-x.ico` 同时发布为 `/xynigo-x.ico` 和 `/favicon.ico`，以保持部署前的浏览器 X 图标。浏览器可在本机 Xynigo 服务未启动时完成飞书登录并使用云端采购、买家号安全摘要、日志和成员会话功能；本机执行器离线只暂停 HubStudio/CDP/SHEIN 等本机能力。登录成功回跳路径必须配置为 `XYNIGO_AUTH_LOGIN_SUCCESS_PATH=/`。
 

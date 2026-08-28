@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import json
 import uuid
 
 from fastapi.testclient import TestClient
@@ -49,7 +50,12 @@ def create_pairing_code(client: TestClient) -> str:
     return str(create_pairing_code_payload(client)["pairingCode"])
 
 
-def pair(device_client: TestClient, pairing_code: str) -> dict[str, object]:
+def pair(
+    device_client: TestClient,
+    pairing_code: str,
+    *,
+    capabilities: list[str] | None = None,
+) -> dict[str, object]:
     response = device_client.post(
         "/v1/executor-channel/pair",
         json={
@@ -59,7 +65,8 @@ def pair(device_client: TestClient, pairing_code: str) -> dict[str, object]:
             "architecture": "arm64",
             "clientVersion": "0.12.5",
             "protocolVersion": 1,
-            "capabilities": ["config.read.v1", "config.write.v1"],
+            "capabilities": capabilities
+            or ["config.read.v1", "config.write.v1"],
         },
         headers={"X-Xynigo-Source": "local_executor_device"},
     )
@@ -80,6 +87,7 @@ def heartbeat(
     credential: str,
     *,
     revision: str | None = None,
+    capabilities: list[str] | None = None,
 ) -> dict[str, object]:
     response = device_client.post(
         "/v1/executor-channel/poll",
@@ -89,7 +97,8 @@ def heartbeat(
             "hubStatus": "ready",
             "clientVersion": "0.12.5",
             "protocolVersion": 1,
-            "capabilities": ["config.read.v1", "config.write.v1"],
+            "capabilities": capabilities
+            or ["config.read.v1", "config.write.v1"],
         },
         headers=device_headers(credential),
     )
@@ -154,6 +163,31 @@ def test_pairing_is_single_use_and_credentials_are_only_stored_hashed(tmp_path) 
 
         missing = web_client.get(f"/v1/executors/pairing-codes/{uuid.uuid4()}")
         assert missing.status_code == 404
+
+
+def test_paired_executor_can_issue_its_owners_local_user_session(tmp_path) -> None:
+    app, _database, _oauth = build_test_app(tmp_path)
+
+    with TestClient(app) as web_client, TestClient(app) as device_client:
+        login(web_client)
+        paired = pair(device_client, create_pairing_code(web_client))
+        credential = str(paired["deviceCredential"])
+        issued = device_client.post(
+            "/v1/executor-channel/session",
+            json={},
+            headers=device_headers(credential),
+        )
+        assert issued.status_code == 200, issued.text
+        session_token = str(issued.json()["sessionToken"])
+        assert len(session_token) >= 32
+        identity = device_client.get(
+            "/v1/auth/me",
+            headers={"Authorization": f"Bearer {session_token}"},
+        )
+        assert identity.status_code == 200, identity.text
+        assert identity.json()["user"]["id"] == web_client.get(
+            "/v1/auth/me"
+        ).json()["user"]["id"]
 
 
 def test_expired_pairing_code_and_device_cookie_are_rejected(tmp_path) -> None:
@@ -537,6 +571,94 @@ def test_web_device_and_task_access_is_owner_isolated_within_tenant(tmp_path) ->
         )
         assert task_cancel.status_code == 404
         assert task_cancel.json()["detail"]["code"] == "executor_task_not_found"
+
+
+def test_workspace_rpc_payload_and_result_are_encrypted_at_rest(tmp_path) -> None:
+    app, database, _oauth = build_test_app(tmp_path)
+    capabilities = ["config.read.v1", "config.write.v1", "workspace.rpc.v1"]
+
+    with TestClient(app) as web_client, TestClient(app) as device_client:
+        login(web_client)
+        paired = pair(
+            device_client,
+            create_pairing_code(web_client),
+            capabilities=capabilities,
+        )
+        credential = str(paired["deviceCredential"])
+        heartbeat(
+            device_client,
+            credential,
+            revision=REVISION_A,
+            capabilities=capabilities,
+        )
+
+        created = web_client.post(
+            f"/v1/executors/{paired['executorId']}/workspace-rpc",
+            json={
+                "method": "POST",
+                "path": "/api/envbatch/parse",
+                "body": {
+                    "filename": "buyers.xlsx",
+                    "contentBase64": "secret-cookie-payload",
+                },
+            },
+            headers=CSRF,
+        )
+        assert created.status_code == 202, created.text
+        task_id = str(created.json()["task"]["id"])
+
+        with database.session_factory() as session:
+            task = session.get(ExecutorTask, uuid.UUID(task_id))
+            assert task is not None
+            stored = json.dumps(task.payload_envelope)
+            assert "secret-cookie-payload" not in stored
+            assert "encryptedPayload" in task.payload_envelope
+
+        leased = heartbeat(
+            device_client,
+            credential,
+            revision=REVISION_A,
+            capabilities=capabilities,
+        )["task"]
+        assert leased["id"] == task_id
+        assert leased["payload"]["body"]["contentBase64"] == (
+            "secret-cookie-payload"
+        )
+        lease_token = str(leased["leaseToken"])
+        started = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/start",
+            json={"leaseToken": lease_token},
+            headers=device_headers(credential),
+        )
+        assert started.status_code == 200, started.text
+        finished = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/finish",
+            json={
+                "leaseToken": lease_token,
+                "outcome": "succeeded",
+                "resultCode": "workspace_rpc_completed",
+                "resultSummary": {
+                    "httpStatus": 200,
+                    "responseType": "json",
+                    "contentType": "application/json",
+                    "body": {"password": "sensitive-result"},
+                },
+            },
+            headers=device_headers(credential),
+        )
+        assert finished.status_code == 200, finished.text
+
+        visible = web_client.get(f"/v1/executor-tasks/{task_id}")
+        assert visible.status_code == 200, visible.text
+        assert visible.json()["task"]["resultSummary"]["body"]["password"] == (
+            "sensitive-result"
+        )
+        with database.session_factory() as session:
+            task = session.get(ExecutorTask, uuid.UUID(task_id))
+            assert task is not None
+            stored = json.dumps(task.result_summary)
+            assert "sensitive-result" not in stored
+            assert "encryptedResult" in task.result_summary
 
 
 def test_started_config_write_becomes_uncertain_after_lease_expiry(tmp_path) -> None:

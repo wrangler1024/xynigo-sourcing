@@ -34,7 +34,9 @@ from .cloud_auth import (
 
 EXECUTOR_KEYCHAIN_SERVICE = 'io.xynigo.sourcing.executor'
 EXECUTOR_KEYCHAIN_ACCOUNT = 'xynigo-device-credential'
-SUPPORTED_CAPABILITIES = ('config.read.v1', 'config.write.v1')
+SUPPORTED_CAPABILITIES = (
+    'config.read.v1', 'config.write.v1', 'workspace.rpc.v1')
+MAX_WORKSPACE_RPC_BYTES = 32 * 1024 * 1024
 CHANNEL_STATE_FIELDS = frozenset({
     'executorId', 'displayName', 'platform', 'architecture', 'pairedAt',
     'lastPollAt', 'lastErrorCode', 'status', 'configRevision',
@@ -197,7 +199,21 @@ class CloudExecutorClient(object):
             },
             token=credential,
             source='local_executor_device',
+            max_response_bytes=MAX_WORKSPACE_RPC_BYTES,
         )
+
+    def issue_user_session(self, credential):
+        payload = self.client._request(
+            '/v1/executor-channel/session',
+            method='POST',
+            payload={},
+            token=credential,
+            source='local_executor_device',
+        )
+        return {
+            'sessionToken': _validated_token(payload.get('sessionToken')),
+            'sessionExpiresAt': str(payload.get('sessionExpiresAt') or ''),
+        }
 
     def start(self, credential, task_id, lease_token):
         return self._task_request(
@@ -229,9 +245,10 @@ class CloudExecutorClient(object):
                 'outcome': outcome,
                 'resultCode': result_code,
                 'resultSummary': result_summary,
-            })
+            }, max_response_bytes=MAX_WORKSPACE_RPC_BYTES)
 
-    def _task_request(self, credential, task_id, suffix, method, payload):
+    def _task_request(self, credential, task_id, suffix, method, payload,
+                      max_response_bytes=1024 * 1024):
         task_id = str(task_id or '').strip()
         if not task_id or '/' in task_id:
             raise LocalAuthError(
@@ -242,6 +259,7 @@ class CloudExecutorClient(object):
             payload=payload,
             token=credential,
             source='local_executor_device',
+            max_response_bytes=max_response_bytes,
         )
 
 
@@ -249,6 +267,8 @@ class ExecutorChannelWorker(object):
     def __init__(self, client, credential_store, state_store,
                  config_getter, public_config_getter, config_writer,
                  task_coordinator, hub_status_getter,
+                 workspace_rpc_executor=None,
+                 user_session_installer=None,
                  sleep_fn=time.sleep, random_fn=random.random):
         self.client = client
         self.credential_store = credential_store
@@ -258,6 +278,8 @@ class ExecutorChannelWorker(object):
         self.config_writer = config_writer
         self.task_coordinator = task_coordinator
         self.hub_status_getter = hub_status_getter
+        self.workspace_rpc_executor = workspace_rpc_executor
+        self.user_session_installer = user_session_installer
         self.sleep = sleep_fn
         self.random = random_fn
         self.stop_event = threading.Event()
@@ -281,6 +303,8 @@ class ExecutorChannelWorker(object):
     def _run(self):
         backoff = 1.0
         credential = None
+        user_session_ready = False
+        user_session_refresh_at = 0.0
         while not self.stop_event.is_set():
             try:
                 if not credential:
@@ -312,6 +336,13 @@ class ExecutorChannelWorker(object):
                         continue
                     self.state_store.update(
                         status='connecting', lastErrorCode='')
+                if (callable(self.user_session_installer)
+                        and (not user_session_ready
+                             or time.monotonic() >= user_session_refresh_at)):
+                    issued = self.client.issue_user_session(credential)
+                    self.user_session_installer(issued['sessionToken'])
+                    user_session_ready = True
+                    user_session_refresh_at = time.monotonic() + 4 * 60 * 60
                 if self.pending_finish:
                     self._flush_pending_finish(credential)
                 cfg = self.config_getter()
@@ -336,6 +367,8 @@ class ExecutorChannelWorker(object):
                         self.state_store.update(
                             status='revoked', lastErrorCode=exc.code)
                     credential = None
+                    user_session_ready = False
+                    user_session_refresh_at = 0.0
                     backoff = 1.0
                     self._wait(1.0)
                     continue
@@ -373,25 +406,35 @@ class ExecutorChannelWorker(object):
             target=renew_loop, name='xynigo-executor-lease', daemon=True)
         renew_thread.start()
         local_task_id = None
+        task_kind = 'config' if task_type.startswith('config.') else ''
+        phase_prefix = 'config' if task_kind else 'workspace'
         try:
-            local_task_id = self.task_coordinator.begin('config')
+            if task_kind:
+                local_task_id = self.task_coordinator.begin(task_kind)
             self.client.progress(
-                credential, task_id, lease_token, 'config.applying', 0, 1)
+                credential, task_id, lease_token,
+                phase_prefix + '.executing', 0, 1)
             outcome, result_code, result_summary = self._apply_task(
                 task_type, payload)
             self.client.progress(
-                credential, task_id, lease_token, 'config.applied', 1, 1,
+                credential, task_id, lease_token,
+                phase_prefix + '.completed', 1, 1,
                 result_code)
         except Exception as exc:
             outcome = 'failed'
             if isinstance(exc, LocalAuthError):
                 result_code = exc.code
             elif isinstance(exc, ValueError):
-                result_code = 'config_write_rejected'
+                result_code = (
+                    'config_write_rejected' if task_kind
+                    else 'workspace_rpc_rejected')
             else:
-                result_code = 'config_task_failed'
-            result_summary = {
-                'configRevision': config_revision(self.config_getter())}
+                result_code = (
+                    'config_task_failed' if task_kind
+                    else 'workspace_rpc_failed')
+            result_summary = (
+                {'configRevision': config_revision(self.config_getter())}
+                if task_kind else {})
         finally:
             if local_task_id:
                 self.task_coordinator.finish(local_task_id)
@@ -405,6 +448,14 @@ class ExecutorChannelWorker(object):
         self._flush_pending_finish(credential)
 
     def _apply_task(self, task_type, payload):
+        if task_type == 'workspace.rpc.v1':
+            if not callable(self.workspace_rpc_executor):
+                raise LocalAuthError(
+                    'executor_capability_missing',
+                    '云端工作台执行能力尚未就绪', 409)
+            return (
+                'succeeded', 'workspace_rpc_completed',
+                self.workspace_rpc_executor(payload))
         current = self.config_getter()
         current_public = self.public_config_getter(current)
         current_revision = config_revision(current_public)

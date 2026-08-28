@@ -17,6 +17,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 PAIRING_CODE_PATTERN = re.compile(r"^[A-HJ-NP-Z2-9]{8}$")
 REVISION_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 STABLE_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]{1,127}$")
+EXECUTOR_CAPABILITIES = Literal[
+    "config.read.v1", "config.write.v1", "workspace.rpc.v1"
+]
 
 
 class StrictBody(BaseModel):
@@ -40,7 +43,7 @@ class ExecutorPairBody(StrictBody):
     architecture: Literal["x86_64", "arm64"]
     clientVersion: str = Field(min_length=1, max_length=64)
     protocolVersion: int = Field(default=1, ge=1, le=10)
-    capabilities: list[Literal["config.read.v1", "config.write.v1"]] = Field(
+    capabilities: list[EXECUTOR_CAPABILITIES] = Field(
         default_factory=lambda: ["config.read.v1", "config.write.v1"],
         max_length=16,
     )
@@ -74,7 +77,7 @@ class ExecutorPollBody(StrictBody):
     hubStatus: Literal["unknown", "ready", "offline", "limited"] = "unknown"
     clientVersion: str = Field(min_length=1, max_length=64)
     protocolVersion: int = Field(default=1, ge=1, le=10)
-    capabilities: list[Literal["config.read.v1", "config.write.v1"]] = Field(
+    capabilities: list[EXECUTOR_CAPABILITIES] = Field(
         default_factory=list,
         max_length=16,
     )
@@ -149,6 +152,31 @@ class ExecutorConfigWriteBody(StrictBody):
         return value
 
 
+class ExecutorWorkspaceRpcBody(StrictBody):
+    method: Literal["GET", "POST"]
+    path: str = Field(min_length=5, max_length=2048)
+    body: dict[str, Any] | None = None
+    idempotencyKey: str | None = Field(default=None, min_length=8, max_length=128)
+
+    @field_validator("path")
+    @classmethod
+    def validate_local_path(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized.startswith("/api/") or normalized.startswith("//"):
+            raise ValueError("workspace RPC path must be a local API path")
+        if any(character in normalized for character in ("\r", "\n", "#")):
+            raise ValueError("workspace RPC path contains invalid characters")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_body_and_size(self) -> "ExecutorWorkspaceRpcBody":
+        if self.method == "GET" and self.body not in (None, {}):
+            raise ValueError("GET workspace RPC cannot contain a body")
+        if len(str(self.body or {})) > 28 * 1024 * 1024:
+            raise ValueError("workspace RPC body is too large")
+        return self
+
+
 class ExecutorTaskStartBody(StrictBody):
     leaseToken: str = Field(min_length=32, max_length=256)
 
@@ -202,30 +230,10 @@ class ExecutorTaskFinishBody(ExecutorTaskStartBody):
     @field_validator("resultSummary")
     @classmethod
     def validate_result_summary(cls, value: dict[str, Any]) -> dict[str, Any]:
-        if len(str(value)) > 64_000:
+        if len(str(value)) > 48 * 1024 * 1024:
             raise ValueError("result summary is too large")
-        forbidden = {
-            "proxylink",
-            "password",
-            "cookie",
-            "authorization",
-            "credential",
-            "appsecret",
-            "token",
-        }
-
-        def check(node: Any) -> None:
-            if isinstance(node, dict):
-                for key, item in node.items():
-                    normalized = re.sub(r"[^a-z0-9]", "", str(key).casefold())
-                    if any(word in normalized for word in forbidden):
-                        raise ValueError("result summary contains a sensitive field")
-                    check(item)
-            elif isinstance(node, list):
-                for item in node:
-                    check(item)
-
-        check(value)
+        # Workspace RPC results are encrypted before durable storage. Config
+        # tasks still receive a strict field-level validation in the service.
         return value
 
 

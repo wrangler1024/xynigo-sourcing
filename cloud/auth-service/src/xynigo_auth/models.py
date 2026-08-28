@@ -1436,7 +1436,8 @@ class ExecutorTask(Base):
             name="uq_executor_task_idempotency",
         ),
         CheckConstraint(
-            "task_type IN ('config.read.v1', 'config.write.v1')",
+            "task_type IN ('config.read.v1', 'config.write.v1', "
+            "'workspace.rpc.v1')",
             name="ck_executor_task_type",
         ),
         CheckConstraint(

@@ -85,8 +85,10 @@ from .executor_contract import (
     ExecutorTaskLeaseBody,
     ExecutorTaskProgressBody,
     ExecutorTaskStartBody,
+    ExecutorWorkspaceRpcBody,
     PairingCodeCreateBody,
 )
+from .executor_payload_crypto import ExecutorPayloadCipher
 from .executor_service import ExecutorChannelService, ExecutorServiceError
 from .local_executor_release import (
     latest_local_executor_release,
@@ -118,6 +120,7 @@ from .procurement_import_service import (
     CloudProcurementImportService,
     ProcurementImportWorker,
 )
+from .workspace_rpc import WorkspaceRpcError, workspace_rpc_permission
 from .procurement_import_sheet import FeishuSheetsGateway
 from .purchase_contract import PurchaseDraft
 from .purchase_service import PurchaseOrderService, PurchaseServiceError
@@ -375,6 +378,9 @@ def create_app(
     buyer_credential_cipher = (
         BuyerCredentialCipher(buyer_credential_key) if buyer_credential_key else None
     )
+    executor_payload_cipher = (
+        ExecutorPayloadCipher(buyer_credential_key) if buyer_credential_key else None
+    )
     operation_sync_worker = None
     if settings.feishu_operation_sync_enabled:
         operation_sync_worker = FeishuOperationSyncWorker(
@@ -455,6 +461,7 @@ def create_app(
     app.state.oauth_client = oauth_client
     app.state.directory_client = directory_client
     app.state.buyer_credential_cipher = buyer_credential_cipher
+    app.state.executor_payload_cipher = executor_payload_cipher
     app.state.operation_sync_worker = operation_sync_worker
     app.state.purchase_sync_worker = purchase_sync_worker
     app.state.procurement_import_service = procurement_import_service
@@ -473,6 +480,7 @@ def create_app(
             pairing_ttl_seconds=settings.executor_pairing_ttl_seconds,
             lease_seconds=settings.executor_lease_seconds,
             online_window_seconds=settings.executor_online_window_seconds,
+            payload_cipher=executor_payload_cipher,
         )
 
     def authenticated_executor(
@@ -1440,6 +1448,48 @@ def create_app(
             "pollPath": "/v1/executor-channel/poll",
         }
 
+    @app.post("/v1/executor-channel/session")
+    def issue_executor_owner_session(
+        request: Request,
+        session: SessionDep,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        _service, executor = authenticated_executor(
+            request, session, authorization
+        )
+        user = session.get(User, executor.owner_user_id)
+        tenant = session.get(Tenant, executor.tenant_id)
+        if user is None or user.status != "active":
+            raise ExecutorServiceError("user_disabled", status_code=403)
+        if tenant is None or tenant.status != "active":
+            raise ExecutorServiceError("tenant_disabled", status_code=403)
+        _ensure_system_catalog(session, tenant=tenant)
+        now = utcnow()
+        expires_at = now + timedelta(seconds=settings.session_ttl_seconds)
+        raw_session_token = random_url_token(48)
+        session.add(
+            SessionRecord(
+                user_id=user.id,
+                token_hash=hash_token(raw_session_token),
+                last_seen_at=now,
+                expires_at=expires_at,
+            )
+        )
+        _add_audit(
+            session,
+            request_id=request.state.request_id,
+            action="executor.owner_session.issue",
+            result="success",
+            tenant_id=tenant.id,
+            actor_user_id=user.id,
+            details={"executorId": str(executor.id)},
+        )
+        session.commit()
+        return {
+            "sessionToken": raw_session_token,
+            "sessionExpiresAt": expires_at.isoformat(),
+        }
+
     @app.post("/v1/executors/{executor_id}/revoke")
     def revoke_local_executor(
         executor_id: uuid.UUID,
@@ -1580,6 +1630,61 @@ def create_app(
             action="executor.config.write.request",
             object_id=executor_id,
             summary={"taskId": str(task.id), "expectedRevision": body.expectedRevision},
+        )
+        return {"task": service.task_payload(task)}
+
+    @app.post(
+        "/v1/executors/{executor_id}/workspace-rpc",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def execute_local_workspace_rpc(
+        executor_id: uuid.UUID,
+        body: ExecutorWorkspaceRpcBody,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        try:
+            permission = workspace_rpc_permission(body.method, body.path)
+        except WorkspaceRpcError as exc:
+            raise HTTPException(
+                status_code=422, detail={"code": exc.code}
+            ) from exc
+        actor = authorize_request(
+            request,
+            session,
+            permission=permission,
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="executor.workspace_rpc.request",
+        )
+        service = executor_channel(session)
+        task = service.create_config_task(
+            tenant_id=actor.tenant.id,
+            user_id=actor.user.id,
+            executor_id=executor_id,
+            task_type="workspace.rpc.v1",
+            payload={
+                "method": body.method,
+                "path": body.path,
+                "body": body.body,
+            },
+            idempotency_key=body.idempotencyKey,
+        )
+        append_executor_audit(
+            request,
+            session,
+            actor,
+            action="executor.workspace_rpc.request",
+            object_id=executor_id,
+            summary={
+                "taskId": str(task.id),
+                "method": body.method,
+                "path": body.path.split("?", 1)[0],
+            },
         )
         return {"task": service.task_payload(task)}
 

@@ -31,6 +31,7 @@ class FakeExecutorClient(object):
         self.pair_calls = []
         self.poll_calls = []
         self.poll_callback = None
+        self.user_sessions = []
 
     def pair(self, code, name, system, architecture):
         self.pair_calls.append((code, name, system, architecture))
@@ -45,6 +46,10 @@ class FakeExecutorClient(object):
         if self.poll_callback:
             self.poll_callback()
         return {'task': None}
+
+    def issue_user_session(self, credential):
+        self.user_sessions.append(credential)
+        return {'sessionToken': 'user-session-' + ('z' * 40)}
 
     def start(self, credential, task_id, lease_token):
         self.started.append((credential, task_id, lease_token))
@@ -143,6 +148,12 @@ class ExecutorTaskApplicationTests(unittest.TestCase):
             config_writer=write_config,
             task_coordinator=coordinator,
             hub_status_getter=lambda _force=False: (True, ''),
+            workspace_rpc_executor=lambda payload: {
+                'httpStatus': 200,
+                'responseType': 'json',
+                'contentType': 'application/json',
+                'body': {'echo': payload},
+            },
         )
         return worker, client, holder, coordinator
 
@@ -257,6 +268,28 @@ class ExecutorTaskApplicationTests(unittest.TestCase):
         self.assertEqual(client.finishes[0]['resultCode'],
                          'config_task_failed')
 
+    def test_workspace_rpc_runs_without_claiming_config_gate(self):
+        worker, client, _holder, coordinator = self.build_worker({
+            'concurrency': 2, 'safeParallelTasks': True,
+        })
+        worker._execute_task(DEVICE_CREDENTIAL, {
+            'id': 'task-workspace',
+            'type': 'workspace.rpc.v1',
+            'leaseToken': LEASE_TOKEN,
+            'payload': {
+                'method': 'GET',
+                'path': '/api/progress',
+                'body': None,
+            },
+        })
+        self.assertEqual(client.finishes[0]['outcome'], 'succeeded')
+        self.assertEqual(client.finishes[0]['resultCode'],
+                         'workspace_rpc_completed')
+        self.assertEqual(
+            client.finishes[0]['resultSummary']['body']['echo']['path'],
+            '/api/progress')
+        self.assertFalse(coordinator.running())
+
 
 class PairingTests(unittest.TestCase):
     def test_pair_saves_credential_only_in_secure_store(self):
@@ -360,6 +393,30 @@ class ExecutorChannelLifecycleTests(unittest.TestCase):
             self.assertFalse(worker.thread.is_alive())
             self.assertEqual(len(client.poll_calls), 2)
             self.assertEqual(store.loads, 1)
+
+    def test_worker_installs_owner_session_before_first_poll(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_store = ExecutorChannelStateStore(
+                os.path.join(directory, 'executor-channel.json'))
+            client = FakeExecutorClient()
+            installed = []
+            worker = ExecutorChannelWorker(
+                client=client,
+                credential_store=MemoryAuthSessionStore(DEVICE_CREDENTIAL),
+                state_store=state_store,
+                config_getter=lambda: {'concurrency': 2},
+                public_config_getter=lambda config: dict(config),
+                config_writer=lambda config: dict(config),
+                task_coordinator=LocalTaskCoordinator(lambda: True),
+                hub_status_getter=lambda _force=False: (True, ''),
+                user_session_installer=installed.append,
+            )
+            client.poll_callback = worker.stop_event.set
+            self.assertTrue(worker.start())
+            worker.thread.join(timeout=2)
+            self.assertFalse(worker.thread.is_alive())
+            self.assertEqual(client.user_sessions, [DEVICE_CREDENTIAL])
+            self.assertEqual(installed, ['user-session-' + ('z' * 40)])
 
 
 if __name__ == '__main__':

@@ -3078,10 +3078,13 @@ function cloudApiError(payload, status) {
     executor_not_found:'本地执行器设备不存在或不属于当前组织',
     executor_offline:'所选本地执行器当前离线，请先启动执行器',
     executor_revoked:'本地执行器设备已被撤销，请重新配对',
-    executor_task_busy:'所选执行器已有配置请求正在处理，请稍后重试',
+    executor_task_busy:'所选执行器已有云端任务正在处理，请稍后重试',
     executor_task_not_found:'本地执行器请求不存在',
     executor_task_state_conflict:'本地执行器请求状态已变化，请刷新后重试',
     executor_task_cancel_requested:'本地执行器请求已进入取消流程',
+    executor_capability_missing:'本地执行器版本过旧，请安装云端提供的最新版本',
+    executor_payload_encryption_unavailable:'云端执行器安全通道尚未就绪',
+    workspace_rpc_operation_unsupported:'当前功能尚未适配新版本本地执行器',
     config_revision_conflict:'本地配置已被其他操作修改，请重新读取后再保存',
     pairing_code_invalid:'配对码无效，请重新生成',
     pairing_code_expired:'配对码已过期，请重新生成',
@@ -3193,6 +3196,160 @@ function cloudLocalStub(path, opts={}) {
   throw error;
 }
 
+const CLOUD_WORKSPACE_RPC_PREFIXES = [
+  '/api/hub-status', '/api/groups', '/api/group-envs', '/api/progress',
+  '/api/tasks', '/api/query', '/api/stop', '/api/requery',
+  '/api/requery-failed', '/api/screenshot', '/api/export', '/api/register/',
+  '/api/buyer-library/import/', '/api/resources/stores',
+  '/api/resources/proxies', '/api/envbatch/', '/api/lark/', '/api/hub-api-key'
+];
+
+function isCloudWorkspaceRpcPath(path) {
+  const pathname = String(path || '').split('?', 1)[0];
+  return CLOUD_WORKSPACE_RPC_PREFIXES.some(prefix =>
+    pathname === prefix || pathname.startsWith(
+      prefix.endsWith('/') ? prefix : prefix + '/'));
+}
+
+async function cloudWorkspaceExecutor() {
+  let selected = localExecutorSelectedDevice();
+  const compatible = item => item && item.status !== 'revoked'
+    && item.connectivity === 'online'
+    && Array.isArray(item.capabilities)
+    && item.capabilities.includes('workspace.rpc.v1');
+  if (!compatible(selected)) {
+    const payload = await cloudFetchJson('/v1/executors');
+    localExecutorDevices = Array.isArray(payload.items) ? payload.items : [];
+    selected = localExecutorDevices.find(compatible) || null;
+    if (selected) localExecutorSelectedDeviceId = selected.id;
+    renderLocalExecutorDevices();
+  }
+  if (!selected) {
+    const anyOnline = localExecutorDevices.some(item =>
+      item.status !== 'revoked' && item.connectivity === 'online');
+    const error = new Error(anyOnline
+      ? '在线执行器版本过旧，请先安装云端提供的最新 Windows 执行器'
+      : '本地执行器当前离线，请先启动最新版本 Xynigo');
+    error.code = anyOnline ? 'executor_capability_missing' : 'executor_offline';
+    throw error;
+  }
+  return selected;
+}
+
+async function cloudWorkspaceRpcRaw(path, opts={}) {
+  const executor = await cloudWorkspaceExecutor();
+  const method = String(opts.method || 'GET').toUpperCase();
+  let body = null;
+  if (method === 'POST') {
+    if (typeof opts.body === 'string' && opts.body) body = JSON.parse(opts.body);
+    else if (opts.body && typeof opts.body === 'object') body = opts.body;
+    else body = {};
+  }
+  const created = await cloudFetchJson(
+    `/v1/executors/${encodeURIComponent(executor.id)}/workspace-rpc`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({method, path, body})
+    });
+  const taskId = String(created.task && created.task.id || '');
+  if (!taskId) throw new Error('云端未返回执行器任务编号');
+  const deadline = Date.now() + 45000;
+  while (Date.now() < deadline) {
+    const payload = await cloudFetchJson(`/v1/executor-tasks/${taskId}`);
+    const task = payload.task || {};
+    if (task.status === 'succeeded') {
+      const result = task.resultSummary || {};
+      const httpStatus = Number(result.httpStatus || 0);
+      if (httpStatus < 200 || httpStatus >= 300) {
+        const responseBody = result.body && typeof result.body === 'object'
+          ? result.body : {};
+        const error = new Error(responseBody.error
+          || `本地任务失败 HTTP ${httpStatus || '未知'}`);
+        error.code = String(responseBody.code || 'workspace_rpc_failed');
+        error.status = httpStatus || 500;
+        throw error;
+      }
+      return result;
+    }
+    if (['failed','uncertain','cancelled'].includes(task.status)) {
+      const error = new Error(task.resultCode === 'workspace_rpc_failed'
+        ? '本地执行器业务接口执行失败，请打开状态中心后重试'
+        : `本地执行器任务失败：${task.resultCode || task.status}`);
+      error.code = String(task.resultCode || task.status);
+      throw error;
+    }
+    await new Promise(resolve => setTimeout(resolve, 300));
+  }
+  throw new Error('等待本地执行器响应超时，请确认状态中心保持运行');
+}
+
+async function cloudWorkspaceApi(path, opts={}) {
+  const result = await cloudWorkspaceRpcRaw(path, opts);
+  if (result.responseType !== 'json' || !result.body
+      || typeof result.body !== 'object') {
+    throw new Error('本地执行器返回了非 JSON 业务响应');
+  }
+  return result.body;
+}
+
+function base64ToBlob(value, contentType) {
+  const binary = atob(String(value || ''));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return new Blob([bytes], {type:String(contentType || 'application/octet-stream')});
+}
+
+function workspaceDownloadName(disposition, fallback) {
+  const encoded = String(disposition || '').match(/filename\*=UTF-8''([^;]+)/i);
+  if (encoded) {
+    try { return decodeURIComponent(encoded[1]); } catch (_) {}
+  }
+  return fallback;
+}
+
+async function downloadWorkspaceResource(path, fallbackName) {
+  if (!CLOUD_WEB_MODE) {
+    location.href = path;
+    return;
+  }
+  const result = await cloudWorkspaceRpcRaw(path);
+  if (result.responseType !== 'base64') {
+    throw new Error('本地执行器没有返回可下载文件');
+  }
+  const blob = base64ToBlob(result.bodyBase64, result.contentType);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = workspaceDownloadName(result.contentDisposition, fallbackName);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function workspaceImageUrl(path) {
+  if (!CLOUD_WEB_MODE) return path;
+  const result = await cloudWorkspaceRpcRaw(path);
+  if (result.responseType !== 'base64') {
+    throw new Error('本地执行器没有返回截图');
+  }
+  return URL.createObjectURL(base64ToBlob(result.bodyBase64, result.contentType));
+}
+
+document.querySelectorAll(
+  'a[href="/api/envbatch/template"], a[href="/api/lark/template"]'
+).forEach(link => {
+  link.addEventListener('click', event => {
+    if (!CLOUD_WEB_MODE) return;
+    event.preventDefault();
+    const path = link.getAttribute('href');
+    const fallback = path.includes('/lark/')
+      ? '买家号统一台账模板.xlsx' : '采购工具买家号入库模板.xlsx';
+    downloadWorkspaceResource(path, fallback).catch(error => toast(error.message));
+  });
+});
+
 async function cloudWebApi(path, opts={}) {
   if (path === '/api/auth/start') {
     return {loginUrl:'/v1/auth/feishu/start', resumed:false};
@@ -3261,6 +3418,9 @@ async function cloudWebApi(path, opts={}) {
   if (path === '/api/assistant/procurement-import'
       || path.startsWith('/api/assistant/procurement-import/')) {
     return cloudFetchJson(procurementImportResourcePath(path), opts);
+  }
+  if (isCloudWorkspaceRpcPath(path)) {
+    return cloudWorkspaceApi(path, opts);
   }
   return cloudLocalStub(path, opts);
 }
@@ -5376,7 +5536,10 @@ async function loadStoreManagement(force=false) {
   $(id).addEventListener(id === 'storeFilterKeyword' ? 'input' : 'change', renderStoreManagementRows);
 });
 $('btnStoreRefresh').onclick = () => loadStoreManagement(true);
-$('btnStoreExport').onclick = () => { location.href = '/api/resources/stores/export'; };
+$('btnStoreExport').onclick = async () => {
+  try { await downloadWorkspaceResource('/api/resources/stores/export', 'Xynigo店铺环境对账.csv'); }
+  catch (error) { toast(error.message); }
+};
 $('storeManagementTbody').onclick = event => {
   const button = event.target.closest('[data-store-detail]');
   if (!button) return;
@@ -5576,7 +5739,10 @@ $('btnProxyCheckStop').onclick = async () => {
   } catch (error) { toast(error.message); }
 };
 $('btnProxyRefresh').onclick = () => loadProxyManagement(true);
-$('btnProxyExport').onclick = () => { location.href = '/api/resources/proxies/export'; };
+$('btnProxyExport').onclick = async () => {
+  try { await downloadWorkspaceResource('/api/resources/proxies/export', 'Xynigo代理IP健康清单.csv'); }
+  catch (error) { toast(error.message); }
+};
 
 function larkTargetDisplayName() {
   return larkTargetBaseName && larkTargetTableName
@@ -5597,7 +5763,19 @@ function createLarkTargetLink(text) {
   link.rel = 'noopener noreferrer';
   link.title = '在新标签页打开当前飞书多维表格';
   link.textContent = text;
-  link.addEventListener('click', event => event.stopPropagation());
+  link.addEventListener('click', async event => {
+    event.stopPropagation();
+    if (!CLOUD_WEB_MODE) return;
+    event.preventDefault();
+    try {
+      const result = await api('/api/lark/target-url');
+      const target = String(result.url || '');
+      if (!/^https:\/\/(?:[^/]+\.)?(?:feishu\.cn|larksuite\.com)\//i.test(target)) {
+        throw new Error('飞书目标地址无效');
+      }
+      window.open(target, '_blank', 'noopener,noreferrer');
+    } catch (error) { toast(error.message); }
+  });
   return link;
 }
 
@@ -6247,7 +6425,7 @@ tbody.addEventListener('click', async e => {
   } catch (err) { toast(err.message); }
 });
 
-function openScreenshot(serial, orderNo) {
+async function openScreenshot(serial, orderNo) {
   const mask = $('screenshotMask');
   const image = $('screenshotImage');
   const loading = $('screenshotLoading');
@@ -6262,9 +6440,19 @@ function openScreenshot(serial, orderNo) {
     loading.hidden = false;
     loading.textContent = '截图加载失败，可重新查询该环境后再试。';
   };
-  image.src = '/api/screenshot?serial=' + encodeURIComponent(serial) + '&t=' + Date.now();
   mask.classList.add('show');
   mask.setAttribute('aria-hidden', 'false');
+  try {
+    const path = '/api/screenshot?serial=' + encodeURIComponent(serial) + '&t=' + Date.now();
+    const url = await workspaceImageUrl(path);
+    if (image.dataset.objectUrl) URL.revokeObjectURL(image.dataset.objectUrl);
+    image.dataset.objectUrl = CLOUD_WEB_MODE ? url : '';
+    image.src = url;
+  } catch (error) {
+    image.hidden = true;
+    loading.hidden = false;
+    loading.textContent = '截图加载失败：' + error.message;
+  }
 }
 
 function closeScreenshot() {
@@ -6273,6 +6461,8 @@ function closeScreenshot() {
   mask.classList.remove('show');
   mask.setAttribute('aria-hidden', 'true');
   image.removeAttribute('src');
+  if (image.dataset.objectUrl) URL.revokeObjectURL(image.dataset.objectUrl);
+  image.dataset.objectUrl = '';
   image.hidden = true;
 }
 
@@ -6286,7 +6476,10 @@ document.addEventListener('keydown', e => {
   }
 });
 
-$('btnExport').onclick = () => { location.href = '/api/export?format=xlsx'; };
+$('btnExport').onclick = async () => {
+  try { await downloadWorkspaceResource('/api/export?format=xlsx', '物流单号查询结果.xlsx'); }
+  catch (error) { toast(error.message); }
+};
 
 $('btnRetryFail').onclick = async () => {
   if (isRunning) { toast('查询进行中，请等本批次结束后再批量重查'); return; }
@@ -8526,7 +8719,8 @@ document.querySelectorAll('input[name="envBackupType"]').forEach(radio => {
   radio.onchange = () => { if (radio.checked) { envBackup.type = radio.value; refreshAssignUi(); } };
 });
 $('btnEnvBackupResult').onclick = () => {
-  window.location = '/api/envbatch/backup/result';
+  downloadWorkspaceResource('/api/envbatch/backup/result', '备用测试环境结果.tsv')
+    .catch(error => toast(error.message));
 };
 $('envDate').onchange = () => refreshAssignUi();
 
@@ -8542,7 +8736,10 @@ $('envTbody').addEventListener('click', async e => {
   } catch (err) { toast(err.message); }
 });
 
-$('btnEnvMapping').onclick = () => { location.href = '/api/envbatch/export-mapping'; };
+$('btnEnvMapping').onclick = async () => {
+  try { await downloadWorkspaceResource('/api/envbatch/export-mapping', '买家号环境映射.xlsx'); }
+  catch (error) { toast(error.message); }
+};
 $('btnEnvTsv').onclick = () => toast('旧统一台账直贴导出已停用');
 
 $('btnGroupAll').onclick = async () => {

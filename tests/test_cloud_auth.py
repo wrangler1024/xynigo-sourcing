@@ -724,8 +724,9 @@ class AuthRouteGuardTests(unittest.TestCase):
     def setUp(self):
         self.original_state = main_module.STATE
         self.auth = FakeRouteAuth()
-        main_module.STATE = SimpleNamespace(auth=self.auth)
+        main_module.STATE = SimpleNamespace(auth=self.auth, cfg={})
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.server.executor_rpc_token = 'rpc-token-' + ('x' * 40)
         self.thread = threading.Thread(
             target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -787,6 +788,30 @@ class AuthRouteGuardTests(unittest.TestCase):
         payload = json.loads(caught.exception.read().decode('utf-8'))
         self.assertEqual(payload['code'], 'authentication_required')
         self.assertEqual(self.auth.required_permissions, [None])
+
+    def test_internal_executor_rpc_token_bypasses_only_local_auth_gate(self):
+        request = Request(
+            self._url('/api/config'),
+            headers={
+                'X-Xynigo-Executor-RPC': self.server.executor_rpc_token,
+                'X-Xynigo-Source': 'executor_workspace_rpc',
+            },
+        )
+        with urlopen(request, timeout=3) as response:
+            payload = json.loads(response.read().decode('utf-8'))
+        self.assertIn('proxyConfigured', payload)
+        self.assertEqual(self.auth.required_permissions, [])
+
+        rejected = Request(
+            self._url('/api/config'),
+            headers={
+                'X-Xynigo-Executor-RPC': 'wrong-' + ('x' * 40),
+                'X-Xynigo-Source': 'executor_workspace_rpc',
+            },
+        )
+        with self.assertRaises(HTTPError) as caught:
+            urlopen(rejected, timeout=3)
+        self.assertEqual(caught.exception.code, 401)
 
     def test_business_log_route_requires_login_and_forwards_only_relative_path(self):
         forwarded = []
