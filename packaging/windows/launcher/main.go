@@ -727,8 +727,10 @@ func (app *launcherApp) showExecutorStartFailure() {
 }
 
 func managedExecutorStopScript() string {
-	return `& { param([string]$Root) ` +
-		`$prefix = [IO.Path]::GetFullPath($Root).TrimEnd('\') + '\'; ` +
+	return `& { ` +
+		`$root = $env:XYNIGO_TERMINATE_ROOT; ` +
+		`if ([string]::IsNullOrWhiteSpace($root)) { exit 2 }; ` +
+		`$prefix = [IO.Path]::GetFullPath($root).TrimEnd('\') + '\'; ` +
 		`Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe'" | ` +
 		`Where-Object { $_.ExecutablePath -and ` +
 		`$_.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) -and ` +
@@ -744,8 +746,8 @@ func terminateManagedExecutors(root string) error {
 		"-NonInteractive",
 		"-ExecutionPolicy", "Bypass",
 		"-Command", managedExecutorStopScript(),
-		root,
 	)
+	command.Env = append(os.Environ(), "XYNIGO_TERMINATE_ROOT="+root)
 	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
 	if err := command.Run(); err != nil {
 		return errors.New("无法结束安装目录内的旧版本本地执行器")
