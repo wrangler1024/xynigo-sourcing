@@ -8846,6 +8846,12 @@ async function loadEnvGroups() {
   const sel = $('envSiteGroup');
   siteSel.disabled = true;
   sel.disabled = true;
+  // 采购员分配是固定业务配置，不应被 HubStudio 分组或执行器版本阻断。
+  // 先渲染四人卡片，再异步读取本机配置和分组；后者失败时卡片仍然可见。
+  envBuyers = normalizeEnvBuyers(envBuyers);
+  envDefaultSplit = normalizeEnvDefaultSplit(envDefaultSplit);
+  envBuyers.forEach(b => { if (!(b.name in envBuyerCounts)) envBuyerCounts[b.name] = 0; });
+  refreshAssignUi();
   try {
     const [cfg, result] = await Promise.all([
       api('/api/config'), api('/api/groups')

@@ -56,6 +56,11 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         ):
             self.assertIn(marker, html)
         self.assertNotIn("buyers:[], buyerDefaultSplit:[]", html)
+        load_groups = html[html.index("async function loadEnvGroups()"):]
+        self.assertLess(
+            load_groups.index("refreshAssignUi();"),
+            load_groups.index("const [cfg, result] = await Promise.all"),
+        )
 
 
 if __name__ == "__main__":
