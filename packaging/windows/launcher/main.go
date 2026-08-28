@@ -142,12 +142,15 @@ func main() {
 		return
 	}
 	command := startupCommand(os.Args[1:])
+	appendStatusCenterLog(root, "launcher_process_started command="+command)
 	mutex, alreadyRunning, err := acquireLauncherMutex(launcherMutexName)
 	if err != nil {
+		appendStatusCenterLog(root, "launcher_mutex_failed: "+err.Error())
 		walk.MsgBox(nil, "Xynigo 启动失败", "无法创建本地单实例锁。", walk.MsgBoxIconError)
 		return
 	}
 	if alreadyRunning {
+		appendStatusCenterLog(root, "launcher_mutex_already_running")
 		if err := writeCommand(root, command); err != nil {
 			walk.MsgBox(nil, "Xynigo", "状态中心已运行，但启动请求未能转交。", walk.MsgBoxIconWarning)
 		}
@@ -157,14 +160,17 @@ func main() {
 
 	app := &launcherApp{root: root, launcherToken: randomToken()}
 	if err := app.buildWindow(); err != nil {
+		appendStatusCenterLog(root, "launcher_window_failed: "+err.Error())
 		walk.MsgBox(nil, "Xynigo 启动失败", err.Error(), walk.MsgBoxIconError)
 		return
 	}
 	if err := app.buildTray(); err != nil {
+		appendStatusCenterLog(root, "launcher_tray_failed: "+err.Error())
 		walk.MsgBox(app.mw, "Xynigo 启动失败", err.Error(), walk.MsgBoxIconError)
 		return
 	}
 	defer app.notify.Dispose()
+	appendStatusCenterLog(root, "launcher_ui_ready")
 
 	app.mw.Closing().Attach(func(canceled *bool, reason walk.CloseReason) {
 		if app.exiting {
@@ -182,6 +188,7 @@ func main() {
 		app.mw.SetVisible(false)
 	}
 	go app.ensureExecutor()
+	appendStatusCenterLog(root, "launcher_executor_start_dispatched")
 	go app.statusLoop()
 	go app.commandLoop()
 	if command != "show" && command != "background" {
