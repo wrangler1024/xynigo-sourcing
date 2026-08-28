@@ -88,6 +88,7 @@ type launcherApp struct {
 	deviceValue    *walk.Label
 	heartbeatValue *walk.Label
 	pairEdit       *walk.LineEdit
+	pairButton     *walk.PushButton
 	startButton    *walk.PushButton
 	trayStatus     *walk.Action
 	trayStartStop  *walk.Action
@@ -98,6 +99,7 @@ type launcherApp struct {
 	launcherToken string
 	statusURL     string
 	lastStatus    *localStatus
+	pairInFlight  bool
 	exiting       bool
 }
 
@@ -288,7 +290,7 @@ func (app *launcherApp) buildWindow() error {
 					Label{AssignTo: &app.deviceValue, Text: "尚未读取设备状态", TextColor: muted},
 					Composite{Background: SolidColorBrush{Color: white}, Layout: HBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
 						LineEdit{AssignTo: &app.pairEdit, CueBanner: "输入云端显示的 8 位一次性配对码", MaxLength: 9},
-						PushButton{Text: "配对这台电脑", MinSize: Size{Width: 122, Height: 34}, OnClicked: func() { go app.performPair(app.pairEdit.Text()) }},
+						PushButton{AssignTo: &app.pairButton, Text: "配对这台电脑", MinSize: Size{Width: 122, Height: 34}, OnClicked: func() { app.startPair(app.pairEdit.Text()) }},
 					}},
 				},
 			},
@@ -707,6 +709,8 @@ func (app *launcherApp) performPair(raw string) {
 	cmd := exec.Command(python, runPy, "pair", code)
 	cmd.Dir = app.root
 	cmd.Env = append(os.Environ(),
+		"PYTHONUTF8=1",
+		"PYTHONIOENCODING=utf-8",
 		"XYNIGO_DATA_DIR="+app.root,
 		"XYNIGO_INSTALL_DIR="+app.root,
 		"XYNIGO_INSTALL_MODE="+installMode,
@@ -725,6 +729,34 @@ func (app *launcherApp) performPair(raw string) {
 	app.restartExecutor()
 	app.mw.Synchronize(func() {
 		walk.MsgBox(app.mw, "设备配对完成", "这台电脑已绑定云端，正在等待真实心跳确认在线。", walk.MsgBoxIconInformation)
+	})
+}
+
+func (app *launcherApp) startPair(raw string) {
+	app.mu.Lock()
+	if app.pairInFlight || app.exiting {
+		app.mu.Unlock()
+		return
+	}
+	app.pairInFlight = true
+	app.mu.Unlock()
+	app.pairEdit.SetEnabled(false)
+	app.pairButton.SetEnabled(false)
+	app.pairButton.SetText("正在配对…")
+	go func() {
+		defer app.finishPair()
+		app.performPair(raw)
+	}()
+}
+
+func (app *launcherApp) finishPair() {
+	app.mu.Lock()
+	app.pairInFlight = false
+	app.mu.Unlock()
+	app.mw.Synchronize(func() {
+		app.pairEdit.SetEnabled(true)
+		app.pairButton.SetEnabled(true)
+		app.pairButton.SetText("配对这台电脑")
 	})
 }
 

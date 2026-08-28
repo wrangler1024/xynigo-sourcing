@@ -155,6 +155,24 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
         self.assertTrue((ROOT / 'packaging/windows/branding/'
                          'installer-header.bmp').is_file())
 
+    def test_pairing_is_single_flight_and_python_output_is_utf8(self):
+        for source in (
+            'pairButton     *walk.PushButton',
+            'pairInFlight  bool',
+            'AssignTo: &app.pairButton',
+            'app.startPair(app.pairEdit.Text())',
+            'if app.pairInFlight || app.exiting',
+            'app.pairButton.SetEnabled(false)',
+            'defer app.finishPair()',
+            'PYTHONUTF8=1',
+            'PYTHONIOENCODING=utf-8',
+        ):
+            self.assertIn(source, self.gui_launcher)
+        self.assertNotIn(
+            'go app.performPair(app.pairEdit.Text())',
+            self.gui_launcher,
+        )
+
     def test_builder_marks_unsigned_artifact_as_not_release_eligible(self):
         self.assertIn("'authenticodeSigned': False", self.builder)
         self.assertIn("'releaseEligible': False", self.builder)
