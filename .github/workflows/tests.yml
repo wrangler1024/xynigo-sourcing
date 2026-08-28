@@ -172,7 +172,19 @@ jobs:
           # the launcher without killing itself, switches the immutable
           # runtime pointer, and starts a fresh status center.
           $onlineLauncher = Start-Process -FilePath "$installDir\Xynigo.exe" -ArgumentList "--background" -PassThru
-          Start-Sleep -Seconds 2
+          $onlineChildren = @()
+          for ($attempt = 0; $attempt -lt 20; $attempt++) {
+            $onlineChildren = @(Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe'" | Where-Object {
+              $_.ExecutablePath -and $_.ExecutablePath -like "$runtimeDir\*"
+            })
+            if ($onlineChildren.Count -eq 1) { break }
+            Start-Sleep -Milliseconds 500
+          }
+          if ($onlineChildren.Count -ne 1) { throw "online executor child did not start" }
+          # The real updater spawns the installer and then exits its own Python
+          # process. Reproduce that handoff while leaving Xynigo.exe alive for
+          # the installer's online-mode process switch.
+          Stop-Process -Id $onlineChildren[0].ProcessId -Force
           # Do not use Start-Process -Wait here: on Windows PowerShell it also
           # waits for the status-center descendant intentionally started by
           # .onInstSuccess. Wait only for the installer process itself.
@@ -196,6 +208,7 @@ jobs:
           if (-not (Test-Path "$installDir\config.json")) { throw "upgrade removed config" }
           if (-not (Test-Path "$installDir\运行数据\keep.txt")) { throw "upgrade removed runtime data" }
           & taskkill.exe /IM Xynigo.exe /T /F | Out-Null
+          Start-Sleep -Milliseconds 800
           $uninstaller = Get-Item "$installDir\卸载 Xynigo Sourcing.exe"
           $uninstall = Start-Process -FilePath $uninstaller.FullName -ArgumentList "/S" -Wait -PassThru
           if ($uninstall.ExitCode -ne 0) { throw "uninstall failed: $($uninstall.ExitCode)" }
