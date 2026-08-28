@@ -84,6 +84,10 @@ jobs:
           if (-not (Test-Path "$installDir\Xynigo.exe")) { throw "tray/status launcher missing" }
           if (-not (Test-Path "$installDir\xynigo-logo.png")) { throw "brand asset missing" }
           if (-not (Test-Path "$installDir\current-version.txt")) { throw "version marker missing" }
+          $launcher = Start-Process -FilePath "$installDir\Xynigo.exe" -ArgumentList "--background" -PassThru
+          Start-Sleep -Seconds 4
+          if ($launcher.HasExited) { throw "tray/status launcher exited during startup: $($launcher.ExitCode)" }
+          & taskkill.exe /PID $launcher.Id /T /F | Out-Null
           $protocol = (Get-Item "HKCU:\Software\Classes\xynigo\shell\open\command").GetValue('')
           if ($protocol -notmatch 'Xynigo\.exe.*--protocol') { throw "xynigo protocol missing" }
           if (-not (Test-Path "$installDir\config.json")) { throw "green config was not migrated" }

@@ -140,6 +140,16 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
             '/executor-status.json',
         ):
             self.assertIn(source, self.gui_launcher)
+        self.assertIn('logo := "xynigo-logo.png"', self.gui_launcher)
+        self.assertIn('icon := "xynigo-x.ico"', self.gui_launcher)
+        self.assertNotIn(
+            'logo := filepath.Join(app.root, "xynigo-logo.png")',
+            self.gui_launcher,
+        )
+        self.assertNotIn(
+            'icon := filepath.Join(app.root, "xynigo-x.ico")',
+            self.gui_launcher,
+        )
         self.assertTrue((ROOT / 'packaging/windows/branding/'
                          'installer-welcome.bmp').is_file())
         self.assertTrue((ROOT / 'packaging/windows/branding/'

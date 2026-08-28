@@ -232,8 +232,13 @@ func (app *launcherApp) buildWindow() error {
 	soft := walk.RGB(232, 248, 247)
 	canvas := walk.RGB(244, 247, 250)
 
-	logo := filepath.Join(app.root, "xynigo-logo.png")
-	icon := filepath.Join(app.root, "xynigo-x.ico")
+	// Declarative Walk treats string images as resource names and resolves
+	// them relative to the executable directory. Passing an absolute path here
+	// makes its resource manager prepend the executable directory a second
+	// time (for example, C:\\...\\Xynigo Sourcing\\C:\\...), so the status
+	// center fails before the executor can start.
+	logo := "xynigo-logo.png"
+	icon := "xynigo-x.ico"
 	window := MainWindow{
 		AssignTo:   &app.mw,
 		Title:      "Xynigo 本地执行器状态中心",
