@@ -7,14 +7,14 @@ import base64
 import json
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 
 MAX_RPC_RESPONSE_BYTES = 28 * 1024 * 1024
 
 
 class WorkspaceRpcClient(object):
-    def __init__(self, base_url, rpc_token, opener=urlopen, timeout=30.0):
+    def __init__(self, base_url, rpc_token, opener=None, timeout=30.0):
         parsed = urlparse(str(base_url or ''))
         if (parsed.scheme != 'http'
                 or parsed.hostname not in ('127.0.0.1', 'localhost')
@@ -26,7 +26,9 @@ class WorkspaceRpcClient(object):
         self.rpc_token = str(rpc_token or '')
         if len(self.rpc_token) < 32:
             raise ValueError('执行器内部接口凭证无效')
-        self.opener = opener
+        # Windows Internet Settings may expose a system proxy to urllib.
+        # Executor-internal loopback traffic must never leave this computer.
+        self.opener = opener or build_opener(ProxyHandler({})).open
         self.timeout = float(timeout)
 
     def execute(self, payload):

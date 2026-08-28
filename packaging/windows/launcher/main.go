@@ -699,14 +699,58 @@ func relativeTime(value string) string {
 
 func (app *launcherApp) ensureExecutor() {
 	if _, err := app.fetchStatus(); err == nil {
-		return
+		app.mu.Lock()
+		managedByCurrentLauncher := app.child != nil
+		app.mu.Unlock()
+		if managedByCurrentLauncher {
+			return
+		}
+		// A standard-package upgrade can replace the launcher while the old
+		// Python child keeps running. Never adopt that process: it may advertise
+		// an old capability set even though the UI itself is the new version.
+		if err := terminateManagedExecutors(app.root); err != nil {
+			app.showExecutorStartFailure()
+			return
+		}
+		time.Sleep(800 * time.Millisecond)
 	}
 	if err := app.startExecutor(); err != nil {
-		app.mw.Synchronize(func() {
-			app.statusTitle.SetText("本地执行器启动失败")
-			app.statusDetail.SetText("请重新安装标准版，或联系管理员检查运行时完整性。")
-		})
+		app.showExecutorStartFailure()
 	}
+}
+
+func (app *launcherApp) showExecutorStartFailure() {
+	app.mw.Synchronize(func() {
+		app.statusTitle.SetText("本地执行器启动失败")
+		app.statusDetail.SetText("请重新安装标准版，或联系管理员检查运行时完整性。")
+	})
+}
+
+func managedExecutorStopScript() string {
+	return `& { param([string]$Root) ` +
+		`$prefix = [IO.Path]::GetFullPath($Root).TrimEnd('\') + '\'; ` +
+		`Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe'" | ` +
+		`Where-Object { $_.ExecutablePath -and ` +
+		`$_.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) -and ` +
+		`$_.CommandLine -match '(?i)run\.py\s+--no-browser' } | ` +
+		`ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } }`
+}
+
+func terminateManagedExecutors(root string) error {
+	command := exec.Command(
+		"powershell.exe",
+		"-NoLogo",
+		"-NoProfile",
+		"-NonInteractive",
+		"-ExecutionPolicy", "Bypass",
+		"-Command", managedExecutorStopScript(),
+		root,
+	)
+	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+	if err := command.Run(); err != nil {
+		return errors.New("无法结束安装目录内的旧版本本地执行器")
+	}
+	return nil
 }
 
 func (app *launcherApp) startExecutor() error {
@@ -816,6 +860,7 @@ func (app *launcherApp) stopExecutor() {
 	token := app.launcherToken
 	app.mu.Unlock()
 	if cmd == nil {
+		_ = terminateManagedExecutors(app.root)
 		return
 	}
 	if statusURL != "" {
@@ -836,6 +881,7 @@ func (app *launcherApp) stopExecutor() {
 		}
 	}
 	_ = cmd.Process.Kill()
+	_ = terminateManagedExecutors(app.root)
 }
 
 func (app *launcherApp) performPair(raw string) {

@@ -2,7 +2,10 @@
 
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestActiveTaskNoteUsesFirstTaskAndElapsedTime(t *testing.T) {
 	status := &localStatus{}
@@ -31,6 +34,25 @@ func TestCloudStatusTextCoversPairingAndOfflineStates(t *testing.T) {
 	for input, want := range tests {
 		if got := cloudStatusText(input); got != want {
 			t.Fatalf("cloudStatusText(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestManagedExecutorStopScriptIsScopedToInstallRoot(t *testing.T) {
+	script := managedExecutorStopScript()
+	for _, required := range []string{
+		"pythonw.exe",
+		"ExecutablePath",
+		"StartsWith",
+		`run\.py\s+--no-browser`,
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("managedExecutorStopScript() must contain %q", required)
+		}
+	}
+	for _, forbidden := range []string{"taskkill", "/IM pythonw.exe"} {
+		if strings.Contains(strings.ToLower(script), strings.ToLower(forbidden)) {
+			t.Fatalf("managedExecutorStopScript() must not contain broad kill %q", forbidden)
 		}
 	}
 }

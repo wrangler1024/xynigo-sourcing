@@ -10,7 +10,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -35,6 +35,7 @@ from .security import hash_token, random_url_token
 
 PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 ACTIVE_TASK_STATUSES = frozenset({"queued", "leased", "running", "cancel_requested"})
+MAX_QUEUED_WORKSPACE_RPC_TASKS = 32
 TERMINAL_TASK_STATUSES = frozenset(
     {"succeeded", "failed", "uncertain", "cancelled"}
 )
@@ -368,14 +369,39 @@ class ExecutorChannelService:
                 raise ExecutorServiceError("executor_task_idempotency_conflict", status_code=409)
             return existing
 
-        active = self.session.scalar(
-            select(ExecutorTask.id).where(
-                ExecutorTask.executor_id == executor.id,
-                ExecutorTask.status.in_(ACTIVE_TASK_STATUSES),
-            ).limit(1)
-        )
-        if active is not None:
-            raise ExecutorServiceError("executor_task_busy", status_code=409)
+        if task_type == "workspace.rpc.v1":
+            # One device worker still executes tasks serially, but a workspace
+            # page issues several short reads together (groups, task state,
+            # progress, preflight). Keep those reads in a bounded FIFO instead
+            # of rejecting all but the first request as busy.
+            active_non_workspace = self.session.scalar(
+                select(ExecutorTask.id).where(
+                    ExecutorTask.executor_id == executor.id,
+                    ExecutorTask.task_type != "workspace.rpc.v1",
+                    ExecutorTask.status.in_(ACTIVE_TASK_STATUSES),
+                ).limit(1)
+            )
+            active_count = self.session.scalar(
+                select(func.count(ExecutorTask.id)).where(
+                    ExecutorTask.executor_id == executor.id,
+                    ExecutorTask.task_type == "workspace.rpc.v1",
+                    ExecutorTask.status.in_(ACTIVE_TASK_STATUSES),
+                )
+            ) or 0
+            if (
+                active_non_workspace is not None
+                or active_count >= MAX_QUEUED_WORKSPACE_RPC_TASKS
+            ):
+                raise ExecutorServiceError("executor_task_busy", status_code=409)
+        else:
+            active = self.session.scalar(
+                select(ExecutorTask.id).where(
+                    ExecutorTask.executor_id == executor.id,
+                    ExecutorTask.status.in_(ACTIVE_TASK_STATUSES),
+                ).limit(1)
+            )
+            if active is not None:
+                raise ExecutorServiceError("executor_task_busy", status_code=409)
 
         task = ExecutorTask(
             tenant_id=tenant_id,

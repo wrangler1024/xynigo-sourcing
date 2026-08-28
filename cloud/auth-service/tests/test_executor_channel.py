@@ -661,6 +661,51 @@ def test_workspace_rpc_payload_and_result_are_encrypted_at_rest(tmp_path) -> Non
             assert "encryptedResult" in task.result_summary
 
 
+def test_workspace_rpc_short_reads_queue_while_config_tasks_remain_exclusive(
+    tmp_path,
+) -> None:
+    app, _database, _oauth = build_test_app(tmp_path)
+    capabilities = ["config.read.v1", "config.write.v1", "workspace.rpc.v1"]
+
+    with TestClient(app) as web_client, TestClient(app) as device_client:
+        login(web_client)
+        paired = pair(
+            device_client,
+            create_pairing_code(web_client),
+            capabilities=capabilities,
+        )
+        credential = str(paired["deviceCredential"])
+        heartbeat(
+            device_client,
+            credential,
+            revision=REVISION_A,
+            capabilities=capabilities,
+        )
+        executor_id = str(paired["executorId"])
+
+        first = web_client.post(
+            f"/v1/executors/{executor_id}/workspace-rpc",
+            json={"method": "GET", "path": "/api/groups"},
+            headers=CSRF,
+        )
+        second = web_client.post(
+            f"/v1/executors/{executor_id}/workspace-rpc",
+            json={"method": "GET", "path": "/api/tasks"},
+            headers=CSRF,
+        )
+        assert first.status_code == 202, first.text
+        assert second.status_code == 202, second.text
+        assert first.json()["task"]["id"] != second.json()["task"]["id"]
+
+        config_read = web_client.post(
+            f"/v1/executors/{executor_id}/config/read",
+            json={},
+            headers=CSRF,
+        )
+        assert config_read.status_code == 409
+        assert config_read.json()["detail"]["code"] == "executor_task_busy"
+
+
 def test_started_config_write_becomes_uncertain_after_lease_expiry(tmp_path) -> None:
     app, database, _oauth = build_test_app(tmp_path)
 
