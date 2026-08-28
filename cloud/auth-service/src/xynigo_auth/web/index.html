@@ -2957,6 +2957,9 @@ const PERMISSION_MENU_GROUPS = [
 ];
 let activePrimary = 'fulfillment';
 let activeModule = 'query';
+let queryProgressLoaded = false;
+let queryPollInFlight = false;
+let groupLoadInFlight = null;
 const MAX_OPEN_FEATURE_TABS = 10;
 let openFeatureTabs = ['query'];
 let localSettingsPageLoaded = false;
@@ -3623,13 +3626,6 @@ async function initializeAuthenticatedWorkspace(identity) {
   pollUpdateStatus();
   loadQueryDisplayConfig();
   loadLarkRuntimeStatus();
-  if (hasFeatureAccess('query')) { loadGroups(); poll(); }
-  if (hasFeatureAccess('register')) pollRegister();
-  if (hasFeatureAccess('envbatch')) {
-    loadEnvGroups();
-    refreshEnvPreflight();
-    pollEnvBatch();
-  }
 }
 
 function closeAuthLoginWindow() {
@@ -5914,13 +5910,20 @@ function render(snap) {
 
 async function poll() {
   if (!authReady || !hasFeatureAccess('query') || activeModule !== 'query') return;
-  try { render(await api('/api/progress')); }
+  if (queryPollInFlight) return;
+  if (CLOUD_WEB_MODE && queryProgressLoaded && !isRunning) return;
+  queryPollInFlight = true;
+  try {
+    render(await api('/api/progress'));
+    queryProgressLoaded = true;
+  }
   catch (e) {
     if (hubConnected !== false) {
       setHubStatus(false);
       $('hubStatus').textContent = '🔴 工具服务无响应（请重启当前系统的启动脚本）';
     }
   }
+  finally { queryPollInFlight = false; }
 }
 setInterval(poll, 1500);
 
@@ -6425,6 +6428,9 @@ $('btnStart').onclick = async () => {
       body: JSON.stringify({ serials, site })
     });
     stopRequested = false;
+    isRunning = true;
+    queryProgressLoaded = false;
+    poll();
     const siteName = j.site === 'US' ? '美国站' : '墨西哥站';
     toast(`开始查询${siteName}，共 ${j.total} 个环境。每个环境约 30-60 秒，请耐心等待`);
   } catch (e) { toast(e.message); }
@@ -6452,6 +6458,9 @@ tbody.addEventListener('click', async e => {
       body: JSON.stringify({ serial: btn.dataset.req, force })
     });
     stopRequested = false;
+    isRunning = true;
+    queryProgressLoaded = false;
+    poll();
     toast(force ? '正在关闭残留窗口并重查环境 ' + btn.dataset.req : '开始重查环境 ' + btn.dataset.req);
   } catch (err) { toast(err.message); }
 });
@@ -7754,11 +7763,18 @@ function setFeaturePanel(module) {
   renderWorkspaceTabs();
   if (module === 'procurementorders' && !procurementLoaded) loadProcurementWorkspace(true);
   else if (module === 'procurementexecution' && !procurementExecutionPageLoaded) resetProcurementExecutionPage(false);
-  else if (module === 'query') poll();
+  else if (module === 'query') {
+    queryProgressLoaded = false;
+    loadGroups();
+    poll();
+  }
   else if (module === 'buyerlib') loadBuyerLibrary();
   else if (module === 'vendorimport') return;
   else if (module === 'register') pollRegister();
-  else if (module === 'envbatch') { pollEnvBatch(); refreshEnvPreflight(); }
+  else if (module === 'envbatch') {
+    pollEnvBatch();
+    loadEnvGroups().then(() => refreshEnvPreflight());
+  }
   else if (module === 'storemanagement') loadStoreManagement(false);
   else if (module === 'proxymanagement') { loadProxyManagement(false); pollProxyChecks(); }
   else if (module === 'businesslogs' && !businessLogsLoaded) loadBusinessLogs(true);
@@ -8813,8 +8829,22 @@ $('hubStatus').onclick = async () => {
 /* ---------- 分组与设置 ---------- */
 
 async function loadGroups() {
+  if (groupLoadInFlight) return groupLoadInFlight;
+  groupLoadInFlight = loadGroupsOnce();
+  try { return await groupLoadInFlight; }
+  finally { groupLoadInFlight = null; }
+}
+
+async function loadGroupsOnce() {
   try {
-    const j = await api('/api/groups');
+    let j;
+    try { j = await api('/api/groups'); }
+    catch (error) {
+      if (error && error.code === 'executor_task_busy') {
+        await new Promise(resolve => setTimeout(resolve, 1200));
+        j = await api('/api/groups');
+      } else throw error;
+    }
     const sel = $('groupSelect');
     sel.innerHTML = '';
     const groups = Array.from(new Set(

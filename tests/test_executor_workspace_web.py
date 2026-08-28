@@ -62,6 +62,31 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             load_groups.index("const [cfg, result] = await Promise.all"),
         )
 
+    def test_cloud_workspace_does_not_flood_idle_executor_with_progress_reads(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        for marker in (
+            "let queryProgressLoaded = false;",
+            "let queryPollInFlight = false;",
+            "let groupLoadInFlight = null;",
+            "if (queryPollInFlight) return;",
+            "if (CLOUD_WEB_MODE && queryProgressLoaded && !isRunning) return;",
+            "if (groupLoadInFlight) return groupLoadInFlight;",
+            "error.code === 'executor_task_busy'",
+        ):
+            self.assertIn(marker, html)
+        initializer = html[
+            html.index("async function initializeAuthenticatedWorkspace(identity)"):
+            html.index("function closeAuthLoginWindow()")
+        ]
+        self.assertNotIn("if (hasFeatureAccess('query'))", initializer)
+        self.assertNotIn("if (hasFeatureAccess('envbatch'))", initializer)
+        query_panel = html[
+            html.index("function setFeaturePanel(module)"):
+            html.index("function syncPrimaryNavigation(primary)")
+        ]
+        self.assertIn("loadGroups();", query_panel)
+        self.assertIn("loadEnvGroups().then(() => refreshEnvPreflight());", query_panel)
+
 
 if __name__ == "__main__":
     unittest.main()
