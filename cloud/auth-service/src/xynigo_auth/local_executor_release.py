@@ -16,7 +16,7 @@ from . import __version__
 REPOSITORY = "wrangler1024/xynigo-sourcing"
 RELEASE_VERSION = "0.12.7"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-08-28T06:41:20Z"
+RELEASE_PUBLISHED_AT = "2026-08-28T07:12:26Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -56,9 +56,9 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.12.7_hotfix6.pkg",
-        "sha256": "8fcc24a4de6cece2da82bb63fca50f66ac7603e78540b7cbdef0cb223f6089e6",
-        "size": 19_265_817,
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.12.7_hotfix7.pkg",
+        "sha256": "35cc3a77a27090ed00726ea26ea40fcdf503b7e69178ac4144620ac7146166b0",
+        "size": 19_399_200,
         "installMode": "standard_system_application",
         "internalUnsignedTest": True,
         "developerIdApplicationSigned": False,
