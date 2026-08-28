@@ -16,7 +16,7 @@ from . import __version__
 REPOSITORY = "wrangler1024/xynigo-sourcing"
 RELEASE_VERSION = "0.12.8"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-08-28T15:00:00Z"
+RELEASE_PUBLISHED_AT = "2026-08-28T15:29:45Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,10 +31,10 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.12.8-candidate0001",
+        "runtimeId": "0.12.8-b047fa729d2d",
         "assetName": "Xynigo_Sourcing_Windows_Setup_v0.12.8.exe",
-        "sha256": "54320a6d475dd681d247468b568cd1479942109e6a84fc428b8666064aea17ac",
-        "size": 15_055_297,
+        "sha256": "1b821cc450232a38fd72b2d7e715ffe71bb5397386c0e7f1459b186cc69aab56",
+        "size": 15_059_413,
         "installMode": "standard_per_user",
         "internalUnsignedTest": True,
         "authenticodeSigned": False,
@@ -44,8 +44,8 @@ _PLATFORMS = {
         "launcherFile": "Xynigo.exe",
         "greenFallback": {
             "assetName": "Xynigo_Sourcing_Windows_20260828_v0.12.8.zip",
-            "sha256": "256efb5d4d0b947a48883dbd905e6b0d5035daa305126dc3857d899be4d3c3b4",
-            "size": 18_158_605,
+            "sha256": "fd80c2131e4c69178de4cee0a13706e16a7b2b09396c2d82eb83ae346e34423d",
+            "size": 18_318_356,
             "installMode": "green_package",
             "launcherFile": "Xynigo.exe",
             "statusCenter": True,
@@ -58,8 +58,8 @@ _PLATFORMS = {
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
         "assetName": "Xynigo_Sourcing_macOS_Standard_v0.12.8.pkg",
-        "sha256": "35cc3a77a27090ed00726ea26ea40fcdf503b7e69178ac4144620ac7146166b0",
-        "size": 19_399_200,
+        "sha256": "aa2b85ff5a48f1b34bbe2b296d531ab0c00fd5e53101a7b17537dea9487a3641",
+        "size": 19_411_529,
         "installMode": "standard_system_application",
         "internalUnsignedTest": True,
         "developerIdApplicationSigned": False,
@@ -68,8 +68,8 @@ _PLATFORMS = {
         "stapled": False,
         "greenFallback": {
             "assetName": "Xynigo_Sourcing_macOS_arm64_20260828_v0.12.8.zip",
-            "sha256": "11a5039fa658d0dfc228cb2583bba73e8307344341223fd7ed0caa55e0248919",
-            "size": 10_263_121,
+            "sha256": "c782c2cefb6c3317f06a11db24e3a21258c3e80159eb5796417c89b1a43a59d7",
+            "size": 18_300_297,
             "installMode": "green_package",
             "launcherFile": "启动-Mac.command",
         },
