@@ -231,9 +231,12 @@ def test_purchase_worker_mirrors_master_lines_and_assignment_idempotently(tmp_pa
     assert fake.master_fields["草稿同步状态"] == "draft-synced"
     assert fake.master_fields["提交状态"] == "submitted"
     assert fake.master_fields["待写内容哈希"] is None
+    assert str(fake.master_fields["orderKey"]).startswith("OK1-")
+    assert "|" not in str(fake.master_fields["orderKey"])
     line_key, line_fields = next(iter(fake.line_fields.items()))
     assert line_key.endswith("|1")
     assert line_fields["明细状态"] == "待认领"
+    assert line_fields["orderKey"] == fake.master_fields["orderKey"]
     assert line_fields["关联采购单"] == ["rec-master-synthetic"]
     assert "商品图片" not in line_fields
 

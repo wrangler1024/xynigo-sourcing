@@ -15,6 +15,8 @@ from urllib.parse import parse_qs, urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .system_order_key import create_system_order_key, legacy_order_key
+
 
 PACKAGE_ID_RE = re.compile(r"^XMWU[A-Z0-9_-]+$")
 PLATFORM_ORDER_RE = re.compile(r"^G(?:SH|SU)[A-Z0-9_-]+$")
@@ -139,6 +141,7 @@ class PurchaseDraft(BaseModel):
     schemaVersion: Literal[1, 2]
     mode: Literal["local-dev-mock", "xynigo-extension"]
     orderKey: str = Field(min_length=1, max_length=800)
+    systemOrderKey: str = Field(default="", max_length=32)
     packageId: str = Field(min_length=1, max_length=200)
     platformOrderNo: str = Field(min_length=1, max_length=200)
     storeName: str = Field(min_length=1, max_length=300)
@@ -262,6 +265,14 @@ class PurchaseDraft(BaseModel):
             raise ValueError("lineNo must be continuous from 1")
         if self.orderKey != create_order_key(self.storeName, self.platformOrderNo, self.packageId):
             raise ValueError("orderKey does not match the order identity")
+        expected_system_order_key = create_system_order_key(
+            self.storeName,
+            self.platformOrderNo,
+            self.packageId,
+        )
+        if self.systemOrderKey and self.systemOrderKey != expected_system_order_key:
+            raise ValueError("systemOrderKey does not match the order identity")
+        self.systemOrderKey = expected_system_order_key
         parsed_store, parsed_operator = parse_store_assignment(self.storeName)
         if self.storeBaseName and self.storeBaseName != parsed_store:
             raise ValueError("storeBaseName does not match storeName")
@@ -271,11 +282,8 @@ class PurchaseDraft(BaseModel):
 
 
 def create_order_key(store_name: str, platform_order_no: str, package_id: str) -> str:
-    """租户内采购单业务键：店铺|平台单号|包裹号，须与客户端 orderKey 一致。"""
-    store = " ".join(str(store_name).split()).lower()
-    order_no = " ".join(str(platform_order_no).split()).upper()
-    package = " ".join(str(package_id).split()).upper()
-    return "|".join((store, order_no, package))
+    """Return the legacy compatibility key accepted from older clients."""
+    return legacy_order_key(store_name, platform_order_no, package_id)
 
 
 def canonical_draft_dict(draft: PurchaseDraft, *, include_client_times: bool = True) -> dict[str, Any]:
@@ -296,8 +304,10 @@ def canonical_json(value: Any) -> str:
 
 
 def draft_content_hash(draft: PurchaseDraft) -> str:
-    """整单内容指纹（不含客户端时间）。相同则视为未改，避免无意义写库。"""
-    raw = canonical_json(canonical_draft_dict(draft, include_client_times=False)).encode("utf-8")
+    """整单内容指纹；排除客户端时间和派生键，避免兼容升级产生虚假修订。"""
+    content = canonical_draft_dict(draft, include_client_times=False)
+    content.pop("systemOrderKey", None)
+    raw = canonical_json(content).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
 
 

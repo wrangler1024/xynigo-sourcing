@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""HubStudio Local API 客户端（标准库 urllib，无鉴权，本机 127.0.0.1）。
+"""Production HubStudio adapter backed directly by the loopback Local API.
 
 事实依据（2026-08-18 实测）：
 - POST http://127.0.0.1:6873/api/v1/*，响应 {code, msg, data}，code==0 为成功
@@ -12,12 +12,19 @@
   isHeadless=true 的无头启动
 """
 import json
+import os
+import re
+import socket
+import subprocess
+import sys
 import time
+import urllib.error
 import urllib.request
 
 from .task_runtime import HubRuntimeGate
 
 DEFAULT_PORT = 6873
+KNOWN_FALLBACK_PORTS = (6873, 6874, 6875)
 RATE_LIMIT_CODE = 'E010205'
 
 # 强制直连不走系统代理：同事电脑开着 Clash 类系统代理时，urllib 默认会把
@@ -26,25 +33,104 @@ OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 class HubApiError(Exception):
-    pass
+    def __init__(self, message, reason_code='hubstudio_local_api_error',
+                 api_code=None):
+        self.reason_code = str(reason_code)
+        self.api_code = None if api_code is None else str(api_code)
+        super().__init__(str(message))
 
 
-class HubStudioApi(object):
+def _safe_api_message(value):
+    text = str(value or '').replace('\r', ' ').replace('\n', ' ')[:180]
+    return re.sub(
+        r'(?i)(api[-_ ]?key|authorization|token|secret|cookie)\s*[:=]\s*\S+',
+        r'\1=[REDACTED]', text)
+
+
+def _default_client_running():
+    """Best-effort process check; never reads command arguments or secrets."""
+    try:
+        if sys.platform == 'darwin':
+            commands = (
+                ['/usr/bin/pgrep', '-x', 'Hubstudio'],
+                ['/usr/bin/pgrep', '-x', 'HubStudio'],
+            )
+            return any(subprocess.run(
+                command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                check=False, timeout=2).returncode == 0
+                for command in commands)
+        if os.name == 'nt':
+            result = subprocess.run(
+                ['tasklist', '/FI', 'IMAGENAME eq HubStudio.exe', '/NH'],
+                capture_output=True, text=True, check=False, timeout=3)
+            return 'hubstudio.exe' in (result.stdout or '').casefold()
+        result = subprocess.run(
+            ['pgrep', '-x', 'Hubstudio'], stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, check=False, timeout=2)
+        return result.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+class HubStudioAdapter(object):
+    """Narrow production contract used by Xynigo business services."""
+
+    def capability_snapshot(self):
+        raise NotImplementedError
+
+    def env_list(self, tag_name=None, page_size=200):
+        raise NotImplementedError
+
+    def list_environment_summaries(self, query='', limit=100):
+        raise NotImplementedError
+
+    def locate_environment(self, identifier):
+        raise NotImplementedError
+
+    def browser_start(self, container_code, headless=False):
+        raise NotImplementedError
+
+    def browser_stop(self, container_code):
+        raise NotImplementedError
+
+    def batch_browser_control(self, action, identifiers, headless=False):
+        raise NotImplementedError
+
+
+class HubStudioLocalApiAdapter(HubStudioAdapter):
     def __init__(self, port=DEFAULT_PORT, timeout=30, retries=3, api_key=None,
-                 runtime_gate=None):
-        self.base = 'http://127.0.0.1:%s/api/v1' % port
+                 runtime_gate=None, known_ports=None, opener=None,
+                 client_running_getter=None):
+        self.configured_port = int(port)
+        candidates = [self.configured_port]
+        for candidate in (known_ports or KNOWN_FALLBACK_PORTS):
+            candidate = int(candidate)
+            if candidate not in candidates:
+                candidates.append(candidate)
+        self.candidate_ports = tuple(candidates[:4])
+        self.port = self.configured_port
+        self.base = self._base_for_port(self.port)
         self.timeout = timeout
         self.retries = retries
         self.runtime_gate = runtime_gate or HubRuntimeGate()
+        self.opener = opener
+        self.client_running_getter = (
+            client_running_getter or _default_client_running)
         self.headers = {'Content-Type': 'application/json'}
         if api_key:
             self.headers['local-api-key'] = api_key
 
-    def _post(self, path, body):
+    @staticmethod
+    def _base_for_port(port):
+        return 'http://127.0.0.1:%s/api/v1' % int(port)
+
+    def _post(self, path, body, retries=None, timeout=None):
         """POST JSON；普通异常短退避，限流则触发跨线程共享冷却。"""
         data = json.dumps(body).encode('utf-8')
         last_err = None
-        for i in range(self.retries):
+        attempts = max(1, int(self.retries if retries is None else retries))
+        request_timeout = self.timeout if timeout is None else float(timeout)
+        for i in range(attempts):
             deferred_by_gate = False
             retry_delay = 0.4 * (i + 1)
             try:
@@ -52,13 +138,40 @@ class HubStudioApi(object):
                     self.base + path, data=data, headers=self.headers,
                     method='POST')
                 with self.runtime_gate.request():
-                    with OPENER.open(req, timeout=self.timeout) as resp:
-                        j = json.loads(resp.read().decode('utf-8'))
+                    with (self.opener or OPENER).open(
+                            req, timeout=request_timeout) as resp:
+                        raw = resp.read()
+                try:
+                    j = json.loads(raw.decode('utf-8'))
+                except (UnicodeError, ValueError) as exc:
+                    raise HubApiError(
+                        'HubStudio Local API 返回格式不兼容',
+                        'hubstudio_local_api_incompatible') from exc
+                if not isinstance(j, dict) or 'code' not in j:
+                    raise HubApiError(
+                        'HubStudio Local API 返回协议不兼容',
+                        'hubstudio_local_api_incompatible')
                 if j.get('code') == 0:
                     return j.get('data')
-                last_err = HubApiError('%s 返回 code=%s: %s' % (
-                    path, j.get('code'), j.get('msg')))
-                if str(j.get('code') or '') == RATE_LIMIT_CODE:
+                api_code = str(j.get('code') or '')
+                safe_message = _safe_api_message(j.get('msg'))
+                auth_failed = (
+                    api_code in {'401', '403', 'E010401', 'E010403'}
+                    or any(marker in safe_message.casefold() for marker in (
+                        'unauthorized', 'forbidden', 'api key', 'api-key',
+                        '鉴权', '认证', '密钥')))
+                last_err = HubApiError(
+                    'HubStudio Local API 认证失败' if auth_failed else
+                    ('HubStudio Local API 返回 code=%s%s' % (
+                        api_code,
+                        (': ' + safe_message) if safe_message else '')),
+                    ('hubstudio_local_api_authentication_failed'
+                     if auth_failed else
+                     ('hubstudio_local_api_rate_limited'
+                      if api_code == RATE_LIMIT_CODE else
+                      'hubstudio_local_api_error')),
+                    api_code=api_code)
+                if api_code == RATE_LIMIT_CODE:
                     # HubStudio 的 E010205 是时间窗限流；原 0.4/0.8 秒
                     # 单线程重试会被并行 worker 继续打断。把 2/4/8 秒
                     # 冷却写入共享闸门，所有 Local API 调用一起避让。
@@ -68,32 +181,150 @@ class HubStudioApi(object):
                     if callable(defer):
                         defer(retry_delay)
                         deferred_by_gate = True
-            except urllib.error.URLError as e:
-                last_err = ConnectionError('无法连接 HubStudio Local API: %s' % e)
+            except urllib.error.HTTPError as exc:
+                if exc.code in (401, 403):
+                    last_err = HubApiError(
+                        'HubStudio Local API 认证失败',
+                        'hubstudio_local_api_authentication_failed',
+                        api_code=exc.code)
+                elif exc.code in (404, 405, 410, 426):
+                    last_err = HubApiError(
+                        'HubStudio Local API 版本不兼容',
+                        'hubstudio_local_api_incompatible',
+                        api_code=exc.code)
+                else:
+                    last_err = HubApiError(
+                        'HubStudio Local API HTTP 错误（%s）' % exc.code,
+                        'hubstudio_local_api_http_error', api_code=exc.code)
+                break
+            except urllib.error.URLError as exc:
+                reason = getattr(exc, 'reason', None)
+                timed_out = isinstance(reason, (socket.timeout, TimeoutError))
+                last_err = HubApiError(
+                    ('HubStudio Local API 请求超时' if timed_out else
+                     '无法连接 HubStudio Local API'),
+                    ('hubstudio_local_api_timeout' if timed_out else
+                     'hubstudio_local_api_unreachable'))
                 break   # 客户端没开，重试无意义
-            except Exception as e:   # 超时等，可重试
-                last_err = HubApiError('%s 调用异常: %s' % (path, e))
-            if i + 1 < self.retries and not deferred_by_gate:
+            except (socket.timeout, TimeoutError):
+                last_err = HubApiError(
+                    'HubStudio Local API 请求超时',
+                    'hubstudio_local_api_timeout')
+                break
+            except HubApiError as exc:
+                last_err = exc
+                if exc.reason_code in {
+                        'hubstudio_local_api_incompatible',
+                        'hubstudio_local_api_authentication_failed'}:
+                    break
+            except Exception:   # 不对外回显未知异常内容
+                last_err = HubApiError(
+                    'HubStudio Local API 调用异常',
+                    'hubstudio_local_api_error')
+            if i + 1 < attempts and not deferred_by_gate:
                 time.sleep(retry_delay)
         raise last_err
 
     # ---- 查询类 ----
 
+    def capability_snapshot(self):
+        """Return a non-sensitive, reason-coded Local API capability view."""
+        try:
+            client_running = bool(self.client_running_getter())
+        except Exception:
+            client_running = False
+        failures = []
+        probe_ports = [self.port]
+        probe_ports.extend(
+            port for port in self.candidate_ports if port not in probe_ports)
+        for port in probe_ports:
+            self.port = int(port)
+            self.base = self._base_for_port(self.port)
+            try:
+                # Startup/capability checks are read-only and deliberately
+                # short. Business operations retain their configured timeout
+                # and retry policy once the endpoint has been discovered.
+                self._post(
+                    '/group/list', {'current': 1, 'size': 1},
+                    retries=1, timeout=min(2.5, float(self.timeout)))
+                return {
+                    'available': True,
+                    'clientRunning': True,
+                    'localApiEnabled': True,
+                    'authenticated': True,
+                    'apiVersion': 'v1',
+                    'endpoint': self.base,
+                    'reasonCode': 'ok',
+                    'message': 'HubStudio Local API 已就绪',
+                }
+            except HubApiError as exc:
+                failures.append((self.port, exc))
+                if exc.reason_code not in {
+                        'hubstudio_local_api_unreachable',
+                        'hubstudio_local_api_timeout'}:
+                    reason = exc.reason_code
+                    if (reason == 'hubstudio_local_api_authentication_failed'
+                            and 'local-api-key' not in self.headers):
+                        reason = 'hubstudio_local_api_authentication_required'
+                    if reason.endswith('_required'):
+                        message = 'HubStudio Local API 需要本机安全密钥'
+                    elif 'authentication' in reason:
+                        message = 'HubStudio Local API 认证失败'
+                    elif reason == 'hubstudio_local_api_incompatible':
+                        message = 'HubStudio Local API 版本不兼容'
+                    elif reason == 'hubstudio_local_api_http_error':
+                        message = 'HubStudio Local API 返回 HTTP 错误'
+                    elif reason == 'hubstudio_local_api_rate_limited':
+                        message = 'HubStudio Local API 请求频率受限'
+                    else:
+                        message = 'HubStudio Local API 返回业务错误'
+                    return {
+                        'available': False,
+                        'clientRunning': True,
+                        'localApiEnabled': True,
+                        'authenticated': not (
+                            reason.endswith('_required')
+                            or 'authentication' in reason),
+                        'apiVersion': 'v1',
+                        'endpoint': self.base,
+                        'reasonCode': reason,
+                        'message': message,
+                    }
+        self.port = self.configured_port
+        self.base = self._base_for_port(self.port)
+        timeout_seen = any(
+            error.reason_code == 'hubstudio_local_api_timeout'
+            for _port, error in failures)
+        if not client_running:
+            reason = 'hubstudio_client_not_running'
+            message = '未检测到 HubStudio 客户端运行'
+        elif timeout_seen:
+            reason = 'hubstudio_local_api_timeout'
+            message = 'HubStudio Local API 请求超时'
+        else:
+            reason = 'hubstudio_local_api_disabled'
+            message = 'HubStudio 已运行，但 Local API 未开启或端口不可达'
+        return {
+            'available': False,
+            'clientRunning': client_running,
+            'localApiEnabled': False,
+            'authenticated': False,
+            'apiVersion': '',
+            'endpoint': self.base,
+            'reasonCode': reason,
+            'message': message,
+        }
+
     def ping(self):
         """探测 HubStudio 客户端是否在线（轻量调用）。"""
-        try:
-            self._post('/group/list', {'current': 1, 'size': 1})
-            return True
-        except Exception:
-            return False
+        return bool(self.capability_snapshot()['available'])
 
     def ping_detail(self):
         """探测并返回失败原因（前端展示用，便于远程排查）。"""
-        try:
-            self._post('/group/list', {'current': 1, 'size': 1})
-            return True, ''
-        except Exception as e:
-            return False, ('%s: %s' % (type(e).__name__, e))[:300]
+        snapshot = self.capability_snapshot()
+        return (
+            bool(snapshot['available']),
+            '' if snapshot['available'] else str(snapshot['message'])[:300])
 
     def group_list(self):
         data = self._post('/group/list', {'current': 1, 'size': 100})
@@ -101,6 +332,7 @@ class HubStudioApi(object):
 
     def env_list(self, tag_name=None, page_size=200):
         """取环境列表；带分组名则按分组过滤，自动翻页。"""
+        page_size = max(1, min(200, int(page_size)))
         result, current = [], 1
         while True:
             body = {'current': current, 'size': page_size}
@@ -129,6 +361,56 @@ class HubStudioApi(object):
                 return env
         return None
 
+    @staticmethod
+    def environment_summary(env):
+        """Return only fields safe for localhost plugin environment controls."""
+        env = env if isinstance(env, dict) else {}
+        return {
+            'containerCode': str(env.get('containerCode') or ''),
+            'serialNumber': str(env.get('serialNumber') or ''),
+            'containerName': str(env.get('containerName') or '')[:160],
+            'tagName': str(env.get('tagName') or '')[:80],
+        }
+
+    def list_environment_summaries(self, query='', limit=100):
+        wanted = str(query or '').strip().casefold()
+        maximum = max(1, min(200, int(limit)))
+        result = []
+        for env in self.env_list():
+            summary = self.environment_summary(env)
+            values = [str(value).casefold() for value in summary.values()]
+            if wanted and not any(wanted in value for value in values):
+                continue
+            result.append(summary)
+            if len(result) >= maximum:
+                break
+        return result
+
+    def locate_environment(self, identifier):
+        wanted = str(identifier or '').strip()
+        if not wanted or len(wanted) > 160:
+            raise HubApiError(
+                '请提供有效的环境序号或 containerCode',
+                'hubstudio_environment_identifier_invalid')
+        matched = []
+        for env in self.env_list():
+            if (str(env.get('serialNumber') or '') == wanted
+                    or str(env.get('containerCode') or '') == wanted):
+                matched.append(env)
+        unique = {
+            str(env.get('containerCode') or ''): env for env in matched
+            if env.get('containerCode') is not None
+        }
+        if not unique:
+            raise HubApiError(
+                '未找到对应的 HubStudio 环境',
+                'hubstudio_environment_not_found')
+        if len(unique) != 1:
+            raise HubApiError(
+                '环境序号与 containerCode 匹配到多个环境',
+                'hubstudio_environment_ambiguous')
+        return next(iter(unique.values()))
+
     # ---- 浏览器控制 ----
 
     def browser_start(self, container_code, headless=False):
@@ -155,6 +437,46 @@ class HubStudioApi(object):
         with self.runtime_gate.browser():
             return self._post('/browser/stop',
                               {'containerCode': str(container_code)}) or {}
+
+    def batch_browser_control(self, action, identifiers, headless=False):
+        """Open or close at most 20 explicitly identified environments."""
+        action = str(action or '').strip().lower()
+        if action not in {'open', 'close'}:
+            raise HubApiError(
+                '批量操作只支持 open 或 close',
+                'hubstudio_batch_action_invalid')
+        if not isinstance(identifiers, list) or not identifiers:
+            raise HubApiError(
+                '批量操作必须指定环境',
+                'hubstudio_batch_targets_invalid')
+        if len(identifiers) > 20:
+            raise HubApiError(
+                '单次最多处理 20 个 HubStudio 环境',
+                'hubstudio_batch_targets_exceeded')
+        results = []
+        for identifier in identifiers:
+            safe_identifier = str(identifier or '').strip()[:160]
+            try:
+                env = self.locate_environment(safe_identifier)
+                code = str(env.get('containerCode') or '')
+                if action == 'open':
+                    self.browser_start(code, headless=bool(headless))
+                else:
+                    self.browser_stop(code)
+                results.append({
+                    'identifier': safe_identifier,
+                    'containerCode': code,
+                    'ok': True,
+                    'reasonCode': 'ok',
+                })
+            except HubApiError as exc:
+                results.append({
+                    'identifier': safe_identifier,
+                    'containerCode': '',
+                    'ok': False,
+                    'reasonCode': exc.reason_code,
+                })
+        return results
 
     # ---- 注册模块写操作（上层必须显式 --apply） ----
 
@@ -199,3 +521,8 @@ class HubStudioApi(object):
             'containerCode': str(container_code),
             'cookie': cookie_text,
         }) or {}
+
+
+# Backward-compatible name used throughout existing business modules.  It is
+# now explicitly the Local API production adapter, not a CLI wrapper.
+HubStudioApi = HubStudioLocalApiAdapter

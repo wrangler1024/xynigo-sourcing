@@ -20,7 +20,7 @@ class MacOSDataMigrationTests(unittest.TestCase):
         source = Path(root) / 'Xynigo-Sourcing'
         source.mkdir()
         (source / 'VERSION.json').write_text(
-            '{"version":"0.12.6"}', encoding='utf-8')
+            '{"version":"0.12.7"}', encoding='utf-8')
         (source / 'config.json').write_text(
             '{"serverPort":6873}', encoding='utf-8')
         (source / '运行数据').mkdir()
@@ -166,7 +166,7 @@ class MacOSStandardInstallerContractTests(unittest.TestCase):
 
 class MacOSStandardInstallerArtifactTests(unittest.TestCase):
     def test_local_compiled_artifact_metadata_when_present(self):
-        metadata = ROOT / 'dist/Xynigo_Sourcing_macOS_Standard_v0.12.6.json'
+        metadata = ROOT / 'dist/Xynigo_Sourcing_macOS_Standard_v0.12.7.json'
         if not metadata.is_file():
             self.skipTest('macOS standard installer is built in packaging CI')
         payload = json.loads(metadata.read_text(encoding='utf-8'))
