@@ -127,7 +127,13 @@ jobs:
           Start-Sleep -Seconds 6
           if ($launcher.HasExited) { throw "tray/status launcher exited during startup: $($launcher.ExitCode)" }
           $orphan.Refresh()
-          if (-not $orphan.HasExited) { throw "new launcher did not replace orphan executor PID $orphanPid" }
+          if (-not $orphan.HasExited) {
+            $statusLog = Join-Path $installDir '日志\状态中心.log'
+            if (Test-Path $statusLog) { Get-Content $statusLog | Write-Host }
+            Get-NetTCPConnection -State Listen -LocalPort 8765 -ErrorAction SilentlyContinue |
+              Format-List LocalAddress,LocalPort,OwningProcess | Out-String | Write-Host
+            throw "new launcher did not replace orphan executor PID $orphanPid"
+          }
           $managedPids = @(Get-NetTCPConnection -State Listen -LocalPort 8765 -ErrorAction SilentlyContinue |
             Select-Object -ExpandProperty OwningProcess -Unique)
           if ($managedPids.Count -ne 1) { throw "expected exactly one status listener, found $($managedPids.Count)" }

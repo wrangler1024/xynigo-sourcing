@@ -723,6 +723,7 @@ func (app *launcherApp) ensureExecutor() {
 		managedByCurrentLauncher := app.child != nil
 		app.mu.Unlock()
 		if managedByCurrentLauncher {
+			appendStatusCenterLog(app.root, "status_detected_current_child")
 			return
 		}
 		// A standard-package upgrade can replace the launcher while the old
@@ -731,15 +732,40 @@ func (app *launcherApp) ensureExecutor() {
 		app.mu.Lock()
 		port := statusPort(app.statusURL)
 		app.mu.Unlock()
+		appendStatusCenterLog(app.root, fmt.Sprintf("status_detected_orphan port=%d", port))
 		if err := terminateStatusListener(port); err != nil {
+			appendStatusCenterLog(app.root, "orphan_takeover_failed: "+err.Error())
 			app.showExecutorStartFailure()
 			return
 		}
+		appendStatusCenterLog(app.root, "orphan_takeover_succeeded")
 		time.Sleep(800 * time.Millisecond)
+	} else {
+		appendStatusCenterLog(app.root, "status_unavailable_start_current")
 	}
 	if err := app.startExecutor(); err != nil {
+		appendStatusCenterLog(app.root, "executor_start_failed: "+err.Error())
 		app.showExecutorStartFailure()
+	} else {
+		appendStatusCenterLog(app.root, "executor_start_succeeded")
 	}
+}
+
+func appendStatusCenterLog(root string, message string) {
+	directory := filepath.Join(root, "日志")
+	if os.MkdirAll(directory, 0o700) != nil {
+		return
+	}
+	file, err := os.OpenFile(
+		filepath.Join(directory, "状态中心.log"),
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND,
+		0o600,
+	)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	_, _ = fmt.Fprintf(file, "%s %s\r\n", time.Now().UTC().Format(time.RFC3339), message)
 }
 
 func (app *launcherApp) showExecutorStartFailure() {
