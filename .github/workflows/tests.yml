@@ -140,12 +140,14 @@ jobs:
           $managedPids = @()
           for ($attempt = 0; $attempt -lt 20; $attempt++) {
             $managedPids = @()
-            foreach ($candidatePort in 8765..8774) {
+            $listeners = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object {
+              $_.LocalAddress -eq '127.0.0.1' -and $_.LocalPort -ge 8765 -and $_.LocalPort -le 8774
+            })
+            foreach ($listener in $listeners) {
               try {
-                $candidateStatus = Invoke-RestMethod -Uri "http://127.0.0.1:$candidatePort/executor-status.json" -TimeoutSec 1
+                $candidateStatus = Invoke-RestMethod -Uri "http://127.0.0.1:$($listener.LocalPort)/executor-status.json" -TimeoutSec 1
                 if ($candidateStatus.schemaVersion -eq 1 -and $candidateStatus.version) {
-                  $managedPids += @(Get-NetTCPConnection -State Listen -LocalPort $candidatePort -ErrorAction SilentlyContinue |
-                    Select-Object -ExpandProperty OwningProcess -Unique)
+                  $managedPids += @($listener.OwningProcess)
                 }
               } catch {}
             }
@@ -153,7 +155,13 @@ jobs:
             if ($managedPids.Count -eq 1 -and $managedPids[0] -ne $orphanPid) { break }
             Start-Sleep -Milliseconds 500
           }
-          if ($managedPids.Count -ne 1) { throw "expected exactly one status listener, found $($managedPids.Count)" }
+          if ($managedPids.Count -ne 1) {
+            $statusLog = Join-Path $installDir '日志\状态中心.log'
+            $executorLog = Join-Path $installDir '日志\本地执行器.log'
+            if (Test-Path $statusLog) { Get-Content $statusLog | Write-Host }
+            if (Test-Path $executorLog) { Get-Content $executorLog -Tail 80 | Write-Host }
+            throw "expected exactly one status listener, found $($managedPids.Count)"
+          }
           if ($managedPids[0] -eq $orphanPid) { throw "launcher adopted the orphan executor" }
           & taskkill.exe /PID $launcher.Id /T /F | Out-Null
           $protocol = (Get-Item "HKCU:\Software\Classes\xynigo\shell\open\command").GetValue('')
