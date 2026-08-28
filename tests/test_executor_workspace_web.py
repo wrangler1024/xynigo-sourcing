@@ -40,6 +40,23 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             CLOUD_HTML.read_bytes(),
         )
 
+    def test_cloud_workspace_keeps_fixed_four_buyer_assignment_cards(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        for marker in (
+            "Object.freeze({name:'新刚', code:'XG'})",
+            "Object.freeze({name:'志恒', code:'ZH'})",
+            "Object.freeze({name:'康德', code:'KD'})",
+            "Object.freeze({name:'宇航', code:'YH'})",
+            "buyers:defaultEnvBuyers()",
+            "buyerDefaultSplit:[...DEFAULT_ENV_SPLIT]",
+            "envBuyers = normalizeEnvBuyers(cfg.buyers);",
+            "envDefaultSplit = normalizeEnvDefaultSplit(cfg.buyerDefaultSplit);",
+            "data-all=",
+            "composeAssignmentSpec()",
+        ):
+            self.assertIn(marker, html)
+        self.assertNotIn("buyers:[], buyerDefaultSplit:[]", html)
+
 
 if __name__ == "__main__":
     unittest.main()

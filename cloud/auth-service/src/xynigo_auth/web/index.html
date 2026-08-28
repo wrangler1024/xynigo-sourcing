@@ -2618,8 +2618,39 @@ let systemLogPage = 1;
 let systemLogTotal = 0;
 let systemLogsLoaded = false;
 let systemLogsLoading = false;
-let envBuyers = [];                          // [{name,code}] 来自 /api/config，后端单一事实源
-let envDefaultSplit = ['新刚', '志恒', '康德'];
+const DEFAULT_ENV_BUYERS = Object.freeze([
+  Object.freeze({name:'新刚', code:'XG'}),
+  Object.freeze({name:'志恒', code:'ZH'}),
+  Object.freeze({name:'康德', code:'KD'}),
+  Object.freeze({name:'宇航', code:'YH'}),
+]);
+const DEFAULT_ENV_SPLIT = Object.freeze(['新刚', '志恒', '康德']);
+function defaultEnvBuyers() {
+  return DEFAULT_ENV_BUYERS.map(buyer => ({...buyer}));
+}
+function normalizeEnvBuyers(value) {
+  if (!Array.isArray(value)) return defaultEnvBuyers();
+  const configured = new Map(value.map(buyer => [
+    String((buyer || {}).name || '').trim(),
+    String((buyer || {}).code || '').trim().toUpperCase(),
+  ]));
+  const rosterComplete = DEFAULT_ENV_BUYERS.every(
+    buyer => configured.get(buyer.name) === buyer.code);
+  if (!rosterComplete) return defaultEnvBuyers();
+  return DEFAULT_ENV_BUYERS.map(buyer => ({
+    name: buyer.name,
+    code: configured.get(buyer.name),
+  }));
+}
+function normalizeEnvDefaultSplit(value) {
+  const allowed = new Set(DEFAULT_ENV_BUYERS.map(buyer => buyer.name));
+  const configured = Array.isArray(value)
+    ? [...new Set(value.map(name => String(name || '').trim()).filter(name => allowed.has(name)))]
+    : [];
+  return configured.length ? configured : [...DEFAULT_ENV_SPLIT];
+}
+let envBuyers = defaultEnvBuyers();           // 业务固定四人；云端/本机空配置都不得清空
+let envDefaultSplit = [...DEFAULT_ENV_SPLIT];
 let envBackupMax = 25;
 let envImportBuyerPlan = '1:新刚';
 let envBuyerCounts = {};                     // 绑号模式：姓名 → 数量
@@ -3176,8 +3207,8 @@ function cloudBuyerLibraryPayload(data) {
 function cloudLocalStub(path, opts={}) {
   const method = String(opts.method || 'GET').toUpperCase();
   if (path === '/api/config' && method === 'GET') return {
-    hiddenQueryColumns:[], buyers:[], buyerDefaultSplit:[], backupMaxCount:25,
-    importBuyerPlan:'', verifySampleCount:1, purchaseSite:'MX', purchaseTags:{MX:'', US:''}
+    hiddenQueryColumns:[], buyers:defaultEnvBuyers(), buyerDefaultSplit:[...DEFAULT_ENV_SPLIT], backupMaxCount:25,
+    importBuyerPlan:'1:新刚', verifySampleCount:1, purchaseSite:'MX', purchaseTags:{MX:'', US:''}
   };
   if (path === '/api/tasks') return {tasks:[], safeParallel:false, executorOnline:false};
   if (path.startsWith('/api/update/')) return {state:'disabled', enabled:false, message:'云端工作台无需更新本机页面'};
@@ -8819,12 +8850,10 @@ async function loadEnvGroups() {
     const [cfg, result] = await Promise.all([
       api('/api/config'), api('/api/groups')
     ]);
-    if (Array.isArray(cfg.buyers) && cfg.buyers.length) {
-      envBuyers = cfg.buyers;
-      envBuyers.forEach(b => { if (!(b.name in envBuyerCounts)) envBuyerCounts[b.name] = 0; });
-      refreshAssignUi();
-    }
-    if (Array.isArray(cfg.buyerDefaultSplit) && cfg.buyerDefaultSplit.length) envDefaultSplit = cfg.buyerDefaultSplit;
+    envBuyers = normalizeEnvBuyers(cfg.buyers);
+    envDefaultSplit = normalizeEnvDefaultSplit(cfg.buyerDefaultSplit);
+    envBuyers.forEach(b => { if (!(b.name in envBuyerCounts)) envBuyerCounts[b.name] = 0; });
+    refreshAssignUi();
     if (cfg.backupMaxCount) envBackupMax = cfg.backupMaxCount;
     if (cfg.importBuyerPlan) envImportBuyerPlan = cfg.importBuyerPlan;
     $('envVerify').checked = Number(cfg.verifySampleCount == null ? 1 : cfg.verifySampleCount) > 0;
