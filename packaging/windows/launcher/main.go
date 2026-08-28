@@ -712,7 +712,7 @@ func (app *launcherApp) ensureExecutor() {
 		app.mu.Lock()
 		port := statusPort(app.statusURL)
 		app.mu.Unlock()
-		if err := terminateManagedExecutors(app.root, port); err != nil {
+		if err := terminateStatusListener(port); err != nil {
 			app.showExecutorStartFailure()
 			return
 		}
@@ -730,28 +730,6 @@ func (app *launcherApp) showExecutorStartFailure() {
 	})
 }
 
-func managedExecutorStopScript() string {
-	return `& { ` +
-		`$root = $env:XYNIGO_TERMINATE_ROOT; ` +
-		`if ([string]::IsNullOrWhiteSpace($root)) { exit 2 }; ` +
-		`$port = 0; [void][int]::TryParse($env:XYNIGO_TERMINATE_PORT, [ref]$port); ` +
-		`$listenerPids = @(); ` +
-		`if ($port -gt 0) { $listenerPids = @(Get-NetTCPConnection -State Listen ` +
-		`-LocalPort $port -ErrorAction SilentlyContinue | ` +
-		`Select-Object -ExpandProperty OwningProcess -Unique) }; ` +
-		`$prefix = [IO.Path]::GetFullPath($root).TrimEnd('\') + '\'; ` +
-		`Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe'" | ` +
-		`Where-Object { ` +
-		`$commandLine = [string]$_.CommandLine; ` +
-		`$pathInRoot = ($_.ExecutablePath -and ` +
-		`$_.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)); ` +
-		`$commandInRoot = ($commandLine.IndexOf($prefix, [StringComparison]::OrdinalIgnoreCase) -ge 0); ` +
-		`$ownsStatusPort = ($listenerPids -contains $_.ProcessId); ` +
-		`$ownsStatusPort -or (($pathInRoot -or $commandInRoot) -and ` +
-		`$commandLine -match '(?i)run\.py"?\s+--no-browser') } | ` +
-		`ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } }`
-}
-
 func statusPort(rawURL string) int {
 	parsed, err := url.Parse(rawURL)
 	if err != nil || parsed.Scheme != "http" || (parsed.Hostname() != "127.0.0.1" && parsed.Hostname() != "localhost") {
@@ -764,23 +742,45 @@ func statusPort(rawURL string) int {
 	return port
 }
 
-func terminateManagedExecutors(root string, port int) error {
-	command := exec.Command(
-		"powershell.exe",
-		"-NoLogo",
-		"-NoProfile",
-		"-NonInteractive",
-		"-ExecutionPolicy", "Bypass",
-		"-Command", managedExecutorStopScript(),
-	)
-	command.Env = append(
-		os.Environ(),
-		"XYNIGO_TERMINATE_ROOT="+root,
-		fmt.Sprintf("XYNIGO_TERMINATE_PORT=%d", port),
-	)
+func listenerPIDs(netstatOutput string, port int) []int {
+	if port < 1 || port > 65535 {
+		return nil
+	}
+	wanted := fmt.Sprintf("127.0.0.1:%d", port)
+	seen := make(map[int]bool)
+	result := make([]int, 0, 1)
+	for _, line := range strings.Split(netstatOutput, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 4 || !strings.EqualFold(fields[0], "TCP") || fields[1] != wanted || fields[2] != "0.0.0.0:0" {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[len(fields)-1])
+		if err != nil || pid <= 0 || seen[pid] {
+			continue
+		}
+		seen[pid] = true
+		result = append(result, pid)
+	}
+	return result
+}
+
+func terminateStatusListener(port int) error {
+	command := exec.Command("netstat.exe", "-ano", "-p", "tcp")
 	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
-	if err := command.Run(); err != nil {
-		return errors.New("无法结束安装目录内的旧版本本地执行器")
+	output, err := command.Output()
+	if err != nil {
+		return errors.New("无法定位旧版本本地执行器")
+	}
+	pids := listenerPIDs(string(output), port)
+	if len(pids) == 0 {
+		return errors.New("旧版本本地执行器监听进程不存在")
+	}
+	for _, pid := range pids {
+		killer := exec.Command("taskkill.exe", "/PID", strconv.Itoa(pid), "/F")
+		killer.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+		if err := killer.Run(); err != nil {
+			return errors.New("无法结束旧版本本地执行器")
+		}
 	}
 	return nil
 }
@@ -892,7 +892,9 @@ func (app *launcherApp) stopExecutor() {
 	token := app.launcherToken
 	app.mu.Unlock()
 	if cmd == nil {
-		_ = terminateManagedExecutors(app.root, statusPort(statusURL))
+		if port := statusPort(statusURL); port > 0 {
+			_ = terminateStatusListener(port)
+		}
 		return
 	}
 	if statusURL != "" {
@@ -913,7 +915,6 @@ func (app *launcherApp) stopExecutor() {
 		}
 	}
 	_ = cmd.Process.Kill()
-	_ = terminateManagedExecutors(app.root, statusPort(statusURL))
 }
 
 func (app *launcherApp) performPair(raw string) {

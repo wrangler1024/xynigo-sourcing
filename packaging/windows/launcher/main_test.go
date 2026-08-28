@@ -38,30 +38,6 @@ func TestCloudStatusTextCoversPairingAndOfflineStates(t *testing.T) {
 	}
 }
 
-func TestManagedExecutorStopScriptIsScopedToInstallRoot(t *testing.T) {
-	script := managedExecutorStopScript()
-	for _, required := range []string{
-		"pythonw.exe",
-		"ExecutablePath",
-		"StartsWith",
-		"IndexOf",
-		"Get-NetTCPConnection",
-		"OwningProcess",
-		"XYNIGO_TERMINATE_ROOT",
-		"XYNIGO_TERMINATE_PORT",
-		`run\.py"?\s+--no-browser`,
-	} {
-		if !strings.Contains(script, required) {
-			t.Fatalf("managedExecutorStopScript() must contain %q", required)
-		}
-	}
-	for _, forbidden := range []string{"taskkill", "/IM pythonw.exe"} {
-		if strings.Contains(strings.ToLower(script), strings.ToLower(forbidden)) {
-			t.Fatalf("managedExecutorStopScript() must not contain broad kill %q", forbidden)
-		}
-	}
-}
-
 func TestStatusPortOnlyAcceptsLoopbackHTTP(t *testing.T) {
 	if got, want := statusPort("http://127.0.0.1:8765/executor-status.json"), 8765; got != want {
 		t.Fatalf("statusPort(loopback) = %d, want %d", got, want)
@@ -74,5 +50,19 @@ func TestStatusPortOnlyAcceptsLoopbackHTTP(t *testing.T) {
 		if got := statusPort(raw); got != 0 {
 			t.Fatalf("statusPort(%q) = %d, want 0", raw, got)
 		}
+	}
+}
+
+func TestListenerPIDsOnlySelectsExactLoopbackPort(t *testing.T) {
+	output := strings.Join([]string{
+		"  Proto  Local Address          Foreign Address        State           PID",
+		"  TCP    127.0.0.1:8765         0.0.0.0:0              LISTENING       5056",
+		"  TCP    127.0.0.1:8766         0.0.0.0:0              LISTENING       6060",
+		"  TCP    0.0.0.0:8765           0.0.0.0:0              LISTENING       7070",
+		"  TCP    127.0.0.1:8765         127.0.0.1:51000        ESTABLISHED     5056",
+	}, "\r\n")
+	pids := listenerPIDs(output, 8765)
+	if len(pids) != 1 || pids[0] != 5056 {
+		t.Fatalf("listenerPIDs() = %v, want [5056]", pids)
 	}
 }
