@@ -173,7 +173,15 @@ jobs:
           # runtime pointer, and starts a fresh status center.
           $onlineLauncher = Start-Process -FilePath "$installDir\Xynigo.exe" -ArgumentList "--background" -PassThru
           Start-Sleep -Seconds 2
-          $upgrade = Start-Process -FilePath $installer.FullName -ArgumentList "/S /ONLINEUPDATE=1" -Wait -PassThru
+          # Do not use Start-Process -Wait here: on Windows PowerShell it also
+          # waits for the status-center descendant intentionally started by
+          # .onInstSuccess. Wait only for the installer process itself.
+          $upgrade = Start-Process -FilePath $installer.FullName -ArgumentList "/S /ONLINEUPDATE=1" -PassThru
+          if (-not $upgrade.WaitForExit(60000)) {
+            Stop-Process -Id $upgrade.Id -Force -ErrorAction SilentlyContinue
+            throw "online reinstall timed out"
+          }
+          $upgrade.Refresh()
           if ($upgrade.ExitCode -ne 0) { throw "online reinstall failed: $($upgrade.ExitCode)" }
           $onlineRestarted = $false
           for ($attempt = 0; $attempt -lt 30; $attempt++) {
