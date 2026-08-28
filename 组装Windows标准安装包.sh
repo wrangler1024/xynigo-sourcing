@@ -10,6 +10,14 @@ case "$CHANNEL" in
   stable|test) ;;
   *) echo "XYNIGO_RELEASE_CHANNEL must be stable or test: $CHANNEL" >&2; exit 2 ;;
 esac
+RUNTIME_REVISION="${XYNIGO_WINDOWS_RUNTIME_REVISION:-$(git rev-parse --short=12 HEAD)}"
+case "$RUNTIME_REVISION" in
+  ''|*[!A-Za-z0-9._-]*)
+    echo "XYNIGO_WINDOWS_RUNTIME_REVISION contains invalid characters: $RUNTIME_REVISION" >&2
+    exit 2
+    ;;
+esac
+RUNTIME_ID="${VERSION}-${RUNTIME_REVISION}"
 
 WORK_ROOT="$(mktemp -d)"
 trap 'rm -rf "$WORK_ROOT"' EXIT
@@ -91,7 +99,7 @@ VERSION_QUAD="${VERSION}.0"
 echo "[4/6] Compile branded Unicode per-user NSIS installer ..."
 ROOT="$ROOT" PAYLOAD_DIR="$PAYLOAD_DIR" OUTPUT_FILE="$OUTPUT_FILE" \
 VERSION="$VERSION" VERSION_QUAD="$VERSION_QUAD" WRAPPER="$WRAPPER" \
-LAUNCHER_BIN="$LAUNCHER_BIN" \
+RUNTIME_ID="$RUNTIME_ID" LAUNCHER_BIN="$LAUNCHER_BIN" \
 python3 - <<'PY'
 import os
 from pathlib import Path
@@ -108,6 +116,7 @@ root = Path(os.environ['ROOT'])
 defines = {
     'APP_VERSION': os.environ['VERSION'],
     'APP_VERSION_QUAD': os.environ['VERSION_QUAD'],
+    'APP_RUNTIME_ID': os.environ['RUNTIME_ID'],
     'PAYLOAD_DIR': os.environ['PAYLOAD_DIR'],
     'OUTPUT_FILE': os.environ['OUTPUT_FILE'],
     'LICENSE_FILE': root / 'LICENSE',
@@ -138,7 +147,8 @@ rm -f "$OUTPUT_FILE" "$METADATA_FILE" "$SHA_FILE"
 
 echo "[5/6] Verify installer metadata and safety contract ..."
 OUTPUT_FILE="$OUTPUT_FILE" METADATA_FILE="$METADATA_FILE" \
-SHA_FILE="$SHA_FILE" VERSION="$VERSION" CHANNEL="$CHANNEL" python3 - <<'PY'
+SHA_FILE="$SHA_FILE" VERSION="$VERSION" RUNTIME_ID="$RUNTIME_ID" \
+CHANNEL="$CHANNEL" python3 - <<'PY'
 import hashlib
 import json
 import os
@@ -152,6 +162,7 @@ metadata = {
     'schemaVersion': 1,
     'product': 'Xynigo Sourcing',
     'version': os.environ['VERSION'],
+    'runtimeId': os.environ['RUNTIME_ID'],
     'channel': os.environ['CHANNEL'],
     'platform': 'windows-x86_64',
     'installMode': 'standard_per_user',

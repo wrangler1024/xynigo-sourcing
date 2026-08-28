@@ -76,6 +76,11 @@ jobs:
           $installer = Get-Item "dist\Xynigo_Sourcing_Windows_Setup_v*.exe"
           $installDir = Join-Path $env:LOCALAPPDATA "Programs\Xynigo Sourcing"
           $greenDir = Join-Path $env:RUNNER_TEMP "Xynigo green source"
+          # Reproduce the v0.12.7 hotfix incident: an existing same-version
+          # runtime must not be reused when the package payload has changed.
+          New-Item -ItemType Directory -Force -Path "$installDir\versions\0.12.7" | Out-Null
+          Set-Content -Path "$installDir\current-version.txt" -Value '0.12.7' -Encoding ASCII
+          Set-Content -Path "$installDir\versions\0.12.7\stale-runtime.txt" -Value 'old payload' -Encoding ASCII
           New-Item -ItemType Directory -Force -Path "$greenDir\运行数据" | Out-Null
           Set-Content -Path "$greenDir\VERSION.json" -Value '{"version":"0.12.4"}' -Encoding UTF8
           Set-Content -Path "$greenDir\config.json" -Value '{"keep":true}' -Encoding UTF8
@@ -87,6 +92,12 @@ jobs:
           if (-not (Test-Path "$installDir\Xynigo.exe")) { throw "tray/status launcher missing" }
           if (-not (Test-Path "$installDir\xynigo-logo.png")) { throw "brand asset missing" }
           if (-not (Test-Path "$installDir\current-version.txt")) { throw "version marker missing" }
+          $runtimeId = (Get-Content "$installDir\current-version.txt" -Raw).Trim()
+          if ($runtimeId -eq '0.12.7') { throw "same-version stale runtime remained active" }
+          $runtimeDir = Join-Path "$installDir\versions" $runtimeId
+          if (-not (Test-Path "$runtimeDir\app\purchase_tool\workspace_rpc.py")) { throw "workspace RPC runtime missing" }
+          $channelSource = Get-Content "$runtimeDir\app\purchase_tool\executor_channel.py" -Raw
+          if ($channelSource -notmatch 'workspace\.rpc\.v1') { throw "workspace RPC capability missing" }
           $launcher = Start-Process -FilePath "$installDir\Xynigo.exe" -ArgumentList "--background" -PassThru
           Start-Sleep -Seconds 4
           if ($launcher.HasExited) { throw "tray/status launcher exited during startup: $($launcher.ExitCode)" }

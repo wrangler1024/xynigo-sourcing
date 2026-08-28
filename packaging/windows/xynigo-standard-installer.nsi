@@ -11,6 +11,9 @@ SetCompressor /SOLID lzma
 !ifndef APP_VERSION_QUAD
   !error "APP_VERSION_QUAD is required"
 !endif
+!ifndef APP_RUNTIME_ID
+  !error "APP_RUNTIME_ID is required"
+!endif
 !ifndef PAYLOAD_DIR
   !error "PAYLOAD_DIR is required"
 !endif
@@ -268,10 +271,11 @@ Section "$(CoreSectionName)" SEC_CORE
   Pop $0
   Pop $1
 
-  ; Each immutable application version has its own directory. A running old
-  ; version is never overwritten; current-version.txt switches the next start.
-  ; User config/log/runtime data stays at $INSTDIR, outside versions/.
-  SetOutPath "$INSTDIR\versions\${APP_VERSION}"
+  ; Each immutable package revision has its own directory. This matters when a
+  ; hotfix keeps the public APP_VERSION: reinstalling must still replace the
+  ; Python executor instead of silently reusing an older same-version payload.
+  ; current-version.txt selects the next runtime; user data stays outside it.
+  SetOutPath "$INSTDIR\versions\${APP_RUNTIME_ID}"
   SetOverwrite off
   File /r "${PAYLOAD_DIR}\*.*"
 
@@ -283,7 +287,7 @@ Section "$(CoreSectionName)" SEC_CORE
   File /oname=Xynigo.cmd "${STANDARD_LAUNCHER}"
   File /oname=配对本地执行器.cmd "${STANDARD_PAIR_LAUNCHER}"
   FileOpen $0 "$INSTDIR\current-version.txt" w
-  FileWrite $0 "${APP_VERSION}"
+  FileWrite $0 "${APP_RUNTIME_ID}"
   FileClose $0
   WriteUninstaller "$INSTDIR\卸载 Xynigo Sourcing.exe"
 
@@ -303,6 +307,7 @@ Section "$(CoreSectionName)" SEC_CORE
 
   WriteRegStr HKCU "${APP_REG_KEY}" "InstallLocation" "$INSTDIR"
   WriteRegStr HKCU "${APP_REG_KEY}" "Version" "${APP_VERSION}"
+  WriteRegStr HKCU "${APP_REG_KEY}" "RuntimeId" "${APP_RUNTIME_ID}"
   WriteRegStr HKCU "${APP_REG_KEY}" "InstallType" "per_user_standard"
 
   ; Register the low-risk launcher protocol for cloud Web → local executor.

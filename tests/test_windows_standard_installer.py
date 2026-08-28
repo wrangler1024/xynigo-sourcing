@@ -98,7 +98,9 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
         self.assertIn('Xynigo.exe$\\" --protocol', self.installer)
 
     def test_versioned_runtime_and_uninstall_preserve_user_data(self):
-        self.assertIn('$INSTDIR\\versions\\${APP_VERSION}', self.installer)
+        self.assertIn('$INSTDIR\\versions\\${APP_RUNTIME_ID}', self.installer)
+        self.assertIn('FileWrite $0 "${APP_RUNTIME_ID}"', self.installer)
+        self.assertNotIn('$INSTDIR\\versions\\${APP_VERSION}', self.installer)
         self.assertIn('current-version.txt', self.installer)
         self.assertNotIn('RMDir /r "$INSTDIR"', self.installer)
         for name in ('config.json', '查询日志', '运行数据', 'imports'):
@@ -199,6 +201,9 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
         self.assertIn('SetOverwrite on', self.installer)
         self.assertIn(launcher_output, self.installer)
         self.assertIn('SetOverwrite off', self.installer)
+        self.assertIn("'APP_RUNTIME_ID': os.environ['RUNTIME_ID']", self.builder)
+        self.assertIn('RUNTIME_ID="${VERSION}-${RUNTIME_REVISION}"', self.builder)
+        self.assertIn("'runtimeId': os.environ['RUNTIME_ID']", self.builder)
         self.assertNotIn('Delete "$INSTDIR\\config.json"', self.installer)
         self.assertNotIn('RMDir /r "$INSTDIR\\运行数据"', self.installer)
 
@@ -262,6 +267,7 @@ class WindowsStandardInstallerArtifactTests(unittest.TestCase):
         installer = ROOT / 'dist' / payload['assetName']
         self.assertTrue(installer.is_file())
         self.assertEqual(payload['installMode'], 'standard_per_user')
+        self.assertTrue(payload['runtimeId'].startswith(payload['version'] + '-'))
         self.assertFalse(payload['requiresElevation'])
         self.assertFalse(payload['autoStart'])
         self.assertFalse(payload['releaseEligible'])
