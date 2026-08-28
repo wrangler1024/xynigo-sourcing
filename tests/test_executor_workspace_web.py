@@ -68,8 +68,12 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             "let queryProgressLoaded = false;",
             "let queryPollInFlight = false;",
             "let groupLoadInFlight = null;",
+            "let envProgressLoaded = false;",
+            "let envPollInFlight = false;",
             "if (queryPollInFlight) return;",
             "if (CLOUD_WEB_MODE && queryProgressLoaded && !isRunning) return;",
+            "if (envPollInFlight) return;",
+            "if (CLOUD_WEB_MODE && envProgressLoaded && !envRunning && !backupRunning) return;",
             "if (groupLoadInFlight) return groupLoadInFlight;",
             "error.code === 'executor_task_busy'",
         ):

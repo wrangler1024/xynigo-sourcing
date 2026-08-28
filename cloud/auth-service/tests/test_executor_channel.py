@@ -696,6 +696,13 @@ def test_workspace_rpc_short_reads_queue_while_config_tasks_remain_exclusive(
         assert first.status_code == 202, first.text
         assert second.status_code == 202, second.text
         assert first.json()["task"]["id"] != second.json()["task"]["id"]
+        duplicate = web_client.post(
+            f"/v1/executors/{executor_id}/workspace-rpc",
+            json={"method": "GET", "path": "/api/groups"},
+            headers=CSRF,
+        )
+        assert duplicate.status_code == 202, duplicate.text
+        assert duplicate.json()["task"]["id"] == first.json()["task"]["id"]
 
         config_read = web_client.post(
             f"/v1/executors/{executor_id}/config/read",

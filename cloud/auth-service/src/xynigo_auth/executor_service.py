@@ -10,7 +10,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -374,6 +374,27 @@ class ExecutorChannelService:
             # page issues several short reads together (groups, task state,
             # progress, preflight). Keep those reads in a bounded FIFO instead
             # of rejecting all but the first request as busy.
+            active_workspace_tasks = list(
+                self.session.scalars(
+                    select(ExecutorTask).where(
+                        ExecutorTask.tenant_id == tenant_id,
+                        ExecutorTask.executor_id == executor.id,
+                        ExecutorTask.created_by_user_id == user_id,
+                        ExecutorTask.task_type == "workspace.rpc.v1",
+                        ExecutorTask.status.in_(ACTIVE_TASK_STATUSES),
+                    )
+                )
+            )
+            matching_active = next(
+                (
+                    active_task
+                    for active_task in active_workspace_tasks
+                    if active_task.payload_envelope.get("payloadHash") == payload_hash
+                ),
+                None,
+            )
+            if matching_active is not None:
+                return matching_active
             active_non_workspace = self.session.scalar(
                 select(ExecutorTask.id).where(
                     ExecutorTask.executor_id == executor.id,
@@ -381,13 +402,7 @@ class ExecutorChannelService:
                     ExecutorTask.status.in_(ACTIVE_TASK_STATUSES),
                 ).limit(1)
             )
-            active_count = self.session.scalar(
-                select(func.count(ExecutorTask.id)).where(
-                    ExecutorTask.executor_id == executor.id,
-                    ExecutorTask.task_type == "workspace.rpc.v1",
-                    ExecutorTask.status.in_(ACTIVE_TASK_STATUSES),
-                )
-            ) or 0
+            active_count = len(active_workspace_tasks)
             if (
                 active_non_workspace is not None
                 or active_count >= MAX_QUEUED_WORKSPACE_RPC_TASKS

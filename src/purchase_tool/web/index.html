@@ -2598,6 +2598,8 @@ let envPlanId = null;
 let envAccountCount = 0;
 let envRunning = false;
 let envSubmitting = false;
+let envProgressLoaded = false;
+let envPollInFlight = false;
 let envPreflightReady = false;
 let envGroupSaving = false;
 let larkReady = false;
@@ -6177,6 +6179,8 @@ function setEnvMode(next) {
     '完成正式执行确认后，这里会立即显示任务提交和后台执行状态。');
   refreshAssignUi();
   refreshEnvPreflight();
+  envProgressLoaded = false;
+  pollEnvBatch();
 }
 
 function updateEnvModeTabs() {
@@ -6360,6 +6364,9 @@ function renderBackupBatch(snap) {
 let envPollFailures = 0;
 async function pollEnvBatch() {
   if (!authReady || !hasFeatureAccess('envbatch') || activeModule !== 'envbatch') return;
+  if (envPollInFlight) return;
+  if (CLOUD_WEB_MODE && envProgressLoaded && !envRunning && !backupRunning) return;
+  envPollInFlight = true;
   try {
     if (envMode === 'backup') {
       renderBackupBatch(await api('/api/envbatch/backup/progress'));
@@ -6367,6 +6374,7 @@ async function pollEnvBatch() {
       renderEnvBatch(await api('/api/envbatch/progress'));
     }
     envPollFailures = 0;
+    envProgressLoaded = true;
   } catch (e) {
     envPollFailures += 1;
     if (envPollFailures >= 3) {
@@ -6378,6 +6386,7 @@ async function pollEnvBatch() {
       }
     }
   }
+  finally { envPollInFlight = false; }
 }
 setInterval(pollEnvBatch, 1500);
 
@@ -7772,6 +7781,7 @@ function setFeaturePanel(module) {
   else if (module === 'vendorimport') return;
   else if (module === 'register') pollRegister();
   else if (module === 'envbatch') {
+    envProgressLoaded = false;
     pollEnvBatch();
     loadEnvGroups().then(() => refreshEnvPreflight());
   }
@@ -8677,6 +8687,7 @@ $('btnEnvStart').onclick = async () => {
         body:JSON.stringify({buyer:envBackup.buyer, count:envBackup.count, type:envBackup.type, purchaseDate:envPurchaseDate(), verifySampleCount:verifyCount, confirmWrite:true, site})
       });
       backupRunning = true;
+      envProgressLoaded = false;
       finishEnvSubmission();
       setEnvExecutionState(
         'running', '备用/测试环境任务已受理，正在后台执行',
@@ -8691,6 +8702,8 @@ $('btnEnvStart').onclick = async () => {
         'failed', '备用/测试环境任务提交失败或响应中断',
         `${err.message}。系统仍会继续轮询后台状态，请勿立即重复提交。`);
       toast(err.message);
+      envProgressLoaded = false;
+      pollEnvBatch();
     }
     return;
   }
@@ -8710,6 +8723,7 @@ $('btnEnvStart').onclick = async () => {
     });
     envPlanId = null;
     envRunning = true;
+    envProgressLoaded = false;
     finishEnvSubmission();
     setEnvExecutionState(
       'running', '买家号建环境任务已受理，正在后台执行',
@@ -8725,6 +8739,8 @@ $('btnEnvStart').onclick = async () => {
       'failed', '买家号建环境任务提交失败或响应中断',
       `${err.message}。系统仍会继续轮询后台状态，请勿立即重复提交。`);
     toast(err.message);
+    envProgressLoaded = false;
+    pollEnvBatch();
   }
 };
 
