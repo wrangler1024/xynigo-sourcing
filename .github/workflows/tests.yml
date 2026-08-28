@@ -58,6 +58,9 @@ jobs:
         with:
           go-version: "1.26.x"
           cache-dependency-path: packaging/windows/launcher/go.sum
+      - name: Test Windows status-center state rendering
+        working-directory: packaging/windows/launcher
+        run: go test ./...
       - run: choco install nsis --version=3.12.0 -y --no-progress
       - name: Build standard installer
         shell: bash

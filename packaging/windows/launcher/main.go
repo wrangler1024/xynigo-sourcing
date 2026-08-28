@@ -79,18 +79,30 @@ type launcherApp struct {
 
 	mw             *walk.MainWindow
 	notify         *walk.NotifyIcon
+	statusSignal   *walk.Label
 	statusTitle    *walk.Label
 	statusDetail   *walk.Label
+	cloudSignal    *walk.Label
 	cloudValue     *walk.Label
+	cloudNote      *walk.Label
+	hubSignal      *walk.Label
 	hubValue       *walk.Label
+	hubNote        *walk.Label
+	taskSignal     *walk.Label
 	taskValue      *walk.Label
+	taskNote       *walk.Label
 	versionValue   *walk.Label
 	deviceValue    *walk.Label
+	deviceState    *walk.Label
 	heartbeatValue *walk.Label
+	pairPanel      *walk.Composite
 	pairEdit       *walk.LineEdit
 	pairButton     *walk.PushButton
 	startButton    *walk.PushButton
 	trayStatus     *walk.Action
+	trayCloud      *walk.Action
+	trayHub        *walk.Action
+	trayPair       *walk.Action
 	trayStartStop  *walk.Action
 
 	mu            sync.Mutex
@@ -230,9 +242,9 @@ func (app *launcherApp) buildWindow() error {
 	navy := walk.RGB(8, 37, 72)
 	muted := walk.RGB(83, 113, 139)
 	teal := walk.RGB(17, 127, 134)
-	line := walk.RGB(218, 230, 236)
 	soft := walk.RGB(232, 248, 247)
 	canvas := walk.RGB(244, 247, 250)
+	green := walk.RGB(20, 132, 93)
 
 	// Declarative Walk treats string images as resource names and resolves
 	// them relative to the executable directory. Passing an absolute path here
@@ -245,63 +257,74 @@ func (app *launcherApp) buildWindow() error {
 		AssignTo:   &app.mw,
 		Title:      "Xynigo 本地执行器状态中心",
 		Icon:       icon,
-		Size:       Size{Width: 780, Height: 640},
-		MinSize:    Size{Width: 720, Height: 590},
+		Size:       Size{Width: 860, Height: 630},
+		MinSize:    Size{Width: 800, Height: 600},
 		Background: SolidColorBrush{Color: canvas},
 		Font:       Font{Family: "Microsoft YaHei UI", PointSize: 9},
-		Layout:     VBox{Margins: Margins{Left: 18, Top: 18, Right: 18, Bottom: 16}, Spacing: 12},
+		Layout:     VBox{MarginsZero: true, SpacingZero: true},
 		Children: []Widget{
 			Composite{
 				Background: SolidColorBrush{Color: soft},
-				Layout:     HBox{Margins: Margins{Left: 18, Top: 12, Right: 18, Bottom: 12}, Spacing: 18},
+				MinSize:    Size{Height: 108},
+				Layout:     HBox{Margins: Margins{Left: 24, Top: 12, Right: 24, Bottom: 12}, Spacing: 24},
 				Children: []Widget{
-					ImageView{Image: logo, Mode: ImageViewModeShrink, MinSize: Size{Width: 210, Height: 82}, MaxSize: Size{Width: 210, Height: 82}},
+					ImageView{Image: logo, Mode: ImageViewModeShrink, MinSize: Size{Width: 238, Height: 82}, MaxSize: Size{Width: 238, Height: 82}},
 					Composite{Background: SolidColorBrush{Color: soft}, Layout: VBox{MarginsZero: true, Spacing: 3}, Children: []Widget{
+						VSpacer{},
 						Label{Text: "LOCAL EXECUTOR STATUS CENTER", TextColor: teal, Font: Font{Family: "Microsoft YaHei UI", PointSize: 8, Bold: true}},
 						Label{Text: "连接云端工作台与这台采购电脑", TextColor: navy, Font: Font{Family: "Microsoft YaHei UI", PointSize: 15, Bold: true}},
-						Label{Text: "状态中心关闭后仍驻留托盘，不影响后台任务。", TextColor: muted},
+						Label{Text: "关闭窗口后仍在系统托盘运行，不影响已接收的后台任务。", TextColor: muted},
+						VSpacer{},
 					}},
 				},
 			},
-			Composite{
-				Border: true, Background: SolidColorBrush{Color: white},
-				Layout: HBox{Margins: Margins{Left: 18, Top: 12, Right: 18, Bottom: 12}, Spacing: 12},
-				Children: []Widget{
-					Label{Text: "●", TextColor: teal, Font: Font{Family: "Segoe UI Symbol", PointSize: 20, Bold: true}, MinSize: Size{Width: 36}},
-					Composite{Background: SolidColorBrush{Color: white}, Layout: VBox{MarginsZero: true, Spacing: 2}, Children: []Widget{
-						Label{AssignTo: &app.statusTitle, Text: "正在启动本地执行器…", TextColor: navy, Font: Font{Family: "Microsoft YaHei UI", PointSize: 11, Bold: true}},
-						Label{AssignTo: &app.statusDetail, Text: "正在读取云端、HubStudio 和本地任务状态。", TextColor: muted},
-					}},
+			Composite{Background: SolidColorBrush{Color: canvas}, Layout: VBox{Margins: Margins{Left: 22, Top: 18, Right: 22, Bottom: 14}, Spacing: 12}, Children: []Widget{
+				Composite{
+					Border: true, Background: SolidColorBrush{Color: white}, MinSize: Size{Height: 76},
+					Layout: HBox{Margins: Margins{Left: 14, Top: 12, Right: 16, Bottom: 12}, Spacing: 12},
+					Children: []Widget{
+						Label{AssignTo: &app.statusSignal, Text: "●", TextColor: green, Font: Font{Family: "Segoe UI Symbol", PointSize: 18, Bold: true}, MinSize: Size{Width: 32}, TextAlignment: AlignCenter},
+						Composite{Background: SolidColorBrush{Color: white}, Layout: VBox{MarginsZero: true, Spacing: 2}, Children: []Widget{
+							Label{AssignTo: &app.statusTitle, Text: "执行器已启动，等待设备配对", TextColor: navy, Font: Font{Family: "Microsoft YaHei UI", PointSize: 11, Bold: true}},
+							Label{AssignTo: &app.statusDetail, Text: "在云端工作台生成一次性配对码，然后在下方完成绑定。", TextColor: muted},
+						}},
+						HSpacer{},
+						Label{AssignTo: &app.heartbeatValue, Text: "尚未建立云端心跳", TextColor: muted, TextAlignment: AlignFar},
+					},
+				},
+				Composite{Layout: Grid{Columns: 4, Spacing: 9}, Background: SolidColorBrush{Color: canvas}, Children: []Widget{
+					statusCard("云端通道", &app.cloudSignal, &app.cloudValue, &app.cloudNote, "等待配对", "需要一次性配对码", white, navy, muted, teal),
+					statusCard("HubStudio", &app.hubSignal, &app.hubValue, &app.hubNote, "正在检查", "等待本机服务", white, navy, muted, teal),
+					statusCard("本机任务", &app.taskSignal, &app.taskValue, &app.taskNote, "当前空闲", "没有运行中的任务", white, navy, muted, teal),
+					statusCard("执行器版本", nil, &app.versionValue, nil, "—", "内部测试渠道", white, navy, muted, teal),
+				}},
+				Composite{
+					Border: true, Background: SolidColorBrush{Color: white}, MinSize: Size{Height: 104},
+					Layout: VBox{Margins: Margins{Left: 15, Top: 12, Right: 15, Bottom: 12}, Spacing: 8},
+					Children: []Widget{
+						Composite{Background: SolidColorBrush{Color: white}, Layout: HBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
+							Composite{Background: SolidColorBrush{Color: white}, Layout: VBox{MarginsZero: true, Spacing: 2}, Children: []Widget{
+								Label{Text: "设备配对", TextColor: navy, Font: Font{Family: "Microsoft YaHei UI", PointSize: 10, Bold: true}},
+								Label{AssignTo: &app.deviceValue, Text: "尚未配对 · 配对码 5 分钟内有效且只能使用一次", TextColor: muted},
+							}},
+							HSpacer{},
+							Label{AssignTo: &app.deviceState, Text: "待配对", TextColor: teal, Font: Font{Family: "Microsoft YaHei UI", PointSize: 9, Bold: true}, TextAlignment: AlignFar},
+						}},
+						Composite{AssignTo: &app.pairPanel, Background: SolidColorBrush{Color: white}, Layout: HBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
+							LineEdit{AssignTo: &app.pairEdit, CueBanner: "输入云端生成的 8 位一次性配对码", MaxLength: 9},
+							PushButton{AssignTo: &app.pairButton, Text: "配对这台电脑", MinSize: Size{Width: 142, Height: 34}, OnClicked: func() { app.startPair(app.pairEdit.Text()) }},
+						}},
+					},
+				},
+				Composite{Background: SolidColorBrush{Color: canvas}, Layout: HBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
+					PushButton{Text: "打开云端工作台", MinSize: Size{Width: 142, Height: 38}, OnClicked: func() { app.openCloudWorkspace() }},
+					PushButton{AssignTo: &app.startButton, Text: "重新启动执行器", MinSize: Size{Width: 132, Height: 38}, OnClicked: func() { go app.restartExecutor() }},
+					PushButton{Text: "打开日志目录", MinSize: Size{Width: 112, Height: 38}, OnClicked: func() { app.openLogs() }},
 					HSpacer{},
-					Label{AssignTo: &app.heartbeatValue, Text: "等待心跳", TextColor: muted, TextAlignment: AlignFar},
-				},
-			},
-			Composite{Layout: Grid{Columns: 2, Spacing: 10}, Background: SolidColorBrush{Color: canvas}, Children: []Widget{
-				statusCard("云端通道", &app.cloudValue, "正在连接", white, line, navy, muted),
-				statusCard("HubStudio", &app.hubValue, "正在检查", white, line, navy, muted),
-				statusCard("本机任务", &app.taskValue, "0 个运行中", white, line, navy, muted),
-				statusCard("执行器版本", &app.versionValue, "—", white, line, navy, muted),
+					PushButton{Text: "刷新状态", MinSize: Size{Width: 96, Height: 38}, OnClicked: func() { go app.refreshStatus() }},
+				}},
+				Label{Text: "云端心跳是在线状态的最终依据；退出 Xynigo 后本机任务将停止。", TextColor: muted, TextAlignment: AlignCenter},
 			}},
-			Composite{
-				Border: true, Background: SolidColorBrush{Color: white},
-				Layout: VBox{Margins: Margins{Left: 16, Top: 12, Right: 16, Bottom: 12}, Spacing: 7},
-				Children: []Widget{
-					Label{Text: "设备配对", TextColor: navy, Font: Font{Family: "Microsoft YaHei UI", PointSize: 10, Bold: true}},
-					Label{AssignTo: &app.deviceValue, Text: "尚未读取设备状态", TextColor: muted},
-					Composite{Background: SolidColorBrush{Color: white}, Layout: HBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
-						LineEdit{AssignTo: &app.pairEdit, CueBanner: "输入云端显示的 8 位一次性配对码", MaxLength: 9},
-						PushButton{AssignTo: &app.pairButton, Text: "配对这台电脑", MinSize: Size{Width: 122, Height: 34}, OnClicked: func() { app.startPair(app.pairEdit.Text()) }},
-					}},
-				},
-			},
-			Composite{Background: SolidColorBrush{Color: canvas}, Layout: HBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
-				PushButton{Text: "打开云端工作台", MinSize: Size{Width: 142, Height: 38}, OnClicked: func() { app.openCloudWorkspace() }},
-				PushButton{AssignTo: &app.startButton, Text: "重新启动执行器", MinSize: Size{Width: 132, Height: 38}, OnClicked: func() { go app.restartExecutor() }},
-				PushButton{Text: "打开日志目录", MinSize: Size{Width: 112, Height: 38}, OnClicked: func() { app.openLogs() }},
-				HSpacer{},
-				PushButton{Text: "刷新状态", MinSize: Size{Width: 96, Height: 38}, OnClicked: func() { go app.refreshStatus() }},
-			}},
-			Label{Text: "云端心跳是在线状态的最终依据；托盘不会静默执行采购、下单或删除动作。", TextColor: muted, TextAlignment: AlignCenter},
 		},
 	}
 	if err := window.Create(); err != nil {
@@ -310,14 +333,38 @@ func (app *launcherApp) buildWindow() error {
 	return nil
 }
 
-func statusCard(title string, target **walk.Label, initial string, background, line, navy, muted walk.Color) Widget {
+func statusCard(
+	title string,
+	signal, value, note **walk.Label,
+	initialValue, initialNote string,
+	background, navy, muted, signalColor walk.Color,
+) Widget {
+	header := []Widget{}
+	if signal != nil {
+		header = append(header, Label{
+			AssignTo: signal, Text: "●", TextColor: signalColor,
+			Font:    Font{Family: "Segoe UI Symbol", PointSize: 7, Bold: true},
+			MinSize: Size{Width: 10}, TextAlignment: AlignCenter,
+		})
+	}
+	header = append(header, Label{
+		Text: title, TextColor: muted,
+		Font: Font{Family: "Microsoft YaHei UI", PointSize: 8, Bold: true},
+	})
+	children := []Widget{
+		Composite{Background: SolidColorBrush{Color: background}, Layout: HBox{MarginsZero: true, Spacing: 5}, Children: header},
+		Label{AssignTo: value, Text: initialValue, TextColor: navy, Font: Font{Family: "Microsoft YaHei UI", PointSize: 11, Bold: true}},
+	}
+	if note != nil {
+		children = append(children, Label{AssignTo: note, Text: initialNote, TextColor: muted, Font: Font{Family: "Microsoft YaHei UI", PointSize: 8}})
+	} else {
+		children = append(children, Label{Text: initialNote, TextColor: muted, Font: Font{Family: "Microsoft YaHei UI", PointSize: 8}})
+	}
 	return Composite{
-		Border: true, Background: SolidColorBrush{Color: background},
-		Layout: VBox{Margins: Margins{Left: 15, Top: 11, Right: 15, Bottom: 11}, Spacing: 3},
-		Children: []Widget{
-			Label{Text: title, TextColor: muted, Font: Font{Family: "Microsoft YaHei UI", PointSize: 8, Bold: true}},
-			Label{AssignTo: target, Text: initial, TextColor: navy, Font: Font{Family: "Microsoft YaHei UI", PointSize: 11, Bold: true}},
-		},
+		Border: true, Background: SolidColorBrush{Color: background}, StretchFactor: 1,
+		MinSize:  Size{Height: 84},
+		Layout:   VBox{Margins: Margins{Left: 12, Top: 10, Right: 12, Bottom: 10}, Spacing: 3},
+		Children: children,
 	}
 }
 
@@ -343,24 +390,35 @@ func (app *launcherApp) buildTray() error {
 		}
 	})
 
-	app.trayStatus = newTrayAction("状态中心 · 正在启动", app.showStatusCenter)
+	app.trayStatus = newTrayStatusAction("● 本地执行器正在启动")
+	app.trayCloud = newTrayStatusAction("云端：正在连接")
+	app.trayHub = newTrayStatusAction("HubStudio：正在检查")
+	openStatus := newTrayAction("打开状态中心", app.showStatusCenter)
 	openCloud := newTrayAction("打开云端工作台", app.openCloudWorkspace)
 	app.trayStartStop = newTrayAction("重新启动执行器", func() { go app.restartExecutor() })
-	pair := newTrayAction("配对这台电脑…", app.showStatusCenter)
+	app.trayPair = newTrayAction("配对这台电脑…", app.showPairing)
 	logs := newTrayAction("打开日志目录", app.openLogs)
 	about := newTrayAction("关于 Xynigo", func() {
 		walk.MsgBox(app.mw, "关于 Xynigo", "Xynigo Sourcing 本地执行器\n云端 Web 统一入口 · 本机安全执行", walk.MsgBoxIconInformation)
 	})
 	exit := newTrayAction("退出 Xynigo", app.exitApplication)
 	for _, action := range []*walk.Action{
-		app.trayStatus, openCloud, walk.NewSeparatorAction(), app.trayStartStop,
-		pair, logs, walk.NewSeparatorAction(), about, exit,
+		app.trayStatus, app.trayCloud, app.trayHub, walk.NewSeparatorAction(),
+		openStatus, openCloud, app.trayPair, walk.NewSeparatorAction(),
+		app.trayStartStop, logs, walk.NewSeparatorAction(), about, exit,
 	} {
 		if err := notify.ContextMenu().Actions().Add(action); err != nil {
 			return err
 		}
 	}
 	return notify.SetVisible(true)
+}
+
+func newTrayStatusAction(text string) *walk.Action {
+	action := walk.NewAction()
+	_ = action.SetText(text)
+	_ = action.SetEnabled(false)
+	return action
 }
 
 func newTrayAction(text string, handler func()) *walk.Action {
@@ -375,6 +433,15 @@ func (app *launcherApp) showStatusCenter() {
 		app.mw.SetVisible(true)
 		_ = app.mw.BringToTop()
 		_ = app.mw.Activate()
+	})
+}
+
+func (app *launcherApp) showPairing() {
+	app.showStatusCenter()
+	app.mw.Synchronize(func() {
+		if app.pairEdit != nil && app.pairEdit.Visible() {
+			_ = app.pairEdit.SetFocus()
+		}
 	})
 }
 
@@ -452,17 +519,34 @@ func configuredServerPort(root string) int {
 }
 
 func (app *launcherApp) renderStatus(status *localStatus, err error) {
+	green := walk.RGB(20, 132, 93)
+	amber := walk.RGB(162, 107, 11)
+	red := walk.RGB(178, 74, 59)
+	blue := walk.RGB(57, 119, 155)
+	muted := walk.RGB(109, 131, 150)
+
 	if err != nil || status == nil {
 		app.statusTitle.SetText("本地执行器未运行")
 		app.statusDetail.SetText("可点击“启动执行器”恢复本机服务；云端工作台仍可独立使用。")
 		app.cloudValue.SetText("未连接")
+		app.cloudNote.SetText("等待本机服务")
 		app.hubValue.SetText("等待执行器")
+		app.hubNote.SetText("尚未检查 Local API")
 		app.taskValue.SetText("—")
+		app.taskNote.SetText("执行器启动后显示")
 		app.versionValue.SetText("—")
 		app.deviceValue.SetText("设备状态将在执行器启动后显示")
+		app.deviceState.SetText("等待执行器")
 		app.heartbeatValue.SetText("无本机心跳")
+		app.statusSignal.SetTextColor(red)
+		app.cloudSignal.SetTextColor(red)
+		app.hubSignal.SetTextColor(muted)
+		app.taskSignal.SetTextColor(muted)
+		app.setPairingVisible(false)
 		app.startButton.SetText("启动执行器")
-		_ = app.trayStatus.SetText("状态中心 · 执行器未运行")
+		_ = app.trayStatus.SetText("● 本地执行器未运行")
+		_ = app.trayCloud.SetText("云端：未连接")
+		_ = app.trayHub.SetText("HubStudio：等待执行器")
 		_ = app.trayStartStop.SetText("启动执行器")
 		_ = app.notify.SetToolTip("Xynigo 本地执行器 · 未运行")
 		return
@@ -472,43 +556,108 @@ func (app *launcherApp) renderStatus(status *localStatus, err error) {
 	app.versionValue.SetText("v" + status.Version)
 	if status.HubStudio.Connected {
 		app.hubValue.SetText("已连接")
+		app.hubNote.SetText("Local API 可用")
+		app.hubSignal.SetTextColor(green)
 	} else {
 		app.hubValue.SetText("未连接")
+		app.hubNote.SetText("请确认 HubStudio 已启动")
+		app.hubSignal.SetTextColor(red)
 	}
 	if status.Tasks.ActiveCount == 0 {
 		app.taskValue.SetText("当前空闲")
+		app.taskNote.SetText("没有运行中的任务")
+		app.taskSignal.SetTextColor(green)
 	} else {
-		app.taskValue.SetText(fmt.Sprintf("%d 个任务运行中", status.Tasks.ActiveCount))
+		app.taskValue.SetText(fmt.Sprintf("%d 个运行中", status.Tasks.ActiveCount))
+		app.taskNote.SetText(activeTaskNote(status))
+		app.taskSignal.SetTextColor(blue)
 	}
-	if status.Executor.Paired {
+	unpaired := !status.Executor.Paired || status.CloudChannel.Status == "not_paired"
+	if !unpaired {
 		name := strings.TrimSpace(status.Executor.DisplayName)
 		if name == "" {
 			name = "这台采购电脑"
 		}
 		app.deviceValue.SetText(name + " · 已完成设备配对")
+		app.deviceState.SetText("已配对")
+		app.deviceState.SetTextColor(green)
+		app.pairEdit.SetText("")
+		app.setPairingVisible(false)
 	} else {
-		app.deviceValue.SetText("尚未配对 · 请在云端生成一次性配对码")
+		app.deviceValue.SetText("尚未配对 · 配对码 5 分钟内有效且只能使用一次")
+		app.deviceState.SetText("待配对")
+		app.deviceState.SetTextColor(amber)
+		app.setPairingVisible(true)
 	}
 	app.heartbeatValue.SetText(relativeTime(status.CloudChannel.LastPollAt))
 	cloudText := cloudStatusText(status.CloudChannel.Status)
 	app.cloudValue.SetText(cloudText)
-	if status.CloudChannel.Status == "online" {
-		app.statusTitle.SetText("本地执行器已连接云端")
+	if unpaired {
+		app.cloudNote.SetText("需要一次性配对码")
+		app.cloudSignal.SetTextColor(amber)
+		app.statusSignal.SetTextColor(amber)
+		app.statusTitle.SetText("执行器已启动，等待设备配对")
+		app.statusDetail.SetText("在云端工作台生成一次性配对码，然后在下方完成绑定。")
+		_ = app.trayStatus.SetText("● 等待设备配对")
+	} else if status.CloudChannel.Status == "online" && status.Tasks.ActiveCount > 0 {
+		app.cloudNote.SetText("心跳正常")
+		app.cloudSignal.SetTextColor(green)
+		app.statusSignal.SetTextColor(blue)
+		app.statusTitle.SetText("本地执行器正在执行任务")
+		app.statusDetail.SetText("云端通道与 HubStudio 正常，当前任务将在本机安全执行。")
+		_ = app.trayStatus.SetText(fmt.Sprintf("● 正在执行 %d 个任务", status.Tasks.ActiveCount))
+	} else if status.CloudChannel.Status == "online" {
+		app.cloudNote.SetText("心跳正常")
+		app.cloudSignal.SetTextColor(green)
+		app.statusSignal.SetTextColor(green)
+		app.statusTitle.SetText("本地执行器在线")
 		if status.HubStudio.Connected {
-			app.statusDetail.SetText("云端通道与 HubStudio 均已就绪，可以接收本机任务。")
+			app.statusDetail.SetText("云端通道和 HubStudio 均已连接，可以接收本机任务。")
 		} else {
 			app.statusDetail.SetText("云端通道正常；HubStudio 尚未连接，请先启动并登录 HubStudio。")
 		}
-	} else if !status.Executor.Paired || status.CloudChannel.Status == "not_paired" {
-		app.statusTitle.SetText("本地执行器正在运行，等待设备配对")
-		app.statusDetail.SetText("在云端工作台生成 8 位一次性配对码后，可在下方完成绑定。")
+		_ = app.trayStatus.SetText("● 本地执行器在线")
 	} else {
-		app.statusTitle.SetText("本地执行器正在重连云端")
+		app.cloudNote.SetText("正在自动重连")
+		app.cloudSignal.SetTextColor(red)
+		app.statusSignal.SetTextColor(red)
+		app.statusTitle.SetText("云端连接已中断")
 		app.statusDetail.SetText("本机服务保持运行；网络恢复后会自动重连，不会重复执行写任务。")
+		_ = app.trayStatus.SetText("● 本地执行器离线")
 	}
-	trayText := "状态中心 · " + cloudText
-	_ = app.trayStatus.SetText(trayText)
+	_ = app.trayCloud.SetText("云端：" + strings.TrimPrefix(cloudText, "云端"))
+	if status.HubStudio.Connected {
+		_ = app.trayHub.SetText("HubStudio：已连接")
+	} else {
+		_ = app.trayHub.SetText("HubStudio：未连接")
+	}
 	_ = app.notify.SetToolTip("Xynigo 本地执行器 · " + cloudText)
+}
+
+func (app *launcherApp) setPairingVisible(visible bool) {
+	if app.pairPanel != nil {
+		app.pairPanel.SetVisible(visible)
+	}
+	if app.trayPair != nil {
+		_ = app.trayPair.SetVisible(visible)
+	}
+}
+
+func activeTaskNote(status *localStatus) string {
+	if len(status.Tasks.Items) == 0 {
+		return "任务正在本机安全执行"
+	}
+	item := status.Tasks.Items[0]
+	label := strings.TrimSpace(item.Label)
+	if label == "" {
+		label = "任务正在本机安全执行"
+	}
+	if item.ElapsedSec <= 0 {
+		return label
+	}
+	minutes := item.ElapsedSec / 60
+	seconds := item.ElapsedSec % 60
+	return fmt.Sprintf("%s · %02d:%02d", label, minutes, seconds)
 }
 
 func cloudStatusText(status string) string {

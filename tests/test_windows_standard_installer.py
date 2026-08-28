@@ -173,6 +173,35 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
             self.gui_launcher,
         )
 
+    def test_status_center_v2_is_native_full_width_and_state_driven(self):
+        for source in (
+            'Size:       Size{Width: 860, Height: 630}',
+            'Grid{Columns: 4, Spacing: 9}',
+            'AssignTo: &app.pairPanel',
+            '尚未配对 · 配对码 5 分钟内有效且只能使用一次',
+            'app.setPairingVisible(false)',
+            'app.setPairingVisible(true)',
+            '● 本地执行器在线',
+            '● 等待设备配对',
+            '● 正在执行 %d 个任务',
+            '云端：',
+            'HubStudio：已连接',
+            '打开状态中心',
+        ):
+            self.assertIn(source, self.gui_launcher)
+        self.assertNotIn('Grid{Columns: 2, Spacing: 10}', self.gui_launcher)
+
+    def test_same_version_upgrade_replaces_launcher_and_preserves_user_data(self):
+        launcher_output = (
+            'File /oname=Xynigo.exe "${STANDARD_GUI_LAUNCHER}"'
+        )
+        self.assertIn('SetOutPath "$INSTDIR"', self.installer)
+        self.assertIn('SetOverwrite on', self.installer)
+        self.assertIn(launcher_output, self.installer)
+        self.assertIn('SetOverwrite off', self.installer)
+        self.assertNotIn('Delete "$INSTDIR\\config.json"', self.installer)
+        self.assertNotIn('RMDir /r "$INSTDIR\\运行数据"', self.installer)
+
     def test_builder_marks_unsigned_artifact_as_not_release_eligible(self):
         self.assertIn("'authenticodeSigned': False", self.builder)
         self.assertIn("'releaseEligible': False", self.builder)
