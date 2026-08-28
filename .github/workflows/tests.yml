@@ -124,9 +124,12 @@ jobs:
           $orphanPid = $orphan.Id
 
           $launcher = Start-Process -FilePath "$installDir\Xynigo.exe" -ArgumentList "--background" -PassThru
-          Start-Sleep -Seconds 6
+          for ($attempt = 0; $attempt -lt 20; $attempt++) {
+            $orphan.Refresh()
+            if ($orphan.HasExited) { break }
+            Start-Sleep -Milliseconds 500
+          }
           if ($launcher.HasExited) { throw "tray/status launcher exited during startup: $($launcher.ExitCode)" }
-          $orphan.Refresh()
           if (-not $orphan.HasExited) {
             $statusLog = Join-Path $installDir '日志\状态中心.log'
             if (Test-Path $statusLog) { Get-Content $statusLog | Write-Host }
@@ -134,8 +137,13 @@ jobs:
               Format-List LocalAddress,LocalPort,OwningProcess | Out-String | Write-Host
             throw "new launcher did not replace orphan executor PID $orphanPid"
           }
-          $managedPids = @(Get-NetTCPConnection -State Listen -LocalPort 8765 -ErrorAction SilentlyContinue |
-            Select-Object -ExpandProperty OwningProcess -Unique)
+          $managedPids = @()
+          for ($attempt = 0; $attempt -lt 20; $attempt++) {
+            $managedPids = @(Get-NetTCPConnection -State Listen -LocalPort 8765 -ErrorAction SilentlyContinue |
+              Select-Object -ExpandProperty OwningProcess -Unique)
+            if ($managedPids.Count -eq 1 -and $managedPids[0] -ne $orphanPid) { break }
+            Start-Sleep -Milliseconds 500
+          }
           if ($managedPids.Count -ne 1) { throw "expected exactly one status listener, found $($managedPids.Count)" }
           if ($managedPids[0] -eq $orphanPid) { throw "launcher adopted the orphan executor" }
           & taskkill.exe /PID $launcher.Id /T /F | Out-Null
