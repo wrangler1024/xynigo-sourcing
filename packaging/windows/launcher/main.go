@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/bits"
 	"net/http"
 	"net/url"
 	"os"
@@ -38,7 +39,25 @@ var (
 	protocolPattern = regexp.MustCompile(`(?i)^xynigo://(?:start/?|wake/?|pair\?code=([A-HJ-NP-Z2-9]{4}-?[A-HJ-NP-Z2-9]{4}))$`)
 	kernel32        = syscall.NewLazyDLL("kernel32.dll")
 	createMutexW    = kernel32.NewProc("CreateMutexW")
+	iphlpapi        = syscall.NewLazyDLL("iphlpapi.dll")
+	getTCPTable     = iphlpapi.NewProc("GetExtendedTcpTable")
 )
+
+const (
+	afINET                   = 2
+	tcpTableOwnerPIDListener = 3
+	mibTCPStateListen        = 2
+	errorInsufficientBuffer  = 122
+)
+
+type mibTCPRowOwnerPID struct {
+	State      uint32
+	LocalAddr  uint32
+	LocalPort  uint32
+	RemoteAddr uint32
+	RemotePort uint32
+	OwningPID  uint32
+}
 
 type localStatus struct {
 	SchemaVersion int    `json:"schemaVersion"`
@@ -742,43 +761,70 @@ func statusPort(rawURL string) int {
 	return port
 }
 
-func listenerPIDs(netstatOutput string, port int) []int {
+func tcpListenerPIDs(port int) ([]int, error) {
 	if port < 1 || port > 65535 {
-		return nil
+		return nil, errors.New("执行器监听端口无效")
 	}
-	wanted := fmt.Sprintf("127.0.0.1:%d", port)
+	var size uint32
+	statusCode, _, _ := getTCPTable.Call(
+		0,
+		uintptr(unsafe.Pointer(&size)),
+		0,
+		afINET,
+		tcpTableOwnerPIDListener,
+		0,
+	)
+	if statusCode != errorInsufficientBuffer || size < 4 {
+		return nil, fmt.Errorf("无法读取本机 TCP 监听表：%d", statusCode)
+	}
+	buffer := make([]byte, size)
+	statusCode, _, _ = getTCPTable.Call(
+		uintptr(unsafe.Pointer(&buffer[0])),
+		uintptr(unsafe.Pointer(&size)),
+		0,
+		afINET,
+		tcpTableOwnerPIDListener,
+		0,
+	)
+	if statusCode != 0 {
+		return nil, fmt.Errorf("无法读取本机 TCP 监听表：%d", statusCode)
+	}
+	count := *(*uint32)(unsafe.Pointer(&buffer[0]))
+	rowSize := uintptr(unsafe.Sizeof(mibTCPRowOwnerPID{}))
+	available := (uintptr(len(buffer)) - 4) / rowSize
+	if uintptr(count) > available {
+		return nil, errors.New("本机 TCP 监听表结构无效")
+	}
 	seen := make(map[int]bool)
 	result := make([]int, 0, 1)
-	for _, line := range strings.Split(netstatOutput, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 4 || !strings.EqualFold(fields[0], "TCP") || fields[1] != wanted || fields[2] != "0.0.0.0:0" {
+	for index := uintptr(0); index < uintptr(count); index++ {
+		offset := uintptr(4) + index*rowSize
+		row := (*mibTCPRowOwnerPID)(unsafe.Pointer(&buffer[offset]))
+		rowPort := int(bits.ReverseBytes16(uint16(row.LocalPort)))
+		if row.State != mibTCPStateListen || rowPort != port || row.OwningPID == 0 {
 			continue
 		}
-		pid, err := strconv.Atoi(fields[len(fields)-1])
-		if err != nil || pid <= 0 || seen[pid] {
+		pid := int(row.OwningPID)
+		if seen[pid] {
 			continue
 		}
 		seen[pid] = true
 		result = append(result, pid)
 	}
-	return result
+	return result, nil
 }
 
 func terminateStatusListener(port int) error {
-	command := exec.Command("netstat.exe", "-ano", "-p", "tcp")
-	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
-	output, err := command.Output()
+	pids, err := tcpListenerPIDs(port)
 	if err != nil {
 		return errors.New("无法定位旧版本本地执行器")
 	}
-	pids := listenerPIDs(string(output), port)
 	if len(pids) == 0 {
 		return errors.New("旧版本本地执行器监听进程不存在")
 	}
 	for _, pid := range pids {
-		killer := exec.Command("taskkill.exe", "/PID", strconv.Itoa(pid), "/F")
-		killer.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
-		if err := killer.Run(); err != nil {
+		process, findErr := os.FindProcess(pid)
+		if findErr != nil || process.Kill() != nil {
 			return errors.New("无法结束旧版本本地执行器")
 		}
 	}

@@ -3,7 +3,8 @@
 package main
 
 import (
-	"strings"
+	"net"
+	"os"
 	"testing"
 )
 
@@ -53,16 +54,21 @@ func TestStatusPortOnlyAcceptsLoopbackHTTP(t *testing.T) {
 	}
 }
 
-func TestListenerPIDsOnlySelectsExactLoopbackPort(t *testing.T) {
-	output := strings.Join([]string{
-		"  Proto  Local Address          Foreign Address        State           PID",
-		"  TCP    127.0.0.1:8765         0.0.0.0:0              LISTENING       5056",
-		"  TCP    127.0.0.1:8766         0.0.0.0:0              LISTENING       6060",
-		"  TCP    0.0.0.0:8765           0.0.0.0:0              LISTENING       7070",
-		"  TCP    127.0.0.1:8765         127.0.0.1:51000        ESTABLISHED     5056",
-	}, "\r\n")
-	pids := listenerPIDs(output, 8765)
-	if len(pids) != 1 || pids[0] != 5056 {
-		t.Fatalf("listenerPIDs() = %v, want [5056]", pids)
+func TestTCPListenerPIDsFindsCurrentProcess(t *testing.T) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
 	}
+	defer listener.Close()
+	port := listener.Addr().(*net.TCPAddr).Port
+	pids, err := tcpListenerPIDs(port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pid := range pids {
+		if pid == os.Getpid() {
+			return
+		}
+	}
+	t.Fatalf("tcpListenerPIDs(%d) = %v, want current PID %d", port, pids, os.Getpid())
 }
