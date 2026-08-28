@@ -250,7 +250,14 @@ def test_config_read_write_lease_and_idempotent_finish(tmp_path) -> None:
                 "configRevision": REVISION_A,
                 "config": {
                     "hubPort": 6873,
+                    "serverPort": 8765,
                     "concurrency": 2,
+                    "importBuyerPlan": "1:新刚",
+                    "verifySampleCount": 3,
+                    "hiddenQueryColumns": ["envName", "ip"],
+                    "purchaseSite": "MX",
+                    "purchaseTags": {"MX": "MX采购", "US": "US采购"},
+                    "envCreateWorkers": 5,
                     "safeParallelTasks": True,
                 },
             },
@@ -274,13 +281,8 @@ def test_config_read_write_lease_and_idempotent_finish(tmp_path) -> None:
             "idempotencyKey": "config-write-test-0001",
             "config": {
                 "hubPort": 6873,
-                "serverPort": 8765,
                 "concurrency": 3,
-                "importBuyerPlan": "1:新刚",
                 "verifySampleCount": 3,
-                "hiddenQueryColumns": ["envName", "ip"],
-                "purchaseSite": "MX",
-                "purchaseTags": {"MX": "MX采购", "US": "US采购"},
                 "envCreateWorkers": 5,
                 "safeParallelTasks": True,
             },
@@ -344,6 +346,22 @@ def test_offline_revision_conflict_revoke_and_sensitive_config_are_blocked(tmp_p
             headers=CSRF,
         )
         assert nested_sensitive.status_code == 422
+        for legacy_config in (
+            {"purchaseSite": "MX"},
+            {"purchaseTags": {"MX": "MX采购"}},
+            {"importBuyerPlan": "1:新刚"},
+            {"serverPort": 8765},
+            {"hiddenQueryColumns": ["envName"]},
+        ):
+            legacy_write = web_client.put(
+                f"/v1/executors/{executor_id}/config",
+                json={
+                    "expectedRevision": REVISION_A,
+                    "config": legacy_config,
+                },
+                headers=CSRF,
+            )
+            assert legacy_write.status_code == 422
 
         with database.session_factory() as session:
             executor = session.scalar(select(LocalExecutor))

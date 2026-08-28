@@ -98,7 +98,12 @@ class PurchaseOrderService:
     ) -> dict[str, object]:
         """幂等保存草稿。已正式提交的单不能被不同内容覆盖。"""
         now = self.clock()
-        record = self._find_order(tenant_id, draft.orderKey, lock=True)
+        record = self._find_order(
+            tenant_id,
+            draft.orderKey,
+            system_order_key_value=draft.systemOrderKey,
+            lock=True,
+        )
         target_hash = draft_content_hash(draft)
         if record is not None and record.submission_status == "submitted":
             if record.content_hash != target_hash:
@@ -115,6 +120,7 @@ class PurchaseOrderService:
             record = PurchaseOrder(
                 tenant_id=tenant_id,
                 order_key=draft.orderKey,
+                system_order_key=draft.systemOrderKey,
                 schema_version=draft.schemaVersion,
                 store_name=store_name,
                 store_base_name=store_base_name,
@@ -137,6 +143,7 @@ class PurchaseOrderService:
             record.store_name = store_name
             record.store_base_name = store_base_name
             record.operator_name = operator_name
+            record.system_order_key = draft.systemOrderKey
             record.draft_payload = canonical_draft_dict(draft)
             record.content_hash = target_hash
             record.draft_revision += 1
@@ -165,7 +172,12 @@ class PurchaseOrderService:
 
         now = self.clock()
         target_hash = draft_content_hash(draft)
-        record = self._find_order(tenant_id, draft.orderKey, lock=True)
+        record = self._find_order(
+            tenant_id,
+            draft.orderKey,
+            system_order_key_value=draft.systemOrderKey,
+            lock=True,
+        )
         revised = False
         if record is not None and record.submission_status == "submitted":
             if record.content_hash != target_hash:
@@ -183,6 +195,7 @@ class PurchaseOrderService:
             record = PurchaseOrder(
                 tenant_id=tenant_id,
                 order_key=draft.orderKey,
+                system_order_key=draft.systemOrderKey,
                 schema_version=draft.schemaVersion,
                 store_name=store_name,
                 store_base_name=store_base_name,
@@ -205,6 +218,7 @@ class PurchaseOrderService:
             record.store_name = store_name
             record.store_base_name = store_base_name
             record.operator_name = operator_name
+            record.system_order_key = draft.systemOrderKey
             record.draft_payload = canonical_draft_dict(draft)
             record.content_hash = target_hash
             record.draft_revision += 1
@@ -351,6 +365,7 @@ class PurchaseOrderService:
         if normalized_keyword:
             pattern = f"%{normalized_keyword}%"
             keyword_filters = [
+                PurchaseOrder.system_order_key.ilike(pattern),
                 PurchaseOrder.order_key.ilike(pattern),
                 PurchaseOrder.draft_payload["packageId"].as_string().ilike(pattern),
                 PurchaseOrder.draft_payload["platformOrderNo"].as_string().ilike(pattern),
@@ -1193,11 +1208,21 @@ class PurchaseOrderService:
         tenant_id: uuid.UUID,
         order_key_value: str,
         *,
+        system_order_key_value: str | None = None,
         lock: bool,
     ) -> PurchaseOrder | None:
+        identity_filters = [PurchaseOrder.order_key == order_key_value]
+        if system_order_key_value:
+            identity_filters.append(
+                PurchaseOrder.system_order_key == system_order_key_value
+            )
+        else:
+            identity_filters.append(
+                PurchaseOrder.system_order_key == order_key_value
+            )
         statement = select(PurchaseOrder).where(
             PurchaseOrder.tenant_id == tenant_id,
-            PurchaseOrder.order_key == order_key_value,
+            or_(*identity_filters),
         )
         if lock:
             statement = statement.with_for_update()
@@ -1336,6 +1361,7 @@ class PurchaseOrderService:
         result: dict[str, object] = {
             "purchaseOrderId": str(record.id),
             "orderKey": record.order_key,
+            "systemOrderKey": record.system_order_key,
             "packageId": draft.get("packageId"),
             "platformOrderNo": draft.get("platformOrderNo"),
             "storeName": record.store_name,
@@ -1561,6 +1587,7 @@ class PurchaseOrderService:
         return {
             "purchaseOrderId": str(record.id),
             "orderKey": record.order_key,
+            "systemOrderKey": record.system_order_key,
             "submissionStatus": record.submission_status,
             "syncStatus": record.sync_status,
             "draftRevision": record.draft_revision,

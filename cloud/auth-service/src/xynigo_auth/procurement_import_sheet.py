@@ -174,6 +174,16 @@ def _excel_date_serial(value: object) -> object:
     return (target - date(1899, 12, 30)).days
 
 
+def _feishu_number_formatter(value: object) -> str:
+    """Translate shared Excel-style formats to the Sheets v2 formatter dialect."""
+
+    formatter = str(value or "").strip()
+    return {
+        "yyyy-mm-dd": "yyyy-MM-dd",
+        "yyyy/mm/dd": "yyyy/MM/dd",
+    }.get(formatter, formatter)
+
+
 class FeishuSheetsGateway:
     """Tenant-identity Sheets client implementing the local gateway contract."""
 
@@ -473,11 +483,17 @@ class FeishuSheetsGateway:
     ) -> dict[str, Any]:
         if not data:
             return {"skipped": True}
+        normalized = []
+        for item in data:
+            style = dict(item.get("style") or {})
+            if "formatter" in style:
+                style["formatter"] = _feishu_number_formatter(style["formatter"])
+            normalized.append({**item, "style": style})
         _reference, token = self._token(url)
         return self._request(
             "PUT",
             f"/open-apis/sheets/v2/spreadsheets/{token}/styles_batch_update",
-            json_body={"data": data},
+            json_body={"data": normalized},
         )
 
     def _resize(

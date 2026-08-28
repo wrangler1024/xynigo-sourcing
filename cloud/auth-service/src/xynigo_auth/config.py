@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from functools import cached_property
+from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse
 
@@ -53,6 +54,7 @@ class Settings(BaseSettings):
     executor_poll_timeout_seconds: int = 25
     executor_lease_seconds: int = 45
     executor_online_window_seconds: int = 60
+    local_executor_asset_dir: str = "/app/release-assets"
     cookie_name: str = "xynigo_session"
     cookie_secure: bool = True
     login_success_path: str = "/"
@@ -189,6 +191,14 @@ class Settings(BaseSettings):
                 "executor_online_window_seconds must be between 30 and 300"
             )
         return value
+
+    @field_validator("local_executor_asset_dir")
+    @classmethod
+    def validate_local_executor_asset_dir(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized or not Path(normalized).is_absolute():
+            raise ValueError("local_executor_asset_dir must be an absolute path")
+        return normalized
 
     @model_validator(mode="after")
     def validate_procurement_import_security(self) -> "Settings":

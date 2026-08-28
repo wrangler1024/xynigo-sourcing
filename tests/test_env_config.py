@@ -14,11 +14,11 @@ from unittest.mock import patch
 import purchase_tool.main as main_module
 from purchase_tool.main import (
     Handler, default_config, effective_proxy_link, load_config,
-    lark_target_link, public_config, public_lark_config,
+    lark_target_link, public_config, public_executor_config, public_lark_config,
     public_lark_runtime_status, save_config,
     purchase_tag_for_site,
     refreshed_lark_target_labels, resolve_submitted_lark_target,
-    updated_config, updated_lark_config)
+    updated_config, updated_executor_config, updated_lark_config)
 from purchase_tool.lark_credentials import MemoryCredentialStore
 from purchase_tool.lark_links import resolve_lark_ledger_link
 
@@ -28,12 +28,12 @@ TEST_PROXY = 'https://proxy.example.test/{region}'
 
 
 class ConfigTests(unittest.TestCase):
-    def test_safe_parallel_mode_is_explicit_boolean_and_defaults_off(self):
+    def test_safe_parallel_mode_is_explicit_boolean_and_defaults_on(self):
         default = default_config()
-        self.assertFalse(default['safeParallelTasks'])
-        enabled = updated_config(default, {'safeParallelTasks': True})
-        self.assertTrue(enabled['safeParallelTasks'])
-        self.assertTrue(public_config(enabled)['safeParallelTasks'])
+        self.assertTrue(default['safeParallelTasks'])
+        disabled = updated_config(default, {'safeParallelTasks': False})
+        self.assertFalse(disabled['safeParallelTasks'])
+        self.assertFalse(public_config(disabled)['safeParallelTasks'])
         with self.assertRaisesRegex(ValueError, '布尔值'):
             updated_config(default, {'safeParallelTasks': 'true'})
 
@@ -125,6 +125,52 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(public['purchaseTags']['US'], '')
         self.assertNotIn('proxyLink', public)
         self.assertNotIn(TEST_PROXY, rendered)
+
+    def test_cloud_executor_config_contains_only_runtime_and_safety_fields(self):
+        cfg = default_config()
+        cfg.update({
+            'purchaseSite': 'US',
+            'purchaseTags': {'MX': 'MX采购', 'US': 'US采购'},
+            'importBuyerPlan': '1:新刚',
+            'proxyLink': TEST_PROXY,
+            'hiddenQueryColumns': ['envName'],
+        })
+        projected = public_executor_config(cfg)
+        self.assertEqual(set(projected), {
+            'hubPort',
+            'concurrency',
+            'envCreateWorkers',
+            'verifySampleCount',
+            'safeParallelTasks',
+        })
+        rendered = json.dumps(projected, ensure_ascii=False)
+        for legacy_value in ('purchaseSite', 'purchaseTags',
+                             'importBuyerPlan', 'proxyLink',
+                             'hiddenQueryColumns', '新刚'):
+            self.assertNotIn(legacy_value, rendered)
+
+    def test_cloud_executor_write_preserves_unrelated_legacy_preferences(self):
+        old = default_config()
+        old.update({
+            'purchaseSite': 'US',
+            'purchaseTags': {
+                'MX': '历史分组名称超过十二个字符也不应影响并发修改',
+                'US': '美国历史分组',
+            },
+            'importBuyerPlan': '历史自由格式',
+            'proxyLink': TEST_PROXY,
+        })
+        updated = updated_executor_config(old, {
+            'concurrency': 3,
+            'safeParallelTasks': True,
+        })
+        self.assertEqual(updated['concurrency'], 3)
+        self.assertTrue(updated['safeParallelTasks'])
+        for key in ('purchaseSite', 'purchaseTags', 'importBuyerPlan',
+                    'proxyLink'):
+            self.assertEqual(updated[key], old[key])
+        with self.assertRaisesRegex(ValueError, '不允许'):
+            updated_executor_config(old, {'purchaseSite': 'MX'})
 
     def test_lark_config_preserves_blanks_and_never_returns_identifiers(self):
         old = default_config()

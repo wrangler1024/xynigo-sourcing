@@ -67,6 +67,17 @@ class LarkCredentialTests(unittest.TestCase):
         self.assertTrue(status['credentialConfigured'])
         self.assertNotIn('private-secret-demo', rendered)
         self.assertNotIn('cli_public_demo', rendered)
+        self.assertIsNotNone(store.load())
+        self.assertEqual(len(runner.calls), 1)
+
+    def test_macos_denied_keychain_read_is_cached_for_process_lifetime(self):
+        runner = QueueRunner([
+            subprocess.CompletedProcess([], 44, '', 'denied'),
+        ])
+        store = MacKeychainCredentialStore(runner=runner)
+        self.assertIsNone(store.load())
+        self.assertIsNone(store.load())
+        self.assertEqual(len(runner.calls), 1)
 
     def test_windows_store_uses_injected_dpapi_and_round_trips(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -29,7 +29,12 @@ from fastapi import (
     status,
 )
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+)
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.orm import Session
@@ -83,7 +88,10 @@ from .executor_contract import (
     PairingCodeCreateBody,
 )
 from .executor_service import ExecutorChannelService, ExecutorServiceError
-from .local_executor_release import latest_local_executor_release
+from .local_executor_release import (
+    latest_local_executor_release,
+    resolve_local_executor_release_asset,
+)
 from .models import (
     LocalExecutor,
     LocalLoginRequest,
@@ -437,7 +445,7 @@ def create_app(
 
     app = FastAPI(
         title="Xynigo Auth Service",
-        version="0.12.6",
+        version="0.12.7",
         docs_url=None,
         redoc_url=None,
         lifespan=lifespan,
@@ -778,6 +786,70 @@ def create_app(
             headers={
                 "Cache-Control": "no-store",
                 "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    @app.get(
+        "/v1/local-executor/releases/{platform_key}/{variant}/download",
+        response_class=FileResponse,
+    )
+    def download_local_executor_release(
+        platform_key: str,
+        variant: Literal["primary", "green"],
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> FileResponse:
+        """Serve one verified immutable installer through the system origin."""
+
+        raw_token = _request_session_token(session_token, authorization)
+        record, user, tenant = _authenticated_identity(session, raw_token)
+        bind_request_identity(request, user=user, tenant=tenant)
+        asset = resolve_local_executor_release_asset(platform_key, variant)
+        if asset is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "local_executor_release_asset_not_found"},
+            )
+        record.last_seen_at = utcnow()
+        session.commit()
+
+        expected_size = int(asset["size"])
+        asset_name = str(asset["assetName"])
+        try:
+            asset_root = Path(settings.local_executor_asset_dir).resolve(strict=True)
+            asset_path = (asset_root / asset_name).resolve(strict=True)
+            if asset_path.parent != asset_root or not asset_path.is_file():
+                raise OSError("asset path is outside the reviewed directory")
+            if asset_path.stat().st_size != expected_size:
+                raise OSError("asset size does not match the release catalog")
+            digest = hashlib.sha256()
+            with asset_path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            if digest.hexdigest() != str(asset["sha256"]):
+                raise OSError("asset digest does not match the release catalog")
+        except OSError:
+            logger.error(
+                "local executor asset storage validation failed",
+                extra={"platform": platform_key, "variant": variant},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"code": "local_executor_download_unavailable"},
+            ) from None
+
+        return FileResponse(
+            asset_path,
+            filename=asset_name,
+            media_type="application/octet-stream",
+            headers={
+                "Cache-Control": "private, no-store",
+                "X-Content-Type-Options": "nosniff",
+                "X-Xynigo-Asset-SHA256": str(asset["sha256"]),
             },
         )
 

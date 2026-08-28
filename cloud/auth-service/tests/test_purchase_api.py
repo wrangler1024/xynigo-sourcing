@@ -25,6 +25,7 @@ from xynigo_auth.models import (
     UserRole,
 )
 from xynigo_auth.purchase_service import PurchaseOrderService, PurchaseServiceError
+from xynigo_auth.system_order_key import create_system_order_key
 
 
 def authenticated_client(tmp_path):
@@ -197,6 +198,11 @@ def test_draft_is_tenant_scoped_idempotent_and_queued_for_sync(tmp_path) -> None
     assert first_data["draftRevision"] == 1
     assert first_data["syncStatus"] == "pending"
     assert first_data["unchanged"] is False
+    expected_system_key = create_system_order_key(
+        draft["storeName"], draft["platformOrderNo"], draft["packageId"]
+    )
+    assert first_data["systemOrderKey"] == expected_system_key
+    assert first_data["draft"]["systemOrderKey"] == expected_system_key
 
     retry = deepcopy(draft)
     retry["updatedAt"] = "2026-08-25T10:05:00+08:00"
@@ -209,6 +215,7 @@ def test_draft_is_tenant_scoped_idempotent_and_queued_for_sync(tmp_path) -> None
         order = session.scalar(select(PurchaseOrder))
         assert order is not None
         assert order.order_key == draft["orderKey"]
+        assert order.system_order_key == expected_system_key
         assert order.store_name == "蓝天-周远超（一组）"
         assert order.store_base_name == "蓝天"
         assert order.operator_name == "周远超"
@@ -231,6 +238,10 @@ def test_draft_is_tenant_scoped_idempotent_and_queued_for_sync(tmp_path) -> None
                 order_key=str(draft["orderKey"]),
             )
         assert caught.value.code == "purchase_order_not_found"
+        assert PurchaseOrderService(session).get(
+            tenant_id=order.tenant_id,
+            order_key=expected_system_key,
+        )["systemOrderKey"] == expected_system_key
     client.close()
 
 
@@ -260,6 +271,18 @@ def test_schema_v1_remains_compatible_without_operator_fields(tmp_path) -> None:
         assert order.store_name == "Legacy Store"
         assert order.store_base_name == "Legacy Store"
         assert order.operator_name is None
+    client.close()
+
+
+def test_rejects_a_forged_system_order_key(tmp_path) -> None:
+    client, _database, headers = authenticated_client(tmp_path)
+    draft = sample_draft()
+    draft["systemOrderKey"] = "OK1-00000-00000-00000-00000"
+
+    response = client.post("/v1/purchase-orders/draft", json=draft, headers=headers)
+
+    assert response.status_code == 422
+    assert "systemOrderKey does not match" in response.text
     client.close()
 
 

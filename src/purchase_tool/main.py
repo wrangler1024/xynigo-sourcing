@@ -47,7 +47,7 @@ import webbrowser
 from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 
 from . import __version__
 from .buyer_library import BuyerLibraryJob, DatabaseBuyerLibraryService
@@ -75,7 +75,9 @@ from .executor_channel import (
     CloudExecutorClient, ExecutorChannelStateStore, ExecutorChannelWorker,
     system_executor_credential_store)
 from .extension_bridge import ExtensionBridge, ExtensionBridgeError
-from .hub_api import HubStudioApi, DEFAULT_PORT
+from .hub_api import HubApiError, HubStudioApi, DEFAULT_PORT
+from .hub_api_key import (
+    HubApiKeyStoreError, system_hub_api_key_store)
 from .instance_guard import acquire_executor_instance_guard
 from .lark_credentials import (LarkCredentialError, LarkCredentials,
                                public_credential_status,
@@ -86,6 +88,8 @@ from .lark_openapi import LarkOpenApiClient
 from .lark_runtime import build_buyer_ledger_service
 from .operation_result_sync import OperationResultSyncQueue
 from .procurement_import import ProcurementImportService
+from .purchase_assistant import (
+    PurchaseAssistantError, PurchaseAssistantService)
 from .redaction import scrub_text
 from .resource_center import ResourceCenterService
 from .shein_query import QueryOrchestrator, normalize_site
@@ -111,6 +115,7 @@ DATA_DIR = os.path.abspath(
     os.environ.get('XYNIGO_DATA_DIR') or os.getcwd())
 CONFIG_PATH = os.path.join(DATA_DIR, 'config.json')
 LOG_DIR = os.path.join(DATA_DIR, '查询日志')
+PURCHASE_ASSISTANT_API_PREFIX = '/api/purchase-assistant/v1'
 
 CONFIG_FIELDS = frozenset({
     'hubPort', 'serverPort', 'concurrency', 'importBuyerPlan',
@@ -121,12 +126,29 @@ CONFIG_FIELDS = frozenset({
     'larkBuyerTargetHost',
     'larkBuyerBaseName', 'larkBuyerTableName',
     'larkBuyerTargetVerified',
+    'purchaseAssistantSpreadsheetToken', 'purchaseAssistantSheetId',
+    'purchaseAssistantCellRange', 'purchaseAssistantApiBase',
+    'purchaseAssistantCacheTtlSeconds',
 })
 CONFIG_REQUEST_FIELDS = (CONFIG_FIELDS - {
     'larkBuyerBaseToken', 'larkBuyerTableId',
     'larkBuyerTargetHost',
     'larkBuyerBaseName', 'larkBuyerTableName',
-    'larkBuyerTargetVerified'}) | {'proxyClear'}
+    'larkBuyerTargetVerified',
+    'purchaseAssistantSpreadsheetToken', 'purchaseAssistantSheetId',
+    'purchaseAssistantCellRange', 'purchaseAssistantApiBase',
+    'purchaseAssistantCacheTtlSeconds'}) | {'proxyClear'}
+
+# Cloud device configuration is intentionally narrower than the legacy local
+# config.json contract. Business choices belong to each environment/purchase
+# task, not to a machine-wide executor profile.
+EXECUTOR_RUNTIME_CONFIG_FIELDS = (
+    'hubPort',
+    'concurrency',
+    'envCreateWorkers',
+    'verifySampleCount',
+    'safeParallelTasks',
+)
 
 PUBLIC_AUTH_API_PATHS = frozenset({
     '/api/auth/status',
@@ -162,6 +184,7 @@ AUTH_PERMISSION_BY_PATH = {
     '/api/lark/open-target': 'system.lark_connection.manage',
     '/api/lark/target-metadata': 'system.lark_connection.manage',
     '/api/lark/preflight': 'system.lark_connection.manage',
+    '/api/hub-api-key': 'system.integration.manage',
     '/api/extension/pair/approve': 'operations.access',
     '/api/procurement/claims': 'procurement.execution.manage',
     '/api/assistant/procurement-import/parse': 'assistant.access',
@@ -242,7 +265,7 @@ def default_config():
         'purchaseTags': {'MX': mx_tag, 'US': us_tag},
         'proxyLink': os.environ.get('XYNIGO_PROXY_LINK', ''),
         'envCreateWorkers': 5,
-        'safeParallelTasks': False,
+        'safeParallelTasks': True,
         # Base/table identifiers are local routing configuration.  The App
         # Secret lives in Keychain/DPAPI and is never written to config.json.
         'larkBuyerBaseToken': os.environ.get('XYNIGO_LARK_BASE_TOKEN', ''),
@@ -252,6 +275,17 @@ def default_config():
         'larkBuyerBaseName': '',
         'larkBuyerTableName': '',
         'larkBuyerTargetVerified': False,
+        # HubStudio purchase assistant reads one ordinary Sheet through the
+        # same enterprise-app credential held in Keychain/DPAPI. These route
+        # coordinates are local-only and never exposed through public config.
+        'purchaseAssistantSpreadsheetToken': os.environ.get(
+            'XYNIGO_PURCHASE_ASSISTANT_SPREADSHEET_TOKEN', ''),
+        'purchaseAssistantSheetId': os.environ.get(
+            'XYNIGO_PURCHASE_ASSISTANT_SHEET_ID', ''),
+        'purchaseAssistantCellRange': os.environ.get(
+            'XYNIGO_PURCHASE_ASSISTANT_CELL_RANGE', 'A1:AQ'),
+        'purchaseAssistantApiBase': 'https://open.feishu.cn/open-apis',
+        'purchaseAssistantCacheTtlSeconds': 8,
     }
 
 
@@ -332,7 +366,12 @@ def public_config(cfg):
                   'proxyLink', 'larkBuyerBaseToken', 'larkBuyerTableId',
                   'larkBuyerTargetHost',
                   'larkBuyerBaseName', 'larkBuyerTableName',
-                  'larkBuyerTargetVerified'}}
+                  'larkBuyerTargetVerified',
+                  'purchaseAssistantSpreadsheetToken',
+                  'purchaseAssistantSheetId',
+                  'purchaseAssistantCellRange',
+                  'purchaseAssistantApiBase',
+                  'purchaseAssistantCacheTtlSeconds'}}
     result['proxyConfigured'] = bool(effective_proxy_link(cfg))
     result['proxySource'] = ('custom' if str(
         (cfg or {}).get('proxyLink') or '').strip() else 'default')
@@ -352,6 +391,16 @@ def public_config(cfg):
         str((cfg or {}).get('larkBuyerBaseToken') or '').strip()
         and str((cfg or {}).get('larkBuyerTableId') or '').strip())
     return result
+
+
+def public_executor_config(cfg):
+    """Return only device runtime and safety settings for cloud control."""
+    public = public_config(cfg)
+    return {
+        key: public[key]
+        for key in EXECUTOR_RUNTIME_CONFIG_FIELDS
+        if key in public
+    }
 
 
 def updated_config(old_cfg, body):
@@ -442,6 +491,49 @@ def updated_config(old_cfg, body):
             cfg['proxyLink'] = validate_proxy_link(submitted_proxy)
         else:
             cfg['proxyLink'] = str(old_cfg.get('proxyLink') or '').strip()
+    return cfg
+
+
+def updated_executor_config(old_cfg, body):
+    """Apply cloud-managed device fields without touching business history."""
+    if not isinstance(body, dict):
+        raise ValueError('设备配置请求必须是 JSON 对象')
+    unknown = set(body) - set(EXECUTOR_RUNTIME_CONFIG_FIELDS)
+    if unknown:
+        raise ValueError('设备配置包含不允许保存的字段')
+    defaults = default_config()
+    cfg = dict(defaults)
+    cfg.update({key: value for key, value in (old_cfg or {}).items()
+                if key in CONFIG_FIELDS})
+    integer_ranges = {
+        'hubPort': (1, 65535),
+        'concurrency': (1, 5),
+        'envCreateWorkers': (1, 10),
+        'verifySampleCount': (0, 10),
+    }
+    for key, (minimum, maximum) in integer_ranges.items():
+        raw = body[key] if key in body else cfg.get(key, defaults[key])
+        try:
+            if isinstance(raw, bool):
+                raise ValueError
+            value = int(raw)
+        except (TypeError, ValueError):
+            if key in body:
+                raise ValueError('%s 必须是整数' % key) from None
+            value = int(defaults[key])
+        if not minimum <= value <= maximum:
+            if key in body:
+                raise ValueError('%s 超出允许范围' % key)
+            value = int(defaults[key])
+        cfg[key] = value
+    parallel = body.get(
+        'safeParallelTasks',
+        cfg.get('safeParallelTasks', defaults['safeParallelTasks']))
+    if not isinstance(parallel, bool):
+        if 'safeParallelTasks' in body:
+            raise ValueError('安全并行模式必须是布尔值')
+        parallel = bool(defaults['safeParallelTasks'])
+    cfg['safeParallelTasks'] = parallel
     return cfg
 
 
@@ -608,38 +700,68 @@ class HubStatusCache(object):
         self.lock = threading.Lock()
         self.value = None
         self.error = ''
+        self.capability = None
         self.checked_at = 0.0
 
     def reset(self):
         with self.lock:
             self.value = None
             self.error = ''
+            self.capability = None
             self.checked_at = 0.0
 
-    def check(self, force=False):
+    def snapshot(self, force=False):
         with self.lock:
             now = time.monotonic()
-            if (not force and self.value is not None
+            if (not force and self.capability is not None
                     and now - self.checked_at < self.ttl_seconds):
-                return self.value, self.error
-            ok, err = self.hub_getter().ping_detail()
+                return dict(self.capability)
+            hub = self.hub_getter()
+            capability_getter = getattr(hub, 'capability_snapshot', None)
+            if callable(capability_getter):
+                capability = dict(capability_getter())
+                ok = bool(capability.get('available'))
+                err = '' if ok else str(capability.get('message') or '')
+            else:
+                ok, err = hub.ping_detail()
+                capability = {
+                    'available': bool(ok),
+                    'clientRunning': bool(ok),
+                    'localApiEnabled': bool(ok),
+                    'authenticated': bool(ok),
+                    'apiVersion': '',
+                    'endpoint': '',
+                    'reasonCode': 'ok' if ok else 'hubstudio_unavailable',
+                    'message': '' if ok else str(err or ''),
+                }
             # E010205 is a rate-limit response, not proof that the local
             # client disconnected. Preserve the last observed state.
-            if (not ok and 'E010205' in (err or '')
-                    and self.value is not None):
+            if (not ok and (
+                    capability.get('reasonCode') ==
+                    'hubstudio_local_api_rate_limited'
+                    or 'E010205' in (err or ''))
+                    and self.capability is not None):
                 self.checked_at = now
-                return self.value, self.error
+                return dict(self.capability)
             self.value = bool(ok)
             self.error = err or ''
+            self.capability = capability
             self.checked_at = now
-            return self.value, self.error
+            return dict(self.capability)
+
+    def check(self, force=False):
+        capability = self.snapshot(force=force)
+        return (
+            bool(capability.get('available')),
+            '' if capability.get('available') else
+            str(capability.get('message') or ''))
 
 
 class AppState(object):
     """进程级共享状态：配置 + HubStudio 连接 + 编排器。"""
 
     def __init__(self, credential_store=None, auth_service=None,
-                 extension_bridge=None):
+                 extension_bridge=None, hub_api_key_store=None):
         cfg = load_config()
         self.cfg = cfg
         self.auth = auth_service or LocalAuthService()
@@ -650,11 +772,14 @@ class AppState(object):
                     endpoint, payload, permission))
         self.extension_bridge = extension_bridge or ExtensionBridge()
         self.lark_credentials = credential_store or system_credential_store()
+        self.hub_api_key_store = (
+            hub_api_key_store or system_hub_api_key_store())
+        self.purchase_assistant = PurchaseAssistantService.from_runtime_config(
+            cfg, self.lark_credentials.load)
         self.hub_runtime_gate = HubRuntimeGate(max_requests=4)
         self.tasks = LocalTaskCoordinator(
             lambda: bool(self.cfg.get('safeParallelTasks')))
-        self.hub = HubStudioApi(
-            port=cfg['hubPort'], runtime_gate=self.hub_runtime_gate)
+        self.hub = self._build_hub_adapter()
         self._hub_status = HubStatusCache(lambda: self.hub)
         self.orch = QueryOrchestrator(
             self.hub, log_dir=LOG_DIR,
@@ -683,7 +808,7 @@ class AppState(object):
             credential_store=system_executor_credential_store(),
             state_store=ExecutorChannelStateStore(),
             config_getter=lambda: dict(self.cfg),
-            public_config_getter=public_config,
+            public_config_getter=public_executor_config,
             config_writer=self.apply_cloud_config,
             task_coordinator=self.tasks,
             hub_status_getter=self.hub_status,
@@ -693,7 +818,7 @@ class AppState(object):
         """Validate and atomically apply a non-secret cloud config task."""
         with self.config_lock:
             old_cfg = dict(self.cfg)
-            cfg = updated_config(old_cfg, submitted)
+            cfg = updated_executor_config(old_cfg, submitted)
             save_config(cfg)
             self.cfg = cfg
             reconnect_needed = (
@@ -708,10 +833,32 @@ class AppState(object):
                     pass
             return dict(cfg)
 
+    def _build_hub_adapter(self):
+        self.hub_api_key_error = ''
+        try:
+            api_key = self.hub_api_key_store.load()
+        except HubApiKeyStoreError:
+            api_key = None
+            self.hub_api_key_error = 'hubstudio_local_api_key_unavailable'
+        return HubStudioApi(
+            port=self.cfg['hubPort'], api_key=api_key,
+            runtime_gate=self.hub_runtime_gate)
+
+    def save_hub_api_key(self, value=None, clear=False):
+        if clear:
+            self.hub_api_key_store.clear()
+        else:
+            self.hub_api_key_store.save(value)
+        self.reconnect_hub()
+        return {
+            'saved': True,
+            'configured': not bool(clear),
+            'capability': self.hub_capabilities(force=True),
+        }
+
     def reconnect_hub(self):
         self.orch.close()
-        self.hub = HubStudioApi(
-            port=self.cfg['hubPort'], runtime_gate=self.hub_runtime_gate)
+        self.hub = self._build_hub_adapter()
         self.orch = QueryOrchestrator(
             self.hub, log_dir=LOG_DIR,
             concurrency=self.cfg.get('concurrency', 2))
@@ -721,6 +868,9 @@ class AppState(object):
 
     def hub_status(self, force=False):
         return self._hub_status.check(force=force)
+
+    def hub_capabilities(self, force=False):
+        return self._hub_status.snapshot(force=force)
 
     def local_executor_status(self):
         """Return the non-sensitive status contract used by the Windows tray.
@@ -732,7 +882,25 @@ class AppState(object):
         """
         channel = ExecutorChannelStateStore().load()
         tasks = self.tasks.snapshot()
-        hub_ok, _hub_error = self.hub_status(force=False)
+        if hasattr(self, '_hub_status'):
+            hub_capability = self.hub_capabilities(force=False)
+        else:
+            # Compatibility for an upgrading status-center process or a
+            # minimal state fixture that only exposes the legacy tuple API.
+            legacy_ok, _legacy_error = self.hub_status(force=False)
+            hub_capability = {
+                'available': bool(legacy_ok),
+                'clientRunning': bool(legacy_ok),
+                'localApiEnabled': bool(legacy_ok),
+                'authenticated': bool(legacy_ok),
+                'apiVersion': '',
+                'endpoint': '',
+                'reasonCode': ('ok' if legacy_ok else
+                               'hubstudio_unavailable'),
+                'message': ('' if legacy_ok else
+                            'HubStudio 自动化暂不可用'),
+            }
+        hub_ok = bool(hub_capability.get('available'))
         channel_status = str(channel.get('status') or 'not_paired')
         paired = bool(channel.get('executorId')) and channel_status not in {
             'not_paired', 'revoked', 'credential_error'}
@@ -760,6 +928,19 @@ class AppState(object):
             'hubStudio': {
                 'connected': bool(hub_ok),
                 'status': 'ready' if hub_ok else 'offline',
+                'available': bool(hub_capability.get('available')),
+                'clientRunning': bool(
+                    hub_capability.get('clientRunning')),
+                'localApiEnabled': bool(
+                    hub_capability.get('localApiEnabled')),
+                'authenticated': bool(
+                    hub_capability.get('authenticated')),
+                'apiVersion': str(
+                    hub_capability.get('apiVersion') or ''),
+                'endpoint': str(hub_capability.get('endpoint') or ''),
+                'reasonCode': str(
+                    hub_capability.get('reasonCode') or ''),
+                'message': str(hub_capability.get('message') or ''),
             },
             'tasks': {
                 'activeCount': len(safe_tasks),
@@ -1890,6 +2071,237 @@ class Handler(BaseHTTPRequestHandler):
             headers['Access-Control-Allow-Origin'] = origin
         self._json(obj, status, headers)
 
+    def _purchase_assistant_origin(self):
+        origin = str(self.headers.get('Origin') or '').strip().lower()
+        return origin if re.fullmatch(
+            r'chrome-extension://[a-p]{32}', origin) else ''
+
+    def _purchase_assistant_json(self, obj, status=200):
+        origin = self._purchase_assistant_origin()
+        headers = {'Vary': 'Origin'}
+        if origin:
+            headers['Access-Control-Allow-Origin'] = origin
+        self._json(obj, status, headers)
+
+    def _purchase_assistant_pair_allowed(self):
+        peer = str((self.client_address or ('',))[0]).casefold()
+        host = str(self.headers.get('Host') or '').partition(':')[0].lower()
+        raw_origin = str(self.headers.get('Origin') or '').strip()
+        origin_allowed = (
+            not raw_origin or bool(self._purchase_assistant_origin()))
+        return (
+            peer in {'127.0.0.1', '::1'}
+            and host in {'127.0.0.1', 'localhost', 'xynigo.localhost'}
+            and origin_allowed
+            and self.headers.get('X-Xynigo-Client') == 'chrome-extension'
+            and self.headers.get('X-Xynigo-Pairing') == 'auto'
+        )
+
+    def _purchase_assistant_request_allowed(self):
+        peer = str((self.client_address or ('',))[0]).casefold()
+        host = str(self.headers.get('Host') or '').partition(':')[0].lower()
+        raw_origin = str(self.headers.get('Origin') or '').strip()
+        return (
+            peer in {'127.0.0.1', '::1'}
+            and host in {'127.0.0.1', 'localhost', 'xynigo.localhost'}
+            and (not raw_origin or bool(self._purchase_assistant_origin()))
+            and self.headers.get('X-Xynigo-Client') == 'chrome-extension'
+        )
+
+    def _handle_purchase_assistant_get(self, parsed):
+        path = parsed.path
+        service = STATE.purchase_assistant
+        if path == PURCHASE_ASSISTANT_API_PREFIX + '/health':
+            return self._purchase_assistant_json({
+                'ok': True,
+                'service': 'xynigo-sourcing',
+                'apiVersion': 2,
+                'features': {
+                    'taskSearch': True,
+                    'recipientRead': True,
+                    'hubStudioAutomation': True,
+                    'hubStudioEnvironmentControl': True,
+                },
+                'version': __version__,
+                'configured': bool(service.configured),
+            })
+        if path == PURCHASE_ASSISTANT_API_PREFIX + '/session':
+            if not self._purchase_assistant_pair_allowed():
+                return self._purchase_assistant_json({
+                    'ok': False,
+                    'code': 'pairing_denied',
+                    'error': '仅允许本机采购助手自动配对',
+                }, 403)
+            return self._purchase_assistant_json({
+                'ok': True,
+                'sessionToken': service.issue_session(),
+            })
+        if not service.authorize(self.headers.get('Authorization')):
+            return self._purchase_assistant_json({
+                'ok': False,
+                'code': 'session_required',
+                'error': '采购助手本次会话已失效',
+            }, 401)
+        if not self._purchase_assistant_request_allowed():
+            return self._purchase_assistant_json({
+                'ok': False,
+                'code': 'origin_forbidden',
+                'error': '采购助手请求来源无效',
+            }, 403)
+        try:
+            if path == PURCHASE_ASSISTANT_API_PREFIX + '/capabilities':
+                return self._purchase_assistant_json({
+                    'ok': True,
+                    'hubStudio': STATE.hub_capabilities(force=True),
+                })
+            if path == PURCHASE_ASSISTANT_API_PREFIX + '/tasks':
+                query = parse_qs(parsed.query, keep_blank_values=True)
+                keyword = str((query.get('query') or [''])[0]).strip()
+                if len(keyword) > 100:
+                    raise PurchaseAssistantError('任务搜索条件过长')
+                if not keyword:
+                    return self._purchase_assistant_json({
+                        'ok': True,
+                        'tasks': [],
+                        'total': 0,
+                        'queryRequired': True,
+                    })
+                matched, total = service.search(keyword, limit=20)
+                return self._purchase_assistant_json({
+                    'ok': True,
+                    'tasks': matched,
+                    'total': total,
+                    'queryRequired': False,
+                    'truncated': total > len(matched),
+                })
+            prefix = PURCHASE_ASSISTANT_API_PREFIX + '/tasks/'
+            suffix = '/recipient'
+            if path.startswith(prefix) and path.endswith(suffix):
+                encoded = path[len(prefix):-len(suffix)]
+                key = str(unquote(encoded)).strip()
+                if not key or len(key) > 300:
+                    raise PurchaseAssistantError('采购任务标识无效')
+                return self._purchase_assistant_json({
+                    'ok': True,
+                    'recipient': service.recipient(key),
+                })
+            if path == PURCHASE_ASSISTANT_API_PREFIX + '/hub/environments':
+                query = parse_qs(parsed.query, keep_blank_values=True)
+                keyword = str((query.get('query') or [''])[0]).strip()
+                try:
+                    limit = int((query.get('limit') or ['100'])[0])
+                except (TypeError, ValueError):
+                    raise PurchaseAssistantError('环境列表数量参数无效')
+                return self._purchase_assistant_json({
+                    'ok': True,
+                    'environments': STATE.hub.list_environment_summaries(
+                        keyword, limit=limit),
+                })
+            if path == (PURCHASE_ASSISTANT_API_PREFIX
+                        + '/hub/environments/locate'):
+                query = parse_qs(parsed.query, keep_blank_values=True)
+                identifier = str(
+                    (query.get('identifier') or [''])[0]).strip()
+                env = STATE.hub.locate_environment(identifier)
+                return self._purchase_assistant_json({
+                    'ok': True,
+                    'environment': STATE.hub.environment_summary(env),
+                })
+            return self._purchase_assistant_json({
+                'ok': False, 'code': 'not_found', 'error': '接口不存在',
+            }, 404)
+        except PurchaseAssistantError as exc:
+            return self._purchase_assistant_json({
+                'ok': False,
+                'code': 'business_error',
+                'error': str(exc),
+            }, 422)
+        except HubApiError as exc:
+            return self._purchase_assistant_json({
+                'ok': False,
+                'code': exc.reason_code,
+                'error': str(exc),
+                'hubStudio': STATE.hub_capabilities(force=True),
+            }, 503)
+        except Exception:
+            return self._purchase_assistant_json({
+                'ok': False,
+                'code': 'internal_error',
+                'error': '采购助手执行器内部异常',
+            }, 500)
+
+    def _handle_purchase_assistant_post(self, path, body):
+        service = STATE.purchase_assistant
+        if not self._purchase_assistant_request_allowed():
+            return self._purchase_assistant_json({
+                'ok': False,
+                'code': 'origin_forbidden',
+                'error': '采购助手请求来源无效',
+            }, 403)
+        if not service.authorize(self.headers.get('Authorization')):
+            return self._purchase_assistant_json({
+                'ok': False,
+                'code': 'session_required',
+                'error': '采购助手本次会话已失效',
+            }, 401)
+        if not isinstance(body, dict):
+            return self._purchase_assistant_json({
+                'ok': False,
+                'code': 'request_invalid',
+                'error': '请求数据格式无效',
+            }, 400)
+        capability = STATE.hub_capabilities(force=True)
+        if not capability.get('available'):
+            return self._purchase_assistant_json({
+                'ok': False,
+                'code': str(capability.get('reasonCode') or
+                            'hubstudio_unavailable'),
+                'error': str(capability.get('message') or
+                             'HubStudio 自动化暂不可用'),
+                'hubStudio': capability,
+            }, 503)
+        try:
+            if path in {
+                    PURCHASE_ASSISTANT_API_PREFIX + '/hub/environments/open',
+                    PURCHASE_ASSISTANT_API_PREFIX + '/hub/environments/close'}:
+                env = STATE.hub.locate_environment(body.get('identifier'))
+                code = str(env.get('containerCode') or '')
+                if path.endswith('/open'):
+                    STATE.hub.browser_start(code, headless=False)
+                    action = 'open'
+                else:
+                    STATE.hub.browser_stop(code)
+                    action = 'close'
+                return self._purchase_assistant_json({
+                    'ok': True,
+                    'action': action,
+                    'environment': STATE.hub.environment_summary(env),
+                })
+            if path == (PURCHASE_ASSISTANT_API_PREFIX
+                        + '/hub/environments/batch'):
+                results = STATE.hub.batch_browser_control(
+                    body.get('action'), body.get('identifiers'),
+                    headless=False)
+                return self._purchase_assistant_json({
+                    'ok': all(item.get('ok') for item in results),
+                    'results': results,
+                })
+            return self._purchase_assistant_json({
+                'ok': False, 'code': 'not_found', 'error': '接口不存在',
+            }, 404)
+        except HubApiError as exc:
+            return self._purchase_assistant_json({
+                'ok': False,
+                'code': exc.reason_code,
+                'error': str(exc),
+            }, 422)
+        except Exception:
+            return self._purchase_assistant_json({
+                'ok': False,
+                'code': 'hubstudio_operation_failed',
+                'error': 'HubStudio 操作失败',
+            }, 500)
+
     def _require_auth(self, path):
         if path in PUBLIC_AUTH_API_PATHS:
             return None
@@ -2071,10 +2483,36 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---- GET ----
 
+    def do_OPTIONS(self):
+        path = urlparse(self.path).path
+        if not path.startswith(PURCHASE_ASSISTANT_API_PREFIX + '/'):
+            self.send_error(501, 'Unsupported method')
+            return
+        origin = self._purchase_assistant_origin()
+        if not origin:
+            self._purchase_assistant_json({
+                'ok': False,
+                'code': 'origin_forbidden',
+                'error': '仅允许浏览器扩展访问',
+            }, 403)
+            return
+        self.send_response(204)
+        self.send_header('Access-Control-Allow-Origin', origin)
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header(
+            'Access-Control-Allow-Headers',
+            'Authorization, Content-Type, X-Xynigo-Client, X-Xynigo-Pairing')
+        self.send_header('Access-Control-Max-Age', '600')
+        self.send_header('Vary', 'Origin')
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path, query = parsed.path, parse_qs(parsed.query)
         try:
+            if path.startswith(PURCHASE_ASSISTANT_API_PREFIX + '/'):
+                return self._handle_purchase_assistant_get(parsed)
             if path.startswith('/api/'):
                 self._require_auth(path)
             if path == '/':
@@ -2342,6 +2780,8 @@ class Handler(BaseHTTPRequestHandler):
                 max_bytes=(28 * 1024 * 1024)
                 if path == '/api/assistant/procurement-import/parse'
                 else 2 * 1024 * 1024)
+            if path.startswith(PURCHASE_ASSISTANT_API_PREFIX + '/'):
+                return self._handle_purchase_assistant_post(path, body)
             if path.startswith('/api/extension/v1/'):
                 return self._handle_extension_post(path, body)
             if path.startswith('/api/'):
@@ -2360,6 +2800,10 @@ class Handler(BaseHTTPRequestHandler):
                     'apiBaseUrl': self._loopback_base_url(),
                     **approved,
                 })
+            elif path == '/api/hub-api-key':
+                self._json(STATE.save_hub_api_key(
+                    value=body.get('apiKey'),
+                    clear=bool(body.get('clear'))))
             elif path.startswith('/api/admin/'):
                 cloud_path, cloud_method = admin_cloud_write_target(path)
                 self._json(STATE.auth.admin_request(

@@ -306,7 +306,7 @@ class SystemLogEvent(Base):
 
 
 class PurchaseOrder(Base):
-    """运营采购单。order_key 在租户内唯一；draft_payload 存店小秘扩展草稿 JSON。"""
+    """运营采购单。system_order_key 是对外键，order_key 保留兼容旧客户端。"""
 
     __tablename__ = "purchase_orders"
 
@@ -315,6 +315,7 @@ class PurchaseOrder(Base):
         ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
     )
     order_key: Mapped[str] = mapped_column(String(800), nullable=False)
+    system_order_key: Mapped[str] = mapped_column(String(32), nullable=False)
     schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     store_name: Mapped[str] = mapped_column(String(300), nullable=False)
     store_base_name: Mapped[str] = mapped_column(String(300), nullable=False)
@@ -345,6 +346,11 @@ class PurchaseOrder(Base):
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "order_key", name="uq_purchase_order_tenant_key"),
+        UniqueConstraint(
+            "tenant_id",
+            "system_order_key",
+            name="uq_purchase_order_tenant_system_key",
+        ),
         CheckConstraint("draft_revision >= 1", name="ck_purchase_order_revision"),
         CheckConstraint(
             "execution_revision >= 0",

@@ -5,7 +5,6 @@ from urllib.parse import unquote
 
 import httpx
 import pytest
-
 from xynigo_auth.procurement_import_sheet import (
     FeishuSheetsGateway,
     LarkSheetSyncError,
@@ -229,3 +228,63 @@ def test_cloud_sheet_gateway_never_blindly_retries_row_append_on_90204() -> None
             [["batch_test"]],
         )
     assert append_calls == 1
+
+
+def test_cloud_sheet_gateway_translates_excel_date_format_for_feishu_v2() -> None:
+    style_body: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal style_body
+        body = json.loads(request.content) if request.content else None
+        if request.url.path.endswith("/tenant_access_token/internal"):
+            return httpx.Response(
+                200,
+                json={"code": 0, "tenant_access_token": "tenant-token", "expire": 7200},
+            )
+        if request.url.path.endswith("/sheets/query"):
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "sheets": [
+                            {
+                                "sheet_id": "sheetA",
+                                "title": "采购执行协作区",
+                                "hidden": False,
+                                "resource_type": "sheet",
+                                "grid_properties": {
+                                    "row_count": 200,
+                                    "column_count": 43,
+                                },
+                            }
+                        ]
+                    },
+                },
+            )
+        if request.url.path.endswith("/values_batch_update"):
+            assert body["valueRanges"] == [
+                {"range": "sheetA!A29:A29", "values": [[46260]]},
+                {"range": "sheetA!A30:A30", "values": [[46260]]},
+            ]
+            return httpx.Response(200, json={"code": 0, "data": {}})
+        if request.url.path.endswith("/styles_batch_update"):
+            style_body = body
+            return httpx.Response(200, json={"code": 0, "data": {}})
+        raise AssertionError(f"unexpected request: {request.method} {request.url}")
+
+    gateway = FeishuSheetsGateway(
+        app_id="cli_test",
+        app_secret="synthetic-secret",
+        transport=httpx.MockTransport(handler),
+    )
+    result = gateway.normalize_date_column(
+        "https://tenant.feishu.cn/sheets/SheetToken123",
+        "采购执行协作区",
+        ["分单日期"],
+        [(29, ["2026-08-26"]), (30, ["2026-08-26"])],
+        number_format="yyyy-mm-dd",
+    )
+    assert result == {"operations": 2, "rows": 2}
+    assert style_body["data"][0]["style"]["formatter"] == "yyyy-MM-dd"
+    assert style_body["data"][0]["ranges"] == ["sheetA!A29:A30"]

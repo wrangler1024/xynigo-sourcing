@@ -472,9 +472,9 @@ class ProcurementImportTests(unittest.TestCase):
         self.assertEqual(plan.rows[0].values['收货人电话'], '0012345678')
         self.assertIn('凑单补差：11.44', plan.rows[0].values['采购备注'])
         self.assertNotIn('凑单补差', plan.rows[1].values['采购备注'])
-        self.assertEqual(
+        self.assertRegex(
             plan.rows[0].values['系统订单键'],
-            '测试店铺|GSH-TEST-001|XMWU-TEST-001')
+            r'^OK1-[0-9A-HJKMNP-TV-Z]{5}(?:-[0-9A-HJKMNP-TV-Z]{5}){3}$')
         self.assertRegex(
             plan.rows[0].values['分单日期'],
             r'^\d{4}-\d{2}-\d{2}$')
@@ -764,6 +764,9 @@ class ProcurementImportTests(unittest.TestCase):
             for row in plan.rows:
                 historical = dict(row.values)
                 historical['导入批次'] = 'older-batch-%d' % copy_index
+                # 旧共享表仍可用中文/竖线键参与新版本防重，无需人工迁移。
+                historical['系统订单键'] = (
+                    '测试店铺|GSH-TEST-001|XMWU-TEST-001')
                 historical_rows.append((row_number, tuple(
                     historical[name] for name in OUTPUT_HEADERS)))
                 gateway.images[row_number] = True

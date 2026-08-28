@@ -29,6 +29,8 @@ class FakeExecutorClient(object):
         self.finishes = []
         self.renewals = []
         self.pair_calls = []
+        self.poll_calls = []
+        self.poll_callback = None
 
     def pair(self, code, name, system, architecture):
         self.pair_calls.append((code, name, system, architecture))
@@ -36,6 +38,13 @@ class FakeExecutorClient(object):
             'executorId': '00000000-0000-0000-0000-000000000001',
             'deviceCredential': DEVICE_CREDENTIAL,
         }
+
+    def poll(self, credential, revision, hub_status, wait_seconds=25):
+        self.poll_calls.append(
+            (credential, revision, hub_status, wait_seconds))
+        if self.poll_callback:
+            self.poll_callback()
+        return {'task': None}
 
     def start(self, credential, task_id, lease_token):
         self.started.append((credential, task_id, lease_token))
@@ -115,8 +124,8 @@ class ExecutorTaskApplicationTests(unittest.TestCase):
         holder = {'config': dict(config)}
 
         def public_config(cfg):
-            return {key: value for key, value in cfg.items()
-                    if key != 'proxyLink'}
+            return {key: cfg[key] for key in (
+                'concurrency', 'safeParallelTasks') if key in cfg}
 
         def write_config(submitted):
             allowed = {'concurrency', 'safeParallelTasks'}
@@ -163,6 +172,23 @@ class ExecutorTaskApplicationTests(unittest.TestCase):
         self.assertNotIn('private.invalid', json.dumps(summary))
         self.assertFalse(coordinator.running())
 
+    def test_legacy_business_preferences_do_not_change_device_revision(self):
+        worker, _client, holder, _coordinator = self.build_worker({
+            'concurrency': 2,
+            'safeParallelTasks': False,
+            'purchaseSite': 'MX',
+            'purchaseTags': {'MX': 'MX采购', 'US': 'US采购'},
+            'importBuyerPlan': '1:新刚',
+        })
+        first = worker._apply_task('config.read.v1', {})[2]
+        holder['config']['purchaseSite'] = 'US'
+        holder['config']['purchaseTags']['US'] = '美国采购'
+        holder['config']['importBuyerPlan'] = '2:志恒'
+        second = worker._apply_task('config.read.v1', {})[2]
+        self.assertEqual(first['configRevision'], second['configRevision'])
+        self.assertEqual(first['config'], second['config'])
+        self.assertNotIn('purchaseSite', second['config'])
+
     def test_write_checks_revision_and_applies_under_local_gate(self):
         initial = {
             'concurrency': 2,
@@ -170,12 +196,16 @@ class ExecutorTaskApplicationTests(unittest.TestCase):
             'proxyLink': 'https://private.invalid/secret',
         }
         worker, client, holder, coordinator = self.build_worker(initial)
+        public_initial = {
+            'concurrency': 2,
+            'safeParallelTasks': False,
+        }
         worker._execute_task(DEVICE_CREDENTIAL, {
             'id': 'task-write',
             'type': 'config.write.v1',
             'leaseToken': LEASE_TOKEN,
             'payload': {
-                'expectedRevision': config_revision(initial),
+                'expectedRevision': config_revision(public_initial),
                 'config': {
                     'concurrency': 3,
                     'safeParallelTasks': True,
@@ -186,6 +216,8 @@ class ExecutorTaskApplicationTests(unittest.TestCase):
         self.assertTrue(holder['config']['safeParallelTasks'])
         self.assertEqual(client.finishes[0]['resultCode'],
                          'config_write_succeeded')
+        self.assertNotIn(
+            'proxyLink', client.finishes[0]['resultSummary']['config'])
         self.assertFalse(coordinator.running())
 
     def test_revision_conflict_keeps_original_config(self):
@@ -261,6 +293,73 @@ class PairingTests(unittest.TestCase):
         self.assertIn("sys.argv[1] == 'pair'", windows_script)
         self.assertIn('配对本地执行器-Mac.command', updater)
         self.assertIn('配对本地执行器.bat', updater)
+
+
+class ExecutorChannelLifecycleTests(unittest.TestCase):
+    def build_worker(self, credential_store, state_store, client):
+        return ExecutorChannelWorker(
+            client=client,
+            credential_store=credential_store,
+            state_store=state_store,
+            config_getter=lambda: {'concurrency': 2},
+            public_config_getter=lambda config: dict(config),
+            config_writer=lambda config: dict(config),
+            task_coordinator=LocalTaskCoordinator(lambda: True),
+            hub_status_getter=lambda _force=False: (True, ''),
+        )
+
+    def test_running_unpaired_worker_detects_later_pairing(self):
+        class DelayedCredentialStore(object):
+            def __init__(self):
+                self.loads = 0
+
+            def load(self):
+                self.loads += 1
+                return DEVICE_CREDENTIAL if self.loads >= 2 else None
+
+            def clear(self):
+                return None
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = DelayedCredentialStore()
+            state_store = ExecutorChannelStateStore(
+                os.path.join(directory, 'executor-channel.json'))
+            client = FakeExecutorClient()
+            worker = self.build_worker(store, state_store, client)
+            worker._wait = lambda _seconds: None
+            client.poll_callback = worker.stop_event.set
+            self.assertTrue(worker.start())
+            worker.thread.join(timeout=2)
+            self.assertFalse(worker.thread.is_alive())
+            self.assertEqual(store.loads, 2)
+            self.assertEqual(len(client.poll_calls), 1)
+            self.assertEqual(client.poll_calls[0][0], DEVICE_CREDENTIAL)
+            self.assertEqual(state_store.load()['status'], 'online')
+
+    def test_worker_reuses_loaded_credential_between_polls(self):
+        class CountingCredentialStore(MemoryAuthSessionStore):
+            def __init__(self):
+                super().__init__(DEVICE_CREDENTIAL)
+                self.loads = 0
+
+            def load(self):
+                self.loads += 1
+                return super().load()
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = CountingCredentialStore()
+            state_store = ExecutorChannelStateStore(
+                os.path.join(directory, 'executor-channel.json'))
+            client = FakeExecutorClient()
+            worker = self.build_worker(store, state_store, client)
+            client.poll_callback = lambda: (
+                worker.stop_event.set()
+                if len(client.poll_calls) >= 2 else None)
+            self.assertTrue(worker.start())
+            worker.thread.join(timeout=2)
+            self.assertFalse(worker.thread.is_alive())
+            self.assertEqual(len(client.poll_calls), 2)
+            self.assertEqual(store.loads, 1)
 
 
 if __name__ == '__main__':

@@ -14,9 +14,9 @@ from . import __version__
 
 
 REPOSITORY = "wrangler1024/xynigo-sourcing"
-RELEASE_VERSION = "0.12.6"
+RELEASE_VERSION = "0.12.7"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-08-27T15:31:07Z"
+RELEASE_PUBLISHED_AT = "2026-08-28T00:00:00Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,7 +31,7 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.12.6.exe",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.12.7.exe",
         "sha256": "e45a5030290e5b2e0fca9bf3eafd9d857114128025d3fa7fadb2b57aae3628e4",
         "size": 14_867_776,
         "installMode": "standard_per_user",
@@ -42,7 +42,7 @@ _PLATFORMS = {
         "trayMenu": True,
         "launcherFile": "Xynigo.exe",
         "greenFallback": {
-            "assetName": "Xynigo_Sourcing_Windows_20260827_v0.12.6.zip",
+            "assetName": "Xynigo_Sourcing_Windows_20260828_v0.12.7.zip",
             "sha256": "1dc9b9f6d4943898cbcf313d5110b7e7bffe85096974798570f4bf117069f271",
             "size": 18_226_858,
             "installMode": "green_package",
@@ -56,9 +56,9 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.12.6.pkg",
-        "sha256": "39df44182bde84fd8c576d73a014a3dee1017943225c244b7b453399bd3ee8e4",
-        "size": 11_353_665,
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.12.7.pkg",
+        "sha256": "53e89f858cb36b22aad3aee08251624e30de6ca749e5a8a44dd8806ab8a42586",
+        "size": 11_356_736,
         "installMode": "standard_system_application",
         "internalUnsignedTest": True,
         "developerIdApplicationSigned": False,
@@ -66,9 +66,9 @@ _PLATFORMS = {
         "notarized": False,
         "stapled": False,
         "greenFallback": {
-            "assetName": "Xynigo_Sourcing_macOS_arm64_20260827_v0.12.6.zip",
-            "sha256": "6e372fc922d187b8373119631110511c17c9ea4ffa96dc049625e0619ae496b9",
-            "size": 10_238_732,
+            "assetName": "Xynigo_Sourcing_macOS_arm64_20260828_v0.12.7.zip",
+            "sha256": "c79e5706abe0f50bce6fb4341a8b68d8ee096e2d9399395f585c4467fce90722",
+            "size": 10_242_204,
             "installMode": "green_package",
             "launcherFile": "启动-Mac.command",
         },
@@ -166,22 +166,56 @@ def _release_download_url(asset_name: str) -> str:
     )
 
 
+def _system_download_path(platform_key: str, variant: str) -> str:
+    encoded_platform = quote(platform_key, safe="_-.")
+    encoded_variant = quote(variant, safe="_-")
+    return (
+        f"/v1/local-executor/releases/{encoded_platform}/"
+        f"{encoded_variant}/download"
+    )
+
+
+def resolve_local_executor_release_asset(
+    platform_key: str,
+    variant: str,
+) -> dict[str, object] | None:
+    """Resolve one reviewed asset without accepting a caller-supplied URL."""
+
+    platform = _PLATFORMS.get(platform_key)
+    if platform is None or variant not in {"primary", "green"}:
+        return None
+    source: dict[str, object] | None
+    if variant == "primary":
+        source = platform
+    else:
+        fallback = platform.get("greenFallback")
+        source = fallback if isinstance(fallback, dict) else None
+    if source is None:
+        return None
+    asset_name = str(source.get("assetName") or "")
+    if not asset_name:
+        return None
+    return {
+        **source,
+        "platformKey": platform_key,
+        "variant": variant,
+    }
+
+
 def latest_local_executor_release() -> dict[str, object]:
     """Return a fresh JSON-safe copy of the immutable release catalog."""
 
     platforms: dict[str, dict[str, object]] = {}
     for platform_key, source in _PLATFORMS.items():
-        asset_name = str(source["assetName"])
         platform = {
             **source,
-            "downloadUrl": _release_download_url(asset_name),
+            "downloadUrl": _system_download_path(platform_key, "primary"),
         }
         fallback = source.get("greenFallback")
         if isinstance(fallback, dict):
-            fallback_asset_name = str(fallback["assetName"])
             platform["greenFallback"] = {
                 **fallback,
-                "downloadUrl": _release_download_url(fallback_asset_name),
+                "downloadUrl": _system_download_path(platform_key, "green"),
             }
         platforms[platform_key] = platform
     return {
@@ -193,9 +227,8 @@ def latest_local_executor_release() -> dict[str, object]:
         "releaseUrl": (
             f"https://github.com/{REPOSITORY}/releases/tag/v{RELEASE_VERSION}"
         ),
-        "manifestUrl": (
-            f"https://github.com/{REPOSITORY}/releases/download/"
-            f"v{RELEASE_VERSION}/Xynigo_Sourcing_v{RELEASE_VERSION}_update.json"
+        "manifestUrl": _release_download_url(
+            f"Xynigo_Sourcing_v{RELEASE_VERSION}_update.json"
         ),
         "platforms": platforms,
         "notesZh": [

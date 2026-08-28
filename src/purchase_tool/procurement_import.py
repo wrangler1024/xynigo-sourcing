@@ -23,6 +23,7 @@ import zipfile
 
 from .xlsx_cell_images import embed_cell_images
 from .lark_sheet_sync import LarkCliSheetsGateway, LarkSheetSyncError
+from .system_order_key import create_system_order_key
 
 
 MAX_XLSX_BYTES = 20 * 1024 * 1024
@@ -808,7 +809,7 @@ def _build_rows(groups):
                 ('实际付款', None), ('付款时间', ''), ('下单截图', ''),
                 ('物流商', ''), ('物流单号', ''), ('物流截图', ''),
                 ('跟单状态', ''), ('异常备注', ''), ('最近更新', ''),
-                ('系统订单键', '%s|%s|%s' % (
+                ('系统订单键', create_system_order_key(
                     store_name, order_no, package_no)),
                 ('导入操作人', ''),
                 ('导入批次', ''), ('数据版本', 'XYP2'),
@@ -1045,10 +1046,21 @@ def _background_bands(items):
     return result
 
 
+def _row_system_order_key(values):
+    """Canonicalize legacy Sheet rows without requiring an in-place migration."""
+    store_name = _compact_text(values.get('店铺'))
+    order_no = _compact_text(values.get('销售订单号'))
+    package_no = _compact_text(values.get('包裹号'))
+    if store_name and order_no and package_no:
+        return create_system_order_key(store_name, order_no, package_no)
+    return _compact_text(values.get('系统订单键'))
+
+
 def _sync_signature(values):
     """Stable line identity using cells that survive Excel → Sheet paste."""
-    return tuple(_compact_text(values.get(name)) for name in (
-        '系统订单键', '销售订单号', '包裹号',
+    return (_row_system_order_key(values),) + tuple(
+        _compact_text(values.get(name)) for name in (
+        '销售订单号', '包裹号',
         '主规格', '次规格', '需求数量', '采购指导价', '采购备注',
         '导入批次', '数据版本',
     ))
@@ -1056,8 +1068,9 @@ def _sync_signature(values):
 
 def _business_signature(values):
     """Stable line identity shared by the same order across import batches."""
-    return tuple(_compact_text(values.get(name)) for name in (
-        '系统订单键', '销售订单号', '包裹号',
+    return (_row_system_order_key(values),) + tuple(
+        _compact_text(values.get(name)) for name in (
+        '销售订单号', '包裹号',
         '主规格', '次规格', '需求数量', '采购指导价', '采购备注',
         '数据版本',
     ))
@@ -1392,7 +1405,7 @@ class ProcurementImportService(object):
                 for header, value in zip(headers, padded)
             }
             batch = _compact_text(values.get('导入批次'))
-            order_key = _compact_text(values.get('系统订单键'))
+            order_key = _row_system_order_key(values)
             if batch == plan.import_batch:
                 signature = _sync_signature(values)
                 current_queues[signature].append(int(row_number))
@@ -1417,7 +1430,7 @@ class ProcurementImportService(object):
         unmatched_by_order = defaultdict(list)
         matched_count_by_order = Counter()
         for index, row in enumerate(plan.rows):
-            order_key = _compact_text(row.values.get('系统订单键'))
+            order_key = _row_system_order_key(row.values)
             plan_by_order[order_key].append((index, row))
             signature = _sync_signature(row.values)
             if current_queues[signature]:

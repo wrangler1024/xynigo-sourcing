@@ -118,14 +118,8 @@ class ExecutorConfigWriteBody(StrictBody):
     def validate_safe_config(cls, value: dict[str, Any]) -> dict[str, Any]:
         allowed = {
             "hubPort",
-            "serverPort",
             "concurrency",
-            "importBuyerPlan",
             "verifySampleCount",
-            "hiddenQueryColumns",
-            "purchaseSite",
-            "purchaseTag",
-            "purchaseTags",
             "envCreateWorkers",
             "safeParallelTasks",
         }
@@ -133,7 +127,6 @@ class ExecutorConfigWriteBody(StrictBody):
             raise ValueError("config contains unsupported or sensitive fields")
         integer_ranges = {
             "hubPort": (1, 65535),
-            "serverPort": (1, 65535),
             "concurrency": (1, 5),
             "verifySampleCount": (0, 10),
             "envCreateWorkers": (1, 10),
@@ -150,28 +143,6 @@ class ExecutorConfigWriteBody(StrictBody):
             value["safeParallelTasks"], bool
         ):
             raise ValueError("safeParallelTasks must be a boolean")
-        if "purchaseSite" in value and value["purchaseSite"] not in {"MX", "US"}:
-            raise ValueError("purchaseSite is unsupported")
-        if "hiddenQueryColumns" in value:
-            hidden = value["hiddenQueryColumns"]
-            if not isinstance(hidden, list) or any(
-                item not in {"envName", "ip"} for item in hidden
-            ):
-                raise ValueError("hiddenQueryColumns is invalid")
-        if "purchaseTags" in value:
-            tags = value["purchaseTags"]
-            if not isinstance(tags, dict) or set(tags) - {"MX", "US"}:
-                raise ValueError("purchaseTags is invalid")
-            if any(not isinstance(item, str) or len(item) > 12 for item in tags.values()):
-                raise ValueError("purchaseTags contains an invalid label")
-        for key, maximum in {
-            "purchaseTag": 12,
-            "importBuyerPlan": 200,
-        }.items():
-            if key in value and (
-                not isinstance(value[key], str) or len(value[key]) > maximum
-            ):
-                raise ValueError(f"{key} is invalid")
         # Keep the task envelope bounded before it reaches the durable queue.
         if len(str(value)) > 32_000:
             raise ValueError("config payload is too large")

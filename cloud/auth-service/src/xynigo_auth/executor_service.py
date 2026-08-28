@@ -32,6 +32,9 @@ ACTIVE_TASK_STATUSES = frozenset({"queued", "leased", "running", "cancel_request
 TERMINAL_TASK_STATUSES = frozenset(
     {"succeeded", "failed", "uncertain", "cancelled"}
 )
+# Read results remain backward compatible with v0.12.6 executors, which may
+# still report legacy local-business preferences. New cloud writes are narrowed
+# by ExecutorConfigWriteBody to device runtime and safety settings only.
 PUBLIC_CONFIG_RESULT_KEYS = frozenset(
     {
         "hubPort",

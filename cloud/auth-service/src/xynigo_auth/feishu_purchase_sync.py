@@ -506,7 +506,7 @@ def _master_common_fields(
             draft.get("platformOrderNo") or "",
             draft.get("packageId") or "",
         ),
-        "orderKey": order.order_key,
+        "orderKey": order.system_order_key,
         "Schema版本": order.schema_version,
         "店铺": draft.get("storeName") or order.store_name,
         "站点": draft.get("site") or "",
@@ -555,7 +555,7 @@ def _line_fields(
     return {
         "明细标题": "%s #%02d" % (draft.get("platformOrderNo") or "", line.line_no),
         "lineKey": line.line_key,
-        "orderKey": order.order_key,
+        "orderKey": order.system_order_key,
         "关联采购单": [master_record_id],
         "行号": line.line_no,
         "是否有效": bool(line.is_active),
@@ -813,10 +813,10 @@ class FeishuPurchaseSyncWorker:
             }
         )
         master_record_id = self.client.upsert_master(
-            order_key=order.order_key,
+            order_key=order.system_order_key,
             fields=master_saving,
             verify_fields={
-                "orderKey": order.order_key,
+                "orderKey": order.system_order_key,
                 "草稿同步状态": "saving-draft",
                 "待写内容哈希": order.content_hash,
             },
@@ -835,7 +835,7 @@ class FeishuPurchaseSyncWorker:
                 else "unexpected_sync_failure"
             )
             self._mark_remote_failure_best_effort(
-                order_key=order.order_key,
+                order_key=order.system_order_key,
                 master_record_id=master_record_id,
                 code=code,
                 sync_time=now,
@@ -863,7 +863,7 @@ class FeishuPurchaseSyncWorker:
                 fields=fields,
                 verify_fields={
                     "lineKey": line.line_key,
-                    "orderKey": order.order_key,
+                    "orderKey": order.system_order_key,
                     "关联采购单": [master_record_id],
                     "行内容哈希": line.content_hash,
                     "明细状态": WORKFLOW_STATUS[line.workflow_status],
@@ -883,10 +883,10 @@ class FeishuPurchaseSyncWorker:
             "最近错误摘要": None,
         }
         confirmed_master_id = self.client.upsert_master(
-            order_key=order.order_key,
+            order_key=order.system_order_key,
             fields=final_fields,
             verify_fields={
-                "orderKey": order.order_key,
+                "orderKey": order.system_order_key,
                 "草稿同步状态": "draft-synced",
                 "草稿版本": order.draft_revision,
                 "内容哈希": order.content_hash,
