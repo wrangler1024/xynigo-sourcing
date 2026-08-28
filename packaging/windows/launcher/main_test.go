@@ -44,6 +44,7 @@ func TestManagedExecutorStopScriptIsScopedToInstallRoot(t *testing.T) {
 		"pythonw.exe",
 		"ExecutablePath",
 		"StartsWith",
+		"IndexOf",
 		"XYNIGO_TERMINATE_ROOT",
 		`run\.py"?\s+--no-browser`,
 	} {

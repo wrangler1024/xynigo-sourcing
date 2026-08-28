@@ -129,8 +129,11 @@ jobs:
           $orphan.Refresh()
           if (-not $orphan.HasExited) { throw "new launcher did not replace orphan executor PID $orphanPid" }
           $managed = @(Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe'" | Where-Object {
-            $_.ExecutablePath -and
-            $_.ExecutablePath.StartsWith($installDir, [StringComparison]::OrdinalIgnoreCase) -and
+            $prefix = $installDir.TrimEnd('\') + '\'
+            $commandLine = [string]$_.CommandLine
+            $pathInRoot = ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase))
+            $commandInRoot = ($commandLine.IndexOf($prefix, [StringComparison]::OrdinalIgnoreCase) -ge 0)
+            ($pathInRoot -or $commandInRoot) -and
             $_.CommandLine -match '(?i)run\.py"?\s+--no-browser'
           })
           if ($managed.Count -ne 1) { throw "expected exactly one managed executor, found $($managed.Count)" }

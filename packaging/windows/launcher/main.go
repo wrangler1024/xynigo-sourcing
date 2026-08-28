@@ -732,9 +732,13 @@ func managedExecutorStopScript() string {
 		`if ([string]::IsNullOrWhiteSpace($root)) { exit 2 }; ` +
 		`$prefix = [IO.Path]::GetFullPath($root).TrimEnd('\') + '\'; ` +
 		`Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe'" | ` +
-		`Where-Object { $_.ExecutablePath -and ` +
-		`$_.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) -and ` +
-		`$_.CommandLine -match '(?i)run\.py"?\s+--no-browser' } | ` +
+		`Where-Object { ` +
+		`$commandLine = [string]$_.CommandLine; ` +
+		`$pathInRoot = ($_.ExecutablePath -and ` +
+		`$_.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)); ` +
+		`$commandInRoot = ($commandLine.IndexOf($prefix, [StringComparison]::OrdinalIgnoreCase) -ge 0); ` +
+		`($pathInRoot -or $commandInRoot) -and ` +
+		`$commandLine -match '(?i)run\.py"?\s+--no-browser' } | ` +
 		`ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } }`
 }
 
