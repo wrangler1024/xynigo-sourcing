@@ -16,7 +16,7 @@ from . import __version__
 REPOSITORY = "wrangler1024/xynigo-sourcing"
 RELEASE_VERSION = "0.12.7"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-08-28T07:12:26Z"
+RELEASE_PUBLISHED_AT = "2026-08-28T07:31:08Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,9 +31,9 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.12.7_hotfix6.exe",
-        "sha256": "2656611bbe2ea34ac4feef5808b1ec128cd1d678d6593e90bbacacb7f97ff60f",
-        "size": 14_928_466,
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.12.7_hotfix7.exe",
+        "sha256": "72c58a9fb4642bd58054fbeac671d50e4ae43ce57eedd01232d51e3934b1af41",
+        "size": 15_058_873,
         "installMode": "standard_per_user",
         "internalUnsignedTest": True,
         "authenticodeSigned": False,
