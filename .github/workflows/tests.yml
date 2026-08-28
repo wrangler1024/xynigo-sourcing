@@ -98,9 +98,43 @@ jobs:
           if (-not (Test-Path "$runtimeDir\app\purchase_tool\workspace_rpc.py")) { throw "workspace RPC runtime missing" }
           $channelSource = Get-Content "$runtimeDir\app\purchase_tool\executor_channel.py" -Raw
           if ($channelSource -notmatch 'workspace\.rpc\.v1') { throw "workspace RPC capability missing" }
+          # Reproduce an upgrade where the previous launcher exited but its
+          # Python executor remained alive. The new status center must replace
+          # only the orphan under this installation root and start its own child.
+          $env:XYNIGO_DATA_DIR = $installDir
+          $env:XYNIGO_INSTALL_DIR = $installDir
+          $env:XYNIGO_INSTALL_MODE = 'standard'
+          $env:XYNIGO_LAUNCHER_TOKEN = ('legacy-' + ('x' * 40))
+          $pythonw = Join-Path $runtimeDir 'python-embed\pythonw.exe'
+          $runPy = Join-Path $runtimeDir 'run.py'
+          $orphanArgs = ('"{0}" --no-browser' -f $runPy)
+          $orphan = Start-Process -FilePath $pythonw -ArgumentList $orphanArgs -PassThru
+          $orphanReady = $false
+          for ($attempt = 0; $attempt -lt 20; $attempt++) {
+            if ($orphan.HasExited) { break }
+            try {
+              $status = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8765/executor-status.json' -TimeoutSec 1
+              if ($status.StatusCode -eq 200) { $orphanReady = $true; break }
+            } catch {
+              Start-Sleep -Milliseconds 500
+            }
+          }
+          if ($orphan.HasExited) { throw "orphan executor setup failed: $($orphan.ExitCode)" }
+          if (-not $orphanReady) { throw "orphan executor did not expose its status endpoint" }
+          $orphanPid = $orphan.Id
+
           $launcher = Start-Process -FilePath "$installDir\Xynigo.exe" -ArgumentList "--background" -PassThru
-          Start-Sleep -Seconds 4
+          Start-Sleep -Seconds 6
           if ($launcher.HasExited) { throw "tray/status launcher exited during startup: $($launcher.ExitCode)" }
+          $orphan.Refresh()
+          if (-not $orphan.HasExited) { throw "new launcher did not replace orphan executor PID $orphanPid" }
+          $managed = @(Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe'" | Where-Object {
+            $_.ExecutablePath -and
+            $_.ExecutablePath.StartsWith($installDir, [StringComparison]::OrdinalIgnoreCase) -and
+            $_.CommandLine -match '(?i)run\.py"?\s+--no-browser'
+          })
+          if ($managed.Count -ne 1) { throw "expected exactly one managed executor, found $($managed.Count)" }
+          if ($managed[0].ProcessId -eq $orphanPid) { throw "launcher adopted the orphan executor" }
           & taskkill.exe /PID $launcher.Id /T /F | Out-Null
           $protocol = (Get-Item "HKCU:\Software\Classes\xynigo\shell\open\command").GetValue('')
           if ($protocol -notmatch 'Xynigo\.exe.*--protocol') { throw "xynigo protocol missing" }

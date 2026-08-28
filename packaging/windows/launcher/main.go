@@ -732,7 +732,7 @@ func managedExecutorStopScript() string {
 		`Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe'" | ` +
 		`Where-Object { $_.ExecutablePath -and ` +
 		`$_.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) -and ` +
-		`$_.CommandLine -match '(?i)run\.py\s+--no-browser' } | ` +
+		`$_.CommandLine -match '(?i)run\.py"?\s+--no-browser' } | ` +
 		`ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } }`
 }
 

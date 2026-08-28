@@ -44,7 +44,7 @@ func TestManagedExecutorStopScriptIsScopedToInstallRoot(t *testing.T) {
 		"pythonw.exe",
 		"ExecutablePath",
 		"StartsWith",
-		`run\.py\s+--no-browser`,
+		`run\.py"?\s+--no-browser`,
 	} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("managedExecutorStopScript() must contain %q", required)
