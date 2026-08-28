@@ -16,7 +16,7 @@ from . import __version__
 REPOSITORY = "wrangler1024/xynigo-sourcing"
 RELEASE_VERSION = "0.12.7"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-08-28T00:00:00Z"
+RELEASE_PUBLISHED_AT = "2026-08-28T01:17:37Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -32,8 +32,8 @@ _PLATFORMS = {
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
         "assetName": "Xynigo_Sourcing_Windows_Setup_v0.12.7.exe",
-        "sha256": "e45a5030290e5b2e0fca9bf3eafd9d857114128025d3fa7fadb2b57aae3628e4",
-        "size": 14_867_776,
+        "sha256": "456db25976e332195a6ec738b59c02991bd23d459e7e42d12a959148a5d474a8",
+        "size": 14_918_636,
         "installMode": "standard_per_user",
         "internalUnsignedTest": True,
         "authenticodeSigned": False,
@@ -43,8 +43,8 @@ _PLATFORMS = {
         "launcherFile": "Xynigo.exe",
         "greenFallback": {
             "assetName": "Xynigo_Sourcing_Windows_20260828_v0.12.7.zip",
-            "sha256": "1dc9b9f6d4943898cbcf313d5110b7e7bffe85096974798570f4bf117069f271",
-            "size": 18_226_858,
+            "sha256": "256efb5d4d0b947a48883dbd905e6b0d5035daa305126dc3857d899be4d3c3b4",
+            "size": 18_158_605,
             "installMode": "green_package",
             "launcherFile": "Xynigo.exe",
             "statusCenter": True,
@@ -57,8 +57,8 @@ _PLATFORMS = {
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
         "assetName": "Xynigo_Sourcing_macOS_Standard_v0.12.7.pkg",
-        "sha256": "53e89f858cb36b22aad3aee08251624e30de6ca749e5a8a44dd8806ab8a42586",
-        "size": 11_356_736,
+        "sha256": "6f3608f4abba564572387da19ccb2c694526cb1400d417015fb1e2ab79c41334",
+        "size": 11_377_490,
         "installMode": "standard_system_application",
         "internalUnsignedTest": True,
         "developerIdApplicationSigned": False,
@@ -67,8 +67,8 @@ _PLATFORMS = {
         "stapled": False,
         "greenFallback": {
             "assetName": "Xynigo_Sourcing_macOS_arm64_20260828_v0.12.7.zip",
-            "sha256": "c79e5706abe0f50bce6fb4341a8b68d8ee096e2d9399395f585c4467fce90722",
-            "size": 10_242_204,
+            "sha256": "11a5039fa658d0dfc228cb2583bba73e8307344341223fd7ed0caa55e0248919",
+            "size": 10_263_121,
             "installMode": "green_package",
             "launcherFile": "启动-Mac.command",
         },
