@@ -898,6 +898,8 @@ func (app *launcherApp) startExecutor() error {
 		"XYNIGO_INSTALL_DIR="+app.root,
 		"XYNIGO_INSTALL_MODE="+installMode,
 		"XYNIGO_LAUNCHER_TOKEN="+app.launcherToken,
+		"PYTHONUTF8=1",
+		"PYTHONIOENCODING=utf-8",
 	)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
