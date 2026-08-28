@@ -139,8 +139,17 @@ jobs:
           }
           $managedPids = @()
           for ($attempt = 0; $attempt -lt 20; $attempt++) {
-            $managedPids = @(Get-NetTCPConnection -State Listen -LocalPort 8765 -ErrorAction SilentlyContinue |
-              Select-Object -ExpandProperty OwningProcess -Unique)
+            $managedPids = @()
+            foreach ($candidatePort in 8765..8774) {
+              try {
+                $candidateStatus = Invoke-RestMethod -Uri "http://127.0.0.1:$candidatePort/executor-status.json" -TimeoutSec 1
+                if ($candidateStatus.schemaVersion -eq 1 -and $candidateStatus.version) {
+                  $managedPids += @(Get-NetTCPConnection -State Listen -LocalPort $candidatePort -ErrorAction SilentlyContinue |
+                    Select-Object -ExpandProperty OwningProcess -Unique)
+                }
+              } catch {}
+            }
+            $managedPids = @($managedPids | Sort-Object -Unique)
             if ($managedPids.Count -eq 1 -and $managedPids[0] -ne $orphanPid) { break }
             Start-Sleep -Milliseconds 500
           }
