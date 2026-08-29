@@ -16,7 +16,7 @@ from . import __version__
 REPOSITORY = "wrangler1024/xynigo-sourcing"
 RELEASE_VERSION = "0.12.8"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-08-28T15:29:45Z"
+RELEASE_PUBLISHED_AT = "2026-08-29T04:06:57Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,10 +31,10 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.12.8-b047fa729d2d",
+        "runtimeId": "0.12.8-d096db7ca05f",
         "assetName": "Xynigo_Sourcing_Windows_Setup_v0.12.8.exe",
-        "sha256": "1b821cc450232a38fd72b2d7e715ffe71bb5397386c0e7f1459b186cc69aab56",
-        "size": 15_059_413,
+        "sha256": "7d87c20a34a39877304463e5ed10e30c7581da9e4e218d0f9ae384affa8db03f",
+        "size": 15_019_926,
         "installMode": "standard_per_user",
         "internalUnsignedTest": True,
         "authenticodeSigned": False,
@@ -246,9 +246,10 @@ def latest_local_executor_release() -> dict[str, object]:
         ),
         "platforms": platforms,
         "notesZh": [
-            "v0.12.8 收口 v0.12.7 已验证热修复，不再复用同一版本号追加不同安装资产。",
+            "v0.12.8 Windows 运行时修订将在线更新控制入口迁入执行器桌面状态中心。",
             "云端 Web 通过 workspace.rpc.v1 调度当前用户配对的执行器，设备与任务保持 owner 隔离。",
-            "Windows 包包含定版状态中心、不可变运行时修订目录和受控在线更新；Mac 包包含冻结运行时可信 CA。",
+            "Web 工作台不再显示检查更新或立即更新，也不再通过云端 RPC 下发更新任务。",
+            "Windows 包包含定版状态中心、不可变运行时修订目录和受控在线更新；Mac 包保持原 v0.12.8 资产。",
             "覆盖安装保留配置、日志、运行数据和设备配对；绿色包继续作为显式回退。",
             "本次按内部快速迭代策略提供未签名标准安装包；下载前必须核对 SHA-256，并按飞书开发群教程手动确认系统安全提示。",
         ],
