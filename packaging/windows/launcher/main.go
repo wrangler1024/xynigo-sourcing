@@ -32,6 +32,8 @@ const (
 	cloudWorkspaceURL = "https://xynigo.samforo.icu"
 	launcherMutexName = "Local\\XynigoSourcing.Launcher"
 	createNoWindow    = 0x08000000
+	updateCheckPath   = "/executor-control/update/check"
+	updateInstallPath = "/executor-control/update/install"
 )
 
 var (
@@ -87,6 +89,14 @@ type localStatus struct {
 			ElapsedSec int    `json:"elapsedSec"`
 		} `json:"items"`
 	} `json:"tasks"`
+	Update struct {
+		Enabled        bool   `json:"enabled"`
+		State          string `json:"state"`
+		InstallMode    string `json:"installMode"`
+		CurrentVersion string `json:"currentVersion"`
+		LatestVersion  string `json:"latestVersion"`
+		Message        string `json:"message"`
+	} `json:"update"`
 }
 
 type commandEnvelope struct {
@@ -112,6 +122,7 @@ type launcherApp struct {
 	taskValue      *walk.Label
 	taskNote       *walk.Label
 	versionValue   *walk.Label
+	versionNote    *walk.Label
 	deviceValue    *walk.Label
 	deviceState    *walk.Label
 	heartbeatValue *walk.Label
@@ -119,20 +130,23 @@ type launcherApp struct {
 	pairEdit       *walk.LineEdit
 	pairButton     *walk.PushButton
 	startButton    *walk.PushButton
+	updateButton   *walk.PushButton
 	trayStatus     *walk.Action
 	trayCloud      *walk.Action
 	trayHub        *walk.Action
 	trayPair       *walk.Action
 	trayStartStop  *walk.Action
+	trayUpdate     *walk.Action
 
-	mu            sync.Mutex
-	child         *exec.Cmd
-	childDone     chan error
-	launcherToken string
-	statusURL     string
-	lastStatus    *localStatus
-	pairInFlight  bool
-	exiting       bool
+	mu             sync.Mutex
+	child          *exec.Cmd
+	childDone      chan error
+	launcherToken  string
+	statusURL      string
+	lastStatus     *localStatus
+	pairInFlight   bool
+	updateInFlight bool
+	exiting        bool
 }
 
 func main() {
@@ -324,7 +338,7 @@ func (app *launcherApp) buildWindow() error {
 					statusCard("云端通道", &app.cloudSignal, &app.cloudValue, &app.cloudNote, "等待配对", "需要一次性配对码", white, navy, muted, teal),
 					statusCard("HubStudio", &app.hubSignal, &app.hubValue, &app.hubNote, "正在检查", "等待本机服务", white, navy, muted, teal),
 					statusCard("本机任务", &app.taskSignal, &app.taskValue, &app.taskNote, "当前空闲", "没有运行中的任务", white, navy, muted, teal),
-					statusCard("执行器版本", nil, &app.versionValue, nil, "—", "内部测试渠道", white, navy, muted, teal),
+					statusCard("执行器版本", nil, &app.versionValue, &app.versionNote, "—", "等待检查更新", white, navy, muted, teal),
 				}},
 				Composite{
 					Border: true, Background: SolidColorBrush{Color: white}, MinSize: Size{Height: 104},
@@ -348,6 +362,7 @@ func (app *launcherApp) buildWindow() error {
 					PushButton{Text: "打开云端工作台", MinSize: Size{Width: 142, Height: 38}, OnClicked: func() { app.openCloudWorkspace() }},
 					PushButton{AssignTo: &app.startButton, Text: "重新启动执行器", MinSize: Size{Width: 132, Height: 38}, OnClicked: func() { go app.restartExecutor() }},
 					PushButton{Text: "打开日志目录", MinSize: Size{Width: 112, Height: 38}, OnClicked: func() { app.openLogs() }},
+					PushButton{AssignTo: &app.updateButton, Text: "检查更新", MinSize: Size{Width: 108, Height: 38}, OnClicked: app.handleUpdateAction},
 					HSpacer{},
 					PushButton{Text: "刷新状态", MinSize: Size{Width: 96, Height: 38}, OnClicked: func() { go app.refreshStatus() }},
 				}},
@@ -424,6 +439,7 @@ func (app *launcherApp) buildTray() error {
 	openStatus := newTrayAction("打开状态中心", app.showStatusCenter)
 	openCloud := newTrayAction("打开云端工作台", app.openCloudWorkspace)
 	app.trayStartStop = newTrayAction("重新启动执行器", func() { go app.restartExecutor() })
+	app.trayUpdate = newTrayAction("检查更新", app.handleUpdateAction)
 	app.trayPair = newTrayAction("配对这台电脑…", app.showPairing)
 	logs := newTrayAction("打开日志目录", app.openLogs)
 	about := newTrayAction("关于 Xynigo", func() {
@@ -433,7 +449,7 @@ func (app *launcherApp) buildTray() error {
 	for _, action := range []*walk.Action{
 		app.trayStatus, app.trayCloud, app.trayHub, walk.NewSeparatorAction(),
 		openStatus, openCloud, app.trayPair, walk.NewSeparatorAction(),
-		app.trayStartStop, logs, walk.NewSeparatorAction(), about, exit,
+		app.trayStartStop, app.trayUpdate, logs, walk.NewSeparatorAction(), about, exit,
 	} {
 		if err := notify.ContextMenu().Actions().Add(action); err != nil {
 			return err
@@ -484,6 +500,128 @@ func (app *launcherApp) openLogs() {
 	}
 	_ = os.MkdirAll(directory, 0o700)
 	_ = exec.Command("explorer.exe", directory).Start()
+}
+
+func (app *launcherApp) handleUpdateAction() {
+	app.mu.Lock()
+	if app.updateInFlight || app.exiting {
+		app.mu.Unlock()
+		return
+	}
+	status := app.lastStatus
+	if status == nil {
+		app.mu.Unlock()
+		walk.MsgBox(app.mw, "无法检查更新", "请先启动本地执行器。", walk.MsgBoxIconWarning)
+		return
+	}
+	update := status.Update
+	app.mu.Unlock()
+
+	if !update.Enabled || update.InstallMode != "standard" {
+		walk.MsgBox(
+			app.mw,
+			"在线更新不可用",
+			"桌面在线更新仅支持标准安装版，请从云端工作台下载安装一次标准版。",
+			walk.MsgBoxIconWarning,
+		)
+		return
+	}
+	action := "check"
+	busyText := "正在检查…"
+	if update.State == "available" {
+		if status.Tasks.ActiveCount > 0 {
+			walk.MsgBox(
+				app.mw,
+				"任务执行中",
+				"请等待当前本机任务完成后再更新，状态中心不会中断正在执行的采购任务。",
+				walk.MsgBoxIconWarning,
+			)
+			return
+		}
+		latest := strings.TrimSpace(update.LatestVersion)
+		if latest == "" {
+			latest = "最新版本"
+		} else {
+			latest = "v" + latest
+		}
+		answer := walk.MsgBox(
+			app.mw,
+			"确认更新 Xynigo",
+			"将在线下载并校验 "+latest+"，随后自动重启本地执行器。\n\n更新前已确认当前没有正在执行的本机任务。",
+			walk.MsgBoxYesNo|walk.MsgBoxIconQuestion,
+		)
+		if answer != walk.DlgCmdYes {
+			return
+		}
+		action = "install"
+		busyText = "准备更新…"
+	}
+
+	app.mu.Lock()
+	if app.updateInFlight {
+		app.mu.Unlock()
+		return
+	}
+	app.updateInFlight = true
+	app.mu.Unlock()
+	app.updateButton.SetText(busyText)
+	app.updateButton.SetEnabled(false)
+	_ = app.trayUpdate.SetEnabled(false)
+	controlPath := updateCheckPath
+	if action == "install" {
+		controlPath = updateInstallPath
+	}
+	go func() {
+		err := app.postLauncherControl(controlPath)
+		app.mu.Lock()
+		app.updateInFlight = false
+		app.mu.Unlock()
+		if err != nil {
+			appendStatusCenterLog(app.root, "update_"+action+"_failed: "+err.Error())
+			app.mw.Synchronize(func() {
+				walk.MsgBox(app.mw, "在线更新失败", err.Error(), walk.MsgBoxIconError)
+			})
+		} else {
+			appendStatusCenterLog(app.root, "update_"+action+"_accepted")
+		}
+		app.refreshStatus()
+	}()
+}
+
+func (app *launcherApp) postLauncherControl(path string) error {
+	app.mu.Lock()
+	statusURL := app.statusURL
+	token := app.launcherToken
+	app.mu.Unlock()
+	if statusURL == "" || statusPort(statusURL) == 0 {
+		return errors.New("本地执行器尚未就绪，请稍后重试")
+	}
+	controlURL := strings.Replace(statusURL, "/executor-status.json", path, 1)
+	request, err := http.NewRequest(http.MethodPost, controlURL, bytes.NewReader(nil))
+	if err != nil {
+		return errors.New("无法创建本机更新请求")
+	}
+	request.Header.Set("X-Xynigo-Launcher", token)
+	client := &http.Client{Timeout: 3 * time.Second}
+	response, err := client.Do(request)
+	if err != nil {
+		return errors.New("本地执行器未响应，请确认状态中心保持运行")
+	}
+	defer response.Body.Close()
+	data, readErr := io.ReadAll(io.LimitReader(response.Body, 128*1024))
+	if readErr != nil {
+		return errors.New("无法读取本机更新响应")
+	}
+	if response.StatusCode == http.StatusOK || response.StatusCode == http.StatusAccepted {
+		return nil
+	}
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(data, &payload) == nil && strings.TrimSpace(payload.Error) != "" {
+		return errors.New(strings.TrimSpace(payload.Error))
+	}
+	return fmt.Errorf("本机更新请求失败（HTTP %d）", response.StatusCode)
 }
 
 func (app *launcherApp) statusLoop() {
@@ -563,6 +701,7 @@ func (app *launcherApp) renderStatus(status *localStatus, err error) {
 		app.taskValue.SetText("—")
 		app.taskNote.SetText("执行器启动后显示")
 		app.versionValue.SetText("—")
+		app.versionNote.SetText("执行器启动后可检查")
 		app.deviceValue.SetText("设备状态将在执行器启动后显示")
 		app.deviceState.SetText("等待执行器")
 		app.heartbeatValue.SetText("无本机心跳")
@@ -572,16 +711,21 @@ func (app *launcherApp) renderStatus(status *localStatus, err error) {
 		app.taskSignal.SetTextColor(muted)
 		app.setPairingVisible(false)
 		app.startButton.SetText("启动执行器")
+		app.updateButton.SetText("检查更新")
+		app.updateButton.SetEnabled(false)
 		_ = app.trayStatus.SetText("● 本地执行器未运行")
 		_ = app.trayCloud.SetText("云端：未连接")
 		_ = app.trayHub.SetText("HubStudio：等待执行器")
 		_ = app.trayStartStop.SetText("启动执行器")
+		_ = app.trayUpdate.SetText("检查更新")
+		_ = app.trayUpdate.SetEnabled(false)
 		_ = app.notify.SetToolTip("Xynigo 本地执行器 · 未运行")
 		return
 	}
 	app.startButton.SetText("重新启动执行器")
 	_ = app.trayStartStop.SetText("重新启动执行器")
 	app.versionValue.SetText("v" + status.Version)
+	app.renderUpdateStatus(status)
 	if status.HubStudio.Connected {
 		app.hubValue.SetText("已连接")
 		app.hubNote.SetText("Local API 可用")
@@ -660,6 +804,68 @@ func (app *launcherApp) renderStatus(status *localStatus, err error) {
 		_ = app.trayHub.SetText("HubStudio：未连接")
 	}
 	_ = app.notify.SetToolTip("Xynigo 本地执行器 · " + cloudText)
+}
+
+func (app *launcherApp) renderUpdateStatus(status *localStatus) {
+	update := status.Update
+	message := strings.TrimSpace(update.Message)
+	if message == "" {
+		message = "等待检查更新"
+	}
+	app.versionNote.SetText(message)
+
+	buttonText := "检查更新"
+	trayText := "检查更新"
+	enabled := update.Enabled && update.InstallMode == "standard"
+	switch update.State {
+	case "checking":
+		buttonText = "正在检查…"
+		trayText = "正在检查更新…"
+		enabled = false
+	case "available":
+		latest := strings.TrimSpace(update.LatestVersion)
+		if latest == "" {
+			buttonText = "立即更新"
+			trayText = "立即更新"
+		} else {
+			buttonText = "更新到 v" + latest
+			trayText = "更新到 v" + latest
+		}
+		if status.Tasks.ActiveCount > 0 {
+			buttonText = "任务结束后更新"
+			trayText = "任务结束后可更新"
+			enabled = false
+		}
+	case "downloading":
+		buttonText = "正在下载…"
+		trayText = "正在下载更新…"
+		enabled = false
+	case "restarting":
+		buttonText = "正在重启…"
+		trayText = "正在安装更新…"
+		enabled = false
+	case "prompting":
+		buttonText = "等待确认…"
+		enabled = false
+	case "disabled":
+		buttonText = "暂不支持在线更新"
+		enabled = false
+	}
+	if update.InstallMode != "standard" {
+		buttonText = "请安装标准版"
+		trayText = "在线更新需要标准版"
+		enabled = false
+	}
+	app.mu.Lock()
+	inFlight := app.updateInFlight
+	app.mu.Unlock()
+	if inFlight {
+		enabled = false
+	}
+	app.updateButton.SetText(buttonText)
+	app.updateButton.SetEnabled(enabled)
+	_ = app.trayUpdate.SetText(trayText)
+	_ = app.trayUpdate.SetEnabled(enabled)
 }
 
 func (app *launcherApp) setPairingVisible(visible bool) {

@@ -138,6 +138,10 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
             '打开云端工作台',
             '配对这台电脑',
             '重新启动执行器',
+            '检查更新',
+            '更新到 v',
+            '/executor-control/update/check',
+            '/executor-control/update/install',
             '打开日志目录',
             '退出 Xynigo',
             '/executor-status.json',
@@ -161,7 +165,7 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
     def test_pairing_is_single_flight_and_python_output_is_utf8(self):
         for source in (
             'pairButton     *walk.PushButton',
-            'pairInFlight  bool',
+            'pairInFlight   bool',
             'AssignTo: &app.pairButton',
             'app.startPair(app.pairEdit.Text())',
             'if app.pairInFlight || app.exiting',
@@ -301,6 +305,16 @@ class LocalExecutorStatusContractTests(unittest.TestCase):
                 'resourceCount': 3,
             }],
         })
+        state.updates = SimpleNamespace(snapshot=lambda: {
+            'enabled': True,
+            'state': 'available',
+            'installMode': 'standard',
+            'currentVersion': '0.12.8',
+            'currentRuntimeId': '0.12.8-test',
+            'latestVersion': '0.12.9',
+            'latestRuntimeId': '0.12.9-test',
+            'message': '发现可在线升级的新构建 v0.12.9',
+        })
         state.hub_status = lambda force=False: (True, 'raw hub response')
         with patch.object(
                 main_module.ExecutorChannelStateStore, 'load', return_value={
@@ -317,6 +331,8 @@ class LocalExecutorStatusContractTests(unittest.TestCase):
         self.assertTrue(payload['executor']['paired'])
         self.assertTrue(payload['hubStudio']['connected'])
         self.assertEqual(payload['tasks']['activeCount'], 1)
+        self.assertEqual(payload['update']['state'], 'available')
+        self.assertEqual(payload['update']['latestVersion'], '0.12.9')
         encoded = __import__('json').dumps(payload, ensure_ascii=False)
         for forbidden in (
             'executor-internal-id', 'query-sensitive-id',

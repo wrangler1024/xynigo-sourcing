@@ -953,6 +953,7 @@ class AppState(object):
             'label': str(item.get('label') or '后台任务'),
             'elapsedSec': int(item.get('elapsedSec') or 0),
         } for item in (tasks.get('tasks') or [])]
+        update = self.updates.snapshot()
         return {
             'schemaVersion': 1,
             'product': 'Xynigo Sourcing 本地执行器',
@@ -990,6 +991,14 @@ class AppState(object):
                 'activeCount': len(safe_tasks),
                 'safeParallel': bool(tasks.get('safeParallel')),
                 'items': safe_tasks,
+            },
+            'update': {
+                'enabled': bool(update.get('enabled')),
+                'state': str(update.get('state') or 'disabled'),
+                'installMode': str(update.get('installMode') or ''),
+                'currentVersion': str(update.get('currentVersion') or ''),
+                'latestVersion': str(update.get('latestVersion') or ''),
+                'message': str(update.get('message') or ''),
             },
         }
 
@@ -2557,6 +2566,25 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Length', '0')
         self.end_headers()
 
+    def _launcher_control_allowed(self):
+        expected = str(os.environ.get('XYNIGO_LAUNCHER_TOKEN') or '')
+        submitted = str(self.headers.get('X-Xynigo-Launcher') or '')
+        peer = str((self.client_address or ('',))[0])
+        return bool(
+            expected
+            and peer in ('127.0.0.1', '::1')
+            and secrets.compare_digest(expected, submitted)
+        )
+
+    def _require_launcher_control(self):
+        if self._launcher_control_allowed():
+            return True
+        self._json({
+            'error': '本地启动器控制请求无效',
+            'code': 'launcher_control_forbidden',
+        }, 403)
+        return False
+
     # ---- GET ----
 
     def do_OPTIONS(self):
@@ -2838,23 +2866,43 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         request_identity = None
         try:
+            if path.startswith('/executor-control/'):
+                if not self._require_launcher_control():
+                    return
             if path == '/executor-control/shutdown':
-                expected = str(os.environ.get('XYNIGO_LAUNCHER_TOKEN') or '')
-                submitted = str(
-                    self.headers.get('X-Xynigo-Launcher') or '')
-                peer = str((self.client_address or ('',))[0])
-                if (not expected or peer not in ('127.0.0.1', '::1')
-                        or not secrets.compare_digest(expected, submitted)):
-                    return self._json({
-                        'error': '本地启动器控制请求无效',
-                        'code': 'launcher_control_forbidden',
-                    }, 403)
                 self._json({'stopping': True})
                 threading.Thread(
                     target=self.server.shutdown,
                     name='xynigo-launcher-shutdown',
                     daemon=True,
                 ).start()
+                return
+            if path == '/executor-control/update/check':
+                started = STATE.updates.check_async(force=True)
+                payload = STATE.updates.snapshot()
+                payload['started'] = started
+                self._json(payload, 202 if started else 200)
+                return
+            if path == '/executor-control/update/install':
+                snapshot = STATE.updates.snapshot()
+                if snapshot.get('installMode') != 'standard':
+                    return self._json({
+                        'error': '绿色版不支持桌面静默升级，请安装标准版',
+                        'code': 'standard_installer_required',
+                    }, 409)
+                active_tasks = STATE.tasks.snapshot().get('tasks') or []
+                if active_tasks:
+                    return self._json({
+                        'error': '本机仍有任务正在执行，请等待任务完成后再更新',
+                        'code': 'executor_tasks_active',
+                    }, 409)
+                accepted = STATE.updates.prompt_async()
+                payload = STATE.updates.snapshot()
+                payload['accepted'] = accepted
+                if not accepted:
+                    payload['error'] = '当前没有可安装的新版本'
+                    return self._json(payload, 409)
+                self._json(payload, 202)
                 return
             large_body_paths = {
                 '/api/assistant/procurement-import/parse',

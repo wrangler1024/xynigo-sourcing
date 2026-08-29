@@ -144,9 +144,7 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
             "Gatekeeper、SmartScreen",
         ):
             self.assertIn(text, self.html)
-        self.assertIn(
-            "$('updateCheck').hidden = CLOUD_WEB_MODE && "
-            "!hasFeatureAccess('localexecutor')", self.html)
+        self.assertNotIn('id="updateCheck"', self.html)
         self.assertIn(
             "$('localExecutorEntry').hidden = !CLOUD_WEB_MODE || "
             "!hasFeatureAccess('localexecutor')",

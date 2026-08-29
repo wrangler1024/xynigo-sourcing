@@ -609,7 +609,7 @@ def bring_console_to_front():
 
 
 class UpdateCoordinator(object):
-    """Expose non-blocking update state to WebUI and prompt in the console."""
+    """Expose non-blocking update state to the trusted desktop launcher."""
 
     BUSY_STATES = ('checking', 'prompting', 'downloading', 'restarting')
 
