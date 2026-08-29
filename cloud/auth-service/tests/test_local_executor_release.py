@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 import xynigo_auth.local_executor_release as release_catalog
@@ -5,6 +7,13 @@ from xynigo_auth.local_executor_release import (
     resolve_local_executor_release_asset,
     validate_release_platforms,
 )
+
+
+def test_compose_mounts_reviewed_release_assets_read_only() -> None:
+    compose = (
+        Path(__file__).resolve().parents[1] / "compose.yaml"
+    ).read_text(encoding="utf-8")
+    assert "./release-assets:/app/release-assets:ro" in compose
 
 
 def test_windows_standard_installer_requires_signature_timestamp_and_publisher():

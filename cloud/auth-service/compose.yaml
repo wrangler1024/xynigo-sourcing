@@ -52,6 +52,11 @@ services:
         condition: service_completed_successfully
     ports:
       - "127.0.0.1:8080:8080"
+    volumes:
+      # Reviewed release binaries live outside the immutable application image.
+      # Mount them read-only so authenticated downloads can validate and stream
+      # the exact file pinned by local_executor_release.py.
+      - ./release-assets:/app/release-assets:ro
     networks:
       - identity
       - edge
