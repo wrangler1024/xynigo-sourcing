@@ -53,6 +53,7 @@ EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 ORDER_RE = re.compile(r'(?:[?&])orderNo=([0-9a-f]+)(?:[&#]|$)', re.I)
 REMARK_ORDER_RE = re.compile(r'(?:^|\|\s*)单号:([0-9a-f]+)', re.I)
 EMAIL_KEY_PATH = '/api/boobar-graph'
+MAIL_KEY_PATH = '/api'
 ENV_NAME_RE = r'^{code}-{site}-{mmdd}-(\d{{3}})$'
 TEST_ENV_NAME_RE = r'^{code}-{site}-测试-(\d{{2}})$'
 
@@ -405,10 +406,10 @@ def extract_vendor_order_no(key_url, account_email):
     """Extract a vendor order number or derive a stable opaque reference.
 
     Legacy code links expose a hexadecimal ``orderNo``.  Some vendors instead
-    deliver links whose identity is either ``id+email``, an ``email`` query
-    parameter, or the account email in the final URL path segment.  Those
-    links do not contain a purchase order number, so use a SHA-256 reference
-    while keeping the existing hexadecimal remark and cross-group
+    deliver links whose identity is either ``id+email``, an ``email``/``mail``
+    query parameter, or the account email in the final URL path segment.
+    Those links do not contain a purchase order number, so use a SHA-256
+    reference while keeping the existing hexadecimal remark and cross-group
     deduplication contract.  Email-only formats deliberately share the same
     reference even if a vendor moves the email between query and path.
     """
@@ -431,7 +432,8 @@ def extract_vendor_order_no(key_url, account_email):
 
     values = None
     link_email = ''
-    if parsed.path.rstrip('/') == EMAIL_KEY_PATH:
+    normalized_path = parsed.path.rstrip('/')
+    if normalized_path in (EMAIL_KEY_PATH, MAIL_KEY_PATH):
         try:
             pairs = parse_qsl(
                 parsed.query, keep_blank_values=True, strict_parsing=True)
@@ -442,9 +444,15 @@ def extract_vendor_order_no(key_url, account_email):
             if name in values:
                 raise EnvBatchError('接码Key链接参数重复')
             values[name] = value
-        if set(values) not in ({'email'}, {'id', 'email'}):
-            raise EnvBatchError('接码Key链接参数不符合新号商格式')
-        link_email = values['email'].strip()
+        if normalized_path == EMAIL_KEY_PATH:
+            if set(values) not in ({'email'}, {'id', 'email'}):
+                raise EnvBatchError('接码Key链接参数不符合新号商格式')
+            link_email = values['email'].strip()
+        else:
+            if (set(values) != {'type', 'mail'} or
+                    values['type'].strip() != 'html'):
+                raise EnvBatchError('接码Key链接参数不符合新号商格式')
+            link_email = values['mail'].strip()
     elif not parsed.query:
         raw_segments = parsed.path.rstrip('/').split('/')
         raw_segments = [segment for segment in raw_segments if segment]

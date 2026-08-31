@@ -113,6 +113,23 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         self.assertIn("loadGroups();", query_panel)
         self.assertIn("loadEnvGroups().then(() => refreshEnvPreflight());", query_panel)
 
+    def test_environment_file_failure_clears_previous_statistics(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        handler = html[
+            html.index("$('envFile').onchange = async e => {"):
+            html.index("$('btnEnvPreview').onclick")
+        ]
+        self.assertIn("<b>—</b>等待本次校验", handler)
+        self.assertIn("<b>—</b>本次校验未通过", handler)
+        self.assertLess(
+            handler.index("<b>—</b>等待本次校验"),
+            handler.index("api('/api/envbatch/parse'"),
+        )
+        self.assertLess(
+            handler.index("<b>—</b>本次校验未通过"),
+            handler.index("'文件校验失败：' + err.message"),
+        )
+
     def test_environment_retry_restores_progress_polling_and_blocks_double_clicks(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")
         retry_handler = html[

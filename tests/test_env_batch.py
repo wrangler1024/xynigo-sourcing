@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import random
+import re
 import tempfile
 import threading
 import unittest
@@ -190,6 +191,9 @@ class EnvBatchTests(unittest.TestCase):
         query_url = (
             'https://mail.example.test/api/boobar-graph?'
             'email=first%40example.com')
+        mail_url = (
+            'https://mail.example.test/api?'
+            'type=html&mail=first%40example.com')
         path_url = (
             'https://mail.example.test/api/mail-key/first%40example.com')
         account = parse_vendor_workbook(BytesIO(workbook_bytes([[
@@ -198,6 +202,27 @@ class EnvBatchTests(unittest.TestCase):
         self.assertEqual(
             account.order_no,
             extract_vendor_order_no(query_url, 'FIRST@example.com'))
+        self.assertEqual(
+            account.order_no,
+            extract_vendor_order_no(mail_url, 'FIRST@example.com'))
+
+    def test_parser_accepts_mail_query_vendor_format_without_header(self):
+        cookie = '[{"name":"sid","value":"synthetic"}]'
+        rows = [
+            ['first@example.com', 'pass-one',
+             ('https://mail.example.test/api?'
+              'type=html&mail=first%40example.com'), cookie],
+            ['second@example.com', 'pass-two',
+             ('https://mail.example.test/api?'
+              'type=html&mail=second%40example.com'), cookie],
+        ]
+        accounts = parse_vendor_workbook(BytesIO(workbook_bytes(rows)))
+        self.assertEqual(len(accounts), 2)
+        self.assertEqual([account.row_number for account in accounts], [1, 2])
+        self.assertTrue(all(
+            re.fullmatch(r'[0-9a-f]{64}', account.order_no)
+            for account in accounts))
+        self.assertNotEqual(accounts[0].order_no, accounts[1].order_no)
 
     def test_vendor_email_path_format_rejects_unsafe_or_ambiguous_links(self):
         cases = (
@@ -232,6 +257,17 @@ class EnvBatchTests(unittest.TestCase):
             ('https://mail.example.test/api/boobar-graph?'
              'email=first%40example.com&email=first%40example.com',
              '参数重复'),
+            ('https://mail.example.test/api?'
+             'type=html&mail=other%40example.com', '邮箱与账号邮箱不一致'),
+            ('https://mail.example.test/api?'
+             'type=text&mail=first%40example.com', '参数不符合'),
+            ('https://mail.example.test/api?'
+             'type=html&mail=first%40example.com&extra=value', '参数不符合'),
+            ('https://mail.example.test/api?'
+             'type=html&mail=first%40example.com&mail=first%40example.com',
+             '参数重复'),
+            ('https://mail.example.test/api?'
+             'mail=first%40example.com', '参数不符合'),
             ('https://mail.example.test/arbitrary?email=first%40example.com',
              '不含可识别'),
         )

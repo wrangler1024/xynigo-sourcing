@@ -14,9 +14,9 @@ from . import __version__
 
 
 REPOSITORY = "wrangler1024/xynigo-sourcing"
-RELEASE_VERSION = "0.12.8"
+RELEASE_VERSION = "0.12.9"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-08-29T04:12:09Z"
+RELEASE_PUBLISHED_AT = "2026-08-31T05:24:56Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,8 +31,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.12.8-1fbc9b31529c",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.12.8.exe",
+        "runtimeId": "0.12.9-candidate",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.12.9.exe",
         "sha256": "68d22b2583bd781d49a2072164054df880f727c0069f646cb5437b90405b9d63",
         "size": 15_017_962,
         "installMode": "standard_per_user",
@@ -43,7 +43,7 @@ _PLATFORMS = {
         "trayMenu": True,
         "launcherFile": "Xynigo.exe",
         "greenFallback": {
-            "assetName": "Xynigo_Sourcing_Windows_20260828_v0.12.8.zip",
+            "assetName": "Xynigo_Sourcing_Windows_20260831_v0.12.9.zip",
             "sha256": "fd80c2131e4c69178de4cee0a13706e16a7b2b09396c2d82eb83ae346e34423d",
             "size": 18_318_356,
             "installMode": "green_package",
@@ -57,7 +57,7 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.12.8.pkg",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.12.9.pkg",
         "sha256": "aa2b85ff5a48f1b34bbe2b296d531ab0c00fd5e53101a7b17537dea9487a3641",
         "size": 19_411_529,
         "installMode": "standard_system_application",
@@ -67,7 +67,7 @@ _PLATFORMS = {
         "notarized": False,
         "stapled": False,
         "greenFallback": {
-            "assetName": "Xynigo_Sourcing_macOS_arm64_20260828_v0.12.8.zip",
+            "assetName": "Xynigo_Sourcing_macOS_arm64_20260831_v0.12.9.zip",
             "sha256": "c782c2cefb6c3317f06a11db24e3a21258c3e80159eb5796417c89b1a43a59d7",
             "size": 18_300_297,
             "installMode": "green_package",
@@ -246,10 +246,11 @@ def latest_local_executor_release() -> dict[str, object]:
         ),
         "platforms": platforms,
         "notesZh": [
-            "v0.12.8 Windows 运行时修订将在线更新控制入口迁入执行器桌面状态中心。",
+            "v0.12.9 严格兼容号商 /api?type=html&mail=邮箱 接码链接，邮箱必须与账号同行一致。",
             "云端 Web 通过 workspace.rpc.v1 调度当前用户配对的执行器，设备与任务保持 owner 隔离。",
-            "Web 工作台不再显示检查更新或立即更新，也不再通过云端 RPC 下发更新任务。",
-            "Windows 包包含定版状态中心、不可变运行时修订目录和受控在线更新；Mac 包保持原 v0.12.8 资产。",
+            "号商文件解析失败时清空旧统计，避免把上一次成功批次误显示为当前结果。",
+            "Web 工作台不下发更新任务；Windows 在线更新继续由执行器桌面状态中心负责。",
+            "Windows/macOS 标准包和绿色包均包含本次解析兼容修复。",
             "覆盖安装保留配置、日志、运行数据和设备配对；绿色包继续作为显式回退。",
             "本次按内部快速迭代策略提供未签名标准安装包；下载前必须核对 SHA-256，并按飞书开发群教程手动确认系统安全提示。",
         ],

@@ -262,7 +262,7 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             coordinator = UpdateCoordinator(
                 directory,
-                '0.12.8',
+                '0.12.9',
                 environ={'XYNIGO_INSTALL_MODE': 'standard'},
             )
         snapshot = coordinator.snapshot()
@@ -272,7 +272,7 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
 
 class WindowsStandardInstallerArtifactTests(unittest.TestCase):
     def test_local_compiled_artifact_metadata_when_present(self):
-        metadata = ROOT / 'dist/Xynigo_Sourcing_Windows_Setup_v0.12.8.json'
+        metadata = ROOT / 'dist/Xynigo_Sourcing_Windows_Setup_v0.12.9.json'
         if not metadata.is_file():
             self.skipTest('standard installer artifact is built in packaging CI')
         import json
@@ -309,11 +309,11 @@ class LocalExecutorStatusContractTests(unittest.TestCase):
             'enabled': True,
             'state': 'available',
             'installMode': 'standard',
-            'currentVersion': '0.12.8',
-            'currentRuntimeId': '0.12.8-test',
-            'latestVersion': '0.12.9',
-            'latestRuntimeId': '0.12.9-test',
-            'message': '发现可在线升级的新构建 v0.12.9',
+            'currentVersion': '0.12.9',
+            'currentRuntimeId': '0.12.9-test',
+            'latestVersion': '0.12.10',
+            'latestRuntimeId': '0.12.10-test',
+            'message': '发现可在线升级的新构建 v0.12.10',
         })
         state.hub_status = lambda force=False: (True, 'raw hub response')
         with patch.object(
@@ -332,7 +332,7 @@ class LocalExecutorStatusContractTests(unittest.TestCase):
         self.assertTrue(payload['hubStudio']['connected'])
         self.assertEqual(payload['tasks']['activeCount'], 1)
         self.assertEqual(payload['update']['state'], 'available')
-        self.assertEqual(payload['update']['latestVersion'], '0.12.9')
+        self.assertEqual(payload['update']['latestVersion'], '0.12.10')
         encoded = __import__('json').dumps(payload, ensure_ascii=False)
         for forbidden in (
             'executor-internal-id', 'query-sensitive-id',
