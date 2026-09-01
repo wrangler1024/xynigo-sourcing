@@ -122,7 +122,7 @@ def test_cloud_workspace_shell_and_assets_are_public_but_api_stays_protected(
     with TestClient(app) as client:
         workspace = client.get("/")
         assert workspace.status_code == 200
-        assert "<title>Xynigo Sourcing v0.12.10</title>" in workspace.text
+        assert "<title>Xynigo Sourcing v0.12.11</title>" in workspace.text
         assert 'src="xynigo-logo.png?v=6"' in workspace.text
         assert 'href="/favicon.ico?v=6"' in workspace.text
         assert "const CLOUD_WEB_MODE" in workspace.text
@@ -167,9 +167,9 @@ def test_authenticated_member_can_read_immutable_local_executor_release(
         assert response.headers["x-content-type-options"] == "nosniff"
         payload = response.json()
         assert payload["schemaVersion"] == 1
-        assert payload["version"] == "0.12.10"
+        assert payload["version"] == "0.12.11"
         assert payload["channel"] == "test"
-        assert payload["releaseUrl"].endswith("/releases/tag/v0.12.10")
+        assert payload["releaseUrl"].endswith("/releases/tag/v0.12.11")
         assert set(payload["platforms"]) == {"windows-x86_64", "macos-arm64"}
         for platform, info in payload["platforms"].items():
             assert info["size"] > 1_000_000
@@ -180,7 +180,7 @@ def test_authenticated_member_can_read_immutable_local_executor_release(
                 f"/v1/local-executor/releases/{platform}/primary/download"
             )
             if platform == "windows-x86_64":
-                assert info["runtimeId"].startswith("0.12.10-")
+                assert info["runtimeId"].startswith("0.12.11-")
             assert "github.com" not in info["downloadUrl"]
             fallback = info["greenFallback"]
             assert fallback["assetName"].endswith(".zip")

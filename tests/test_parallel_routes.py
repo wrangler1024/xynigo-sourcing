@@ -51,6 +51,7 @@ class FakeEnvJob(object):
         self.running = False
         self.callback = None
         self.resource_name = resource_name
+        self.stop_calls = 0
 
     def start(self, *_args, reserve_resources=None, on_finished=None,
               **_kwargs):
@@ -59,6 +60,10 @@ class FakeEnvJob(object):
         self.running = True
         self.callback = on_finished
         return 1
+
+    def request_stop(self):
+        self.stop_calls += 1
+        return {'stopping': True, 'stopRequested': True}
 
 
 class ParallelRouteTests(unittest.TestCase):
@@ -78,7 +83,7 @@ class ParallelRouteTests(unittest.TestCase):
             hub=FakeHub(),
             orch=self.orch,
             env_job=self.env_job,
-            backup_job=SimpleNamespace(running=False),
+            backup_job=FakeEnvJob('BACKUP-MX-0825-001'),
             reg_job=SimpleNamespace(running=False),
         )
         self.state.tasks = LocalTaskCoordinator(
@@ -123,6 +128,29 @@ class ParallelRouteTests(unittest.TestCase):
         self.orch.callback()
         self.env_job.callback()
         self.assertFalse(self.state.tasks.running())
+
+    def test_environment_stop_routes_request_cooperative_stop(self):
+        self.post('/api/envbatch/start', {
+            'planId': 'safe-test', 'assignment': '1:新刚',
+            'purchaseDate': '20260825', 'confirmWrite': True})
+        status, body = self.post('/api/envbatch/stop', {})
+        self.assertEqual(status, 202)
+        self.assertTrue(body['stopRequested'])
+        self.assertEqual(self.env_job.stop_calls, 1)
+        self.assertEqual(len(self.state.tasks.snapshot()['tasks']), 1)
+        self.env_job.callback()
+
+        status, started = self.post('/api/envbatch/backup/start', {
+            'buyer': '新刚', 'count': 1, 'type': '备用',
+            'purchaseDate': '20260825', 'confirmWrite': True})
+        self.assertEqual(status, 200)
+        self.assertTrue(started['started'])
+        status, body = self.post('/api/envbatch/backup/stop', {})
+        self.assertEqual(status, 202)
+        self.assertTrue(body['stopRequested'])
+        self.assertEqual(self.state.backup_job.stop_calls, 1)
+        self.assertEqual(len(self.state.tasks.snapshot()['tasks']), 1)
+        self.state.backup_job.callback()
 
     def test_compatibility_mode_returns_409(self):
         self.safe_parallel = False

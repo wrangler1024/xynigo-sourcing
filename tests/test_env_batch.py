@@ -645,6 +645,98 @@ class EnvBatchTests(unittest.TestCase):
             self.assertEqual(sum(call[0] == 'remark' for call in hub.calls), 1)
             self.assertFalse(store.path.exists())
 
+    def test_safe_stop_finishes_active_row_and_resumes_unstarted_rows(self):
+        class BlockingFirstCreateHub(FakeHub):
+            def __init__(self):
+                super().__init__()
+                self.first_started = threading.Event()
+                self.release_first = threading.Event()
+
+            def env_create(self, body):
+                if not self.first_started.is_set():
+                    self.first_started.set()
+                    if not self.release_first.wait(2):
+                        raise RuntimeError('test timed out waiting to release create')
+                return super().env_create(body)
+
+        source = workbook_bytes(demo_rows())
+        accounts = parse_vendor_workbook(BytesIO(source))
+        hub = BlockingFirstCreateHub()
+        stop_event = threading.Event()
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ResumeStateStore(
+                batch_fingerprint(source, '2:新刚', 'MX', '20260819'), tmp)
+            first = BatchEnvOrchestrator(
+                hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY,
+                purchase_date='20260819', state_store=store,
+                sleep_fn=lambda _seconds: None, max_workers=1,
+                stop_event=stop_event)
+            first.prepare(accounts, '2:新刚')
+            worker = threading.Thread(target=first.run)
+            worker.start()
+            self.assertTrue(hub.first_started.wait(1))
+            stop_event.set()
+            hub.release_first.set()
+            worker.join(3)
+            self.assertFalse(worker.is_alive())
+
+            self.assertEqual(
+                [row.state for row in first.rows], ['done', 'stopped'])
+            self.assertEqual(
+                first.rows[0].completed_steps,
+                {'env_created', 'cookie_imported', 'account_bound',
+                 'remarked', 'done'})
+            self.assertEqual(sum(call[0] == 'create' for call in hub.calls), 1)
+            self.assertEqual(sum(call[0] == 'cookie' for call in hub.calls), 1)
+            self.assertEqual(sum(call[0] == 'account' for call in hub.calls), 1)
+            self.assertEqual(sum(call[0] == 'remark' for call in hub.calls), 1)
+            self.assertTrue(store.path.exists())
+
+            resumed = BatchEnvOrchestrator(
+                hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY,
+                purchase_date='20260819', state_store=store,
+                sleep_fn=lambda _seconds: None, max_workers=1)
+            resumed.prepare(accounts, '2:新刚')
+            resumed.run()
+            self.assertEqual(
+                [row.state for row in resumed.rows], ['done', 'done'])
+            self.assertEqual(sum(call[0] == 'create' for call in hub.calls), 2)
+            self.assertFalse(store.path.exists())
+
+    def test_backup_safe_stop_does_not_start_queued_rows(self):
+        class BlockingFirstCreateHub(FakeHub):
+            def __init__(self):
+                super().__init__()
+                self.first_started = threading.Event()
+                self.release_first = threading.Event()
+
+            def env_create(self, body):
+                if not self.first_started.is_set():
+                    self.first_started.set()
+                    if not self.release_first.wait(2):
+                        raise RuntimeError('test timed out waiting to release create')
+                return super().env_create(body)
+
+        hub = BlockingFirstCreateHub()
+        stop_event = threading.Event()
+        runner = BackupEnvOrchestrator(
+            hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY,
+            sleep_fn=lambda _seconds: None, max_workers=1,
+            stop_event=stop_event)
+        runner.prepare('新刚', 2, '备用', '20260819')
+        worker = threading.Thread(target=runner.run)
+        worker.start()
+        self.assertTrue(hub.first_started.wait(1))
+        stop_event.set()
+        hub.release_first.set()
+        worker.join(3)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual([row.state for row in runner.rows], ['done', 'stopped'])
+        self.assertEqual(sum(call[0] == 'create' for call in hub.calls), 1)
+        self.assertEqual(sum(call[0] == 'remark' for call in hub.calls), 1)
+        result = backup_result_tsv_bytes(runner.rows, 'MX').decode('utf-8-sig')
+        self.assertIn('已停止', result)
+
     def test_remark_and_mapping_export_contract(self):
         accounts = parse_vendor_workbook(BytesIO(workbook_bytes(demo_rows()[:1])))
         plan = build_batch_plan(

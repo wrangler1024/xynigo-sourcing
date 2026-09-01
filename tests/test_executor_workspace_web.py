@@ -172,6 +172,20 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             retry_handler.index("toast('重试已受理；正在从失败步骤继续')"),
         )
 
+    def test_environment_safe_stop_is_visible_and_uses_mode_specific_route(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        for marker in (
+            'id="btnEnvStop"',
+            "let envStopSubmitting = false;",
+            "let envStopRequested = false;",
+            "'/api/envbatch/stop'",
+            "'/api/envbatch/backup/stop'",
+            "安全停止不会强行中断",
+            "未开始行已保留",
+            "r.state === 'stopped'",
+        ):
+            self.assertIn(marker, html)
+
 
 if __name__ == "__main__":
     unittest.main()

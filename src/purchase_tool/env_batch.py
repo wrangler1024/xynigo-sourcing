@@ -926,7 +926,7 @@ class BatchEnvOrchestrator(object):
     def __init__(self, hub, purchase_tag, proxy_link, site='MX',
                  purchase_date=None, state_store=None,
                  write_interval=0.3, sleep_fn=time.sleep, rng=None,
-                 on_progress=None, max_workers=5):
+                 on_progress=None, max_workers=5, stop_event=None):
         self.hub = hub
         self.site = normalize_env_site(site)
         self.purchase_tag = validate_purchase_tag(purchase_tag)
@@ -937,6 +937,7 @@ class BatchEnvOrchestrator(object):
         self.sleep = sleep_fn
         self.rng = rng or random
         self.on_progress = on_progress
+        self.stop_event = stop_event or threading.Event()
         # 并行建环境：纯 Local API 路径（不开浏览器窗口），默认 5、
         # 1-10 可调；模块一开窗口场景的并发结论不适用于此处。
         self.max_workers = max(1, min(10, int(max_workers)))
@@ -981,6 +982,14 @@ class BatchEnvOrchestrator(object):
     def _run_one(self, row):
         if 'done' in row.completed_steps:
             row.state = 'done'
+            return
+        # 安全停止只在一整行开始前生效。已经进入五步写链路的行必须完整
+        # 收尾，避免留下“环境已建但未绑号/未写备注”的半成品。
+        if self.stop_event.is_set():
+            row.state = 'stopped'
+            row.error_step = ''
+            row.error = '安全停止：未开始执行'
+            self._persist()
             return
         current_step = 'env_created'
         try:
@@ -1210,7 +1219,7 @@ class BackupEnvOrchestrator(object):
 
     def __init__(self, hub, purchase_tag, proxy_link, site='MX',
                  write_interval=0.3, sleep_fn=time.sleep, rng=None,
-                 on_progress=None, max_workers=5):
+                 on_progress=None, max_workers=5, stop_event=None):
         self.hub = hub
         self.site = normalize_env_site(site)
         self.purchase_tag = validate_purchase_tag(purchase_tag)
@@ -1219,6 +1228,7 @@ class BackupEnvOrchestrator(object):
         self.sleep = sleep_fn
         self.rng = rng or random
         self.on_progress = on_progress
+        self.stop_event = stop_event or threading.Event()
         self.max_workers = max(1, min(10, int(max_workers)))
         self._persist_lock = threading.Lock()
         self.rows = []
@@ -1250,6 +1260,13 @@ class BackupEnvOrchestrator(object):
 
     def _run_one(self, row):
         if row.state == 'done':
+            return
+        # 与绑号环境一致：只阻止尚未开始的整行，不在建环境和写备注之间
+        # 强切，确保不会制造缺备注的半成品环境。
+        if self.stop_event.is_set():
+            row.state = 'stopped'
+            row.error = '安全停止：未开始执行'
+            self._persist()
             return
         row.state = 'running'
         self._persist()
@@ -1316,7 +1333,8 @@ def backup_result_tsv_bytes(rows, site):
             row.serial_number if row.serial_number is not None else '',
             row.container_code,
             site,
-            '完成' if row.state == 'done' else '失败',
+            ('完成' if row.state == 'done' else
+             ('已停止' if row.state == 'stopped' else '失败')),
         ])
     return output.getvalue().encode('utf-8-sig')
 
@@ -1351,7 +1369,9 @@ def mapping_workbook_bytes(rows):
             row.serial_number,
             row.account.buyer,
             row.binding_time,
-            '完成' if row.state == 'done' else '失败:%s' % row.error_step,
+            ('完成' if row.state == 'done' else
+             ('已停止' if row.state == 'stopped'
+              else '失败:%s' % row.error_step)),
         ])
     for cell in sheet[1]:
         cell.font = Font(bold=True, color='FFFFFF')

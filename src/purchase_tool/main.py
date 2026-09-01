@@ -1369,6 +1369,9 @@ class EnvBatchJob(object):
         self.lock = threading.Lock()
         self.pending = {}
         self.running = False
+        self.stop_requested = False
+        self.stop_available = False
+        self.stop_event = threading.Event()
         self.started_at = None
         self.finished_at = None
         self.rows = []
@@ -1676,6 +1679,10 @@ class EnvBatchJob(object):
             if not pending:
                 raise ValueError('解析计划已过期，请重新选择 xlsx')
             self.running = True
+            self.stop_requested = False
+            self.stop_available = True
+            self.stop_event = threading.Event()
+            stop_event = self.stop_event
             self.started_at = time.time()
             self.finished_at = None
             self.rows = []
@@ -1716,7 +1723,8 @@ class EnvBatchJob(object):
                     purchase_date=purchase_date,
                     state_store=ResumeStateStore(batch_id),
                     on_progress=self._set_rows,
-                    max_workers=runtime['workers'])
+                    max_workers=runtime['workers'],
+                    stop_event=stop_event)
                 with self.lock:
                     self.runner = runner
                 runner.prepare(accounts, assignment)
@@ -1726,8 +1734,11 @@ class EnvBatchJob(object):
                     reserve_resources(environment_resources(runner.rows))
                 result_rows = runner.run()
                 mapping = mapping_workbook_bytes(result_rows)
-                checks = runner.verify_ips(verify_sample_count)
+                checks = ([] if stop_event.is_set()
+                          else runner.verify_ips(verify_sample_count))
                 done = sum(row.state == 'done' for row in result_rows)
+                stopped = sum(row.state == 'stopped' for row in result_rows)
+                failed = sum(row.state == 'failed' for row in result_rows)
                 if write_lark_ledger:
                     self._sync_ledger_rows(
                         ledger_service, result_rows,
@@ -1743,7 +1754,8 @@ class EnvBatchJob(object):
                     self.summary = {
                         'total': len(result_rows),
                         'done': done,
-                        'failed': len(result_rows) - done,
+                        'stopped': stopped,
+                        'failed': failed,
                         'ipOk': sum(bool(item.get('ok')) for item in checks),
                         'ipTotal': len(checks),
                     }
@@ -1762,6 +1774,7 @@ class EnvBatchJob(object):
                 with self.lock:
                     self.finished_at = time.time()
                     self.running = False
+                    self.stop_available = False
                 if on_finished:
                     try:
                         on_finished()
@@ -1770,6 +1783,19 @@ class EnvBatchJob(object):
 
         threading.Thread(target=worker, daemon=True).start()
         return len(accounts)
+
+    def request_stop(self):
+        """Request a cooperative stop without interrupting an active row."""
+        with self.lock:
+            if not self.running or not self.stop_available:
+                raise RuntimeError('没有正在执行且可安全停止的买家号建环境任务')
+            self.stop_requested = True
+            self.stop_event.set()
+            return {
+                'stopping': True,
+                'stopRequested': True,
+                'message': '已停止领取新行，正在等待当前并发行安全完成',
+            }
 
     def retry_row(self, account_id, reserve_resources=None,
                   on_finished=None):
@@ -1788,6 +1814,10 @@ class EnvBatchJob(object):
                 reserve_resources(environment_resources([row]))
             self._cancel_sensitive_cleanup_locked()
             self.running = True
+            self.stop_requested = False
+            self.stop_available = True
+            self.stop_event = threading.Event()
+            self.runner.stop_event = self.stop_event
             self.started_at = time.time()
             self.finished_at = None
 
@@ -1809,7 +1839,10 @@ class EnvBatchJob(object):
                     self.summary.update({
                         'total': len(result_rows),
                         'done': sum(row.state == 'done' for row in result_rows),
-                        'failed': sum(row.state != 'done' for row in result_rows),
+                        'stopped': sum(
+                            row.state == 'stopped' for row in result_rows),
+                        'failed': sum(
+                            row.state == 'failed' for row in result_rows),
                     })
                 self._schedule_sensitive_cleanup(self.runner)
             except Exception as exc:
@@ -1820,6 +1853,7 @@ class EnvBatchJob(object):
                 with self.lock:
                     self.finished_at = time.time()
                     self.running = False
+                    self.stop_available = False
                 if on_finished:
                     try:
                         on_finished()
@@ -1966,6 +2000,8 @@ class EnvBatchJob(object):
                 and all(row.account.password for row in done_rows))
             return {
                 'running': self.running,
+                'stopRequested': self.stop_requested,
+                'stopAvailable': self.stop_available,
                 'elapsedSec': elapsed,
                 'rows': [dict(row) for row in self.rows],
                 'summary': dict(self.summary),
@@ -2000,6 +2036,8 @@ class BackupEnvJob(object):
         self.config_getter = config_getter
         self.lock = threading.Lock()
         self.running = False
+        self.stop_requested = False
+        self.stop_event = threading.Event()
         self.started_at = None
         self.finished_at = None
         self.rows = []
@@ -2091,6 +2129,9 @@ class BackupEnvJob(object):
             if self.running:
                 raise RuntimeError('已有备用环境任务在进行')
             self.running = True
+            self.stop_requested = False
+            self.stop_event = threading.Event()
+            stop_event = self.stop_event
             self.started_at = time.time()
             self.finished_at = None
             self.rows = []
@@ -2106,19 +2147,24 @@ class BackupEnvJob(object):
                     hub, purchase_tag=runtime['purchaseTag'],
                     proxy_link=runtime['proxyLink'], site=runtime['site'],
                     on_progress=self._set_rows,
-                    max_workers=runtime['workers'])
+                    max_workers=runtime['workers'],
+                    stop_event=stop_event)
                 runner.prepare(buyer, count, backup_type, purchase_date)
                 if reserve_resources:
                     reserve_resources(environment_resources(runner.rows))
                 result_rows = runner.run()
-                checks = runner.verify_ips(verify_sample_count)
+                checks = ([] if stop_event.is_set()
+                          else runner.verify_ips(verify_sample_count))
                 done = sum(row.state == 'done' for row in result_rows)
+                stopped = sum(row.state == 'stopped' for row in result_rows)
+                failed = sum(row.state == 'failed' for row in result_rows)
                 with self.lock:
                     self.ip_checks = checks
                     self.summary = {
                         'total': len(result_rows),
                         'done': done,
-                        'failed': len(result_rows) - done,
+                        'stopped': stopped,
+                        'failed': failed,
                         'ipOk': sum(bool(item.get('ok')) for item in checks),
                         'ipTotal': len(checks),
                     }
@@ -2149,6 +2195,19 @@ class BackupEnvJob(object):
         threading.Thread(target=worker, daemon=True).start()
         return count
 
+    def request_stop(self):
+        """Request a cooperative stop without interrupting an active row."""
+        with self.lock:
+            if not self.running:
+                raise RuntimeError('没有正在执行的备用/测试环境任务')
+            self.stop_requested = True
+            self.stop_event.set()
+            return {
+                'stopping': True,
+                'stopRequested': True,
+                'message': '已停止领取新行，正在等待当前并发行安全完成',
+            }
+
     def snapshot(self):
         with self.lock:
             end_at = time.time() if self.running else self.finished_at
@@ -2156,6 +2215,7 @@ class BackupEnvJob(object):
                 if self.started_at and end_at else 0
             return {
                 'running': self.running,
+                'stopRequested': self.stop_requested,
                 'elapsedSec': elapsed,
                 'rows': [dict(row) for row in self.rows],
                 'summary': dict(self.summary),
@@ -3259,6 +3319,8 @@ class Handler(BaseHTTPRequestHandler):
                     raise
                 self._json({'started': True, 'count': count,
                             'taskId': task_id})
+            elif path == '/api/envbatch/stop':
+                self._json(STATE.env_job.request_stop(), 202)
             elif path == '/api/envbatch/retry-row':
                 task_id = STATE.tasks.begin('env_batch')
                 account_id = str(body.get('accountId') or '')
@@ -3306,6 +3368,8 @@ class Handler(BaseHTTPRequestHandler):
                     raise
                 self._json({'started': True, 'count': count,
                             'taskId': task_id})
+            elif path == '/api/envbatch/backup/stop':
+                self._json(STATE.backup_job.request_stop(), 202)
             elif path == '/api/envbatch/preferences':
                 lock = getattr(STATE, 'config_lock', None)
                 with lock if lock is not None else nullcontext():

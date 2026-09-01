@@ -243,6 +243,65 @@ class EnvWebJobTests(unittest.TestCase):
         self.assertEqual(backup._runtime_config()['workers'], 9)
         self.assertEqual(backup._runtime_config()['configuredWorkers'], 9)
 
+    def test_safe_stop_request_is_idempotent_and_reports_stopped_rows(self):
+        class BlockingFirstCreateHub(FakeHub):
+            def __init__(self):
+                super().__init__()
+                self.first_started = threading.Event()
+                self.release_first = threading.Event()
+
+            def env_create(self, body):
+                if not self.first_started.is_set():
+                    self.first_started.set()
+                    if not self.release_first.wait(2):
+                        raise RuntimeError('test timed out waiting to release create')
+                return super().env_create(body)
+
+        workbook = Workbook()
+        sheet = workbook.active
+        for index in (1, 2):
+            sheet.append([
+                'web%d@example.com' % index, 'web-secret-pass-%d' % index,
+                ('https://codes.example.test/get?orderNo=abc12%d' % index),
+                '[{"name":"sid","value":"cookie-%d"}]' % index,
+            ])
+        output = BytesIO()
+        workbook.save(output)
+        hub = BlockingFirstCreateHub()
+        cfg = {
+            'purchaseTag': TEST_TAG, 'proxyLink': TEST_PROXY,
+            'envCreateWorkers': 1,
+        }
+        job = EnvBatchJob(lambda: hub, lambda: cfg)
+        parsed = job.parse(
+            'vendor.xlsx',
+            base64.b64encode(output.getvalue()).decode('ascii'))
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                    'purchase_tool.main.ResumeStateStore',
+                    lambda batch_id: ResumeStateStore(batch_id, tmp)):
+                job.start(
+                    parsed['planId'], '2:新刚', '20260819',
+                    verify_sample_count=2, confirm_write=True)
+                self.assertTrue(hub.first_started.wait(1))
+                first = job.request_stop()
+                second = job.request_stop()
+                self.assertTrue(first['stopRequested'])
+                self.assertTrue(second['stopRequested'])
+                self.assertTrue(job.snapshot()['stopRequested'])
+                hub.release_first.set()
+                deadline = time.time() + 5
+                while job.snapshot()['running'] and time.time() < deadline:
+                    time.sleep(0.05)
+
+        snap = job.snapshot()
+        self.assertFalse(snap['running'])
+        self.assertTrue(snap['stopRequested'])
+        self.assertEqual(snap['summary']['done'], 1)
+        self.assertEqual(snap['summary']['stopped'], 1)
+        self.assertEqual(snap['summary']['failed'], 0)
+        self.assertEqual(snap['summary']['ipTotal'], 0)
+
     def test_apply_generates_safe_mapping_without_legacy_credential_tsv(self):
         source = source_bytes()
         hub = FakeHub()
@@ -742,6 +801,42 @@ class BackupEnvJobTests(unittest.TestCase):
         final = job.snapshot()
         self.assertFalse(final['running'])
         self.assertEqual(final['summary']['done'], 3)
+
+    def test_backup_job_safe_stop_reports_unstarted_rows(self):
+        class BlockingFirstCreateHub(FakeHub):
+            def __init__(self):
+                super().__init__()
+                self.first_started = threading.Event()
+                self.release_first = threading.Event()
+
+            def env_create(self, body):
+                if not self.first_started.is_set():
+                    self.first_started.set()
+                    if not self.release_first.wait(2):
+                        raise RuntimeError('test timed out waiting to release create')
+                return super().env_create(body)
+
+        hub = BlockingFirstCreateHub()
+        cfg = {
+            'purchaseTag': TEST_TAG, 'proxyLink': TEST_PROXY,
+            'envCreateWorkers': 1,
+        }
+        job = BackupEnvJob(lambda: hub, lambda: cfg)
+        job.start('新刚', 2, '备用', '20260819',
+                  verify_sample_count=2, confirm_write=True)
+        self.assertTrue(hub.first_started.wait(1))
+        self.assertTrue(job.request_stop()['stopRequested'])
+        self.assertTrue(job.request_stop()['stopRequested'])
+        hub.release_first.set()
+        deadline = time.time() + 5
+        while job.snapshot()['running'] and time.time() < deadline:
+            time.sleep(0.05)
+        snap = job.snapshot()
+        self.assertTrue(snap['stopRequested'])
+        self.assertEqual(snap['summary']['done'], 1)
+        self.assertEqual(snap['summary']['stopped'], 1)
+        self.assertEqual(snap['summary']['failed'], 0)
+        self.assertEqual(snap['summary']['ipTotal'], 0)
 
     def test_backup_uses_builtin_default_proxy_when_unset(self):
         from purchase_tool.env_batch import DEFAULT_PROXY_LINK

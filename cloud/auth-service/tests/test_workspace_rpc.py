@@ -14,6 +14,8 @@ from xynigo_auth.workspace_rpc import WorkspaceRpcError, workspace_rpc_permissio
         ("GET", "/api/envbatch/preferences", "resource.environment.create"),
         ("POST", "/api/envbatch/preferences", "resource.environment.create"),
         ("POST", "/api/envbatch/start", "resource.environment.create"),
+        ("POST", "/api/envbatch/stop", "resource.environment.create"),
+        ("POST", "/api/envbatch/backup/stop", "resource.environment.create"),
         ("GET", "/api/envbatch/progress", "resource.environment.create"),
         ("GET", "/api/resources/stores?refresh=1", "resource.store.read"),
         ("POST", "/api/buyer-library/import/parse", "resource.buyer.import"),
