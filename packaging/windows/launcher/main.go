@@ -90,12 +90,18 @@ type localStatus struct {
 		} `json:"items"`
 	} `json:"tasks"`
 	Update struct {
-		Enabled        bool   `json:"enabled"`
-		State          string `json:"state"`
-		InstallMode    string `json:"installMode"`
-		CurrentVersion string `json:"currentVersion"`
-		LatestVersion  string `json:"latestVersion"`
-		Message        string `json:"message"`
+		Enabled                     bool   `json:"enabled"`
+		State                       string `json:"state"`
+		Stage                       string `json:"stage"`
+		InstallMode                 string `json:"installMode"`
+		CurrentVersion              string `json:"currentVersion"`
+		LatestVersion               string `json:"latestVersion"`
+		Message                     string `json:"message"`
+		DownloadReceivedBytes       int64  `json:"downloadReceivedBytes"`
+		DownloadTotalBytes          int64  `json:"downloadTotalBytes"`
+		DownloadPercent             int    `json:"downloadPercent"`
+		DownloadSpeedBytesPerSecond int64  `json:"downloadSpeedBytesPerSecond"`
+		DownloadEtaSeconds          *int   `json:"downloadEtaSeconds"`
 	} `json:"update"`
 }
 
@@ -131,6 +137,7 @@ type launcherApp struct {
 	pairButton     *walk.PushButton
 	startButton    *walk.PushButton
 	updateButton   *walk.PushButton
+	updateProgress *walk.ProgressBar
 	trayStatus     *walk.Action
 	trayCloud      *walk.Action
 	trayHub        *walk.Action
@@ -365,6 +372,7 @@ func (app *launcherApp) buildWindow() error {
 					PushButton{AssignTo: &app.startButton, Text: "重新启动执行器", MinSize: Size{Width: 132, Height: 38}, OnClicked: func() { go app.restartExecutor() }},
 					PushButton{Text: "打开日志目录", MinSize: Size{Width: 112, Height: 38}, OnClicked: func() { app.openLogs() }},
 					PushButton{AssignTo: &app.updateButton, Text: "检查更新", MinSize: Size{Width: 108, Height: 38}, OnClicked: app.handleUpdateAction},
+					ProgressBar{AssignTo: &app.updateProgress, MinValue: 0, MaxValue: 100, Value: 0, Visible: false, MinSize: Size{Width: 150, Height: 18}},
 					HSpacer{},
 					PushButton{Text: "刷新状态", MinSize: Size{Width: 96, Height: 38}, OnClicked: func() { go app.refreshStatus() }},
 				}},
@@ -850,8 +858,25 @@ func (app *launcherApp) renderUpdateStatus(status *localStatus) {
 			enabled = false
 		}
 	case "downloading":
-		buttonText = "正在下载…"
-		trayText = "正在下载更新…"
+		if update.DownloadPercent > 0 {
+			buttonText = fmt.Sprintf("下载 %d%%", update.DownloadPercent)
+			trayText = fmt.Sprintf("正在下载更新 %d%%", update.DownloadPercent)
+		} else {
+			buttonText = "正在下载…"
+			trayText = "正在下载更新…"
+		}
+		enabled = false
+	case "verifying":
+		buttonText = "正在校验…"
+		trayText = "正在校验更新包…"
+		enabled = false
+	case "extracting":
+		buttonText = "正在解压…"
+		trayText = "正在解压更新包…"
+		enabled = false
+	case "installing":
+		buttonText = "正在安装…"
+		trayText = "正在启动安装…"
 		enabled = false
 	case "restarting":
 		buttonText = "正在重启…"
@@ -877,6 +902,21 @@ func (app *launcherApp) renderUpdateStatus(status *localStatus) {
 	}
 	app.updateButton.SetText(buttonText)
 	app.updateButton.SetEnabled(enabled)
+	progressVisible := update.State == "downloading" || update.State == "verifying" ||
+		update.State == "extracting" || update.State == "installing" || update.State == "restarting"
+	if app.updateProgress != nil {
+		if update.State == "downloading" && update.DownloadPercent > 0 {
+			_ = app.updateProgress.SetMarqueeMode(false)
+			app.updateProgress.SetValue(update.DownloadPercent)
+		} else if progressVisible {
+			app.updateProgress.SetValue(0)
+			_ = app.updateProgress.SetMarqueeMode(true)
+		} else {
+			_ = app.updateProgress.SetMarqueeMode(false)
+			app.updateProgress.SetValue(0)
+		}
+		app.updateProgress.SetVisible(progressVisible)
+	}
 	_ = app.trayUpdate.SetText(trayText)
 	_ = app.trayUpdate.SetEnabled(enabled)
 }

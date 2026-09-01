@@ -268,7 +268,8 @@ def validate_proxy_link(value):
     return link
 
 
-def envbatch_preflight(hub, purchase_tag, proxy_link, site='MX'):
+def envbatch_preflight(
+        hub, purchase_tag, proxy_link, site='MX', groups=None):
     """Return a non-sensitive readiness summary for module three."""
     site = normalize_env_site(site)
     result = {
@@ -292,12 +293,14 @@ def envbatch_preflight(hub, purchase_tag, proxy_link, site='MX'):
     except EnvBatchError as exc:
         problems.append(str(exc))
     try:
-        groups = list(hub.group_list() or [])
+        available_groups = (
+            list(hub.group_list() or []) if groups is None
+            else list(groups or []))
     except Exception:
         problems.append('HubStudio 未连接，请启动客户端并检查 Local API 端口')
     else:
         result['hubConnected'] = True
-        result['groupFound'] = bool(tag) and tag in groups
+        result['groupFound'] = bool(tag) and tag in available_groups
         if tag and not result['groupFound']:
             problems.append('采购分组未在 HubStudio 中精确匹配，请核对设置')
     result['ready'] = not problems

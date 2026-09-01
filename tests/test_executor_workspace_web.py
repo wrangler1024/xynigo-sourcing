@@ -28,13 +28,13 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             html.index("return cloudLocalStub(path, opts);"),
         )
         env_groups = html[
-            html.index("async function loadEnvGroups()"):
+            html.index("async function loadEnvGroups(options={})"):
             html.index("function inferQuerySite(groupName)")
         ]
         self.assertIn("/api/envbatch/preferences", env_groups)
         self.assertNotIn("api('/api/config'", env_groups)
-        self.assertIn("envGroupCompatibleWithSite(name, site)", env_groups)
-        self.assertIn("$('envSiteGroup').value = '';", env_groups)
+        self.assertIn("renderEnvGroupsForSite(site, configured)", env_groups)
+        self.assertIn("scheduleEnvWorkspacePreferenceSave", env_groups)
 
     def test_phase_two_uses_cloud_runs_and_dedicated_encrypted_parse(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")
@@ -77,8 +77,16 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             html.index("/* ---------- 操作 ---------- */")
         ]
         self.assertIn("environmentGroup=' + encodeURIComponent(selectedGroup)", preflight)
-        self.assertIn("String(cachedState.purchaseTag || '') === selectedGroup", preflight)
-        self.assertIn("if (!$('envSiteGroup').value && state.purchaseTag", preflight)
+        self.assertIn(
+            "state = envPreflightFromSnapshot(snapshotMeta, site, selectedGroup)",
+            preflight,
+        )
+        derived = html[
+            html.index("function envPreflightFromSnapshot"):
+            html.index("async function refreshEnvPreflight")
+        ]
+        self.assertIn("const groupFound = groups.has(selectedGroup)", derived)
+        self.assertIn("正式执行前服务端会再次校验", derived)
 
         even_handler = html[
             html.index("$('btnEnvEven').onclick"):
@@ -140,7 +148,7 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         ):
             self.assertIn(marker, html)
         self.assertNotIn("buyers:[], buyerDefaultSplit:[]", html)
-        load_groups = html[html.index("async function loadEnvGroups()"):]
+        load_groups = html[html.index("async function loadEnvGroups(options={})"):]
         self.assertLess(
             load_groups.index("refreshAssignUi();"),
             load_groups.index("[cfg, result] = await Promise.all"),
@@ -187,6 +195,39 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         ]
         self.assertIn("loadGroups();", query_panel)
         self.assertIn("loadEnvGroups().then(() => refreshEnvPreflight());", query_panel)
+
+    def test_environment_setup_is_first_and_site_group_switches_use_cache(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        setup = html.index('id="envCardSetup"')
+        parse = html.index('id="envCardParse"')
+        assignment = html.index('id="envAssignTitle"')
+        self.assertLess(setup, parse)
+        self.assertLess(parse, assignment)
+        for marker in (
+            '① 选择创建参数',
+            '② 载入号商名单',
+            '③ 采购员分配',
+            'CLOUD_WORKSPACE_SNAPSHOT_CLIENT_TTL_MS',
+            'cloudWorkspaceSnapshotCachedAt',
+            'renderEnvGroupsForSite(site, purchaseTags[site])',
+            'scheduleEnvWorkspacePreferenceSave(site, rendered.selected)',
+            'paintCachedEnvPreflightSelection()',
+            '分组已从缓存即时筛选',
+            '偏好正在后台保存',
+        ):
+            self.assertIn(marker, html)
+        site_handler = html[
+            html.index("$('envSite').onchange"):
+            html.index("$('envSiteGroup').onchange")
+        ]
+        group_handler = html[
+            html.index("$('envSiteGroup').onchange"):
+            html.index("function inferQuerySite(groupName)")
+        ]
+        self.assertNotIn('await loadEnvGroups()', site_handler)
+        self.assertNotIn('refreshEnvPreflight(true)', site_handler)
+        self.assertNotIn('refreshEnvPreflight(true)', group_handler)
+        self.assertNotIn('e.target.disabled = true', site_handler + group_handler)
 
     def test_environment_file_failure_clears_previous_statistics(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")

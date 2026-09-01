@@ -92,11 +92,13 @@ class FakeHub(object):
     def __init__(self, create_delay=0.0):
         self.envs = []
         self.groups = [TEST_TAG]
+        self.group_calls = 0
         self.calls = []
         self.lock = threading.Lock()
         self.create_delay = create_delay
 
     def group_list(self):
+        self.group_calls += 1
         return list(self.groups)
 
     def env_list(self, tag=None):
@@ -727,6 +729,21 @@ class EnvWebJobTests(unittest.TestCase):
             environment_group=TEST_TAG)
         self.assertEqual(len(rows), 1)
         self.assertIn(('list', TEST_TAG), hub.calls)
+
+    def test_page_preflight_can_reuse_cached_group_list(self):
+        hub = FakeHub()
+        cached_reads = []
+        job = EnvBatchJob(
+            lambda: hub,
+            runtime_config,
+            group_getter=lambda: cached_reads.append(True) or [TEST_TAG],
+        )
+
+        preflight = job.preflight('MX', environment_group=TEST_TAG)
+
+        self.assertTrue(preflight['ready'])
+        self.assertEqual(cached_reads, [True])
+        self.assertEqual(hub.group_calls, 0)
 
     def test_missing_group_blocks_preview_before_env_list(self):
         hub = FakeHub()

@@ -872,7 +872,8 @@ class AppState(object):
                             if method == 'GET' else
                             'resource.buyer.import'))))
         self.env_job = EnvBatchJob(
-            lambda: self.hub, lambda: self.cfg)
+            lambda: self.hub, lambda: self.cfg,
+            group_getter=self.hub_groups)
         self.backup_job = BackupEnvJob(lambda: self.hub, lambda: self.cfg)
         self.resources = ResourceCenterService(
             lambda: self.hub, self.lark_credentials.load)
@@ -1116,10 +1117,22 @@ class AppState(object):
             'update': {
                 'enabled': bool(update.get('enabled')),
                 'state': str(update.get('state') or 'disabled'),
+                'stage': str(update.get('stage') or ''),
                 'installMode': str(update.get('installMode') or ''),
                 'currentVersion': str(update.get('currentVersion') or ''),
                 'latestVersion': str(update.get('latestVersion') or ''),
                 'message': str(update.get('message') or ''),
+                'downloadReceivedBytes': int(
+                    update.get('downloadReceivedBytes') or 0),
+                'downloadTotalBytes': int(
+                    update.get('downloadTotalBytes') or 0),
+                'downloadPercent': max(
+                    0, min(100, int(update.get('downloadPercent') or 0))),
+                'downloadSpeedBytesPerSecond': int(
+                    update.get('downloadSpeedBytesPerSecond') or 0),
+                'downloadEtaSeconds': (
+                    int(update['downloadEtaSeconds'])
+                    if update.get('downloadEtaSeconds') is not None else None),
             },
         }
 
@@ -1475,10 +1488,11 @@ class EnvBatchJob(object):
     RESULT_CREDENTIAL_TTL_SECONDS = 15 * 60
 
     def __init__(self, hub_getter, config_getter=load_config,
-                 ledger_sync_factory=None):
+                 ledger_sync_factory=None, group_getter=None):
         self.hub_getter = hub_getter
         self.config_getter = config_getter
         self.ledger_sync_factory = ledger_sync_factory
+        self.group_getter = group_getter
         self.lock = threading.Lock()
         self.pending = {}
         self.running = False
@@ -1531,7 +1545,8 @@ class EnvBatchJob(object):
         runtime = self._runtime_config(site, environment_group)
         result = envbatch_preflight(
             self.hub_getter(), runtime['purchaseTag'], runtime['proxyLink'],
-            site=runtime['site'])
+            site=runtime['site'],
+            groups=(self.group_getter() if self.group_getter else None))
         result.update({
             'configuredWorkers': runtime['configuredWorkers'],
             'effectiveWorkers': runtime['workers'],

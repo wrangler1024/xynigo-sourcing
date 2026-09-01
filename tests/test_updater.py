@@ -39,9 +39,16 @@ class FakeClient(object):
             raise self.error
         return self.latest
 
-    def prepare_update(self, _release, output=print):
+    def prepare_update(
+            self, _release, output=print, progress=None, stage=None):
         self.prepared = True
+        if progress:
+            progress(5, 10)
         output('下载进度：100%')
+        if progress:
+            progress(10, 10)
+        if stage:
+            stage('verifying', '下载完成，正在校验 SHA-256…')
         return object()
 
     def launch_installer(self, _prepared, _install_dir, _current_version):
@@ -266,6 +273,31 @@ class UpdaterTests(unittest.TestCase):
         self.assertTrue(client.launched)
         self.assertEqual(exit_codes, [42])
         self.assertEqual(status['state'], 'restarting')
+        self.assertEqual(status['stage'], 'restarting')
+        self.assertEqual(status['downloadPercent'], 100)
+        self.assertEqual(status['downloadReceivedBytes'], 10)
+        self.assertEqual(status['downloadTotalBytes'], 10)
+
+    def test_download_progress_snapshot_exposes_size_speed_and_eta(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = UpdateCoordinator(
+                tmp, '0.5.0', client=FakeClient(), environ={},
+                skip_marker_path=Path(tmp) / 'no-marker')
+            with manager.lock:
+                manager.state = 'downloading'
+                manager._reset_download_progress_locked()
+                manager.download_started_at -= 2
+            manager._download_progress(5 * 1024 * 1024, 10 * 1024 * 1024)
+            status = manager.snapshot()
+        self.assertEqual(status['state'], 'downloading')
+        self.assertEqual(status['stage'], 'downloading')
+        self.assertEqual(status['downloadPercent'], 50)
+        self.assertEqual(status['downloadReceivedBytes'], 5 * 1024 * 1024)
+        self.assertEqual(status['downloadTotalBytes'], 10 * 1024 * 1024)
+        self.assertGreater(status['downloadSpeedBytesPerSecond'], 0)
+        self.assertGreaterEqual(status['downloadEtaSeconds'], 1)
+        self.assertIn('50%', status['message'])
+        self.assertIn('5.0 MB/10.0 MB', status['message'])
 
     def test_standard_coordinator_confirms_in_web_and_updates_same_version(self):
         exit_codes = []

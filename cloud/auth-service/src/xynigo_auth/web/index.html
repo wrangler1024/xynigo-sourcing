@@ -1884,8 +1884,30 @@
       <button class="mode-tab" data-mode="backup" type="button">📦 备用·测试环境<small>不绑号 → 只建环境 + 写备注（不导 Cookie、不写台账）</small></button>
     </div>
 
+    <section class="card" id="envCardSetup">
+      <div class="card-title">① 选择创建参数 <span class="legend">先确定购买日期、站点和采购分组，再上传买家号文件；切换站点只筛选已缓存分组，不重复查询 HubStudio</span></div>
+      <div class="input-row">
+        <div class="field" style="min-width:180px">
+          <label>购买日期（YYYYMMDD）</label>
+          <input class="env-text" type="date" id="envDate">
+        </div>
+        <div class="field" style="min-width:180px">
+          <label>建环境站点</label>
+          <select id="envSite">
+            <option value="MX">墨西哥站 · shein.com.mx</option>
+            <option value="US">美国站 · us.shein.com</option>
+          </select>
+        </div>
+        <div class="field" style="min-width:220px">
+          <label>HubStudio 采购分组（按站点记忆）</label>
+          <select id="envSiteGroup"><option value="">正在读取已缓存的 HubStudio 分组…</option></select>
+        </div>
+      </div>
+      <div class="reg-plan" id="envPreflightText">正在恢复站点、采购分组与预检快照…</div>
+    </section>
+
     <section class="card" id="envCardParse">
-      <div class="card-title">① 载入号商名单 <span class="legend">Sheet1 固定 4 列：邮箱 / 密码 / 接码Key / Cookie；兼容号商文件有表头或无表头，系统模板固定带表头</span></div>
+      <div class="card-title">② 载入号商名单 <span class="legend">Sheet1 固定 4 列：邮箱 / 密码 / 接码Key / Cookie；兼容号商文件有表头或无表头，系统模板固定带表头</span></div>
       <div class="file-box">
         <b>选择号商交付 xlsx</b>
         <input type="file" id="envFile" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
@@ -1897,7 +1919,7 @@
     </section>
 
     <section class="card">
-      <div class="card-title"><span id="envAssignTitle">② 采购员分配</span> <span class="legend" id="envAssignLegend">名单写死四人，卡片点选；默认均分新刚/志恒/康德（宇航手动），环境名用英文代号，按文件顺序连续分段，每人每日独立续排</span></div>
+      <div class="card-title"><span id="envAssignTitle">③ 采购员分配</span> <span class="legend" id="envAssignLegend">名单写死四人，卡片点选；默认均分新刚/志恒/康德（宇航手动），环境名用英文代号，按文件顺序连续分段，每人每日独立续排</span></div>
       <div id="envAssignBound">
         <div class="buyer-grid" id="envBuyerGrid"></div>
         <div class="assign-toolbar">
@@ -1926,29 +1948,11 @@
         </div>
         <div class="spec-line">环境名预览：<b class="mono" id="envBackupPattern">—</b> · 备注统一写 <b id="envBackupRemark">「备用环境」</b> · 不导 Cookie、不绑号、不写台账（单批上限 25）</div>
       </div>
-      <div class="input-row" style="margin-top:14px">
-        <div class="field" style="min-width:180px">
-          <label>购买日期（YYYYMMDD）</label>
-          <input class="env-text" type="date" id="envDate">
-        </div>
-        <div class="field" style="min-width:180px">
-          <label>建环境站点</label>
-          <select id="envSite">
-            <option value="MX">墨西哥站 · shein.com.mx</option>
-            <option value="US">美国站 · us.shein.com</option>
-          </select>
-        </div>
-        <div class="field" style="min-width:220px">
-          <label>HubStudio 采购分组（按站点记忆）</label>
-          <select id="envSiteGroup"><option value="">正在读取 HubStudio 分组…</option></select>
-        </div>
-      </div>
-      <div class="reg-plan" id="envPreflightText">正在检查 HubStudio、采购分组与代理配置…</div>
       <div class="reg-plan" id="envPreviewText">解析后点“干跑预览”，将只读 HubStudio 全量环境并核对续排序号，不做任何写入。</div>
     </section>
 
     <section class="card">
-      <div class="card-title">③ 执行确认</div>
+      <div class="card-title" id="envExecuteCardTitle">④ 执行确认</div>
       <div class="check-row">
         <label><input type="checkbox" id="envVerify" checked> <span>后台无头验证全部新建环境出口 IP，读取检测结果后立即关闭；不会打开可见的 HubStudio 环境窗口。</span></label>
         <input type="hidden" id="envVerifyCount" value="1">
@@ -1971,7 +1975,7 @@
     </section>
 
     <section class="card">
-      <div class="card-title">④ 批量进度 <span class="legend">行数多时表格内部滚动，表头固定</span></div>
+      <div class="card-title"><span id="envProgressCardTitle">⑤ 批量进度</span> <span class="legend">行数多时表格内部滚动，表头固定</span></div>
       <div class="table-wrap" id="envTableWrap">
         <table>
           <thead id="envThead"><tr><th>邮箱</th><th>采购员</th><th>环境名</th><th>HUB序号</th><th>五步进度</th><th>当前状态</th><th>留档</th><th>操作</th></tr></thead>
@@ -1981,7 +1985,7 @@
     </section>
 
     <section class="card">
-      <div class="card-title">⑤ 批次摘要与留档</div>
+      <div class="card-title" id="envSummaryCardTitle">⑥ 批次摘要与留档</div>
       <div class="stat-grid" id="envSummary"><div class="stat-chip"><b>0</b>完成</div><div class="stat-chip"><b>0</b>失败</div></div>
       <div class="reg-plan" id="envIpList">尚无后台出口 IP 检测结果</div>
       <div class="reg-plan ledger-summary" id="envLedgerSummary">建环境结果将先写数据库，再自动同步独立 Base。</div>
@@ -2581,6 +2585,8 @@ let envFailedCount = 0;
 let lastEnvironmentRows = [];
 let envPreflightReady = false;
 let envGroupSaving = false;
+let envPreferenceSaveTimer = null;
+let envPreferenceSaveRevision = 0;
 let envSelectionInitialized = false;
 let envAvailableGroups = [];
 let larkReady = false;
@@ -2646,7 +2652,9 @@ let cloudLogisticsRunId = '';
 let cloudLogisticsTaskId = '';
 let lastWorkspaceExecutorId = '';
 let cloudWorkspaceSnapshotCache = null;
+let cloudWorkspaceSnapshotCachedAt = 0;
 let cloudWorkspaceSnapshotRefreshPromise = null;
+const CLOUD_WORKSPACE_SNAPSHOT_CLIENT_TTL_MS = 5 * 60 * 1000;
 const cloudEnvironmentAncestorCache = new Map();
 let safeParallelTasks = true;
 // 采购/买家号相关分组白名单：模块一、模块三均暂时隐藏店铺/后台分组
@@ -3540,6 +3548,7 @@ async function refreshCloudWorkspaceSnapshot(executor) {
         stale:!!latest.stale,
         ageSeconds:latest.ageSeconds,
       };
+      cloudWorkspaceSnapshotCachedAt = Date.now();
     }
     return cloudWorkspaceSnapshotCache;
   })();
@@ -3551,7 +3560,24 @@ async function refreshCloudWorkspaceSnapshot(executor) {
 }
 
 async function cloudWorkspaceSnapshot(forceRefresh=false) {
+  const cacheAge = Date.now() - cloudWorkspaceSnapshotCachedAt;
+  if (!forceRefresh && cloudWorkspaceSnapshotCache
+      && cacheAge >= 0 && cacheAge < CLOUD_WORKSPACE_SNAPSHOT_CLIENT_TTL_MS) {
+    if (cloudWorkspaceSnapshotCache.stale
+        && !cloudWorkspaceSnapshotRefreshPromise
+        && cloudWorkspaceSnapshotCache.executorId) {
+      refreshCloudWorkspaceSnapshot({
+        id:cloudWorkspaceSnapshotCache.executorId
+      }).then(snapshot => {
+        if (!snapshot || envPlanId || envRunning || backupRunning || envSubmitting) return;
+        if (activeModule === 'envbatch') loadEnvGroups({useCacheOnly:true});
+        else if (activeModule === 'query') loadGroups();
+      }).catch(() => {});
+    }
+    return cloudWorkspaceSnapshotCache;
+  }
   const executor = await cloudFormalExecutor('workspace.snapshot.v1');
+  if (forceRefresh) return await refreshCloudWorkspaceSnapshot(executor);
   let envelope = null;
   try {
     envelope = await cloudFetchJson(
@@ -3563,18 +3589,19 @@ async function cloudWorkspaceSnapshot(forceRefresh=false) {
         stale:!!envelope.stale,
         ageSeconds:envelope.ageSeconds,
       };
+      cloudWorkspaceSnapshotCachedAt = Date.now();
     }
   } catch (error) {
     if (!cloudWorkspaceSnapshotCache) throw error;
   }
   const cached = cloudWorkspaceSnapshotCache;
-  if (forceRefresh || !cached) {
+  if (!cached) {
     return await refreshCloudWorkspaceSnapshot(executor);
   }
   if (envelope && envelope.stale && !cloudWorkspaceSnapshotRefreshPromise) {
     refreshCloudWorkspaceSnapshot(executor).then(snapshot => {
       if (!snapshot || envPlanId || envRunning || backupRunning || envSubmitting) return;
-      if (activeModule === 'envbatch') loadEnvGroups();
+      if (activeModule === 'envbatch') loadEnvGroups({useCacheOnly:true});
       else if (activeModule === 'query') loadGroups();
     }).catch(() => {});
   }
@@ -6446,7 +6473,10 @@ function setEnvMode(next) {
   $('envAssignBackup').classList.toggle('hidden', bound);
   $('envBoundExports').classList.toggle('hidden', !bound);
   $('envBackupExports').classList.toggle('hidden', bound);
-  $('envAssignTitle').textContent = bound ? '② 采购员分配' : '② 备用·测试环境';
+  $('envAssignTitle').textContent = bound ? '③ 采购员分配' : '② 备用·测试环境设置';
+  $('envExecuteCardTitle').textContent = bound ? '④ 执行确认' : '③ 执行确认';
+  $('envProgressCardTitle').textContent = bound ? '⑤ 批量进度' : '④ 批量进度';
+  $('envSummaryCardTitle').textContent = bound ? '⑥ 批次摘要与留档' : '⑤ 批次摘要与留档';
   $('envAssignLegend').textContent = bound
     ? '名单写死四人，卡片点选；默认均分新刚/志恒/康德（宇航手动），环境名用英文代号，按文件顺序连续分段，每人每日独立续排'
     : '只建环境+写备注：备用与绑号共享当日代号序号段（续排错开），测试环境独立序号；不导 Cookie、不绑号、不写台账';
@@ -6745,6 +6775,46 @@ async function pollEnvBatch() {
 }
 setInterval(pollEnvBatch, 1500);
 
+function envPreflightFromSnapshot(snapshot, site, selectedGroup) {
+  const cachedState = snapshot && snapshot.preflight
+    ? snapshot.preflight[site] : null;
+  if (!cachedState) return null;
+  const groups = new Set((snapshot.groups || []).map(
+    group => String(group || '').trim()).filter(Boolean));
+  const groupFound = groups.has(selectedGroup);
+  const hubConnected = !!cachedState.hubConnected;
+  const proxyConfigured = !!cachedState.proxyConfigured;
+  const ready = hubConnected && groupFound && proxyConfigured;
+  const problems = [];
+  if (!hubConnected) problems.push('HubStudio 未连接');
+  if (!groupFound) problems.push('采购分组未在缓存列表中精确匹配');
+  if (!proxyConfigured) problems.push('代理链接未配置');
+  return {
+    ...cachedState,
+    ready, hubConnected, groupFound, proxyConfigured,
+    purchaseTag:selectedGroup,
+    message:problems.length ? problems.join('；') : '缓存预检通过；正式执行前服务端会再次校验',
+  };
+}
+
+function paintEnvPreflight(state, snapshotMeta=null) {
+  envPreflightReady = !!(state && state.ready);
+  envEffectiveWorkers = Number(
+    state && (state.effectiveWorkers || state.configuredWorkers) || 1);
+  setHubStatus(state && state.hubConnected);
+  const checks = [
+    state && state.hubConnected ? 'HubStudio 已连接' : 'HubStudio 未连接',
+    state && state.groupFound ? '采购分组精确匹配' : '采购分组未匹配',
+    state && state.proxyConfigured ? '代理链接已配置' : '代理链接未配置',
+    `实际建环境并发 ${envEffectiveWorkers}`
+  ];
+  const snapshotText = snapshotMeta
+    ? ` · ${workspaceSnapshotTimeText(snapshotMeta)}${snapshotMeta.stale ? ' · 后台更新中' : ' · 已缓存'}`
+    : '';
+  $('envPreflightText').textContent = `${envPreflightReady ? '预检通过' : '预检阻断'}：${checks.join(' · ')}。${state && state.message || ''}${snapshotText}`;
+  updateEnvButtons();
+}
+
 async function refreshEnvPreflight(forceRefresh=false) {
   if (!authReady || !hasFeatureAccess('envbatch')) return;
   try {
@@ -6754,46 +6824,22 @@ async function refreshEnvPreflight(forceRefresh=false) {
       throw new Error('请先选择当前站点的 HubStudio 采购分组');
     }
     let state, snapshotMeta = null;
-    let preflightFromSnapshot = false;
     if (CLOUD_WEB_MODE) {
-      snapshotMeta = await cloudWorkspaceSnapshot(false);
-      const cachedState = snapshotMeta && snapshotMeta.preflight
-        ? snapshotMeta.preflight[site] : null;
-      const cachedMatches = cachedState
-        && String(cachedState.purchaseTag || '') === selectedGroup;
-      preflightFromSnapshot = !forceRefresh && cachedMatches
-        && !snapshotMeta.stale;
-      state = preflightFromSnapshot ? cachedState
-        : await api('/api/envbatch/preflight?site=' + encodeURIComponent(site)
-          + '&environmentGroup=' + encodeURIComponent(selectedGroup));
+      snapshotMeta = await cloudWorkspaceSnapshot(forceRefresh);
+      state = envPreflightFromSnapshot(snapshotMeta, site, selectedGroup);
+      if (!state) throw new Error('执行器工作区快照尚未包含预检状态');
     } else {
       state = await api('/api/envbatch/preflight?site=' + encodeURIComponent(site)
         + '&environmentGroup=' + encodeURIComponent(selectedGroup));
     }
-    envPreflightReady = !!state.ready;
-    envEffectiveWorkers = Number(state.effectiveWorkers || state.configuredWorkers || 1);
-    setHubStatus(state.hubConnected);
-    if (!$('envSiteGroup').value && state.purchaseTag
-        && Array.from($('envSiteGroup').options).some(option => option.value === state.purchaseTag)) {
-      $('envSiteGroup').value = state.purchaseTag;
-    }
-    const checks = [
-      state.hubConnected ? 'HubStudio 已连接' : 'HubStudio 未连接',
-      state.groupFound ? '采购分组精确匹配' : '采购分组未匹配',
-      state.proxyConfigured ? '代理链接已配置' : '代理链接未配置',
-      `实际建环境并发 ${Number(state.effectiveWorkers || state.configuredWorkers || 1)}`
-    ];
-    const snapshotText = snapshotMeta
-      ? (preflightFromSnapshot
-        ? ` · ${workspaceSnapshotTimeText(snapshotMeta)}`
-        : ' · 已按页面当前站点与分组实时校验') : '';
-    $('envPreflightText').textContent = `${state.ready ? '预检通过' : '预检阻断'}：${checks.join(' · ')}。${state.message || ''}${snapshotText}`;
+    paintEnvPreflight(state, snapshotMeta);
   } catch (e) {
     envPreflightReady = false;
     $('envPreflightText').textContent = '预检失败：' + e.message;
   }
-  $('envSite').disabled = envSubmitting || envRunning || backupRunning || envGroupSaving;
-  $('envSiteGroup').disabled = envSubmitting || envRunning || backupRunning || envGroupSaving || $('envSiteGroup').options.length < 2;
+  $('envSite').disabled = envSubmitting || envRunning || backupRunning;
+  $('envSiteGroup').disabled = envSubmitting || envRunning || backupRunning
+    || $('envSiteGroup').options.length < 2;
   updateEnvButtons();
 }
 
@@ -9602,16 +9648,78 @@ function rememberEnvWorkspacePreference(site, group='') {
   if (group) purchaseTags[site] = group;
   cloudWorkspaceSnapshotCache = {
     ...cloudWorkspaceSnapshotCache,
-    stale:true,
     preferences:{...preferences, purchaseSite:site, purchaseTags},
   };
 }
 
-async function loadEnvGroups() {
+function renderEnvGroupsForSite(site, preferredGroup='') {
+  const sel = $('envSiteGroup');
+  const groups = envAvailableGroups.filter(
+    name => envGroupCompatibleWithSite(name, site));
+  const previousGroup = String(sel.value || '');
+  sel.innerHTML = '';
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = groups.length
+    ? '请选择 HubStudio 采购分组'
+    : 'HubStudio 暂无可用分组';
+  sel.appendChild(placeholder);
+  groups.forEach(group => {
+    const option = document.createElement('option');
+    option.value = group;
+    option.textContent = group;
+    sel.appendChild(option);
+  });
+  const fallback = SITE_DEFAULT_GROUPS[site];
+  const candidates = [preferredGroup, fallback, previousGroup]
+    .map(value => String(value || '').trim()).filter(Boolean);
+  const selected = candidates.find(value => groups.includes(value)) || '';
+  sel.value = selected;
+  sel.disabled = envSubmitting || envRunning || backupRunning || groups.length === 0;
+  return {groups, selected, usedFallback:!!selected && selected === fallback};
+}
+
+function paintCachedEnvPreflightSelection() {
+  if (!CLOUD_WEB_MODE || !cloudWorkspaceSnapshotCache) return false;
+  const site = $('envSite').value;
+  const selectedGroup = String($('envSiteGroup').value || '').trim();
+  if (!selectedGroup) return false;
+  const state = envPreflightFromSnapshot(
+    cloudWorkspaceSnapshotCache, site, selectedGroup);
+  if (!state) return false;
+  paintEnvPreflight(state, cloudWorkspaceSnapshotCache);
+  return true;
+}
+
+function scheduleEnvWorkspacePreferenceSave(site, group='') {
+  rememberEnvWorkspacePreference(site, group);
+  const revision = ++envPreferenceSaveRevision;
+  if (envPreferenceSaveTimer) clearTimeout(envPreferenceSaveTimer);
+  envPreferenceSaveTimer = setTimeout(async () => {
+    envPreferenceSaveTimer = null;
+    const body = {purchaseSite:site};
+    if (group) body.purchaseTags = {[site]:group};
+    try {
+      await api('/api/envbatch/preferences', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(body)
+      });
+    } catch (error) {
+      if (revision === envPreferenceSaveRevision) {
+        toast('选择已生效，但偏好保存失败：' + error.message);
+      }
+    }
+  }, 250);
+}
+
+async function loadEnvGroups(options={}) {
   const siteSel = $('envSite');
   const sel = $('envSiteGroup');
-  siteSel.disabled = true;
-  sel.disabled = true;
+  const useCacheOnly = !!options.useCacheOnly;
+  if (!useCacheOnly) {
+    siteSel.disabled = true;
+    sel.disabled = true;
+  }
   // 采购员分配是固定业务配置，不应被 HubStudio 分组或执行器版本阻断。
   // 先渲染四人卡片，再异步读取本机配置和分组；后者失败时卡片仍然可见。
   envBuyers = normalizeEnvBuyers(envBuyers);
@@ -9621,7 +9729,8 @@ async function loadEnvGroups() {
   try {
     let cfg, result, snapshotMeta = null;
     if (CLOUD_WEB_MODE) {
-      snapshotMeta = await cloudWorkspaceSnapshot();
+      snapshotMeta = useCacheOnly && cloudWorkspaceSnapshotCache
+        ? cloudWorkspaceSnapshotCache : await cloudWorkspaceSnapshot();
       cfg = snapshotMeta.preferences || {};
       result = {groups:Array.isArray(snapshotMeta.groups) ? snapshotMeta.groups : []};
     } else {
@@ -9648,50 +9757,17 @@ async function loadEnvGroups() {
       envSelectionInitialized = true;
     }
     const site = siteSel.value;
-    const groups = envAvailableGroups.filter(
-      name => envGroupCompatibleWithSite(name, site));
-    const previousGroup = String(sel.value || '');
-    sel.innerHTML = '';
-    const placeholder = document.createElement('option');
-    placeholder.value = '';
-    placeholder.textContent = groups.length
-      ? '请选择 HubStudio 采购分组'
-      : 'HubStudio 暂无可用分组';
-    sel.appendChild(placeholder);
-    groups.forEach(group => {
-      const option = document.createElement('option');
-      option.value = group;
-      option.textContent = group;
-      sel.appendChild(option);
-    });
     const purchaseTags = cfg.purchaseTags || {MX:cfg.purchaseTag || '', US:''};
     const configured = String(purchaseTags[site] || '');
-    if (previousGroup && groups.includes(previousGroup)) {
-      sel.value = previousGroup;
-    } else if (configured && groups.includes(configured)) {
-      sel.value = configured;
-    } else {
-      // 本机未配置该站点分组时默认选中站点标准分组并静默记住，预检即可直接通过
-      const fallback = SITE_DEFAULT_GROUPS[site];
-      if (fallback && groups.includes(fallback)) {
-        sel.value = fallback;
-        if (!configured) {
-          try {
-            await api('/api/envbatch/preferences', {
-              method:'POST', headers:{'Content-Type':'application/json'},
-              body:JSON.stringify({purchaseSite:site, purchaseTags:{[site]:fallback}})
-            });
-            rememberEnvWorkspacePreference(site, fallback);
-            toast(`采购分组默认已设为「${fallback}」`);
-            await refreshEnvPreflight(true);
-          } catch (err) { /* 保存失败仅提示预检，不影响页面 */ }
-        }
-      } else if (configured) {
-        placeholder.textContent = '当前配置未匹配，请重新选择采购分组';
-      }
+    const rendered = renderEnvGroupsForSite(site, configured);
+    if (configured && !rendered.groups.includes(configured)) {
+      sel.options[0].textContent = '当前配置未匹配，请重新选择采购分组';
+    } else if (!configured && rendered.usedFallback) {
+      scheduleEnvWorkspacePreferenceSave(site, rendered.selected);
+      toast(`采购分组默认已设为「${rendered.selected}」`);
     }
     siteSel.disabled = envSubmitting || envRunning || envGroupSaving;
-    sel.disabled = envSubmitting || envRunning || envGroupSaving || groups.length === 0;
+    sel.disabled = envSubmitting || envRunning || envGroupSaving || rendered.groups.length === 0;
     if (snapshotMeta) {
       $('envPreflightText').textContent = `已恢复执行器非敏感快照 · ${workspaceSnapshotTimeText(snapshotMeta)}${snapshotMeta.stale ? ' · 正在后台刷新' : ''}`;
     }
@@ -9714,68 +9790,38 @@ function invalidateEnvironmentPlan(message) {
   refreshAssignUi();
 }
 
-$('envSite').onchange = async e => {
+$('envSite').onchange = e => {
   const site = e.target.value;
   if (envSubmitting || envRunning || envGroupSaving) return;
   invalidateEnvironmentPlan(
     '站点已变更，请重新选择 xlsx 并执行 Cookie 站点校验。');
-  envGroupSaving = true;
   envPreflightReady = false;
-  e.target.disabled = true;
-  $('envSiteGroup').value = '';
-  $('envSiteGroup').disabled = true;
-  $('btnEnvStart').disabled = true;
-  $('btnEnvPreview').disabled = true;
-  try {
-    await api('/api/envbatch/preferences', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({purchaseSite:site})
-    });
-    rememberEnvWorkspacePreference(site);
-    await loadEnvGroups();
-    await refreshEnvPreflight(true);
-    toast(`已切换到${site === 'US' ? '美国站' : '墨西哥站'}`);
-  } catch (err) {
-    toast('站点切换失败：' + err.message);
-    await loadEnvGroups();
-    await refreshEnvPreflight();
-  } finally {
-    envGroupSaving = false;
-    e.target.disabled = envSubmitting || envRunning;
-    $('envSiteGroup').disabled = envSubmitting || envRunning || $('envSiteGroup').options.length < 2;
+  const preferences = cloudWorkspaceSnapshotCache
+    && cloudWorkspaceSnapshotCache.preferences || {};
+  const purchaseTags = preferences.purchaseTags || {};
+  const rendered = renderEnvGroupsForSite(site, purchaseTags[site]);
+  scheduleEnvWorkspacePreferenceSave(site, rendered.selected);
+  if (!paintCachedEnvPreflightSelection()) {
+    $('envPreflightText').textContent = rendered.selected
+      ? '正在读取缓存预检状态…' : '请先选择当前站点的采购分组';
   }
+  refreshEnvPreflight().catch(() => {});
+  refreshAssignUi();
+  toast(`已切换到${site === 'US' ? '美国站' : '墨西哥站'}；分组已从缓存即时筛选`);
 };
 
-$('envSiteGroup').onchange = async e => {
+$('envSiteGroup').onchange = e => {
   const selected = e.target.value;
   if (!selected || envSubmitting || envRunning || envGroupSaving) return;
   invalidateEnvironmentPlan(
     '采购分组已变更，旧解析计划已废弃；请按当前分组重新上传 xlsx。');
-  envGroupSaving = true;
   envPreflightReady = false;
-  e.target.disabled = true;
-  $('btnEnvStart').disabled = true;
-  $('btnEnvPreview').disabled = true;
-  try {
-    await api('/api/envbatch/preferences', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        purchaseSite:$('envSite').value,
-        purchaseTags:{[$('envSite').value]:selected}
-      })
-    });
-    rememberEnvWorkspacePreference($('envSite').value, selected);
-    await refreshEnvPreflight(true);
-    toast('采购分组已保存，预检状态已刷新');
-  } catch (err) {
-    toast('采购分组保存失败：' + err.message);
-    await loadEnvGroups();
-    await refreshEnvPreflight();
-  } finally {
-    envGroupSaving = false;
-    $('envSite').disabled = envSubmitting || envRunning;
-    e.target.disabled = envSubmitting || envRunning || e.target.options.length < 2;
-  }
+  const site = $('envSite').value;
+  scheduleEnvWorkspacePreferenceSave(site, selected);
+  paintCachedEnvPreflightSelection();
+  refreshEnvPreflight().catch(() => {});
+  refreshAssignUi();
+  toast('采购分组已切换；偏好正在后台保存');
 };
 
 function inferQuerySite(groupName) {

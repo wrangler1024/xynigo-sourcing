@@ -140,6 +140,11 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
             '重新启动执行器',
             '检查更新',
             '更新到 v',
+            'ProgressBar{AssignTo: &app.updateProgress',
+            'DownloadPercent',
+            '下载 %d%%',
+            'case "verifying"',
+            'case "installing"',
             '/executor-control/update/check',
             '/executor-control/update/install',
             '打开日志目录',
@@ -314,6 +319,12 @@ class LocalExecutorStatusContractTests(unittest.TestCase):
             'latestVersion': '0.12.10',
             'latestRuntimeId': '0.12.10-test',
             'message': '发现可在线升级的新构建 v0.12.10',
+            'stage': 'downloading',
+            'downloadReceivedBytes': 5_000_000,
+            'downloadTotalBytes': 10_000_000,
+            'downloadPercent': 50,
+            'downloadSpeedBytesPerSecond': 1_000_000,
+            'downloadEtaSeconds': 5,
         })
         state.hub_status = lambda force=False: (True, 'raw hub response')
         with patch.object(
@@ -333,6 +344,9 @@ class LocalExecutorStatusContractTests(unittest.TestCase):
         self.assertEqual(payload['tasks']['activeCount'], 1)
         self.assertEqual(payload['update']['state'], 'available')
         self.assertEqual(payload['update']['latestVersion'], '0.12.10')
+        self.assertEqual(payload['update']['stage'], 'downloading')
+        self.assertEqual(payload['update']['downloadPercent'], 50)
+        self.assertEqual(payload['update']['downloadTotalBytes'], 10_000_000)
         encoded = __import__('json').dumps(payload, ensure_ascii=False)
         for forbidden in (
             'executor-internal-id', 'query-sensitive-id',

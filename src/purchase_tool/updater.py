@@ -347,7 +347,7 @@ class GitHubUpdateClient(object):
             managed_paths=managed_paths_for_platform(platform_key),
             runtime_id=str(selected_manifest.get('runtimeId') or ''))
 
-    def prepare_update(self, release, output=print):
+    def prepare_update(self, release, output=print, progress=None, stage=None):
         asset_name = str(release.manifest.get('assetName') or '')
         expected_hash = str(release.manifest.get('sha256') or '').lower()
         expected_size = int(release.manifest.get('size') or 0)
@@ -365,7 +365,9 @@ class GitHubUpdateClient(object):
         archive = work_dir / asset.name
         last_percent = [-1]
 
-        def progress(received, total):
+        def report_progress(received, total):
+            if progress:
+                progress(received, total or expected_size)
             if not total:
                 return
             percent = int(received * 100 / total)
@@ -374,12 +376,17 @@ class GitHubUpdateClient(object):
                 output('下载进度：%d%%' % percent)
 
         try:
-            self.transport.download(asset.url, archive, progress=progress)
+            self.transport.download(
+                asset.url, archive, progress=report_progress)
             if expected_size and archive.stat().st_size != expected_size:
                 raise UpdateError('下载文件大小不一致')
+            if stage:
+                stage('verifying', '下载完成，正在校验 SHA-256…')
             actual_hash = sha256_file(archive)
             if actual_hash.lower() != expected_hash:
                 raise UpdateError('SHA-256 校验失败，已拒绝更新')
+            if stage:
+                stage('extracting', '校验通过，正在解压更新包…')
             extract_dir = work_dir / 'extracted'
             safe_extract_zip(archive, extract_dir)
             package_root = locate_package_root(
@@ -484,7 +491,7 @@ class StandardInstallerUpdateClient(object):
             runtime_id=runtime_id,
         )
 
-    def prepare_update(self, release, output=print):
+    def prepare_update(self, release, output=print, progress=None, stage=None):
         if not release.platform_key.startswith('windows-'):
             raise UpdateError('当前标准安装包在线升级仅支持 Windows')
         asset_name = str(release.manifest.get('assetName') or '').strip()
@@ -512,8 +519,10 @@ class StandardInstallerUpdateClient(object):
         installer = work_dir / asset_name
         last_percent = [-1]
 
-        def progress(received, total):
+        def report_progress(received, total):
             total = total or expected_size
+            if progress:
+                progress(received, total)
             if not total:
                 return
             percent = min(100, int(received * 100 / total))
@@ -527,10 +536,12 @@ class StandardInstallerUpdateClient(object):
                 installer,
                 expected_size=expected_size,
                 expected_hash=expected_hash,
-                progress=progress,
+                progress=report_progress,
             )
             if not installer.is_file() or installer.stat().st_size != expected_size:
                 raise UpdateError('下载文件大小不一致')
+            if stage:
+                stage('verifying', '下载完成，正在执行 SHA-256 二次校验…')
             if sha256_file(installer).lower() != expected_hash:
                 raise UpdateError('SHA-256 校验失败，已拒绝更新')
             return PreparedUpdate(
@@ -611,7 +622,9 @@ def bring_console_to_front():
 class UpdateCoordinator(object):
     """Expose non-blocking update state to the trusted desktop launcher."""
 
-    BUSY_STATES = ('checking', 'prompting', 'downloading', 'restarting')
+    BUSY_STATES = (
+        'checking', 'prompting', 'downloading', 'verifying', 'extracting',
+        'installing', 'restarting')
 
     def __init__(self, install_dir, current_version, client=None,
                  current_runtime_id=None,
@@ -646,6 +659,13 @@ class UpdateCoordinator(object):
         self.latest_version = ''
         self.latest_runtime_id = ''
         self.notes = ()
+        self.update_stage = 'idle'
+        self.download_received_bytes = 0
+        self.download_total_bytes = 0
+        self.download_percent = 0
+        self.download_speed_bytes_per_second = 0
+        self.download_eta_seconds = None
+        self.download_started_at = None
         self.last_checked = 0.0
         self.decision = ''
         self.state = 'idle' if self.enabled else 'disabled'
@@ -675,7 +695,73 @@ class UpdateCoordinator(object):
                 'notes': list(self.notes),
                 'message': self.message,
                 'decision': self.decision,
+                'stage': self.update_stage,
+                'downloadReceivedBytes': self.download_received_bytes,
+                'downloadTotalBytes': self.download_total_bytes,
+                'downloadPercent': self.download_percent,
+                'downloadSpeedBytesPerSecond': (
+                    self.download_speed_bytes_per_second),
+                'downloadEtaSeconds': self.download_eta_seconds,
             }
+
+    @staticmethod
+    def _byte_text(value):
+        value = max(0, int(value or 0))
+        if value >= 1024 * 1024:
+            return '%.1f MB' % (value / float(1024 * 1024))
+        if value >= 1024:
+            return '%.1f KB' % (value / float(1024))
+        return '%d B' % value
+
+    def _reset_download_progress_locked(self):
+        self.update_stage = 'downloading'
+        self.download_received_bytes = 0
+        self.download_total_bytes = 0
+        self.download_percent = 0
+        self.download_speed_bytes_per_second = 0
+        self.download_eta_seconds = None
+        self.download_started_at = time.monotonic()
+
+    def _download_progress(self, received, total):
+        received = max(0, int(received or 0))
+        total = max(0, int(total or 0))
+        now = time.monotonic()
+        with self.lock:
+            if self.download_started_at is None:
+                self.download_started_at = now
+            elapsed = max(0.001, now - self.download_started_at)
+            speed = max(0, int(received / elapsed))
+            percent = min(100, int(received * 100 / total)) if total else 0
+            eta = (
+                max(0, int((total - received) / speed))
+                if total > received and speed > 0 else 0
+                if total and received >= total else None)
+            self.state = 'downloading'
+            self.update_stage = 'downloading'
+            self.download_received_bytes = received
+            self.download_total_bytes = total
+            self.download_percent = percent
+            self.download_speed_bytes_per_second = speed
+            self.download_eta_seconds = eta
+            progress_text = (
+                '正在下载：%d%% · %s/%s' % (
+                    percent, self._byte_text(received), self._byte_text(total))
+                if total else '正在下载：已接收 %s' % self._byte_text(received))
+            if speed:
+                progress_text += ' · %s/s' % self._byte_text(speed)
+            if eta is not None and eta > 0:
+                progress_text += ' · 约 %d 秒' % eta
+            self.message = progress_text
+
+    def _update_stage_state(self, stage, message):
+        allowed = {'verifying', 'extracting', 'installing', 'restarting'}
+        normalized = str(stage or '').strip().casefold()
+        if normalized not in allowed:
+            return
+        with self.lock:
+            self.state = normalized
+            self.update_stage = normalized
+            self.message = str(message or '').strip() or self.message
 
     def check_async(self, force=False):
         with self.lock:
@@ -686,6 +772,7 @@ class UpdateCoordinator(object):
                     < self.check_interval):
                 return False
             self.state = 'checking'
+            self.update_stage = 'checking'
             self.message = '正在检查新版本…'
             self.decision = ''
         threading.Thread(target=self.check_now, daemon=True).start()
@@ -696,6 +783,7 @@ class UpdateCoordinator(object):
             return self.snapshot()
         with self.lock:
             self.state = 'checking'
+            self.update_stage = 'checking'
             self.message = '正在检查新版本…'
         try:
             release = self.client.get_latest_release()
@@ -710,6 +798,7 @@ class UpdateCoordinator(object):
                 self.notes = tuple(release.notes_zh[:8])
                 self.last_checked = time.monotonic()
                 self.state = 'available' if available else 'current'
+                self.update_stage = self.state
                 self.message = (
                     '发现可在线升级的新构建 v%s' % release.version
                     if available else '当前已是最新构建')
@@ -717,6 +806,7 @@ class UpdateCoordinator(object):
             with self.lock:
                 self.last_checked = time.monotonic()
                 self.state = 'error'
+                self.update_stage = 'error'
                 self.message = '更新检查失败：%s' % exc
         return self.snapshot()
 
@@ -726,8 +816,9 @@ class UpdateCoordinator(object):
                 return False
             if self.standard_mode:
                 self.state = 'downloading'
+                self._reset_download_progress_locked()
                 self.decision = 'accepted'
-                self.message = '已确认在线升级，正在下载并校验标准安装包…'
+                self.message = '已确认在线升级，正在准备下载标准安装包…'
                 worker = self._install_worker
             else:
                 self.state = 'prompting'
@@ -742,8 +833,9 @@ class UpdateCoordinator(object):
                 return False
             if self.standard_mode:
                 self.state = 'downloading'
+                self._reset_download_progress_locked()
                 self.decision = 'accepted'
-                self.message = '已确认在线升级，正在下载并校验标准安装包…'
+                self.message = '已确认在线升级，正在准备下载标准安装包…'
                 worker = self._install_worker
             else:
                 self.state = 'prompting'
@@ -782,12 +874,14 @@ class UpdateCoordinator(object):
                 return False
             with self.lock:
                 self.state = 'downloading'
+                self._reset_download_progress_locked()
                 self.decision = 'accepted'
                 self.message = '正在下载并校验更新包…'
             return self._install_worker(release=release)
         except Exception as exc:
             with self.lock:
                 self.state = 'available' if self.release else 'error'
+                self.update_stage = 'error'
                 self.message = '更新失败：%s' % exc
             self.output('更新失败：%s' % exc)
             self.output('当前版本继续运行，可稍后重试。')
@@ -803,12 +897,23 @@ class UpdateCoordinator(object):
             # before the executor exits to hand control to the installer.
             if self.standard_mode and self.standard_install_delay:
                 time.sleep(self.standard_install_delay)
+            with self.lock:
+                self._reset_download_progress_locked()
+                self.message = '正在连接下载服务器…'
             self.output('正在下载并校验更新包，请勿关闭窗口……')
-            prepared = self.client.prepare_update(release, output=self.output)
+            prepared = self.client.prepare_update(
+                release,
+                output=self.output,
+                progress=self._download_progress,
+                stage=self._update_stage_state,
+            )
+            self._update_stage_state(
+                'installing', '校验通过，正在启动安装程序…')
             self.client.launch_installer(
                 prepared, self.install_dir, self.current_version)
             with self.lock:
                 self.state = 'restarting'
+                self.update_stage = 'restarting'
                 self.message = '更新包校验通过，正在重启…'
             self.output('更新包校验通过，正在切换程序并自动重启。')
             self.output('==============================================')
@@ -817,6 +922,7 @@ class UpdateCoordinator(object):
         except Exception as exc:
             with self.lock:
                 self.state = 'available' if self.release else 'error'
+                self.update_stage = 'error'
                 self.message = '更新失败：%s' % exc
             self.output('更新失败：%s' % exc)
             self.output('当前版本继续运行，可稍后重试。')
