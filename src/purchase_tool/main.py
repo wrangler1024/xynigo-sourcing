@@ -77,6 +77,7 @@ from .env_batch import (BACKUP_MAX_COUNT, BACKUP_REMARK, BUYER_CODES,
 from .executor_channel import (
     CloudExecutorClient, ExecutorChannelStateStore, ExecutorChannelWorker,
     system_executor_credential_store)
+from .operation_executor import LocalOperationExecutor, backup_account_ref
 from .extension_bridge import ExtensionBridge, ExtensionBridgeError
 from .hub_api import HubApiError, HubStudioApi, DEFAULT_PORT
 from .hub_api_key import (
@@ -1134,6 +1135,59 @@ class AppState(object):
                     str(item.get('envName') or '') for row in rows))],
         }
 
+    def backup_environment_result_payload(
+            self, run_key, site, purchase_date, environment_group,
+            purchaser_label):
+        snapshot = self.backup_job.snapshot()
+        rows = [dict(row) for row in snapshot.get('rows') or []]
+        if not rows:
+            raise ValueError('备用/测试建环境任务没有可回传行')
+        ip_by_name = {
+            str(item.get('envName') or ''): dict(item)
+            for item in snapshot.get('ipChecks') or []
+        }
+        return {
+            'source': 'local_executor',
+            'runKey': run_key,
+            'site': normalize_env_site(site),
+            'purchaseDate': str(purchase_date or ''),
+            'environmentGroup': validate_purchase_group_site(
+                environment_group, site),
+            'startedAt': self._iso_epoch(self.backup_job.started_at),
+            'completedAt': self._iso_epoch(
+                self.backup_job.finished_at or time.time()),
+            'results': [{
+                'accountRef': backup_account_ref(
+                    run_key, str(row.get('envName') or '')),
+                'accountLabel': '备用环境-%03d' % (index + 1),
+                'purchaserLabel': str(purchaser_label or ''),
+                'environmentName': str(row.get('envName') or ''),
+                'environmentRef': (
+                    str(row.get('containerCode'))
+                    if row.get('containerCode') not in (None, '') else None),
+                'environmentSerial': (
+                    str(row.get('serialNumber'))
+                    if row.get('serialNumber') not in (None, '') else None),
+                'status': ('success' if row.get('state') == 'done'
+                           else 'failed'),
+                'errorStep': (
+                    '' if row.get('state') == 'done'
+                    else 'environment_create'),
+                'errorSummary': scrub_text(row.get('error') or '')[:300],
+                'bindingAt': None,
+                'recoveredExisting': False,
+            } for index, row in enumerate(rows)],
+            'ipChecks': [{
+                'environmentName': environment_name,
+                'ipAddress': str(item.get('ip') or ''),
+                'country': str(item.get('country') or ''),
+                'city': str(item.get('city') or ''),
+                'isp': str(item.get('isp') or ''),
+                'ok': bool(item.get('ok')),
+                'errorSummary': scrub_text(item.get('error') or '')[:300],
+            } for environment_name, item in ip_by_name.items()],
+        }
+
     def logistics_result_payload(self, task_id, mode, serials):
         snapshot = self.orch.snapshot()
         selected = {str(serial) for serial in serials or ()}
@@ -1395,7 +1449,7 @@ class EnvBatchJob(object):
         self._sensitive_timer = None
         self._sensitive_generation = 0
 
-    def _runtime_config(self, site='MX'):
+    def _runtime_config(self, site='MX', environment_group=None):
         site = normalize_env_site(site)
         cfg = dict(self.config_getter() or {})
         try:
@@ -1404,7 +1458,11 @@ class EnvBatchJob(object):
             workers = 5
         return {
             'site': site,
-            'purchaseTag': purchase_tag_for_site(cfg, site),
+            'purchaseTag': validate_purchase_group_site(
+                environment_group
+                if environment_group is not None
+                else purchase_tag_for_site(cfg, site),
+                site),
             'proxyLink': effective_proxy_link(cfg),
             'workers': workers,
             'configuredWorkers': workers,
@@ -1625,6 +1683,7 @@ class EnvBatchJob(object):
 
     def start(self, plan_id, assignment, purchase_date,
               verify_sample_count=3, confirm_write=False, site='MX',
+              environment_group=None,
               write_lark_ledger=False, confirm_lark_write=False,
               reserve_resources=None, on_finished=None):
         if not confirm_write:
@@ -1647,7 +1706,7 @@ class EnvBatchJob(object):
             account_count = len(pending['accounts'])
             verify_sample_count = min(verify_sample_count, account_count)
         parse_assignment(assignment, account_count)
-        runtime = self._runtime_config(site)
+        runtime = self._runtime_config(site, environment_group)
         # 正式执行同步复核：允许混合登录态，纯错站仍在消费计划前拒收。
         validate_accounts_site(
             pending['accounts'], runtime['site'], allow_mixed=True)
@@ -2144,7 +2203,7 @@ class BackupEnvJob(object):
         self.result_data = None
         self.result_name = ''
 
-    def _runtime_config(self, site='MX'):
+    def _runtime_config(self, site='MX', environment_group=None):
         site = normalize_env_site(site)
         cfg = dict(self.config_getter() or {})
         try:
@@ -2153,7 +2212,11 @@ class BackupEnvJob(object):
             workers = 5
         return {
             'site': site,
-            'purchaseTag': purchase_tag_for_site(cfg, site),
+            'purchaseTag': validate_purchase_group_site(
+                environment_group
+                if environment_group is not None
+                else purchase_tag_for_site(cfg, site),
+                site),
             'proxyLink': effective_proxy_link(cfg),
             'workers': workers,
             'configuredWorkers': workers,
@@ -2201,6 +2264,7 @@ class BackupEnvJob(object):
 
     def start(self, buyer, count, backup_type, purchase_date,
               verify_sample_count=1, confirm_write=False, site='MX',
+              environment_group=None,
               reserve_resources=None, on_finished=None):
         if not confirm_write:
             raise ValueError('正式执行必须二次确认 HubStudio 写入')
@@ -2214,7 +2278,7 @@ class BackupEnvJob(object):
         with self.lock:
             if self.running:
                 raise RuntimeError('已有备用环境任务在进行')
-        runtime = self._runtime_config(site)
+        runtime = self._runtime_config(site, environment_group)
         hub = self.hub_getter()
         # 预检先于启动线程：预检失败零写入。
         require_envbatch_ready(
@@ -2666,6 +2730,17 @@ class Handler(BaseHTTPRequestHandler):
             and not origin
             and self.headers.get('X-Xynigo-Source') == 'executor_workspace_rpc'
         )
+
+    def _operation_run_key(self, body, fallback):
+        """Honor cloud Run identity only on the authenticated loopback path."""
+        if not self._internal_executor_rpc_allowed():
+            return str(fallback or '')
+        value = str((body or {}).get('operationRunKey') or '').strip()
+        if not value:
+            return str(fallback or '')
+        if not re.fullmatch(r'[A-Za-z0-9._:-]{8,128}', value):
+            raise ValueError('云端业务运行编号无效')
+        return value
         origin = str(self.headers.get('Origin') or '').strip()
         if not origin:
             # Native clients and existing local scripts do not send Origin.
@@ -3225,11 +3300,12 @@ class Handler(BaseHTTPRequestHandler):
                 task_id = STATE.tasks.begin(
                     'query', environment_resources(selected_envs))
                 selected_serials = [str(serial) for serial in serials]
+                operation_run_key = self._operation_run_key(body, task_id)
 
                 def finish_query():
                     try:
                         payload = STATE.logistics_result_payload(
-                            task_id, 'initial', selected_serials)
+                            operation_run_key, 'initial', selected_serials)
                         STATE.enqueue_operation_result(
                             '/v1/operations/logistics-query-runs',
                             'fulfillment.order.read', payload)
@@ -3258,11 +3334,12 @@ class Handler(BaseHTTPRequestHandler):
                 env_index = {serial: env} if env else {}
                 task_id = STATE.tasks.begin(
                     'query', environment_resources([env] if env else []))
+                operation_run_key = self._operation_run_key(body, task_id)
 
                 def finish_requery():
                     try:
                         payload = STATE.logistics_result_payload(
-                            task_id, 'single_retry', [serial])
+                            operation_run_key, 'single_retry', [serial])
                         STATE.enqueue_operation_result(
                             '/v1/operations/logistics-query-runs',
                             'fulfillment.order.read', payload)
@@ -3292,11 +3369,12 @@ class Handler(BaseHTTPRequestHandler):
                             if serial in env_index]
                 task_id = STATE.tasks.begin(
                     'query', environment_resources(selected))
+                operation_run_key = self._operation_run_key(body, task_id)
 
                 def finish_failed_requery():
                     try:
                         payload = STATE.logistics_result_payload(
-                            task_id, 'failed_retry', retry_serials)
+                            operation_run_key, 'failed_retry', retry_serials)
                         STATE.enqueue_operation_result(
                             '/v1/operations/logistics-query-runs',
                             'fulfillment.order.read', payload)
@@ -3412,10 +3490,12 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError(
                         '测试版已停用旧买家号台账直写；建环境结果将写数据库并同步新 Base')
                 task_id = STATE.tasks.begin('env_batch')
+                operation_run_key = self._operation_run_key(body, task_id)
 
                 def finish_environment_batch():
                     try:
-                        payload = STATE.environment_result_payload(task_id)
+                        payload = STATE.environment_result_payload(
+                            operation_run_key)
                         STATE.enqueue_operation_result(
                             '/v1/operations/environment-creation-runs',
                             'resource.environment.create', payload)
@@ -3431,6 +3511,7 @@ class Handler(BaseHTTPRequestHandler):
                         verify_sample_count=body.get('verifySampleCount', 3),
                         confirm_write=bool(body.get('confirmWrite')),
                         site=body.get('site') or 'MX',
+                        environment_group=body.get('environmentGroup'),
                         write_lark_ledger=bool(body.get('writeLarkLedger')),
                         confirm_lark_write=bool(body.get('confirmLarkWrite')),
                         reserve_resources=lambda resources:
@@ -3500,16 +3581,40 @@ class Handler(BaseHTTPRequestHandler):
                 }, 410)
             elif path == '/api/envbatch/backup/start':
                 task_id = STATE.tasks.begin('backup_env')
+                operation_run_key = self._operation_run_key(body, task_id)
+                site = body.get('site') or 'MX'
+                purchase_date = (
+                    body.get('purchaseDate') or time.strftime('%Y%m%d'))
+                environment_group = (
+                    body.get('environmentGroup')
+                    if body.get('environmentGroup') is not None
+                    else purchase_tag_for_site(STATE.cfg, site))
+                purchaser_label = body.get('buyer')
+
+                def finish_backup_environment_batch():
+                    try:
+                        payload = STATE.backup_environment_result_payload(
+                            operation_run_key, site, purchase_date,
+                            environment_group, purchaser_label)
+                        STATE.enqueue_operation_result(
+                            '/v1/operations/environment-creation-runs',
+                            'resource.environment.create', payload)
+                    except Exception as exc:
+                        if hasattr(STATE, 'operation_sync_error'):
+                            STATE.operation_sync_error = scrub_text(exc)[:200]
+                    finally:
+                        STATE.tasks.finish(task_id)
                 try:
                     count = STATE.backup_job.start(
                         body.get('buyer'), body.get('count'), body.get('type'),
-                        body.get('purchaseDate') or time.strftime('%Y%m%d'),
+                        purchase_date,
                         verify_sample_count=body.get('verifySampleCount', 1),
                         confirm_write=bool(body.get('confirmWrite')),
-                        site=body.get('site') or 'MX',
+                        site=site,
+                        environment_group=body.get('environmentGroup'),
                         reserve_resources=lambda resources:
                             STATE.tasks.reserve(task_id, resources),
-                        on_finished=lambda: STATE.tasks.finish(task_id))
+                        on_finished=finish_backup_environment_batch)
                 except Exception:
                     STATE.tasks.finish(task_id)
                     raise
@@ -3700,8 +3805,10 @@ def main(argv=None):
     local_url = 'http://127.0.0.1:%s' % port
     executor_rpc_token = secrets.token_urlsafe(48)
     server.executor_rpc_token = executor_rpc_token
-    STATE.executor_channel.workspace_rpc_executor = WorkspaceRpcClient(
-        local_url, executor_rpc_token).execute
+    workspace_rpc = WorkspaceRpcClient(local_url, executor_rpc_token)
+    STATE.executor_channel.workspace_rpc_executor = workspace_rpc.execute
+    STATE.executor_channel.operation_task_executor = LocalOperationExecutor(
+        workspace_rpc.execute).execute
     launch_url = browser_launch_url(local_url, argv, STATE.auth)
     print('Xynigo Sourcing v%s  本地执行器运行中：%s' % (
         __version__, local_url))

@@ -58,7 +58,7 @@ class FakeExecutorClient(object):
         self.renewals.append((credential, task_id, lease_token))
 
     def progress(self, credential, task_id, lease_token, phase,
-                 current=None, total=None, stable_code=None):
+                 current=None, total=None, stable_code=None, snapshot=None):
         self.progress_events.append({
             'credential': credential,
             'taskId': task_id,
@@ -67,6 +67,7 @@ class FakeExecutorClient(object):
             'current': current,
             'total': total,
             'stableCode': stable_code,
+            'snapshot': snapshot,
         })
 
     def finish(self, credential, task_id, lease_token, outcome,
@@ -288,6 +289,97 @@ class ExecutorTaskApplicationTests(unittest.TestCase):
         self.assertEqual(
             client.finishes[0]['resultSummary']['body']['echo']['path'],
             '/api/progress')
+        self.assertFalse(coordinator.running())
+
+    def test_formal_operation_task_streams_snapshot_and_finishes(self):
+        worker, client, _holder, coordinator = self.build_worker({
+            'concurrency': 2, 'safeParallelTasks': True,
+        })
+        received = []
+
+        def execute_operation(task_type, payload, report,
+                              cancellation_event=None):
+            received.append((task_type, payload, cancellation_event))
+            report(
+                'logistics.running', 1, 1,
+                snapshot={'rows': [{
+                    'environmentSerial': '101',
+                    'environmentName': 'XG-MX-001',
+                    'status': 'ok',
+                    'currentStep': 'ok',
+                    'completedSteps': ['query_completed'],
+                }]})
+            return 'succeeded', 'logistics_completed', {
+                'runStatus': 'completed',
+                'phase': 'logistics.completed',
+                'progressCompleted': 1,
+                'progressTotal': 1,
+                'totalCount': 1,
+                'successCount': 1,
+                'failedCount': 0,
+                'stoppedCount': 0,
+            }
+
+        worker.operation_task_executor = execute_operation
+        worker._execute_task(DEVICE_CREDENTIAL, {
+            'id': 'task-operation',
+            'type': 'logistics.query.v1',
+            'leaseToken': LEASE_TOKEN,
+            'payload': {
+                'runKey': 'logistics-run-0001',
+                'site': 'MX',
+                'queryMode': 'initial',
+                'environmentSerials': ['101'],
+            },
+        })
+
+        self.assertEqual(received[0][0], 'logistics.query.v1')
+        self.assertEqual(client.progress_events[0]['snapshot']['rows'][0][
+            'environmentSerial'], '101')
+        self.assertEqual(client.finishes[0]['resultCode'],
+                         'logistics_completed')
+        self.assertEqual(client.finishes[0]['resultSummary']['runStatus'],
+                         'completed')
+        self.assertFalse(coordinator.running())
+
+    def test_dedicated_environment_parse_task_uses_local_parser(self):
+        worker, client, _holder, coordinator = self.build_worker({
+            'concurrency': 2, 'safeParallelTasks': True,
+        })
+        received = []
+
+        def parse_rpc(payload):
+            received.append(payload)
+            return {
+                'httpStatus': 200,
+                'responseType': 'json',
+                'contentType': 'application/json',
+                'body': {
+                    'planId': 'plan-local-0001',
+                    'site': 'MX',
+                    'count': 2,
+                    'preview': [],
+                },
+            }
+
+        worker.workspace_rpc_executor = parse_rpc
+        worker._execute_task(DEVICE_CREDENTIAL, {
+            'id': 'task-environment-parse',
+            'type': 'environment.parse.v1',
+            'leaseToken': LEASE_TOKEN,
+            'payload': {
+                'filename': 'buyers.xlsx',
+                'contentBase64': 'UEsDB-synthetic',
+                'site': 'MX',
+            },
+        })
+
+        self.assertEqual(received[0]['path'], '/api/envbatch/parse')
+        self.assertEqual(client.finishes[0]['outcome'], 'succeeded')
+        self.assertEqual(client.finishes[0]['resultCode'],
+                         'environment_parse_completed')
+        self.assertEqual(client.finishes[0]['resultSummary']['planId'],
+                         'plan-local-0001')
         self.assertFalse(coordinator.running())
 
 

@@ -106,8 +106,14 @@ from .models import (
     User,
     UserRole,
 )
-from .operation_contract import EnvironmentCreationRunBody, LogisticsQueryRunBody
-from .operation_service import OperationResultService
+from .operation_contract import (
+    EnvironmentCreationRunBody,
+    EnvironmentCreationRunCreateBody,
+    EnvironmentPlanParseBody,
+    LogisticsQueryRunBody,
+    LogisticsQueryRunCreateBody,
+)
+from .operation_service import OperationResultService, OperationRunService
 from .procurement_import_contract import (
     ProcurementImportParseBody,
     ProcurementImportSyncBody,
@@ -1701,6 +1707,54 @@ def create_app(
         )
         return {"task": service.task_payload(task)}
 
+    @app.post(
+        "/v1/environment-plans/parse",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def parse_environment_plan(
+        body: EnvironmentPlanParseBody,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="resource.environment.create",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="resource.environment.plan.parse",
+        )
+        service = executor_channel(session)
+        task = service.create_config_task(
+            tenant_id=actor.tenant.id,
+            user_id=actor.user.id,
+            executor_id=body.executorId,
+            task_type="environment.parse.v1",
+            payload={
+                "filename": body.filename,
+                "contentBase64": body.contentBase64,
+                "site": body.site,
+            },
+            idempotency_key=body.idempotencyKey,
+        )
+        append_executor_audit(
+            request,
+            session,
+            actor,
+            action="resource.environment.plan.parse",
+            object_id=body.executorId,
+            summary={
+                "taskId": str(task.id),
+                "site": body.site,
+                "uploadBytesApprox": len(body.contentBase64) * 3 // 4,
+            },
+        )
+        return {"task": service.task_payload(task)}
+
     @app.get("/v1/executor-tasks/{task_id}")
     def get_executor_task(
         task_id: uuid.UUID,
@@ -2530,6 +2584,183 @@ def create_app(
         session.commit()
         return {"ok": True, "data": result}
 
+    @app.post(
+        "/v1/operation-runs/environment-creation",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def create_environment_operation_run(
+        request: Request,
+        body: EnvironmentCreationRunCreateBody,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "resource.environment.run.create"
+        actor = authorize_request(
+            request,
+            session,
+            permission="resource.environment.create",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        runs = OperationRunService(session)
+        try:
+            run, unchanged = runs.create_environment_run(
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                body=body,
+            )
+        except PurchaseServiceError as exc:
+            purchase_error(
+                request,
+                session,
+                actor,
+                action,
+                exc,
+                business_object_id=body.idempotencyKey,
+            )
+        if not unchanged:
+            task_type = (
+                "environment.create-bound.v1"
+                if body.mode == "bound"
+                else "environment.create-backup.v1"
+            )
+            task = executor_channel(session).create_config_task(
+                tenant_id=actor.tenant.id,
+                user_id=actor.user.id,
+                executor_id=body.executorId,
+                task_type=task_type,
+                payload={
+                    "runId": str(run.id),
+                    "runKey": run.source_run_key,
+                    "mode": body.mode,
+                    "site": body.site,
+                    "purchaseDate": body.purchaseDate,
+                    "environmentGroup": body.environmentGroup,
+                    "planRef": body.planRef,
+                    "buyerLabel": body.buyerLabel,
+                    "totalCount": body.totalCount,
+                    "verifySampleCount": body.verifySampleCount,
+                    "assignments": [
+                        item.model_dump(mode="json") for item in body.assignments
+                    ],
+                },
+                idempotency_key=f"operation:{body.idempotencyKey}",
+                commit=False,
+            )
+            run.executor_task_id = task.id
+            run.status = "queued"
+            run.phase = "queued"
+            run.updated_at = utcnow()
+        result = runs.environment_snapshot(run, unchanged=unchanged)
+        _add_audit(
+            session,
+            request_id=request.state.request_id,
+            action=action,
+            result="success",
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            business_object_type="environment_creation_run",
+            business_object_id=str(run.id),
+            change_summary={
+                "status": run.status,
+                "totalCount": run.total_count,
+                "unchanged": unchanged,
+            },
+            details={"mode": run.run_mode, "site": run.site},
+            **_request_log_context(request),
+        )
+        session.commit()
+        return {"ok": True, "data": result}
+
+    @app.get("/v1/operation-runs/environment-creation/latest")
+    def latest_environment_operation_run(
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="resource.environment.create",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="resource.environment.run.latest",
+        )
+        service = OperationRunService(session)
+        run = service.latest_environment_run(
+            tenant_id=actor.tenant.id, actor_user_id=actor.user.id
+        )
+        return {"ok": True, "data": service.environment_snapshot(run) if run else None}
+
+    @app.get("/v1/operation-runs/environment-creation/{run_id}")
+    def get_environment_operation_run(
+        run_id: uuid.UUID,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "resource.environment.run.read"
+        actor = authorize_request(
+            request,
+            session,
+            permission="resource.environment.create",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        service = OperationRunService(session)
+        try:
+            run = service.get_environment_run(
+                tenant_id=actor.tenant.id, run_id=run_id
+            )
+        except PurchaseServiceError as exc:
+            purchase_error(
+                request, session, actor, action, exc, business_object_id=str(run_id)
+            )
+        return {"ok": True, "data": service.environment_snapshot(run)}
+
+    @app.post("/v1/operation-runs/environment-creation/{run_id}/cancel")
+    def cancel_environment_operation_run(
+        run_id: uuid.UUID,
+        body: ExecutorTaskCancelBody,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="resource.environment.create",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="resource.environment.run.cancel",
+        )
+        runs = OperationRunService(session)
+        run = runs.get_environment_run(tenant_id=actor.tenant.id, run_id=run_id)
+        if run.executor_task_id is None:
+            raise HTTPException(
+                status_code=409, detail={"code": "operation_run_not_cancellable"}
+            )
+        task = executor_channel(session).get_task(
+            tenant_id=actor.tenant.id,
+            user_id=actor.user.id,
+            task_id=run.executor_task_id,
+        )
+        if body.expectedStatus and task.status != body.expectedStatus:
+            raise ExecutorServiceError("executor_task_state_conflict", status_code=409)
+        executor_channel(session).cancel_task(
+            tenant_id=actor.tenant.id,
+            user_id=actor.user.id,
+            task_id=task.id,
+        )
+        session.refresh(run)
+        return {"ok": True, "data": runs.environment_snapshot(run)}
+
     @app.put("/v1/operations/logistics-query-runs")
     def ingest_logistics_query_run(
         request: Request,
@@ -2588,6 +2819,169 @@ def create_app(
         )
         session.commit()
         return {"ok": True, "data": result}
+
+    @app.post(
+        "/v1/operation-runs/logistics-query",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def create_logistics_operation_run(
+        request: Request,
+        body: LogisticsQueryRunCreateBody,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "fulfillment.logistics.run.create"
+        actor = authorize_request(
+            request,
+            session,
+            permission="fulfillment.order.read",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        runs = OperationRunService(session)
+        try:
+            run, unchanged = runs.create_logistics_run(
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                body=body,
+            )
+        except PurchaseServiceError as exc:
+            purchase_error(
+                request,
+                session,
+                actor,
+                action,
+                exc,
+                business_object_id=body.idempotencyKey,
+            )
+        if not unchanged:
+            task = executor_channel(session).create_config_task(
+                tenant_id=actor.tenant.id,
+                user_id=actor.user.id,
+                executor_id=body.executorId,
+                task_type="logistics.query.v1",
+                payload={
+                    "runId": str(run.id),
+                    "runKey": run.source_run_key,
+                    "queryMode": body.queryMode,
+                    "force": body.force,
+                    "site": body.site,
+                    "environmentSerials": list(body.environmentSerials),
+                },
+                idempotency_key=f"operation:{body.idempotencyKey}",
+                commit=False,
+            )
+            run.executor_task_id = task.id
+            run.status = "queued"
+            run.phase = "queued"
+            run.updated_at = utcnow()
+        result = runs.logistics_snapshot(run, unchanged=unchanged)
+        _add_audit(
+            session,
+            request_id=request.state.request_id,
+            action=action,
+            result="success",
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            business_object_type="logistics_query_run",
+            business_object_id=str(run.id),
+            change_summary={
+                "status": run.status,
+                "totalCount": run.total_count,
+                "unchanged": unchanged,
+            },
+            details={"queryMode": run.query_mode, "site": run.site},
+            **_request_log_context(request),
+        )
+        session.commit()
+        return {"ok": True, "data": result}
+
+    @app.get("/v1/operation-runs/logistics-query/latest")
+    def latest_logistics_operation_run(
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="fulfillment.order.read",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="fulfillment.logistics.run.latest",
+        )
+        service = OperationRunService(session)
+        run = service.latest_logistics_run(
+            tenant_id=actor.tenant.id, actor_user_id=actor.user.id
+        )
+        return {"ok": True, "data": service.logistics_snapshot(run) if run else None}
+
+    @app.get("/v1/operation-runs/logistics-query/{run_id}")
+    def get_logistics_operation_run(
+        run_id: uuid.UUID,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "fulfillment.logistics.run.read"
+        actor = authorize_request(
+            request,
+            session,
+            permission="fulfillment.order.read",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        service = OperationRunService(session)
+        try:
+            run = service.get_logistics_run(tenant_id=actor.tenant.id, run_id=run_id)
+        except PurchaseServiceError as exc:
+            purchase_error(
+                request, session, actor, action, exc, business_object_id=str(run_id)
+            )
+        return {"ok": True, "data": service.logistics_snapshot(run)}
+
+    @app.post("/v1/operation-runs/logistics-query/{run_id}/cancel")
+    def cancel_logistics_operation_run(
+        run_id: uuid.UUID,
+        body: ExecutorTaskCancelBody,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="fulfillment.order.read",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="fulfillment.logistics.run.cancel",
+        )
+        runs = OperationRunService(session)
+        run = runs.get_logistics_run(tenant_id=actor.tenant.id, run_id=run_id)
+        if run.executor_task_id is None:
+            raise HTTPException(
+                status_code=409, detail={"code": "operation_run_not_cancellable"}
+            )
+        task = executor_channel(session).get_task(
+            tenant_id=actor.tenant.id,
+            user_id=actor.user.id,
+            task_id=run.executor_task_id,
+        )
+        if body.expectedStatus and task.status != body.expectedStatus:
+            raise ExecutorServiceError("executor_task_state_conflict", status_code=409)
+        executor_channel(session).cancel_task(
+            tenant_id=actor.tenant.id,
+            user_id=actor.user.id,
+            task_id=task.id,
+        )
+        session.refresh(run)
+        return {"ok": True, "data": runs.logistics_snapshot(run)}
 
     @app.post("/v1/purchase-orders/draft")
     def save_purchase_order_draft(
@@ -5127,6 +5521,12 @@ def _validation_log_target(method: str, path: str) -> tuple[str | None, str | No
         return "resource.environment.result_ingest", None
     if method == "PUT" and path == "/v1/operations/logistics-query-runs":
         return "fulfillment.logistics.result_ingest", None
+    if method == "POST" and path == "/v1/operation-runs/environment-creation":
+        return "resource.environment.run.create", None
+    if method == "POST" and path == "/v1/operation-runs/logistics-query":
+        return "fulfillment.logistics.run.create", None
+    if method == "POST" and path == "/v1/environment-plans/parse":
+        return "resource.environment.plan.parse", None
     if method == "PUT" and path == "/v1/resources/buyer-accounts/snapshot":
         return "resource.buyer_account.snapshot_sync", None
     if method == "POST" and path == "/v1/resources/buyer-accounts/preflight":

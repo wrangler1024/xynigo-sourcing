@@ -18,7 +18,13 @@ PAIRING_CODE_PATTERN = re.compile(r"^[A-HJ-NP-Z2-9]{8}$")
 REVISION_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 STABLE_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]{1,127}$")
 EXECUTOR_CAPABILITIES = Literal[
-    "config.read.v1", "config.write.v1", "workspace.rpc.v1"
+    "config.read.v1",
+    "config.write.v1",
+    "workspace.rpc.v1",
+    "environment.parse.v1",
+    "logistics.query.v1",
+    "environment.create-bound.v1",
+    "environment.create-backup.v1",
 ]
 
 
@@ -190,6 +196,7 @@ class ExecutorTaskProgressBody(ExecutorTaskStartBody):
     current: int | None = Field(default=None, ge=0)
     total: int | None = Field(default=None, ge=0)
     stableCode: str | None = Field(default=None, max_length=128)
+    snapshot: dict[str, Any] | None = None
 
     @field_validator("phase")
     @classmethod
@@ -211,6 +218,10 @@ class ExecutorTaskProgressBody(ExecutorTaskStartBody):
     def validate_progress(self) -> "ExecutorTaskProgressBody":
         if self.current is not None and self.total is not None and self.current > self.total:
             raise ValueError("progress current cannot exceed total")
+        if self.snapshot is not None:
+            raw = str(self.snapshot)
+            if len(raw) > 2 * 1024 * 1024:
+                raise ValueError("progress snapshot is too large")
         return self
 
 

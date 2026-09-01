@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Literal
+import uuid
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -20,6 +21,164 @@ def _timezone_required(value: datetime | None) -> datetime | None:
     if value is not None and (value.tzinfo is None or value.utcoffset() is None):
         raise ValueError("datetime must contain a timezone")
     return value
+
+
+class PurchaserAllocationSummary(BaseModel):
+    """Credential-free assignment used to create an environment run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    purchaserLabel: str = Field(min_length=1, max_length=100)
+    count: int = Field(ge=1, le=2000)
+
+    @field_validator("purchaserLabel")
+    @classmethod
+    def normalize_purchaser(cls, value: str) -> str:
+        normalized = _single_line(value)
+        if any(character in normalized for character in (",", ":")):
+            raise ValueError("purchaserLabel contains an unsupported separator")
+        return normalized
+
+
+class EnvironmentCreationRunCreateBody(BaseModel):
+    """Safe cloud request for a durable environment-creation Run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    idempotencyKey: str = Field(min_length=8, max_length=128, pattern=SAFE_KEY_RE)
+    executorId: uuid.UUID
+    mode: Literal["bound", "backup", "test"] = "bound"
+    site: Literal["US", "MX"]
+    purchaseDate: str = Field(pattern=r"^20\d{6}$")
+    environmentGroup: str = Field(min_length=1, max_length=12)
+    planRef: str | None = Field(
+        default=None, min_length=8, max_length=128, pattern=SAFE_KEY_RE
+    )
+    buyerLabel: str | None = Field(default=None, min_length=1, max_length=100)
+    totalCount: int = Field(ge=1, le=2000)
+    verifySampleCount: int = Field(default=0, ge=0, le=2000)
+    assignments: list[PurchaserAllocationSummary] = Field(
+        default_factory=list, max_length=100
+    )
+
+    @field_validator("environmentGroup", "buyerLabel")
+    @classmethod
+    def normalize_create_text(cls, value: str | None) -> str | None:
+        return _single_line(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def validate_mode_inputs(self) -> "EnvironmentCreationRunCreateBody":
+        if self.verifySampleCount > self.totalCount:
+            raise ValueError("verifySampleCount cannot exceed totalCount")
+        if self.mode == "bound":
+            if not self.planRef:
+                raise ValueError("bound environment run requires planRef")
+            if not self.assignments:
+                raise ValueError("bound environment run requires assignments")
+            if sum(item.count for item in self.assignments) != self.totalCount:
+                raise ValueError("assignment count must equal totalCount")
+        elif not self.buyerLabel:
+            raise ValueError("backup/test environment run requires buyerLabel")
+        return self
+
+
+class EnvironmentPlanParseBody(BaseModel):
+    """Encrypted upload request for parsing a buyer-account workbook locally."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    idempotencyKey: str = Field(min_length=8, max_length=128, pattern=SAFE_KEY_RE)
+    executorId: uuid.UUID
+    filename: str = Field(min_length=1, max_length=255)
+    contentBase64: str = Field(min_length=1, max_length=28 * 1024 * 1024)
+    site: Literal["US", "MX"]
+
+    @field_validator("filename")
+    @classmethod
+    def validate_filename(cls, value: str) -> str:
+        normalized = _single_line(value)
+        if any(character in normalized for character in ("/", "\\", "\x00")):
+            raise ValueError("filename must not contain a path")
+        if not normalized.casefold().endswith(".xlsx"):
+            raise ValueError("environment plan must be an xlsx workbook")
+        return normalized
+
+
+class EnvironmentPlanPreviewItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    emailMasked: str = Field(min_length=1, max_length=255)
+    orderMasked: str = Field(default="", max_length=160)
+    cookieBytes: int = Field(ge=0, le=10 * 1024 * 1024)
+
+    @field_validator("emailMasked")
+    @classmethod
+    def require_masked_preview_account(cls, value: str) -> str:
+        normalized = _single_line(value)
+        if "@" in normalized and not any(marker in normalized for marker in MASK_MARKERS):
+            raise ValueError("emailMasked must be masked")
+        return normalized
+
+
+class EnvironmentPlanParseResult(BaseModel):
+    """Credential-free result returned by the local workbook parser."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    planId: str = Field(min_length=8, max_length=128, pattern=SAFE_KEY_RE)
+    site: Literal["US", "MX"]
+    count: int = Field(ge=1, le=2000)
+    cookieCount: int = Field(ge=0, le=2000)
+    mixedSiteCookieCount: int = Field(default=0, ge=0, le=2000)
+    passwordKindCount: int = Field(ge=0, le=2000)
+    duplicateCount: int = Field(ge=0, le=2000)
+    issueCount: int = Field(ge=0, le=2000)
+    orderCount: int = Field(ge=0, le=2000)
+    preview: list[EnvironmentPlanPreviewItem] = Field(default_factory=list, max_length=5)
+
+    @model_validator(mode="after")
+    def validate_counts(self) -> "EnvironmentPlanParseResult":
+        bounded = (
+            self.cookieCount,
+            self.mixedSiteCookieCount,
+            self.duplicateCount,
+            self.issueCount,
+            self.orderCount,
+        )
+        if any(value > self.count for value in bounded):
+            raise ValueError("environment parse count exceeds total")
+        return self
+
+
+class LogisticsQueryRunCreateBody(BaseModel):
+    """Safe cloud request for a durable logistics-query Run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    idempotencyKey: str = Field(min_length=8, max_length=128, pattern=SAFE_KEY_RE)
+    executorId: uuid.UUID
+    queryMode: Literal["initial", "single_retry", "failed_retry"] = "initial"
+    force: bool = False
+    site: Literal["US", "MX"]
+    environmentSerials: list[str] = Field(min_length=1, max_length=2000)
+
+    @field_validator("environmentSerials")
+    @classmethod
+    def normalize_environment_serials(cls, value: list[str]) -> list[str]:
+        normalized = [_single_line(item) for item in value]
+        if any(not item or len(item) > 64 for item in normalized):
+            raise ValueError("environment serial is invalid")
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("environmentSerials must be unique")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_query_mode(self) -> "LogisticsQueryRunCreateBody":
+        if self.queryMode == "single_retry" and len(self.environmentSerials) != 1:
+            raise ValueError("single_retry requires exactly one environment")
+        if self.queryMode != "single_retry" and self.force:
+            raise ValueError("force is only supported for single_retry")
+        return self
 
 
 class EnvironmentCreationResultItem(BaseModel):
@@ -74,6 +233,61 @@ class EnvironmentCreationResultItem(BaseModel):
                 "successful environment result requires reference and serial"
             )
         return self
+
+
+class EnvironmentRunProgressItem(BaseModel):
+    """Credential-free row snapshot accepted from a formal executor task."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    accountRef: str = Field(min_length=8, max_length=128, pattern=SAFE_KEY_RE)
+    accountLabel: str = Field(min_length=1, max_length=255)
+    purchaserLabel: str = Field(min_length=1, max_length=100)
+    environmentName: str = Field(min_length=1, max_length=255)
+    environmentRef: str | None = Field(
+        default=None, min_length=1, max_length=128, pattern=SAFE_KEY_RE
+    )
+    environmentSerial: str | None = Field(default=None, min_length=1, max_length=64)
+    status: Literal["queued", "running", "success", "failed", "stopped"]
+    currentStep: str = Field(default="", max_length=64)
+    completedSteps: list[str] = Field(default_factory=list, max_length=20)
+    errorStep: str = Field(default="", max_length=64)
+    errorSummary: str = Field(default="", max_length=300)
+    recoveredExisting: bool = False
+    ipAddress: str = Field(default="", max_length=64)
+    ipCountry: str = Field(default="", max_length=100)
+    ipVerified: bool | None = None
+
+    @field_validator(
+        "accountLabel",
+        "purchaserLabel",
+        "environmentName",
+        "environmentSerial",
+        "currentStep",
+        "errorStep",
+        "errorSummary",
+        "ipCountry",
+    )
+    @classmethod
+    def normalize_progress_text(cls, value: str | None) -> str | None:
+        return _single_line(value) if value is not None else None
+
+    @field_validator("accountLabel")
+    @classmethod
+    def require_progress_masked_account(cls, value: str) -> str:
+        if "@" in value and not any(marker in value for marker in MASK_MARKERS):
+            raise ValueError("accountLabel must be masked")
+        return value
+
+    @field_validator("completedSteps")
+    @classmethod
+    def normalize_completed_steps(cls, value: list[str]) -> list[str]:
+        normalized = [_single_line(item) for item in value]
+        if any(not item or len(item) > 64 for item in normalized):
+            raise ValueError("completed step is invalid")
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("completedSteps must be unique")
+        return normalized
 
 
 class EnvironmentIpCheckItem(BaseModel):
@@ -183,6 +397,47 @@ class LogisticsQueryResultItem(BaseModel):
     @classmethod
     def validate_query_timezone(cls, value: datetime | None) -> datetime | None:
         return _timezone_required(value)
+
+
+class LogisticsRunProgressItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    environmentSerial: str = Field(min_length=1, max_length=64)
+    environmentName: str = Field(default="", max_length=255)
+    status: Literal["pending", "running", "ok", "fail", "login", "inuse", "stopped"]
+    currentStep: str = Field(default="", max_length=64)
+    completedSteps: list[str] = Field(default_factory=list, max_length=20)
+    platformOrderNo: str = Field(default="", max_length=160)
+    platformStatus: str = Field(default="", max_length=100)
+    statusLabel: str = Field(default="", max_length=100)
+    trackingNumbers: list[str] = Field(default_factory=list, max_length=20)
+    packageNumbers: list[str] = Field(default_factory=list, max_length=20)
+    carrier: str = Field(default="", max_length=100)
+    errorSummary: str = Field(default="", max_length=300)
+
+    @field_validator(
+        "environmentSerial",
+        "environmentName",
+        "currentStep",
+        "platformOrderNo",
+        "platformStatus",
+        "statusLabel",
+        "carrier",
+        "errorSummary",
+    )
+    @classmethod
+    def normalize_logistics_progress_text(cls, value: str) -> str:
+        return _single_line(value)
+
+    @field_validator("completedSteps", "trackingNumbers", "packageNumbers")
+    @classmethod
+    def normalize_progress_lists(cls, value: list[str]) -> list[str]:
+        normalized = [_single_line(item) for item in value if _single_line(item)]
+        if any(len(item) > 200 for item in normalized):
+            raise ValueError("progress list item is too long")
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("progress list items must be unique")
+        return normalized
 
 
 class LogisticsQueryRunBody(BaseModel):

@@ -2561,6 +2561,7 @@ let procurementImportPlanId = null;
 let procurementImportTargetValidated = false;
 let procurementImportSyncTimer = null;
 let envPlanId = null;
+let envPlanExecutorId = '';
 let envAccountCount = 0;
 let envRunning = false;
 let envSubmitting = false;
@@ -2632,6 +2633,11 @@ let envBuyerCounts = {};                     // 绑号模式：姓名 → 数量
 let envMode = 'bound';                       // bound=绑号环境 / backup=备用·测试环境
 let envBackup = { buyer: '', count: 10, type: '备用' };
 let backupRunning = false;
+let cloudEnvironmentRunId = '';
+let cloudEnvironmentTaskId = '';
+let cloudLogisticsRunId = '';
+let cloudLogisticsTaskId = '';
+let lastWorkspaceExecutorId = '';
 let safeParallelTasks = true;
 // 采购/买家号相关分组白名单：模块一、模块三均暂时隐藏店铺/后台分组
 const BUYER_GROUP_PATTERN = /采购|买家号|Registration/i;
@@ -3273,8 +3279,175 @@ async function cloudWorkspaceExecutor() {
   return selected;
 }
 
+async function cloudFormalExecutor(capability, preferredId='') {
+  let selected = localExecutorSelectedDevice();
+  const compatible = item => item && item.status !== 'revoked'
+    && item.connectivity === 'online'
+    && Array.isArray(item.capabilities)
+    && item.capabilities.includes(capability);
+  if (preferredId) {
+    selected = localExecutorDevices.find(item => item.id === preferredId) || null;
+  }
+  if (!compatible(selected)) {
+    const payload = await cloudFetchJson('/v1/executors');
+    localExecutorDevices = Array.isArray(payload.items) ? payload.items : [];
+    selected = preferredId
+      ? localExecutorDevices.find(item => item.id === preferredId) || null
+      : localExecutorDevices.find(compatible) || null;
+    if (compatible(selected)) localExecutorSelectedDeviceId = selected.id;
+    renderLocalExecutorDevices();
+  }
+  if (!compatible(selected)) {
+    const error = new Error(selected && selected.connectivity === 'online'
+      ? '当前执行器版本不支持阶段 2 正式任务，请升级到最新版本'
+      : '本地执行器当前离线，请先启动解析文件时使用的最新版本 Xynigo');
+    error.code = selected && selected.connectivity === 'online'
+      ? 'executor_capability_missing' : 'executor_offline';
+    throw error;
+  }
+  return selected;
+}
+
+function cloudRunElapsed(run) {
+  const started = Date.parse(run && (run.startedAt || run.createdAt) || '');
+  const ended = Date.parse(run && run.completedAt || '');
+  if (!Number.isFinite(started)) return 0;
+  return Math.max(0, Math.floor(((Number.isFinite(ended) ? ended : Date.now()) - started) / 1000));
+}
+
+function cloudRunHubConnected(run) {
+  const executor = localExecutorDevices.find(item => item.id === run.executorId);
+  return !!(executor && executor.connectivity === 'online'
+    && executor.hubStatus === 'ready');
+}
+
+function cloudLogisticsLegacySnapshot(run) {
+  if (!run) return {running:false, rows:[], elapsedSec:0, hubConnected:false};
+  const rows = (run.rows || []).map(row => ({
+    serial:String(row.environmentSerial || ''),
+    envName:String(row.environmentName || ''),
+    state:String(row.status || 'pending'),
+    orderNo:String(row.platformOrderNo || ''),
+    orderTime:String(row.orderTime || ''), amount:String(row.amount || ''),
+    status:String(row.platformStatus || ''), statusCn:String(row.statusLabel || ''),
+    stage:String(row.fulfillmentStage || ''),
+    tracks:Array.isArray(row.trackingNumbers) ? row.trackingNumbers : [],
+    pkgs:Array.isArray(row.packageNumbers) ? row.packageNumbers : [],
+    carrier:String(row.carrier || ''), kanDan:!!row.cancelled,
+    riskOrder:!!row.riskOrder, riskMessage:String(row.riskSummary || ''),
+    ip:String(row.ipAddress || ''), time:String(row.queriedAt || ''),
+    timeZone:String(row.timeZone || ''), utcOffsetMinutes:row.utcOffsetMinutes,
+    error:String(row.errorSummary || ''),
+    screenshotState:String(row.screenshotStatus || 'pending'),
+  }));
+  return {
+    running:!run.terminal,
+    current:rows.filter(row => row.state === 'running').map(row => row.serial).join(', '),
+    elapsedSec:cloudRunElapsed(run), rows,
+    site:run.site, hubConnected:cloudRunHubConnected(run),
+  };
+}
+
+function cloudEnvironmentLegacySnapshot(run) {
+  if (!run) return {running:false, rows:[], elapsedSec:0, hubConnected:false};
+  const rows = (run.rows || []).map(row => {
+    const status = String(row.status || 'queued');
+    let state = status;
+    if (status === 'queued') state = 'pending';
+    else if (status === 'success') state = 'done';
+    else if (status === 'running') state = String(row.currentStep || 'running');
+    return {
+      accountId:String(row.accountRef || ''),
+      emailMasked:String(row.accountLabel || ''), buyer:String(row.purchaserLabel || ''),
+      envName:String(row.environmentName || ''),
+      containerCode:String(row.environmentRef || ''),
+      serialNumber:String(row.environmentSerial || ''),
+      state, completedSteps:Array.isArray(row.completedSteps) ? row.completedSteps : [],
+      errorStep:String(row.errorStep || ''), error:String(row.errorSummary || ''),
+      recoveredExisting:!!row.recoveredExisting,
+    };
+  });
+  const checks = (run.rows || []).filter(row => row.ipVerified !== null
+    && row.ipVerified !== undefined).map(row => ({
+      envName:String(row.environmentName || ''), ip:String(row.ipAddress || ''),
+      country:String(row.ipCountry || ''), ok:!!row.ipVerified,
+    }));
+  const phase = String(run.phase || '').replace(/^environment\./, '');
+  const summary = {
+    total:Number(run.totalCount || rows.length),
+    done:Number(run.successCount || rows.filter(row => row.state === 'done').length),
+    failed:Number(run.failedCount || rows.filter(row => row.state === 'failed').length),
+    stopped:rows.filter(row => row.state === 'stopped').length,
+    ipOk:Number(run.ipOkCount || 0), ipTotal:Number(run.ipTotalCount || 0),
+  };
+  return {
+    running:!run.terminal, stopRequested:!!run.stopRequested,
+    elapsedSec:cloudRunElapsed(run), rows, summary, ipChecks:checks,
+    phase, ipCheckDone:checks.length, ipCheckTotal:Number(run.ipTotalCount || checks.length),
+    fatalError:run.status === 'failed'
+      ? String((rows.find(row => row.error) || {}).error || '任务执行失败') : '',
+    mappingReady:false, tsvReady:false, resultReady:false,
+    ledger:{enabled:false, running:false, rows:[]},
+    hubConnected:cloudRunHubConnected(run),
+  };
+}
+
+async function cloudOperationSnapshot(kind, runId='') {
+  const base = kind === 'environment'
+    ? '/v1/operation-runs/environment-creation'
+    : '/v1/operation-runs/logistics-query';
+  const payload = await cloudFetchJson(runId
+    ? `${base}/${encodeURIComponent(runId)}` : `${base}/latest`);
+  return payload.data || null;
+}
+
+async function cancelCloudOperationRun(kind, runId) {
+  if (!runId) throw new Error('云端任务尚未返回可停止的运行编号');
+  const base = kind === 'environment'
+    ? '/v1/operation-runs/environment-creation'
+    : '/v1/operation-runs/logistics-query';
+  return cloudFetchJson(`${base}/${encodeURIComponent(runId)}/cancel`, {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'
+  });
+}
+
+async function waitCloudExecutorTask(taskId, timeoutMs=120000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const payload = await cloudFetchJson(
+      `/v1/executor-tasks/${encodeURIComponent(taskId)}`);
+    const task = payload.task || {};
+    if (task.status === 'succeeded') return task;
+    if (['failed','uncertain','cancelled'].includes(task.status)) {
+      const error = new Error(`本地执行器任务失败：${task.resultCode || task.status}`);
+      error.code = String(task.resultCode || task.status);
+      throw error;
+    }
+    await new Promise(resolve => setTimeout(resolve, 300));
+  }
+  const error = new Error('等待本地执行器解析文件超时；请检查执行器状态后重试');
+  error.code = 'executor_task_timeout';
+  throw error;
+}
+
+async function cloudEnvironmentPlanParse(filename, contentBase64, site) {
+  const executor = await cloudFormalExecutor('environment.parse.v1');
+  const created = await cloudFetchJson('/v1/environment-plans/parse', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({
+      idempotencyKey:newWorkspaceMutationKey('environment-parse'),
+      executorId:executor.id, filename, contentBase64, site,
+    })
+  });
+  const taskId = String(created.task && created.task.id || '');
+  if (!taskId) throw new Error('云端未返回文件解析任务编号');
+  const task = await waitCloudExecutorTask(taskId);
+  return {result:task.resultSummary || {}, executorId:String(executor.id || '')};
+}
+
 async function cloudWorkspaceRpcRaw(path, opts={}) {
   const executor = await cloudWorkspaceExecutor();
+  lastWorkspaceExecutorId = String(executor.id || '');
   const method = String(opts.method || 'GET').toUpperCase();
   let body = null;
   if (method === 'POST') {
@@ -5844,7 +6017,16 @@ async function poll() {
       && Date.now() >= queryPollGraceUntil) return;
   queryPollInFlight = true;
   try {
-    render(await api('/api/progress'));
+    if (CLOUD_WEB_MODE) {
+      const run = await cloudOperationSnapshot('logistics', cloudLogisticsRunId);
+      if (run) {
+        cloudLogisticsRunId = String(run.runId || '');
+        cloudLogisticsTaskId = String(run.executorTaskId || '');
+      }
+      render(cloudLogisticsLegacySnapshot(run));
+    } else {
+      render(await api('/api/progress'));
+    }
     queryProgressLoaded = true;
   }
   catch (e) {
@@ -6356,7 +6538,18 @@ async function pollEnvBatch() {
       && Date.now() >= envPollGraceUntil) return;
   envPollInFlight = true;
   try {
-    if (envMode === 'backup') {
+    if (CLOUD_WEB_MODE) {
+      const run = await cloudOperationSnapshot('environment', cloudEnvironmentRunId);
+      if (run) {
+        cloudEnvironmentRunId = String(run.runId || '');
+        cloudEnvironmentTaskId = String(run.executorTaskId || '');
+        envMode = run.mode === 'bound' ? 'bound' : 'backup';
+        if (run.mode === 'test') envBackup.type = '测试';
+      }
+      const snapshot = cloudEnvironmentLegacySnapshot(run);
+      if (envMode === 'backup') renderBackupBatch(snapshot);
+      else renderEnvBatch(snapshot);
+    } else if (envMode === 'backup') {
       renderBackupBatch(await api('/api/envbatch/backup/progress'));
     } else {
       renderEnvBatch(await api('/api/envbatch/progress'));
@@ -6428,17 +6621,33 @@ $('btnStart').onclick = async () => {
   queryPollGraceUntil = Date.now() + 2 * 60 * 1000;
   $('btnStart').disabled = true;
   try {
-    const j = await api('/api/query', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload), idempotencyKey, rpcTimeoutMs:120000
-    });
+    let j;
+    if (CLOUD_WEB_MODE) {
+      const executor = await cloudFormalExecutor('logistics.query.v1');
+      const created = await cloudFetchJson('/v1/operation-runs/logistics-query', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          idempotencyKey, executorId:executor.id, queryMode:'initial', site,
+          environmentSerials:serials,
+        })
+      });
+      j = created.data;
+      cloudLogisticsRunId = String(j.runId || '');
+      cloudLogisticsTaskId = String(j.executorTaskId || '');
+      render(cloudLogisticsLegacySnapshot(j));
+    } else {
+      j = await api('/api/query', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload), idempotencyKey, rpcTimeoutMs:120000
+      });
+    }
     clearWorkspaceMutationKey('query-start', idempotencyKey);
     stopRequested = false;
     isRunning = true;
     queryProgressLoaded = false;
     poll();
     const siteName = j.site === 'US' ? '美国站' : '墨西哥站';
-    toast(`开始查询${siteName}，共 ${j.total} 个环境。每个环境约 30-60 秒，请耐心等待`);
+    toast(`开始查询${siteName}，共 ${j.total || j.totalCount} 个环境。每个环境约 30-60 秒，请耐心等待`);
   } catch (e) {
     queryPollGraceUntil = Date.now() + 30 * 1000;
     queryProgressLoaded = false;
@@ -6452,7 +6661,11 @@ $('btnStart').onclick = async () => {
 
 $('btnStop').onclick = async () => {
   stopRequested = true;
-  try { await api('/api/stop', { method: 'POST' }); toast('停止中，当前环境查询完成后结束…'); } catch (e) { toast(e.message); }
+  try {
+    if (CLOUD_WEB_MODE) await cancelCloudOperationRun('logistics', cloudLogisticsRunId);
+    else await api('/api/stop', { method: 'POST' });
+    toast('停止中，当前环境查询完成后结束…');
+  } catch (e) { toast(e.message); }
 };
 
 tbody.addEventListener('click', async e => {
@@ -6467,10 +6680,28 @@ tbody.addEventListener('click', async e => {
   const force = btn.dataset.force === '1';
   if (force && !confirm('将关闭该环境当前打开的浏览器并重新查询。\n\n请确认这是上次查询中断的残留窗口——如果采购同事正在使用该环境，关闭可能影响其登录状态！')) return;
   try {
-    await api('/api/requery', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ serial: btn.dataset.req, force })
-    });
+    if (CLOUD_WEB_MODE) {
+      const serial = String(btn.dataset.req || '');
+      const payload = {serial, force, site:$('querySite').value};
+      const idempotencyKey = workspaceMutationKey('query-single-retry', payload);
+      const executor = await cloudFormalExecutor('logistics.query.v1');
+      const created = await cloudFetchJson('/v1/operation-runs/logistics-query', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          idempotencyKey, executorId:executor.id, queryMode:'single_retry',
+          force, site:payload.site, environmentSerials:[serial],
+        })
+      });
+      clearWorkspaceMutationKey('query-single-retry', idempotencyKey);
+      cloudLogisticsRunId = String(created.data.runId || '');
+      cloudLogisticsTaskId = String(created.data.executorTaskId || '');
+      render(cloudLogisticsLegacySnapshot(created.data));
+    } else {
+      await api('/api/requery', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ serial: btn.dataset.req, force })
+      });
+    }
     stopRequested = false;
     isRunning = true;
     queryProgressLoaded = false;
@@ -6538,10 +6769,35 @@ $('btnExport').onclick = async () => {
 $('btnRetryFail').onclick = async () => {
   if (isRunning) { toast('查询进行中，请等本批次结束后再批量重查'); return; }
   try {
-    const j = await api('/api/requery-failed', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: '{}'
-    });
+    const retrySerials = lastRows.filter(row =>
+      ['fail','inuse','pending','stopped'].includes(row.state)
+    ).map(row => String(row.serial || '')).filter(Boolean);
+    let j;
+    if (CLOUD_WEB_MODE) {
+      const payload = {serials:retrySerials, site:$('querySite').value};
+      const idempotencyKey = workspaceMutationKey('query-failed-retry', payload);
+      const executor = await cloudFormalExecutor('logistics.query.v1');
+      const created = await cloudFetchJson('/v1/operation-runs/logistics-query', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          idempotencyKey, executorId:executor.id, queryMode:'failed_retry',
+          site:payload.site, environmentSerials:retrySerials,
+        })
+      });
+      clearWorkspaceMutationKey('query-failed-retry', idempotencyKey);
+      cloudLogisticsRunId = String(created.data.runId || '');
+      cloudLogisticsTaskId = String(created.data.executorTaskId || '');
+      j = {count:Number(created.data.totalCount || retrySerials.length)};
+      render(cloudLogisticsLegacySnapshot(created.data));
+      isRunning = true;
+      queryProgressLoaded = false;
+      poll();
+    } else {
+      j = await api('/api/requery-failed', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: '{}'
+      });
+    }
     stopRequested = false;
     const loginCnt = lastRows.filter(r => r.state === 'login').length;
     toast(`开始重查 ${j.count} 个异常行` +
@@ -8624,6 +8880,7 @@ $('btnBuyerImportCommit').onclick = async () => {
 
 $('envFile').onchange = async e => {
   envPlanId = null;
+  envPlanExecutorId = '';
   envAccountCount = 0;
   $('btnEnvPreview').disabled = true;
   $('btnEnvStart').disabled = true;
@@ -8634,12 +8891,20 @@ $('envFile').onchange = async e => {
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
     const contentBase64 = bytesToBase64(bytes);
-    const result = await api('/api/envbatch/parse', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        filename:file.name, contentBase64, site:$('envSite').value
-      })
-    });
+    let result;
+    if (CLOUD_WEB_MODE) {
+      const parsed = await cloudEnvironmentPlanParse(
+        file.name, contentBase64, $('envSite').value);
+      result = parsed.result;
+      envPlanExecutorId = parsed.executorId;
+    } else {
+      result = await api('/api/envbatch/parse', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          filename:file.name, contentBase64, site:$('envSite').value
+        })
+      });
+    }
     envPlanId = result.planId;
     envAccountCount = result.count;
     const mixedSiteCookieCount = Number(result.mixedSiteCookieCount || 0);
@@ -8698,13 +8963,34 @@ $('btnEnvStart').onclick = async () => {
       '正在等待本机服务受理，请勿重复点击或关闭页面；受理后会自动切换为“后台执行中”。');
     const payload = {buyer:envBackup.buyer, count:envBackup.count,
       type:envBackup.type, purchaseDate:envPurchaseDate(),
-      verifySampleCount:verifyCount, confirmWrite:true, site};
+      verifySampleCount:verifyCount, confirmWrite:true, site,
+      environmentGroup:$('envSiteGroup').value};
     const idempotencyKey = workspaceMutationKey('env-backup-start', payload);
     try {
-      const result = await api('/api/envbatch/backup/start', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body:JSON.stringify(payload), idempotencyKey, rpcTimeoutMs:120000
-      });
+      let result;
+      if (CLOUD_WEB_MODE) {
+        const executor = await cloudFormalExecutor('environment.create-backup.v1');
+        const created = await cloudFetchJson('/v1/operation-runs/environment-creation', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({
+            idempotencyKey, executorId:executor.id,
+            mode:envBackup.type === '测试' ? 'test' : 'backup',
+            site, purchaseDate:payload.purchaseDate,
+            environmentGroup:payload.environmentGroup,
+            buyerLabel:envBackup.buyer, totalCount:envBackup.count,
+            verifySampleCount:verifyCount, assignments:[],
+          })
+        });
+        result = {...created.data, count:created.data.totalCount};
+        cloudEnvironmentRunId = String(result.runId || '');
+        cloudEnvironmentTaskId = String(result.executorTaskId || '');
+        renderBackupBatch(cloudEnvironmentLegacySnapshot(result));
+      } else {
+        result = await api('/api/envbatch/backup/start', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify(payload), idempotencyKey, rpcTimeoutMs:120000
+        });
+      }
       clearWorkspaceMutationKey('env-backup-start', idempotencyKey);
       backupRunning = true;
       envStopRequested = false;
@@ -8740,15 +9026,39 @@ $('btnEnvStart').onclick = async () => {
   await paintEnvSubmissionState();
   const payload = {planId:envPlanId, assignment,
     purchaseDate:envPurchaseDate(), verifySampleCount:verifyCount,
-    confirmWrite:true, site, writeLarkLedger, confirmLarkWrite};
+    confirmWrite:true, site, environmentGroup:$('envSiteGroup').value,
+    writeLarkLedger, confirmLarkWrite};
   const idempotencyKey = workspaceMutationKey('env-start', payload);
   try {
-    const result = await api('/api/envbatch/start', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(payload), idempotencyKey, rpcTimeoutMs:120000
-    });
+    let result;
+    if (CLOUD_WEB_MODE) {
+      const executor = await cloudFormalExecutor(
+        'environment.create-bound.v1', envPlanExecutorId);
+      const assignments = envActiveBuyers().map(buyer => ({
+        purchaserLabel:buyer.name, count:Number(envBuyerCounts[buyer.name] || 0),
+      })).filter(item => item.count > 0);
+      const created = await cloudFetchJson('/v1/operation-runs/environment-creation', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          idempotencyKey, executorId:executor.id, mode:'bound', site,
+          purchaseDate:payload.purchaseDate, environmentGroup:payload.environmentGroup,
+          planRef:envPlanId, totalCount:envAccountCount,
+          verifySampleCount:verifyCount, assignments,
+        })
+      });
+      result = {...created.data, count:created.data.totalCount};
+      cloudEnvironmentRunId = String(result.runId || '');
+      cloudEnvironmentTaskId = String(result.executorTaskId || '');
+      renderEnvBatch(cloudEnvironmentLegacySnapshot(result));
+    } else {
+      result = await api('/api/envbatch/start', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(payload), idempotencyKey, rpcTimeoutMs:120000
+      });
+    }
     clearWorkspaceMutationKey('env-start', idempotencyKey);
     envPlanId = null;
+    envPlanExecutorId = '';
     envRunning = true;
     envStopRequested = false;
     envProgressLoaded = false;
@@ -8785,10 +9095,14 @@ $('btnEnvStop').onclick = async () => {
   envStopSubmitting = true;
   updateEnvButtons();
   try {
-    await api(path, {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(payload), idempotencyKey
-    });
+    if (CLOUD_WEB_MODE) {
+      await cancelCloudOperationRun('environment', cloudEnvironmentRunId);
+    } else {
+      await api(path, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(payload), idempotencyKey
+      });
+    }
     clearWorkspaceMutationKey(scope, idempotencyKey);
     envStopRequested = true;
     envProgressLoaded = false;
@@ -9106,6 +9420,7 @@ $('envSite').onchange = async e => {
   if (envSubmitting || envRunning || envGroupSaving) return;
   if (envPlanId) {
     envPlanId = null;
+    envPlanExecutorId = '';
     envAccountCount = 0;
     $('envPlan').textContent = '站点已变更，请重新选择 xlsx 并执行 Cookie 站点校验。';
   }

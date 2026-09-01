@@ -969,21 +969,39 @@ class EnvironmentCreationRun(Base):
     )
     source_run_key: Mapped[str] = mapped_column(String(128), nullable=False)
     payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    result_payload_hash: Mapped[str | None] = mapped_column(String(64))
+    executor_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("local_executors.id", ondelete="SET NULL")
+    )
+    executor_task_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("executor_tasks.id", ondelete="SET NULL")
+    )
+    run_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="bound")
     site: Mapped[str] = mapped_column(String(20), nullable=False)
     purchase_date: Mapped[str] = mapped_column(String(8), nullable=False)
     environment_group: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
+    phase: Mapped[str] = mapped_column(String(64), nullable=False, default="created")
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    progress_completed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    progress_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    stop_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     total_count: Mapped[int] = mapped_column(Integer, nullable=False)
     success_count: Mapped[int] = mapped_column(Integer, nullable=False)
     failed_count: Mapped[int] = mapped_column(Integer, nullable=False)
     ip_ok_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     ip_total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    request_summary: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     source: Mapped[str] = mapped_column(String(64), nullable=False)
     client_version: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
     __table_args__ = (
@@ -992,14 +1010,23 @@ class EnvironmentCreationRun(Base):
         ),
         CheckConstraint("site IN ('US', 'MX')", name="ck_environment_run_site"),
         CheckConstraint(
-            "status IN ('completed', 'partial_failure', 'failed')",
+            "status IN ('created', 'queued', 'leased', 'running', "
+            "'completed', 'partial_failure', 'failed', 'cancelled', 'uncertain')",
             name="ck_environment_run_status",
         ),
         CheckConstraint(
-            "total_count >= 0 AND success_count >= 0 AND failed_count >= 0",
+            "run_mode IN ('bound', 'backup', 'test')",
+            name="ck_environment_run_mode",
+        ),
+        CheckConstraint(
+            "total_count >= 0 AND success_count >= 0 AND failed_count >= 0 "
+            "AND attempt >= 0 AND progress_completed >= 0 AND progress_total >= 0 "
+            "AND progress_completed <= progress_total",
             name="ck_environment_run_counts",
         ),
         Index("ix_environment_run_tenant_completed", "tenant_id", "completed_at"),
+        Index("ix_environment_run_tenant_status", "tenant_id", "status", "updated_at"),
+        Index("ix_environment_run_executor_task", "executor_task_id", unique=True),
     )
 
 
@@ -1022,6 +1049,8 @@ class EnvironmentCreationResult(Base):
     environment_ref: Mapped[str | None] = mapped_column(String(128))
     environment_serial: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(32), nullable=False)
+    current_step: Mapped[str | None] = mapped_column(String(64))
+    completed_steps: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     error_step: Mapped[str | None] = mapped_column(String(64))
     error_summary: Mapped[str | None] = mapped_column(String(300))
     binding_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -1039,11 +1068,15 @@ class EnvironmentCreationResult(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     __table_args__ = (
         UniqueConstraint("run_id", "account_ref", name="uq_environment_result_run_account"),
         CheckConstraint(
-            "status IN ('success', 'failed')", name="ck_environment_result_status"
+            "status IN ('queued', 'running', 'success', 'failed', 'stopped')",
+            name="ck_environment_result_status",
         ),
         CheckConstraint(
             "feishu_sync_status IN ('pending', 'processing', 'completed', 'failed')",
@@ -1068,18 +1101,35 @@ class LogisticsQueryRun(Base):
     )
     source_run_key: Mapped[str] = mapped_column(String(128), nullable=False)
     payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    result_payload_hash: Mapped[str | None] = mapped_column(String(64))
+    executor_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("local_executors.id", ondelete="SET NULL")
+    )
+    executor_task_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("executor_tasks.id", ondelete="SET NULL")
+    )
     query_mode: Mapped[str] = mapped_column(String(32), nullable=False)
     site: Mapped[str] = mapped_column(String(20), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
+    phase: Mapped[str] = mapped_column(String(64), nullable=False, default="created")
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    progress_completed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    progress_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    stop_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     total_count: Mapped[int] = mapped_column(Integer, nullable=False)
     success_count: Mapped[int] = mapped_column(Integer, nullable=False)
     failed_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    request_summary: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     source: Mapped[str] = mapped_column(String(64), nullable=False)
     client_version: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
     __table_args__ = (
@@ -1092,14 +1142,19 @@ class LogisticsQueryRun(Base):
             name="ck_logistics_run_mode",
         ),
         CheckConstraint(
-            "status IN ('completed', 'partial_failure', 'failed')",
+            "status IN ('created', 'queued', 'leased', 'running', "
+            "'completed', 'partial_failure', 'failed', 'cancelled', 'uncertain')",
             name="ck_logistics_run_status",
         ),
         CheckConstraint(
-            "total_count >= 0 AND success_count >= 0 AND failed_count >= 0",
+            "total_count >= 0 AND success_count >= 0 AND failed_count >= 0 "
+            "AND attempt >= 0 AND progress_completed >= 0 AND progress_total >= 0 "
+            "AND progress_completed <= progress_total",
             name="ck_logistics_run_counts",
         ),
         Index("ix_logistics_run_tenant_completed", "tenant_id", "completed_at"),
+        Index("ix_logistics_run_tenant_status", "tenant_id", "status", "updated_at"),
+        Index("ix_logistics_run_executor_task", "executor_task_id", unique=True),
     )
 
 
@@ -1118,6 +1173,8 @@ class LogisticsQueryResult(Base):
     environment_serial: Mapped[str] = mapped_column(String(64), nullable=False)
     environment_name: Mapped[str | None] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(32), nullable=False)
+    current_step: Mapped[str | None] = mapped_column(String(64))
+    completed_steps: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     platform_order_no: Mapped[str | None] = mapped_column(String(160))
     order_time_text: Mapped[str | None] = mapped_column(String(64))
     amount_text: Mapped[str | None] = mapped_column(String(64))
@@ -1144,11 +1201,14 @@ class LogisticsQueryResult(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     __table_args__ = (
         UniqueConstraint("run_id", "environment_serial", name="uq_logistics_result_run_env"),
         CheckConstraint(
-            "status IN ('ok', 'fail', 'login', 'inuse', 'stopped', 'pending')",
+            "status IN ('ok', 'fail', 'login', 'inuse', 'stopped', 'pending', 'running')",
             name="ck_logistics_result_status",
         ),
         CheckConstraint(
@@ -1437,7 +1497,8 @@ class ExecutorTask(Base):
         ),
         CheckConstraint(
             "task_type IN ('config.read.v1', 'config.write.v1', "
-            "'workspace.rpc.v1')",
+            "'workspace.rpc.v1', 'environment.parse.v1', 'logistics.query.v1', "
+            "'environment.create-bound.v1', 'environment.create-backup.v1')",
             name="ck_executor_task_type",
         ),
         CheckConstraint(

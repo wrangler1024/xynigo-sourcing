@@ -30,12 +30,22 @@ from .cloud_auth import (
     WindowsDpapiAuthSessionStore,
     _validated_token,
 )
+from .operation_executor import (
+    BUSINESS_TASK_TYPES, OperationExecutionError,
+)
 
 
 EXECUTOR_KEYCHAIN_SERVICE = 'io.xynigo.sourcing.executor'
 EXECUTOR_KEYCHAIN_ACCOUNT = 'xynigo-device-credential'
 SUPPORTED_CAPABILITIES = (
-    'config.read.v1', 'config.write.v1', 'workspace.rpc.v1')
+    'config.read.v1',
+    'config.write.v1',
+    'workspace.rpc.v1',
+    'environment.parse.v1',
+    'logistics.query.v1',
+    'environment.create-bound.v1',
+    'environment.create-backup.v1',
+)
 MAX_WORKSPACE_RPC_BYTES = 32 * 1024 * 1024
 CHANNEL_STATE_FIELDS = frozenset({
     'executorId', 'displayName', 'platform', 'architecture', 'pairedAt',
@@ -226,7 +236,7 @@ class CloudExecutorClient(object):
             {'leaseToken': lease_token})
 
     def progress(self, credential, task_id, lease_token, phase,
-                 current=None, total=None, stable_code=None):
+                 current=None, total=None, stable_code=None, snapshot=None):
         payload = {'leaseToken': lease_token, 'phase': phase}
         if current is not None:
             payload['current'] = current
@@ -234,6 +244,8 @@ class CloudExecutorClient(object):
             payload['total'] = total
         if stable_code:
             payload['stableCode'] = stable_code
+        if snapshot is not None:
+            payload['snapshot'] = snapshot
         return self._task_request(
             credential, task_id, 'progress', 'POST', payload)
 
@@ -268,6 +280,7 @@ class ExecutorChannelWorker(object):
                  config_getter, public_config_getter, config_writer,
                  task_coordinator, hub_status_getter,
                  workspace_rpc_executor=None,
+                 operation_task_executor=None,
                  user_session_installer=None,
                  sleep_fn=time.sleep, random_fn=random.random):
         self.client = client
@@ -279,6 +292,7 @@ class ExecutorChannelWorker(object):
         self.task_coordinator = task_coordinator
         self.hub_status_getter = hub_status_getter
         self.workspace_rpc_executor = workspace_rpc_executor
+        self.operation_task_executor = operation_task_executor
         self.user_session_installer = user_session_installer
         self.sleep = sleep_fn
         self.random = random_fn
@@ -401,11 +415,21 @@ class ExecutorChannelWorker(object):
         self.client.start(credential, task_id, lease_token)
         renewal_stop = threading.Event()
         renewal_error = []
+        cancellation_event = threading.Event()
+        if bool(task.get('cancellationRequested')):
+            cancellation_event.set()
 
         def renew_loop():
             while not renewal_stop.wait(15.0):
                 try:
-                    self.client.renew(credential, task_id, lease_token)
+                    renewed = self.client.renew(
+                        credential, task_id, lease_token)
+                    renewed_task = (
+                        renewed.get('task')
+                        if isinstance(renewed, dict) else None)
+                    if (isinstance(renewed_task, dict)
+                            and renewed_task.get('cancellationRequested')):
+                        cancellation_event.set()
                 except Exception as exc:
                     renewal_error.append(exc)
                     return
@@ -414,23 +438,34 @@ class ExecutorChannelWorker(object):
             target=renew_loop, name='xynigo-executor-lease', daemon=True)
         renew_thread.start()
         local_task_id = None
-        task_kind = 'config' if task_type.startswith('config.') else ''
-        phase_prefix = 'config' if task_kind else 'workspace'
+        task_kind = (
+            'operation' if task_type in BUSINESS_TASK_TYPES
+            else 'config' if task_type.startswith('config.') else '')
+        phase_prefix = task_kind or 'workspace'
+
+        def report(phase, current=None, total=None, stable_code=None,
+                   snapshot=None):
+            return self.client.progress(
+                credential, task_id, lease_token, phase,
+                current, total, stable_code, snapshot)
+
         try:
-            if task_kind:
+            if task_kind == 'config':
                 local_task_id = self.task_coordinator.begin(task_kind)
-            self.client.progress(
-                credential, task_id, lease_token,
-                phase_prefix + '.executing', 0, 1)
+            if task_kind != 'operation':
+                report(phase_prefix + '.executing', 0, 1)
             outcome, result_code, result_summary = self._apply_task(
-                task_type, payload)
-            self.client.progress(
-                credential, task_id, lease_token,
-                phase_prefix + '.completed', 1, 1,
-                result_code)
+                task_type, payload, progress_report=report,
+                cancellation_event=cancellation_event)
+            if task_kind != 'operation':
+                report(
+                    phase_prefix + '.completed', 1, 1,
+                    result_code)
         except Exception as exc:
             outcome = 'failed'
             if isinstance(exc, LocalAuthError):
+                result_code = exc.code
+            elif isinstance(exc, OperationExecutionError):
                 result_code = exc.code
             elif isinstance(exc, ValueError):
                 result_code = (
@@ -442,7 +477,10 @@ class ExecutorChannelWorker(object):
                     else 'workspace_rpc_failed')
             result_summary = (
                 {'configRevision': config_revision(self.config_getter())}
-                if task_kind else {})
+                if task_kind == 'config' else {
+                    'runStatus': 'failed',
+                    'phase': phase_prefix + '.failed',
+                } if task_kind == 'operation' else {})
         finally:
             if local_task_id:
                 self.task_coordinator.finish(local_task_id)
@@ -455,7 +493,42 @@ class ExecutorChannelWorker(object):
             result_code, result_summary)
         self._flush_pending_finish(credential)
 
-    def _apply_task(self, task_type, payload):
+    def _apply_task(self, task_type, payload, progress_report=None,
+                    cancellation_event=None):
+        if task_type in BUSINESS_TASK_TYPES:
+            if not callable(self.operation_task_executor):
+                raise LocalAuthError(
+                    'executor_capability_missing',
+                    '正式业务任务执行能力尚未就绪', 409)
+            return self.operation_task_executor(
+                task_type, payload, progress_report,
+                cancellation_event=cancellation_event)
+        if task_type == 'environment.parse.v1':
+            if not callable(self.workspace_rpc_executor):
+                raise LocalAuthError(
+                    'executor_capability_missing',
+                    '买家号文件解析能力尚未就绪', 409)
+            result = self.workspace_rpc_executor({
+                'method': 'POST',
+                'path': '/api/envbatch/parse',
+                'body': payload,
+            })
+            if (not isinstance(result, dict)
+                    or result.get('responseType') != 'json'
+                    or not isinstance(result.get('body'), dict)):
+                raise LocalAuthError(
+                    'environment_parse_response_invalid',
+                    '买家号文件解析响应无效', 502)
+            status = int(result.get('httpStatus') or 0)
+            if status < 200 or status >= 300:
+                body = result['body']
+                raise LocalAuthError(
+                    str(body.get('code') or 'environment_parse_failed'),
+                    str(body.get('error') or '买家号文件解析失败'),
+                    status or 500)
+            return (
+                'succeeded', 'environment_parse_completed',
+                result['body'])
         if task_type == 'workspace.rpc.v1':
             if not callable(self.workspace_rpc_executor):
                 raise LocalAuthError(

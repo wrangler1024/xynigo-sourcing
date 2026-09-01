@@ -20,7 +20,12 @@ from .models import (
     LogisticsQueryRun,
     OperationalSyncOutbox,
 )
-from .operation_contract import EnvironmentCreationRunBody, LogisticsQueryRunBody
+from .operation_contract import (
+    EnvironmentCreationRunBody,
+    EnvironmentCreationRunCreateBody,
+    LogisticsQueryRunBody,
+    LogisticsQueryRunCreateBody,
+)
 from .purchase_service import PurchaseServiceError
 
 
@@ -54,6 +59,311 @@ def _run_status(success_count: int, total_count: int) -> str:
     return "failed"
 
 
+def _iso(value: datetime | None) -> str | None:
+    return value.isoformat() if value is not None else None
+
+
+class OperationRunService:
+    """Cloud-owned lifecycle and read model for local business operations."""
+
+    TERMINAL_STATUSES = frozenset(
+        {"completed", "partial_failure", "failed", "cancelled", "uncertain"}
+    )
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def create_environment_run(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        body: EnvironmentCreationRunCreateBody,
+    ) -> tuple[EnvironmentCreationRun, bool]:
+        digest = _payload_hash(body)
+        existing = self.session.scalar(
+            select(EnvironmentCreationRun).where(
+                EnvironmentCreationRun.tenant_id == tenant_id,
+                EnvironmentCreationRun.source_run_key == body.idempotencyKey,
+            )
+        )
+        if existing is not None:
+            if existing.payload_hash != digest:
+                raise PurchaseServiceError(
+                    "operation_run_idempotency_conflict",
+                    "同一建环境任务标识已提交不同请求",
+                    409,
+                )
+            return existing, True
+        now = utcnow()
+        run = EnvironmentCreationRun(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            actor_user_id=actor_user_id,
+            source_run_key=body.idempotencyKey,
+            payload_hash=digest,
+            executor_id=body.executorId,
+            run_mode=body.mode,
+            site=body.site,
+            purchase_date=body.purchaseDate,
+            environment_group=body.environmentGroup,
+            status="created",
+            phase="created",
+            progress_completed=0,
+            progress_total=body.totalCount,
+            total_count=body.totalCount,
+            success_count=0,
+            failed_count=0,
+            ip_ok_count=0,
+            ip_total_count=0,
+            request_summary={
+                "mode": body.mode,
+                "planRef": body.planRef,
+                "buyerLabel": body.buyerLabel,
+                "verifySampleCount": body.verifySampleCount,
+                "assignments": [
+                    item.model_dump(mode="json") for item in body.assignments
+                ],
+            },
+            source="cloud_web",
+            created_at=now,
+            updated_at=now,
+        )
+        self.session.add(run)
+        self.session.flush()
+        return run, False
+
+    def create_logistics_run(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        body: LogisticsQueryRunCreateBody,
+    ) -> tuple[LogisticsQueryRun, bool]:
+        digest = _payload_hash(body)
+        existing = self.session.scalar(
+            select(LogisticsQueryRun).where(
+                LogisticsQueryRun.tenant_id == tenant_id,
+                LogisticsQueryRun.source_run_key == body.idempotencyKey,
+            )
+        )
+        if existing is not None:
+            accepted_hash = existing.result_payload_hash or (
+                existing.payload_hash if existing.source != "cloud_web" else None
+            )
+            if accepted_hash is not None and accepted_hash != digest:
+                raise PurchaseServiceError(
+                    "operation_run_idempotency_conflict",
+                    "同一物流查询任务标识已提交不同请求",
+                    409,
+                )
+            return existing, True
+        now = utcnow()
+        run = LogisticsQueryRun(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            actor_user_id=actor_user_id,
+            source_run_key=body.idempotencyKey,
+            payload_hash=digest,
+            executor_id=body.executorId,
+            query_mode=body.queryMode,
+            site=body.site,
+            status="created",
+            phase="created",
+            progress_completed=0,
+            progress_total=len(body.environmentSerials),
+            total_count=len(body.environmentSerials),
+            success_count=0,
+            failed_count=0,
+            request_summary={
+                "environmentSerials": list(body.environmentSerials),
+                "force": body.force,
+            },
+            source="cloud_web",
+            created_at=now,
+            updated_at=now,
+        )
+        self.session.add(run)
+        self.session.flush()
+        return run, False
+
+    def get_environment_run(
+        self, *, tenant_id: uuid.UUID, run_id: uuid.UUID
+    ) -> EnvironmentCreationRun:
+        run = self.session.scalar(
+            select(EnvironmentCreationRun).where(
+                EnvironmentCreationRun.id == run_id,
+                EnvironmentCreationRun.tenant_id == tenant_id,
+            )
+        )
+        if run is None:
+            raise PurchaseServiceError("operation_run_not_found", "建环境任务不存在", 404)
+        return run
+
+    def get_logistics_run(
+        self, *, tenant_id: uuid.UUID, run_id: uuid.UUID
+    ) -> LogisticsQueryRun:
+        run = self.session.scalar(
+            select(LogisticsQueryRun).where(
+                LogisticsQueryRun.id == run_id,
+                LogisticsQueryRun.tenant_id == tenant_id,
+            )
+        )
+        if run is None:
+            raise PurchaseServiceError("operation_run_not_found", "物流任务不存在", 404)
+        return run
+
+    def latest_environment_run(
+        self, *, tenant_id: uuid.UUID, actor_user_id: uuid.UUID
+    ) -> EnvironmentCreationRun | None:
+        return self.session.scalar(
+            select(EnvironmentCreationRun)
+            .where(
+                EnvironmentCreationRun.tenant_id == tenant_id,
+                EnvironmentCreationRun.actor_user_id == actor_user_id,
+            )
+            .order_by(EnvironmentCreationRun.updated_at.desc())
+            .limit(1)
+        )
+
+    def latest_logistics_run(
+        self, *, tenant_id: uuid.UUID, actor_user_id: uuid.UUID
+    ) -> LogisticsQueryRun | None:
+        return self.session.scalar(
+            select(LogisticsQueryRun)
+            .where(
+                LogisticsQueryRun.tenant_id == tenant_id,
+                LogisticsQueryRun.actor_user_id == actor_user_id,
+            )
+            .order_by(LogisticsQueryRun.updated_at.desc())
+            .limit(1)
+        )
+
+    def environment_snapshot(
+        self, run: EnvironmentCreationRun, *, unchanged: bool = False
+    ) -> dict[str, object]:
+        rows = list(
+            self.session.scalars(
+                select(EnvironmentCreationResult)
+                .where(EnvironmentCreationResult.run_id == run.id)
+                .order_by(EnvironmentCreationResult.created_at, EnvironmentCreationResult.id)
+            )
+        )
+        return {
+            "runId": str(run.id),
+            "runKey": run.source_run_key,
+            "executorId": str(run.executor_id) if run.executor_id else None,
+            "executorTaskId": str(run.executor_task_id) if run.executor_task_id else None,
+            "mode": run.run_mode,
+            "site": run.site,
+            "purchaseDate": run.purchase_date,
+            "environmentGroup": run.environment_group,
+            "status": run.status,
+            "phase": run.phase,
+            "attempt": run.attempt,
+            "progressCompleted": run.progress_completed,
+            "progressTotal": run.progress_total,
+            "stopRequested": run.stop_requested,
+            "totalCount": run.total_count,
+            "successCount": run.success_count,
+            "failedCount": run.failed_count,
+            "ipOkCount": run.ip_ok_count,
+            "ipTotalCount": run.ip_total_count,
+            "startedAt": _iso(run.started_at),
+            "completedAt": _iso(run.completed_at),
+            "lastHeartbeatAt": _iso(run.last_heartbeat_at),
+            "createdAt": _iso(run.created_at),
+            "updatedAt": _iso(run.updated_at),
+            "terminal": run.status in self.TERMINAL_STATUSES,
+            "unchanged": unchanged,
+            "rows": [
+                {
+                    "accountRef": row.account_ref,
+                    "accountLabel": row.account_label,
+                    "purchaserLabel": row.purchaser_label,
+                    "environmentName": row.environment_name,
+                    "environmentRef": row.environment_ref,
+                    "environmentSerial": row.environment_serial,
+                    "status": row.status,
+                    "currentStep": row.current_step,
+                    "completedSteps": list(row.completed_steps or []),
+                    "errorStep": row.error_step,
+                    "errorSummary": row.error_summary,
+                    "recoveredExisting": row.recovered_existing,
+                    "ipAddress": row.ip_address,
+                    "ipCountry": row.ip_country,
+                    "ipVerified": row.ip_verified,
+                    "updatedAt": _iso(row.updated_at),
+                }
+                for row in rows
+            ],
+        }
+
+    def logistics_snapshot(
+        self, run: LogisticsQueryRun, *, unchanged: bool = False
+    ) -> dict[str, object]:
+        rows = list(
+            self.session.scalars(
+                select(LogisticsQueryResult)
+                .where(LogisticsQueryResult.run_id == run.id)
+                .order_by(LogisticsQueryResult.created_at, LogisticsQueryResult.id)
+            )
+        )
+        return {
+            "runId": str(run.id),
+            "runKey": run.source_run_key,
+            "executorId": str(run.executor_id) if run.executor_id else None,
+            "executorTaskId": str(run.executor_task_id) if run.executor_task_id else None,
+            "queryMode": run.query_mode,
+            "site": run.site,
+            "status": run.status,
+            "phase": run.phase,
+            "attempt": run.attempt,
+            "progressCompleted": run.progress_completed,
+            "progressTotal": run.progress_total,
+            "stopRequested": run.stop_requested,
+            "totalCount": run.total_count,
+            "successCount": run.success_count,
+            "failedCount": run.failed_count,
+            "startedAt": _iso(run.started_at),
+            "completedAt": _iso(run.completed_at),
+            "lastHeartbeatAt": _iso(run.last_heartbeat_at),
+            "createdAt": _iso(run.created_at),
+            "updatedAt": _iso(run.updated_at),
+            "terminal": run.status in self.TERMINAL_STATUSES,
+            "unchanged": unchanged,
+            "rows": [
+                {
+                    "environmentSerial": row.environment_serial,
+                    "environmentName": row.environment_name,
+                    "status": row.status,
+                    "currentStep": row.current_step,
+                    "completedSteps": list(row.completed_steps or []),
+                    "platformOrderNo": row.platform_order_no,
+                    "orderTime": row.order_time_text,
+                    "amount": row.amount_text,
+                    "platformStatus": row.platform_status,
+                    "statusLabel": row.status_label,
+                    "fulfillmentStage": row.fulfillment_stage,
+                    "trackingNumbers": list(row.tracking_numbers or []),
+                    "packageNumbers": list(row.package_numbers or []),
+                    "carrier": row.carrier,
+                    "cancelled": row.cancelled,
+                    "riskOrder": row.risk_order,
+                    "riskSummary": row.risk_summary,
+                    "ipAddress": row.ip_address,
+                    "timeZone": row.time_zone,
+                    "utcOffsetMinutes": row.utc_offset_minutes,
+                    "queriedAt": _iso(row.queried_at),
+                    "errorSummary": row.error_summary,
+                    "screenshotStatus": row.screenshot_status,
+                    "updatedAt": _iso(row.updated_at),
+                }
+                for row in rows
+            ],
+        }
+
+
 class OperationResultService:
     def __init__(self, session: Session) -> None:
         self.session = session
@@ -74,38 +384,78 @@ class OperationResultService:
             )
         )
         if existing is not None:
-            if existing.payload_hash != digest:
+            accepted_hash = existing.result_payload_hash or (
+                existing.payload_hash if existing.source != "cloud_web" else None
+            )
+            if accepted_hash is not None and accepted_hash != digest:
                 raise PurchaseServiceError(
                     "operation_run_idempotency_conflict",
                     "同一建环境任务标识已提交不同结果",
                     409,
                 )
-            return self._environment_result(existing, unchanged=True)
+            if accepted_hash is not None:
+                return self._environment_result(existing, unchanged=True)
+            if (
+                existing.site != body.site
+                or existing.purchase_date != body.purchaseDate
+                or existing.environment_group != body.environmentGroup
+            ):
+                raise PurchaseServiceError(
+                    "operation_run_result_conflict",
+                    "建环境结果与已受理任务参数不一致",
+                    409,
+                )
 
         now = utcnow()
         success_count = sum(item.status == "success" for item in body.results)
-        run = EnvironmentCreationRun(
+        run = existing or EnvironmentCreationRun(
             id=uuid.uuid4(),
             tenant_id=tenant_id,
             actor_user_id=actor_user_id,
             source_run_key=body.runKey,
             payload_hash=digest,
+            result_payload_hash=digest,
+            run_mode="bound",
             site=body.site,
             purchase_date=body.purchaseDate,
             environment_group=body.environmentGroup,
-            status=_run_status(success_count, len(body.results)),
+            status="created",
+            phase="created",
+            progress_completed=0,
+            progress_total=len(body.results),
             total_count=len(body.results),
-            success_count=success_count,
-            failed_count=len(body.results) - success_count,
-            ip_ok_count=sum(item.ok for item in body.ipChecks),
-            ip_total_count=len(body.ipChecks),
-            started_at=body.startedAt,
-            completed_at=body.completedAt,
+            success_count=0,
+            failed_count=0,
+            ip_ok_count=0,
+            ip_total_count=0,
+            request_summary={},
             source=body.source,
             client_version=client_version,
             created_at=now,
+            updated_at=now,
         )
-        self.session.add(run)
+        if existing is None:
+            self.session.add(run)
+        preserve_cancelled = existing is not None and existing.status == "cancelled"
+        run.result_payload_hash = digest
+        run.status = (
+            "cancelled"
+            if preserve_cancelled
+            else _run_status(success_count, len(body.results))
+        )
+        run.phase = "cancelled" if preserve_cancelled else "completed"
+        run.progress_completed = len(body.results)
+        run.progress_total = len(body.results)
+        run.total_count = len(body.results)
+        run.success_count = success_count
+        run.failed_count = len(body.results) - success_count
+        run.ip_ok_count = sum(item.ok for item in body.ipChecks)
+        run.ip_total_count = len(body.ipChecks)
+        run.started_at = run.started_at or body.startedAt
+        run.completed_at = body.completedAt
+        run.last_heartbeat_at = body.completedAt
+        run.client_version = client_version
+        run.updated_at = now
         # No ORM relationship links these rows, so SQLAlchemy cannot infer
         # that the parent must be inserted before the result batch.
         self.session.flush()
@@ -113,30 +463,47 @@ class OperationResultService:
         resource_conflicts = 0
         for item in body.results:
             ip_check = ip_checks.get(item.environmentName)
-            record = EnvironmentCreationResult(
-                id=uuid.uuid4(),
-                run_id=run.id,
-                tenant_id=tenant_id,
-                account_ref=item.accountRef,
-                account_label=item.accountLabel,
-                purchaser_label=item.purchaserLabel,
-                environment_name=item.environmentName,
-                environment_ref=item.environmentRef,
-                environment_serial=item.environmentSerial,
-                status=item.status,
-                error_step=item.errorStep or None,
-                error_summary=item.errorSummary or None,
-                binding_at=item.bindingAt,
-                recovered_existing=item.recoveredExisting,
-                ip_address=ip_check.ipAddress if ip_check else None,
-                ip_country=ip_check.country if ip_check else None,
-                ip_city=ip_check.city if ip_check else None,
-                ip_isp=ip_check.isp if ip_check else None,
-                ip_verified=ip_check.ok if ip_check else None,
-                feishu_sync_status="pending",
-                created_at=now,
+            record = self.session.scalar(
+                select(EnvironmentCreationResult).where(
+                    EnvironmentCreationResult.run_id == run.id,
+                    EnvironmentCreationResult.account_ref == item.accountRef,
+                )
             )
-            self.session.add(record)
+            if record is None:
+                record = EnvironmentCreationResult(
+                    id=uuid.uuid4(),
+                    run_id=run.id,
+                    tenant_id=tenant_id,
+                    account_ref=item.accountRef,
+                    account_label=item.accountLabel,
+                    purchaser_label=item.purchaserLabel,
+                    environment_name=item.environmentName,
+                    status=item.status,
+                    completed_steps=[],
+                    recovered_existing=item.recoveredExisting,
+                    feishu_sync_status="pending",
+                    created_at=now,
+                    updated_at=now,
+                )
+                self.session.add(record)
+            record.account_label = item.accountLabel
+            record.purchaser_label = item.purchaserLabel
+            record.environment_name = item.environmentName
+            record.environment_ref = item.environmentRef
+            record.environment_serial = item.environmentSerial
+            record.status = item.status
+            record.current_step = "done" if item.status == "success" else item.errorStep or None
+            record.error_step = item.errorStep or None
+            record.error_summary = item.errorSummary or None
+            record.binding_at = item.bindingAt
+            record.recovered_existing = item.recoveredExisting
+            record.ip_address = ip_check.ipAddress if ip_check else None
+            record.ip_country = ip_check.country if ip_check else None
+            record.ip_city = ip_check.city if ip_check else None
+            record.ip_isp = ip_check.isp if ip_check else None
+            record.ip_verified = ip_check.ok if ip_check else None
+            record.feishu_sync_status = "pending"
+            record.updated_at = now
             fields = _nonempty({
                 "同步键": f"environment:{tenant_id}:{record.id}",
                 "建环境任务ID": body.runKey,
@@ -168,8 +535,14 @@ class OperationResultService:
                 "回传来源": body.source,
                 "客户端版本": client_version or "",
             })
-            self.session.add(
-                OperationalSyncOutbox(
+            outbox = self.session.scalar(
+                select(OperationalSyncOutbox).where(
+                    OperationalSyncOutbox.dedupe_key
+                    == f"environment_creation_result:{record.id}"
+                )
+            )
+            if outbox is None:
+                self.session.add(OperationalSyncOutbox(
                     id=uuid.uuid4(),
                     tenant_id=tenant_id,
                     aggregate_type="environment_creation_result",
@@ -179,8 +552,7 @@ class OperationResultService:
                     status="pending",
                     attempt_count=0,
                     available_at=now,
-                )
-            )
+                ))
             if item.status == "success":
                 resource_conflicts += self._merge_buyer_resource(
                     tenant_id=tenant_id,
@@ -270,35 +642,68 @@ class OperationResultService:
             )
         )
         if existing is not None:
-            if existing.payload_hash != digest:
+            accepted_hash = existing.result_payload_hash or (
+                existing.payload_hash if existing.source != "cloud_web" else None
+            )
+            if accepted_hash is not None and accepted_hash != digest:
                 raise PurchaseServiceError(
                     "operation_run_idempotency_conflict",
                     "同一物流查询任务标识已提交不同结果",
                     409,
                 )
-            return self._logistics_result(existing, unchanged=True)
+            if accepted_hash is not None:
+                return self._logistics_result(existing, unchanged=True)
+            if existing.site != body.site or existing.query_mode != body.queryMode:
+                raise PurchaseServiceError(
+                    "operation_run_result_conflict",
+                    "物流结果与已受理任务参数不一致",
+                    409,
+                )
 
         now = utcnow()
         success_count = sum(item.status == "ok" for item in body.results)
-        run = LogisticsQueryRun(
+        run = existing or LogisticsQueryRun(
             id=uuid.uuid4(),
             tenant_id=tenant_id,
             actor_user_id=actor_user_id,
             source_run_key=body.runKey,
             payload_hash=digest,
+            result_payload_hash=digest,
             query_mode=body.queryMode,
             site=body.site,
-            status=_run_status(success_count, len(body.results)),
+            status="created",
+            phase="created",
+            progress_completed=0,
+            progress_total=len(body.results),
             total_count=len(body.results),
-            success_count=success_count,
-            failed_count=len(body.results) - success_count,
-            started_at=body.startedAt,
-            completed_at=body.completedAt,
+            success_count=0,
+            failed_count=0,
+            request_summary={},
             source=body.source,
             client_version=client_version,
             created_at=now,
+            updated_at=now,
         )
-        self.session.add(run)
+        if existing is None:
+            self.session.add(run)
+        preserve_cancelled = existing is not None and existing.status == "cancelled"
+        run.result_payload_hash = digest
+        run.status = (
+            "cancelled"
+            if preserve_cancelled
+            else _run_status(success_count, len(body.results))
+        )
+        run.phase = "cancelled" if preserve_cancelled else "completed"
+        run.progress_completed = len(body.results)
+        run.progress_total = len(body.results)
+        run.total_count = len(body.results)
+        run.success_count = success_count
+        run.failed_count = len(body.results) - success_count
+        run.started_at = run.started_at or body.startedAt
+        run.completed_at = body.completedAt
+        run.last_heartbeat_at = body.completedAt
+        run.client_version = client_version
+        run.updated_at = now
         self.session.flush()
         mode_label = {
             "initial": "首次查询",
@@ -314,35 +719,52 @@ class OperationResultService:
             "pending": "待处理",
         }
         for item in body.results:
-            record = LogisticsQueryResult(
-                id=uuid.uuid4(),
-                run_id=run.id,
-                tenant_id=tenant_id,
-                environment_serial=item.environmentSerial,
-                environment_name=item.environmentName or None,
-                status=item.status,
-                platform_order_no=item.platformOrderNo or None,
-                order_time_text=item.orderTime or None,
-                amount_text=item.amount or None,
-                platform_status=item.platformStatus or None,
-                status_label=item.statusLabel or None,
-                fulfillment_stage=item.fulfillmentStage or None,
-                tracking_numbers=list(item.trackingNumbers),
-                package_numbers=list(item.packageNumbers),
-                carrier=item.carrier or None,
-                cancelled=item.cancelled,
-                risk_order=item.riskOrder,
-                risk_summary=item.riskSummary or None,
-                ip_address=item.ipAddress or None,
-                time_zone=item.timeZone or None,
-                utc_offset_minutes=item.utcOffsetMinutes,
-                queried_at=item.queriedAt,
-                error_summary=item.errorSummary or None,
-                screenshot_status=item.screenshotStatus or None,
-                feishu_sync_status="pending",
-                created_at=now,
+            record = self.session.scalar(
+                select(LogisticsQueryResult).where(
+                    LogisticsQueryResult.run_id == run.id,
+                    LogisticsQueryResult.environment_serial == item.environmentSerial,
+                )
             )
-            self.session.add(record)
+            if record is None:
+                record = LogisticsQueryResult(
+                    id=uuid.uuid4(),
+                    run_id=run.id,
+                    tenant_id=tenant_id,
+                    environment_serial=item.environmentSerial,
+                    status=item.status,
+                    completed_steps=[],
+                    tracking_numbers=[],
+                    package_numbers=[],
+                    cancelled=False,
+                    risk_order=False,
+                    feishu_sync_status="pending",
+                    created_at=now,
+                    updated_at=now,
+                )
+                self.session.add(record)
+            record.environment_name = item.environmentName or None
+            record.status = item.status
+            record.current_step = "done" if item.status == "ok" else item.status
+            record.platform_order_no = item.platformOrderNo or None
+            record.order_time_text = item.orderTime or None
+            record.amount_text = item.amount or None
+            record.platform_status = item.platformStatus or None
+            record.status_label = item.statusLabel or None
+            record.fulfillment_stage = item.fulfillmentStage or None
+            record.tracking_numbers = list(item.trackingNumbers)
+            record.package_numbers = list(item.packageNumbers)
+            record.carrier = item.carrier or None
+            record.cancelled = item.cancelled
+            record.risk_order = item.riskOrder
+            record.risk_summary = item.riskSummary or None
+            record.ip_address = item.ipAddress or None
+            record.time_zone = item.timeZone or None
+            record.utc_offset_minutes = item.utcOffsetMinutes
+            record.queried_at = item.queriedAt
+            record.error_summary = item.errorSummary or None
+            record.screenshot_status = item.screenshotStatus or None
+            record.feishu_sync_status = "pending"
+            record.updated_at = now
             fields = _nonempty({
                 "同步键": f"logistics:{tenant_id}:{record.id}",
                 "查询任务ID": body.runKey,
@@ -374,8 +796,14 @@ class OperationResultService:
                 "回传来源": body.source,
                 "客户端版本": client_version or "",
             })
-            self.session.add(
-                OperationalSyncOutbox(
+            outbox = self.session.scalar(
+                select(OperationalSyncOutbox).where(
+                    OperationalSyncOutbox.dedupe_key
+                    == f"logistics_query_result:{record.id}"
+                )
+            )
+            if outbox is None:
+                self.session.add(OperationalSyncOutbox(
                     id=uuid.uuid4(),
                     tenant_id=tenant_id,
                     aggregate_type="logistics_query_result",
@@ -385,8 +813,7 @@ class OperationResultService:
                     status="pending",
                     attempt_count=0,
                     available_at=now,
-                )
-            )
+                ))
         self.session.flush()
         return self._logistics_result(run, unchanged=False)
 

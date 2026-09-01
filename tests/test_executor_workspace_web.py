@@ -36,6 +36,28 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         self.assertIn("envGroupCompatibleWithSite(name, site)", env_groups)
         self.assertIn("$('envSiteGroup').value = '';", env_groups)
 
+    def test_phase_two_uses_cloud_runs_and_dedicated_encrypted_parse(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        for marker in (
+            "environment.parse.v1",
+            "async function cloudEnvironmentPlanParse",
+            "'/v1/environment-plans/parse'",
+            "'/v1/operation-runs/environment-creation'",
+            "'/v1/operation-runs/logistics-query'",
+            "async function cloudOperationSnapshot",
+            "cloudEnvironmentLegacySnapshot",
+            "cloudLogisticsLegacySnapshot",
+            "cancelCloudOperationRun('environment'",
+            "cancelCloudOperationRun('logistics'",
+        ):
+            self.assertIn(marker, html)
+        parse_handler = html[
+            html.index("$('envFile').onchange"):
+            html.index("$('btnEnvPreview').onclick")
+        ]
+        self.assertIn("cloudEnvironmentPlanParse", parse_handler)
+        self.assertIn("envPlanExecutorId = parsed.executorId", parse_handler)
+
     def test_cloud_workspace_renews_sessions_and_idempotently_submits_writes(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")
         for marker in (

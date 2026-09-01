@@ -10,6 +10,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -25,10 +26,19 @@ from .executor_payload_crypto import (
     ExecutorPayloadCipherError,
 )
 from .models import (
+    EnvironmentCreationResult,
+    EnvironmentCreationRun,
     ExecutorPairingCode,
     ExecutorTask,
     ExecutorTaskEvent,
+    LogisticsQueryResult,
+    LogisticsQueryRun,
     LocalExecutor,
+)
+from .operation_contract import (
+    EnvironmentPlanParseResult,
+    EnvironmentRunProgressItem,
+    LogisticsRunProgressItem,
 )
 from .security import hash_token, random_url_token
 
@@ -36,6 +46,16 @@ from .security import hash_token, random_url_token
 PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 ACTIVE_TASK_STATUSES = frozenset({"queued", "leased", "running", "cancel_requested"})
 MAX_QUEUED_WORKSPACE_RPC_TASKS = 32
+BUSINESS_TASK_TYPES = frozenset(
+    {
+        "logistics.query.v1",
+        "environment.create-bound.v1",
+        "environment.create-backup.v1",
+    }
+)
+ENCRYPTED_TASK_TYPES = frozenset(
+    {"workspace.rpc.v1", "environment.parse.v1", *BUSINESS_TASK_TYPES}
+)
 TERMINAL_TASK_STATUSES = frozenset(
     {"succeeded", "failed", "uncertain", "cancelled"}
 )
@@ -63,6 +83,23 @@ PUBLIC_CONFIG_RESULT_KEYS = frozenset(
         "larkLedgerTargetConfigured",
     }
 )
+BUSINESS_RESULT_KEYS = frozenset(
+    {
+        "runStatus",
+        "phase",
+        "progressCompleted",
+        "progressTotal",
+        "totalCount",
+        "successCount",
+        "failedCount",
+        "stoppedCount",
+        "ipOkCount",
+        "ipTotalCount",
+    }
+)
+BUSINESS_RUN_STATUSES = frozenset(
+    {"completed", "partial_failure", "failed", "cancelled", "uncertain"}
+)
 
 
 def utcnow() -> datetime:
@@ -71,6 +108,12 @@ def utcnow() -> datetime:
 
 def as_utc(value: datetime) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def _safe_nonnegative_int(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return max(0, value)
 
 
 class ExecutorServiceError(RuntimeError):
@@ -288,10 +331,26 @@ class ExecutorChannelService:
                     task.status = "cancelled"
                     task.finished_at = now
                     task.result_code = "executor_revoked"
+                    self._sync_operation_run(
+                        task,
+                        status="cancelled",
+                        phase="cancelled",
+                        attempt=task.attempt,
+                        heartbeat_at=now,
+                        completed_at=now,
+                    )
                 else:
                     task.status = "uncertain"
                     task.finished_at = now
                     task.result_code = "executor_revoked_during_execution"
+                    self._sync_operation_run(
+                        task,
+                        status="uncertain",
+                        phase="uncertain",
+                        attempt=task.attempt,
+                        heartbeat_at=now,
+                        completed_at=now,
+                    )
                 self._event(task, "device_revoked", stable_code=task.result_code)
             self.session.commit()
         return executor
@@ -330,6 +389,7 @@ class ExecutorChannelService:
         task_type: str,
         payload: dict[str, Any],
         idempotency_key: str | None = None,
+        commit: bool = True,
     ) -> ExecutorTask:
         executor = self.require_executor(
             tenant_id=tenant_id,
@@ -339,11 +399,11 @@ class ExecutorChannelService:
         now = utcnow()
         if executor.status != "active":
             raise ExecutorServiceError("executor_revoked", status_code=409)
-        if not self._online(executor, now=now):
+        if not self._online(executor, now=now) and task_type not in BUSINESS_TASK_TYPES:
             raise ExecutorServiceError("executor_offline", status_code=409)
         if task_type not in set(executor.capabilities or []):
             raise ExecutorServiceError("executor_capability_missing", status_code=409)
-        if task_type == "workspace.rpc.v1" and self.payload_cipher is None:
+        if task_type in ENCRYPTED_TASK_TYPES and self.payload_cipher is None:
             raise ExecutorServiceError("executor_payload_encryption_unavailable", status_code=503)
         if task_type == "config.write.v1":
             expected = str(payload.get("expectedRevision") or "")
@@ -362,7 +422,7 @@ class ExecutorChannelService:
         if existing is not None:
             same_payload = (
                 existing.payload_envelope.get("payloadHash") == payload_hash
-                if task_type == "workspace.rpc.v1"
+                if task_type in ENCRYPTED_TASK_TYPES
                 else existing.payload_envelope == payload
             )
             if existing.task_type != task_type or not same_payload:
@@ -425,13 +485,13 @@ class ExecutorChannelService:
             idempotency_key=key,
             payload_version=1,
             payload_envelope=(
-                {} if task_type == "workspace.rpc.v1" else payload
+                {} if task_type in ENCRYPTED_TASK_TYPES else payload
             ),
             created_by_user_id=user_id,
         )
         self.session.add(task)
         self.session.flush()
-        if task_type == "workspace.rpc.v1":
+        if task_type in ENCRYPTED_TASK_TYPES:
             try:
                 task.payload_envelope = {
                     "schemaVersion": 1,
@@ -446,7 +506,10 @@ class ExecutorChannelService:
             except ExecutorPayloadCipherError as exc:
                 raise ExecutorServiceError(str(exc), status_code=503) from exc
         self._event(task, "queued")
-        self.session.commit()
+        if commit:
+            self.session.commit()
+        else:
+            self.session.flush()
         return task
 
     def get_task(
@@ -479,9 +542,25 @@ class ExecutorChannelService:
             task.status = "cancelled"
             task.finished_at = now
             task.result_code = "cancelled_by_user"
+            self._sync_operation_run(
+                task,
+                status="cancelled",
+                phase="cancelled",
+                attempt=task.attempt,
+                heartbeat_at=now,
+                completed_at=now,
+            )
             self._event(task, "cancelled", stable_code=task.result_code)
         else:
             task.status = "cancel_requested"
+            run_status = "running" if task.started_at else "leased"
+            self._sync_operation_run(
+                task,
+                status=run_status,
+                phase="cancel_requested",
+                attempt=task.attempt,
+                heartbeat_at=now,
+            )
             self._event(task, "cancel_requested")
         self.session.commit()
         return task
@@ -548,6 +627,14 @@ class ExecutorChannelService:
         task.started_at = task.started_at or now
         task.lease_until = now + timedelta(seconds=self.lease_seconds)
         executor.last_seen_at = now
+        self._sync_operation_run(
+            task,
+            status="running",
+            phase="starting",
+            attempt=task.attempt,
+            heartbeat_at=now,
+            started_at=now,
+        )
         self._event(task, "started", trace_id=trace_id)
         self.session.commit()
         return task
@@ -566,6 +653,13 @@ class ExecutorChannelService:
         now = utcnow()
         task.lease_until = now + timedelta(seconds=self.lease_seconds)
         executor.last_seen_at = now
+        self._sync_operation_run(
+            task,
+            status="running" if task.started_at else "leased",
+            phase=None,
+            attempt=task.attempt,
+            heartbeat_at=now,
+        )
         self.session.commit()
         return task
 
@@ -582,6 +676,16 @@ class ExecutorChannelService:
         if task.status not in {"running", "cancel_requested"}:
             raise ExecutorServiceError("executor_task_state_conflict", status_code=409)
         executor.last_seen_at = utcnow()
+        self._sync_operation_run(
+            task,
+            status="running",
+            phase=body.phase,
+            attempt=task.attempt,
+            progress_current=body.current,
+            progress_total=body.total,
+            heartbeat_at=executor.last_seen_at,
+            progress_snapshot=body.snapshot,
+        )
         self._event(
             task,
             "progress",
@@ -615,11 +719,13 @@ class ExecutorChannelService:
         if task.status not in {"leased", "running", "cancel_requested"}:
             raise ExecutorServiceError("executor_task_state_conflict", status_code=409)
         self._validate_config_result(task, body)
+        self._validate_business_result(task, body)
+        self._validate_environment_parse_result(task, body)
         now = utcnow()
         task.status = body.outcome
         task.finished_at = now
         task.result_code = body.resultCode
-        if task.task_type == "workspace.rpc.v1":
+        if task.task_type in ENCRYPTED_TASK_TYPES:
             if self.payload_cipher is None:
                 raise ExecutorServiceError(
                     "executor_payload_encryption_unavailable", status_code=503
@@ -641,6 +747,29 @@ class ExecutorChannelService:
             task.result_summary = body.resultSummary
         task.lease_until = None
         executor.last_seen_at = now
+        terminal_status = "completed" if body.outcome == "succeeded" else "failed"
+        requested_status = str(body.resultSummary.get("runStatus") or "")
+        if requested_status in {
+            "completed",
+            "partial_failure",
+            "failed",
+            "cancelled",
+            "uncertain",
+        }:
+            terminal_status = requested_status
+        self._sync_operation_run(
+            task,
+            status=terminal_status,
+            phase=str(body.resultSummary.get("phase") or terminal_status),
+            attempt=task.attempt,
+            progress_current=_safe_nonnegative_int(
+                body.resultSummary.get("progressCompleted")
+            ),
+            progress_total=_safe_nonnegative_int(body.resultSummary.get("progressTotal")),
+            heartbeat_at=now,
+            completed_at=now,
+            result_summary=body.resultSummary,
+        )
         if body.outcome == "succeeded" and task.task_type.startswith("config."):
             revision = str(body.resultSummary.get("configRevision") or "")
             if len(revision) == 64 and all(char in "0123456789abcdef" for char in revision):
@@ -721,10 +850,17 @@ class ExecutorChannelService:
         task.lease_token_digest = hash_token(lease_token)
         task.lease_until = now + timedelta(seconds=self.lease_seconds)
         task.attempt += 1
+        self._sync_operation_run(
+            task,
+            status="leased",
+            phase="leased",
+            attempt=task.attempt,
+            heartbeat_at=now,
+        )
         self._event(task, "leased", trace_id=trace_id)
         self.session.commit()
         payload = task.payload_envelope
-        if task.task_type == "workspace.rpc.v1":
+        if task.task_type in ENCRYPTED_TASK_TYPES:
             if self.payload_cipher is None:
                 raise ExecutorServiceError(
                     "executor_payload_encryption_unavailable", status_code=503
@@ -773,12 +909,27 @@ class ExecutorChannelService:
                 task.status = "queued"
                 task.lease_token_digest = None
                 task.lease_until = None
+                self._sync_operation_run(
+                    task,
+                    status="queued",
+                    phase="lease_recovered",
+                    attempt=task.attempt,
+                    heartbeat_at=now,
+                )
                 self._event(task, "lease_recovered", trace_id=trace_id)
             else:
                 task.status = "uncertain"
                 task.finished_at = now
                 task.result_code = "lease_expired_after_start"
                 task.lease_until = None
+                self._sync_operation_run(
+                    task,
+                    status="uncertain",
+                    phase="uncertain",
+                    attempt=task.attempt,
+                    heartbeat_at=now,
+                    completed_at=now,
+                )
                 self._event(
                     task,
                     "execution_uncertain",
@@ -823,6 +974,48 @@ class ExecutorChannelService:
             raise ExecutorServiceError("executor_result_invalid", status_code=422)
 
     @staticmethod
+    def _validate_business_result(
+        task: ExecutorTask, body: ExecutorTaskFinishBody
+    ) -> None:
+        if task.task_type not in BUSINESS_TASK_TYPES:
+            return
+        summary = body.resultSummary
+        if set(summary) - BUSINESS_RESULT_KEYS:
+            raise ExecutorServiceError("executor_result_invalid", status_code=422)
+        run_status = str(summary.get("runStatus") or "")
+        if run_status not in BUSINESS_RUN_STATUSES:
+            raise ExecutorServiceError("executor_result_invalid", status_code=422)
+        phase = str(summary.get("phase") or "")
+        if not 2 <= len(phase) <= 64 or any(character.isspace() for character in phase):
+            raise ExecutorServiceError("executor_result_invalid", status_code=422)
+        count_keys = BUSINESS_RESULT_KEYS - {"runStatus", "phase"}
+        for key in count_keys:
+            if key not in summary:
+                continue
+            value = summary[key]
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ExecutorServiceError("executor_result_invalid", status_code=422)
+        completed = summary.get("progressCompleted")
+        total = summary.get("progressTotal")
+        if isinstance(completed, int) and isinstance(total, int) and completed > total:
+            raise ExecutorServiceError("executor_result_invalid", status_code=422)
+
+    @staticmethod
+    def _validate_environment_parse_result(
+        task: ExecutorTask, body: ExecutorTaskFinishBody
+    ) -> None:
+        if task.task_type != "environment.parse.v1":
+            return
+        if body.outcome != "succeeded":
+            if body.resultSummary:
+                raise ExecutorServiceError("executor_result_invalid", status_code=422)
+            return
+        try:
+            EnvironmentPlanParseResult.model_validate(body.resultSummary)
+        except ValidationError as exc:
+            raise ExecutorServiceError("executor_result_invalid", status_code=422) from exc
+
+    @staticmethod
     def _payload_hash(payload: dict[str, Any]) -> str:
         raw = json.dumps(
             payload,
@@ -834,7 +1027,7 @@ class ExecutorChannelService:
 
     def _result_summary(self, task: ExecutorTask) -> dict[str, Any]:
         summary = task.result_summary or {}
-        if task.task_type != "workspace.rpc.v1" or not summary:
+        if task.task_type not in ENCRYPTED_TASK_TYPES or not summary:
             return summary
         if self.payload_cipher is None:
             raise ExecutorServiceError(
@@ -849,6 +1042,185 @@ class ExecutorChannelService:
             )
         except ExecutorPayloadCipherError as exc:
             raise ExecutorServiceError(str(exc), status_code=503) from exc
+
+    def _sync_operation_run(
+        self,
+        task: ExecutorTask,
+        *,
+        status: str,
+        phase: str | None,
+        attempt: int,
+        heartbeat_at: datetime,
+        progress_current: int | None = None,
+        progress_total: int | None = None,
+        started_at: datetime | None = None,
+        completed_at: datetime | None = None,
+        result_summary: dict[str, Any] | None = None,
+        progress_snapshot: dict[str, Any] | None = None,
+    ) -> None:
+        if task.task_type.startswith("environment.create-"):
+            run = self.session.scalar(
+                select(EnvironmentCreationRun).where(
+                    EnvironmentCreationRun.executor_task_id == task.id
+                )
+            )
+        elif task.task_type == "logistics.query.v1":
+            run = self.session.scalar(
+                select(LogisticsQueryRun).where(
+                    LogisticsQueryRun.executor_task_id == task.id
+                )
+            )
+        else:
+            return
+        if run is None:
+            return
+        run.status = status
+        if phase is not None:
+            run.phase = phase[:64]
+        if phase == "cancel_requested" or status == "cancelled":
+            run.stop_requested = True
+        run.attempt = max(0, int(attempt))
+        run.last_heartbeat_at = heartbeat_at
+        run.updated_at = heartbeat_at
+        if started_at is not None:
+            run.started_at = run.started_at or started_at
+        if completed_at is not None:
+            run.completed_at = completed_at
+        if progress_total is not None:
+            run.progress_total = max(0, progress_total)
+        if progress_current is not None:
+            run.progress_completed = min(
+                max(0, progress_current), max(0, run.progress_total)
+            )
+        summary = result_summary or {}
+        success_count = _safe_nonnegative_int(summary.get("successCount"))
+        failed_count = _safe_nonnegative_int(summary.get("failedCount"))
+        if success_count is not None:
+            run.success_count = min(success_count, run.total_count)
+        if failed_count is not None:
+            run.failed_count = min(failed_count, run.total_count)
+        if isinstance(run, EnvironmentCreationRun):
+            ip_ok = _safe_nonnegative_int(summary.get("ipOkCount"))
+            ip_total = _safe_nonnegative_int(summary.get("ipTotalCount"))
+            if ip_ok is not None:
+                run.ip_ok_count = ip_ok
+            if ip_total is not None:
+                run.ip_total_count = ip_total
+            if progress_snapshot is not None:
+                self._upsert_environment_progress(run, progress_snapshot, heartbeat_at)
+        elif progress_snapshot is not None:
+            self._upsert_logistics_progress(run, progress_snapshot, heartbeat_at)
+
+    def _upsert_environment_progress(
+        self,
+        run: EnvironmentCreationRun,
+        snapshot: dict[str, Any],
+        now: datetime,
+    ) -> None:
+        if set(snapshot) != {"rows"} or not isinstance(snapshot.get("rows"), list):
+            raise ExecutorServiceError("executor_progress_snapshot_invalid", status_code=422)
+        try:
+            rows = [EnvironmentRunProgressItem.model_validate(item) for item in snapshot["rows"]]
+        except ValidationError as exc:
+            raise ExecutorServiceError("executor_progress_snapshot_invalid", status_code=422) from exc
+        refs = [row.accountRef for row in rows]
+        if len(refs) != len(set(refs)) or len(rows) > run.total_count:
+            raise ExecutorServiceError("executor_progress_snapshot_invalid", status_code=422)
+        existing = {
+            row.account_ref: row
+            for row in self.session.scalars(
+                select(EnvironmentCreationResult).where(
+                    EnvironmentCreationResult.run_id == run.id
+                )
+            )
+        }
+        for item in rows:
+            row = existing.get(item.accountRef)
+            if row is None:
+                row = EnvironmentCreationResult(
+                    id=uuid.uuid4(),
+                    run_id=run.id,
+                    tenant_id=run.tenant_id,
+                    account_ref=item.accountRef,
+                    account_label=item.accountLabel,
+                    purchaser_label=item.purchaserLabel,
+                    environment_name=item.environmentName,
+                    status=item.status,
+                    completed_steps=list(item.completedSteps),
+                    recovered_existing=item.recoveredExisting,
+                    feishu_sync_status="pending",
+                    created_at=now,
+                    updated_at=now,
+                )
+                self.session.add(row)
+            row.account_label = item.accountLabel
+            row.purchaser_label = item.purchaserLabel
+            row.environment_name = item.environmentName
+            row.environment_ref = item.environmentRef
+            row.environment_serial = item.environmentSerial
+            row.status = item.status
+            row.current_step = item.currentStep or None
+            row.completed_steps = list(item.completedSteps)
+            row.error_step = item.errorStep or None
+            row.error_summary = item.errorSummary or None
+            row.recovered_existing = item.recoveredExisting
+            row.ip_address = item.ipAddress or None
+            row.ip_country = item.ipCountry or None
+            row.ip_verified = item.ipVerified
+            row.updated_at = now
+
+    def _upsert_logistics_progress(
+        self,
+        run: LogisticsQueryRun,
+        snapshot: dict[str, Any],
+        now: datetime,
+    ) -> None:
+        if set(snapshot) != {"rows"} or not isinstance(snapshot.get("rows"), list):
+            raise ExecutorServiceError("executor_progress_snapshot_invalid", status_code=422)
+        try:
+            rows = [LogisticsRunProgressItem.model_validate(item) for item in snapshot["rows"]]
+        except ValidationError as exc:
+            raise ExecutorServiceError("executor_progress_snapshot_invalid", status_code=422) from exc
+        serials = [row.environmentSerial for row in rows]
+        if len(serials) != len(set(serials)) or len(rows) > run.total_count:
+            raise ExecutorServiceError("executor_progress_snapshot_invalid", status_code=422)
+        existing = {
+            row.environment_serial: row
+            for row in self.session.scalars(
+                select(LogisticsQueryResult).where(LogisticsQueryResult.run_id == run.id)
+            )
+        }
+        for item in rows:
+            row = existing.get(item.environmentSerial)
+            if row is None:
+                row = LogisticsQueryResult(
+                    id=uuid.uuid4(),
+                    run_id=run.id,
+                    tenant_id=run.tenant_id,
+                    environment_serial=item.environmentSerial,
+                    status=item.status,
+                    completed_steps=list(item.completedSteps),
+                    tracking_numbers=list(item.trackingNumbers),
+                    package_numbers=list(item.packageNumbers),
+                    cancelled=False,
+                    risk_order=False,
+                    feishu_sync_status="pending",
+                    created_at=now,
+                    updated_at=now,
+                )
+                self.session.add(row)
+            row.environment_name = item.environmentName or None
+            row.status = item.status
+            row.current_step = item.currentStep or None
+            row.completed_steps = list(item.completedSteps)
+            row.platform_order_no = item.platformOrderNo or None
+            row.platform_status = item.platformStatus or None
+            row.status_label = item.statusLabel or None
+            row.tracking_numbers = list(item.trackingNumbers)
+            row.package_numbers = list(item.packageNumbers)
+            row.carrier = item.carrier or None
+            row.error_summary = item.errorSummary or None
+            row.updated_at = now
 
     @staticmethod
     def _require_lease(
