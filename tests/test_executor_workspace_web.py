@@ -49,6 +49,10 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             "cloudLogisticsLegacySnapshot",
             "cancelCloudOperationRun('environment'",
             "cancelCloudOperationRun('logistics'",
+            "function invalidateEnvironmentPlan(message)",
+            "paintContinuousElapsed('envElapsed'",
+            "}, 1000);",
+            "$('envFile').disabled = busy || !selectionReady;",
         ):
             self.assertIn(marker, html)
         parse_handler = html[

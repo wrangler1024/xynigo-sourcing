@@ -2553,6 +2553,8 @@ let hubConnected = null;
 let isRunning = false;
 let stopRequested = false;
 let lastRows = [];
+let queryElapsedBase = 0;
+let queryElapsedObservedAt = Date.now();
 let toastTimer = null;
 let regTasks = null;
 let regRunning = false;
@@ -2571,6 +2573,8 @@ let envEffectiveWorkers = 1;
 let envProgressLoaded = false;
 let envPollInFlight = false;
 let envPollGraceUntil = 0;
+let envElapsedBase = 0;
+let envElapsedObservedAt = Date.now();
 let envRetryAccountId = '';
 let envRetryFailedSubmitting = false;
 let envFailedCount = 0;
@@ -5987,6 +5991,8 @@ function render(snap) {
   const wasRunning = isRunning;
   isRunning = snap.running;
   lastRows = snap.rows || [];
+  queryElapsedBase = Number(snap.elapsedSec || 0);
+  queryElapsedObservedAt = Date.now();
   setHubStatus(snap.hubConnected);
   renderRows(lastRows);
   renderStats(lastRows);
@@ -5998,8 +6004,7 @@ function render(snap) {
   $('currentEnv').textContent = isRunning
     ? '正在查询：' + (snap.current || '') + ' …'
     : (snap.rows && snap.rows.length ? '查询结束' : '待开始');
-  const sec = snap.elapsedSec || 0;
-  $('elapsed').textContent = '已用 ' + String(Math.floor(sec / 60)).padStart(2, '0') + ':' + String(sec % 60).padStart(2, '0');
+  paintContinuousElapsed('elapsed', queryElapsedBase);
   if (wasRunning && !isRunning && snap.rows && snap.rows.length) {
     const ok = snap.rows.filter(r => r.state === 'ok' && !r.riskOrder).length;
     const risk = snap.rows.filter(r => r.state === 'ok' && r.riskOrder).length;
@@ -6063,6 +6068,31 @@ setInterval(pollRegister, 1500);
 
 const ENV_STEPS = ['env_created', 'cookie_imported', 'account_bound', 'remarked', 'done'];
 const ENV_STEP_LABEL = {env_created:'环境已建',cookie_imported:'Cookie已导',account_bound:'账号已绑',remarked:'备注已写',done:'完成'};
+const ENV_RUN_PHASE_LABEL = {
+  created:'已创建', queued:'排队等待执行器', leased:'执行器已领取', starting:'正在启动',
+  preparing:'正在预检和准备', creating:'正在创建环境', cookie_importing:'正在导入 Cookie',
+  account_binding:'正在绑定账号', remarking:'正在写入备注', ip_checking:'正在检测出口 IP',
+  finalizing:'正在收尾并持久化结果', completed:'已完成', partial_failure:'部分失败',
+  failed:'执行失败', stopped:'已安全停止', cancelled:'已安全停止',
+  cancel_requested:'正在安全停止', uncertain:'执行结果待核对'
+};
+
+function paintContinuousElapsed(elementId, seconds) {
+  const value = Math.max(0, Math.floor(Number(seconds || 0)));
+  $(elementId).textContent = '已用 ' + String(Math.floor(value / 60)).padStart(2, '0')
+    + ':' + String(value % 60).padStart(2, '0');
+}
+
+setInterval(() => {
+  if (isRunning) {
+    paintContinuousElapsed('elapsed', queryElapsedBase
+      + Math.floor((Date.now() - queryElapsedObservedAt) / 1000));
+  }
+  if (envRunning || backupRunning) {
+    paintContinuousElapsed('envElapsed', envElapsedBase
+      + Math.floor((Date.now() - envElapsedObservedAt) / 1000));
+  }
+}, 1000);
 
 /* ---------- 模块三：采购员名单卡片（名单来自后端 /api/config） ---------- */
 
@@ -6187,11 +6217,14 @@ function refreshAssignUi() {
   chip.textContent = `已分配 ${assigned}/${total || '—'}` + (balanced ? ' ✓' : (assigned < total ? `，还差 ${total - assigned}` : ''));
   chip.className = 'assign-sum ' + (balanced ? 'ok' : 'warn');
   $('envSpecOut').textContent = assigned > 0 ? composeAssignmentSpec() : '（未分配）';
-  for (const id of ['envFile', 'envDate', 'envVerify', 'envVerifyCount',
+  for (const id of ['envDate', 'envVerify', 'envVerifyCount',
                     'btnEnvEven', 'btnEnvClear', 'envBackupDec',
                     'envBackupCount', 'envBackupInc']) {
     $(id).disabled = busy;
   }
+  const selectionReady = ['MX','US'].includes($('envSite').value)
+    && !!$('envSiteGroup').value && envPreflightReady;
+  $('envFile').disabled = busy || !selectionReady;
   document.querySelectorAll('.chip[data-n], input[name="envBackupType"]').forEach(
     element => { element.disabled = busy; });
   updateEnvButtons();
@@ -6203,6 +6236,9 @@ function updateEnvButtons() {
   const backupReady = envMode === 'backup' && envBackup.count >= 1 && envBackup.count <= envBackupMax;
   const ready = envPreflightReady && (boundReady || backupReady);
   const busy = envSubmitting || envRunning || backupRunning;
+  const selectionReady = ['MX','US'].includes($('envSite').value)
+    && !!$('envSiteGroup').value && envPreflightReady;
+  $('envFile').disabled = busy || !selectionReady;
   $('btnEnvPreview').disabled = busy || !ready;
   $('btnEnvStart').disabled = busy || !ready;
   $('btnEnvStart').textContent = envSubmitting
@@ -6361,12 +6397,14 @@ function finishEnvSubmission() {
 function renderEnvExecutionState(snap, mode) {
   if (envSubmitting) return;
   const rows = snap.rows || [];
-  const total = rows.length;
-  const done = rows.filter(row => row.state === 'done').length;
-  const failed = rows.filter(row => row.state === 'failed').length;
+  const summary = snap.summary || {};
+  const total = Number(summary.total || rows.length || 0);
+  const done = Number(summary.done || rows.filter(row => row.state === 'done').length);
+  const failed = Number(summary.failed || rows.filter(row => row.state === 'failed').length);
   const stopped = rows.filter(row => row.state === 'stopped').length;
   const taskName = mode === 'backup' ? '备用/测试环境任务' : '买家号建环境任务';
   if (snap.running) {
+    const phaseLabel = ENV_RUN_PHASE_LABEL[snap.phase] || '正在后台执行';
     if (snap.stopRequested) {
       setEnvExecutionState(
         'warning', `${taskName}正在安全停止`,
@@ -6382,7 +6420,7 @@ function renderEnvExecutionState(snap, mode) {
       return;
     }
     setEnvExecutionState(
-      'running', `${taskName}正在后台执行`,
+      'running', `${taskName}：${phaseLabel}`,
       `当前完成 ${done}/${total || '—'}，已用 ${snap.elapsedSec || 0} 秒；页面每 1.5 秒自动刷新，请勿重复点击“正式执行”。`);
     return;
   }
@@ -6428,6 +6466,8 @@ function renderEnvBatch(snap) {
   const wasRunning = envRunning;
   envRunning = !!snap.running;
   envStopRequested = !!snap.stopRequested;
+  envElapsedBase = Number(snap.elapsedSec || 0);
+  envElapsedObservedAt = Date.now();
   setHubStatus(snap.hubConnected);
   $('envSite').disabled = envSubmitting || envRunning || backupRunning || envGroupSaving;
   $('envSiteGroup').disabled = envSubmitting || envRunning || backupRunning || envGroupSaving || $('envSiteGroup').options.length < 2;
@@ -6440,8 +6480,7 @@ function renderEnvBatch(snap) {
   const settled = done + stopped + failed;
   $('envBar').style.width = (rows.length ? settled / rows.length * 100 : 0) + '%';
   $('envProgressText').textContent = `${done} 完成 / ${rows.length || envAccountCount}` + (stopped ? ` · ${stopped} 已停止` : '');
-  const sec = snap.elapsedSec || 0;
-  $('envElapsed').textContent = '已用 ' + String(Math.floor(sec / 60)).padStart(2, '0') + ':' + String(sec % 60).padStart(2, '0');
+  paintContinuousElapsed('envElapsed', envElapsedBase);
   if (wasRunning !== envRunning) refreshAssignUi();
   else updateEnvButtons();
   $('btnEnvMapping').disabled = !snap.mappingReady;
@@ -6489,6 +6528,8 @@ function renderBackupBatch(snap) {
   const wasRunning = backupRunning;
   backupRunning = !!snap.running;
   envStopRequested = !!snap.stopRequested;
+  envElapsedBase = Number(snap.elapsedSec || 0);
+  envElapsedObservedAt = Date.now();
   setHubStatus(snap.hubConnected);
   $('envSite').disabled = envSubmitting || envRunning || backupRunning || envGroupSaving;
   $('envSiteGroup').disabled = envSubmitting || envRunning || backupRunning || envGroupSaving || $('envSiteGroup').options.length < 2;
@@ -6500,8 +6541,7 @@ function renderBackupBatch(snap) {
   const settled = done + stopped + failed;
   $('envBar').style.width = (rows.length ? settled / rows.length * 100 : 0) + '%';
   $('envProgressText').textContent = `${done} 完成 / ${rows.length || envBackup.count}` + (stopped ? ` · ${stopped} 已停止` : '');
-  const sec = snap.elapsedSec || 0;
-  $('envElapsed').textContent = '已用 ' + String(Math.floor(sec / 60)).padStart(2, '0') + ':' + String(sec % 60).padStart(2, '0');
+  paintContinuousElapsed('envElapsed', envElapsedBase);
   if (wasRunning !== backupRunning) refreshAssignUi();
   else updateEnvButtons();
   $('btnEnvBackupResult').disabled = !snap.resultReady;
@@ -9415,15 +9455,23 @@ async function loadEnvGroups() {
   }
 }
 
+function invalidateEnvironmentPlan(message) {
+  if (!envPlanId && !envAccountCount) return;
+  envPlanId = null;
+  envPlanExecutorId = '';
+  envAccountCount = 0;
+  envBuyerCounts = {};
+  $('envStats').innerHTML = '<div class="stat-chip"><b>—</b>需重新解析文件</div>';
+  $('envPreviewText').textContent = '站点或采购分组已变化，旧预览已失效。';
+  $('envPlan').textContent = message;
+  refreshAssignUi();
+}
+
 $('envSite').onchange = async e => {
   const site = e.target.value;
   if (envSubmitting || envRunning || envGroupSaving) return;
-  if (envPlanId) {
-    envPlanId = null;
-    envPlanExecutorId = '';
-    envAccountCount = 0;
-    $('envPlan').textContent = '站点已变更，请重新选择 xlsx 并执行 Cookie 站点校验。';
-  }
+  invalidateEnvironmentPlan(
+    '站点已变更，请重新选择 xlsx 并执行 Cookie 站点校验。');
   envGroupSaving = true;
   envPreflightReady = false;
   e.target.disabled = true;
@@ -9453,6 +9501,8 @@ $('envSite').onchange = async e => {
 $('envSiteGroup').onchange = async e => {
   const selected = e.target.value;
   if (!selected || envSubmitting || envRunning || envGroupSaving) return;
+  invalidateEnvironmentPlan(
+    '采购分组已变更，旧解析计划已废弃；请按当前分组重新上传 xlsx。');
   envGroupSaving = true;
   envPreflightReady = false;
   e.target.disabled = true;
