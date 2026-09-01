@@ -40,6 +40,8 @@ from .operation_contract import (
     EnvironmentRunProgressItem,
     ExecutorWorkspaceSnapshotResult,
     LogisticsRunProgressItem,
+    WorkspaceEnvironmentPreferences,
+    WorkspaceRuntimeConfig,
 )
 from .security import hash_token, random_url_token
 
@@ -731,6 +733,11 @@ class ExecutorChannelService:
         self._validate_business_result(task, body)
         self._validate_environment_parse_result(task, body)
         workspace_snapshot = self._validated_workspace_snapshot(task, body)
+        self._sync_workspace_preferences(
+            executor=executor,
+            task=task,
+            body=body,
+        )
         now = utcnow()
         task.status = body.outcome
         task.finished_at = now
@@ -1060,6 +1067,69 @@ class ExecutorChannelService:
         except ValidationError as exc:
             raise ExecutorServiceError("executor_result_invalid", status_code=422) from exc
 
+    def _sync_workspace_preferences(
+        self,
+        *,
+        executor: LocalExecutor,
+        task: ExecutorTask,
+        body: ExecutorTaskFinishBody,
+    ) -> None:
+        """Mirror an acknowledged local preference write into the cached snapshot."""
+        if (
+            task.task_type != "workspace.rpc.v1"
+            or body.outcome != "succeeded"
+            or not executor.workspace_snapshot
+            or self.payload_cipher is None
+        ):
+            return
+        try:
+            request_payload = self.payload_cipher.decrypt(
+                task.payload_envelope.get("encryptedPayload"),
+                tenant_id=task.tenant_id,
+                task_id=task.id,
+                purpose="request",
+            )
+        except ExecutorPayloadCipherError as exc:
+            raise ExecutorServiceError(str(exc), status_code=503) from exc
+        if not isinstance(request_payload, dict):
+            raise ExecutorServiceError("executor_result_invalid", status_code=422)
+        if (
+            request_payload.get("method") != "POST"
+            or request_payload.get("path") != "/api/envbatch/preferences"
+        ):
+            return
+        result = body.resultSummary
+        result_body = result.get("body") if isinstance(result, dict) else None
+        try:
+            http_status = int(result.get("httpStatus") or 0)
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise ExecutorServiceError("executor_result_invalid", status_code=422) from exc
+        if (
+            not isinstance(result_body, dict)
+            or not 200 <= http_status < 300
+            or result.get("responseType") != "json"
+        ):
+            return
+        preference_keys = {
+            "purchaseSite",
+            "purchaseTags",
+            "importBuyerPlan",
+            "verifySampleCount",
+            "buyers",
+            "buyerDefaultSplit",
+            "backupMaxCount",
+        }
+        try:
+            preferences = WorkspaceEnvironmentPreferences.model_validate(
+                {key: result_body[key] for key in preference_keys}
+            )
+        except (KeyError, ValidationError) as exc:
+            raise ExecutorServiceError("executor_result_invalid", status_code=422) from exc
+        snapshot = dict(executor.workspace_snapshot)
+        snapshot["preferences"] = preferences.model_dump(mode="json")
+        executor.workspace_snapshot = snapshot
+        executor.workspace_snapshot_revision = self._payload_hash(snapshot)
+
     def workspace_snapshot_payload(
         self,
         *,
@@ -1084,6 +1154,76 @@ class ExecutorChannelService:
             "capturedAt": captured_at.isoformat() if captured_at else None,
             "ageSeconds": age_seconds,
             "stale": age_seconds is None or age_seconds > 300,
+        }
+
+    def cached_config_payload(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+        executor_id: uuid.UUID,
+    ) -> dict[str, Any] | None:
+        """Return the last safe config snapshot without scheduling device work."""
+        executor = self.require_executor(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            executor_id=executor_id,
+        )
+        latest_config_task = self.session.scalar(
+            select(ExecutorTask)
+            .where(
+                ExecutorTask.tenant_id == tenant_id,
+                ExecutorTask.executor_id == executor.id,
+                ExecutorTask.task_type.in_({"config.read.v1", "config.write.v1"}),
+                ExecutorTask.status == "succeeded",
+            )
+            .order_by(ExecutorTask.finished_at.desc())
+            .limit(1)
+        )
+        latest_summary = (
+            latest_config_task.result_summary
+            if latest_config_task is not None else None
+        )
+        snapshot = executor.workspace_snapshot or {}
+        snapshot_runtime = snapshot.get("runtimeConfig")
+        runtime = (
+            {
+                "configRevision": latest_summary.get("configRevision"),
+                **latest_summary.get("config", {}),
+            }
+            if isinstance(latest_summary, dict)
+            and isinstance(latest_summary.get("config"), dict)
+            else snapshot_runtime
+        )
+        if not isinstance(runtime, dict):
+            return None
+        runtime_keys = {
+            "configRevision",
+            "hubPort",
+            "concurrency",
+            "envCreateWorkers",
+            "verifySampleCount",
+            "safeParallelTasks",
+        }
+        try:
+            validated = WorkspaceRuntimeConfig.model_validate(
+                {key: runtime[key] for key in runtime_keys}
+            )
+        except (KeyError, ValidationError):
+            return None
+        validated_payload = validated.model_dump(mode="json")
+        revision = validated_payload.pop("configRevision")
+        return {
+            "configRevision": revision,
+            "config": validated_payload,
+            "capturedAt": (
+                latest_config_task.finished_at.isoformat()
+                if latest_config_task is not None
+                and latest_config_task.finished_at is not None
+                else executor.workspace_snapshot_at.isoformat()
+                if executor.workspace_snapshot_at is not None
+                else None
+            ),
         }
 
     @staticmethod

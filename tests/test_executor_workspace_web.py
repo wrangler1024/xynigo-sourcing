@@ -70,6 +70,30 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         self.assertIn("cloudEnvironmentPlanParse", parse_handler)
         self.assertIn("envPlanExecutorId = parsed.executorId", parse_handler)
 
+    def test_field_feedback_fixes_use_one_selected_state_source(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        preflight = html[
+            html.index("async function refreshEnvPreflight"):
+            html.index("/* ---------- 操作 ---------- */")
+        ]
+        self.assertIn("environmentGroup=' + encodeURIComponent(selectedGroup)", preflight)
+        self.assertIn("String(cachedState.purchaseTag || '') === selectedGroup", preflight)
+        self.assertIn("if (!$('envSiteGroup').value && state.purchaseTag", preflight)
+
+        even_handler = html[
+            html.index("$('btnEnvEven').onclick"):
+            html.index("$('btnEnvClear').onclick")
+        ]
+        self.assertIn("splitEnvEvenly(envDefaultSplit)", even_handler)
+        self.assertNotIn("envActiveBuyers()", even_handler)
+        self.assertIn('均分（默认三人）', html)
+
+        self.assertIn("payload.cachedResult", html)
+        self.assertIn("只读配置快照", html)
+        self.assertIn("云端加密中转至 ${executorName}", html)
+        self.assertIn("云端不保存明文文件", html)
+        self.assertNotIn("coreVersion=148", html)
+
     def test_cloud_workspace_renews_sessions_and_idempotently_submits_writes(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")
         for marker in (

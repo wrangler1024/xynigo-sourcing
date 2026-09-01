@@ -401,6 +401,14 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
                 "buyerDefaultSplit": ["新刚"],
                 "backupMaxCount": 25,
             },
+            "runtimeConfig": {
+                "configRevision": REVISION_A,
+                "hubPort": 6873,
+                "concurrency": 2,
+                "envCreateWorkers": 5,
+                "verifySampleCount": 1,
+                "safeParallelTasks": True,
+            },
             "groups": ["MX采购", "美国采购"],
             "preflight": {
                 "MX": {
@@ -455,7 +463,65 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
         assert snapshot_visible.json()["snapshot"]["groups"] == [
             "MX采购", "美国采购"
         ]
+        assert snapshot_visible.json()["snapshot"]["runtimeConfig"][
+            "configRevision"
+        ] == REVISION_A
         assert snapshot_visible.json()["snapshotRevision"] == "c" * 64
+        preference_write = web_client.post(
+            f"/v1/executors/{executor_id}/workspace-rpc",
+            json={
+                "method": "POST",
+                "path": "/api/envbatch/preferences",
+                "body": {
+                    "purchaseSite": "US",
+                    "purchaseTags": {"US": "美国采购"},
+                },
+                "idempotencyKey": "environment-preferences-0001",
+            },
+            headers=CSRF,
+        )
+        assert preference_write.status_code == 202, preference_write.text
+        preference_task_id = preference_write.json()["task"]["id"]
+        preference_lease = heartbeat(
+            device_client, credential, capabilities=capabilities
+        )["task"]
+        assert preference_lease["type"] == "workspace.rpc.v1"
+        preference_credential = preference_lease["leaseToken"]
+        assert device_client.post(
+            f"/v1/executor-channel/tasks/{preference_task_id}/start",
+            json={"leaseToken": preference_credential},
+            headers=device_headers(credential),
+        ).status_code == 200
+        preference_finish = device_client.post(
+            f"/v1/executor-channel/tasks/{preference_task_id}/finish",
+            json={
+                "leaseToken": preference_credential,
+                "outcome": "succeeded",
+                "resultCode": "workspace_rpc_completed",
+                "resultSummary": {
+                    "httpStatus": 200,
+                    "responseType": "json",
+                    "contentType": "application/json",
+                    "body": {
+                        "saved": True,
+                        "purchaseSite": "US",
+                        "purchaseTags": {"MX": "MX采购", "US": "美国采购"},
+                        "importBuyerPlan": "2:新刚",
+                        "verifySampleCount": 1,
+                        "buyers": [{"name": "新刚", "code": "XG"}],
+                        "buyerDefaultSplit": ["新刚"],
+                        "backupMaxCount": 25,
+                    },
+                },
+            },
+            headers=device_headers(credential),
+        )
+        assert preference_finish.status_code == 200, preference_finish.text
+        updated_snapshot = web_client.get(
+            f"/v1/executors/{executor_id}/workspace-snapshot"
+        ).json()["snapshot"]
+        assert updated_snapshot["preferences"]["purchaseSite"] == "US"
+        assert updated_snapshot["groups"] == ["MX采购", "美国采购"]
         parse_created = web_client.post(
             "/v1/environment-plans/parse",
             json={
@@ -1291,6 +1357,69 @@ def test_workspace_rpc_short_reads_queue_while_config_tasks_remain_exclusive(
         )
         assert config_read.status_code == 409
         assert config_read.json()["detail"]["code"] == "executor_task_busy"
+
+
+def test_busy_executor_config_read_returns_last_safe_snapshot(tmp_path) -> None:
+    app, database, _oauth = build_test_app(tmp_path)
+    capabilities = ["config.read.v1", "workspace.rpc.v1"]
+
+    with TestClient(app) as web_client, TestClient(app) as device_client:
+        login(web_client)
+        paired = pair(
+            device_client,
+            create_pairing_code(web_client),
+            capabilities=capabilities,
+        )
+        executor_id = str(paired["executorId"])
+        credential = str(paired["deviceCredential"])
+        heartbeat(
+            device_client,
+            credential,
+            revision=REVISION_A,
+            capabilities=capabilities,
+        )
+        captured_at = datetime.now(UTC)
+        with database.session_factory() as session:
+            executor = session.get(LocalExecutor, uuid.UUID(executor_id))
+            assert executor is not None
+            executor.workspace_snapshot = {
+                "runtimeConfig": {
+                    "configRevision": REVISION_A,
+                    "hubPort": 6873,
+                    "concurrency": 2,
+                    "envCreateWorkers": 5,
+                    "verifySampleCount": 3,
+                    "safeParallelTasks": True,
+                }
+            }
+            executor.workspace_snapshot_at = captured_at
+            session.commit()
+
+        active = web_client.post(
+            f"/v1/executors/{executor_id}/workspace-rpc",
+            json={"method": "GET", "path": "/api/groups"},
+            headers=CSRF,
+        )
+        assert active.status_code == 202, active.text
+
+        config_read = web_client.post(
+            f"/v1/executors/{executor_id}/config/read",
+            json={},
+            headers=CSRF,
+        )
+        assert config_read.status_code == 202, config_read.text
+        payload = config_read.json()
+        assert payload["task"] is None
+        assert payload["cached"] is True
+        assert payload["cachedResult"]["configRevision"] == REVISION_A
+        assert payload["cachedResult"]["config"] == {
+            "hubPort": 6873,
+            "concurrency": 2,
+            "envCreateWorkers": 5,
+            "verifySampleCount": 3,
+            "safeParallelTasks": True,
+        }
+        assert payload["cachedResult"]["capturedAt"]
 
 
 def test_started_config_write_becomes_uncertain_after_lease_expiry(tmp_path) -> None:

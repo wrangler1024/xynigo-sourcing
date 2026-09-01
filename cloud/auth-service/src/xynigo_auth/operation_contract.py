@@ -237,6 +237,19 @@ class WorkspacePreflightSnapshot(BaseModel):
         return _single_line(value)
 
 
+class WorkspaceRuntimeConfig(BaseModel):
+    """Credential-free device settings safe to display while a Run is active."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    configRevision: str = Field(pattern=r"^[a-f0-9]{64}$")
+    hubPort: int = Field(ge=1, le=65535)
+    concurrency: int = Field(ge=1, le=5)
+    envCreateWorkers: int = Field(ge=1, le=10)
+    verifySampleCount: int = Field(ge=0, le=10)
+    safeParallelTasks: bool
+
+
 class ExecutorWorkspaceSnapshotResult(BaseModel):
     """Strict non-sensitive snapshot used for fast cloud workspace restore."""
 
@@ -246,6 +259,7 @@ class ExecutorWorkspaceSnapshotResult(BaseModel):
     snapshotRevision: str = Field(pattern=r"^[a-f0-9]{64}$")
     capturedAt: datetime
     preferences: WorkspaceEnvironmentPreferences
+    runtimeConfig: WorkspaceRuntimeConfig | None = None
     groups: list[str] = Field(default_factory=list, max_length=500)
     preflight: dict[Literal["US", "MX"], WorkspacePreflightSnapshot]
 

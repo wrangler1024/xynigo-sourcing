@@ -707,6 +707,27 @@ class EnvWebJobTests(unittest.TestCase):
         self.assertNotIn(parsed['planId'], job.pending)
         self.assertEqual(job.snapshot()['summary']['done'], 1)
 
+    def test_preflight_and_preview_use_explicit_selected_group(self):
+        hub = FakeHub()
+        cfg = {
+            'purchaseSite': 'MX',
+            'purchaseTags': {'MX': TEST_US_TAG, 'US': TEST_US_TAG},
+            'proxyLink': TEST_PROXY,
+        }
+        job = EnvBatchJob(lambda: hub, lambda: cfg)
+
+        preflight = job.preflight('MX', environment_group=TEST_TAG)
+        self.assertTrue(preflight['ready'])
+        self.assertEqual(preflight['purchaseTag'], TEST_TAG)
+
+        parsed = job.parse(
+            'vendor.xlsx', base64.b64encode(source_bytes()).decode('ascii'))
+        rows = job.preview(
+            parsed['planId'], '1:新刚', '20260819', site='MX',
+            environment_group=TEST_TAG)
+        self.assertEqual(len(rows), 1)
+        self.assertIn(('list', TEST_TAG), hub.calls)
+
     def test_missing_group_blocks_preview_before_env_list(self):
         hub = FakeHub()
         hub.groups = []

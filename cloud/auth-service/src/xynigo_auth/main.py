@@ -1593,13 +1593,37 @@ def create_app(
             audit_action="executor.config.read.request",
         )
         service = executor_channel(session)
-        task = service.create_config_task(
-            tenant_id=actor.tenant.id,
-            user_id=actor.user.id,
-            executor_id=executor_id,
-            task_type="config.read.v1",
-            payload={},
-        )
+        try:
+            task = service.create_config_task(
+                tenant_id=actor.tenant.id,
+                user_id=actor.user.id,
+                executor_id=executor_id,
+                task_type="config.read.v1",
+                payload={},
+            )
+        except ExecutorServiceError as exc:
+            if exc.code != "executor_task_busy":
+                raise
+            cached = service.cached_config_payload(
+                tenant_id=actor.tenant.id,
+                user_id=actor.user.id,
+                executor_id=executor_id,
+            )
+            if cached is None:
+                raise
+            append_executor_audit(
+                request,
+                session,
+                actor,
+                action="executor.config.read.cached",
+                object_id=executor_id,
+                summary={"source": "workspace_snapshot"},
+            )
+            return {
+                "task": None,
+                "cached": True,
+                "cachedResult": cached,
+            }
         append_executor_audit(
             request,
             session,

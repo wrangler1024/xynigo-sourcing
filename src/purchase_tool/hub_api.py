@@ -173,17 +173,21 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
                     return j.get('data')
                 api_code = str(j.get('code') or '')
                 safe_message = _safe_api_message(j.get('msg'))
+                browser_core_missing = api_code == '-10007'
                 auth_failed = (
                     api_code in {'401', '403', 'E010401', 'E010403'}
                     or any(marker in safe_message.casefold() for marker in (
                         'unauthorized', 'forbidden', 'api key', 'api-key',
                         '鉴权', '认证', '密钥')))
                 last_err = HubApiError(
+                    'HubStudio 浏览器内核不存在' if browser_core_missing else
                     'HubStudio Local API 认证失败' if auth_failed else
                     ('HubStudio Local API 返回 code=%s%s' % (
                         api_code,
                         (': ' + safe_message) if safe_message else '')),
-                    ('hubstudio_local_api_authentication_failed'
+                    ('hubstudio_browser_core_missing'
+                     if browser_core_missing else
+                     'hubstudio_local_api_authentication_failed'
                      if auth_failed else
                      ('hubstudio_local_api_rate_limited'
                       if api_code == RATE_LIMIT_CODE else
@@ -199,6 +203,8 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
                     if callable(defer):
                         defer(retry_delay)
                         deferred_by_gate = True
+                elif browser_core_missing:
+                    break
             except urllib.error.HTTPError as exc:
                 if exc.code in (401, 403):
                     last_err = HubApiError(
@@ -233,7 +239,8 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
                 last_err = exc
                 if exc.reason_code in {
                         'hubstudio_local_api_incompatible',
-                        'hubstudio_local_api_authentication_failed'}:
+                        'hubstudio_local_api_authentication_failed',
+                        'hubstudio_browser_core_missing'}:
                     break
             except Exception:   # 不对外回显未知异常内容
                 last_err = HubApiError(

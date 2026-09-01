@@ -332,7 +332,6 @@ class RegistrationOrchestrator(object):
             'proxyTypeName': 'Socks5_通用api',
             'linkCode': PROXY_LINK.replace('{region}', site),
             'ipGetRuleType': 1,
-            'coreVersion': 148,
             'advancedBo': {
                 'width': 1920, 'height': 1080, 'languageType': 0,
                 'webgl': 0, 'canvas': 0, 'audioContext': 0},

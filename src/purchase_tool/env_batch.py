@@ -23,7 +23,7 @@ import time
 from urllib.parse import parse_qsl, unquote, urlsplit
 import urllib.request
 
-from .hub_api import DEFAULT_PORT, HubStudioApi
+from .hub_api import DEFAULT_PORT, HubApiError, HubStudioApi
 from .redaction import mask_email, scrub_text
 
 
@@ -656,7 +656,6 @@ def build_env_create_body(name, site='MX', rng=None, proxy_link=None,
         'proxyTypeName': 'Socks5_通用api',
         'linkCode': link_code.replace('{region}', site),
         'ipGetRuleType': 1,
-        'coreVersion': 148,
         'advancedBo': {
             'width': width,
             'height': height,
@@ -1149,10 +1148,21 @@ def probe_env_ip(hub, site, env_name, container_code, geo_lookup):
             'error': '' if country_code == site else '出口 IP 国家不匹配',
         }
     except Exception as exc:
+        core_missing = (
+            isinstance(exc, HubApiError)
+            and str(exc.api_code or '') == '-10007'
+        ) or bool(re.search(
+            r'(?i)(chrome\[?\d*\]?core does not exist|浏览器?内核不存在)',
+            str(exc),
+        ))
         return {
             'envName': env_name, 'ip': '', 'country': '',
             'city': '', 'isp': '', 'ok': False,
-            'error': scrub_text(exc)[:200],
+            'error': (
+                'HubStudio 浏览器内核不存在；请在 HubStudio 安装可用内核，'
+                '或将该环境切换到已安装内核后重新检测'
+                if core_missing else scrub_text(exc)[:200]
+            ),
         }
     finally:
         if started:

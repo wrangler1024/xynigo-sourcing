@@ -981,6 +981,11 @@ class AppState(object):
     def workspace_snapshot(self):
         """Build one credential-free snapshot for cloud workspace restore."""
         preferences = public_envbatch_preferences(self.cfg)
+        runtime_config = public_executor_config(self.cfg)
+        runtime_config = {
+            'configRevision': config_revision(runtime_config),
+            **runtime_config,
+        }
         groups = sorted({
             str(item or '').strip() for item in self.hub_groups()
             if str(item or '').strip()
@@ -1021,6 +1026,7 @@ class AppState(object):
         captured_at = datetime.now(timezone.utc).isoformat()
         content = {
             'preferences': preferences,
+            'runtimeConfig': runtime_config,
             'groups': groups,
             'preflight': preflight,
         }
@@ -1521,8 +1527,8 @@ class EnvBatchJob(object):
             'configuredWorkers': workers,
         }
 
-    def preflight(self, site='MX'):
-        runtime = self._runtime_config(site)
+    def preflight(self, site='MX', environment_group=None):
+        runtime = self._runtime_config(site, environment_group)
         result = envbatch_preflight(
             self.hub_getter(), runtime['purchaseTag'], runtime['proxyLink'],
             site=runtime['site'])
@@ -1605,14 +1611,15 @@ class EnvBatchJob(object):
             } for item in accounts[:5]],
         }
 
-    def preview(self, plan_id, assignment, purchase_date, site='MX'):
+    def preview(self, plan_id, assignment, purchase_date, site='MX',
+                environment_group=None):
         with self.lock:
             self._clean_pending()
             pending = self.pending.get(plan_id)
         if not pending:
             raise ValueError('解析计划已过期，请重新选择 xlsx')
         parse_assignment(assignment, len(pending['accounts']))
-        runtime = self._runtime_config(site)
+        runtime = self._runtime_config(site, environment_group)
         hub = self.hub_getter()
         require_envbatch_ready(
             hub, runtime['purchaseTag'], runtime['proxyLink'],
@@ -2294,10 +2301,11 @@ class BackupEnvJob(object):
             raise ValueError('购买日期必须是 YYYYMMDD')
         return buyer, count, backup_type, purchase_date
 
-    def preview(self, buyer, count, backup_type, purchase_date, site='MX'):
+    def preview(self, buyer, count, backup_type, purchase_date, site='MX',
+                environment_group=None):
         buyer, count, backup_type, purchase_date = self._validate_params(
             buyer, count, backup_type, purchase_date)
-        runtime = self._runtime_config(site)
+        runtime = self._runtime_config(site, environment_group)
         hub = self.hub_getter()
         require_envbatch_ready(
             hub, runtime['purchaseTag'], runtime['proxyLink'],
@@ -3123,7 +3131,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(snap)
             elif path == '/api/envbatch/preflight':
                 site = (query.get('site') or ['MX'])[0]
-                self._json(STATE.env_job.preflight(site))
+                environment_group = (
+                    query.get('environmentGroup') or [None])[0]
+                self._json(
+                    STATE.env_job.preflight(
+                        site, environment_group=environment_group)
+                    if environment_group is not None
+                    else STATE.env_job.preflight(site))
             elif path == '/api/envbatch/preferences':
                 self._json(public_envbatch_preferences(STATE.cfg))
             elif path == '/api/envbatch/template':
@@ -3161,7 +3175,9 @@ class Handler(BaseHTTPRequestHandler):
                     (query.get('type') or [''])[0],
                     (query.get('purchaseDate') or
                      [time.strftime('%Y%m%d')])[0],
-                    site=(query.get('site') or ['MX'])[0])
+                    site=(query.get('site') or ['MX'])[0],
+                    environment_group=(
+                        query.get('environmentGroup') or [None])[0])
                 self._json(result)
             elif path == '/api/envbatch/backup/progress':
                 snap = STATE.backup_job.snapshot()
@@ -3547,7 +3563,8 @@ class Handler(BaseHTTPRequestHandler):
                 rows = STATE.env_job.preview(
                     body.get('planId'), body.get('assignment'),
                     body.get('purchaseDate') or time.strftime('%Y%m%d'),
-                    site=body.get('site') or 'MX')
+                    site=body.get('site') or 'MX',
+                    environment_group=body.get('environmentGroup'))
                 self._json({'valid': True, 'count': len(rows), 'rows': rows})
             elif path == '/api/envbatch/start':
                 if body.get('writeLarkLedger'):

@@ -56,6 +56,10 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(snapshot['groups'], ['MX采购', '美国采购'])
         self.assertEqual(len(snapshot['snapshotRevision']), 64)
         self.assertEqual(set(snapshot['preflight']), {'MX', 'US'})
+        self.assertEqual(
+            snapshot['runtimeConfig']['configRevision'],
+            main_module.config_revision(public_executor_config(state.cfg)))
+        self.assertEqual(snapshot['runtimeConfig']['envCreateWorkers'], 5)
         rendered = json.dumps(snapshot, ensure_ascii=False)
         self.assertNotIn(TEST_PROXY, rendered)
         self.assertNotIn('proxyLink', rendered)

@@ -28,7 +28,7 @@ from purchase_tool.env_batch import (
     mapping_workbook_bytes, normalize_buyer, normalize_env_site,
     parse_assignment, parse_vendor_workbook, probe_env_ip,
     validate_assignment_template, validate_purchase_tag)
-from purchase_tool.hub_api import HubStudioApi
+from purchase_tool.hub_api import HubApiError, HubStudioApi
 
 
 TEST_TAG = 'MX-Purchase'
@@ -399,7 +399,7 @@ class EnvBatchTests(unittest.TestCase):
         body = build_env_create_body(
             'XG-MX-0819-001', rng=rng,
             proxy_link=TEST_PROXY, purchase_tag=TEST_TAG)
-        self.assertEqual(body['coreVersion'], 148)
+        self.assertNotIn('coreVersion', body)
         self.assertEqual(body['advancedBo']['languageType'], 0)
         self.assertEqual(body['tagName'], TEST_TAG)
         self.assertEqual(body['linkCode'],
@@ -582,6 +582,25 @@ class EnvBatchTests(unittest.TestCase):
         self.assertTrue(result['ok'])
         self.assertEqual(hub.calls, [
             ('start', '123', True), ('stop', '123')])
+
+    def test_ip_probe_translates_missing_browser_core_to_actionable_error(self):
+        class MissingCoreHub(object):
+            def browser_start(self, _code, headless=False):
+                raise HubApiError(
+                    'HubStudio Local API code=-10007',
+                    api_code=-10007)
+
+            def browser_stop(self, _code):
+                raise AssertionError('未启动成功的环境不能执行关闭')
+
+        result = probe_env_ip(
+            MissingCoreHub(), 'US', 'XG-US-0901-011', '123',
+            lambda _ip: {})
+
+        self.assertFalse(result['ok'])
+        self.assertIn('浏览器内核不存在', result['error'])
+        self.assertIn('安装可用内核', result['error'])
+        self.assertNotIn('-10007', result['error'])
 
     def test_hub_unfiltered_env_list_paginates_across_all_groups(self):
         api = HubStudioApi()
@@ -970,7 +989,7 @@ class EnvBatchTests(unittest.TestCase):
         self.assertEqual(len(create_calls), 2)
         self.assertEqual(create_calls[0][1]['linkCode'],
                          'https://proxy.example.test/MX')
-        self.assertEqual(create_calls[0][1]['coreVersion'], 148)
+        self.assertNotIn('coreVersion', create_calls[0][1])
         remark_calls = [call for call in hub.calls if call[0] == 'remark']
         self.assertEqual(len(remark_calls), 2)
         self.assertEqual({call[3] for call in remark_calls}, {'备用环境'})

@@ -6,7 +6,7 @@ import unittest
 from urllib.error import URLError
 
 from purchase_tool import hub_api
-from purchase_tool.hub_api import HubStudioLocalApiAdapter
+from purchase_tool.hub_api import HubApiError, HubStudioLocalApiAdapter
 from purchase_tool.hub_api_key import (
     HubApiKeyStoreError, SystemHubApiKeyStore, _wrap_key)
 
@@ -87,6 +87,23 @@ class MemoryTokenBackend(object):
 
 
 class HubStudioLocalApiAdapterTests(unittest.TestCase):
+    def test_missing_browser_core_is_stable_and_not_retried(self):
+        opener = FakeLocalApiOpener(
+            response_code=-10007,
+            response_message='Chrome[148]Core does not exist')
+        adapter = HubStudioLocalApiAdapter(
+            opener=opener, client_running_getter=lambda: True,
+            retries=3, timeout=1)
+
+        with self.assertRaises(HubApiError) as context:
+            adapter.browser_start('container-test-1', headless=True)
+
+        self.assertEqual(
+            context.exception.reason_code,
+            'hubstudio_browser_core_missing')
+        self.assertEqual(context.exception.api_code, '-10007')
+        self.assertEqual(len(opener.calls), 1)
+
     def test_healthy_api_does_not_spawn_client_process_diagnostic(self):
         process_checks = []
         adapter = HubStudioLocalApiAdapter(

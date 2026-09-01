@@ -166,6 +166,7 @@ class RegistrationFlowTests(unittest.TestCase):
         body = RegistrationOrchestrator.env_create_body('safe-env')
         self.assertEqual(body['tagName'], 'SHEIN Mexico Registration')
         self.assertEqual(body['advancedBo']['width'], 1920)
+        self.assertNotIn('coreVersion', body)
 
     def test_us_registration_contract_uses_us_url_group_and_site(self):
         page = FakePage(site='US')
