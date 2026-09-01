@@ -217,6 +217,58 @@ def test_backup_environment_task_honors_cooperative_cancellation():
                for call in rpc.calls)
 
 
+def test_environment_stop_reports_cleanup_and_ip_failure_reasons():
+    rpc = FakeRpc('/api/envbatch/progress', [{
+        'running': False,
+        'phase': 'stopped',
+        'stopRequested': True,
+        'rows': [{
+            'accountId': 'a' * 64,
+            'emailMasked': 'bu***01@example.test',
+            'buyer': '新刚',
+            'envName': 'XG-US-0901-001',
+            'containerCode': '132725138',
+            'serialNumber': '101',
+            'state': 'rolled_back',
+            'completedSteps': ['env_created', 'done'],
+            'createdInRun': True,
+            'cleanupStatus': 'deleted',
+        }],
+        'ipChecks': [{
+            'envName': 'XG-US-0901-001',
+            'ip': '', 'country': '', 'ok': False,
+            'errorCode': 'hub_ip_missing',
+            'error': 'HubStudio 已启动环境，但未返回出口 IP',
+        }],
+        'summary': {
+            'total': 1, 'done': 0, 'stopped': 1, 'failed': 0,
+            'cleanupTotal': 1, 'cleanupDone': 1, 'cleanupFailed': 0,
+        },
+    }])
+    events = []
+    executor = LocalOperationExecutor(
+        rpc, poll_interval=0.05, sleep_fn=lambda _seconds: None)
+
+    outcome, code, summary = executor.execute(
+        'environment.create-bound.v1', {
+            'runKey': 'environment-run-cleanup-0001',
+            'site': 'US', 'purchaseDate': '20260901',
+            'environmentGroup': 'US采购', 'planRef': 'plan-local-0001',
+            'totalCount': 1, 'verifySampleCount': 1,
+            'assignments': [{'purchaserLabel': '新刚', 'count': 1}],
+        }, lambda **event: events.append(event))
+
+    assert outcome == 'succeeded'
+    assert code == 'environment_cancelled'
+    assert summary['cleanupDone'] == 1
+    row = events[-1]['snapshot']['rows'][0]
+    assert row['status'] == 'stopped'
+    assert row['createdInRun'] is True
+    assert row['cleanupStatus'] == 'deleted'
+    assert row['ipErrorCode'] == 'hub_ip_missing'
+    assert '未返回出口 IP' in row['ipErrorSummary']
+
+
 def test_logistics_task_reports_incremental_terminal_result():
     rpc = FakeRpc('/api/progress', [
         {

@@ -135,6 +135,16 @@ class FakeHub(object):
                 env['remark'] = remark
         return {}
 
+    def env_delete(self, container_codes):
+        wanted = {str(code) for code in container_codes}
+        self.calls.append(('delete', tuple(sorted(wanted))))
+        with self.lock:
+            self.envs = [
+                env for env in self.envs
+                if str(env.get('containerCode') or '') not in wanted
+            ]
+        return True
+
 
 class EnvBatchTests(unittest.TestCase):
     def test_repository_sample_matches_contract(self):
@@ -628,9 +638,43 @@ class EnvBatchTests(unittest.TestCase):
             lambda _ip: {})
 
         self.assertFalse(result['ok'])
+        self.assertEqual(result['errorCode'], 'hub_browser_core_missing')
         self.assertIn('浏览器内核不存在', result['error'])
         self.assertIn('安装可用内核', result['error'])
         self.assertNotIn('-10007', result['error'])
+
+    def test_ip_probe_explains_missing_ip_instead_of_unknown(self):
+        class NoIpHub(object):
+            def browser_start(self, _code, headless=False):
+                return {}
+
+            def browser_stop(self, _code):
+                return {}
+
+        result = probe_env_ip(
+            NoIpHub(), 'US', 'KD-US-0901-021', '123', lambda _ip: {})
+
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['errorCode'], 'hub_ip_missing')
+        self.assertIn('未返回出口 IP', result['error'])
+
+    def test_ip_probe_preserves_geo_lookup_failure_reason(self):
+        class ProbeHub(object):
+            def browser_start(self, _code, headless=False):
+                return {'ip': '203.0.113.11'}
+
+            def browser_stop(self, _code):
+                return {}
+
+        result = probe_env_ip(
+            ProbeHub(), 'US', 'KD-US-0901-021', '123',
+            lambda _ip: (_ for _ in ()).throw(
+                EnvBatchError('IP 归属地查询失败')))
+
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['errorCode'], 'ip_geo_lookup_failed')
+        self.assertEqual(result['ip'], '203.0.113.11')
+        self.assertIn('归属地查询失败', result['error'])
 
     def test_hub_unfiltered_env_list_paginates_across_all_groups(self):
         api = HubStudioApi()
@@ -837,6 +881,78 @@ class EnvBatchTests(unittest.TestCase):
                 [row.state for row in resumed.rows], ['done', 'done'])
             self.assertEqual(sum(call[0] == 'create' for call in hub.calls), 2)
             self.assertFalse(store.path.exists())
+
+    def test_stop_compensation_deletes_only_environments_created_by_run(self):
+        accounts = parse_vendor_workbook(BytesIO(workbook_bytes(demo_rows())))
+        hub = FakeHub()
+        stop_event = threading.Event()
+        runner = BatchEnvOrchestrator(
+            hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY,
+            purchase_date='20260819', sleep_fn=lambda _seconds: None,
+            max_workers=1, stop_event=stop_event)
+        runner.prepare(accounts, '2:新刚')
+
+        runner._run_one(runner.rows[0])
+        stop_event.set()
+        runner._run_one(runner.rows[1])
+        self.assertTrue(runner.rows[0].created_in_run)
+        self.assertEqual(runner.rows[1].state, 'stopped')
+
+        cleaned = runner.rollback_created_environments()
+
+        self.assertEqual(cleaned, [runner.rows[0]])
+        self.assertEqual(runner.rows[0].state, 'rolled_back')
+        self.assertEqual(runner.rows[0].cleanup_status, 'deleted')
+        self.assertEqual(runner.rows[1].cleanup_status, 'not_required')
+        self.assertEqual(hub.envs, [])
+
+    def test_stop_compensation_never_deletes_recovered_environment(self):
+        accounts = parse_vendor_workbook(BytesIO(workbook_bytes(demo_rows())))
+        hub = FakeHub()
+        hub.envs.append({
+            'containerName': 'XG-MX-0819-001',
+            'containerCode': '8999', 'serialNumber': 1099,
+            'tagName': TEST_TAG,
+            'remark': format_remark(accounts[0], '20260819'),
+        })
+        runner = BatchEnvOrchestrator(
+            hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY,
+            purchase_date='20260819', sleep_fn=lambda _seconds: None,
+            max_workers=1)
+        runner.prepare(accounts, '2:新刚')
+        recovered = next(row for row in runner.rows if row.recovered_existing)
+
+        self.assertEqual(runner.rollback_created_environments(), [])
+        self.assertIsNotNone(hub.env_lookup(
+            container_code=recovered.container_code))
+
+    def test_stop_compensation_reconciles_delete_timeout_without_duplicate(self):
+        class TimeoutAfterDeleteHub(FakeHub):
+            def __init__(self):
+                super().__init__()
+                self.delete_calls = 0
+
+            def env_delete(self, container_codes):
+                self.delete_calls += 1
+                super().env_delete(container_codes)
+                raise HubApiError(
+                    'HubStudio Local API 请求超时',
+                    'hubstudio_local_api_timeout')
+
+        accounts = parse_vendor_workbook(BytesIO(workbook_bytes(demo_rows())))
+        hub = TimeoutAfterDeleteHub()
+        runner = BatchEnvOrchestrator(
+            hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY,
+            purchase_date='20260819', sleep_fn=lambda _seconds: None,
+            max_workers=1)
+        runner.prepare(accounts[:1], '1:新刚')
+        runner.run()
+
+        runner.rollback_created_environments()
+
+        self.assertEqual(hub.delete_calls, 1)
+        self.assertEqual(runner.rows[0].cleanup_status, 'deleted')
+        self.assertEqual(runner.rows[0].cleanup_attempts, 1)
 
     def test_backup_safe_stop_does_not_start_queued_rows(self):
         class BlockingFirstCreateHub(FakeHub):

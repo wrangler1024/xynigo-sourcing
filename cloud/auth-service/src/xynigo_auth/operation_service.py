@@ -379,6 +379,14 @@ class OperationRunService:
             )
             if run.executor_task_id else None
         )
+        created_count = sum(row.created_in_run for row in rows)
+        recovered_count = sum(row.recovered_existing for row in rows)
+        cleanup_total = sum(
+            row.created_in_run and row.cleanup_status != "not_required"
+            for row in rows
+        )
+        cleanup_done = sum(row.cleanup_status == "deleted" for row in rows)
+        cleanup_failed = sum(row.cleanup_status == "failed" for row in rows)
         return {
             "runId": str(run.id),
             "runKey": run.source_run_key,
@@ -400,6 +408,11 @@ class OperationRunService:
             "failedCount": run.failed_count,
             "ipOkCount": run.ip_ok_count,
             "ipTotalCount": run.ip_total_count,
+            "createdCount": created_count,
+            "recoveredCount": recovered_count,
+            "cleanupTotal": cleanup_total,
+            "cleanupDone": cleanup_done,
+            "cleanupFailed": cleanup_failed,
             "startedAt": _iso(run.started_at),
             "completedAt": _iso(run.completed_at),
             "lastHeartbeatAt": _iso(run.last_heartbeat_at),
@@ -422,9 +435,15 @@ class OperationRunService:
                     "errorStep": row.error_step,
                     "errorSummary": row.error_summary,
                     "recoveredExisting": row.recovered_existing,
+                    "createdInRun": row.created_in_run,
+                    "cleanupStatus": row.cleanup_status,
+                    "cleanupErrorCode": row.cleanup_error_code,
+                    "cleanupErrorSummary": row.cleanup_error_summary,
                     "ipAddress": row.ip_address,
                     "ipCountry": row.ip_country,
                     "ipVerified": row.ip_verified,
+                    "ipErrorCode": row.ip_error_code,
+                    "ipErrorSummary": row.ip_error_summary,
                     "updatedAt": _iso(row.updated_at),
                 }
                 for row in rows
@@ -540,6 +559,7 @@ class OperationResultService:
 
         now = utcnow()
         success_count = sum(item.status == "success" for item in body.results)
+        failed_count = sum(item.status == "failed" for item in body.results)
         run = existing or EnvironmentCreationRun(
             id=uuid.uuid4(),
             tenant_id=tenant_id,
@@ -580,7 +600,7 @@ class OperationResultService:
         run.progress_total = len(body.results)
         run.total_count = len(body.results)
         run.success_count = success_count
-        run.failed_count = len(body.results) - success_count
+        run.failed_count = failed_count
         run.ip_ok_count = sum(item.ok for item in body.ipChecks)
         run.ip_total_count = len(body.ipChecks)
         run.started_at = run.started_at or body.startedAt
@@ -629,11 +649,21 @@ class OperationResultService:
             record.error_summary = item.errorSummary or None
             record.binding_at = item.bindingAt
             record.recovered_existing = item.recoveredExisting
+            record.created_in_run = item.createdInRun
+            record.cleanup_status = item.cleanupStatus
+            record.cleanup_error_code = item.cleanupErrorCode or None
+            record.cleanup_error_summary = item.cleanupErrorSummary or None
             record.ip_address = ip_check.ipAddress if ip_check else None
             record.ip_country = ip_check.country if ip_check else None
             record.ip_city = ip_check.city if ip_check else None
             record.ip_isp = ip_check.isp if ip_check else None
             record.ip_verified = ip_check.ok if ip_check else None
+            record.ip_error_code = (
+                (ip_check.errorCode or None) if ip_check else None
+            )
+            record.ip_error_summary = (
+                (ip_check.errorSummary or None) if ip_check else None
+            )
             record.feishu_sync_status = "pending"
             record.updated_at = now
             fields = _nonempty({

@@ -37,6 +37,8 @@ def environment_payload() -> dict[str, object]:
                 "status": "success",
                 "bindingAt": "2026-08-26T09:02:00+08:00",
                 "recoveredExisting": False,
+                "createdInRun": True,
+                "cleanupStatus": "not_required",
             },
             {
                 "accountRef": "sha256-synthetic-buyer-0002",
@@ -57,6 +59,7 @@ def environment_payload() -> dict[str, object]:
                 "city": "Example City",
                 "isp": "Synthetic ISP",
                 "ok": True,
+                "errorCode": "",
             }
         ],
     }
@@ -178,6 +181,15 @@ def test_real_operation_results_are_idempotent_durable_and_feishu_queued(
         assert buyer is not None
         assert buyer.account_ref == "sha256-synthetic-buyer-0001"
         assert buyer.credential_status == "ready"
+        created = session.scalar(
+            select(EnvironmentCreationResult).where(
+                EnvironmentCreationResult.account_ref
+                == "sha256-synthetic-buyer-0001"
+            )
+        )
+        assert created is not None
+        assert created.created_in_run is True
+        assert created.cleanup_status == "not_required"
         assert buyer.hub_environment_ref == "hub-synthetic-us-0001"
         assert buyer.source == "environment_creation"
 

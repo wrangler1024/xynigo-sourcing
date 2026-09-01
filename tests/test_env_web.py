@@ -124,6 +124,30 @@ class FakeHub(object):
                 'tagName': body['tagName'], 'remark': ''})
         return {}
 
+    def env_lookup(self, container_code=None, container_name=None,
+                   tag_name=None):
+        with self.lock:
+            for env in self.envs:
+                if tag_name and env.get('tagName') != tag_name:
+                    continue
+                if (container_code and str(env.get('containerCode')) ==
+                        str(container_code)):
+                    return dict(env)
+                if (container_name and env.get('containerName') ==
+                        container_name):
+                    return dict(env)
+        return None
+
+    def env_delete(self, container_codes):
+        wanted = {str(code) for code in container_codes}
+        self.calls.append(('delete', tuple(sorted(wanted))))
+        with self.lock:
+            self.envs = [
+                env for env in self.envs
+                if str(env.get('containerCode') or '') not in wanted
+            ]
+        return True
+
     def env_import_cookie(self, _code, _cookie_text):
         self.calls.append(('cookie',))
         return {}
@@ -322,10 +346,12 @@ class EnvWebJobTests(unittest.TestCase):
         snap = job.snapshot()
         self.assertFalse(snap['running'])
         self.assertTrue(snap['stopRequested'])
-        self.assertEqual(snap['summary']['done'], 1)
-        self.assertEqual(snap['summary']['stopped'], 1)
+        self.assertEqual(snap['summary']['done'], 0)
+        self.assertEqual(snap['summary']['stopped'], 2)
         self.assertEqual(snap['summary']['failed'], 0)
         self.assertEqual(snap['summary']['ipTotal'], 0)
+        self.assertEqual(snap['summary']['cleanupDone'], 1)
+        self.assertEqual(len(hub.envs), 0)
 
     def test_batch_retry_failed_retries_only_failed_rows(self):
         class FailCookieTwiceHub(FakeHub):
@@ -1008,10 +1034,12 @@ class BackupEnvJobTests(unittest.TestCase):
             time.sleep(0.05)
         snap = job.snapshot()
         self.assertTrue(snap['stopRequested'])
-        self.assertEqual(snap['summary']['done'], 1)
-        self.assertEqual(snap['summary']['stopped'], 1)
+        self.assertEqual(snap['summary']['done'], 0)
+        self.assertEqual(snap['summary']['stopped'], 2)
         self.assertEqual(snap['summary']['failed'], 0)
         self.assertEqual(snap['summary']['ipTotal'], 0)
+        self.assertEqual(snap['summary']['cleanupDone'], 1)
+        self.assertEqual(len(hub.envs), 0)
 
     def test_backup_uses_builtin_default_proxy_when_unset(self):
         from purchase_tool.env_batch import DEFAULT_PROXY_LINK

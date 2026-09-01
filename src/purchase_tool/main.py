@@ -1187,12 +1187,22 @@ class AppState(object):
                 'environmentSerial': (
                     str(row.get('serialNumber'))
                     if row.get('serialNumber') not in (None, '') else None),
-                'status': ('success' if row.get('state') == 'done'
-                           else 'failed'),
+                'status': (
+                    'success' if row.get('state') == 'done'
+                    else 'stopped' if row.get('state') in (
+                        'stopped', 'rolled_back')
+                    else 'failed'),
                 'errorStep': str(row.get('errorStep') or ''),
                 'errorSummary': scrub_text(row.get('error') or '')[:300],
                 'bindingAt': self._iso_local_text(row.get('bindingTime')),
                 'recoveredExisting': bool(row.get('recoveredExisting')),
+                'createdInRun': bool(row.get('createdInRun')),
+                'cleanupStatus': str(
+                    row.get('cleanupStatus') or 'not_required'),
+                'cleanupErrorCode': str(
+                    row.get('cleanupErrorCode') or ''),
+                'cleanupErrorSummary': scrub_text(
+                    row.get('cleanupError') or '')[:300],
             } for row in rows],
             'ipChecks': [{
                 'environmentName': str(item.get('envName') or ''),
@@ -1201,6 +1211,7 @@ class AppState(object):
                 'city': str(item.get('city') or ''),
                 'isp': str(item.get('isp') or ''),
                 'ok': bool(item.get('ok')),
+                'errorCode': str(item.get('errorCode') or ''),
                 'errorSummary': scrub_text(item.get('error') or '')[:300],
             } for item in snapshot.get('ipChecks') or []
                 if (not selected or any(
@@ -1241,14 +1252,24 @@ class AppState(object):
                 'environmentSerial': (
                     str(row.get('serialNumber'))
                     if row.get('serialNumber') not in (None, '') else None),
-                'status': ('success' if row.get('state') == 'done'
-                           else 'failed'),
+                'status': (
+                    'success' if row.get('state') == 'done'
+                    else 'stopped' if row.get('state') in (
+                        'stopped', 'rolled_back')
+                    else 'failed'),
                 'errorStep': (
                     '' if row.get('state') == 'done'
                     else 'environment_create'),
                 'errorSummary': scrub_text(row.get('error') or '')[:300],
                 'bindingAt': None,
                 'recoveredExisting': False,
+                'createdInRun': bool(row.get('createdInRun')),
+                'cleanupStatus': str(
+                    row.get('cleanupStatus') or 'not_required'),
+                'cleanupErrorCode': str(
+                    row.get('cleanupErrorCode') or ''),
+                'cleanupErrorSummary': scrub_text(
+                    row.get('cleanupError') or '')[:300],
             } for index, row in enumerate(rows)],
             'ipChecks': [{
                 'environmentName': environment_name,
@@ -1257,6 +1278,7 @@ class AppState(object):
                 'city': str(item.get('city') or ''),
                 'isp': str(item.get('isp') or ''),
                 'ok': bool(item.get('ok')),
+                'errorCode': str(item.get('errorCode') or ''),
                 'errorSummary': scrub_text(item.get('error') or '')[:300],
             } for environment_name, item in ip_by_name.items()],
         }
@@ -1896,6 +1918,11 @@ class EnvBatchJob(object):
                 with self.lock:
                     self.phase = 'creating'
                 result_rows = runner.run()
+                if stop_event.is_set():
+                    with self.lock:
+                        self.phase = 'rolling_back'
+                    runner.rollback_created_environments()
+                    result_rows = runner.rows
                 mapping = mapping_workbook_bytes(result_rows)
                 verification_total = min(
                     verify_sample_count,
@@ -1910,8 +1937,18 @@ class EnvBatchJob(object):
                               verify_sample_count,
                               on_progress=self._set_ip_checks))
                 done = sum(row.state == 'done' for row in result_rows)
-                stopped = sum(row.state == 'stopped' for row in result_rows)
-                failed = sum(row.state == 'failed' for row in result_rows)
+                stopped = sum(
+                    row.state in ('stopped', 'rolled_back')
+                    for row in result_rows)
+                failed = sum(
+                    row.state in ('failed', 'cleanup_failed')
+                    for row in result_rows)
+                cleanup_total = sum(
+                    row.created_in_run for row in result_rows)
+                cleanup_done = sum(
+                    row.cleanup_status == 'deleted' for row in result_rows)
+                cleanup_failed = sum(
+                    row.cleanup_status == 'failed' for row in result_rows)
                 if write_lark_ledger:
                     self._sync_ledger_rows(
                         ledger_service, result_rows,
@@ -1932,6 +1969,9 @@ class EnvBatchJob(object):
                         'failed': failed,
                         'ipOk': sum(bool(item.get('ok')) for item in checks),
                         'ipTotal': len(checks),
+                        'cleanupTotal': cleanup_total,
+                        'cleanupDone': cleanup_done,
+                        'cleanupFailed': cleanup_failed,
                     }
                 self._schedule_sensitive_cleanup(runner)
             except Exception as exc:
@@ -1971,7 +2011,7 @@ class EnvBatchJob(object):
             return {
                 'stopping': True,
                 'stopRequested': True,
-                'message': '已停止领取新行，正在等待当前并发行安全完成',
+                'message': '已停止领取新行；当前并发行收尾后将销毁本任务新建环境',
             }
 
     def retry_row(self, account_id, reserve_resources=None,
@@ -2426,6 +2466,11 @@ class BackupEnvJob(object):
                 with self.lock:
                     self.phase = 'creating'
                 result_rows = runner.run()
+                if stop_event.is_set():
+                    with self.lock:
+                        self.phase = 'rolling_back'
+                    runner.rollback_created_environments()
+                    result_rows = runner.rows
                 verification_total = min(
                     verify_sample_count,
                     sum(row.state == 'done' and bool(row.container_code)
@@ -2439,8 +2484,18 @@ class BackupEnvJob(object):
                               verify_sample_count,
                               on_progress=self._set_ip_checks))
                 done = sum(row.state == 'done' for row in result_rows)
-                stopped = sum(row.state == 'stopped' for row in result_rows)
-                failed = sum(row.state == 'failed' for row in result_rows)
+                stopped = sum(
+                    row.state in ('stopped', 'rolled_back')
+                    for row in result_rows)
+                failed = sum(
+                    row.state in ('failed', 'cleanup_failed')
+                    for row in result_rows)
+                cleanup_total = sum(
+                    row.created_in_run for row in result_rows)
+                cleanup_done = sum(
+                    row.cleanup_status == 'deleted' for row in result_rows)
+                cleanup_failed = sum(
+                    row.cleanup_status == 'failed' for row in result_rows)
                 with self.lock:
                     self.ip_checks = checks
                     self.phase = 'finalizing'
@@ -2451,6 +2506,9 @@ class BackupEnvJob(object):
                         'failed': failed,
                         'ipOk': sum(bool(item.get('ok')) for item in checks),
                         'ipTotal': len(checks),
+                        'cleanupTotal': cleanup_total,
+                        'cleanupDone': cleanup_done,
+                        'cleanupFailed': cleanup_failed,
                     }
                     self.result_data = backup_result_tsv_bytes(
                         result_rows, runtime['site'])
@@ -2492,7 +2550,7 @@ class BackupEnvJob(object):
             return {
                 'stopping': True,
                 'stopRequested': True,
-                'message': '已停止领取新行，正在等待当前并发行安全完成',
+                'message': '已停止领取新行；当前并发行收尾后将销毁本任务新建环境',
             }
 
     def snapshot(self):

@@ -1059,11 +1059,19 @@ class EnvironmentCreationResult(Base):
     error_summary: Mapped[str | None] = mapped_column(String(300))
     binding_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     recovered_existing: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_in_run: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    cleanup_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="not_required"
+    )
+    cleanup_error_code: Mapped[str | None] = mapped_column(String(128))
+    cleanup_error_summary: Mapped[str | None] = mapped_column(String(300))
     ip_address: Mapped[str | None] = mapped_column(String(64))
     ip_country: Mapped[str | None] = mapped_column(String(100))
     ip_city: Mapped[str | None] = mapped_column(String(100))
     ip_isp: Mapped[str | None] = mapped_column(String(200))
     ip_verified: Mapped[bool | None] = mapped_column(Boolean)
+    ip_error_code: Mapped[str | None] = mapped_column(String(128))
+    ip_error_summary: Mapped[str | None] = mapped_column(String(300))
     feishu_sync_status: Mapped[str] = mapped_column(
         String(32), nullable=False, default="pending"
     )
@@ -1081,6 +1089,11 @@ class EnvironmentCreationResult(Base):
         CheckConstraint(
             "status IN ('queued', 'running', 'success', 'failed', 'stopped')",
             name="ck_environment_result_status",
+        ),
+        CheckConstraint(
+            "cleanup_status IN ('not_required', 'pending', 'deleting', "
+            "'deleted', 'failed')",
+            name="ck_environment_result_cleanup_status",
         ),
         CheckConstraint(
             "feishu_sync_status IN ('pending', 'processing', 'completed', 'failed')",

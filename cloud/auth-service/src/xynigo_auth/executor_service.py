@@ -103,6 +103,9 @@ BUSINESS_RESULT_KEYS = frozenset(
         "successCount",
         "failedCount",
         "stoppedCount",
+        "cleanupTotal",
+        "cleanupDone",
+        "cleanupFailed",
         "ipOkCount",
         "ipTotalCount",
         "errorCode",
@@ -1391,9 +1394,15 @@ class ExecutorChannelService:
             row.error_step = item.errorStep or None
             row.error_summary = item.errorSummary or None
             row.recovered_existing = item.recoveredExisting
+            row.created_in_run = item.createdInRun
+            row.cleanup_status = item.cleanupStatus
+            row.cleanup_error_code = item.cleanupErrorCode or None
+            row.cleanup_error_summary = item.cleanupErrorSummary or None
             row.ip_address = item.ipAddress or None
             row.ip_country = item.ipCountry or None
             row.ip_verified = item.ipVerified
+            row.ip_error_code = item.ipErrorCode or None
+            row.ip_error_summary = item.ipErrorSummary or None
             row.updated_at = now
 
     def _upsert_logistics_progress(

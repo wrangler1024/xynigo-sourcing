@@ -67,6 +67,13 @@ class FakeLocalApiOpener(object):
             data = {'containers': []}
         elif path in {'/browser/start', '/browser/stop'}:
             data = {'accepted': True}
+        elif path == '/env/del':
+            wanted = {str(value) for value in body.get('containerCodes') or []}
+            self.environments = [
+                env for env in self.environments
+                if str(env.get('containerCode') or '') not in wanted
+            ]
+            data = True
         else:
             data = {}
         return FakeResponse({'code': 0, 'msg': 'Success', 'data': data})
@@ -87,6 +94,19 @@ class MemoryTokenBackend(object):
 
 
 class HubStudioLocalApiAdapterTests(unittest.TestCase):
+    def test_environment_delete_accepts_only_explicit_numeric_codes(self):
+        opener = FakeLocalApiOpener()
+        adapter = HubStudioLocalApiAdapter(
+            opener=opener, client_running_getter=lambda: True,
+            retries=1, timeout=1)
+
+        self.assertTrue(adapter.env_delete(['132725138']))
+        delete_calls = [body for _port, path, body, _headers in opener.calls
+                        if path == '/env/del']
+        self.assertEqual(delete_calls, [{'containerCodes': [132725138]}])
+        with self.assertRaises(HubApiError):
+            adapter.env_delete(['环境名称'])
+
     def test_missing_browser_core_is_stable_and_not_retried(self):
         opener = FakeLocalApiOpener(
             response_code=-10007,

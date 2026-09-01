@@ -292,7 +292,7 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             retry_handler.index("toast('重试已受理；正在从失败步骤继续')"),
         )
 
-    def test_environment_safe_stop_is_visible_and_uses_mode_specific_route(self):
+    def test_environment_stop_rolls_back_owned_rows_and_uses_mode_route(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")
         for marker in (
             'id="btnEnvStop"',
@@ -300,11 +300,37 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             "let envStopRequested = false;",
             "'/api/envbatch/stop'",
             "'/api/envbatch/backup/stop'",
-            "安全停止不会强行中断",
-            "未开始行已保留",
+            "停止并撤销会先阻止新行",
+            "历史恢复环境不会删除",
+            "已销毁，可重新创建",
+            "cleanupStatus === 'deleted'",
             "r.state === 'stopped'",
         ):
             self.assertIn(marker, html)
+
+    def test_new_environment_run_clears_stale_rows_and_explains_ip_errors(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        submission = html[
+            html.index("function beginEnvSubmission"):
+            html.index("function paintEnvSubmissionState")
+        ]
+        for marker in (
+            "lastEnvironmentRows = [];",
+            "旧批次结果已隐藏",
+            "本批任务尚未进入出口 IP 检测",
+        ):
+            self.assertIn(marker, submission)
+        render = html[
+            html.index("function renderEnvBatch"):
+            html.index("let envPollFailures")
+        ]
+        for marker in (
+            "本批任务正在预检和准备，尚无逐行结果",
+            "已存在，未重复创建",
+            "x.errorCode",
+            "检测失败",
+        ):
+            self.assertIn(marker, render)
 
     def test_environment_failed_rows_can_be_retried_in_one_batch(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")

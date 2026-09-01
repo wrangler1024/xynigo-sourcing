@@ -702,6 +702,11 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
                             "status": "running",
                             "currentStep": "env_created",
                             "completedSteps": [],
+                            "createdInRun": True,
+                            "cleanupStatus": "pending",
+                            "ipVerified": False,
+                            "ipErrorCode": "hub_ip_missing",
+                            "ipErrorSummary": "HubStudio 未返回出口 IP",
                         },
                         {
                             "accountRef": "sha256-progress-account-0002",
@@ -726,6 +731,9 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
         assert len(running["rows"]) == 2
         running_rows = {row["accountRef"]: row for row in running["rows"]}
         assert running_rows["sha256-progress-account-0001"]["status"] == "running"
+        assert running_rows["sha256-progress-account-0001"]["createdInRun"] is True
+        assert running_rows["sha256-progress-account-0001"]["cleanupStatus"] == "pending"
+        assert running_rows["sha256-progress-account-0001"]["ipErrorCode"] == "hub_ip_missing"
         assert running_rows["sha256-progress-account-0002"]["status"] == "queued"
 
         unsafe_finish = device_client.post(
@@ -757,6 +765,9 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
                     "progressTotal": 2,
                     "successCount": 1,
                     "failedCount": 1,
+                    "cleanupTotal": 1,
+                    "cleanupDone": 0,
+                    "cleanupFailed": 0,
                     "ipOkCount": 1,
                     "ipTotalCount": 1,
                 },

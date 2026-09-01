@@ -22,7 +22,9 @@ BUSINESS_TASK_TYPES = frozenset({
     'environment.retry-row.v1',
     'environment.retry-failed.v1',
 })
-ENVIRONMENT_TERMINAL_STATES = frozenset({'done', 'failed', 'stopped'})
+ENVIRONMENT_TERMINAL_STATES = frozenset({
+    'done', 'failed', 'stopped', 'rolled_back', 'cleanup_failed',
+})
 LOGISTICS_TERMINAL_STATES = frozenset({
     'ok', 'fail', 'login', 'inuse', 'stopped',
 })
@@ -380,7 +382,7 @@ class LocalOperationExecutor(object):
         phase = str(snapshot.get('phase') or '').strip().casefold()
         allowed = {
             'idle', 'preparing', 'creating', 'ip_checking', 'finalizing',
-            'completed', 'failed', 'stopped',
+            'rolling_back', 'completed', 'failed', 'stopped',
         }
         if phase not in allowed:
             phase = 'creating' if snapshot.get('running') else 'completed'
@@ -407,6 +409,8 @@ class LocalOperationExecutor(object):
                 'done': 'success',
                 'failed': 'failed',
                 'stopped': 'stopped',
+                'rolled_back': 'stopped',
+                'cleanup_failed': 'failed',
                 'pending': 'queued',
             }.get(state, 'running')
             env_name = str(source.get('envName') or '').strip()
@@ -444,8 +448,19 @@ class LocalOperationExecutor(object):
                 'errorStep': str(source.get('errorStep') or '')[:64],
                 'errorSummary': scrub_text(source.get('error') or '')[:300],
                 'recoveredExisting': bool(source.get('recoveredExisting')),
+                'createdInRun': bool(source.get('createdInRun')),
+                'cleanupStatus': str(
+                    source.get('cleanupStatus') or 'not_required')[:32],
+                'cleanupErrorCode': str(
+                    source.get('cleanupErrorCode') or '')[:128],
+                'cleanupErrorSummary': scrub_text(
+                    source.get('cleanupError') or '')[:300],
                 'ipAddress': str(ip_check.get('ip') or '')[:64],
                 'ipCountry': str(ip_check.get('country') or '')[:100],
+                'ipErrorCode': str(
+                    ip_check.get('errorCode') or '')[:128],
+                'ipErrorSummary': scrub_text(
+                    ip_check.get('error') or '')[:300],
                 'ipVerified': (
                     bool(ip_check.get('ok')) if ip_check else None),
             })
@@ -510,6 +525,9 @@ class LocalOperationExecutor(object):
             'successCount': success,
             'failedCount': failed,
             'stoppedCount': stopped,
+            'cleanupTotal': int(raw.get('cleanupTotal') or 0),
+            'cleanupDone': int(raw.get('cleanupDone') or 0),
+            'cleanupFailed': int(raw.get('cleanupFailed') or 0),
             'ipOkCount': ip_ok,
             'ipTotalCount': ip_total,
         }

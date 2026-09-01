@@ -376,11 +376,19 @@ class EnvironmentCreationResultItem(BaseModel):
         default=None, min_length=1, max_length=128, pattern=SAFE_KEY_RE
     )
     environmentSerial: str | None = Field(default=None, min_length=1, max_length=64)
-    status: Literal["success", "failed"]
+    status: Literal["success", "failed", "stopped"]
     errorStep: str = Field(default="", max_length=64)
     errorSummary: str = Field(default="", max_length=300)
     bindingAt: datetime | None = None
     recoveredExisting: bool = False
+    createdInRun: bool = False
+    cleanupStatus: Literal[
+        "not_required", "pending", "deleting", "deleted", "failed"
+    ] = "not_required"
+    cleanupErrorCode: str = Field(
+        default="", max_length=128, pattern=r"^[A-Za-z0-9._:-]*$"
+    )
+    cleanupErrorSummary: str = Field(default="", max_length=300)
 
     @field_validator(
         "accountLabel",
@@ -389,6 +397,8 @@ class EnvironmentCreationResultItem(BaseModel):
         "environmentSerial",
         "errorStep",
         "errorSummary",
+        "cleanupErrorCode",
+        "cleanupErrorSummary",
     )
     @classmethod
     def normalize_text(cls, value: str | None) -> str | None:
@@ -438,8 +448,20 @@ class EnvironmentRunProgressItem(BaseModel):
     errorStep: str = Field(default="", max_length=64)
     errorSummary: str = Field(default="", max_length=300)
     recoveredExisting: bool = False
+    createdInRun: bool = False
+    cleanupStatus: Literal[
+        "not_required", "pending", "deleting", "deleted", "failed"
+    ] = "not_required"
+    cleanupErrorCode: str = Field(
+        default="", max_length=128, pattern=r"^[A-Za-z0-9._:-]*$"
+    )
+    cleanupErrorSummary: str = Field(default="", max_length=300)
     ipAddress: str = Field(default="", max_length=64)
     ipCountry: str = Field(default="", max_length=100)
+    ipErrorCode: str = Field(
+        default="", max_length=128, pattern=r"^[A-Za-z0-9._:-]*$"
+    )
+    ipErrorSummary: str = Field(default="", max_length=300)
     ipVerified: bool | None = None
 
     @field_validator(
@@ -450,7 +472,11 @@ class EnvironmentRunProgressItem(BaseModel):
         "currentStep",
         "errorStep",
         "errorSummary",
+        "cleanupErrorCode",
+        "cleanupErrorSummary",
         "ipCountry",
+        "ipErrorCode",
+        "ipErrorSummary",
     )
     @classmethod
     def normalize_progress_text(cls, value: str | None) -> str | None:
@@ -483,9 +509,14 @@ class EnvironmentIpCheckItem(BaseModel):
     city: str = Field(default="", max_length=100)
     isp: str = Field(default="", max_length=200)
     ok: bool
+    errorCode: str = Field(
+        default="", max_length=128, pattern=r"^[A-Za-z0-9._:-]*$"
+    )
     errorSummary: str = Field(default="", max_length=300)
 
-    @field_validator("environmentName", "country", "city", "isp", "errorSummary")
+    @field_validator(
+        "environmentName", "country", "city", "isp", "errorCode", "errorSummary"
+    )
     @classmethod
     def normalize_text(cls, value: str) -> str:
         return _single_line(value)

@@ -1963,7 +1963,7 @@
       <div class="action-row">
         <button class="btn" id="btnEnvPreview" disabled>👁 干跑预览（只读）</button>
         <button class="btn primary" id="btnEnvStart" disabled>▶ 正式执行</button>
-        <button class="btn danger" id="btnEnvStop" disabled>⏹ 安全停止</button>
+        <button class="btn danger" id="btnEnvStop" disabled>⏹ 停止并撤销</button>
         <div class="progress-wrap"><div class="progress"><div class="bar" id="envBar"></div></div><span class="hint" id="envProgressText">0 / 0</span></div>
         <span class="hint" id="envElapsed">已用 00:00</span>
       </div>
@@ -1971,7 +1971,7 @@
         <span class="state-dot" aria-hidden="true"></span>
         <span class="state-copy"><b class="state-title" id="envExecutionTitle">等待执行确认</b><span class="state-detail" id="envExecutionDetail">完成正式执行确认后，这里会立即显示任务提交和后台执行状态。</span></span>
       </div>
-      <div class="note-card" style="margin-top:12px">五步状态机：<b>建环境（使用 HubStudio 当前可用默认内核 + 加权指纹）→ 导 Cookie 原文 → 绑账号 → 写完整备注 → 完成</b>。安全停止只阻止尚未开始的整行，已进入执行的并发行会完整收尾；断点文件不保存密码/Cookie/接码Key，重新选择同一原始 xlsx 即可恢复。</div>
+      <div class="note-card" style="margin-top:12px">五步状态机：<b>建环境（使用 HubStudio 当前可用默认内核 + 加权指纹）→ 导 Cookie 原文 → 绑账号 → 写完整备注 → 完成</b>。停止并撤销会先阻止新行、等待已进入执行的并发行完整收尾，再只销毁本任务新建环境；历史恢复环境不会删除。撤销完成后可修改参数或采购员分配，并重新上传同一原始 xlsx。</div>
     </section>
 
     <section class="card">
@@ -3392,12 +3392,18 @@ function cloudEnvironmentLegacySnapshot(run) {
       state, completedSteps:Array.isArray(row.completedSteps) ? row.completedSteps : [],
       errorStep:String(row.errorStep || ''), error:String(row.errorSummary || ''),
       recoveredExisting:!!row.recoveredExisting,
+      createdInRun:!!row.createdInRun,
+      cleanupStatus:String(row.cleanupStatus || 'not_required'),
+      cleanupErrorCode:String(row.cleanupErrorCode || ''),
+      cleanupError:String(row.cleanupErrorSummary || ''),
     };
   });
   const checks = (run.rows || []).filter(row => row.ipVerified !== null
     && row.ipVerified !== undefined).map(row => ({
       envName:String(row.environmentName || ''), ip:String(row.ipAddress || ''),
       country:String(row.ipCountry || ''), ok:!!row.ipVerified,
+      errorCode:String(row.ipErrorCode || ''),
+      error:String(row.ipErrorSummary || ''),
     }));
   const phase = String(run.phase || '').replace(/^environment\./, '');
   const summary = {
@@ -3405,6 +3411,12 @@ function cloudEnvironmentLegacySnapshot(run) {
     done:Number(run.successCount || rows.filter(row => row.state === 'done').length),
     failed:Number(run.failedCount || rows.filter(row => row.state === 'failed').length),
     stopped:rows.filter(row => row.state === 'stopped').length,
+    created:Number(run.createdCount || rows.filter(row => row.createdInRun).length),
+    recovered:Number(run.recoveredCount || rows.filter(row => row.recoveredExisting).length),
+    cleanupTotal:Number(run.cleanupTotal || rows.filter(row => row.createdInRun
+      && row.cleanupStatus !== 'not_required').length),
+    cleanupDone:Number(run.cleanupDone || rows.filter(row => row.cleanupStatus === 'deleted').length),
+    cleanupFailed:Number(run.cleanupFailed || rows.filter(row => row.cleanupStatus === 'failed').length),
     ipOk:Number(run.ipOkCount || 0), ipTotal:Number(run.ipTotalCount || 0),
   };
   const resultMessages = {
@@ -3413,6 +3425,8 @@ function cloudEnvironmentLegacySnapshot(run) {
     lease_expired_after_start:'执行器连接中断，当前结果待核对，请勿直接重复提交。'
   };
   return {
+    runId:String(run.runId || ''), site:String(run.site || ''),
+    environmentGroup:String(run.environmentGroup || ''),
     running:!run.terminal, stopRequested:!!run.stopRequested,
     elapsedSec:cloudRunElapsed(run), rows, summary, ipChecks:checks,
     phase, ipCheckDone:checks.length, ipCheckTotal:Number(run.ipTotalCount || checks.length),
@@ -3457,6 +3471,12 @@ async function cloudEnvironmentSnapshotWithHistory(run) {
     done:current.rows.filter(row => row.state === 'done').length,
     failed:current.rows.filter(row => row.state === 'failed').length,
     stopped:current.rows.filter(row => row.state === 'stopped').length,
+    created:current.rows.filter(row => row.createdInRun).length,
+    recovered:current.rows.filter(row => row.recoveredExisting).length,
+    cleanupTotal:current.rows.filter(row => row.createdInRun
+      && row.cleanupStatus !== 'not_required').length,
+    cleanupDone:current.rows.filter(row => row.cleanupStatus === 'deleted').length,
+    cleanupFailed:current.rows.filter(row => row.cleanupStatus === 'failed').length,
     ipOk:current.ipChecks.filter(item => item.ok).length,
     ipTotal:current.ipChecks.length,
   };
@@ -6271,9 +6291,10 @@ const ENV_RUN_PHASE_LABEL = {
   created:'已创建', queued:'排队等待执行器', leased:'执行器已领取', starting:'正在启动',
   preparing:'正在预检和准备', creating:'正在创建环境', cookie_importing:'正在导入 Cookie',
   account_binding:'正在绑定账号', remarking:'正在写入备注', ip_checking:'正在检测出口 IP',
+  rolling_back:'正在销毁本任务新建环境',
   finalizing:'正在收尾并持久化结果', completed:'已完成', partial_failure:'部分失败',
-  failed:'执行失败', stopped:'已安全停止', cancelled:'已安全停止',
-  cancel_requested:'正在安全停止', uncertain:'执行结果待核对'
+  failed:'执行失败', stopped:'已停止并撤销', cancelled:'已停止并撤销',
+  cancel_requested:'正在停止并撤销', uncertain:'执行结果待核对'
 };
 
 function paintContinuousElapsed(elementId, seconds) {
@@ -6445,7 +6466,7 @@ function updateEnvButtons() {
   $('btnEnvStop').disabled = !(envRunning || backupRunning)
     || envStopSubmitting || envStopRequested;
   $('btnEnvStop').textContent = envStopSubmitting
-    ? '⏳ 正在请求停止…' : (envStopRequested ? '⏳ 安全停止中…' : '⏹ 安全停止');
+    ? '⏳ 正在请求停止…' : (envStopRequested ? '⏳ 停止并撤销中…' : '⏹ 停止并撤销');
   $('btnEnvRetryFailed').disabled = envMode !== 'bound' || busy
     || !!envRetryAccountId || envRetryFailedSubmitting || envFailedCount < 1;
   $('btnEnvRetryFailed').textContent = envRetryFailedSubmitting
@@ -6563,6 +6584,12 @@ function setEnvExecutionState(kind, title, detail) {
 function beginEnvSubmission(title, detail) {
   envSubmitting = true;
   envPollGraceUntil = Date.now() + 2 * 60 * 1000;
+  lastEnvironmentRows = [];
+  $('envBar').style.width = '0%';
+  $('envProgressText').textContent = '0 完成 / 正在受理新任务';
+  $('envTbody').innerHTML = `<tr><td colspan="${envMode === 'bound' ? 8 : 5}" class="empty-tip">正在预检和准备本次任务，旧批次结果已隐藏</td></tr>`;
+  $('envSummary').innerHTML = '<div class="stat-chip"><b>0</b>本批新建</div><div class="stat-chip"><b>0</b>历史恢复</div>';
+  $('envIpList').textContent = '本批任务尚未进入出口 IP 检测';
   setEnvExecutionState('submitting', title, detail);
   updateEnvModeTabs();
   refreshAssignUi();
@@ -6608,9 +6635,14 @@ function renderEnvExecutionState(snap, mode) {
   if (snap.running) {
     const phaseLabel = ENV_RUN_PHASE_LABEL[snap.phase] || '正在后台执行';
     if (snap.stopRequested) {
+      const cleanupDone = Number(summary.cleanupDone || 0);
+      const cleanupTotal = Number(summary.cleanupTotal || 0);
+      const cleanupFailed = Number(summary.cleanupFailed || 0);
       setEnvExecutionState(
-        'warning', `${taskName}正在安全停止`,
-        `已停止领取新行；最多 ${envEffectiveWorkers} 个已进入执行的并发行会完整收尾，期间请勿关闭执行器。`);
+        'warning', `${taskName}${snap.phase === 'rolling_back' ? '正在销毁本批环境' : '正在停止并撤销'}`,
+        snap.phase === 'rolling_back'
+          ? `已销毁 ${cleanupDone}/${cleanupTotal || '—'} 个本任务新建环境${cleanupFailed ? `，${cleanupFailed} 个销毁失败` : ''}；请勿关闭执行器。`
+          : `已停止领取新行；最多 ${envEffectiveWorkers} 个已进入执行的并发行会完整收尾，随后自动销毁本任务新建环境。`);
       return;
     }
     if (snap.phase === 'ip_checking') {
@@ -6634,18 +6666,22 @@ function renderEnvExecutionState(snap, mode) {
   }
   if (total) {
     if (snap.stopRequested) {
-      const resume = mode === 'backup'
-        ? '未开始行已保留；按相同采购员、类型、日期重新提交即可安全续排。'
-        : '未开始行已保留；重新选择同一原始 xlsx，并保持站点、日期和分配不变即可从断点续跑。';
+      const cleanupDone = Number(summary.cleanupDone || 0);
+      const cleanupFailed = Number(summary.cleanupFailed || 0);
+      const resume = cleanupFailed
+        ? '仍有环境销毁失败；这些行重新执行会发生重复，请先根据明细完成清理。'
+        : '本任务新建环境已撤销；可以修改创建参数或采购员分配，并重新上传同一份文件执行新任务。';
       setEnvExecutionState(
-        failed ? 'warning' : 'success',
-        `${taskName}已安全停止：${done} 完成，${stopped} 未开始`,
-        `${resume}${failed ? ` 另有 ${failed} 行执行失败，请查看明细。` : ''}`);
+        cleanupFailed || failed ? 'warning' : 'success',
+        `${taskName}已停止：销毁 ${cleanupDone} 个，${stopped} 行已终止`,
+        `${resume}${failed ? ` 另有 ${failed} 行失败，请查看明细。` : ''}`);
       return;
     }
     const partlyFailed = failed > 0;
     const kind = partlyFailed ? 'warning' : 'success';
-    let title = `${taskName}已完成：${done}/${total}`;
+    const recovered = Number(summary.recovered || 0);
+    const created = Number(summary.created || Math.max(0, done - recovered));
+    let title = `${taskName}已完成：新建 ${created}，恢复已有 ${recovered}`;
     let detail = '后台任务已经结束，结果将持久化到数据库并异步镜像到独立 Base。';
     if (partlyFailed) {
       title = `${taskName}部分失败：HubStudio ${done}/${total} 完成`;
@@ -6677,8 +6713,10 @@ function renderEnvBatch(snap) {
   const rows = snap.rows || [];
   lastEnvironmentRows = rows.map(row => ({...row}));
   const done = rows.filter(r => r.state === 'done').length;
-  const stopped = rows.filter(r => r.state === 'stopped').length;
-  const failed = rows.filter(r => r.state === 'failed').length;
+  const stopped = rows.filter(r => r.state === 'stopped'
+    || r.state === 'rolled_back' || r.cleanupStatus === 'deleted').length;
+  const failed = rows.filter(r => r.state === 'failed'
+    || r.state === 'cleanup_failed' || r.cleanupStatus === 'failed').length;
   envFailedCount = failed;
   const settled = done + stopped + failed;
   $('envBar').style.width = (rows.length ? settled / rows.length * 100 : 0) + '%';
@@ -6691,7 +6729,12 @@ function renderEnvBatch(snap) {
   renderLedgerSummary(snap.ledger);
   renderEnvExecutionState(snap, 'bound');
   if (snap.fatalError) $('envPreviewText').textContent = '执行错误：' + snap.fatalError;
-  if (!rows.length) return;
+  if (!rows.length) {
+    $('envTbody').innerHTML = '<tr><td colspan="8" class="empty-tip">本批任务正在预检和准备，尚无逐行结果</td></tr>';
+    $('envSummary').innerHTML = '<div class="stat-chip"><b>0</b>本批新建</div><div class="stat-chip"><b>0</b>历史恢复</div>';
+    $('envIpList').textContent = '本批任务尚未进入出口 IP 检测';
+    return;
+  }
   $('envTbody').innerHTML = rows.map(r => {
     const completed = new Set(r.completedSteps || []);
     const dots = ENV_STEPS.map(step => {
@@ -6702,9 +6745,12 @@ function renderEnvBatch(snap) {
       return `<span class="${cls}" title="${ENV_STEP_LABEL[step]}"></span>`;
     }).join('');
     let state = '<span class="badge st-procesando">排队中</span>';
-    if (r.state === 'done') state = '<span class="badge ok">✔ 完成</span>';
+    if (r.cleanupStatus === 'deleted') state = '<span class="badge inuse">⏹ 已销毁，可重新创建</span>';
+    else if (r.cleanupStatus === 'failed') state = `<span class="badge fail">⚠ 销毁失败：${esc(r.cleanupError || r.error)}</span>`;
+    else if (r.state === 'done' && r.recoveredExisting) state = '<span class="badge ok">✔ 已存在，未重复创建</span>';
+    else if (r.state === 'done') state = '<span class="badge ok">✔ 新建完成</span>';
     else if (r.state === 'failed') state = `<span class="badge fail">⚠ ${esc(ENV_STEP_LABEL[r.errorStep] || r.errorStep)}：${esc(r.error)}</span>`;
-    else if (r.state === 'stopped') state = '<span class="badge inuse">⏹ 已安全停止，未开始</span>';
+    else if (r.state === 'stopped') state = '<span class="badge inuse">⏹ 已停止，未创建</span>';
     else if (r.state === 'running' || ENV_STEPS.includes(r.state)) state = `<span class="spinner"></span>${esc(ENV_STEP_LABEL[r.state] || '执行中')}…`;
     const retryPending = envRetryAccountId === String(r.accountId || '');
     const retryDisabled = envRunning || envSubmitting
@@ -6713,17 +6759,26 @@ function renderEnvBatch(snap) {
       ? `<button class="btn-mini" data-env-retry="${esc(r.accountId)}"${retryDisabled ? ' disabled' : ''}>${retryPending ? '⏳ 重试中…' : '🔄 重试此步'}</button>`
       : '';
     const archived = completed.has('remarked') ? '已写入 HubStudio（敏感内容不回传页面）' : '—';
-    return `<tr class="${r.state === 'done' ? 'row-success' : (r.state === 'failed' ? 'row-fail' : (r.state === 'stopped' ? 'row-pending' : 'row-running'))}">
+    const rowClass = r.cleanupStatus === 'failed' ? 'row-fail'
+      : r.cleanupStatus === 'deleted' ? 'row-pending'
+      : r.state === 'done' ? 'row-success'
+      : r.state === 'failed' ? 'row-fail'
+      : r.state === 'stopped' ? 'row-pending' : 'row-running';
+    return `<tr class="${rowClass}">
       <td>${esc(r.emailMasked)}</td><td>${esc(r.buyer)}</td><td class="mono">${esc(r.envName)}</td><td class="mono">${esc(r.serialNumber) || '—'}</td>
       <td><span class="dots">${dots}</span> ${completed.size}/5</td><td>${state}</td><td>${archived}</td><td>${retry}</td></tr>`;
   }).join('');
   const summary = snap.summary || {};
-  $('envSummary').innerHTML = `<div class="stat-chip ok"><b>${summary.done ?? done}</b>完成</div><div class="stat-chip warn"><b>${summary.stopped ?? stopped}</b>已停止</div><div class="stat-chip bad"><b>${summary.failed ?? failed}</b>失败</div><div class="stat-chip blue"><b>${summary.ipOk || 0}/${summary.ipTotal || 0}</b>出口 IP 国家匹配</div>`;
+  const recovered = Number(summary.recovered || rows.filter(row => row.recoveredExisting).length);
+  const created = Number(summary.created || rows.filter(row => row.createdInRun).length);
+  const cleanupDone = Number(summary.cleanupDone || rows.filter(row => row.cleanupStatus === 'deleted').length);
+  const cleanupFailed = Number(summary.cleanupFailed || rows.filter(row => row.cleanupStatus === 'failed').length);
+  $('envSummary').innerHTML = `<div class="stat-chip ok"><b>${created}</b>本批新建</div><div class="stat-chip blue"><b>${recovered}</b>历史恢复</div><div class="stat-chip warn"><b>${cleanupDone}</b>已销毁</div><div class="stat-chip bad"><b>${cleanupFailed || (summary.failed ?? failed)}</b>${cleanupFailed ? '销毁失败' : '失败'}</div><div class="stat-chip blue"><b>${summary.ipOk || 0}/${summary.ipTotal || 0}</b>出口 IP 国家匹配</div>`;
   const checks = snap.ipChecks || [];
   const ipChecking = snap.phase === 'ip_checking';
   const ipProgress = `出口 IP 检测${ipChecking ? '中' : '完成'}：${Number(snap.ipCheckDone || checks.length)}/${Number(snap.ipCheckTotal || checks.length)}`;
   $('envIpList').textContent = checks.length
-    ? ipProgress + '\n' + checks.map(x => `${x.envName} → ${x.ip || '—'} · ${x.country || x.error || '未知'} ${x.ok ? '✓' : '⚠'}`).join('\n')
+    ? ipProgress + '\n' + checks.map(x => `${x.envName} → ${x.ip || '—'} · ${x.country || x.error || '检测失败'}${x.errorCode ? `（${x.errorCode}）` : ''} ${x.ok ? '✓' : '⚠'}`).join('\n')
     : (ipChecking ? ipProgress + '\n正在启动首个环境并读取出口 IP，请稍候…' : '尚无后台出口 IP 检测结果');
 }
 
@@ -6738,9 +6793,12 @@ function renderBackupBatch(snap) {
   $('envSiteGroup').disabled = envSubmitting || envRunning || backupRunning || envGroupSaving || $('envSiteGroup').options.length < 2;
   updateEnvModeTabs();
   const rows = snap.rows || [];
+  lastEnvironmentRows = rows.map(row => ({...row}));
   const done = rows.filter(r => r.state === 'done').length;
-  const stopped = rows.filter(r => r.state === 'stopped').length;
-  const failed = rows.filter(r => r.state === 'failed').length;
+  const stopped = rows.filter(r => r.state === 'stopped'
+    || r.state === 'rolled_back' || r.cleanupStatus === 'deleted').length;
+  const failed = rows.filter(r => r.state === 'failed'
+    || r.state === 'cleanup_failed' || r.cleanupStatus === 'failed').length;
   const settled = done + stopped + failed;
   $('envBar').style.width = (rows.length ? settled / rows.length * 100 : 0) + '%';
   $('envProgressText').textContent = `${done} 完成 / ${rows.length || envBackup.count}` + (stopped ? ` · ${stopped} 已停止` : '');
@@ -6750,32 +6808,40 @@ function renderBackupBatch(snap) {
   $('btnEnvBackupResult').disabled = !snap.resultReady;
   renderEnvExecutionState(snap, 'backup');
   if (snap.fatalError) $('envPreviewText').textContent = '执行错误：' + snap.fatalError;
-  if (!rows.length) return;
+  if (!rows.length) {
+    $('envTbody').innerHTML = '<tr><td colspan="5" class="empty-tip">本批任务正在预检和准备，尚无逐行结果</td></tr>';
+    $('envSummary').innerHTML = '<div class="stat-chip"><b>0</b>本批新建</div><div class="stat-chip"><b>0</b>已销毁</div>';
+    $('envIpList').textContent = '本批任务尚未进入出口 IP 检测';
+    return;
+  }
   const badge = r => {
+    if (r.cleanupStatus === 'deleted') return '<span class="badge inuse">⏹ 已销毁，可重新创建</span>';
+    if (r.cleanupStatus === 'failed') return `<span class="badge fail">⚠ 销毁失败：${esc(r.cleanupError || r.error)}</span>`;
     if (r.state === 'done') return '<span class="badge ok">✔ 完成</span>';
     if (r.state === 'failed') return `<span class="badge fail">⚠ 失败</span>`;
-    if (r.state === 'stopped') return '<span class="badge inuse">⏹ 已安全停止，未开始</span>';
+    if (r.state === 'stopped') return '<span class="badge inuse">⏹ 已停止，未创建</span>';
     if (r.state === 'running') return '<span class="spinner"></span>创建中…';
     return '<span class="badge st-procesando">排队中</span>';
   };
   $('envTbody').innerHTML = rows.map((r, i) =>
-    `<tr class="${r.state === 'done' ? 'row-success' : (r.state === 'failed' ? 'row-fail' : (r.state === 'running' ? 'row-running' : (r.state === 'stopped' ? 'row-pending' : '')))}">` +
+    `<tr class="${r.cleanupStatus === 'failed' ? 'row-fail' : (r.cleanupStatus === 'deleted' ? 'row-pending' : (r.state === 'done' ? 'row-success' : (r.state === 'failed' ? 'row-fail' : (r.state === 'running' ? 'row-running' : (r.state === 'stopped' ? 'row-pending' : '')))))}">` +
     `<td>${i + 1}</td><td class="mono">${esc(r.envName)}</td><td class="mono">${esc(r.serialNumber) || '—'}</td>` +
     `<td>${badge(r)}</td><td>${esc(r.error) || (r.state === 'done' ? '备注已写入 HubStudio' : '—')}</td></tr>`
   ).join('');
   const summary = snap.summary || {};
-  $('envSummary').innerHTML = `<div class="stat-chip ok"><b>${summary.done ?? done}</b>完成</div><div class="stat-chip warn"><b>${summary.stopped ?? stopped}</b>已停止</div><div class="stat-chip bad"><b>${summary.failed ?? failed}</b>失败</div><div class="stat-chip blue"><b>${summary.ipOk || 0}/${summary.ipTotal || 0}</b>出口 IP 国家匹配</div>`;
+  $('envSummary').innerHTML = `<div class="stat-chip ok"><b>${summary.created || rows.filter(row => row.createdInRun).length}</b>本批新建</div><div class="stat-chip warn"><b>${summary.cleanupDone || rows.filter(row => row.cleanupStatus === 'deleted').length}</b>已销毁</div><div class="stat-chip bad"><b>${summary.cleanupFailed || (summary.failed ?? failed)}</b>失败</div><div class="stat-chip blue"><b>${summary.ipOk || 0}/${summary.ipTotal || 0}</b>出口 IP 国家匹配</div>`;
   const checks = snap.ipChecks || [];
   const ipChecking = snap.phase === 'ip_checking';
   const ipProgress = `出口 IP 检测${ipChecking ? '中' : '完成'}：${Number(snap.ipCheckDone || checks.length)}/${Number(snap.ipCheckTotal || checks.length)}`;
   $('envIpList').textContent = checks.length
-    ? ipProgress + '\n' + checks.map(x => `${x.envName} → ${x.ip || '—'} · ${x.country || x.error || '未知'} ${x.ok ? '✓' : '⚠'}`).join('\n')
+    ? ipProgress + '\n' + checks.map(x => `${x.envName} → ${x.ip || '—'} · ${x.country || x.error || '检测失败'}${x.errorCode ? `（${x.errorCode}）` : ''} ${x.ok ? '✓' : '⚠'}`).join('\n')
     : (ipChecking ? ipProgress + '\n正在启动首个环境并读取出口 IP，请稍候…' : '尚无后台出口 IP 检测结果');
 }
 
 let envPollFailures = 0;
 async function pollEnvBatch() {
   if (!authReady || !hasFeatureAccess('envbatch') || activeModule !== 'envbatch') return;
+  if (envSubmitting) return;
   if (envPollInFlight) return;
   if (CLOUD_WEB_MODE && envProgressLoaded && !envRunning && !backupRunning
       && Date.now() >= envPollGraceUntil) return;
@@ -9287,6 +9353,10 @@ $('btnEnvStart').onclick = async () => {
   const verifyCount = $('envVerify').checked ? (envMode === 'backup' ? envBackup.count : envAccountCount) : 0;
   if (envMode === 'backup') {
     if (!confirm(`将按${siteName}为 ${envBackup.buyer} 创建 ${envBackup.count} 个「${envBackup.type}环境」：只建环境并写备注，不导 Cookie、不绑号、不写台账。\n\n确认正式执行？`)) return;
+    if (CLOUD_WEB_MODE) {
+      cloudEnvironmentRunId = '';
+      cloudEnvironmentTaskId = '';
+    }
     beginEnvSubmission(
       '执行指令已确认，正在提交备用/测试环境任务',
       '正在等待本机服务受理，请勿重复点击或关闭页面；受理后会自动切换为“后台执行中”。');
@@ -9349,6 +9419,10 @@ $('btnEnvStart').onclick = async () => {
   const writeLarkLedger = false;
   if (!confirm(`将按${siteName}处理 ${envAccountCount} 个账号：创建环境、导入 Cookie、绑定账号并写备注。\n\n本次确认只授权 HubStudio 写入，是否继续？`)) return;
   const confirmLarkWrite = false;
+  if (CLOUD_WEB_MODE) {
+    cloudEnvironmentRunId = '';
+    cloudEnvironmentTaskId = '';
+  }
   beginEnvSubmission(
     '执行指令已确认，正在提交买家号建环境任务',
     '正在等待本机服务受理，请勿重复点击或关闭页面；完成后结果将回传数据库。');
@@ -9419,7 +9493,9 @@ $('btnEnvStart').onclick = async () => {
 $('btnEnvStop').onclick = async () => {
   if (envStopSubmitting || envStopRequested || (!envRunning && !backupRunning)) return;
   const activeName = envMode === 'backup' ? '备用/测试环境任务' : '买家号建环境任务';
-  if (!confirm(`确认安全停止${activeName}？\n\n安全停止不会强行中断正在写入的环境；系统会立即停止领取新行，最多 ${envEffectiveWorkers} 个已进入执行的并发行会完成整行后退出。`)) return;
+  const createdCount = lastEnvironmentRows.filter(row => row.createdInRun
+    && row.cleanupStatus !== 'deleted').length;
+  if (!confirm(`确认停止并撤销${activeName}？\n\n系统会立即停止领取新行，最多 ${envEffectiveWorkers} 个已进入执行的并发行会先完整收尾；随后销毁本任务新建的环境${createdCount ? `（当前已识别 ${createdCount} 个）` : ''}。历史恢复环境不会删除，撤销完成后可修改参数并重新上传同一文件。`)) return;
   const path = envMode === 'backup'
     ? '/api/envbatch/backup/stop' : '/api/envbatch/stop';
   const scope = envMode === 'backup' ? 'env-backup-stop' : 'env-stop';
@@ -9441,16 +9517,16 @@ $('btnEnvStop').onclick = async () => {
     envProgressLoaded = false;
     envPollGraceUntil = Date.now() + 2 * 60 * 1000;
     setEnvExecutionState(
-      'warning', `${activeName}正在安全停止`,
-      `已停止领取新行；最多 ${envEffectiveWorkers} 个当前并发行会完整收尾，请勿关闭执行器。`);
-    toast('安全停止请求已发送，正在等待当前并发行收尾');
+      'warning', `${activeName}正在停止并撤销`,
+      `已停止领取新行；最多 ${envEffectiveWorkers} 个当前并发行会完整收尾，随后自动销毁本任务新建环境。请勿关闭执行器。`);
+    toast('停止请求已发送；收尾后将自动销毁本任务新建环境');
     pollEnvBatch();
     setTimeout(pollEnvBatch, 400);
   } catch (err) {
     envProgressLoaded = false;
     envPollGraceUntil = Date.now() + 30 * 1000;
     setEnvExecutionState(
-      'warning', '安全停止请求响应中断',
+      'warning', '停止并撤销请求响应中断',
       `${err.message}。系统会继续获取后台状态，请勿重复提交任务。`);
     toast(err.message);
     pollEnvBatch();
@@ -9501,7 +9577,7 @@ $('btnEnvRetryFailed').onclick = async () => {
   if (envSubmitting || envRunning || envRetryFailedSubmitting
       || envRetryAccountId || envFailedCount < 1) return;
   const retryCount = envFailedCount;
-  if (!confirm(`批量重试当前 ${retryCount} 个失败账号？\n\n系统只重试当前 failed 行，并从每行第一个未完成步骤继续；已完成步骤、已完成行和已安全停止行都不会重复执行。`)) return;
+  if (!confirm(`批量重试当前 ${retryCount} 个失败账号？\n\n系统只重试当前 failed 行，并从每行第一个未完成步骤继续；已完成步骤、已完成行和已停止行都不会重复执行。`)) return;
   const payload = {};
   const idempotencyKey = workspaceMutationKey('env-retry-failed', payload);
   envRetryFailedSubmitting = true;
@@ -9534,7 +9610,7 @@ $('btnEnvRetryFailed').onclick = async () => {
     envProgressLoaded = false;
     setEnvExecutionState(
       'running', `已受理 ${result.count} 个失败账号的批量重试`,
-      '页面已恢复进度刷新；每行从原失败步骤继续，并继续支持安全停止。');
+      '页面已恢复进度刷新；每行从原失败步骤继续，并继续支持停止并撤销。');
     pollEnvBatch();
     setTimeout(pollEnvBatch, 400);
     toast(`已开始批量重试 ${result.count} 个失败账号`);

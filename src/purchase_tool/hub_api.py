@@ -115,6 +115,9 @@ class HubStudioAdapter(object):
     def browser_stop(self, container_code):
         raise NotImplementedError
 
+    def env_delete(self, container_codes):
+        raise NotImplementedError
+
     def batch_browser_control(self, action, identifiers, headless=False):
         raise NotImplementedError
 
@@ -514,6 +517,47 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
         with self.runtime_gate.browser():
             return self._post('/browser/stop',
                               {'containerCode': str(container_code)}) or {}
+
+    def env_delete(self, container_codes):
+        """Delete explicitly identified environments through the Local API.
+
+        HubStudio documents ``/env/del`` as accepting at most 1000 numeric
+        container codes.  Keep this adapter deliberately narrower: callers
+        must already have proved ownership and may delete at most one batch of
+        explicit IDs.  Names, serial numbers and empty identifiers are never
+        accepted as deletion targets.
+        """
+        if not isinstance(container_codes, (list, tuple)) or not container_codes:
+            raise HubApiError(
+                '删除环境必须指定 containerCode',
+                'hubstudio_environment_delete_targets_invalid')
+        if len(container_codes) > 1000:
+            raise HubApiError(
+                '单次最多删除 1000 个 HubStudio 环境',
+                'hubstudio_environment_delete_targets_exceeded')
+        normalized = []
+        for value in container_codes:
+            text = str(value or '').strip()
+            if not text.isdigit():
+                raise HubApiError(
+                    '删除环境的 containerCode 无效',
+                    'hubstudio_environment_delete_targets_invalid')
+            number = int(text)
+            if number < 1:
+                raise HubApiError(
+                    '删除环境的 containerCode 无效',
+                    'hubstudio_environment_delete_targets_invalid')
+            normalized.append(number)
+        if len(normalized) != len(set(normalized)):
+            raise HubApiError(
+                '删除环境目标包含重复 containerCode',
+                'hubstudio_environment_delete_targets_invalid')
+        result = self._post('/env/del', {'containerCodes': normalized})
+        if result is not True:
+            raise HubApiError(
+                'HubStudio 未确认环境删除成功',
+                'hubstudio_environment_delete_unconfirmed')
+        return True
 
     def batch_browser_control(self, action, identifiers, headless=False):
         """Open or close at most 20 explicitly identified environments."""

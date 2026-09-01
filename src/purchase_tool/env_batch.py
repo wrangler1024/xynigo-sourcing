@@ -379,6 +379,11 @@ class BatchPlanItem:
     error: str = ''
     binding_time: str = ''
     recovered_existing: bool = False
+    created_in_run: bool = False
+    cleanup_status: str = 'not_required'
+    cleanup_error_code: str = ''
+    cleanup_error: str = ''
+    cleanup_attempts: int = 0
 
     def public_dict(self):
         return {
@@ -394,6 +399,11 @@ class BatchPlanItem:
             'error': scrub_text(self.error)[:300],
             'bindingTime': self.binding_time,
             'recoveredExisting': self.recovered_existing,
+            'createdInRun': self.created_in_run,
+            'cleanupStatus': self.cleanup_status,
+            'cleanupErrorCode': self.cleanup_error_code,
+            'cleanupError': scrub_text(self.cleanup_error)[:300],
+            'cleanupAttempts': self.cleanup_attempts,
         }
 
 
@@ -986,6 +996,14 @@ def build_batch_plan(accounts, assignment_spec, existing_envs=None,
                 error_step=str(saved.get('errorStep') or ''),
                 error=str(saved.get('error') or ''),
                 binding_time=str(saved.get('bindingTime') or ''),
+                created_in_run=bool(saved.get('createdInRun')),
+                cleanup_status=str(
+                    saved.get('cleanupStatus') or 'not_required'),
+                cleanup_error_code=str(
+                    saved.get('cleanupErrorCode') or ''),
+                cleanup_error=str(saved.get('cleanupError') or ''),
+                cleanup_attempts=max(
+                    0, int(saved.get('cleanupAttempts') or 0)),
             )
             if not item.env_name:
                 raise EnvBatchError('续跑状态缺少环境名，拒绝恢复')
@@ -1156,6 +1174,10 @@ class _EnvironmentLookupMixin(object):
                 if adopted is None:
                     raise
                 existing = adopted
+                # The exact name was absent before this create attempt.  A
+                # timeout followed by an exact lookup therefore belongs to
+                # this attempt and must remain eligible for compensation.
+                created_here = True
             if existing is None:
                 self.sleep(self.write_interval)
                 container_code = self._created_container_code(create_result)
@@ -1165,6 +1187,40 @@ class _EnvironmentLookupMixin(object):
                     raise EnvBatchError('新建环境后回读超时')
         self._environment_index.remember_selected(existing)
         return existing, created_here
+
+    def _delete_owned_environment(self, row, max_attempts=3):
+        """Delete one owned environment and reconcile timeout uncertainty."""
+        last_error = None
+        for attempt in range(max(1, int(max_attempts))):
+            row.cleanup_attempts += 1
+            self._persist()
+            existing = self.hub.env_lookup(
+                container_code=row.container_code)
+            if existing is None:
+                return
+            if str(existing.get('containerName') or '') != row.env_name:
+                raise HubApiError(
+                    '环境 ID 已指向其他名称，拒绝自动销毁',
+                    'hubstudio_environment_cleanup_identity_mismatch')
+            try:
+                self.hub.env_delete([row.container_code])
+                return
+            except Exception as exc:
+                last_error = exc
+                # A timed-out delete may already have committed.  Reconcile
+                # by exact ID before retrying so a repeated request never
+                # targets a recycled identifier blindly.
+                remaining = self.hub.env_lookup(
+                    container_code=row.container_code)
+                if remaining is None:
+                    return
+                if str(remaining.get('containerName') or '') != row.env_name:
+                    raise HubApiError(
+                        '删除结果不确定且环境 ID 已变化，拒绝继续',
+                        'hubstudio_environment_cleanup_identity_mismatch')
+                if attempt + 1 < max_attempts:
+                    self.sleep(min(2.0, 0.5 * (attempt + 1)))
+        raise last_error or EnvBatchError('HubStudio 环境销毁失败')
 
 
 class BatchEnvOrchestrator(_EnvironmentLookupMixin):
@@ -1258,6 +1314,8 @@ class BatchEnvOrchestrator(_EnvironmentLookupMixin):
                 row.serial_number = existing.get('serialNumber')
                 if not row.container_code or row.serial_number is None:
                     raise EnvBatchError('环境回读缺少 containerCode 或 HUB 序号')
+                row.created_in_run = bool(created_here)
+                row.cleanup_status = 'not_required'
                 self._mark(row, 'env_created')
 
             current_step = 'cookie_imported'
@@ -1310,6 +1368,51 @@ class BatchEnvOrchestrator(_EnvironmentLookupMixin):
             self.state_store.remove()
         return self.rows
 
+    @staticmethod
+    def _cleanup_reason(exc):
+        if isinstance(exc, HubApiError):
+            return exc.reason_code, scrub_text(exc)[:300]
+        return 'environment_cleanup_failed', scrub_text(exc)[:300]
+
+    def rollback_created_environments(self):
+        """Delete only environments durably attributed to this run.
+
+        Historical environments recovered during preflight are intentionally
+        excluded.  A missing environment is an idempotent success; an ID/name
+        mismatch fails closed and is never deleted.
+        """
+        targets = [
+            row for row in self.rows
+            if row.created_in_run and not row.recovered_existing
+            and row.container_code and row.cleanup_status != 'deleted'
+        ]
+        for row in targets:
+            row.cleanup_status = 'deleting'
+            row.cleanup_error_code = ''
+            row.cleanup_error = ''
+            self._persist()
+            try:
+                self._delete_owned_environment(row)
+                row.cleanup_status = 'deleted'
+                row.cleanup_error_code = ''
+                row.cleanup_error = ''
+                row.state = 'rolled_back'
+                row.error_step = ''
+                row.error = '已停止并销毁本任务新建环境'
+            except Exception as exc:
+                code, message = self._cleanup_reason(exc)
+                row.cleanup_status = 'failed'
+                row.cleanup_error_code = code
+                row.cleanup_error = message
+                row.state = 'cleanup_failed'
+                row.error_step = 'environment_cleanup'
+                row.error = message
+            self._persist()
+        if self.state_store and targets and all(
+                row.cleanup_status == 'deleted' for row in targets):
+            self.state_store.remove()
+        return targets
+
     def retry_one(self, account_id):
         row = next((item for item in self.rows
                     if item.account.account_id == account_id), None)
@@ -1361,6 +1464,8 @@ class BatchEnvOrchestrator(_EnvironmentLookupMixin):
         geo_lookup = geo_lookup or lookup_ip_country
         results = []
         for row in self._verification_sample(self.rows, count):
+            if self.stop_event.is_set():
+                break
             results.append(probe_env_ip(
                 self.hub, self.site, row.env_name, row.container_code,
                 geo_lookup))
@@ -1376,16 +1481,41 @@ def probe_env_ip(hub, site, env_name, container_code, geo_lookup):
         data = hub.browser_start(container_code, headless=True) or {}
         started = True
         ip = str(data.get('ip') or '')
-        geo = geo_lookup(ip) if ip else {}
+        if not ip:
+            return {
+                'envName': env_name, 'ip': '', 'country': '', 'city': '',
+                'isp': '', 'ok': False, 'errorCode': 'hub_ip_missing',
+                'error': 'HubStudio 已启动环境，但未返回出口 IP',
+            }
+        try:
+            geo = geo_lookup(ip)
+        except Exception as exc:
+            return {
+                'envName': env_name, 'ip': ip, 'country': '', 'city': '',
+                'isp': '', 'ok': False,
+                'errorCode': 'ip_geo_lookup_failed',
+                'error': scrub_text(exc)[:200] or 'IP 归属地查询失败',
+            }
         country_code = str(geo.get('countryCode') or '').upper()
+        if not country_code:
+            return {
+                'envName': env_name, 'ip': ip,
+                'country': geo.get('country') or '',
+                'city': geo.get('city') or '',
+                'isp': geo.get('isp') or '', 'ok': False,
+                'errorCode': 'ip_country_unknown',
+                'error': '已取得出口 IP，但归属地服务未返回国家代码',
+            }
+        matched = country_code == site
         return {
             'envName': env_name,
             'ip': ip,
             'country': geo.get('country') or '',
             'city': geo.get('city') or '',
             'isp': geo.get('isp') or '',
-            'ok': country_code == site,
-            'error': '' if country_code == site else '出口 IP 国家不匹配',
+            'ok': matched,
+            'errorCode': '' if matched else 'ip_country_mismatch',
+            'error': '' if matched else '出口 IP 国家不匹配',
         }
     except Exception as exc:
         core_missing = (
@@ -1398,6 +1528,10 @@ def probe_env_ip(hub, site, env_name, container_code, geo_lookup):
         return {
             'envName': env_name, 'ip': '', 'country': '',
             'city': '', 'isp': '', 'ok': False,
+            'errorCode': (
+                'hub_browser_core_missing' if core_missing
+                else getattr(exc, 'reason_code', '')
+                or 'hub_browser_probe_failed'),
             'error': (
                 'HubStudio 浏览器内核不存在；请在 HubStudio 安装可用内核，'
                 '或将该环境切换到已安装内核后重新检测'
@@ -1467,6 +1601,11 @@ class BackupPlanItem:
     serial_number: object = None
     state: str = 'pending'
     error: str = ''
+    created_in_run: bool = False
+    cleanup_status: str = 'not_required'
+    cleanup_error_code: str = ''
+    cleanup_error: str = ''
+    cleanup_attempts: int = 0
 
     def public_dict(self):
         return {
@@ -1475,6 +1614,11 @@ class BackupPlanItem:
             'serialNumber': self.serial_number,
             'state': self.state,
             'error': scrub_text(self.error)[:300],
+            'createdInRun': self.created_in_run,
+            'cleanupStatus': self.cleanup_status,
+            'cleanupErrorCode': self.cleanup_error_code,
+            'cleanupError': scrub_text(self.cleanup_error)[:300],
+            'cleanupAttempts': self.cleanup_attempts,
         }
 
 
@@ -1532,7 +1676,7 @@ class BackupEnvOrchestrator(_EnvironmentLookupMixin):
         row.state = 'running'
         self._persist()
         try:
-            existing, _created_here = self._create_or_adopt_env(
+            existing, created_here = self._create_or_adopt_env(
                 row.env_name,
                 lambda: build_env_create_body(
                     row.env_name, self.site, self.rng,
@@ -1543,6 +1687,8 @@ class BackupEnvOrchestrator(_EnvironmentLookupMixin):
             row.serial_number = existing.get('serialNumber')
             if not row.container_code or row.serial_number is None:
                 raise EnvBatchError('环境回读缺少 containerCode 或 HUB 序号')
+            row.created_in_run = bool(created_here)
+            row.cleanup_status = 'not_required'
             self.hub.env_update(
                 row.container_code, row.env_name, self.remark)
             self.sleep(self.write_interval)
@@ -1566,12 +1712,42 @@ class BackupEnvOrchestrator(_EnvironmentLookupMixin):
                 self._run_one(row)
         return self.rows
 
+    def rollback_created_environments(self):
+        targets = [
+            row for row in self.rows
+            if row.created_in_run and row.container_code
+            and row.cleanup_status != 'deleted'
+        ]
+        for row in targets:
+            row.cleanup_status = 'deleting'
+            row.cleanup_error_code = ''
+            row.cleanup_error = ''
+            self._persist()
+            try:
+                self._delete_owned_environment(row)
+                row.cleanup_status = 'deleted'
+                row.cleanup_error_code = ''
+                row.cleanup_error = ''
+                row.state = 'rolled_back'
+                row.error = '已停止并销毁本任务新建环境'
+            except Exception as exc:
+                code, message = BatchEnvOrchestrator._cleanup_reason(exc)
+                row.cleanup_status = 'failed'
+                row.cleanup_error_code = code
+                row.cleanup_error = message
+                row.state = 'cleanup_failed'
+                row.error = message
+            self._persist()
+        return targets
+
     def verify_ips(self, count=1, geo_lookup=None, on_progress=None):
         geo_lookup = geo_lookup or lookup_ip_country
         done = [row for row in self.rows
                 if row.state == 'done' and row.container_code]
         results = []
         for row in done[:max(0, int(count))]:
+            if self.stop_event.is_set():
+                break
             results.append(probe_env_ip(
                 self.hub, self.site, row.env_name, row.container_code,
                 geo_lookup))
@@ -1592,7 +1768,9 @@ def backup_result_tsv_bytes(rows, site):
             row.container_code,
             site,
             ('完成' if row.state == 'done' else
-             ('已停止' if row.state == 'stopped' else '失败')),
+             ('已销毁' if row.state == 'rolled_back' else
+              ('已停止' if row.state == 'stopped' else
+               ('销毁失败' if row.state == 'cleanup_failed' else '失败')))),
         ])
     return output.getvalue().encode('utf-8-sig')
 
@@ -1628,8 +1806,10 @@ def mapping_workbook_bytes(rows):
             row.account.buyer,
             row.binding_time,
             ('完成' if row.state == 'done' else
-             ('已停止' if row.state == 'stopped'
-              else '失败:%s' % row.error_step)),
+             ('已销毁' if row.state == 'rolled_back' else
+              ('已停止' if row.state == 'stopped' else
+               ('销毁失败' if row.state == 'cleanup_failed'
+                else '失败:%s' % row.error_step)))),
         ])
     for cell in sheet[1]:
         cell.font = Font(bold=True, color='FFFFFF')
