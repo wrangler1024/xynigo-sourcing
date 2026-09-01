@@ -11,6 +11,14 @@ from urllib.request import ProxyHandler, Request, build_opener
 
 
 MAX_RPC_RESPONSE_BYTES = 28 * 1024 * 1024
+SLOW_MUTATION_PATHS = frozenset({
+    '/api/query',
+    '/api/envbatch/parse',
+    '/api/envbatch/start',
+    '/api/envbatch/backup/start',
+    '/api/buyer-library/import/parse',
+    '/api/buyer-library/import/commit',
+})
 
 
 class WorkspaceRpcClient(object):
@@ -64,12 +72,18 @@ class WorkspaceRpcClient(object):
             method=method,
         )
         try:
-            response = self.opener(request, timeout=self.timeout)
+            response = self.opener(
+                request, timeout=self._request_timeout(method, parsed.path))
             return self._read_response(response)
         except HTTPError as exc:
             return self._read_response(exc)
         except (URLError, TimeoutError, OSError) as exc:
             raise RuntimeError('执行器内部业务接口不可用') from exc
+
+    def _request_timeout(self, method, path):
+        if method == 'POST' and path in SLOW_MUTATION_PATHS:
+            return max(self.timeout, 120.0)
+        return self.timeout
 
     @staticmethod
     def _read_response(response):

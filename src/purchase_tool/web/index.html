@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Xynigo Sourcing v0.12.9</title>
+<title>Xynigo Sourcing v0.12.10</title>
 <link rel="icon" type="image/png" sizes="260x260" href="/xynigo-x.png?v=6">
 <link rel="icon" type="image/x-icon" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256" href="/favicon.ico?v=6">
 <link rel="shortcut icon" href="/favicon.ico?v=6">
@@ -1439,7 +1439,7 @@
           <div class="hero-kicker">XYNIGO SOURCING WORKSPACE</div>
           <h1>让小犀帮你把每一单稳稳带回来，<span class="hero-call">Xyni, GO!</span></h1>
           <p id="moduleSummary">批量查询订单与物流状态，异常任务集中处理，结果一键导出。</p>
-          <div class="hero-meta"><span class="hero-chip">内部切换测试 v0.12.9</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
+          <div class="hero-meta"><span class="hero-chip">现场止血测试 v0.12.10</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
         </div>
         <div class="hero-lockup" role="img" aria-label="小犀与 Xynigo 完整品牌一体图形">
           <img src="xynigo-logo.png" alt="">
@@ -2564,6 +2564,7 @@ let envRunning = false;
 let envSubmitting = false;
 let envProgressLoaded = false;
 let envPollInFlight = false;
+let envPollGraceUntil = 0;
 let envRetryAccountId = '';
 let envPreflightReady = false;
 let envGroupSaving = false;
@@ -2934,6 +2935,8 @@ let activePrimary = 'fulfillment';
 let activeModule = 'query';
 let queryProgressLoaded = false;
 let queryPollInFlight = false;
+let querySubmitting = false;
+let queryPollGraceUntil = 0;
 let groupLoadInFlight = null;
 const MAX_OPEN_FEATURE_TABS = 10;
 let openFeatureTabs = ['query'];
@@ -3057,6 +3060,7 @@ const CLOUD_WEB_MODE = location.protocol !== 'file:' && (
   new URLSearchParams(location.search).get('runtime') === 'cloud'
   || !['127.0.0.1', 'localhost', '::1'].includes(location.hostname)
 );
+const CLOUD_SESSION_KEEPALIVE_MS = 15 * 60 * 1000;
 const CLOUD_EXECUTOR_OFFLINE_MESSAGE = 'Xynigo 本机执行器未启动；云端工作台仍可使用，HubStudio/CDP 等本机能力暂不可执行。';
 function procurementImportResourcePath(path) {
   if (!CLOUD_WEB_MODE) return path;
@@ -3108,7 +3112,7 @@ async function cloudFetchJson(path, opts={}) {
   const headers = new Headers(opts.headers || {});
   headers.set('Accept', 'application/json');
   headers.set('X-Xynigo-Source', 'cloud_web_workspace');
-  headers.set('X-Xynigo-Client-Version', '0.12.9-cloud-web');
+  headers.set('X-Xynigo-Client-Version', '0.12.10-cloud-web');
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     headers.set('X-Xynigo-Web-CSRF', 'same-origin');
   }
@@ -3207,6 +3211,28 @@ const CLOUD_WORKSPACE_RPC_PREFIXES = [
   '/api/buyer-library/import/', '/api/resources/stores',
   '/api/resources/proxies', '/api/envbatch/', '/api/lark/', '/api/hub-api-key'
 ];
+const workspaceMutationAttempts = new Map();
+
+function newWorkspaceMutationKey(scope) {
+  const suffix = globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function'
+    ? globalThis.crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `${scope}-${suffix}`.slice(0, 128);
+}
+
+function workspaceMutationKey(scope, payload) {
+  const signature = JSON.stringify(payload || {});
+  const current = workspaceMutationAttempts.get(scope);
+  if (current && current.signature === signature) return current.key;
+  const key = newWorkspaceMutationKey(scope);
+  workspaceMutationAttempts.set(scope, {signature, key});
+  return key;
+}
+
+function clearWorkspaceMutationKey(scope, key) {
+  const current = workspaceMutationAttempts.get(scope);
+  if (current && current.key === key) workspaceMutationAttempts.delete(scope);
+}
 
 function isCloudWorkspaceRpcPath(path) {
   const pathname = String(path || '').split('?', 1)[0];
@@ -3249,14 +3275,20 @@ async function cloudWorkspaceRpcRaw(path, opts={}) {
     else if (opts.body && typeof opts.body === 'object') body = opts.body;
     else body = {};
   }
+  const idempotencyKey = method === 'POST'
+    ? (opts.idempotencyKey || newWorkspaceMutationKey('workspace-rpc'))
+    : null;
   const created = await cloudFetchJson(
     `/v1/executors/${encodeURIComponent(executor.id)}/workspace-rpc`, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({method, path, body})
+      body:JSON.stringify({method, path, body, idempotencyKey})
     });
   const taskId = String(created.task && created.task.id || '');
   if (!taskId) throw new Error('云端未返回执行器任务编号');
-  const deadline = Date.now() + 45000;
+  const slowMutation = method === 'POST' && (
+    path.startsWith('/api/envbatch/') || path === '/api/query'
+    || path.startsWith('/api/buyer-library/import/'));
+  const deadline = Date.now() + Number(opts.rpcTimeoutMs || (slowMutation ? 120000 : 45000));
   while (Date.now() < deadline) {
     const payload = await cloudFetchJson(`/v1/executor-tasks/${taskId}`);
     const task = payload.task || {};
@@ -3283,7 +3315,9 @@ async function cloudWorkspaceRpcRaw(path, opts={}) {
     }
     await new Promise(resolve => setTimeout(resolve, 300));
   }
-  throw new Error('等待本地执行器响应超时，请确认状态中心保持运行');
+  const error = new Error('等待本地执行器响应超时；请求编号已保留，重试不会重复提交');
+  error.code = 'executor_rpc_timeout';
+  throw error;
 }
 
 async function cloudWorkspaceApi(path, opts={}) {
@@ -3594,6 +3628,20 @@ async function initializeAuthenticatedWorkspace(identity) {
   loadQueryDisplayConfig();
   loadLarkRuntimeStatus();
 }
+
+async function refreshCloudSession() {
+  if (!CLOUD_WEB_MODE || !authReady || document.visibilityState === 'hidden') return;
+  try {
+    const status = await cloudFetchJson('/v1/auth/web/status');
+    if (!status.authenticated) lockWorkspace('登录会话已达到安全期限，请重新使用飞书登录。');
+  } catch (_) {
+    // A temporary network failure must not clear a still-valid workspace.
+  }
+}
+setInterval(refreshCloudSession, CLOUD_SESSION_KEEPALIVE_MS);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') refreshCloudSession();
+});
 
 function closeAuthLoginWindow() {
   if (authLoginWindow && !authLoginWindow.closed) {
@@ -5762,7 +5810,7 @@ function render(snap) {
   setHubStatus(snap.hubConnected);
   renderRows(lastRows);
   renderStats(lastRows);
-  $('btnStart').disabled = isRunning;
+  $('btnStart').disabled = querySubmitting || isRunning;
   $('btnStop').disabled = !isRunning;
   const retryable = lastRows.filter(r => ['fail', 'inuse', 'pending', 'stopped'].includes(r.state)).length;
   $('btnRetryFail').disabled = isRunning || !retryable;
@@ -5785,7 +5833,8 @@ function render(snap) {
 async function poll() {
   if (!authReady || !hasFeatureAccess('query') || activeModule !== 'query') return;
   if (queryPollInFlight) return;
-  if (CLOUD_WEB_MODE && queryProgressLoaded && !isRunning) return;
+  if (CLOUD_WEB_MODE && queryProgressLoaded && !isRunning
+      && Date.now() >= queryPollGraceUntil) return;
   queryPollInFlight = true;
   try {
     render(await api('/api/progress'));
@@ -6077,6 +6126,7 @@ function setEnvExecutionState(kind, title, detail) {
 
 function beginEnvSubmission(title, detail) {
   envSubmitting = true;
+  envPollGraceUntil = Date.now() + 2 * 60 * 1000;
   setEnvExecutionState('submitting', title, detail);
   updateEnvModeTabs();
   refreshAssignUi();
@@ -6241,7 +6291,8 @@ let envPollFailures = 0;
 async function pollEnvBatch() {
   if (!authReady || !hasFeatureAccess('envbatch') || activeModule !== 'envbatch') return;
   if (envPollInFlight) return;
-  if (CLOUD_WEB_MODE && envProgressLoaded && !envRunning && !backupRunning) return;
+  if (CLOUD_WEB_MODE && envProgressLoaded && !envRunning && !backupRunning
+      && Date.now() >= envPollGraceUntil) return;
   envPollInFlight = true;
   try {
     if (envMode === 'backup') {
@@ -6279,7 +6330,8 @@ async function refreshEnvPreflight() {
     const checks = [
       state.hubConnected ? 'HubStudio 已连接' : 'HubStudio 未连接',
       state.groupFound ? '采购分组精确匹配' : '采购分组未匹配',
-      state.proxyConfigured ? '代理链接已配置' : '代理链接未配置'
+      state.proxyConfigured ? '代理链接已配置' : '代理链接未配置',
+      `实际建环境并发 ${Number(state.effectiveWorkers || state.configuredWorkers || 1)}`
     ];
     $('envPreflightText').textContent = `${state.ready ? '预检通过' : '预检阻断'}：${checks.join(' · ')}。${state.message || ''}`;
   } catch (e) {
@@ -6303,22 +6355,37 @@ function parseSerials() {
 }
 
 $('btnStart').onclick = async () => {
+  if (querySubmitting || isRunning) return;
   if (!hubConnected) { toast('未检测到 HubStudio：请先启动 HubStudio 客户端并登录，然后点右上角状态标签重新检测'); return; }
   const serials = parseSerials();
   if (!serials) return;
   const site = $('querySite').value;
+  const payload = {serials, site};
+  const idempotencyKey = workspaceMutationKey('query-start', payload);
+  querySubmitting = true;
+  queryPollGraceUntil = Date.now() + 2 * 60 * 1000;
+  $('btnStart').disabled = true;
   try {
     const j = await api('/api/query', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ serials, site })
+      body: JSON.stringify(payload), idempotencyKey, rpcTimeoutMs:120000
     });
+    clearWorkspaceMutationKey('query-start', idempotencyKey);
     stopRequested = false;
     isRunning = true;
     queryProgressLoaded = false;
     poll();
     const siteName = j.site === 'US' ? '美国站' : '墨西哥站';
     toast(`开始查询${siteName}，共 ${j.total} 个环境。每个环境约 30-60 秒，请耐心等待`);
-  } catch (e) { toast(e.message); }
+  } catch (e) {
+    queryPollGraceUntil = Date.now() + 30 * 1000;
+    queryProgressLoaded = false;
+    poll();
+    toast(e.message);
+  } finally {
+    querySubmitting = false;
+    $('btnStart').disabled = isRunning;
+  }
 };
 
 $('btnStop').onclick = async () => {
@@ -8567,11 +8634,16 @@ $('btnEnvStart').onclick = async () => {
     beginEnvSubmission(
       '执行指令已确认，正在提交备用/测试环境任务',
       '正在等待本机服务受理，请勿重复点击或关闭页面；受理后会自动切换为“后台执行中”。');
+    const payload = {buyer:envBackup.buyer, count:envBackup.count,
+      type:envBackup.type, purchaseDate:envPurchaseDate(),
+      verifySampleCount:verifyCount, confirmWrite:true, site};
+    const idempotencyKey = workspaceMutationKey('env-backup-start', payload);
     try {
       const result = await api('/api/envbatch/backup/start', {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({buyer:envBackup.buyer, count:envBackup.count, type:envBackup.type, purchaseDate:envPurchaseDate(), verifySampleCount:verifyCount, confirmWrite:true, site})
+        body:JSON.stringify(payload), idempotencyKey, rpcTimeoutMs:120000
       });
+      clearWorkspaceMutationKey('env-backup-start', idempotencyKey);
       backupRunning = true;
       envProgressLoaded = false;
       finishEnvSubmission();
@@ -8583,6 +8655,7 @@ $('btnEnvStart').onclick = async () => {
       setTimeout(pollEnvBatch, 400);
       toast(`备用任务已开始，并行创建 ${result.count} 个${envBackup.type}环境`);
     } catch (err) {
+      envPollGraceUntil = Date.now() + 30 * 1000;
       finishEnvSubmission();
       setEnvExecutionState(
         'failed', '备用/测试环境任务提交失败或响应中断',
@@ -8602,11 +8675,16 @@ $('btnEnvStart').onclick = async () => {
     '执行指令已确认，正在提交买家号建环境任务',
     '正在等待本机服务受理，请勿重复点击或关闭页面；完成后结果将回传数据库。');
   await paintEnvSubmissionState();
+  const payload = {planId:envPlanId, assignment,
+    purchaseDate:envPurchaseDate(), verifySampleCount:verifyCount,
+    confirmWrite:true, site, writeLarkLedger, confirmLarkWrite};
+  const idempotencyKey = workspaceMutationKey('env-start', payload);
   try {
     const result = await api('/api/envbatch/start', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({planId:envPlanId, assignment, purchaseDate:envPurchaseDate(), verifySampleCount:verifyCount, confirmWrite:true, site, writeLarkLedger, confirmLarkWrite})
+      body:JSON.stringify(payload), idempotencyKey, rpcTimeoutMs:120000
     });
+    clearWorkspaceMutationKey('env-start', idempotencyKey);
     envPlanId = null;
     envRunning = true;
     envProgressLoaded = false;
@@ -8620,6 +8698,7 @@ $('btnEnvStart').onclick = async () => {
     $('envPlan').textContent = `已启动 ${result.count} 个账号；页面不再持有原始文件内容。`;
     toast(`模块三已开始，并行处理 ${result.count} 个账号`);
   } catch (err) {
+    envPollGraceUntil = Date.now() + 30 * 1000;
     finishEnvSubmission();
     setEnvExecutionState(
       'failed', '买家号建环境任务提交失败或响应中断',

@@ -33,6 +33,7 @@ API：
 """
 import base64
 import binascii
+import copy
 import csv
 from io import BytesIO, StringIO
 import json
@@ -782,12 +783,53 @@ class HubStatusCache(object):
             self.checked_at = now
             return dict(self.capability)
 
+    def cached_snapshot(self):
+        """Return the last probe without ever touching HubStudio Local API."""
+        with self.lock:
+            if self.capability is not None:
+                return dict(self.capability)
+            return {
+                'available': False,
+                'clientRunning': False,
+                'localApiEnabled': False,
+                'authenticated': False,
+                'apiVersion': '',
+                'endpoint': '',
+                'reasonCode': 'hubstudio_check_pending',
+                'message': 'HubStudio 状态正在后台检测',
+            }
+
     def check(self, force=False):
         capability = self.snapshot(force=force)
         return (
             bool(capability.get('available')),
             '' if capability.get('available') else
             str(capability.get('message') or ''))
+
+
+class HubReadCache(object):
+    """Small read-through cache for slow, non-sensitive Hub list views."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.entries = {}
+
+    def get(self, key, ttl_seconds, loader):
+        with self.lock:
+            now = time.monotonic()
+            cached = self.entries.get(key)
+            if cached and now - cached['storedAt'] < float(ttl_seconds):
+                return copy.deepcopy(cached['value'])
+            value = loader()
+            self.entries[key] = {
+                'storedAt': now,
+                'value': copy.deepcopy(value),
+            }
+            return copy.deepcopy(value)
+
+    def invalidate(self):
+        with self.lock:
+            self.entries = {}
 
 
 class AppState(object):
@@ -814,6 +856,7 @@ class AppState(object):
             lambda: bool(self.cfg.get('safeParallelTasks')))
         self.hub = self._build_hub_adapter()
         self._hub_status = HubStatusCache(lambda: self.hub)
+        self._hub_reads = HubReadCache()
         self.orch = QueryOrchestrator(
             self.hub, log_dir=LOG_DIR,
             concurrency=cfg.get('concurrency', 2))
@@ -907,6 +950,7 @@ class AppState(object):
             self.hub, log_dir=LOG_DIR,
             concurrency=self.cfg.get('concurrency', 2))
         self._hub_status.reset()
+        self._hub_reads.invalidate()
         self.resources.invalidate()
         return self.hub_status(force=True)[0]
 
@@ -915,6 +959,23 @@ class AppState(object):
 
     def hub_capabilities(self, force=False):
         return self._hub_status.snapshot(force=force)
+
+    def hub_groups(self):
+        return self._hub_reads.get(
+            ('groups',), 30.0, lambda: self.hub.group_list())
+
+    def hub_group_serials(self, group=None):
+        normalized_group = str(group or '')
+
+        def load():
+            envs = self.hub.env_list(normalized_group or None)
+            return sorted(
+                [str(item.get('serialNumber')) for item in envs
+                 if item.get('serialNumber') is not None],
+                key=lambda value: int(value) if value.isdigit() else 0)
+
+        return self._hub_reads.get(
+            ('group-envs', normalized_group), 5.0, load)
 
     def local_executor_status(self):
         """Return the non-sensitive status contract used by the Windows tray.
@@ -927,7 +988,7 @@ class AppState(object):
         channel = ExecutorChannelStateStore().load()
         tasks = self.tasks.snapshot()
         if hasattr(self, '_hub_status'):
-            hub_capability = self.hub_capabilities(force=False)
+            hub_capability = self._hub_status.cached_snapshot()
         else:
             # Compatibility for an upgrading status-center process or a
             # minimal state fixture that only exposes the legacy tuple API.
@@ -1336,20 +1397,24 @@ class EnvBatchJob(object):
             workers = max(1, min(10, int(cfg.get('envCreateWorkers') or 5)))
         except (TypeError, ValueError):
             workers = 5
-        if cfg.get('safeParallelTasks'):
-            workers = min(workers, 3)
         return {
             'site': site,
             'purchaseTag': purchase_tag_for_site(cfg, site),
             'proxyLink': effective_proxy_link(cfg),
             'workers': workers,
+            'configuredWorkers': workers,
         }
 
     def preflight(self, site='MX'):
         runtime = self._runtime_config(site)
-        return envbatch_preflight(
+        result = envbatch_preflight(
             self.hub_getter(), runtime['purchaseTag'], runtime['proxyLink'],
             site=runtime['site'])
+        result.update({
+            'configuredWorkers': runtime['configuredWorkers'],
+            'effectiveWorkers': runtime['workers'],
+        })
+        return result
 
     def _clean_pending(self):
         cutoff = time.time() - self.PENDING_TTL_SECONDS
@@ -1951,13 +2016,12 @@ class BackupEnvJob(object):
             workers = max(1, min(10, int(cfg.get('envCreateWorkers') or 5)))
         except (TypeError, ValueError):
             workers = 5
-        if cfg.get('safeParallelTasks'):
-            workers = min(workers, 3)
         return {
             'site': site,
             'purchaseTag': purchase_tag_for_site(cfg, site),
             'proxyLink': effective_proxy_link(cfg),
             'workers': workers,
+            'configuredWorkers': workers,
         }
 
     @staticmethod
@@ -2648,14 +2712,20 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.updates.check_async()
                 self._json(STATE.updates.snapshot())
             elif path == '/api/groups':
-                self._json({'groups': STATE.hub.group_list()})
+                loader = getattr(STATE, 'hub_groups', None)
+                groups = loader() if callable(loader) else STATE.hub.group_list()
+                self._json({'groups': groups})
             elif path == '/api/group-envs':
                 group = (query.get('group') or [''])[0]
-                envs = STATE.hub.env_list(group or None)
-                serials = sorted(
-                    [str(e.get('serialNumber')) for e in envs
-                     if e.get('serialNumber') is not None],
-                    key=lambda x: int(x) if x.isdigit() else 0)
+                loader = getattr(STATE, 'hub_group_serials', None)
+                if callable(loader):
+                    serials = loader(group or None)
+                else:
+                    envs = STATE.hub.env_list(group or None)
+                    serials = sorted(
+                        [str(e.get('serialNumber')) for e in envs
+                         if e.get('serialNumber') is not None],
+                        key=lambda x: int(x) if x.isdigit() else 0)
                 self._json({'serials': serials, 'count': len(serials)})
             elif path == '/api/progress':
                 snap = STATE.orch.snapshot()

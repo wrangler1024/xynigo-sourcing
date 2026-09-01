@@ -451,7 +451,7 @@ def create_app(
 
     app = FastAPI(
         title="Xynigo Auth Service",
-        version="0.12.9",
+        version="0.12.10",
         docs_url=None,
         redoc_url=None,
         lifespan=lifespan,
@@ -873,21 +873,34 @@ def create_app(
         session_token: Annotated[
             str | None, Cookie(alias=settings.cookie_name)
         ] = None,
-    ) -> dict[str, object]:
+    ) -> JSONResponse:
         """Return a quiet 200 status so the public login shell does not emit a 401."""
 
         if not session_token:
-            return {"authenticated": False}
+            return JSONResponse({"authenticated": False})
         try:
             record, user, tenant = _authenticated_identity(session, session_token)
         except HTTPException:
-            return {"authenticated": False}
+            return JSONResponse({"authenticated": False})
         bind_request_identity(request, user=user, tenant=tenant)
         _ensure_system_catalog(session, tenant=tenant)
-        record.last_seen_at = utcnow()
+        now = utcnow()
+        record.last_seen_at = now
+        renewed_max_age = _slide_session_expiry(record, settings=settings, now=now)
         identity = _identity_payload(session, user, tenant)
         session.commit()
-        return {"authenticated": True, "identity": identity}
+        response = JSONResponse({"authenticated": True, "identity": identity})
+        if renewed_max_age is not None:
+            response.set_cookie(
+                key=settings.cookie_name,
+                value=session_token,
+                max_age=renewed_max_age,
+                secure=settings.cookie_secure,
+                httponly=True,
+                samesite="lax",
+                path="/",
+            )
+        return response
 
     @app.post("/v1/auth/local/start", status_code=status.HTTP_201_CREATED)
     def start_local_login(session: SessionDep) -> dict[str, object]:
@@ -5064,6 +5077,38 @@ def _authenticated_identity(
     if tenant is None or tenant.status != "active":
         raise HTTPException(status_code=403, detail={"code": "tenant_disabled"})
     return record, user, tenant
+
+
+def _slide_session_expiry(
+    record: SessionRecord,
+    *,
+    settings: Settings,
+    now: datetime,
+) -> int | None:
+    """Extend an active browser session inside a fixed absolute lifetime.
+
+    The caller must also re-issue the HttpOnly cookie.  Returning ``None``
+    avoids a database write and Set-Cookie churn until the idle expiry enters
+    the configured refresh window.
+    """
+
+    current_expiry = as_utc(record.expires_at)
+    if (
+        current_expiry - now
+        > timedelta(seconds=settings.session_refresh_threshold_seconds)
+    ):
+        return None
+    absolute_expiry = as_utc(record.created_at) + timedelta(
+        seconds=settings.session_absolute_ttl_seconds
+    )
+    renewed_expiry = min(
+        now + timedelta(seconds=settings.session_ttl_seconds),
+        absolute_expiry,
+    )
+    if renewed_expiry <= current_expiry:
+        return None
+    record.expires_at = renewed_expiry
+    return max(1, int((renewed_expiry - now).total_seconds()))
 
 
 def _validation_log_target(method: str, path: str) -> tuple[str | None, str | None]:

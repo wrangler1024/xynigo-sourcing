@@ -14,9 +14,9 @@ from . import __version__
 
 
 REPOSITORY = "wrangler1024/xynigo-sourcing"
-RELEASE_VERSION = "0.12.9"
+RELEASE_VERSION = "0.12.10"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-08-31T05:33:21Z"
+RELEASE_PUBLISHED_AT = "2026-09-01T00:00:00Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,8 +31,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.12.9-ee64f0f09957",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.12.9.exe",
+        "runtimeId": "0.12.10-candidate",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.12.10.exe",
         "sha256": "97ee3017261b0bebf262665e5977bb7f2261657cf8acae8f3dc2cde1b92cc7e6",
         "size": 15_071_916,
         "installMode": "standard_per_user",
@@ -43,7 +43,7 @@ _PLATFORMS = {
         "trayMenu": True,
         "launcherFile": "Xynigo.exe",
         "greenFallback": {
-            "assetName": "Xynigo_Sourcing_Windows_20260831_v0.12.9.zip",
+            "assetName": "Xynigo_Sourcing_Windows_20260901_v0.12.10.zip",
             "sha256": "28be2166dcaa540eb93ba3ff82d50e618c79f0974c850eb153ae7f8d6c008f99",
             "size": 18_337_575,
             "installMode": "green_package",
@@ -57,7 +57,7 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.12.9.pkg",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.12.10.pkg",
         "sha256": "7284b21990ed48613e5359ce37cc944527ad96e6876ffdb7338eda6c84acfe42",
         "size": 19_417_316,
         "installMode": "standard_system_application",
@@ -67,7 +67,7 @@ _PLATFORMS = {
         "notarized": False,
         "stapled": False,
         "greenFallback": {
-            "assetName": "Xynigo_Sourcing_macOS_arm64_20260831_v0.12.9.zip",
+            "assetName": "Xynigo_Sourcing_macOS_arm64_20260901_v0.12.10.zip",
             "sha256": "6f179b4559589809944c8ae1635ca3c42c5dac9ea1eb3166dd14521e073607ba",
             "size": 18_306_528,
             "installMode": "green_package",
@@ -246,11 +246,12 @@ def latest_local_executor_release() -> dict[str, object]:
         ),
         "platforms": platforms,
         "notesZh": [
-            "v0.12.9 严格兼容号商 /api?type=html&mail=邮箱 接码链接，邮箱必须与账号同行一致。",
-            "云端 Web 通过 workspace.rpc.v1 调度当前用户配对的执行器，设备与任务保持 owner 隔离。",
-            "号商文件解析失败时清空旧统计，避免把上一次成功批次误显示为当前结果。",
-            "Web 工作台不下发更新任务；Windows 在线更新继续由执行器桌面状态中心负责。",
-            "Windows/macOS 标准包和绿色包均包含本次解析兼容修复。",
+            "v0.12.10 修复长任务续租期间执行器仍被云端误判离线的问题。",
+            "活动中的 Web 会话按 8 小时空闲期滑动续期，并受 7 天绝对期限约束。",
+            "查询和建环境提交使用幂等键、提交锁与短时持续进度核对，响应中断后重试不会重复下发。",
+            "物流查询改用 HubStudio 无头启动；建环境实际并发与配置值一致并在预检中显示。",
+            "托盘状态连续三次失败才判离线，状态读取不再同步触发 HubStudio 探测。",
+            "HubStudio 分组和环境序号使用短时只读缓存，减少重复加载和 Local API 压力。",
             "覆盖安装保留配置、日志、运行数据和设备配对；绿色包继续作为显式回退。",
             "本次按内部快速迭代策略提供未签名标准安装包；下载前必须核对 SHA-256，并按飞书开发群教程手动确认系统安全提示。",
         ],

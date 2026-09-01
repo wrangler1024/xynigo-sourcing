@@ -36,6 +36,23 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         self.assertIn("envGroupCompatibleWithSite(name, site)", env_groups)
         self.assertIn("$('envSiteGroup').value = '';", env_groups)
 
+    def test_cloud_workspace_renews_sessions_and_idempotently_submits_writes(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        for marker in (
+            "const CLOUD_SESSION_KEEPALIVE_MS",
+            "async function refreshCloudSession()",
+            "setInterval(refreshCloudSession, CLOUD_SESSION_KEEPALIVE_MS);",
+            "function workspaceMutationKey(scope, payload)",
+            "body:JSON.stringify({method, path, body, idempotencyKey})",
+            "error.code = 'executor_rpc_timeout';",
+            "let querySubmitting = false;",
+            "querySubmitting || isRunning",
+            "workspaceMutationKey('query-start', payload)",
+            "workspaceMutationKey('env-start', payload)",
+            "workspaceMutationKey('env-backup-start', payload)",
+        ):
+            self.assertIn(marker, html)
+
     def test_binary_results_no_longer_navigate_to_cloud_local_api_paths(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")
         self.assertIn("downloadWorkspaceResource('/api/export?format=xlsx'", html)
@@ -81,9 +98,9 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             "let envPollInFlight = false;",
             "let envRetryAccountId = '';",
             "if (queryPollInFlight) return;",
-            "if (CLOUD_WEB_MODE && queryProgressLoaded && !isRunning) return;",
+            "if (CLOUD_WEB_MODE && queryProgressLoaded && !isRunning",
             "if (envPollInFlight) return;",
-            "if (CLOUD_WEB_MODE && envProgressLoaded && !envRunning && !backupRunning) return;",
+            "if (CLOUD_WEB_MODE && envProgressLoaded && !envRunning && !backupRunning",
             "if (groupLoadInFlight) return groupLoadInFlight;",
             "error.code === 'executor_task_busy'",
             "filename:file.name, contentBase64, site:$('envSite').value",

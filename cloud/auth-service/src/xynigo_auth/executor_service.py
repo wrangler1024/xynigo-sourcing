@@ -547,6 +547,7 @@ class ExecutorChannelService:
         task.status = "running"
         task.started_at = task.started_at or now
         task.lease_until = now + timedelta(seconds=self.lease_seconds)
+        executor.last_seen_at = now
         self._event(task, "started", trace_id=trace_id)
         self.session.commit()
         return task
@@ -562,7 +563,9 @@ class ExecutorChannelService:
         self._require_lease(task, lease_token)
         if task.status not in {"leased", "running", "cancel_requested"}:
             raise ExecutorServiceError("executor_task_state_conflict", status_code=409)
-        task.lease_until = utcnow() + timedelta(seconds=self.lease_seconds)
+        now = utcnow()
+        task.lease_until = now + timedelta(seconds=self.lease_seconds)
+        executor.last_seen_at = now
         self.session.commit()
         return task
 
@@ -578,6 +581,7 @@ class ExecutorChannelService:
         self._require_lease(task, body.leaseToken)
         if task.status not in {"running", "cancel_requested"}:
             raise ExecutorServiceError("executor_task_state_conflict", status_code=409)
+        executor.last_seen_at = utcnow()
         self._event(
             task,
             "progress",
@@ -636,6 +640,7 @@ class ExecutorChannelService:
         else:
             task.result_summary = body.resultSummary
         task.lease_until = None
+        executor.last_seen_at = now
         if body.outcome == "succeeded" and task.task_type.startswith("config."):
             revision = str(body.resultSummary.get("configRevision") or "")
             if len(revision) == 64 and all(char in "0123456789abcdef" for char in revision):

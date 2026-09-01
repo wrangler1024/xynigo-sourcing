@@ -73,6 +73,20 @@ class WorkspaceRpcClientTests(unittest.TestCase):
                 'body': None,
             })
 
+    def test_slow_mutations_receive_extended_internal_timeout(self):
+        self.assertEqual(
+            self.client._request_timeout('POST', '/api/envbatch/start'),
+            120.0,
+        )
+        self.assertEqual(
+            self.client._request_timeout('POST', '/api/query'),
+            120.0,
+        )
+        self.assertEqual(
+            self.client._request_timeout('GET', '/api/progress'),
+            30.0,
+        )
+
 
 if __name__ == '__main__':
     unittest.main()

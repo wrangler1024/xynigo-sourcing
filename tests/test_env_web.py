@@ -229,7 +229,7 @@ class EnvWebJobTests(unittest.TestCase):
                 site='MX')
         self.assertEqual(job.pending, {})
 
-    def test_safe_parallel_mode_caps_environment_workers_at_three(self):
+    def test_environment_worker_setting_is_not_silently_capped(self):
         cfg = {
             'purchaseTag': TEST_TAG,
             'proxyLink': TEST_PROXY,
@@ -238,8 +238,10 @@ class EnvWebJobTests(unittest.TestCase):
         }
         job = EnvBatchJob(lambda: FakeHub(), lambda: cfg)
         backup = BackupEnvJob(lambda: FakeHub(), lambda: cfg)
-        self.assertEqual(job._runtime_config()['workers'], 3)
-        self.assertEqual(backup._runtime_config()['workers'], 3)
+        self.assertEqual(job._runtime_config()['workers'], 9)
+        self.assertEqual(job._runtime_config()['configuredWorkers'], 9)
+        self.assertEqual(backup._runtime_config()['workers'], 9)
+        self.assertEqual(backup._runtime_config()['configuredWorkers'], 9)
 
     def test_apply_generates_safe_mapping_without_legacy_credential_tsv(self):
         source = source_bytes()

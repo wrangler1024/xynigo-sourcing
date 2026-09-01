@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     bootstrap_super_admin_open_ids: str = ""
     auto_activate_users: bool = False
     session_ttl_seconds: int = 8 * 60 * 60
+    session_absolute_ttl_seconds: int = 7 * 24 * 60 * 60
+    session_refresh_threshold_seconds: int = 4 * 60 * 60
     oauth_attempt_ttl_seconds: int = 5 * 60
     local_login_ttl_seconds: int = 5 * 60
     system_log_retention_days: int = 30
@@ -84,6 +86,24 @@ class Settings(BaseSettings):
     def validate_session_ttl(cls, value: int) -> int:
         if value < 300 or value > 7 * 24 * 60 * 60:
             raise ValueError("session_ttl_seconds must be between 300 and 604800")
+        return value
+
+    @field_validator("session_absolute_ttl_seconds")
+    @classmethod
+    def validate_session_absolute_ttl(cls, value: int) -> int:
+        if value < 60 * 60 or value > 30 * 24 * 60 * 60:
+            raise ValueError(
+                "session_absolute_ttl_seconds must be between 3600 and 2592000"
+            )
+        return value
+
+    @field_validator("session_refresh_threshold_seconds")
+    @classmethod
+    def validate_session_refresh_threshold(cls, value: int) -> int:
+        if value < 60 or value > 7 * 24 * 60 * 60:
+            raise ValueError(
+                "session_refresh_threshold_seconds must be between 60 and 604800"
+            )
         return value
 
     @field_validator("oauth_attempt_ttl_seconds")
@@ -199,6 +219,18 @@ class Settings(BaseSettings):
         if not normalized or not Path(normalized).is_absolute():
             raise ValueError("local_executor_asset_dir must be an absolute path")
         return normalized
+
+    @model_validator(mode="after")
+    def validate_session_lifetime(self) -> "Settings":
+        if self.session_absolute_ttl_seconds < self.session_ttl_seconds:
+            raise ValueError(
+                "session_absolute_ttl_seconds must be at least session_ttl_seconds"
+            )
+        if self.session_refresh_threshold_seconds >= self.session_ttl_seconds:
+            raise ValueError(
+                "session_refresh_threshold_seconds must be less than session_ttl_seconds"
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_procurement_import_security(self) -> "Settings":

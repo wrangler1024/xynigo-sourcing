@@ -27,7 +27,7 @@ class FakeUpdates:
             'enabled': True,
             'state': self.state,
             'installMode': 'standard',
-            'currentVersion': '0.12.9',
+            'currentVersion': '0.12.10',
             'latestVersion': '0.12.10',
             'message': '测试更新状态',
         }

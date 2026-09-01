@@ -43,7 +43,7 @@ wheels = [
 
 [[package]]
 name = "xynigo-sourcing"
-version = "0.12.9"
+version = "0.12.10"
 source = { editable = "." }
 dependencies = [
     { name = "certifi" },

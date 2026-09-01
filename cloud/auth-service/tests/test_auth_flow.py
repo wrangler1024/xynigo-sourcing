@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
@@ -50,6 +51,9 @@ def build_test_app(
     procurement_import_enabled: bool = False,
     procurement_import_gateway=None,
     local_executor_asset_dir: str | None = None,
+    session_ttl_seconds: int = 8 * 60 * 60,
+    session_absolute_ttl_seconds: int = 7 * 24 * 60 * 60,
+    session_refresh_threshold_seconds: int = 4 * 60 * 60,
 ):
     database = Database(f"sqlite+pysqlite:///{tmp_path / 'identity.sqlite3'}")
     Base.metadata.create_all(database.engine)
@@ -72,6 +76,9 @@ def build_test_app(
         local_executor_asset_dir=(
             local_executor_asset_dir or str(tmp_path / "release-assets")
         ),
+        session_ttl_seconds=session_ttl_seconds,
+        session_absolute_ttl_seconds=session_absolute_ttl_seconds,
+        session_refresh_threshold_seconds=session_refresh_threshold_seconds,
     )
     oauth = FakeOAuthClient(
         FeishuIdentity(
@@ -115,7 +122,7 @@ def test_cloud_workspace_shell_and_assets_are_public_but_api_stays_protected(
     with TestClient(app) as client:
         workspace = client.get("/")
         assert workspace.status_code == 200
-        assert "<title>Xynigo Sourcing v0.12.9</title>" in workspace.text
+        assert "<title>Xynigo Sourcing v0.12.10</title>" in workspace.text
         assert 'src="xynigo-logo.png?v=6"' in workspace.text
         assert 'href="/favicon.ico?v=6"' in workspace.text
         assert "const CLOUD_WEB_MODE" in workspace.text
@@ -160,9 +167,9 @@ def test_authenticated_member_can_read_immutable_local_executor_release(
         assert response.headers["x-content-type-options"] == "nosniff"
         payload = response.json()
         assert payload["schemaVersion"] == 1
-        assert payload["version"] == "0.12.9"
+        assert payload["version"] == "0.12.10"
         assert payload["channel"] == "test"
-        assert payload["releaseUrl"].endswith("/releases/tag/v0.12.9")
+        assert payload["releaseUrl"].endswith("/releases/tag/v0.12.10")
         assert set(payload["platforms"]) == {"windows-x86_64", "macos-arm64"}
         for platform, info in payload["platforms"].items():
             assert info["size"] > 1_000_000
@@ -173,7 +180,7 @@ def test_authenticated_member_can_read_immutable_local_executor_release(
                 f"/v1/local-executor/releases/{platform}/primary/download"
             )
             if platform == "windows-x86_64":
-                assert info["runtimeId"].startswith("0.12.9-")
+                assert info["runtimeId"].startswith("0.12.10-")
             assert "github.com" not in info["downloadUrl"]
             fallback = info["greenFallback"]
             assert fallback["assetName"].endswith(".zip")
@@ -317,6 +324,51 @@ def test_unknown_user_is_pending_and_receives_no_session(tmp_path) -> None:
     with database.session_factory() as session:
         assert session.scalar(select(User.status)) == "pending"
         assert session.scalar(select(SessionRecord)) is None
+
+
+def test_web_status_slides_active_cookie_session_without_exceeding_absolute_limit(
+    tmp_path,
+) -> None:
+    app, database, _oauth = build_test_app(
+        tmp_path,
+        session_ttl_seconds=60 * 60,
+        session_absolute_ttl_seconds=24 * 60 * 60,
+        session_refresh_threshold_seconds=30 * 60,
+    )
+
+    with TestClient(app) as client:
+        state, _challenge = start_login(client)
+        callback = client.get(
+            "/v1/auth/feishu/callback",
+            params={"code": "authorization-code", "state": state},
+            follow_redirects=False,
+        )
+        assert callback.status_code == 303
+        raw_cookie = client.cookies.get("xynigo_session")
+        assert raw_cookie
+
+        now = datetime.now(UTC)
+        with database.session_factory() as session:
+            record = session.scalar(select(SessionRecord))
+            assert record is not None
+            record.created_at = now - timedelta(hours=23, minutes=30)
+            record.expires_at = now + timedelta(minutes=5)
+            previous_expiry = record.expires_at
+            absolute_expiry = record.created_at + timedelta(hours=24)
+            session.commit()
+
+        status = client.get("/v1/auth/web/status")
+        assert status.status_code == 200
+        assert status.json()["authenticated"] is True
+        assert "Max-Age=" in status.headers["set-cookie"]
+        assert client.cookies.get("xynigo_session") == raw_cookie
+
+        with database.session_factory() as session:
+            record = session.scalar(select(SessionRecord))
+            assert record is not None
+            stored_expiry = record.expires_at.replace(tzinfo=UTC)
+            assert stored_expiry > previous_expiry
+            assert stored_expiry <= absolute_expiry
 
 
 def test_oauth_state_is_single_use(tmp_path) -> None:

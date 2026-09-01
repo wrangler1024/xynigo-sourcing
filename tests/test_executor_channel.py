@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 
-from purchase_tool.cloud_auth import MemoryAuthSessionStore
+from purchase_tool.cloud_auth import LocalAuthError, MemoryAuthSessionStore
 from purchase_tool.executor_channel import (
     CHANNEL_STATE_FIELDS,
     ExecutorChannelStateStore,
@@ -417,6 +417,62 @@ class ExecutorChannelLifecycleTests(unittest.TestCase):
             self.assertFalse(worker.thread.is_alive())
             self.assertEqual(client.user_sessions, [DEVICE_CREDENTIAL])
             self.assertEqual(installed, ['user-session-' + ('z' * 40)])
+
+    def test_two_transient_poll_failures_stay_reconnecting_before_recovery(self):
+        class RecordingStateStore(ExecutorChannelStateStore):
+            def __init__(self, path):
+                super().__init__(path)
+                self.statuses = []
+
+            def update(self, **changes):
+                if 'status' in changes:
+                    self.statuses.append(changes['status'])
+                return super().update(**changes)
+
+        class FlakyClient(FakeExecutorClient):
+            def poll(self, credential, revision, hub_status, wait_seconds=25):
+                self.poll_calls.append(
+                    (credential, revision, hub_status, wait_seconds))
+                if len(self.poll_calls) <= 2:
+                    raise LocalAuthError('cloud_unreachable', status=503)
+                worker.stop_event.set()
+                return {'task': None}
+
+        with tempfile.TemporaryDirectory() as directory:
+            state_store = RecordingStateStore(
+                os.path.join(directory, 'executor-channel.json'))
+            client = FlakyClient()
+            worker = self.build_worker(
+                MemoryAuthSessionStore(DEVICE_CREDENTIAL), state_store, client)
+            worker._wait = lambda _seconds: None
+            self.assertTrue(worker.start())
+            worker.thread.join(timeout=2)
+            self.assertFalse(worker.thread.is_alive())
+            self.assertEqual(len(client.poll_calls), 3)
+            self.assertEqual(state_store.load()['status'], 'online')
+            self.assertGreaterEqual(state_store.statuses.count('reconnecting'), 2)
+            self.assertNotIn('offline', state_store.statuses)
+
+    def test_third_consecutive_poll_failure_reports_offline(self):
+        class FlakyClient(FakeExecutorClient):
+            def poll(self, credential, revision, hub_status, wait_seconds=25):
+                self.poll_calls.append(
+                    (credential, revision, hub_status, wait_seconds))
+                if len(self.poll_calls) >= 3:
+                    worker.stop_event.set()
+                raise LocalAuthError('cloud_unreachable', status=503)
+
+        with tempfile.TemporaryDirectory() as directory:
+            state_store = ExecutorChannelStateStore(
+                os.path.join(directory, 'executor-channel.json'))
+            client = FlakyClient()
+            worker = self.build_worker(
+                MemoryAuthSessionStore(DEVICE_CREDENTIAL), state_store, client)
+            worker._wait = lambda _seconds: None
+            self.assertTrue(worker.start())
+            worker.thread.join(timeout=2)
+            self.assertFalse(worker.thread.is_alive())
+            self.assertEqual(state_store.load()['status'], 'offline')
 
 
 if __name__ == '__main__':

@@ -28,9 +28,10 @@ func TestActiveTaskNoteFallsBackWithoutItems(t *testing.T) {
 
 func TestCloudStatusTextCoversPairingAndOfflineStates(t *testing.T) {
 	tests := map[string]string{
-		"online":     "云端在线",
-		"not_paired": "等待配对",
-		"offline":    "云端离线",
+		"online":       "云端在线",
+		"reconnecting": "正在重连",
+		"not_paired":   "等待配对",
+		"offline":      "云端离线",
 	}
 	for input, want := range tests {
 		if got := cloudStatusText(input); got != want {

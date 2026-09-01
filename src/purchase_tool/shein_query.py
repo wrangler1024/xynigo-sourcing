@@ -468,13 +468,28 @@ class QueryOrchestrator(object):
     def start_batch(self, serials, env_index=None, site='MX',
                     on_finished=None):
         """启动批量查询线程。env_index: {serialNumber(str): env dict}。"""
-        if self.running:
-            raise RuntimeError('已有查询在进行中')
         site = normalize_site(site)
+        serials = list(serials)
+        self._prepare_run(serials, site, fresh=True)
         threading.Thread(
             target=self._run,
-            args=(list(serials), env_index or {}, True, site, on_finished),
+            args=(serials, env_index or {}, False, site, on_finished, True),
             daemon=True).start()
+
+    def _prepare_run(self, serials, site, fresh):
+        """Publish running state before background I/O can block or finish."""
+        with self.lock:
+            if self.running:
+                raise RuntimeError('已有查询在进行中')
+            self.stop_event = threading.Event()
+            self.site = site
+            self.running = True
+            self.started_at = time.time()
+            self.finished_at = None
+            self._inflight = set()
+            if fresh:
+                self._reset_screenshots()
+                self.rows = [self._blank_row(s, site) for s in serials]
 
     def requery(self, serial, env_index=None, force=False, on_finished=None):
         """单行重新查询（复用同一套流程，不新增行）。
@@ -493,9 +508,10 @@ class QueryOrchestrator(object):
         if force:
             self._force_stops.add(serial)
         site = row.get('site') or self.site
+        self._prepare_run([serial], site, fresh=False)
         threading.Thread(
             target=self._run,
-            args=([serial], env_index or {}, False, site, on_finished),
+            args=([serial], env_index or {}, False, site, on_finished, True),
             daemon=True).start()
 
     def requery_failed(self, env_index=None, on_finished=None):
@@ -515,9 +531,10 @@ class QueryOrchestrator(object):
         with self.lock:
             site = next((r.get('site') for r in self.rows
                          if r['serial'] in serials), self.site)
+        self._prepare_run(serials, site, fresh=False)
         threading.Thread(
             target=self._run,
-            args=(serials, env_index or {}, False, site, on_finished),
+            args=(serials, env_index or {}, False, site, on_finished, True),
             daemon=True).start()
         return len(serials)
 
@@ -527,20 +544,11 @@ class QueryOrchestrator(object):
     # ---- 主流程 ----
 
     def _run(self, serials, env_index, fresh=True, site='MX',
-             on_finished=None):
+             on_finished=None, prepared=False):
         site = normalize_site(site)
-        self.stop_event = threading.Event()
-        with self.lock:
-            self.site = site
-            self.running = True
-            self.started_at = time.time()
-            self.finished_at = None
-            self._inflight = set()
+        if not prepared:
+            self._prepare_run(serials, site, fresh=fresh)
         try:
-            if fresh:
-                self._reset_screenshots()
-                with self.lock:
-                    self.rows = [self._blank_row(s, site) for s in serials]
             if not env_index:
                 try:
                     env_index = {str(e.get('serialNumber')): e
@@ -639,7 +647,7 @@ class QueryOrchestrator(object):
         with self._start_lock:
             while True:
                 try:
-                    return self.hub.browser_start(code)
+                    return self.hub.browser_start(code, headless=True)
                 except HubApiError as e:
                     if '-10005' in str(e) and time.time() < deadline:
                         time.sleep(5)

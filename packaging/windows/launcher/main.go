@@ -144,6 +144,8 @@ type launcherApp struct {
 	launcherToken  string
 	statusURL      string
 	lastStatus     *localStatus
+	lastStatusAt   time.Time
+	statusFailures int
 	pairInFlight   bool
 	updateInFlight bool
 	exiting        bool
@@ -641,12 +643,21 @@ func (app *launcherApp) statusLoop() {
 
 func (app *launcherApp) refreshStatus() {
 	status, err := app.fetchStatus()
+	if err != nil {
+		app.mu.Lock()
+		app.statusFailures++
+		if app.statusFailures < 3 && app.lastStatus != nil && time.Since(app.lastStatusAt) < 15*time.Second {
+			status = app.lastStatus
+			err = nil
+		}
+		app.mu.Unlock()
+	}
 	app.mw.Synchronize(func() { app.renderStatus(status, err) })
 }
 
 func (app *launcherApp) fetchStatus() (*localStatus, error) {
 	start := configuredServerPort(app.root)
-	client := &http.Client{Timeout: 700 * time.Millisecond}
+	client := &http.Client{Timeout: 2 * time.Second}
 	for port := start; port < start+10; port++ {
 		url := fmt.Sprintf("http://127.0.0.1:%d/executor-status.json", port)
 		response, err := client.Get(url)
@@ -665,6 +676,8 @@ func (app *launcherApp) fetchStatus() (*localStatus, error) {
 		app.mu.Lock()
 		app.statusURL = url
 		app.lastStatus = &status
+		app.lastStatusAt = time.Now()
+		app.statusFailures = 0
 		app.mu.Unlock()
 		return &status, nil
 	}
@@ -900,6 +913,8 @@ func cloudStatusText(status string) string {
 		return "云端在线"
 	case "connecting", "paired":
 		return "正在连接"
+	case "reconnecting":
+		return "正在重连"
 	case "not_paired":
 		return "等待配对"
 	case "revoked":

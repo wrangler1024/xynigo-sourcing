@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -204,6 +206,44 @@ class TrackingScreenshotTests(unittest.TestCase):
             }, set(), 'US')
         self.assertEqual(row['state'], 'fail')
         self.assertIn('与所选 US 站不一致', row['error'])
+
+    def test_batch_is_running_before_background_hub_read_completes(self):
+        release = threading.Event()
+
+        class BlockingHub(object):
+            def env_list(self):
+                release.wait(1)
+                return []
+
+            def open_container_codes(self):
+                return set()
+
+        job = QueryOrchestrator(BlockingHub(), settle_seconds=0)
+        try:
+            job.start_batch(['1001'], site='MX')
+            snapshot = job.snapshot()
+            self.assertTrue(snapshot['running'])
+            self.assertEqual([row['serial'] for row in snapshot['rows']], ['1001'])
+        finally:
+            release.set()
+            deadline = time.time() + 2
+            while job.snapshot()['running'] and time.time() < deadline:
+                time.sleep(0.01)
+            job.close()
+
+    def test_query_browser_runs_headless(self):
+        class RecordingHub(object):
+            def __init__(self):
+                self.calls = []
+
+            def browser_start(self, code, headless=False):
+                self.calls.append((code, headless))
+                return {'browser': 'ok'}
+
+        hub = RecordingHub()
+        job = QueryOrchestrator(hub)
+        self.assertEqual(job._start_browser('container-1'), {'browser': 'ok'})
+        self.assertEqual(hub.calls, [('container-1', True)])
 
 
 if __name__ == '__main__':

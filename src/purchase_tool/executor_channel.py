@@ -302,6 +302,7 @@ class ExecutorChannelWorker(object):
 
     def _run(self):
         backoff = 1.0
+        consecutive_failures = 0
         credential = None
         user_session_ready = False
         user_session_refresh_at = 0.0
@@ -355,6 +356,7 @@ class ExecutorChannelWorker(object):
                     status='online', lastPollAt=_now_iso(),
                     lastErrorCode='', configRevision=revision)
                 backoff = 1.0
+                consecutive_failures = 0
                 task = response.get('task') if isinstance(response, dict) else None
                 if task:
                     self._execute_task(credential, task)
@@ -372,13 +374,19 @@ class ExecutorChannelWorker(object):
                     backoff = 1.0
                     self._wait(1.0)
                     continue
+                consecutive_failures += 1
                 self.state_store.update(
-                    status='offline', lastErrorCode=exc.code)
+                    status=('offline' if consecutive_failures >= 3
+                            else 'reconnecting'),
+                    lastErrorCode=exc.code)
                 self._wait(backoff + self.random() * min(1.0, backoff / 4.0))
                 backoff = min(30.0, backoff * 2.0)
             except Exception:
+                consecutive_failures += 1
                 self.state_store.update(
-                    status='error', lastErrorCode='executor_channel_failed')
+                    status=('error' if consecutive_failures >= 3
+                            else 'reconnecting'),
+                    lastErrorCode='executor_channel_failed')
                 self._wait(backoff)
                 backoff = min(30.0, backoff * 2.0)
 

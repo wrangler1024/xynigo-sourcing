@@ -262,7 +262,7 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             coordinator = UpdateCoordinator(
                 directory,
-                '0.12.9',
+                '0.12.10',
                 environ={'XYNIGO_INSTALL_MODE': 'standard'},
             )
         snapshot = coordinator.snapshot()
@@ -272,7 +272,7 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
 
 class WindowsStandardInstallerArtifactTests(unittest.TestCase):
     def test_local_compiled_artifact_metadata_when_present(self):
-        metadata = ROOT / 'dist/Xynigo_Sourcing_Windows_Setup_v0.12.9.json'
+        metadata = ROOT / 'dist/Xynigo_Sourcing_Windows_Setup_v0.12.10.json'
         if not metadata.is_file():
             self.skipTest('standard installer artifact is built in packaging CI')
         import json
@@ -309,8 +309,8 @@ class LocalExecutorStatusContractTests(unittest.TestCase):
             'enabled': True,
             'state': 'available',
             'installMode': 'standard',
-            'currentVersion': '0.12.9',
-            'currentRuntimeId': '0.12.9-test',
+            'currentVersion': '0.12.10',
+            'currentRuntimeId': '0.12.10-test',
             'latestVersion': '0.12.10',
             'latestRuntimeId': '0.12.10-test',
             'message': '发现可在线升级的新构建 v0.12.10',

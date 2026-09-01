@@ -631,6 +631,22 @@ def test_workspace_rpc_payload_and_result_are_encrypted_at_rest(tmp_path) -> Non
             headers=device_headers(credential),
         )
         assert started.status_code == 200, started.text
+        with database.session_factory() as session:
+            executor = session.scalar(select(LocalExecutor))
+            assert executor is not None
+            executor.last_seen_at = datetime.now(UTC) - timedelta(minutes=5)
+            session.commit()
+        renewed = device_client.put(
+            f"/v1/executor-channel/tasks/{task_id}/lease",
+            json={"leaseToken": lease_token},
+            headers=device_headers(credential),
+        )
+        assert renewed.status_code == 200, renewed.text
+        with database.session_factory() as session:
+            executor = session.scalar(select(LocalExecutor))
+            assert executor is not None
+            last_seen = executor.last_seen_at.replace(tzinfo=UTC)
+            assert datetime.now(UTC) - last_seen < timedelta(seconds=5)
         finished = device_client.post(
             f"/v1/executor-channel/tasks/{task_id}/finish",
             json={
