@@ -17,7 +17,13 @@ from openpyxl import Workbook
 os.environ.setdefault(
     'XYNIGO_PROXY_LINK', 'https://proxy.example.test/{region}')
 
-from purchase_tool.env_batch import BatchPlanItem, BuyerAccount, ResumeStateStore
+from purchase_tool.env_batch import (
+    BatchPlanItem,
+    BuyerAccount,
+    ResumeStateStore,
+    parse_vendor_workbook,
+    serialize_buyer_accounts,
+)
 from purchase_tool.main import BackupEnvJob, EnvBatchJob, ledger_tsv_bytes
 
 
@@ -171,6 +177,23 @@ class FakeLedgerService(object):
 
 
 class EnvWebJobTests(unittest.TestCase):
+    def test_cloud_plan_id_converts_to_a_distinct_local_memory_plan_id(self):
+        job = EnvBatchJob(lambda: FakeHub(), runtime_config)
+        accounts = parse_vendor_workbook(BytesIO(source_bytes()))
+        cloud_plan_id = '11111111-1111-4111-8111-111111111111'
+
+        imported = job.import_cloud_plan(
+            serialize_buyer_accounts(accounts),
+            site='MX',
+            cloud_plan_id=cloud_plan_id,
+        )
+
+        self.assertEqual(imported['cloudPlanId'], cloud_plan_id)
+        self.assertNotEqual(imported['planId'], cloud_plan_id)
+        self.assertIn(imported['planId'], job.pending)
+        self.assertEqual(
+            job.pending[imported['planId']]['cloudPlanId'], cloud_plan_id)
+
     @staticmethod
     def _other_group_duplicate():
         return {

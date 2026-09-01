@@ -32,7 +32,11 @@ class CloudPlanRpc(FakeRpc):
         self.calls.append(payload)
         path = payload['path']
         if payload['method'] == 'POST' and path == '/api/envbatch/cloud-plan':
-            return response({'planId': 'local-hydrated-plan-0001', 'count': 1})
+            return response({
+                'cloudPlanId': payload['body']['cloudPlanId'],
+                'planId': 'local-hydrated-plan-0001',
+                'count': 1,
+            })
         if payload['method'] == 'GET' and path == self.progress_path:
             return response(self.snapshots.pop(0))
         return response({'started': True})
@@ -148,7 +152,7 @@ def test_bound_environment_task_hydrates_encrypted_cloud_plan_before_start():
             'site': 'MX',
             'purchaseDate': '20260901',
             'environmentGroup': 'MX采购',
-            'planRef': 'cloud-plan-0001',
+            'cloudPlanId': 'cloud-plan-0001',
             'planAccounts': [account],
             'totalCount': 1,
             'verifySampleCount': 0,
@@ -158,6 +162,7 @@ def test_bound_environment_task_hydrates_encrypted_cloud_plan_before_start():
     assert outcome == 'succeeded'
     assert code == 'environment_completed'
     assert rpc.calls[0]['path'] == '/api/envbatch/cloud-plan'
+    assert rpc.calls[0]['body']['cloudPlanId'] == 'cloud-plan-0001'
     assert rpc.calls[0]['body']['accounts'] == [account]
     assert rpc.calls[1]['path'] == '/api/envbatch/start'
     assert rpc.calls[1]['body']['planId'] == 'local-hydrated-plan-0001'

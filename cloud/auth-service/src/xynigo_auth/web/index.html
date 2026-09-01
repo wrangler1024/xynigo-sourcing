@@ -2566,7 +2566,9 @@ let buyerImportPlanId = null;
 let procurementImportPlanId = null;
 let procurementImportTargetValidated = false;
 let procurementImportSyncTimer = null;
-let envPlanId = null;
+let envCloudPlanId = null;
+let envLocalPlanId = null;
+let envUploadRevision = 0;
 let envCloudPlanPreview = [];
 let envAccountCount = 0;
 let envRunning = false;
@@ -3512,10 +3514,22 @@ async function cloudEnvironmentPlanParse(filename, contentBase64, site, environm
   return result;
 }
 
+function hasEnvironmentPlan() {
+  return CLOUD_WEB_MODE ? !!envCloudPlanId : !!envLocalPlanId;
+}
+
+function cloudPlanExpiryTime(value) {
+  const timestamp = Date.parse(String(value || ''));
+  if (!Number.isFinite(timestamp)) return '计划过期时间';
+  return new Date(timestamp).toLocaleTimeString(
+    'zh-CN', {hour:'2-digit', minute:'2-digit', hour12:false});
+}
+
 let envPlanRestoreInFlight = false;
 async function restoreLatestCloudEnvironmentPlan() {
-  if (!CLOUD_WEB_MODE || envPlanRestoreInFlight || envPlanId || envRunning
+  if (!CLOUD_WEB_MODE || envPlanRestoreInFlight || hasEnvironmentPlan() || envRunning
       || backupRunning || envSubmitting || envMode !== 'bound') return false;
+  const restoreRevision = envUploadRevision;
   const site = $('envSite').value;
   const environmentGroup = String($('envSiteGroup').value || '').trim();
   if (!environmentGroup) return false;
@@ -3524,16 +3538,17 @@ async function restoreLatestCloudEnvironmentPlan() {
     const payload = await cloudFetchJson(
       `/v1/environment-plans/latest?site=${encodeURIComponent(site)}&environmentGroup=${encodeURIComponent(environmentGroup)}`);
     const result = payload && payload.plan;
-    if (!result || envPlanId || $('envSite').value !== site
+    if (!result || hasEnvironmentPlan() || envUploadRevision !== restoreRevision
+        || $('envSite').value !== site
         || $('envSiteGroup').value !== environmentGroup) return false;
-    envPlanId = String(result.planId || '');
+    envCloudPlanId = String(result.cloudPlanId || '');
     envAccountCount = Number(result.count || 0);
     envCloudPlanPreview = Array.isArray(result.preview) ? result.preview : [];
-    if (!envPlanId || envAccountCount < 1) return false;
+    if (!envCloudPlanId || envAccountCount < 1) return false;
     if (!applyAssignmentTemplate(envImportBuyerPlan)) splitEnvEvenly(envDefaultSplit);
     const mixed = Number(result.mixedSiteCookieCount || 0);
     $('envStats').innerHTML = `<div class="stat-chip blue"><b>${envAccountCount}</b>账号总数</div><div class="stat-chip ok"><b>${result.cookieCount}/${envAccountCount}</b>Cookie 覆盖</div><div class="stat-chip ${mixed ? 'warn' : 'ok'}"><b>${mixed}</b>混合登录态（允许）</div><div class="stat-chip"><b>${result.passwordKindCount}</b>密码种类</div><div class="stat-chip ok"><b>0</b>文件内重复</div><div class="stat-chip ok"><b>0</b>格式问题</div><div class="stat-chip"><b>${result.orderCount}</b>单号已提取</div>`;
-    $('envPlan').textContent = `已恢复本次登录用户未过期的云端加密解析计划：${envAccountCount} 行。无需重新上传文件；正式执行前仍会实时复核 HubStudio。`;
+    $('envPlan').textContent = `已恢复 ${cloudPlanExpiryTime(result.expiresAt)} 前有效的云端加密解析计划：${envAccountCount} 行。无需重新上传文件；正式执行前仍会实时复核 HubStudio。`;
     refreshAssignUi();
     return true;
   } catch (_) {
@@ -3594,7 +3609,7 @@ async function cloudWorkspaceSnapshot(forceRefresh=false) {
       refreshCloudWorkspaceSnapshot({
         id:cloudWorkspaceSnapshotCache.executorId
       }).then(snapshot => {
-        if (!snapshot || envPlanId || envRunning || backupRunning || envSubmitting) return;
+        if (!snapshot || hasEnvironmentPlan() || envRunning || backupRunning || envSubmitting) return;
         if (activeModule === 'envbatch') loadEnvGroups({useCacheOnly:true});
         else if (activeModule === 'query') loadGroups();
       }).catch(() => {});
@@ -3625,7 +3640,7 @@ async function cloudWorkspaceSnapshot(forceRefresh=false) {
   }
   if (envelope && envelope.stale && !cloudWorkspaceSnapshotRefreshPromise) {
     refreshCloudWorkspaceSnapshot(executor).then(snapshot => {
-      if (!snapshot || envPlanId || envRunning || backupRunning || envSubmitting) return;
+      if (!snapshot || hasEnvironmentPlan() || envRunning || backupRunning || envSubmitting) return;
       if (activeModule === 'envbatch') loadEnvGroups({useCacheOnly:true});
       else if (activeModule === 'query') loadGroups();
     }).catch(() => {});
@@ -6415,7 +6430,7 @@ function refreshAssignUi() {
 }
 
 function updateEnvButtons() {
-  const boundReady = envMode === 'bound' && !!envPlanId &&
+  const boundReady = envMode === 'bound' && hasEnvironmentPlan() &&
     envAssignedTotal() === envAccountCount && envAccountCount > 0;
   const backupReady = envMode === 'backup' && envBackup.count >= 1 && envBackup.count <= envBackupMax;
   const ready = envPreflightReady && (boundReady || backupReady);
@@ -9165,7 +9180,9 @@ $('btnBuyerImportCommit').onclick = async () => {
 };
 
 $('envFile').onchange = async e => {
-  envPlanId = null;
+  const uploadRevision = ++envUploadRevision;
+  envCloudPlanId = null;
+  envLocalPlanId = null;
   envCloudPlanPreview = [];
   envAccountCount = 0;
   $('btnEnvPreview').disabled = true;
@@ -9173,26 +9190,32 @@ $('envFile').onchange = async e => {
   $('envStats').innerHTML = '<div class="stat-chip"><b>—</b>等待本次校验</div>';
   const file = e.target.files[0];
   if (!file) { $('envPlan').textContent = '尚未选择文件'; return; }
+  const selectedSite = $('envSite').value;
+  const selectedGroup = $('envSiteGroup').value;
   $('envPlan').textContent = CLOUD_WEB_MODE
     ? '正在读取文件并提交云端安全解析…'
     : '当前电脑正在解析并校验文件…';
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
+    if (uploadRevision !== envUploadRevision) return;
     const contentBase64 = bytesToBase64(bytes);
     let result;
     if (CLOUD_WEB_MODE) {
       result = await cloudEnvironmentPlanParse(
-        file.name, contentBase64, $('envSite').value,
-        $('envSiteGroup').value);
+        file.name, contentBase64, selectedSite, selectedGroup);
     } else {
       result = await api('/api/envbatch/parse', {
         method:'POST', headers:{'Content-Type':'application/json'},
         body:JSON.stringify({
-          filename:file.name, contentBase64, site:$('envSite').value
+          filename:file.name, contentBase64, site:selectedSite
         })
       });
     }
-    envPlanId = result.planId;
+    if (uploadRevision !== envUploadRevision
+        || $('envSite').value !== selectedSite
+        || $('envSiteGroup').value !== selectedGroup) return;
+    if (CLOUD_WEB_MODE) envCloudPlanId = result.cloudPlanId;
+    else envLocalPlanId = result.planId;
     envAccountCount = result.count;
     envCloudPlanPreview = Array.isArray(result.preview) ? result.preview : [];
     const mixedSiteCookieCount = Number(result.mixedSiteCookieCount || 0);
@@ -9202,16 +9225,22 @@ $('envFile').onchange = async e => {
     const mixedNotice = mixedSiteCookieCount
       ? `\n\n⚠ 临时兼容：${mixedSiteCookieCount} 行同时包含墨西哥与美国登录域，将按当前选择的 ${$('envSite').value} 站建环境并原样写入 Cookie。`
       : '';
-    $('envPlan').textContent = `已校验 ${result.count} 行（仅显示脱敏信息）：\n` + result.preview.map(x => `${x.emailMasked} · 单号 ${x.orderMasked} · Cookie ${Math.ceil(x.cookieBytes / 1024)}KB`).join('\n') + (result.count > result.preview.length ? `\n…… 共 ${result.count} 行` : '') + mixedNotice + '\n\n页面已清空原始文件内容；云端只短时保存加密执行计划，正式执行时再通过加密通道交给所选本地执行器。';
+    const reuseNotice = CLOUD_WEB_MODE && result.reused
+      ? `检测到相同文件，已复用 ${cloudPlanExpiryTime(result.expiresAt)} 前有效的解析计划。\n\n`
+      : '';
+    $('envPlan').textContent = reuseNotice + `已校验 ${result.count} 行（仅显示脱敏信息）：\n` + result.preview.map(x => `${x.emailMasked} · 单号 ${x.orderMasked} · Cookie ${Math.ceil(x.cookieBytes / 1024)}KB`).join('\n') + (result.count > result.preview.length ? `\n…… 共 ${result.count} 行` : '') + mixedNotice + '\n\n页面已清空原始文件内容；云端只短时保存加密执行计划，正式执行时再通过加密通道交给所选本地执行器。';
     await refreshEnvPreflight();
-    toast(mixedSiteCookieCount
+    toast(result.reused
+      ? `检测到相同文件，已复用 ${cloudPlanExpiryTime(result.expiresAt)} 前有效的解析计划`
+      : mixedSiteCookieCount
       ? `校验通过：${result.count} 行，其中 ${mixedSiteCookieCount} 行混合登录态已临时允许`
       : `号商名单校验通过：${result.count} 行`);
   } catch (err) {
+    if (uploadRevision !== envUploadRevision) return;
     $('envStats').innerHTML = '<div class="stat-chip"><b>—</b>本次校验未通过</div>';
     $('envPlan').textContent = '文件校验失败：' + err.message;
   } finally {
-    e.target.value = '';
+    if (uploadRevision === envUploadRevision) e.target.value = '';
   }
 };
 
@@ -9228,7 +9257,7 @@ $('btnEnvPreview').onclick = async () => {
     } catch (err) { toast(err.message); $('envPreviewText').textContent = '干跑预览失败：' + err.message; }
     return;
   }
-  if (!envPlanId) { toast('请先选择并解析 xlsx'); return; }
+  if (!hasEnvironmentPlan()) { toast('请先选择并解析 xlsx'); return; }
   if (CLOUD_WEB_MODE) {
     $('envPreviewText').textContent = `云端格式与站点校验通过，共 ${envAccountCount} 行：\n` +
       envCloudPlanPreview.map(x => `${x.emailMasked} · 单号 ${x.orderMasked}`).join('\n') +
@@ -9241,7 +9270,7 @@ $('btnEnvPreview').onclick = async () => {
     const result = await api('/api/envbatch/preview', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
-        planId:envPlanId, assignment:composeAssignmentSpec(),
+        planId:envLocalPlanId, assignment:composeAssignmentSpec(),
         purchaseDate:envPurchaseDate(), site:$('envSite').value,
         environmentGroup:$('envSiteGroup').value
       })
@@ -9315,7 +9344,7 @@ $('btnEnvStart').onclick = async () => {
     }
     return;
   }
-  if (!envPlanId) { toast('请先选择并解析 xlsx'); return; }
+  if (!hasEnvironmentPlan()) { toast('请先选择并解析 xlsx'); return; }
   const assignment = composeAssignmentSpec();
   const writeLarkLedger = false;
   if (!confirm(`将按${siteName}处理 ${envAccountCount} 个账号：创建环境、导入 Cookie、绑定账号并写备注。\n\n本次确认只授权 HubStudio 写入，是否继续？`)) return;
@@ -9324,11 +9353,14 @@ $('btnEnvStart').onclick = async () => {
     '执行指令已确认，正在提交买家号建环境任务',
     '正在等待本机服务受理，请勿重复点击或关闭页面；完成后结果将回传数据库。');
   await paintEnvSubmissionState();
-  const payload = {planId:envPlanId, assignment,
+  const payload = {planId:envLocalPlanId, assignment,
     purchaseDate:envPurchaseDate(), verifySampleCount:verifyCount,
     confirmWrite:true, site, environmentGroup:$('envSiteGroup').value,
     writeLarkLedger, confirmLarkWrite};
-  const idempotencyKey = workspaceMutationKey('env-start', payload);
+  const idempotencyPayload = CLOUD_WEB_MODE
+    ? {...payload, planId:undefined, cloudPlanId:envCloudPlanId}
+    : payload;
+  const idempotencyKey = workspaceMutationKey('env-start', idempotencyPayload);
   try {
     let result;
     if (CLOUD_WEB_MODE) {
@@ -9342,7 +9374,7 @@ $('btnEnvStart').onclick = async () => {
         body:JSON.stringify({
           idempotencyKey, executorId:executor.id, mode:'bound', site,
           purchaseDate:payload.purchaseDate, environmentGroup:payload.environmentGroup,
-          planRef:envPlanId, totalCount:envAccountCount,
+          cloudPlanId:envCloudPlanId, totalCount:envAccountCount,
           verifySampleCount:verifyCount, assignments,
         })
       });
@@ -9357,7 +9389,8 @@ $('btnEnvStart').onclick = async () => {
       });
     }
     clearWorkspaceMutationKey('env-start', idempotencyKey);
-    envPlanId = null;
+    envCloudPlanId = null;
+    envLocalPlanId = null;
     envCloudPlanPreview = [];
     envRunning = true;
     envStopRequested = false;
@@ -9835,8 +9868,11 @@ async function loadEnvGroups(options={}) {
 }
 
 function invalidateEnvironmentPlan(message) {
-  if (!envPlanId && !envAccountCount) return;
-  envPlanId = null;
+  envUploadRevision += 1;
+  $('envFile').value = '';
+  if (!hasEnvironmentPlan() && !envAccountCount) return;
+  envCloudPlanId = null;
+  envLocalPlanId = null;
   envCloudPlanPreview = [];
   envAccountCount = 0;
   envBuyerCounts = {};

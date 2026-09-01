@@ -28,6 +28,9 @@ def upgrade() -> None:
         sa.Column("site", sa.String(8), nullable=False),
         sa.Column("environment_group", sa.String(255), nullable=False),
         sa.Column("source_hash", sa.String(64), nullable=False),
+        sa.Column(
+            "preview_summary", sa.JSON(), nullable=False, server_default=sa.text("'{}'")
+        ),
         sa.Column("encrypted_payload", sa.LargeBinary()),
         sa.Column("status", sa.String(32), nullable=False, server_default="parsed"),
         sa.Column("account_count", sa.Integer(), nullable=False),
@@ -84,6 +87,49 @@ def upgrade() -> None:
         "environment_account_plans",
         ["tenant_id", "created_by_user_id", "created_at"],
     )
+    op.create_index(
+        "uq_environment_account_plan_active_source",
+        "environment_account_plans",
+        ["tenant_id", "created_by_user_id", "source_hash"],
+        unique=True,
+        postgresql_where=sa.text("status = 'parsed'"),
+    )
+
+    op.create_table(
+        "environment_account_plan_requests",
+        sa.Column("id", sa.Uuid(), nullable=False),
+        sa.Column("tenant_id", sa.Uuid(), nullable=False),
+        sa.Column("created_by_user_id", sa.Uuid(), nullable=False),
+        sa.Column("cloud_plan_id", sa.Uuid(), nullable=False),
+        sa.Column("idempotency_key", sa.String(128), nullable=False),
+        sa.Column("source_hash", sa.String(64), nullable=False),
+        sa.Column("reused", sa.Boolean(), nullable=False, server_default=sa.false()),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["created_by_user_id"], ["users.id"], ondelete="CASCADE"
+        ),
+        sa.ForeignKeyConstraint(
+            ["cloud_plan_id"], ["environment_account_plans.id"], ondelete="CASCADE"
+        ),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint(
+            "tenant_id",
+            "created_by_user_id",
+            "idempotency_key",
+            name="uq_environment_account_plan_request_idempotency",
+        ),
+    )
+    op.create_index(
+        "ix_environment_account_plan_request_plan",
+        "environment_account_plan_requests",
+        ["cloud_plan_id", "created_at"],
+    )
 
     op.create_table(
         "environment_workspace_preferences",
@@ -117,6 +163,15 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table("environment_workspace_preferences")
+    op.drop_index(
+        "ix_environment_account_plan_request_plan",
+        table_name="environment_account_plan_requests",
+    )
+    op.drop_table("environment_account_plan_requests")
+    op.drop_index(
+        "uq_environment_account_plan_active_source",
+        table_name="environment_account_plans",
+    )
     op.drop_index(
         "ix_environment_account_plan_user_latest",
         table_name="environment_account_plans",

@@ -106,23 +106,38 @@ class LocalOperationExecutor(object):
                 raise OperationExecutionError(
                     'operation_payload_invalid', '正式建环境任务缺少采购员分配')
             assignment = self._assignment_text(assignments, total)
-            plan_ref = self._required_text(payload, 'planRef')
+            cloud_plan_id = str(
+                payload.get('cloudPlanId') or payload.get('planRef') or '').strip()
+            if not cloud_plan_id:
+                raise OperationExecutionError(
+                    'operation_payload_invalid', '正式建环境任务缺少云端计划编号')
+            local_plan_id = ''
             plan_accounts = payload.get('planAccounts')
             if plan_accounts is not None:
                 if not isinstance(plan_accounts, list) or len(plan_accounts) != total:
                     raise OperationExecutionError(
                         'operation_payload_invalid', '云端解析计划账号数量无效')
                 imported = self._request('POST', '/api/envbatch/cloud-plan', {
+                    'cloudPlanId': cloud_plan_id,
                     'site': site,
                     'accounts': plan_accounts,
                     'filename': '云端加密解析计划.xlsx',
                 })
-                plan_ref = self._required_text(imported, 'planId')
+                returned_cloud_plan_id = str(
+                    imported.get('cloudPlanId') or '').strip()
+                if returned_cloud_plan_id != cloud_plan_id:
+                    raise OperationExecutionError(
+                        'operation_payload_invalid', '本地导入的云端计划编号不一致')
+                local_plan_id = self._required_text(imported, 'planId')
+            else:
+                # Temporary compatibility for tasks created before the cloud
+                # plan contract was renamed. Their planRef was a local token.
+                local_plan_id = cloud_plan_id
             start_path = '/api/envbatch/start'
             progress_path = '/api/envbatch/progress'
             stop_path = '/api/envbatch/stop'
             start_body = {
-                'planId': plan_ref,
+                'planId': local_plan_id,
                 'assignment': assignment,
                 'purchaseDate': purchase_date,
                 'verifySampleCount': verify_count,

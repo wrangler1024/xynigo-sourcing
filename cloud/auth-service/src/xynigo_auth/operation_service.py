@@ -128,7 +128,7 @@ class OperationRunService:
             ip_total_count=0,
             request_summary={
                 "mode": body.mode,
-                "planRef": body.planRef,
+                "cloudPlanId": body.cloudPlanId,
                 "buyerLabel": body.buyerLabel,
                 "verifySampleCount": body.verifySampleCount,
                 "assignments": [

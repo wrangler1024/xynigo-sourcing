@@ -1597,11 +1597,20 @@ class EnvBatchJob(object):
         validate_accounts_site(accounts, site, allow_mixed=True)
         return self._store_pending_plan(filename, source, accounts, site)
 
-    def import_cloud_plan(self, accounts, site='MX', filename='云端解析计划.xlsx'):
+    def import_cloud_plan(self, accounts, site='MX', filename='云端解析计划.xlsx',
+                          cloud_plan_id=''):
         """Hydrate an authenticated cloud plan into short-lived local memory."""
         site = normalize_env_site(site)
         parsed = deserialize_buyer_accounts(accounts, site=site)
-        return self._store_pending_plan(filename, b'', parsed, site)
+        cloud_plan_id = str(cloud_plan_id or '').strip()
+        if not cloud_plan_id or len(cloud_plan_id) > 128:
+            raise ValueError('云端解析计划编号无效')
+        result = self._store_pending_plan(filename, b'', parsed, site)
+        with self.lock:
+            pending = self.pending.get(result['planId'])
+            if pending is not None:
+                pending['cloudPlanId'] = cloud_plan_id
+        return {'cloudPlanId': cloud_plan_id, **result}
 
     def _store_pending_plan(self, filename, source, accounts, site):
         mixed_site_cookie_count = count_mixed_site_accounts(accounts)
@@ -3589,7 +3598,8 @@ class Handler(BaseHTTPRequestHandler):
                 result = STATE.env_job.import_cloud_plan(
                     body.get('accounts'),
                     site=body.get('site') or 'MX',
-                    filename=body.get('filename') or '云端解析计划.xlsx')
+                    filename=body.get('filename') or '云端解析计划.xlsx',
+                    cloud_plan_id=body.get('cloudPlanId'))
                 self._json(result)
             elif path == '/api/envbatch/preview':
                 rows = STATE.env_job.preview(

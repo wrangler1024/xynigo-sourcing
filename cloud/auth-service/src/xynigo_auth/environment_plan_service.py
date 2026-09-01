@@ -26,7 +26,7 @@ from .environment_plan_core import (
     validate_accounts_site,
 )
 from .environment_plan_crypto import EnvironmentPlanCipher, EnvironmentPlanCipherError
-from .models import EnvironmentAccountPlan
+from .models import EnvironmentAccountPlan, EnvironmentAccountPlanRequest
 
 
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
@@ -122,7 +122,7 @@ class CloudEnvironmentPlanService:
         return len(records)
 
     @staticmethod
-    def _parse_uuid(value: object) -> uuid.UUID:
+    def _parse_cloud_plan_id(value: object) -> uuid.UUID:
         try:
             return uuid.UUID(str(value or ""))
         except (ValueError, TypeError, AttributeError) as exc:
@@ -136,11 +136,11 @@ class CloudEnvironmentPlanService:
         *,
         tenant_id: uuid.UUID,
         actor_user_id: uuid.UUID,
-        plan_id: object,
+        cloud_plan_id: object,
         for_update: bool = False,
     ) -> EnvironmentAccountPlan:
         statement = select(EnvironmentAccountPlan).where(
-            EnvironmentAccountPlan.id == self._parse_uuid(plan_id),
+            EnvironmentAccountPlan.id == self._parse_cloud_plan_id(cloud_plan_id),
             EnvironmentAccountPlan.tenant_id == tenant_id,
             EnvironmentAccountPlan.created_by_user_id == actor_user_id,
         )
@@ -192,10 +192,11 @@ class CloudEnvironmentPlanService:
 
     @staticmethod
     def _public_result(
-        record: EnvironmentAccountPlan, accounts: list[object]
+        record: EnvironmentAccountPlan, *, reused: bool
     ) -> dict[str, Any]:
+        safe_summary = dict(record.preview_summary or {})
         return {
-            "planId": str(record.id),
+            "cloudPlanId": str(record.id),
             "site": record.site,
             "environmentGroup": record.environment_group,
             "count": record.account_count,
@@ -207,6 +208,13 @@ class CloudEnvironmentPlanService:
             "orderCount": record.order_count,
             "expiresAt": _as_aware(record.expires_at).isoformat(),
             "runtime": "cloud",
+            "reused": bool(reused),
+            "preview": list(safe_summary.get("preview") or [])[:5],
+        }
+
+    @staticmethod
+    def _preview_summary(accounts: list[object]) -> dict[str, Any]:
+        return {
             "preview": [
                 {
                     "emailMasked": account.safe_email,
@@ -214,8 +222,146 @@ class CloudEnvironmentPlanService:
                     "cookieBytes": len(account.cookie_text.encode("utf-8")),
                 }
                 for account in accounts[:5]
-            ],
+            ]
         }
+
+    @staticmethod
+    def _active_source_record(
+        session: Session,
+        *,
+        tenant_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        source_hash: str,
+    ) -> EnvironmentAccountPlan | None:
+        return session.scalar(
+            select(EnvironmentAccountPlan).where(
+                EnvironmentAccountPlan.tenant_id == tenant_id,
+                EnvironmentAccountPlan.created_by_user_id == actor_user_id,
+                EnvironmentAccountPlan.source_hash == source_hash,
+                EnvironmentAccountPlan.status == "parsed",
+                EnvironmentAccountPlan.expires_at > utcnow(),
+            )
+        )
+
+    def _idempotency_replay(
+        self,
+        session: Session,
+        *,
+        tenant_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        idempotency_key: str,
+        source_hash: str,
+    ) -> dict[str, Any] | None:
+        request = session.scalar(
+            select(EnvironmentAccountPlanRequest).where(
+                EnvironmentAccountPlanRequest.tenant_id == tenant_id,
+                EnvironmentAccountPlanRequest.created_by_user_id == actor_user_id,
+                EnvironmentAccountPlanRequest.idempotency_key == idempotency_key,
+            )
+        )
+        if request is None:
+            return None
+        if request.source_hash != source_hash:
+            raise CloudEnvironmentPlanError(
+                "environment_plan_idempotency_conflict",
+                "同一请求编号已用于不同文件，请重新选择 xlsx",
+                status=409,
+            )
+        record = session.scalar(
+            select(EnvironmentAccountPlan).where(
+                EnvironmentAccountPlan.id == request.cloud_plan_id,
+                EnvironmentAccountPlan.tenant_id == tenant_id,
+                EnvironmentAccountPlan.created_by_user_id == actor_user_id,
+            )
+        )
+        if record is None:
+            raise CloudEnvironmentPlanError(
+                "environment_plan_idempotency_invalid",
+                "原解析请求记录已失效，请使用新的请求编号重试",
+                status=409,
+            )
+        return self._public_result(record, reused=request.reused)
+
+    @staticmethod
+    def _add_request_record(
+        session: Session,
+        *,
+        tenant_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        record: EnvironmentAccountPlan,
+        idempotency_key: str,
+        source_hash: str,
+        reused: bool,
+    ) -> None:
+        session.add(EnvironmentAccountPlanRequest(
+            tenant_id=tenant_id,
+            created_by_user_id=actor_user_id,
+            cloud_plan_id=record.id,
+            idempotency_key=idempotency_key,
+            source_hash=source_hash,
+            reused=reused,
+        ))
+
+    def _recover_concurrent_insert(
+        self,
+        session: Session,
+        *,
+        tenant_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        idempotency_key: str,
+        source_hash: str,
+        cause: IntegrityError,
+    ) -> dict[str, Any]:
+        session.rollback()
+        replay = self._idempotency_replay(
+            session,
+            tenant_id=tenant_id,
+            actor_user_id=actor_user_id,
+            idempotency_key=idempotency_key,
+            source_hash=source_hash,
+        )
+        if replay is not None:
+            return replay
+        reusable = self._active_source_record(
+            session,
+            tenant_id=tenant_id,
+            actor_user_id=actor_user_id,
+            source_hash=source_hash,
+        )
+        if reusable is None:
+            raise CloudEnvironmentPlanError(
+                "environment_plan_concurrent_conflict",
+                "并发解析计划状态已变化，请重试上传",
+                status=409,
+            ) from cause
+        self._add_request_record(
+            session,
+            tenant_id=tenant_id,
+            actor_user_id=actor_user_id,
+            record=reusable,
+            idempotency_key=idempotency_key,
+            source_hash=source_hash,
+            reused=True,
+        )
+        try:
+            session.flush()
+        except IntegrityError as retry_exc:
+            session.rollback()
+            replay = self._idempotency_replay(
+                session,
+                tenant_id=tenant_id,
+                actor_user_id=actor_user_id,
+                idempotency_key=idempotency_key,
+                source_hash=source_hash,
+            )
+            if replay is not None:
+                return replay
+            raise CloudEnvironmentPlanError(
+                "environment_plan_concurrent_conflict",
+                "并发解析计划状态已变化，请重试上传",
+                status=409,
+            ) from retry_exc
+        return self._public_result(reusable, reused=True)
 
     def parse(
         self,
@@ -229,7 +375,6 @@ class CloudEnvironmentPlanService:
         site: str,
         environment_group: str,
     ) -> dict[str, Any]:
-        self.expire_plans(session)
         source = _decode_upload(content_base64)
         normalized_site = normalize_env_site(site)
         normalized_group = str(environment_group or "").strip()
@@ -240,22 +385,44 @@ class CloudEnvironmentPlanService:
             + b"\0"
             + normalized_group.encode("utf-8")
         ).hexdigest()
-        existing = session.scalar(
-            select(EnvironmentAccountPlan).where(
-                EnvironmentAccountPlan.tenant_id == tenant_id,
-                EnvironmentAccountPlan.created_by_user_id == actor_user_id,
-                EnvironmentAccountPlan.idempotency_key == idempotency_key,
-            )
+        replay = self._idempotency_replay(
+            session,
+            tenant_id=tenant_id,
+            actor_user_id=actor_user_id,
+            idempotency_key=idempotency_key,
+            source_hash=source_hash,
         )
-        if existing is not None:
-            if existing.source_hash != source_hash:
-                raise CloudEnvironmentPlanError(
-                    "environment_plan_idempotency_conflict",
-                    "同一请求编号已用于不同文件，请重新选择 xlsx",
-                    status=409,
+        if replay is not None:
+            return replay
+        self.expire_plans(session)
+        reusable = self._active_source_record(
+            session,
+            tenant_id=tenant_id,
+            actor_user_id=actor_user_id,
+            source_hash=source_hash,
+        )
+        if reusable is not None:
+            self._add_request_record(
+                session,
+                tenant_id=tenant_id,
+                actor_user_id=actor_user_id,
+                record=reusable,
+                idempotency_key=idempotency_key,
+                source_hash=source_hash,
+                reused=True,
+            )
+            try:
+                session.flush()
+            except IntegrityError as exc:
+                return self._recover_concurrent_insert(
+                    session,
+                    tenant_id=tenant_id,
+                    actor_user_id=actor_user_id,
+                    idempotency_key=idempotency_key,
+                    source_hash=source_hash,
+                    cause=exc,
                 )
-            accounts = self._accounts(existing)
-            return self._public_result(existing, accounts)
+            return self._public_result(reusable, reused=True)
         active_count = int(
             session.scalar(
                 select(func.count(EnvironmentAccountPlan.id)).where(
@@ -332,6 +499,7 @@ class CloudEnvironmentPlanService:
             site=normalized_site,
             environment_group=normalized_group,
             source_hash=source_hash,
+            preview_summary=self._preview_summary(accounts),
             encrypted_payload=encrypted,
             status="parsed",
             account_count=len(accounts),
@@ -342,25 +510,27 @@ class CloudEnvironmentPlanService:
             expires_at=now + timedelta(seconds=self.plan_ttl_seconds),
         )
         session.add(record)
+        self._add_request_record(
+            session,
+            tenant_id=tenant_id,
+            actor_user_id=actor_user_id,
+            record=record,
+            idempotency_key=idempotency_key,
+            source_hash=source_hash,
+            reused=False,
+        )
         try:
             session.flush()
         except IntegrityError as exc:
-            session.rollback()
-            existing = session.scalar(
-                select(EnvironmentAccountPlan).where(
-                    EnvironmentAccountPlan.tenant_id == tenant_id,
-                    EnvironmentAccountPlan.created_by_user_id == actor_user_id,
-                    EnvironmentAccountPlan.idempotency_key == idempotency_key,
-                )
+            return self._recover_concurrent_insert(
+                session,
+                tenant_id=tenant_id,
+                actor_user_id=actor_user_id,
+                idempotency_key=idempotency_key,
+                source_hash=source_hash,
+                cause=exc,
             )
-            if existing is not None and existing.source_hash == source_hash:
-                return self._public_result(existing, self._accounts(existing))
-            raise CloudEnvironmentPlanError(
-                "environment_plan_idempotency_conflict",
-                "同一请求编号已用于不同文件，请重新选择 xlsx",
-                status=409,
-            ) from exc
-        return self._public_result(record, accounts)
+        return self._public_result(record, reused=False)
 
     def load_for_execution(
         self,
@@ -368,7 +538,7 @@ class CloudEnvironmentPlanService:
         *,
         tenant_id: uuid.UUID,
         actor_user_id: uuid.UUID,
-        plan_id: object,
+        cloud_plan_id: object,
         site: str,
         environment_group: str,
         total_count: int,
@@ -377,7 +547,7 @@ class CloudEnvironmentPlanService:
             session,
             tenant_id=tenant_id,
             actor_user_id=actor_user_id,
-            plan_id=plan_id,
+            cloud_plan_id=cloud_plan_id,
             for_update=True,
         )
         if record.status != "parsed":
@@ -423,7 +593,7 @@ class CloudEnvironmentPlanService:
         )
         if record is None:
             return None
-        return self._public_result(record, self._accounts(record))
+        return self._public_result(record, reused=True)
 
     @staticmethod
     def mark_submitted(record: EnvironmentAccountPlan) -> None:

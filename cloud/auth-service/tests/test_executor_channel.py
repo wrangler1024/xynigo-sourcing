@@ -152,6 +152,7 @@ def test_environment_plan_is_parsed_in_cloud_and_site_errors_are_structured(
         assert created.status_code == 201, created.text
         result = created.json()
         assert result["runtime"] == "cloud"
+        assert result["reused"] is False
         assert result["count"] == 1
         assert result["preview"][0]["emailMasked"] != "buyer1@example.test"
 
@@ -160,7 +161,7 @@ def test_environment_plan_is_parsed_in_cloud_and_site_errors_are_structured(
             params={"site": "MX", "environmentGroup": "MX采购"},
         )
         assert latest.status_code == 200
-        assert latest.json()["plan"]["planId"] == result["planId"]
+        assert latest.json()["plan"]["cloudPlanId"] == result["cloudPlanId"]
 
         mismatch = client.post(
             "/v1/environment-plans/parse",
@@ -576,7 +577,7 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
         assert parse_result["runtime"] == "cloud"
         assert parse_result["count"] == 2
         assert parse_result["environmentGroup"] == "MX采购测试"
-        plan_id = parse_result["planId"]
+        cloud_plan_id = parse_result["cloudPlanId"]
         assert heartbeat(
             device_client, credential, capabilities=capabilities
         )["task"] is None
@@ -587,7 +588,7 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
             "site": "MX",
             "purchaseDate": "20260901",
             "environmentGroup": "MX采购测试",
-            "planRef": plan_id,
+            "cloudPlanId": cloud_plan_id,
             "totalCount": 2,
             "verifySampleCount": 2,
             "assignments": [{"purchaserLabel": "合成采购员", "count": 2}],
@@ -634,7 +635,7 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
             assert run.executor_task_id == task.id
             assert task.task_type == "environment.create-bound.v1"
             serialized = json.dumps(task.payload_envelope)
-            assert plan_id not in serialized
+            assert cloud_plan_id not in serialized
             assert "MX采购测试" not in serialized
 
         leased = heartbeat(
@@ -642,7 +643,8 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
         )["task"]
         assert leased["type"] == "environment.create-bound.v1"
         assert leased["payload"]["runId"] == snapshot["runId"]
-        assert leased["payload"]["planRef"] == plan_id
+        assert leased["payload"]["cloudPlanId"] == cloud_plan_id
+        assert "planRef" not in leased["payload"]
         assert len(leased["payload"]["planAccounts"]) == 2
         lease_token = leased["leaseToken"]
         leased_snapshot = web_client.get(
@@ -764,7 +766,9 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
         assert finished.status_code == 200, finished.text
         with database.session_factory() as session:
             terminal_task = session.get(ExecutorTask, uuid.UUID(task_id))
-            stored_plan = session.get(EnvironmentAccountPlan, uuid.UUID(plan_id))
+            stored_plan = session.get(
+                EnvironmentAccountPlan, uuid.UUID(cloud_plan_id)
+            )
             assert terminal_task is not None
             assert "encryptedPayload" not in terminal_task.payload_envelope
             assert terminal_task.payload_envelope.get("purgedAt")

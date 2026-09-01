@@ -1329,6 +1329,9 @@ class EnvironmentAccountPlan(Base):
     site: Mapped[str] = mapped_column(String(8), nullable=False)
     environment_group: Mapped[str] = mapped_column(String(255), nullable=False)
     source_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    preview_summary: Mapped[dict[str, Any]] = mapped_column(
+        JSON, nullable=False, default=dict
+    )
     encrypted_payload: Mapped[bytes | None] = mapped_column(LargeBinary)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="parsed")
     account_count: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -1374,6 +1377,15 @@ class EnvironmentAccountPlan(Base):
             "created_by_user_id",
             "created_at",
         ),
+        Index(
+            "uq_environment_account_plan_active_source",
+            "tenant_id",
+            "created_by_user_id",
+            "source_hash",
+            unique=True,
+            postgresql_where=text("status = 'parsed'"),
+            sqlite_where=text("status = 'parsed'"),
+        ),
     )
 
 
@@ -1401,6 +1413,44 @@ class EnvironmentWorkspacePreference(Base):
         CheckConstraint(
             "purchase_site IN ('US', 'MX')",
             name="ck_environment_workspace_preference_site",
+        ),
+    )
+
+
+class EnvironmentAccountPlanRequest(Base):
+    """Exact idempotency replay for cloud environment-plan parse requests."""
+
+    __tablename__ = "environment_account_plan_requests"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    created_by_user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    cloud_plan_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("environment_account_plans.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    reused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "created_by_user_id",
+            "idempotency_key",
+            name="uq_environment_account_plan_request_idempotency",
+        ),
+        Index(
+            "ix_environment_account_plan_request_plan",
+            "cloud_plan_id",
+            "created_at",
         ),
     )
 

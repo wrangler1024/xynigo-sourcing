@@ -6,7 +6,14 @@ from datetime import datetime
 from typing import Literal
 import uuid
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 
 SAFE_KEY_RE = r"^[A-Za-z0-9._:-]+$"
@@ -51,8 +58,12 @@ class EnvironmentCreationRunCreateBody(BaseModel):
     site: Literal["US", "MX"]
     purchaseDate: str = Field(pattern=r"^20\d{6}$")
     environmentGroup: str = Field(min_length=1, max_length=12)
-    planRef: str | None = Field(
-        default=None, min_length=8, max_length=128, pattern=SAFE_KEY_RE
+    cloudPlanId: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("cloudPlanId", "planRef"),
+        min_length=8,
+        max_length=128,
+        pattern=SAFE_KEY_RE,
     )
     buyerLabel: str | None = Field(default=None, min_length=1, max_length=100)
     totalCount: int = Field(ge=1, le=2000)
@@ -71,8 +82,8 @@ class EnvironmentCreationRunCreateBody(BaseModel):
         if self.verifySampleCount > self.totalCount:
             raise ValueError("verifySampleCount cannot exceed totalCount")
         if self.mode == "bound":
-            if not self.planRef:
-                raise ValueError("bound environment run requires planRef")
+            if not self.cloudPlanId:
+                raise ValueError("bound environment run requires cloudPlanId")
             if not self.assignments:
                 raise ValueError("bound environment run requires assignments")
             if sum(item.count for item in self.assignments) != self.totalCount:
@@ -158,7 +169,12 @@ class EnvironmentPlanParseResult(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    planId: str = Field(min_length=8, max_length=128, pattern=SAFE_KEY_RE)
+    cloudPlanId: str = Field(
+        validation_alias=AliasChoices("cloudPlanId", "planId"),
+        min_length=8,
+        max_length=128,
+        pattern=SAFE_KEY_RE,
+    )
     site: Literal["US", "MX"]
     environmentGroup: str | None = Field(default=None, min_length=1, max_length=12)
     count: int = Field(ge=1, le=2000)
@@ -170,6 +186,7 @@ class EnvironmentPlanParseResult(BaseModel):
     orderCount: int = Field(ge=0, le=2000)
     expiresAt: datetime | None = None
     runtime: Literal["cloud", "local"] = "local"
+    reused: bool = False
     preview: list[EnvironmentPlanPreviewItem] = Field(default_factory=list, max_length=5)
 
     _validate_expiry = field_validator("expiresAt")(_timezone_required)

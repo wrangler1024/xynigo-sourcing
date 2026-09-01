@@ -116,7 +116,7 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             "let querySubmitting = false;",
             "querySubmitting || isRunning",
             "workspaceMutationKey('query-start', payload)",
-            "workspaceMutationKey('env-start', payload)",
+            "workspaceMutationKey('env-start', idempotencyPayload)",
             "workspaceMutationKey('env-backup-start', payload)",
         ):
             self.assertIn(marker, html)
@@ -171,13 +171,32 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             "if (CLOUD_WEB_MODE && envProgressLoaded && !envRunning && !backupRunning",
             "if (groupLoadInFlight) return groupLoadInFlight;",
             "error.code === 'executor_task_busy'",
-            "filename:file.name, contentBase64, site:$('envSite').value",
+            "filename:file.name, contentBase64, site:selectedSite",
             "站点已变更，请重新选择 xlsx",
             "mixedSiteCookieCount",
             "混合登录态（允许）",
             "将按当前选择的",
         ):
             self.assertIn(marker, html)
+
+    def test_cloud_environment_plan_naming_reuse_and_stale_upload_guard(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        for marker in (
+            "let envCloudPlanId = null;",
+            "let envLocalPlanId = null;",
+            "let envUploadRevision = 0;",
+            "envCloudPlanId = result.cloudPlanId;",
+            "cloudPlanId:envCloudPlanId",
+            "planId:envLocalPlanId",
+            "检测到相同文件，已复用 ${cloudPlanExpiryTime(result.expiresAt)} 前有效的解析计划",
+            "uploadRevision !== envUploadRevision",
+            "$('envSite').value !== selectedSite",
+            "$('envSiteGroup').value !== selectedGroup",
+            "envUploadRevision += 1;",
+        ):
+            self.assertIn(marker, html)
+        self.assertNotIn("let envPlanId = null;", html)
+        self.assertNotIn("planRef:envPlanId", html)
         for removed in (
             "'/api/update/'",
             "CLOUD_WEB_MODE ? 900000 : 30000",
