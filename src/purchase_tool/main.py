@@ -64,6 +64,7 @@ from .env_batch import (BACKUP_MAX_COUNT, BACKUP_REMARK, BUYER_CODES,
                         backup_result_tsv_bytes,
                         batch_fingerprint, build_batch_plan,
                         count_mixed_site_accounts,
+                        deserialize_buyer_accounts,
                         envbatch_preflight,
                         mapping_workbook_bytes, normalize_backup_type,
                         normalize_buyer, parse_assignment,
@@ -1594,6 +1595,15 @@ class EnvBatchJob(object):
         # 环境创建临时兼容号商提供的 MX/US 混合登录态，Cookie 原文
         # 不裁剪；仅 Cookie 完全属于另一站时在保存计划前整批拒收。
         validate_accounts_site(accounts, site, allow_mixed=True)
+        return self._store_pending_plan(filename, source, accounts, site)
+
+    def import_cloud_plan(self, accounts, site='MX', filename='云端解析计划.xlsx'):
+        """Hydrate an authenticated cloud plan into short-lived local memory."""
+        site = normalize_env_site(site)
+        parsed = deserialize_buyer_accounts(accounts, site=site)
+        return self._store_pending_plan(filename, b'', parsed, site)
+
+    def _store_pending_plan(self, filename, source, accounts, site):
         mixed_site_cookie_count = count_mixed_site_accounts(accounts)
         token = secrets.token_urlsafe(24)
         with self.lock:
@@ -3330,6 +3340,7 @@ class Handler(BaseHTTPRequestHandler):
                 '/api/assistant/procurement-import/parse',
                 '/api/buyer-library/import/parse',
                 '/api/envbatch/parse',
+                '/api/envbatch/cloud-plan',
                 '/api/register/validate',
             }
             body = self._body(
@@ -3573,6 +3584,12 @@ class Handler(BaseHTTPRequestHandler):
                 result = STATE.env_job.parse(
                     body.get('filename'), body.get('contentBase64'),
                     site=body.get('site') or 'MX')
+                self._json(result)
+            elif path == '/api/envbatch/cloud-plan':
+                result = STATE.env_job.import_cloud_plan(
+                    body.get('accounts'),
+                    site=body.get('site') or 'MX',
+                    filename=body.get('filename') or '云端解析计划.xlsx')
                 self._json(result)
             elif path == '/api/envbatch/preview':
                 rows = STATE.env_job.preview(

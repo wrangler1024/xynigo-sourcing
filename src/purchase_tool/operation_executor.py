@@ -106,11 +106,23 @@ class LocalOperationExecutor(object):
                 raise OperationExecutionError(
                     'operation_payload_invalid', '正式建环境任务缺少采购员分配')
             assignment = self._assignment_text(assignments, total)
+            plan_ref = self._required_text(payload, 'planRef')
+            plan_accounts = payload.get('planAccounts')
+            if plan_accounts is not None:
+                if not isinstance(plan_accounts, list) or len(plan_accounts) != total:
+                    raise OperationExecutionError(
+                        'operation_payload_invalid', '云端解析计划账号数量无效')
+                imported = self._request('POST', '/api/envbatch/cloud-plan', {
+                    'site': site,
+                    'accounts': plan_accounts,
+                    'filename': '云端加密解析计划.xlsx',
+                })
+                plan_ref = self._required_text(imported, 'planId')
             start_path = '/api/envbatch/start'
             progress_path = '/api/envbatch/progress'
             stop_path = '/api/envbatch/stop'
             start_body = {
-                'planId': self._required_text(payload, 'planRef'),
+                'planId': plan_ref,
                 'assignment': assignment,
                 'purchaseDate': purchase_date,
                 'verifySampleCount': verify_count,

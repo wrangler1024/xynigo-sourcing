@@ -1312,6 +1312,99 @@ class ProcurementImportPlan(Base):
     )
 
 
+class EnvironmentAccountPlan(Base):
+    """Encrypted, short-lived buyer-account plan parsed by the cloud."""
+
+    __tablename__ = "environment_account_plans"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    created_by_user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    site: Mapped[str] = mapped_column(String(8), nullable=False)
+    environment_group: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    encrypted_payload: Mapped[bytes | None] = mapped_column(LargeBinary)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="parsed")
+    account_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    cookie_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    mixed_site_cookie_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    password_kind_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    order_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "created_by_user_id",
+            "idempotency_key",
+            name="uq_environment_account_plan_idempotency",
+        ),
+        CheckConstraint("site IN ('US', 'MX')", name="ck_environment_account_plan_site"),
+        CheckConstraint(
+            "status IN ('parsed', 'submitted', 'expired')",
+            name="ck_environment_account_plan_status",
+        ),
+        CheckConstraint(
+            "account_count >= 1 AND cookie_count >= 0 AND "
+            "mixed_site_cookie_count >= 0 AND password_kind_count >= 0 AND "
+            "order_count >= 0",
+            name="ck_environment_account_plan_counts",
+        ),
+        Index(
+            "ix_environment_account_plan_tenant_expiry",
+            "tenant_id",
+            "expires_at",
+        ),
+        Index(
+            "ix_environment_account_plan_user_latest",
+            "tenant_id",
+            "created_by_user_id",
+            "created_at",
+        ),
+    )
+
+
+class EnvironmentWorkspacePreference(Base):
+    """Cloud-owned site/group preference; never occupies an executor task."""
+
+    __tablename__ = "environment_workspace_preferences"
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    purchase_site: Mapped[str] = mapped_column(String(8), nullable=False, default="MX")
+    purchase_tags: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "purchase_site IN ('US', 'MX')",
+            name="ck_environment_workspace_preference_site",
+        ),
+    )
+
+
 class ProcurementImportJob(Base):
     """Durable progress for an idempotent ordinary-Sheet import run."""
 

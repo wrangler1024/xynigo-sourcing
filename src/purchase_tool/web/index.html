@@ -2567,7 +2567,7 @@ let procurementImportPlanId = null;
 let procurementImportTargetValidated = false;
 let procurementImportSyncTimer = null;
 let envPlanId = null;
-let envPlanExecutorId = '';
+let envCloudPlanPreview = [];
 let envAccountCount = 0;
 let envRunning = false;
 let envSubmitting = false;
@@ -2587,6 +2587,8 @@ let envPreflightReady = false;
 let envGroupSaving = false;
 let envPreferenceSaveTimer = null;
 let envPreferenceSaveRevision = 0;
+let envPreferenceSavePending = null;
+let envPreferenceSaveInFlight = false;
 let envSelectionInitialized = false;
 let envAvailableGroups = [];
 let larkReady = false;
@@ -3113,6 +3115,11 @@ function cloudApiError(payload, status) {
     permission_denied:'当前角色没有执行此操作的权限', web_csrf_required:'页面安全校验失败，请刷新后重试',
     procurement_import_cloud_disabled:'云端采购协作导入尚未启用',
     procurement_import_plan_expired:'解析计划已过期，请重新选择 xlsx',
+    environment_plan_cloud_disabled:'云端买家号解析加密能力尚未启用',
+    environment_plan_expired:'解析计划已过期，请重新选择 xlsx',
+    environment_plan_consumed:'解析计划已提交，请重新上传 xlsx',
+    environment_plan_context_mismatch:'站点、分组或账号数量已变化，请重新上传 xlsx',
+    environment_plan_limit:'短时解析计划过多，请稍后重试',
     purchase_claim_conflict:'采购任务已被其他成员处理，请刷新后重试',
     purchase_order_not_found:'采购单不存在或不属于当前组织',
     executor_not_found:'本地执行器设备不存在或不属于当前组织',
@@ -3493,29 +3500,47 @@ async function waitCloudExecutorTask(taskId, timeoutMs=120000, onState=null) {
   throw error;
 }
 
-async function cloudEnvironmentPlanParse(filename, contentBase64, site) {
-  const executor = await cloudFormalExecutor('environment.parse.v1');
-  const executorName = String(executor.displayName || '所选电脑');
-  $('envPlan').textContent = `文件已通过 HTTPS 提交；云端加密中转至 ${executorName}，等待本地执行器解析…`;
-  const created = await cloudFetchJson('/v1/environment-plans/parse', {
+async function cloudEnvironmentPlanParse(filename, contentBase64, site, environmentGroup) {
+  $('envPlan').textContent = '文件已通过 HTTPS 提交；云端正在内存解析并生成加密短期计划…';
+  const result = await cloudFetchJson('/v1/environment-plans/parse', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body:JSON.stringify({
       idempotencyKey:newWorkspaceMutationKey('environment-parse'),
-      executorId:executor.id, filename, contentBase64, site,
+      filename, contentBase64, site, environmentGroup,
     })
   });
-  const taskId = String(created.task && created.task.id || '');
-  if (!taskId) throw new Error('云端未返回文件解析任务编号');
-  const task = await waitCloudExecutorTask(taskId, 120000, state => {
-    const labels = {
-      queued:'排队等待', leased:'已领取', running:'正在解析',
-      succeeded:'解析完成'
-    };
-    const status = labels[String(state.status || '')]
-      || String(state.status || '等待中');
-    $('envPlan').textContent = `文件已通过 HTTPS 提交；${executorName} ${status}。云端不保存明文文件。`;
-  });
-  return {result:task.resultSummary || {}, executorId:String(executor.id || '')};
+  return result;
+}
+
+let envPlanRestoreInFlight = false;
+async function restoreLatestCloudEnvironmentPlan() {
+  if (!CLOUD_WEB_MODE || envPlanRestoreInFlight || envPlanId || envRunning
+      || backupRunning || envSubmitting || envMode !== 'bound') return false;
+  const site = $('envSite').value;
+  const environmentGroup = String($('envSiteGroup').value || '').trim();
+  if (!environmentGroup) return false;
+  envPlanRestoreInFlight = true;
+  try {
+    const payload = await cloudFetchJson(
+      `/v1/environment-plans/latest?site=${encodeURIComponent(site)}&environmentGroup=${encodeURIComponent(environmentGroup)}`);
+    const result = payload && payload.plan;
+    if (!result || envPlanId || $('envSite').value !== site
+        || $('envSiteGroup').value !== environmentGroup) return false;
+    envPlanId = String(result.planId || '');
+    envAccountCount = Number(result.count || 0);
+    envCloudPlanPreview = Array.isArray(result.preview) ? result.preview : [];
+    if (!envPlanId || envAccountCount < 1) return false;
+    if (!applyAssignmentTemplate(envImportBuyerPlan)) splitEnvEvenly(envDefaultSplit);
+    const mixed = Number(result.mixedSiteCookieCount || 0);
+    $('envStats').innerHTML = `<div class="stat-chip blue"><b>${envAccountCount}</b>账号总数</div><div class="stat-chip ok"><b>${result.cookieCount}/${envAccountCount}</b>Cookie 覆盖</div><div class="stat-chip ${mixed ? 'warn' : 'ok'}"><b>${mixed}</b>混合登录态（允许）</div><div class="stat-chip"><b>${result.passwordKindCount}</b>密码种类</div><div class="stat-chip ok"><b>0</b>文件内重复</div><div class="stat-chip ok"><b>0</b>格式问题</div><div class="stat-chip"><b>${result.orderCount}</b>单号已提取</div>`;
+    $('envPlan').textContent = `已恢复本次登录用户未过期的云端加密解析计划：${envAccountCount} 行。无需重新上传文件；正式执行前仍会实时复核 HubStudio。`;
+    refreshAssignUi();
+    return true;
+  } catch (_) {
+    return false;
+  } finally {
+    envPlanRestoreInFlight = false;
+  }
 }
 
 function workspaceSnapshotTimeText(snapshot) {
@@ -9141,7 +9166,7 @@ $('btnBuyerImportCommit').onclick = async () => {
 
 $('envFile').onchange = async e => {
   envPlanId = null;
-  envPlanExecutorId = '';
+  envCloudPlanPreview = [];
   envAccountCount = 0;
   $('btnEnvPreview').disabled = true;
   $('btnEnvStart').disabled = true;
@@ -9149,17 +9174,16 @@ $('envFile').onchange = async e => {
   const file = e.target.files[0];
   if (!file) { $('envPlan').textContent = '尚未选择文件'; return; }
   $('envPlan').textContent = CLOUD_WEB_MODE
-    ? '正在读取文件并准备提交到所选本地执行器…'
+    ? '正在读取文件并提交云端安全解析…'
     : '当前电脑正在解析并校验文件…';
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
     const contentBase64 = bytesToBase64(bytes);
     let result;
     if (CLOUD_WEB_MODE) {
-      const parsed = await cloudEnvironmentPlanParse(
-        file.name, contentBase64, $('envSite').value);
-      result = parsed.result;
-      envPlanExecutorId = parsed.executorId;
+      result = await cloudEnvironmentPlanParse(
+        file.name, contentBase64, $('envSite').value,
+        $('envSiteGroup').value);
     } else {
       result = await api('/api/envbatch/parse', {
         method:'POST', headers:{'Content-Type':'application/json'},
@@ -9170,6 +9194,7 @@ $('envFile').onchange = async e => {
     }
     envPlanId = result.planId;
     envAccountCount = result.count;
+    envCloudPlanPreview = Array.isArray(result.preview) ? result.preview : [];
     const mixedSiteCookieCount = Number(result.mixedSiteCookieCount || 0);
     if (!applyAssignmentTemplate(envImportBuyerPlan)) splitEnvEvenly(envDefaultSplit);
     refreshAssignUi();
@@ -9177,7 +9202,7 @@ $('envFile').onchange = async e => {
     const mixedNotice = mixedSiteCookieCount
       ? `\n\n⚠ 临时兼容：${mixedSiteCookieCount} 行同时包含墨西哥与美国登录域，将按当前选择的 ${$('envSite').value} 站建环境并原样写入 Cookie。`
       : '';
-    $('envPlan').textContent = `已校验 ${result.count} 行（仅显示脱敏信息）：\n` + result.preview.map(x => `${x.emailMasked} · 单号 ${x.orderMasked} · Cookie ${Math.ceil(x.cookieBytes / 1024)}KB`).join('\n') + (result.count > result.preview.length ? `\n…… 共 ${result.count} 行` : '') + mixedNotice + '\n\n页面已清空原始文件内容；所选本地执行器仅在短时内存保留解析计划，云端不保存明文文件。';
+    $('envPlan').textContent = `已校验 ${result.count} 行（仅显示脱敏信息）：\n` + result.preview.map(x => `${x.emailMasked} · 单号 ${x.orderMasked} · Cookie ${Math.ceil(x.cookieBytes / 1024)}KB`).join('\n') + (result.count > result.preview.length ? `\n…… 共 ${result.count} 行` : '') + mixedNotice + '\n\n页面已清空原始文件内容；云端只短时保存加密执行计划，正式执行时再通过加密通道交给所选本地执行器。';
     await refreshEnvPreflight();
     toast(mixedSiteCookieCount
       ? `校验通过：${result.count} 行，其中 ${mixedSiteCookieCount} 行混合登录态已临时允许`
@@ -9204,6 +9229,14 @@ $('btnEnvPreview').onclick = async () => {
     return;
   }
   if (!envPlanId) { toast('请先选择并解析 xlsx'); return; }
+  if (CLOUD_WEB_MODE) {
+    $('envPreviewText').textContent = `云端格式与站点校验通过，共 ${envAccountCount} 行：\n` +
+      envCloudPlanPreview.map(x => `${x.emailMasked} · 单号 ${x.orderMasked}`).join('\n') +
+      (envAccountCount > envCloudPlanPreview.length ? `\n…… 其余 ${envAccountCount - envCloudPlanPreview.length} 行已脱敏省略` : '') +
+      '\n\nHubStudio 环境冲突、续排序号与分组状态将在点击“正式执行”后由本地执行器实时复核。';
+    toast('云端干跑预览完成；未调用本地执行器');
+    return;
+  }
   try {
     const result = await api('/api/envbatch/preview', {
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -9300,7 +9333,7 @@ $('btnEnvStart').onclick = async () => {
     let result;
     if (CLOUD_WEB_MODE) {
       const executor = await cloudFormalExecutor(
-        'environment.create-bound.v1', envPlanExecutorId);
+        'environment.cloud-plan.v1');
       const assignments = envActiveBuyers().map(buyer => ({
         purchaserLabel:buyer.name, count:Number(envBuyerCounts[buyer.name] || 0),
       })).filter(item => item.count > 0);
@@ -9325,7 +9358,7 @@ $('btnEnvStart').onclick = async () => {
     }
     clearWorkspaceMutationKey('env-start', idempotencyKey);
     envPlanId = null;
-    envPlanExecutorId = '';
+    envCloudPlanPreview = [];
     envRunning = true;
     envStopRequested = false;
     envProgressLoaded = false;
@@ -9691,24 +9724,46 @@ function paintCachedEnvPreflightSelection() {
   return true;
 }
 
+async function flushEnvWorkspacePreferenceSave() {
+  if (envPreferenceSaveInFlight) return;
+  envPreferenceSaveInFlight = true;
+  try {
+    while (envPreferenceSavePending) {
+      const pending = envPreferenceSavePending;
+      envPreferenceSavePending = null;
+      try {
+        const options = {
+          method:CLOUD_WEB_MODE ? 'PUT' : 'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify(pending.body)
+        };
+        if (CLOUD_WEB_MODE) {
+          await cloudFetchJson('/v1/environment-preferences', options);
+        } else {
+          await api('/api/envbatch/preferences', options);
+        }
+      } catch (error) {
+        if (pending.revision === envPreferenceSaveRevision) {
+          toast('选择已生效，但偏好保存失败：' + error.message);
+        }
+      }
+    }
+  } finally {
+    envPreferenceSaveInFlight = false;
+    if (envPreferenceSavePending) flushEnvWorkspacePreferenceSave();
+  }
+}
+
 function scheduleEnvWorkspacePreferenceSave(site, group='') {
   rememberEnvWorkspacePreference(site, group);
   const revision = ++envPreferenceSaveRevision;
+  const body = {purchaseSite:site};
+  if (group) body.purchaseTags = {[site]:group};
+  envPreferenceSavePending = {body, revision};
   if (envPreferenceSaveTimer) clearTimeout(envPreferenceSaveTimer);
-  envPreferenceSaveTimer = setTimeout(async () => {
+  envPreferenceSaveTimer = setTimeout(() => {
     envPreferenceSaveTimer = null;
-    const body = {purchaseSite:site};
-    if (group) body.purchaseTags = {[site]:group};
-    try {
-      await api('/api/envbatch/preferences', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body:JSON.stringify(body)
-      });
-    } catch (error) {
-      if (revision === envPreferenceSaveRevision) {
-        toast('选择已生效，但偏好保存失败：' + error.message);
-      }
-    }
+    flushEnvWorkspacePreferenceSave();
   }, 250);
 }
 
@@ -9771,6 +9826,7 @@ async function loadEnvGroups(options={}) {
     if (snapshotMeta) {
       $('envPreflightText').textContent = `已恢复执行器非敏感快照 · ${workspaceSnapshotTimeText(snapshotMeta)}${snapshotMeta.stale ? ' · 正在后台刷新' : ''}`;
     }
+    await restoreLatestCloudEnvironmentPlan();
   } catch (e) {
     sel.innerHTML = '<option value="">分组接口不可用，请检查 HubStudio</option>';
     siteSel.disabled = envSubmitting || envRunning || envGroupSaving;
@@ -9781,7 +9837,7 @@ async function loadEnvGroups(options={}) {
 function invalidateEnvironmentPlan(message) {
   if (!envPlanId && !envAccountCount) return;
   envPlanId = null;
-  envPlanExecutorId = '';
+  envCloudPlanPreview = [];
   envAccountCount = 0;
   envBuyerCounts = {};
   $('envStats').innerHTML = '<div class="stat-chip"><b>—</b>需重新解析文件</div>';

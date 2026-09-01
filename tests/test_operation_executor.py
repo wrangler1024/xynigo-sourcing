@@ -27,6 +27,17 @@ class FakeRpc(object):
         return response({'started': True})
 
 
+class CloudPlanRpc(FakeRpc):
+    def __call__(self, payload):
+        self.calls.append(payload)
+        path = payload['path']
+        if payload['method'] == 'POST' and path == '/api/envbatch/cloud-plan':
+            return response({'planId': 'local-hydrated-plan-0001', 'count': 1})
+        if payload['method'] == 'GET' and path == self.progress_path:
+            return response(self.snapshots.pop(0))
+        return response({'started': True})
+
+
 def test_bound_environment_task_reports_rows_and_uses_explicit_group():
     rpc = FakeRpc('/api/envbatch/progress', [
         {
@@ -104,6 +115,52 @@ def test_bound_environment_task_reports_rows_and_uses_explicit_group():
     assert start['body']['operationRunKey'] == 'environment-run-0001'
     assert start['body']['assignment'] == '2:新刚'
     assert events[-1]['snapshot']['rows'][0]['ipVerified'] is True
+
+
+def test_bound_environment_task_hydrates_encrypted_cloud_plan_before_start():
+    rpc = CloudPlanRpc('/api/envbatch/progress', [{
+        'running': False,
+        'phase': 'completed',
+        'rows': [{
+            'accountId': 'a' * 64,
+            'emailMasked': 'bu***01@example.test',
+            'buyer': '新刚',
+            'envName': 'XG-MX-0901-001',
+            'state': 'done',
+            'completedSteps': ['done'],
+        }],
+        'summary': {'total': 1, 'done': 1, 'failed': 0},
+    }])
+    executor = LocalOperationExecutor(
+        rpc, poll_interval=0.05, sleep_fn=lambda _seconds: None)
+    account = {
+        'rowNumber': 2,
+        'email': 'buyer1@example.test',
+        'password': 'sensitive-password',
+        'keyUrl': 'https://vendor.example/api?orderNo=00000001',
+        'cookie': '[{"name":"session","value":"sensitive"}]',
+        'orderNo': '00000001',
+    }
+
+    outcome, code, _summary = executor.execute(
+        'environment.create-bound.v1', {
+            'runKey': 'environment-run-cloud-plan-0001',
+            'site': 'MX',
+            'purchaseDate': '20260901',
+            'environmentGroup': 'MX采购',
+            'planRef': 'cloud-plan-0001',
+            'planAccounts': [account],
+            'totalCount': 1,
+            'verifySampleCount': 0,
+            'assignments': [{'purchaserLabel': '新刚', 'count': 1}],
+        }, lambda **_event: None)
+
+    assert outcome == 'succeeded'
+    assert code == 'environment_completed'
+    assert rpc.calls[0]['path'] == '/api/envbatch/cloud-plan'
+    assert rpc.calls[0]['body']['accounts'] == [account]
+    assert rpc.calls[1]['path'] == '/api/envbatch/start'
+    assert rpc.calls[1]['body']['planId'] == 'local-hydrated-plan-0001'
 
 
 def test_backup_environment_task_honors_cooperative_cancellation():

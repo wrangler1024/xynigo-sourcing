@@ -111,15 +111,15 @@ class EnvironmentRetryRunCreateBody(BaseModel):
 
 
 class EnvironmentPlanParseBody(BaseModel):
-    """Encrypted upload request for parsing a buyer-account workbook locally."""
+    """Upload request for cloud parsing into an encrypted short-lived plan."""
 
     model_config = ConfigDict(extra="forbid")
 
     idempotencyKey: str = Field(min_length=8, max_length=128, pattern=SAFE_KEY_RE)
-    executorId: uuid.UUID
     filename: str = Field(min_length=1, max_length=255)
     contentBase64: str = Field(min_length=1, max_length=28 * 1024 * 1024)
     site: Literal["US", "MX"]
+    environmentGroup: str = Field(min_length=1, max_length=12)
 
     @field_validator("filename")
     @classmethod
@@ -130,6 +130,11 @@ class EnvironmentPlanParseBody(BaseModel):
         if not normalized.casefold().endswith(".xlsx"):
             raise ValueError("environment plan must be an xlsx workbook")
         return normalized
+
+    @field_validator("environmentGroup")
+    @classmethod
+    def validate_environment_group(cls, value: str) -> str:
+        return _single_line(value)
 
 
 class EnvironmentPlanPreviewItem(BaseModel):
@@ -149,12 +154,13 @@ class EnvironmentPlanPreviewItem(BaseModel):
 
 
 class EnvironmentPlanParseResult(BaseModel):
-    """Credential-free result returned by the local workbook parser."""
+    """Credential-free result returned by the cloud workbook parser."""
 
     model_config = ConfigDict(extra="forbid")
 
     planId: str = Field(min_length=8, max_length=128, pattern=SAFE_KEY_RE)
     site: Literal["US", "MX"]
+    environmentGroup: str | None = Field(default=None, min_length=1, max_length=12)
     count: int = Field(ge=1, le=2000)
     cookieCount: int = Field(ge=0, le=2000)
     mixedSiteCookieCount: int = Field(default=0, ge=0, le=2000)
@@ -162,7 +168,11 @@ class EnvironmentPlanParseResult(BaseModel):
     duplicateCount: int = Field(ge=0, le=2000)
     issueCount: int = Field(ge=0, le=2000)
     orderCount: int = Field(ge=0, le=2000)
+    expiresAt: datetime | None = None
+    runtime: Literal["cloud", "local"] = "local"
     preview: list[EnvironmentPlanPreviewItem] = Field(default_factory=list, max_length=5)
+
+    _validate_expiry = field_validator("expiresAt")(_timezone_required)
 
     @model_validator(mode="after")
     def validate_counts(self) -> "EnvironmentPlanParseResult":
@@ -176,6 +186,25 @@ class EnvironmentPlanParseResult(BaseModel):
         if any(value > self.count for value in bounded):
             raise ValueError("environment parse count exceeds total")
         return self
+
+
+class EnvironmentWorkspacePreferenceBody(BaseModel):
+    """Cloud-owned last selection; partial site-tag updates are allowed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    purchaseSite: Literal["US", "MX"]
+    purchaseTags: dict[Literal["US", "MX"], str] = Field(default_factory=dict)
+
+    @field_validator("purchaseTags")
+    @classmethod
+    def validate_partial_purchase_tags(
+        cls, value: dict[str, str]
+    ) -> dict[str, str]:
+        normalized = {key: _single_line(item) for key, item in value.items()}
+        if any(not item or len(item) > 12 for item in normalized.values()):
+            raise ValueError("purchase group is invalid")
+        return normalized
 
 
 class WorkspaceBuyerItem(BaseModel):

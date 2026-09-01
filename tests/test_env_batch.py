@@ -27,6 +27,7 @@ from purchase_tool.env_batch import (
     format_remark, load_vendor_xlsx,
     mapping_workbook_bytes, normalize_buyer, normalize_env_site,
     parse_assignment, parse_vendor_workbook, probe_env_ip,
+    deserialize_buyer_accounts, serialize_buyer_accounts,
     validate_assignment_template, validate_purchase_tag)
 from purchase_tool.hub_api import HubApiError, HubStudioApi
 
@@ -959,6 +960,24 @@ class EnvBatchTests(unittest.TestCase):
         aggregate_plan = build_batch_plan(
             aggregate_accounts, '4:新刚', purchase_date='20260819')
         self.assertEqual(len(aggregate_plan), 4)
+
+    def test_encrypted_cloud_plan_round_trip_is_strict_and_site_bound(self):
+        accounts = parse_vendor_workbook(BytesIO(workbook_bytes(demo_rows())))
+        payload = serialize_buyer_accounts(accounts)
+        restored = deserialize_buyer_accounts(payload, site='MX')
+        self.assertEqual(
+            [(item.email, item.password, item.cookie_text) for item in restored],
+            [(item.email, item.password, item.cookie_text) for item in accounts])
+
+        altered = [dict(item) for item in payload]
+        altered[0]['orderNo'] = 'deadbeef'
+        with self.assertRaisesRegex(EnvBatchError, '号商单号校验失败'):
+            deserialize_buyer_accounts(altered, site='MX')
+
+        us_payload = [dict(payload[0])]
+        us_payload[0]['cookie'] = '[{"domain":".us.shein.com"}]'
+        with self.assertRaisesRegex(EnvBatchError, 'Cookie 站点校验失败'):
+            deserialize_buyer_accounts(us_payload, site='MX')
 
     def test_bound_parallel_run_creates_all_rows(self):
         rows = []

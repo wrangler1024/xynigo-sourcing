@@ -362,6 +362,7 @@ class ExecutorChannelService:
                         heartbeat_at=now,
                         completed_at=now,
                     )
+                self._purge_sensitive_request(task, now=now)
                 self._event(task, "device_revoked", stable_code=task.result_code)
             self.session.commit()
         return executor
@@ -561,6 +562,7 @@ class ExecutorChannelService:
                 heartbeat_at=now,
                 completed_at=now,
             )
+            self._purge_sensitive_request(task, now=now)
             self._event(task, "cancelled", stable_code=task.result_code)
         else:
             task.status = "cancel_requested"
@@ -763,6 +765,7 @@ class ExecutorChannelService:
         else:
             task.result_summary = body.resultSummary
         task.lease_until = None
+        self._purge_sensitive_request(task, now=now)
         executor.last_seen_at = now
         if workspace_snapshot is not None:
             executor.workspace_snapshot = workspace_snapshot.model_dump(mode="json")
@@ -963,7 +966,20 @@ class ExecutorChannelService:
                     stable_code=task.result_code,
                     trace_id=trace_id,
                 )
+                self._purge_sensitive_request(task, now=now)
         self.session.commit()
+
+    @staticmethod
+    def _purge_sensitive_request(task: ExecutorTask, *, now: datetime) -> None:
+        """Erase buyer credentials once a bound environment task is terminal."""
+        if task.task_type != "environment.create-bound.v1":
+            return
+        envelope = dict(task.payload_envelope or {})
+        if "encryptedPayload" not in envelope:
+            return
+        envelope.pop("encryptedPayload", None)
+        envelope["purgedAt"] = now.isoformat()
+        task.payload_envelope = envelope
 
     def _device_task(
         self, *, executor: LocalExecutor, task_id: uuid.UUID

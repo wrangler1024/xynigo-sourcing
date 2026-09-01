@@ -14,6 +14,7 @@ MAX_RPC_RESPONSE_BYTES = 28 * 1024 * 1024
 SLOW_MUTATION_PATHS = frozenset({
     '/api/query',
     '/api/envbatch/parse',
+    '/api/envbatch/cloud-plan',
     '/api/envbatch/start',
     '/api/envbatch/backup/start',
     '/api/buyer-library/import/parse',

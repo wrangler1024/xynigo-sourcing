@@ -17,7 +17,7 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             "'/api/query'",
             "'/api/progress'",
             "'/api/envbatch/'",
-            "api('/api/envbatch/preferences')",
+            "cloudFetchJson('/v1/environment-preferences'",
             "'/api/buyer-library/import/'",
             "'/api/resources/stores'",
             "'/api/resources/proxies'",
@@ -36,11 +36,12 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         self.assertIn("renderEnvGroupsForSite(site, configured)", env_groups)
         self.assertIn("scheduleEnvWorkspacePreferenceSave", env_groups)
 
-    def test_phase_two_uses_cloud_runs_and_dedicated_encrypted_parse(self):
+    def test_phase_two_uses_cloud_runs_and_cloud_encrypted_parse(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")
         for marker in (
-            "environment.parse.v1",
+            "environment.cloud-plan.v1",
             "async function cloudEnvironmentPlanParse",
+            "async function restoreLatestCloudEnvironmentPlan",
             "'/v1/environment-plans/parse'",
             "'/v1/operation-runs/environment-creation'",
             "'/v1/operation-runs/logistics-query'",
@@ -68,7 +69,8 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             html.index("$('btnEnvPreview').onclick")
         ]
         self.assertIn("cloudEnvironmentPlanParse", parse_handler)
-        self.assertIn("envPlanExecutorId = parsed.executorId", parse_handler)
+        self.assertIn("$('envSiteGroup').value", parse_handler)
+        self.assertIn("envCloudPlanPreview", parse_handler)
 
     def test_field_feedback_fixes_use_one_selected_state_source(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")
@@ -98,8 +100,8 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
 
         self.assertIn("payload.cachedResult", html)
         self.assertIn("只读配置快照", html)
-        self.assertIn("云端加密中转至 ${executorName}", html)
-        self.assertIn("云端不保存明文文件", html)
+        self.assertIn("云端正在内存解析并生成加密短期计划", html)
+        self.assertIn("云端只短时保存加密执行计划", html)
         self.assertNotIn("coreVersion=148", html)
 
     def test_cloud_workspace_renews_sessions_and_idempotently_submits_writes(self):

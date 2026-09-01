@@ -91,11 +91,17 @@ from .executor_contract import (
 )
 from .executor_payload_crypto import ExecutorPayloadCipher
 from .executor_service import ExecutorChannelService, ExecutorServiceError
+from .environment_plan_crypto import EnvironmentPlanCipher
+from .environment_plan_service import (
+    CloudEnvironmentPlanError,
+    CloudEnvironmentPlanService,
+)
 from .local_executor_release import (
     latest_local_executor_release,
     resolve_local_executor_release_asset,
 )
 from .models import (
+    EnvironmentWorkspacePreference,
     LocalExecutor,
     LocalLoginRequest,
     OAuthLoginAttempt,
@@ -112,6 +118,7 @@ from .operation_contract import (
     EnvironmentCreationRunCreateBody,
     EnvironmentPlanParseBody,
     EnvironmentRetryRunCreateBody,
+    EnvironmentWorkspacePreferenceBody,
     LogisticsQueryRunBody,
     LogisticsQueryRunCreateBody,
 )
@@ -389,6 +396,17 @@ def create_app(
     executor_payload_cipher = (
         ExecutorPayloadCipher(buyer_credential_key) if buyer_credential_key else None
     )
+    environment_plan_service = (
+        CloudEnvironmentPlanService(
+            cipher=EnvironmentPlanCipher(buyer_credential_key),
+            plan_ttl_seconds=settings.environment_plan_ttl_seconds,
+            max_active_plans_per_tenant=(
+                settings.environment_plan_max_active_plans_per_tenant
+            ),
+        )
+        if buyer_credential_key
+        else None
+    )
     operation_sync_worker = None
     if settings.feishu_operation_sync_enabled:
         operation_sync_worker = FeishuOperationSyncWorker(
@@ -470,6 +488,7 @@ def create_app(
     app.state.directory_client = directory_client
     app.state.buyer_credential_cipher = buyer_credential_cipher
     app.state.executor_payload_cipher = executor_payload_cipher
+    app.state.environment_plan_service = environment_plan_service
     app.state.operation_sync_worker = operation_sync_worker
     app.state.purchase_sync_worker = purchase_sync_worker
     app.state.procurement_import_service = procurement_import_service
@@ -1751,10 +1770,13 @@ def create_app(
             authorization=authorization,
             audit_action="executor.workspace_snapshot.read",
         )
-        return executor_channel(session).workspace_snapshot_payload(
+        payload = executor_channel(session).workspace_snapshot_payload(
             tenant_id=actor.tenant.id,
             user_id=actor.user.id,
             executor_id=executor_id,
+        )
+        return merge_cloud_environment_preferences(
+            session, actor.tenant.id, actor.user.id, payload
         )
 
     @app.post(
@@ -1788,7 +1810,7 @@ def create_app(
             payload={},
             idempotency_key=body.idempotencyKey,
         )
-        return {
+        payload = {
             **service.workspace_snapshot_payload(
                 tenant_id=actor.tenant.id,
                 user_id=actor.user.id,
@@ -1796,10 +1818,162 @@ def create_app(
             ),
             "task": service.task_payload(task),
         }
+        return merge_cloud_environment_preferences(
+            session, actor.tenant.id, actor.user.id, payload
+        )
+
+    def merge_cloud_environment_preferences(
+        session: Session,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        record = session.get(EnvironmentWorkspacePreference, (tenant_id, user_id))
+        if record is None or not isinstance(payload.get("snapshot"), dict):
+            return payload
+        result = dict(payload)
+        snapshot = dict(payload["snapshot"])
+        preferences = dict(snapshot.get("preferences") or {})
+        tags = dict(preferences.get("purchaseTags") or {})
+        tags.update({
+            key: str(value or "")
+            for key, value in dict(record.purchase_tags or {}).items()
+            if key in {"US", "MX"}
+        })
+        preferences["purchaseSite"] = record.purchase_site
+        preferences["purchaseTags"] = {
+            "US": str(tags.get("US") or ""),
+            "MX": str(tags.get("MX") or ""),
+        }
+        snapshot["preferences"] = preferences
+        result["snapshot"] = snapshot
+        return result
+
+    @app.get("/v1/environment-preferences")
+    def get_environment_preferences(
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="resource.environment.create",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="resource.environment.preference.read",
+        )
+        record = session.get(
+            EnvironmentWorkspacePreference, (actor.tenant.id, actor.user.id)
+        )
+        tags = dict(record.purchase_tags or {}) if record else {}
+        return {
+            "purchaseSite": record.purchase_site if record else "MX",
+            "purchaseTags": {
+                "US": str(tags.get("US") or ""),
+                "MX": str(tags.get("MX") or ""),
+            },
+        }
+
+    @app.put("/v1/environment-preferences")
+    def put_environment_preferences(
+        body: EnvironmentWorkspacePreferenceBody,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "resource.environment.preference.write"
+        actor = authorize_request(
+            request,
+            session,
+            permission="resource.environment.create",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        key = (actor.tenant.id, actor.user.id)
+        record = session.get(EnvironmentWorkspacePreference, key)
+        if record is None:
+            record = EnvironmentWorkspacePreference(
+                tenant_id=actor.tenant.id,
+                user_id=actor.user.id,
+                purchase_site=body.purchaseSite,
+                purchase_tags={},
+            )
+            session.add(record)
+        tags = dict(record.purchase_tags or {})
+        tags.update(body.purchaseTags)
+        record.purchase_site = body.purchaseSite
+        record.purchase_tags = {
+            key: str(value or "")
+            for key, value in tags.items()
+            if key in {"US", "MX"} and str(value or "")
+        }
+        _add_audit(
+            session,
+            request_id=request.state.request_id,
+            action=action,
+            result="success",
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            business_object_type="environment_workspace_preference",
+            business_object_id=str(actor.user.id),
+            change_summary={"purchaseSite": record.purchase_site},
+            details={"purchaseSite": record.purchase_site},
+            **_request_log_context(request),
+        )
+        session.commit()
+        return {
+            "purchaseSite": record.purchase_site,
+            "purchaseTags": {
+                "US": str(record.purchase_tags.get("US") or ""),
+                "MX": str(record.purchase_tags.get("MX") or ""),
+            },
+        }
+
+    @app.get("/v1/environment-plans/latest")
+    def latest_environment_plan(
+        request: Request,
+        session: SessionDep,
+        site: Annotated[Literal["US", "MX"], Query()],
+        environment_group: Annotated[
+            str, Query(alias="environmentGroup", min_length=1, max_length=12)
+        ],
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="resource.environment.create",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="resource.environment.plan.latest",
+        )
+        if environment_plan_service is None:
+            return {"plan": None}
+        result = environment_plan_service.latest(
+            session,
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            site=site,
+            environment_group=environment_group,
+        )
+        if session.dirty:
+            session.commit()
+        return {"plan": result}
 
     @app.post(
         "/v1/environment-plans/parse",
-        status_code=status.HTTP_202_ACCEPTED,
+        status_code=status.HTTP_201_CREATED,
     )
     def parse_environment_plan(
         body: EnvironmentPlanParseBody,
@@ -1818,32 +1992,69 @@ def create_app(
             authorization=authorization,
             audit_action="resource.environment.plan.parse",
         )
-        service = executor_channel(session)
-        task = service.create_config_task(
-            tenant_id=actor.tenant.id,
-            user_id=actor.user.id,
-            executor_id=body.executorId,
-            task_type="environment.parse.v1",
-            payload={
-                "filename": body.filename,
-                "contentBase64": body.contentBase64,
-                "site": body.site,
-            },
-            idempotency_key=body.idempotencyKey,
-        )
-        append_executor_audit(
-            request,
+        if environment_plan_service is None:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "environment_plan_cloud_disabled",
+                    "message": "云端买家号解析加密能力尚未启用",
+                },
+            )
+        try:
+            result = environment_plan_service.parse(
+                session,
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                idempotency_key=body.idempotencyKey,
+                filename=body.filename,
+                content_base64=body.contentBase64,
+                site=body.site,
+                environment_group=body.environmentGroup,
+            )
+        except CloudEnvironmentPlanError as exc:
+            session.rollback()
+            _add_audit(
+                session,
+                request_id=request.state.request_id,
+                action="resource.environment.plan.parse",
+                result="denied" if exc.status in {409, 410, 422} else "failure",
+                outcome="validation_failed" if exc.status == 422 else "business_conflict",
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                business_object_type="environment_account_plan",
+                business_object_id=body.idempotencyKey,
+                failure_reason=exc.code,
+                details={"reason": exc.code, "site": body.site},
+                **_request_log_context(request),
+            )
+            session.commit()
+            raise HTTPException(
+                status_code=exc.status,
+                detail={"code": exc.code, "message": str(exc)},
+            ) from exc
+        _add_audit(
             session,
-            actor,
+            request_id=request.state.request_id,
             action="resource.environment.plan.parse",
-            object_id=body.executorId,
-            summary={
-                "taskId": str(task.id),
-                "site": body.site,
+            result="success",
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            business_object_type="environment_account_plan",
+            business_object_id=result["planId"],
+            change_summary={
+                "site": result["site"],
+                "accountCount": result["count"],
+                "runtime": "cloud",
+            },
+            details={
+                "site": result["site"],
+                "accountCount": result["count"],
                 "uploadBytesApprox": len(body.contentBase64) * 3 // 4,
             },
+            **_request_log_context(request),
         )
-        return {"task": service.task_payload(task)}
+        session.commit()
+        return result
 
     @app.get("/v1/executor-tasks/{task_id}")
     def get_executor_task(
@@ -2711,34 +2922,82 @@ def create_app(
                 business_object_id=body.idempotencyKey,
             )
         if not unchanged:
+            plan_record = None
+            plan_accounts = None
+            channel = executor_channel(session)
+            if body.mode == "bound":
+                if environment_plan_service is None:
+                    raise HTTPException(
+                        status_code=503,
+                        detail={
+                            "code": "environment_plan_cloud_disabled",
+                            "message": "云端买家号解析加密能力尚未启用",
+                        },
+                    )
+                executor = channel.require_executor(
+                    tenant_id=actor.tenant.id,
+                    user_id=actor.user.id,
+                    executor_id=body.executorId,
+                )
+                if "environment.cloud-plan.v1" not in set(executor.capabilities or []):
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "code": "executor_capability_missing",
+                            "message": "本地执行器版本过旧，请先升级后再正式执行",
+                        },
+                    )
+                try:
+                    plan_record, plan_accounts = (
+                        environment_plan_service.load_for_execution(
+                            session,
+                            tenant_id=actor.tenant.id,
+                            actor_user_id=actor.user.id,
+                            plan_id=body.planRef,
+                            site=body.site,
+                            environment_group=body.environmentGroup,
+                            total_count=body.totalCount,
+                        )
+                    )
+                except CloudEnvironmentPlanError as exc:
+                    session.rollback()
+                    raise HTTPException(
+                        status_code=exc.status,
+                        detail={"code": exc.code, "message": str(exc)},
+                    ) from exc
             task_type = (
                 "environment.create-bound.v1"
                 if body.mode == "bound"
                 else "environment.create-backup.v1"
             )
-            task = executor_channel(session).create_config_task(
+            task_payload = {
+                "runId": str(run.id),
+                "runKey": run.source_run_key,
+                "mode": body.mode,
+                "site": body.site,
+                "purchaseDate": body.purchaseDate,
+                "environmentGroup": body.environmentGroup,
+                "planRef": body.planRef,
+                "buyerLabel": body.buyerLabel,
+                "totalCount": body.totalCount,
+                "verifySampleCount": body.verifySampleCount,
+                "assignments": [
+                    item.model_dump(mode="json") for item in body.assignments
+                ],
+            }
+            if plan_accounts is not None:
+                task_payload["planAccounts"] = plan_accounts
+            task = channel.create_config_task(
                 tenant_id=actor.tenant.id,
                 user_id=actor.user.id,
                 executor_id=body.executorId,
                 task_type=task_type,
-                payload={
-                    "runId": str(run.id),
-                    "runKey": run.source_run_key,
-                    "mode": body.mode,
-                    "site": body.site,
-                    "purchaseDate": body.purchaseDate,
-                    "environmentGroup": body.environmentGroup,
-                    "planRef": body.planRef,
-                    "buyerLabel": body.buyerLabel,
-                    "totalCount": body.totalCount,
-                    "verifySampleCount": body.verifySampleCount,
-                    "assignments": [
-                        item.model_dump(mode="json") for item in body.assignments
-                    ],
-                },
+                payload=task_payload,
                 idempotency_key=f"operation:{body.idempotencyKey}",
                 commit=False,
             )
+            if plan_record is not None:
+                environment_plan_service.mark_submitted(plan_record)
             run.executor_task_id = task.id
             run.status = "queued"
             run.phase = "queued"

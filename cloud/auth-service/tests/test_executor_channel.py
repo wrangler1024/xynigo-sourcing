@@ -2,14 +2,18 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
+import base64
+from io import BytesIO
 import json
 import uuid
 
 from fastapi.testclient import TestClient
+from openpyxl import Workbook
 from sqlalchemy import select
 
 from test_auth_flow import build_test_app, start_login
 from xynigo_auth.models import (
+    EnvironmentAccountPlan,
     EnvironmentCreationRun,
     ExecutorPairingCode,
     ExecutorTask,
@@ -24,6 +28,25 @@ from xynigo_auth.security import hash_token
 CSRF = {"X-Xynigo-Web-CSRF": "same-origin"}
 REVISION_A = "a" * 64
 REVISION_B = "b" * 64
+
+
+def environment_workbook(count: int = 2, *, site: str = "MX") -> str:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["邮箱账号", "密码", "接码Key链接", "Cookie"])
+    domain = ".shein.com.mx" if site == "MX" else ".us.shein.com"
+    for index in range(1, count + 1):
+        email = f"buyer{index}@example.test"
+        sheet.append([
+            email,
+            "synthetic-password",
+            f"https://vendor.example/api?orderNo={index:08x}",
+            json.dumps([{"name": "session", "value": "test", "domain": domain}]),
+        ])
+    output = BytesIO()
+    workbook.save(output)
+    workbook.close()
+    return base64.b64encode(output.getvalue()).decode("ascii")
 
 
 def login(client: TestClient) -> None:
@@ -107,6 +130,58 @@ def heartbeat(
     )
     assert response.status_code == 200, response.text
     return response.json()
+
+
+def test_environment_plan_is_parsed_in_cloud_and_site_errors_are_structured(
+    tmp_path,
+) -> None:
+    app, database, _oauth = build_test_app(tmp_path)
+    with TestClient(app) as client:
+        login(client)
+        created = client.post(
+            "/v1/environment-plans/parse",
+            json={
+                "idempotencyKey": "cloud-environment-plan-0001",
+                "filename": "buyers.xlsx",
+                "contentBase64": environment_workbook(1, site="MX"),
+                "site": "MX",
+                "environmentGroup": "MX采购",
+            },
+            headers=CSRF,
+        )
+        assert created.status_code == 201, created.text
+        result = created.json()
+        assert result["runtime"] == "cloud"
+        assert result["count"] == 1
+        assert result["preview"][0]["emailMasked"] != "buyer1@example.test"
+
+        latest = client.get(
+            "/v1/environment-plans/latest",
+            params={"site": "MX", "environmentGroup": "MX采购"},
+        )
+        assert latest.status_code == 200
+        assert latest.json()["plan"]["planId"] == result["planId"]
+
+        mismatch = client.post(
+            "/v1/environment-plans/parse",
+            json={
+                "idempotencyKey": "cloud-environment-plan-0002",
+                "filename": "buyers-us.xlsx",
+                "contentBase64": environment_workbook(1, site="US"),
+                "site": "MX",
+                "environmentGroup": "MX采购",
+            },
+            headers=CSRF,
+        )
+        assert mismatch.status_code == 422
+        assert mismatch.json()["detail"]["code"] == "environment_plan_site_mismatch"
+        assert "第2行" in mismatch.json()["detail"]["message"]
+
+    with database.session_factory() as session:
+        record = session.scalar(select(EnvironmentAccountPlan))
+        assert record is not None and record.encrypted_payload
+        assert b"synthetic-password" not in record.encrypted_payload
+        assert session.scalar(select(ExecutorTask)) is None
 
 
 def test_pairing_is_single_use_and_credentials_are_only_stored_hashed(tmp_path) -> None:
@@ -352,6 +427,7 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
         "workspace.rpc.v1",
         "workspace.snapshot.v1",
         "environment.parse.v1",
+        "environment.cloud-plan.v1",
         "environment.create-bound.v1",
         "environment.create-backup.v1",
         "environment.retry-row.v1",
@@ -467,56 +543,18 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
             "configRevision"
         ] == REVISION_A
         assert snapshot_visible.json()["snapshotRevision"] == "c" * 64
-        preference_write = web_client.post(
-            f"/v1/executors/{executor_id}/workspace-rpc",
+        preference_write = web_client.put(
+            "/v1/environment-preferences",
             json={
-                "method": "POST",
-                "path": "/api/envbatch/preferences",
-                "body": {
-                    "purchaseSite": "US",
-                    "purchaseTags": {"US": "美国采购"},
-                },
-                "idempotencyKey": "environment-preferences-0001",
+                "purchaseSite": "US",
+                "purchaseTags": {"US": "美国采购"},
             },
             headers=CSRF,
         )
-        assert preference_write.status_code == 202, preference_write.text
-        preference_task_id = preference_write.json()["task"]["id"]
-        preference_lease = heartbeat(
+        assert preference_write.status_code == 200, preference_write.text
+        assert heartbeat(
             device_client, credential, capabilities=capabilities
-        )["task"]
-        assert preference_lease["type"] == "workspace.rpc.v1"
-        preference_credential = preference_lease["leaseToken"]
-        assert device_client.post(
-            f"/v1/executor-channel/tasks/{preference_task_id}/start",
-            json={"leaseToken": preference_credential},
-            headers=device_headers(credential),
-        ).status_code == 200
-        preference_finish = device_client.post(
-            f"/v1/executor-channel/tasks/{preference_task_id}/finish",
-            json={
-                "leaseToken": preference_credential,
-                "outcome": "succeeded",
-                "resultCode": "workspace_rpc_completed",
-                "resultSummary": {
-                    "httpStatus": 200,
-                    "responseType": "json",
-                    "contentType": "application/json",
-                    "body": {
-                        "saved": True,
-                        "purchaseSite": "US",
-                        "purchaseTags": {"MX": "MX采购", "US": "美国采购"},
-                        "importBuyerPlan": "2:新刚",
-                        "verifySampleCount": 1,
-                        "buyers": [{"name": "新刚", "code": "XG"}],
-                        "buyerDefaultSplit": ["新刚"],
-                        "backupMaxCount": 25,
-                    },
-                },
-            },
-            headers=device_headers(credential),
-        )
-        assert preference_finish.status_code == 200, preference_finish.text
+        )["task"] is None
         updated_snapshot = web_client.get(
             f"/v1/executors/{executor_id}/workspace-snapshot"
         ).json()["snapshot"]
@@ -526,85 +564,22 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
             "/v1/environment-plans/parse",
             json={
                 "idempotencyKey": "environment-parse-0001",
-                "executorId": executor_id,
                 "filename": "synthetic-buyers.xlsx",
-                "contentBase64": "UEsDB-synthetic-workbook-content",
+                "contentBase64": environment_workbook(2),
                 "site": "MX",
+                "environmentGroup": "MX采购测试",
             },
             headers=CSRF,
         )
-        assert parse_created.status_code == 202, parse_created.text
-        parse_task_id = parse_created.json()["task"]["id"]
-        with database.session_factory() as session:
-            parse_task = session.get(ExecutorTask, uuid.UUID(parse_task_id))
-            assert parse_task is not None
-            assert parse_task.task_type == "environment.parse.v1"
-            serialized_parse = json.dumps(parse_task.payload_envelope)
-            assert "synthetic-buyers.xlsx" not in serialized_parse
-            assert "synthetic-workbook-content" not in serialized_parse
-        parse_lease = heartbeat(
+        assert parse_created.status_code == 201, parse_created.text
+        parse_result = parse_created.json()
+        assert parse_result["runtime"] == "cloud"
+        assert parse_result["count"] == 2
+        assert parse_result["environmentGroup"] == "MX采购测试"
+        plan_id = parse_result["planId"]
+        assert heartbeat(
             device_client, credential, capabilities=capabilities
-        )["task"]
-        assert parse_lease["type"] == "environment.parse.v1"
-        assert parse_lease["payload"]["filename"] == "synthetic-buyers.xlsx"
-        parse_credential = parse_lease["leaseToken"]
-        assert device_client.post(
-            f"/v1/executor-channel/tasks/{parse_task_id}/start",
-            json={"leaseToken": parse_credential},
-            headers=device_headers(credential),
-        ).status_code == 200
-        unsafe_parse_finish = device_client.post(
-            f"/v1/executor-channel/tasks/{parse_task_id}/finish",
-            json={
-                "leaseToken": parse_credential,
-                "outcome": "succeeded",
-                "resultCode": "environment_parse_completed",
-                "resultSummary": {
-                    "planId": "plan-synthetic-0001",
-                    "site": "MX",
-                    "count": 1,
-                    "cookieCount": 1,
-                    "mixedSiteCookieCount": 0,
-                    "passwordKindCount": 1,
-                    "duplicateCount": 0,
-                    "issueCount": 0,
-                    "orderCount": 1,
-                    "preview": [],
-                    "password": "must-not-persist",
-                },
-            },
-            headers=device_headers(credential),
-        )
-        assert unsafe_parse_finish.status_code == 422
-        parse_finished = device_client.post(
-            f"/v1/executor-channel/tasks/{parse_task_id}/finish",
-            json={
-                "leaseToken": parse_credential,
-                "outcome": "succeeded",
-                "resultCode": "environment_parse_completed",
-                "resultSummary": {
-                    "planId": "plan-synthetic-0001",
-                    "site": "MX",
-                    "count": 2,
-                    "cookieCount": 2,
-                    "mixedSiteCookieCount": 0,
-                    "passwordKindCount": 1,
-                    "duplicateCount": 0,
-                    "issueCount": 0,
-                    "orderCount": 2,
-                    "preview": [],
-                },
-            },
-            headers=device_headers(credential),
-        )
-        assert parse_finished.status_code == 200, parse_finished.text
-        parse_visible = web_client.get(
-            f"/v1/executor-tasks/{parse_task_id}"
-        )
-        assert parse_visible.status_code == 200
-        assert parse_visible.json()["task"]["resultSummary"]["planId"] == (
-            "plan-synthetic-0001"
-        )
+        )["task"] is None
         create_body = {
             "idempotencyKey": "environment-run-create-0001",
             "executorId": executor_id,
@@ -612,7 +587,7 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
             "site": "MX",
             "purchaseDate": "20260901",
             "environmentGroup": "MX采购测试",
-            "planRef": "plan-synthetic-0001",
+            "planRef": plan_id,
             "totalCount": 2,
             "verifySampleCount": 2,
             "assignments": [{"purchaserLabel": "合成采购员", "count": 2}],
@@ -659,7 +634,7 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
             assert run.executor_task_id == task.id
             assert task.task_type == "environment.create-bound.v1"
             serialized = json.dumps(task.payload_envelope)
-            assert "plan-synthetic-0001" not in serialized
+            assert plan_id not in serialized
             assert "MX采购测试" not in serialized
 
         leased = heartbeat(
@@ -667,7 +642,8 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
         )["task"]
         assert leased["type"] == "environment.create-bound.v1"
         assert leased["payload"]["runId"] == snapshot["runId"]
-        assert leased["payload"]["planRef"] == "plan-synthetic-0001"
+        assert leased["payload"]["planRef"] == plan_id
+        assert len(leased["payload"]["planAccounts"]) == 2
         lease_token = leased["leaseToken"]
         leased_snapshot = web_client.get(
             f"/v1/operation-runs/environment-creation/{snapshot['runId']}"
@@ -786,6 +762,15 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
             headers=device_headers(credential),
         )
         assert finished.status_code == 200, finished.text
+        with database.session_factory() as session:
+            terminal_task = session.get(ExecutorTask, uuid.UUID(task_id))
+            stored_plan = session.get(EnvironmentAccountPlan, uuid.UUID(plan_id))
+            assert terminal_task is not None
+            assert "encryptedPayload" not in terminal_task.payload_envelope
+            assert terminal_task.payload_envelope.get("purgedAt")
+            assert stored_plan is not None
+            assert stored_plan.status == "submitted"
+            assert stored_plan.encrypted_payload is None
         latest = web_client.get(
             "/v1/operation-runs/environment-creation/latest"
         )

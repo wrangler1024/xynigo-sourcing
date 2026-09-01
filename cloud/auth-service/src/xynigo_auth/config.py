@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     procurement_import_plan_ttl_seconds: int = 30 * 60
     procurement_import_worker_interval_seconds: int = 2
     procurement_import_max_active_plans_per_tenant: int = 5
+    environment_plan_ttl_seconds: int = 30 * 60
+    environment_plan_max_active_plans_per_tenant: int = 5
     executor_pairing_ttl_seconds: int = 5 * 60
     executor_poll_timeout_seconds: int = 25
     executor_lease_seconds: int = 45
@@ -155,12 +157,15 @@ class Settings(BaseSettings):
             )
         return value
 
-    @field_validator("procurement_import_plan_ttl_seconds")
+    @field_validator(
+        "procurement_import_plan_ttl_seconds",
+        "environment_plan_ttl_seconds",
+    )
     @classmethod
     def validate_procurement_import_ttl(cls, value: int) -> int:
         if value < 300 or value > 24 * 60 * 60:
             raise ValueError(
-                "procurement_import_plan_ttl_seconds must be between 300 and 86400"
+                "plan_ttl_seconds must be between 300 and 86400"
             )
         return value
 
@@ -173,12 +178,15 @@ class Settings(BaseSettings):
             )
         return value
 
-    @field_validator("procurement_import_max_active_plans_per_tenant")
+    @field_validator(
+        "procurement_import_max_active_plans_per_tenant",
+        "environment_plan_max_active_plans_per_tenant",
+    )
     @classmethod
     def validate_procurement_import_active_plan_limit(cls, value: int) -> int:
         if value < 1 or value > 50:
             raise ValueError(
-                "procurement_import_max_active_plans_per_tenant must be between 1 and 50"
+                "max_active_plans_per_tenant must be between 1 and 50"
             )
         return value
 

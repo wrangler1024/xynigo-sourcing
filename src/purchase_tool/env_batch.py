@@ -537,7 +537,7 @@ def parse_vendor_workbook(source):
                 raise EnvBatchError('第 %d 行缺少邮箱/密码/接码Key/Cookie 字段' % row_number)
 
             email = _cell_text(email_raw).strip()
-            if not EMAIL_RE.fullmatch(email):
+            if len(email) > 320 or not EMAIL_RE.fullmatch(email):
                 raise EnvBatchError('第 %d 行邮箱格式错误：%s' %
                                     (row_number, mask_email(email)))
             email_key = email.casefold()
@@ -547,7 +547,7 @@ def parse_vendor_workbook(source):
             seen_emails.add(email_key)
 
             key_url = _cell_text(key_raw).strip()
-            if not re.match(r'^https?://', key_url, re.I):
+            if len(key_url) > 16384 or not re.match(r'^https?://', key_url, re.I):
                 raise EnvBatchError('第 %d 行接码Key不是 http(s) URL：%s' %
                                     (row_number, mask_email(email)))
             try:
@@ -555,12 +555,19 @@ def parse_vendor_workbook(source):
             except EnvBatchError as exc:
                 raise EnvBatchError('第 %d 行%s：%s' % (
                     row_number, str(exc), mask_email(email))) from exc
+            if len(order_no) > 128:
+                raise EnvBatchError('第 %d 行号商单号过长：%s' %
+                                    (row_number, mask_email(email)))
             if order_no.casefold() in seen_orders:
                 raise EnvBatchError('第 %d 行号商单号重复：%s' %
                                     (row_number, mask_email(email)))
             seen_orders.add(order_no.casefold())
 
             cookie_text = _cell_text(cookie_raw)
+            password = _cell_text(password_raw)
+            if len(password) > 8192 or len(cookie_text) > 10 * 1024 * 1024:
+                raise EnvBatchError('第 %d 行密码或 Cookie 内容过长：%s' %
+                                    (row_number, mask_email(email)))
             try:
                 parsed_cookie = json.loads(cookie_text)
             except Exception as exc:
@@ -573,7 +580,7 @@ def parse_vendor_workbook(source):
             accounts.append(BuyerAccount(
                 row_number=row_number,
                 email=email,
-                password=_cell_text(password_raw),
+                password=password,
                 key_url=key_url,
                 cookie_text=cookie_text,
                 order_no=order_no,
@@ -583,6 +590,92 @@ def parse_vendor_workbook(source):
         return accounts
     finally:
         workbook.close()
+
+
+ENVIRONMENT_PLAN_ACCOUNT_KEYS = frozenset({
+    'rowNumber', 'email', 'password', 'keyUrl', 'cookie', 'orderNo',
+})
+
+
+def serialize_buyer_accounts(accounts):
+    """Serialize a parsed workbook for authenticated encrypted transport.
+
+    The returned structure is sensitive and must never be logged or returned
+    to a browser.  It is used by the cloud plan vault and the encrypted
+    cloud-to-executor task payload only.
+    """
+    return [{
+        'rowNumber': int(account.row_number),
+        'email': str(account.email),
+        'password': str(account.password),
+        'keyUrl': str(account.key_url),
+        'cookie': str(account.cookie_text),
+        'orderNo': str(account.order_no),
+    } for account in accounts]
+
+
+def deserialize_buyer_accounts(items, site='MX'):
+    """Strictly rebuild a cloud plan before handing it to HubStudio code."""
+    if not isinstance(items, list) or not 1 <= len(items) <= 2000:
+        raise EnvBatchError('云端解析计划账号数量无效，请重新上传 xlsx')
+    accounts = []
+    seen_emails, seen_orders = set(), set()
+    for index, item in enumerate(items, start=1):
+        if not isinstance(item, dict) or set(item) != ENVIRONMENT_PLAN_ACCOUNT_KEYS:
+            raise EnvBatchError('云端解析计划结构无效，请重新上传 xlsx')
+        try:
+            row_number = int(item['rowNumber'])
+        except (TypeError, ValueError) as exc:
+            raise EnvBatchError('云端解析计划行号无效，请重新上传 xlsx') from exc
+        if row_number < 1:
+            raise EnvBatchError('云端解析计划行号无效，请重新上传 xlsx')
+        values = {
+            key: item[key] for key in
+            ('email', 'password', 'keyUrl', 'cookie', 'orderNo')
+        }
+        if any(not isinstance(value, str) for value in values.values()):
+            raise EnvBatchError('云端解析计划字段类型无效，请重新上传 xlsx')
+        email = values['email'].strip()
+        password = values['password']
+        key_url = values['keyUrl'].strip()
+        cookie_text = values['cookie']
+        order_no = values['orderNo'].strip()
+        if (len(email) > 320 or len(password) > 8192 or
+                len(key_url) > 16384 or len(cookie_text) > 10 * 1024 * 1024 or
+                not re.fullmatch(r'[0-9a-f]{1,128}', order_no, re.I)):
+            raise EnvBatchError('云端解析计划字段长度或格式无效，请重新上传 xlsx')
+        if not EMAIL_RE.fullmatch(email):
+            raise EnvBatchError('云端解析计划邮箱格式无效，请重新上传 xlsx')
+        email_key = email.casefold()
+        if email_key in seen_emails:
+            raise EnvBatchError('云端解析计划邮箱重复，请重新上传 xlsx')
+        seen_emails.add(email_key)
+        try:
+            expected_order_no = extract_vendor_order_no(key_url, email)
+        except EnvBatchError as exc:
+            raise EnvBatchError(
+                '云端解析计划接码链接无效，请重新上传 xlsx') from exc
+        if expected_order_no.casefold() != order_no.casefold():
+            raise EnvBatchError('云端解析计划号商单号校验失败，请重新上传 xlsx')
+        if order_no.casefold() in seen_orders:
+            raise EnvBatchError('云端解析计划号商单号重复，请重新上传 xlsx')
+        seen_orders.add(order_no.casefold())
+        try:
+            parsed_cookie = json.loads(cookie_text)
+        except Exception as exc:
+            raise EnvBatchError('云端解析计划 Cookie 无效，请重新上传 xlsx') from exc
+        if not isinstance(parsed_cookie, (list, dict)):
+            raise EnvBatchError('云端解析计划 Cookie 无效，请重新上传 xlsx')
+        accounts.append(BuyerAccount(
+            row_number=row_number,
+            email=email,
+            password=password,
+            key_url=key_url,
+            cookie_text=cookie_text,
+            order_no=order_no,
+        ))
+    validate_accounts_site(accounts, site, allow_mixed=True)
+    return accounts
 
 
 def load_vendor_xlsx(path, allow_repo_sample=False):
