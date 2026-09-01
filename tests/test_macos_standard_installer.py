@@ -166,7 +166,7 @@ class MacOSStandardInstallerContractTests(unittest.TestCase):
 
 class MacOSStandardInstallerArtifactTests(unittest.TestCase):
     def test_local_compiled_artifact_metadata_when_present(self):
-        metadata = ROOT / 'dist/Xynigo_Sourcing_macOS_Standard_v0.13.0.json'
+        metadata = ROOT / 'dist/Xynigo_Sourcing_macOS_Standard_v0.13.1.json'
         if not metadata.is_file():
             self.skipTest('macOS standard installer is built in packaging CI')
         payload = json.loads(metadata.read_text(encoding='utf-8'))

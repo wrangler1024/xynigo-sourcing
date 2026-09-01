@@ -14,9 +14,9 @@ from . import __version__
 
 
 REPOSITORY = "wrangler1024/xynigo-sourcing"
-RELEASE_VERSION = "0.13.0"
+RELEASE_VERSION = "0.13.1"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-01T11:05:45Z"
+RELEASE_PUBLISHED_AT = "2026-09-01T12:23:35Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,10 +31,10 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.13.0-51c81c6bb58e",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.0.exe",
-        "sha256": "2ba725e8ae35ead23b426938a2256b8e7a67fd6d8301310d8427671eed94a1ed",
-        "size": 15_086_534,
+        "runtimeId": "0.13.1-candidate",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.1.exe",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "size": 1_000_001,
         "installMode": "standard_per_user",
         "internalUnsignedTest": True,
         "authenticodeSigned": False,
@@ -43,9 +43,9 @@ _PLATFORMS = {
         "trayMenu": True,
         "launcherFile": "Xynigo.exe",
         "greenFallback": {
-            "assetName": "Xynigo_Sourcing_Windows_20260901_v0.13.0.zip",
-            "sha256": "0cee5e16132379eb98299c401cb142d1fda744ba77b654e60a8f78661aa749d1",
-            "size": 18_357_377,
+            "assetName": "Xynigo_Sourcing_Windows_20260901_v0.13.1.zip",
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+            "size": 1,
             "installMode": "green_package",
             "launcherFile": "Xynigo.exe",
             "statusCenter": True,
@@ -57,9 +57,9 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.0.pkg",
-        "sha256": "4888b3f467333293adfd7230aef833cac9e6d2778cce9a7b833fecd7450d7a20",
-        "size": 19_454_932,
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.1.pkg",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "size": 1_000_001,
         "installMode": "standard_system_application",
         "internalUnsignedTest": True,
         "developerIdApplicationSigned": False,
@@ -67,9 +67,9 @@ _PLATFORMS = {
         "notarized": False,
         "stapled": False,
         "greenFallback": {
-            "assetName": "Xynigo_Sourcing_macOS_arm64_20260901_v0.13.0.zip",
-            "sha256": "152a7e2da509561c5a70d41d5f8884623eab798c93764bd04bae115384894004",
-            "size": 18_342_367,
+            "assetName": "Xynigo_Sourcing_macOS_arm64_20260901_v0.13.1.zip",
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+            "size": 1,
             "installMode": "green_package",
             "launcherFile": "启动-Mac.command",
         },
@@ -246,13 +246,12 @@ def latest_local_executor_release() -> dict[str, object]:
         ),
         "platforms": platforms,
         "notesZh": [
-            "v0.13.0 将环境创建与物流查询迁移到可持久化云端业务 Run。",
-            "刷新、切页或重新登录后从云端恢复任务生命周期、进度、结果和最后心跳。",
-            "买家号文件通过专用加密任务通道交由所选本地执行器解析，云端不保存明文文件。",
-            "工作区快照恢复站点、采购分组、预检和非敏感设备运行配置。",
-            "环境创建页面按当前站点和分组统一预检、预览与正式执行，并持续显示出口 IP 状态。",
-            "新建环境不再硬编码 Chrome 148；内核缺失时立即提示安装或切换可用内核。",
-            "安全停止、单行重试和失败项批量重试继续保留，并统一由云端 Run 状态驱动。",
+            "环境创建页面改为先选择购买日期、站点和采购分组，再上传文件、分配采购员并执行。",
+            "站点和采购分组切换优先使用本地缓存快照，减少重复查询和页面卡顿；正式执行前仍进行实时校验。",
+            "Windows 在线更新显示下载进度、百分比、字节数、速度、预计剩余时间和安装阶段。",
+            "环境快照建立索引并按容器编号或名称精确查询 HubStudio，减少全量环境扫描。",
+            "创建响应不确定时优先认领已存在的目标环境，避免超时重试造成重复创建。",
+            "云端业务 Run、加密文件解析、安全停止、单行重试和失败项批量重试继续保留。",
             "覆盖安装保留配置、日志、运行数据和设备配对；绿色包继续作为显式回退。",
             "本次按内部快速迭代策略提供未签名标准安装包；下载前必须核对 SHA-256，并按飞书开发群教程手动确认系统安全提示。",
         ],
