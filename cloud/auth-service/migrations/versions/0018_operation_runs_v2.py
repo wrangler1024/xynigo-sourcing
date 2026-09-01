@@ -95,19 +95,54 @@ def _extend_result_table(table: str, prefix: str) -> None:
 
 
 def upgrade() -> None:
+    op.add_column(
+        "local_executors",
+        sa.Column(
+            "workspace_snapshot",
+            sa.JSON(),
+            nullable=False,
+            server_default=sa.text("'{}'"),
+        ),
+    )
+    op.add_column(
+        "local_executors",
+        sa.Column("workspace_snapshot_revision", sa.String(64)),
+    )
+    op.add_column(
+        "local_executors",
+        sa.Column("workspace_snapshot_at", sa.DateTime(timezone=True)),
+    )
     op.drop_constraint("ck_executor_task_type", "executor_tasks", type_="check")
     op.create_check_constraint(
         "ck_executor_task_type",
         "executor_tasks",
         "task_type IN ('config.read.v1', 'config.write.v1', 'workspace.rpc.v1', "
-        "'environment.parse.v1', "
+        "'workspace.snapshot.v1', 'environment.parse.v1', "
         "'logistics.query.v1', 'environment.create-bound.v1', "
-        "'environment.create-backup.v1')",
+        "'environment.create-backup.v1', 'environment.retry-row.v1', "
+        "'environment.retry-failed.v1')",
     )
     _extend_run_table("environment_creation_runs", "environment_run")
     op.add_column(
         "environment_creation_runs",
         sa.Column("run_mode", sa.String(32), nullable=False, server_default="bound"),
+    )
+    op.add_column(
+        "environment_creation_runs",
+        sa.Column("parent_run_id", sa.Uuid()),
+    )
+    op.create_foreign_key(
+        "fk_environment_run_parent",
+        "environment_creation_runs",
+        "environment_creation_runs",
+        ["parent_run_id"],
+        ["id"],
+        ondelete="SET NULL",
+    )
+    op.create_index(
+        "ix_environment_run_parent",
+        "environment_creation_runs",
+        ["parent_run_id", "created_at"],
     )
     op.drop_constraint("ck_environment_run_status", "environment_creation_runs", type_="check")
     op.drop_constraint("ck_environment_run_counts", "environment_creation_runs", type_="check")
@@ -115,7 +150,7 @@ def upgrade() -> None:
     op.create_check_constraint(
         "ck_environment_run_mode",
         "environment_creation_runs",
-        "run_mode IN ('bound', 'backup', 'test')",
+        "run_mode IN ('bound', 'backup', 'test', 'retry_row', 'retry_failed')",
     )
     op.create_check_constraint(
         "ck_environment_run_counts",
@@ -191,17 +226,17 @@ def downgrade() -> None:
         sa.text(
             "DELETE FROM executor_task_events WHERE task_id IN "
             "(SELECT id FROM executor_tasks WHERE task_type IN "
-            "('environment.parse.v1', 'logistics.query.v1', "
-            "'environment.create-bound.v1', "
-            "'environment.create-backup.v1'))"
+            "('workspace.snapshot.v1', 'environment.parse.v1', 'logistics.query.v1', "
+            "'environment.create-bound.v1', 'environment.create-backup.v1', "
+            "'environment.retry-row.v1', 'environment.retry-failed.v1'))"
         )
     )
     op.execute(
         sa.text(
             "DELETE FROM executor_tasks WHERE task_type IN "
-            "('environment.parse.v1', 'logistics.query.v1', "
-            "'environment.create-bound.v1', "
-            "'environment.create-backup.v1')"
+            "('workspace.snapshot.v1', 'environment.parse.v1', 'logistics.query.v1', "
+            "'environment.create-bound.v1', 'environment.create-backup.v1', "
+            "'environment.retry-row.v1', 'environment.retry-failed.v1')"
         )
     )
     op.execute(
@@ -262,6 +297,11 @@ def downgrade() -> None:
         "environment_creation_runs",
         "total_count >= 0 AND success_count >= 0 AND failed_count >= 0",
     )
+    op.drop_index("ix_environment_run_parent", table_name="environment_creation_runs")
+    op.drop_constraint(
+        "fk_environment_run_parent", "environment_creation_runs", type_="foreignkey"
+    )
+    op.drop_column("environment_creation_runs", "parent_run_id")
     op.drop_column("environment_creation_runs", "run_mode")
     _shrink_run_table("environment_creation_runs", "environment_run")
     op.drop_constraint("ck_executor_task_type", "executor_tasks", type_="check")
@@ -270,3 +310,6 @@ def downgrade() -> None:
         "executor_tasks",
         "task_type IN ('config.read.v1', 'config.write.v1', 'workspace.rpc.v1')",
     )
+    op.drop_column("local_executors", "workspace_snapshot_at")
+    op.drop_column("local_executors", "workspace_snapshot_revision")
+    op.drop_column("local_executors", "workspace_snapshot")

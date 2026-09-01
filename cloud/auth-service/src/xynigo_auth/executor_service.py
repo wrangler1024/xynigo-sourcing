@@ -38,6 +38,7 @@ from .models import (
 from .operation_contract import (
     EnvironmentPlanParseResult,
     EnvironmentRunProgressItem,
+    ExecutorWorkspaceSnapshotResult,
     LogisticsRunProgressItem,
 )
 from .security import hash_token, random_url_token
@@ -51,10 +52,17 @@ BUSINESS_TASK_TYPES = frozenset(
         "logistics.query.v1",
         "environment.create-bound.v1",
         "environment.create-backup.v1",
+        "environment.retry-row.v1",
+        "environment.retry-failed.v1",
     }
 )
 ENCRYPTED_TASK_TYPES = frozenset(
-    {"workspace.rpc.v1", "environment.parse.v1", *BUSINESS_TASK_TYPES}
+    {
+        "workspace.rpc.v1",
+        "workspace.snapshot.v1",
+        "environment.parse.v1",
+        *BUSINESS_TASK_TYPES,
+    }
 )
 TERMINAL_TASK_STATUSES = frozenset(
     {"succeeded", "failed", "uncertain", "cancelled"}
@@ -95,6 +103,7 @@ BUSINESS_RESULT_KEYS = frozenset(
         "stoppedCount",
         "ipOkCount",
         "ipTotalCount",
+        "errorCode",
     }
 )
 BUSINESS_RUN_STATUSES = frozenset(
@@ -721,6 +730,7 @@ class ExecutorChannelService:
         self._validate_config_result(task, body)
         self._validate_business_result(task, body)
         self._validate_environment_parse_result(task, body)
+        workspace_snapshot = self._validated_workspace_snapshot(task, body)
         now = utcnow()
         task.status = body.outcome
         task.finished_at = now
@@ -747,6 +757,10 @@ class ExecutorChannelService:
             task.result_summary = body.resultSummary
         task.lease_until = None
         executor.last_seen_at = now
+        if workspace_snapshot is not None:
+            executor.workspace_snapshot = workspace_snapshot.model_dump(mode="json")
+            executor.workspace_snapshot_revision = workspace_snapshot.snapshotRevision
+            executor.workspace_snapshot_at = workspace_snapshot.capturedAt
         terminal_status = "completed" if body.outcome == "succeeded" else "failed"
         requested_status = str(body.resultSummary.get("runStatus") or "")
         if requested_status in {
@@ -799,6 +813,12 @@ class ExecutorChannelService:
             "lastSeenAt": executor.last_seen_at.isoformat() if executor.last_seen_at else None,
             "configRevision": executor.config_revision,
             "hubStatus": executor.hub_status,
+            "workspaceSnapshotRevision": executor.workspace_snapshot_revision,
+            "workspaceSnapshotAt": (
+                executor.workspace_snapshot_at.isoformat()
+                if executor.workspace_snapshot_at
+                else None
+            ),
             "revokedAt": executor.revoked_at.isoformat() if executor.revoked_at else None,
             "createdAt": executor.created_at.isoformat() if executor.created_at else None,
         }
@@ -988,7 +1008,17 @@ class ExecutorChannelService:
         phase = str(summary.get("phase") or "")
         if not 2 <= len(phase) <= 64 or any(character.isspace() for character in phase):
             raise ExecutorServiceError("executor_result_invalid", status_code=422)
-        count_keys = BUSINESS_RESULT_KEYS - {"runStatus", "phase"}
+        error_code = str(summary.get("errorCode") or "")
+        if error_code and (
+            len(error_code) > 128
+            or not error_code[0].isalpha()
+            or any(
+                not (character.islower() or character.isdigit() or character in "_.-")
+                for character in error_code
+            )
+        ):
+            raise ExecutorServiceError("executor_result_invalid", status_code=422)
+        count_keys = BUSINESS_RESULT_KEYS - {"runStatus", "phase", "errorCode"}
         for key in count_keys:
             if key not in summary:
                 continue
@@ -1014,6 +1044,47 @@ class ExecutorChannelService:
             EnvironmentPlanParseResult.model_validate(body.resultSummary)
         except ValidationError as exc:
             raise ExecutorServiceError("executor_result_invalid", status_code=422) from exc
+
+    @staticmethod
+    def _validated_workspace_snapshot(
+        task: ExecutorTask, body: ExecutorTaskFinishBody
+    ) -> ExecutorWorkspaceSnapshotResult | None:
+        if task.task_type != "workspace.snapshot.v1":
+            return None
+        if body.outcome != "succeeded":
+            if body.resultSummary:
+                raise ExecutorServiceError("executor_result_invalid", status_code=422)
+            return None
+        try:
+            return ExecutorWorkspaceSnapshotResult.model_validate(body.resultSummary)
+        except ValidationError as exc:
+            raise ExecutorServiceError("executor_result_invalid", status_code=422) from exc
+
+    def workspace_snapshot_payload(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+        executor_id: uuid.UUID,
+    ) -> dict[str, Any]:
+        executor = self.require_executor(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            executor_id=executor_id,
+        )
+        captured_at = executor.workspace_snapshot_at
+        age_seconds = (
+            max(0, int((utcnow() - as_utc(captured_at)).total_seconds()))
+            if captured_at else None
+        )
+        return {
+            "executorId": str(executor.id),
+            "snapshot": executor.workspace_snapshot or None,
+            "snapshotRevision": executor.workspace_snapshot_revision,
+            "capturedAt": captured_at.isoformat() if captured_at else None,
+            "ageSeconds": age_seconds,
+            "stale": age_seconds is None or age_seconds > 300,
+        }
 
     @staticmethod
     def _payload_hash(payload: dict[str, Any]) -> str:
@@ -1058,7 +1129,7 @@ class ExecutorChannelService:
         result_summary: dict[str, Any] | None = None,
         progress_snapshot: dict[str, Any] | None = None,
     ) -> None:
-        if task.task_type.startswith("environment.create-"):
+        if task.task_type.startswith(("environment.create-", "environment.retry-")):
             run = self.session.scalar(
                 select(EnvironmentCreationRun).where(
                     EnvironmentCreationRun.executor_task_id == task.id

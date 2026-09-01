@@ -19,6 +19,8 @@ BUSINESS_TASK_TYPES = frozenset({
     'logistics.query.v1',
     'environment.create-bound.v1',
     'environment.create-backup.v1',
+    'environment.retry-row.v1',
+    'environment.retry-failed.v1',
 })
 ENVIRONMENT_TERMINAL_STATES = frozenset({'done', 'failed', 'stopped'})
 LOGISTICS_TERMINAL_STATES = frozenset({
@@ -74,7 +76,31 @@ class LocalOperationExecutor(object):
         purchase_date = self._required_text(payload, 'purchaseDate')
         verify_count = self._nonnegative_int(
             payload.get('verifySampleCount'), 'verifySampleCount')
-        if task_type == 'environment.create-bound.v1':
+        selected_refs = None
+        if task_type in (
+                'environment.retry-row.v1',
+                'environment.retry-failed.v1'):
+            raw_refs = payload.get('accountRefs')
+            if not isinstance(raw_refs, list) or not raw_refs:
+                raise OperationExecutionError(
+                    'operation_payload_invalid', '环境重试任务缺少失败账号')
+            selected_refs = {
+                str(item or '').strip() for item in raw_refs
+                if str(item or '').strip()}
+            if len(selected_refs) != total:
+                raise OperationExecutionError(
+                    'operation_payload_invalid', '环境重试账号数量无效')
+            start_path = (
+                '/api/envbatch/retry-row'
+                if task_type == 'environment.retry-row.v1'
+                else '/api/envbatch/retry-failed')
+            progress_path = '/api/envbatch/progress'
+            stop_path = '/api/envbatch/stop'
+            start_body = {'operationRunKey': run_key}
+            if task_type == 'environment.retry-row.v1':
+                start_body['accountId'] = next(iter(selected_refs))
+            backup = False
+        elif task_type == 'environment.create-bound.v1':
             assignments = payload.get('assignments')
             if not isinstance(assignments, list) or not assignments:
                 raise OperationExecutionError(
@@ -130,7 +156,7 @@ class LocalOperationExecutor(object):
             rows = self._environment_rows(
                 snapshot, run_key=run_key,
                 purchaser_label=start_body.get('buyer') or '',
-                backup=backup)
+                backup=backup, selected_refs=selected_refs)
             completed = sum(
                 row['status'] in ('success', 'failed', 'stopped')
                 for row in rows)
@@ -151,6 +177,9 @@ class LocalOperationExecutor(object):
                 break
             self.sleep(self.poll_interval)
         summary = self._environment_summary(snapshot, total, rows)
+        if selected_refs is not None:
+            summary['ipOkCount'] = 0
+            summary['ipTotalCount'] = 0
         return self._terminal_result('environment', summary)
 
     def _execute_logistics(self, payload, report, cancellation_event):
@@ -237,8 +266,12 @@ class LocalOperationExecutor(object):
                 'operation_local_response_invalid', '本地业务接口未返回 JSON')
         if status < 200 or status >= 300:
             message = scrub_text(response.get('error') or '本地业务接口执行失败')
+            inferred_code = (
+                'environment_retry_source_expired'
+                if '凭证内存已清理' in message
+                else 'operation_local_request_failed')
             raise OperationExecutionError(
-                str(response.get('code') or 'operation_local_request_failed'),
+                str(response.get('code') or inferred_code),
                 message[:300])
         return response
 
@@ -327,7 +360,9 @@ class LocalOperationExecutor(object):
         return 'environment.' + phase
 
     @staticmethod
-    def _environment_rows(snapshot, run_key, purchaser_label, backup):
+    def _environment_rows(
+            snapshot, run_key, purchaser_label, backup,
+            selected_refs=None):
         ip_by_name = {
             str(item.get('envName') or ''): item
             for item in snapshot.get('ipChecks') or []
@@ -336,6 +371,9 @@ class LocalOperationExecutor(object):
         result = []
         for index, source in enumerate(snapshot.get('rows') or []):
             if not isinstance(source, dict):
+                continue
+            source_ref = str(source.get('accountId') or '').strip()
+            if selected_refs is not None and source_ref not in selected_refs:
                 continue
             state = str(source.get('state') or 'pending').strip().casefold()
             status = {
@@ -355,7 +393,7 @@ class LocalOperationExecutor(object):
                     if status == 'success' else [])
                 current_step = state
             else:
-                account_ref = str(source.get('accountId') or '').strip()
+                account_ref = source_ref
                 account_label = str(source.get('emailMasked') or '').strip()
                 purchaser = str(source.get('buyer') or '').strip()
                 completed_steps = [

@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import purchase_tool.main as main_module
 from purchase_tool.main import (
-    Handler, default_config, effective_proxy_link, load_config,
+    AppState, Handler, default_config, effective_proxy_link, load_config,
     lark_target_link, public_config, public_executor_config, public_lark_config,
     public_envbatch_preferences, public_lark_runtime_status, save_config,
     purchase_tag_for_site,
@@ -29,6 +29,37 @@ TEST_PROXY = 'https://proxy.example.test/{region}'
 
 
 class ConfigTests(unittest.TestCase):
+    def test_workspace_snapshot_is_aggregated_versioned_and_non_sensitive(self):
+        state = object.__new__(AppState)
+        state.cfg = default_config()
+        state.cfg.update({
+            'purchaseSite': 'MX',
+            'purchaseTags': {'MX': 'MX采购', 'US': '美国采购'},
+            'proxyLink': TEST_PROXY,
+        })
+        state.hub_groups = lambda: ['MX采购', '美国采购', 'MX采购']
+        state.hub_status = lambda force=False: (True, '')
+        state.env_job = SimpleNamespace(preflight=lambda site: {
+            'ready': True,
+            'hubConnected': True,
+            'groupFound': True,
+            'proxyConfigured': True,
+            'purchaseTag': state.cfg['purchaseTags'][site],
+            'configuredWorkers': 5,
+            'effectiveWorkers': 5,
+            'message': '预检通过',
+        })
+
+        snapshot = state.workspace_snapshot()
+
+        self.assertEqual(snapshot['schemaVersion'], 1)
+        self.assertEqual(snapshot['groups'], ['MX采购', '美国采购'])
+        self.assertEqual(len(snapshot['snapshotRevision']), 64)
+        self.assertEqual(set(snapshot['preflight']), {'MX', 'US'})
+        rendered = json.dumps(snapshot, ensure_ascii=False)
+        self.assertNotIn(TEST_PROXY, rendered)
+        self.assertNotIn('proxyLink', rendered)
+
     def test_safe_parallel_mode_is_explicit_boolean_and_defaults_on(self):
         default = default_config()
         self.assertTrue(default['safeParallelTasks'])

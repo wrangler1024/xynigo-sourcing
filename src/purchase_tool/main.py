@@ -76,7 +76,7 @@ from .env_batch import (BACKUP_MAX_COUNT, BACKUP_REMARK, BUYER_CODES,
                         validate_purchase_tag)
 from .executor_channel import (
     CloudExecutorClient, ExecutorChannelStateStore, ExecutorChannelWorker,
-    system_executor_credential_store)
+    config_revision, system_executor_credential_store)
 from .operation_executor import LocalOperationExecutor, backup_account_ref
 from .extension_bridge import ExtensionBridge, ExtensionBridgeError
 from .hub_api import HubApiError, HubStudioApi, DEFAULT_PORT
@@ -977,6 +977,59 @@ class AppState(object):
 
         return self._hub_reads.get(
             ('group-envs', normalized_group), 5.0, load)
+
+    def workspace_snapshot(self):
+        """Build one credential-free snapshot for cloud workspace restore."""
+        preferences = public_envbatch_preferences(self.cfg)
+        groups = sorted({
+            str(item or '').strip() for item in self.hub_groups()
+            if str(item or '').strip()
+        })
+        try:
+            configured_workers = max(
+                1, min(10, int(self.cfg.get('envCreateWorkers') or 5)))
+        except (TypeError, ValueError):
+            configured_workers = 5
+        preflight = {}
+        for site in ('MX', 'US'):
+            try:
+                source = self.env_job.preflight(site)
+                preflight[site] = {
+                    'ready': bool(source.get('ready')),
+                    'hubConnected': bool(source.get('hubConnected')),
+                    'groupFound': bool(source.get('groupFound')),
+                    'proxyConfigured': bool(source.get('proxyConfigured')),
+                    'purchaseTag': str(source.get('purchaseTag') or ''),
+                    'configuredWorkers': int(
+                        source.get('configuredWorkers') or configured_workers),
+                    'effectiveWorkers': int(
+                        source.get('effectiveWorkers') or configured_workers),
+                    'message': scrub_text(source.get('message') or '')[:300],
+                }
+            except Exception as exc:
+                preflight[site] = {
+                    'ready': False,
+                    'hubConnected': bool(self.hub_status()[0]),
+                    'groupFound': False,
+                    'proxyConfigured': bool(effective_proxy_link(self.cfg)),
+                    'purchaseTag': str(
+                        purchase_tag_for_site(self.cfg, site) or '')[:12],
+                    'configuredWorkers': configured_workers,
+                    'effectiveWorkers': configured_workers,
+                    'message': scrub_text(exc)[:300],
+                }
+        captured_at = datetime.now(timezone.utc).isoformat()
+        content = {
+            'preferences': preferences,
+            'groups': groups,
+            'preflight': preflight,
+        }
+        return {
+            'schemaVersion': 1,
+            'snapshotRevision': config_revision(content),
+            'capturedAt': captured_at,
+            **content,
+        }
 
     def local_executor_status(self):
         """Return the non-sensitive status contract used by the Windows tray.
@@ -1903,6 +1956,8 @@ class EnvBatchJob(object):
             self.runner.stop_event = self.stop_event
             self.started_at = time.time()
             self.finished_at = None
+            self.phase = 'creating'
+            self.fatal_error = ''
 
         def worker():
             try:
@@ -1937,6 +1992,9 @@ class EnvBatchJob(object):
                     self.finished_at = time.time()
                     self.running = False
                     self.stop_available = False
+                    self.phase = ('failed' if self.fatal_error else
+                                  'stopped' if self.stop_requested else
+                                  'completed')
                 if on_finished:
                     try:
                         on_finished()
@@ -1969,6 +2027,7 @@ class EnvBatchJob(object):
             self.started_at = time.time()
             self.finished_at = None
             self.fatal_error = ''
+            self.phase = 'creating'
 
         def worker():
             try:
@@ -2004,6 +2063,9 @@ class EnvBatchJob(object):
                     self.finished_at = time.time()
                     self.running = False
                     self.stop_available = False
+                    self.phase = ('failed' if self.fatal_error else
+                                  'stopped' if self.stop_requested else
+                                  'completed')
                 if on_finished:
                     try:
                         on_finished(account_ids)
@@ -2972,6 +3034,8 @@ class Handler(BaseHTTPRequestHandler):
                 loader = getattr(STATE, 'hub_groups', None)
                 groups = loader() if callable(loader) else STATE.hub.group_list()
                 self._json({'groups': groups})
+            elif path == '/api/workspace/snapshot':
+                self._json(STATE.workspace_snapshot())
             elif path == '/api/group-envs':
                 group = (query.get('group') or [''])[0]
                 loader = getattr(STATE, 'hub_group_serials', None)
@@ -3527,11 +3591,12 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/envbatch/retry-row':
                 task_id = STATE.tasks.begin('env_batch')
                 account_id = str(body.get('accountId') or '')
+                operation_run_key = self._operation_run_key(body, task_id)
 
                 def finish_environment_retry():
                     try:
                         payload = STATE.environment_result_payload(
-                            task_id, [account_id])
+                            operation_run_key, [account_id])
                         STATE.enqueue_operation_result(
                             '/v1/operations/environment-creation-runs',
                             'resource.environment.create', payload)
@@ -3552,11 +3617,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({'started': True, 'taskId': task_id})
             elif path == '/api/envbatch/retry-failed':
                 task_id = STATE.tasks.begin('env_batch')
+                operation_run_key = self._operation_run_key(body, task_id)
 
                 def finish_environment_failed_retry(account_ids):
                     try:
                         payload = STATE.environment_result_payload(
-                            task_id, account_ids)
+                            operation_run_key, account_ids)
                         STATE.enqueue_operation_result(
                             '/v1/operations/environment-creation-runs',
                             'resource.environment.create', payload)

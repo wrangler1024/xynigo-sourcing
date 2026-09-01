@@ -41,10 +41,13 @@ SUPPORTED_CAPABILITIES = (
     'config.read.v1',
     'config.write.v1',
     'workspace.rpc.v1',
+    'workspace.snapshot.v1',
     'environment.parse.v1',
     'logistics.query.v1',
     'environment.create-bound.v1',
     'environment.create-backup.v1',
+    'environment.retry-row.v1',
+    'environment.retry-failed.v1',
 )
 MAX_WORKSPACE_RPC_BYTES = 32 * 1024 * 1024
 CHANNEL_STATE_FIELDS = frozenset({
@@ -480,6 +483,7 @@ class ExecutorChannelWorker(object):
                 if task_kind == 'config' else {
                     'runStatus': 'failed',
                     'phase': phase_prefix + '.failed',
+                    'errorCode': result_code,
                 } if task_kind == 'operation' else {})
         finally:
             if local_task_id:
@@ -528,6 +532,32 @@ class ExecutorChannelWorker(object):
                     status or 500)
             return (
                 'succeeded', 'environment_parse_completed',
+                result['body'])
+        if task_type == 'workspace.snapshot.v1':
+            if not callable(self.workspace_rpc_executor):
+                raise LocalAuthError(
+                    'executor_capability_missing',
+                    '工作区快照能力尚未就绪', 409)
+            result = self.workspace_rpc_executor({
+                'method': 'GET',
+                'path': '/api/workspace/snapshot',
+                'body': None,
+            })
+            if (not isinstance(result, dict)
+                    or result.get('responseType') != 'json'
+                    or not isinstance(result.get('body'), dict)):
+                raise LocalAuthError(
+                    'workspace_snapshot_response_invalid',
+                    '工作区快照响应无效', 502)
+            status = int(result.get('httpStatus') or 0)
+            if status < 200 or status >= 300:
+                body = result['body']
+                raise LocalAuthError(
+                    str(body.get('code') or 'workspace_snapshot_failed'),
+                    str(body.get('error') or '工作区快照刷新失败'),
+                    status or 500)
+            return (
+                'succeeded', 'workspace_snapshot_completed',
                 result['body'])
         if task_type == 'workspace.rpc.v1':
             if not callable(self.workspace_rpc_executor):

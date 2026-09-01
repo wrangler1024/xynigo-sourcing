@@ -53,6 +53,14 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             "paintContinuousElapsed('envElapsed'",
             "}, 1000);",
             "$('envFile').disabled = busy || !selectionReady;",
+            "workspace.snapshot.v1",
+            "async function cloudWorkspaceSnapshot",
+            "workspaceSnapshotTimeText",
+            "/workspace-snapshot",
+            "/retry`, {",
+            "retryMode:'failed'",
+            "retryMode:'single'",
+            "cloudEnvironmentSnapshotWithHistory",
         ):
             self.assertIn(marker, html)
         parse_handler = html[
@@ -111,7 +119,7 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         load_groups = html[html.index("async function loadEnvGroups()"):]
         self.assertLess(
             load_groups.index("refreshAssignUi();"),
-            load_groups.index("const [cfg, result] = await Promise.all"),
+            load_groups.index("[cfg, result] = await Promise.all"),
         )
 
     def test_cloud_workspace_does_not_flood_idle_executor_with_progress_reads(self):

@@ -350,9 +350,12 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
         "config.read.v1",
         "config.write.v1",
         "workspace.rpc.v1",
+        "workspace.snapshot.v1",
         "environment.parse.v1",
         "environment.create-bound.v1",
         "environment.create-backup.v1",
+        "environment.retry-row.v1",
+        "environment.retry-failed.v1",
         "logistics.query.v1",
     ]
 
@@ -368,6 +371,91 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
         assert heartbeat(
             device_client, credential, capabilities=capabilities
         )["task"] is None
+        snapshot_refresh = web_client.post(
+            f"/v1/executors/{executor_id}/workspace-snapshot",
+            json={"idempotencyKey": "workspace-snapshot-0001"},
+            headers=CSRF,
+        )
+        assert snapshot_refresh.status_code == 202, snapshot_refresh.text
+        snapshot_task_id = snapshot_refresh.json()["task"]["id"]
+        snapshot_lease = heartbeat(
+            device_client, credential, capabilities=capabilities
+        )["task"]
+        assert snapshot_lease["type"] == "workspace.snapshot.v1"
+        snapshot_credential = snapshot_lease["leaseToken"]
+        assert device_client.post(
+            f"/v1/executor-channel/tasks/{snapshot_task_id}/start",
+            json={"leaseToken": snapshot_credential},
+            headers=device_headers(credential),
+        ).status_code == 200
+        snapshot_result = {
+            "schemaVersion": 1,
+            "snapshotRevision": "c" * 64,
+            "capturedAt": "2026-09-01T18:00:00+08:00",
+            "preferences": {
+                "purchaseSite": "MX",
+                "purchaseTags": {"MX": "MX采购", "US": "美国采购"},
+                "importBuyerPlan": "2:新刚",
+                "verifySampleCount": 1,
+                "buyers": [{"name": "新刚", "code": "XG"}],
+                "buyerDefaultSplit": ["新刚"],
+                "backupMaxCount": 25,
+            },
+            "groups": ["MX采购", "美国采购"],
+            "preflight": {
+                "MX": {
+                    "ready": True,
+                    "hubConnected": True,
+                    "groupFound": True,
+                    "proxyConfigured": True,
+                    "purchaseTag": "MX采购",
+                    "configuredWorkers": 5,
+                    "effectiveWorkers": 5,
+                    "message": "预检通过",
+                },
+                "US": {
+                    "ready": True,
+                    "hubConnected": True,
+                    "groupFound": True,
+                    "proxyConfigured": True,
+                    "purchaseTag": "美国采购",
+                    "configuredWorkers": 5,
+                    "effectiveWorkers": 5,
+                    "message": "预检通过",
+                },
+            },
+        }
+        unsafe_snapshot = deepcopy(snapshot_result)
+        unsafe_snapshot["password"] = "must-not-persist"
+        assert device_client.post(
+            f"/v1/executor-channel/tasks/{snapshot_task_id}/finish",
+            json={
+                "leaseToken": snapshot_credential,
+                "outcome": "succeeded",
+                "resultCode": "workspace_snapshot_completed",
+                "resultSummary": unsafe_snapshot,
+            },
+            headers=device_headers(credential),
+        ).status_code == 422
+        snapshot_finished = device_client.post(
+            f"/v1/executor-channel/tasks/{snapshot_task_id}/finish",
+            json={
+                "leaseToken": snapshot_credential,
+                "outcome": "succeeded",
+                "resultCode": "workspace_snapshot_completed",
+                "resultSummary": snapshot_result,
+            },
+            headers=device_headers(credential),
+        )
+        assert snapshot_finished.status_code == 200, snapshot_finished.text
+        snapshot_visible = web_client.get(
+            f"/v1/executors/{executor_id}/workspace-snapshot"
+        )
+        assert snapshot_visible.status_code == 200
+        assert snapshot_visible.json()["snapshot"]["groups"] == [
+            "MX采购", "美国采购"
+        ]
+        assert snapshot_visible.json()["snapshotRevision"] == "c" * 64
         parse_created = web_client.post(
             "/v1/environment-plans/parse",
             json={
@@ -699,6 +787,94 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
         restored_rows = {row["accountRef"]: row for row in restored["rows"]}
         assert restored_rows["sha256-progress-account-0001"]["status"] == "success"
         assert restored_rows["sha256-progress-account-0001"]["ipVerified"] is True
+
+        retry_created = web_client.post(
+            f"/v1/operation-runs/environment-creation/{snapshot['runId']}/retry",
+            json={
+                "idempotencyKey": "environment-retry-row-0001",
+                "retryMode": "single",
+                "accountRefs": ["sha256-progress-account-0002"],
+            },
+            headers=CSRF,
+        )
+        assert retry_created.status_code == 202, retry_created.text
+        retry_snapshot = retry_created.json()["data"]
+        assert retry_snapshot["mode"] == "retry_row"
+        assert retry_snapshot["parentRunId"] == snapshot["runId"]
+        assert retry_snapshot["progressTotal"] == 1
+        retry_lease = heartbeat(
+            device_client, credential, capabilities=capabilities
+        )["task"]
+        assert retry_lease["type"] == "environment.retry-row.v1"
+        assert retry_lease["payload"]["accountRefs"] == [
+            "sha256-progress-account-0002"
+        ]
+        retry_task_id = retry_snapshot["executorTaskId"]
+        retry_credential = retry_lease["leaseToken"]
+        assert device_client.post(
+            f"/v1/executor-channel/tasks/{retry_task_id}/start",
+            json={"leaseToken": retry_credential},
+            headers=device_headers(credential),
+        ).status_code == 200
+        retry_progress = device_client.post(
+            f"/v1/executor-channel/tasks/{retry_task_id}/progress",
+            json={
+                "leaseToken": retry_credential,
+                "phase": "environment.creating",
+                "current": 1,
+                "total": 1,
+                "snapshot": {"rows": [{
+                    "accountRef": "sha256-progress-account-0002",
+                    "accountLabel": "pr***02@example.test",
+                    "purchaserLabel": "合成采购员",
+                    "environmentName": "SYN-MX-0901-002",
+                    "environmentRef": "hub-synthetic-mx-0002",
+                    "environmentSerial": "9002",
+                    "status": "success",
+                    "currentStep": "done",
+                    "completedSteps": ["done"],
+                }]},
+            },
+            headers=device_headers(credential),
+        )
+        assert retry_progress.status_code == 200, retry_progress.text
+        retry_finished = device_client.post(
+            f"/v1/executor-channel/tasks/{retry_task_id}/finish",
+            json={
+                "leaseToken": retry_credential,
+                "outcome": "succeeded",
+                "resultCode": "environment_completed",
+                "resultSummary": {
+                    "runStatus": "completed",
+                    "phase": "environment.completed",
+                    "progressCompleted": 1,
+                    "progressTotal": 1,
+                    "totalCount": 1,
+                    "successCount": 1,
+                    "failedCount": 0,
+                    "stoppedCount": 0,
+                    "ipOkCount": 0,
+                    "ipTotalCount": 0,
+                },
+            },
+            headers=device_headers(credential),
+        )
+        assert retry_finished.status_code == 200, retry_finished.text
+        retry_restored = web_client.get(
+            f"/v1/operation-runs/environment-creation/{retry_snapshot['runId']}"
+        ).json()["data"]
+        assert retry_restored["status"] == "completed"
+        assert retry_restored["rows"][0]["status"] == "success"
+        stale_retry = web_client.post(
+            f"/v1/operation-runs/environment-creation/{retry_snapshot['runId']}/retry",
+            json={
+                "idempotencyKey": "environment-retry-stale-0001",
+                "retryMode": "failed",
+                "accountRefs": ["sha256-progress-account-0002"],
+            },
+            headers=CSRF,
+        )
+        assert stale_retry.status_code == 409
 
         logistics = web_client.post(
             "/v1/operation-runs/logistics-query",

@@ -196,3 +196,103 @@ def test_logistics_task_reports_incremental_terminal_result():
     assert summary['failedCount'] == 1
     assert events[-1]['current'] == 2
     assert events[-1]['snapshot']['rows'][1]['status'] == 'login'
+
+
+def test_environment_single_retry_filters_parent_rows_into_child_run():
+    common_success = {
+        'accountId': 'a' * 64,
+        'emailMasked': 'ok***01@example.test',
+        'buyer': '新刚',
+        'envName': 'XG-MX-0901-001',
+        'containerCode': 'container-001',
+        'serialNumber': '101',
+        'state': 'done',
+        'completedSteps': ['done'],
+    }
+    retry_ref = 'b' * 64
+    rpc = FakeRpc('/api/envbatch/progress', [
+        {
+            'running': True,
+            'phase': 'creating',
+            'rows': [common_success, {
+                'accountId': retry_ref,
+                'emailMasked': 'fa***02@example.test',
+                'buyer': '新刚',
+                'envName': 'XG-MX-0901-002',
+                'state': 'running',
+                'completedSteps': ['env_created'],
+            }],
+        },
+        {
+            'running': False,
+            'phase': 'completed',
+            'rows': [common_success, {
+                'accountId': retry_ref,
+                'emailMasked': 'fa***02@example.test',
+                'buyer': '新刚',
+                'envName': 'XG-MX-0901-002',
+                'containerCode': 'container-002',
+                'serialNumber': '102',
+                'state': 'done',
+                'completedSteps': ['done'],
+            }],
+        },
+    ])
+    events = []
+    executor = LocalOperationExecutor(
+        rpc, poll_interval=0.05, sleep_fn=lambda _seconds: None)
+    outcome, code, summary = executor.execute(
+        'environment.retry-row.v1', {
+            'runKey': 'environment-retry-0001',
+            'parentRunId': 'parent-environment-run-0001',
+            'retryMode': 'single',
+            'accountRefs': [retry_ref],
+            'totalCount': 1,
+            'site': 'MX',
+            'purchaseDate': '20260901',
+            'environmentGroup': 'MX采购',
+        }, lambda **event: events.append(event))
+
+    assert outcome == 'succeeded'
+    assert code == 'environment_completed'
+    assert summary['successCount'] == 1
+    assert rpc.calls[0]['path'] == '/api/envbatch/retry-row'
+    assert rpc.calls[0]['body']['accountId'] == retry_ref
+    assert rpc.calls[0]['body']['operationRunKey'] == 'environment-retry-0001'
+    assert len(events[-1]['snapshot']['rows']) == 1
+    assert events[-1]['snapshot']['rows'][0]['accountRef'] == retry_ref
+
+
+def test_environment_failed_retry_uses_batch_retry_endpoint():
+    retry_ref = 'c' * 64
+    rpc = FakeRpc('/api/envbatch/progress', [{
+        'running': False,
+        'phase': 'completed',
+        'rows': [{
+            'accountId': retry_ref,
+            'emailMasked': 'fa***03@example.test',
+            'buyer': '新刚',
+            'envName': 'XG-MX-0901-003',
+            'containerCode': 'container-003',
+            'serialNumber': '103',
+            'state': 'done',
+            'completedSteps': ['done'],
+        }],
+    }])
+    executor = LocalOperationExecutor(
+        rpc, poll_interval=0.05, sleep_fn=lambda _seconds: None)
+    outcome, code, _summary = executor.execute(
+        'environment.retry-failed.v1', {
+            'runKey': 'environment-retry-0002',
+            'parentRunId': 'parent-environment-run-0001',
+            'retryMode': 'failed',
+            'accountRefs': [retry_ref],
+            'totalCount': 1,
+            'site': 'MX',
+            'purchaseDate': '20260901',
+            'environmentGroup': 'MX采购',
+        }, lambda **_event: None)
+
+    assert outcome == 'succeeded'
+    assert code == 'environment_completed'
+    assert rpc.calls[0]['path'] == '/api/envbatch/retry-failed'

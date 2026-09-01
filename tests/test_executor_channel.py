@@ -382,6 +382,47 @@ class ExecutorTaskApplicationTests(unittest.TestCase):
                          'plan-local-0001')
         self.assertFalse(coordinator.running())
 
+    def test_workspace_snapshot_task_uses_one_aggregated_local_read(self):
+        worker, client, _holder, coordinator = self.build_worker({
+            'concurrency': 2, 'safeParallelTasks': True,
+        })
+        received = []
+        snapshot = {
+            'schemaVersion': 1,
+            'snapshotRevision': 'c' * 64,
+            'capturedAt': '2026-09-01T10:00:00+00:00',
+            'preferences': {},
+            'groups': ['MX采购'],
+            'preflight': {},
+        }
+
+        def snapshot_rpc(payload):
+            received.append(payload)
+            return {
+                'httpStatus': 200,
+                'responseType': 'json',
+                'contentType': 'application/json',
+                'body': snapshot,
+            }
+
+        worker.workspace_rpc_executor = snapshot_rpc
+        worker._execute_task(DEVICE_CREDENTIAL, {
+            'id': 'task-workspace-snapshot',
+            'type': 'workspace.snapshot.v1',
+            'leaseToken': LEASE_TOKEN,
+            'payload': {},
+        })
+
+        self.assertEqual(received, [{
+            'method': 'GET',
+            'path': '/api/workspace/snapshot',
+            'body': None,
+        }])
+        self.assertEqual(client.finishes[0]['resultCode'],
+                         'workspace_snapshot_completed')
+        self.assertEqual(client.finishes[0]['resultSummary'], snapshot)
+        self.assertFalse(coordinator.running())
+
 
 class PairingTests(unittest.TestCase):
     def test_pair_saves_credential_only_in_secure_store(self):

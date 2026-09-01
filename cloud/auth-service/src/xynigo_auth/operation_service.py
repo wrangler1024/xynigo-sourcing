@@ -16,6 +16,7 @@ from .models import (
     BuyerAccount,
     EnvironmentCreationResult,
     EnvironmentCreationRun,
+    ExecutorTask,
     LogisticsQueryResult,
     LogisticsQueryRun,
     OperationalSyncOutbox,
@@ -23,6 +24,7 @@ from .models import (
 from .operation_contract import (
     EnvironmentCreationRunBody,
     EnvironmentCreationRunCreateBody,
+    EnvironmentRetryRunCreateBody,
     LogisticsQueryRunBody,
     LogisticsQueryRunCreateBody,
 )
@@ -33,7 +35,15 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _payload_hash(body: EnvironmentCreationRunBody | LogisticsQueryRunBody) -> str:
+def _payload_hash(
+    body: (
+        EnvironmentCreationRunBody
+        | EnvironmentCreationRunCreateBody
+        | EnvironmentRetryRunCreateBody
+        | LogisticsQueryRunBody
+        | LogisticsQueryRunCreateBody
+    ),
+) -> str:
     canonical = json.dumps(
         body.model_dump(mode="json"),
         ensure_ascii=False,
@@ -187,6 +197,118 @@ class OperationRunService:
         self.session.flush()
         return run, False
 
+    def create_environment_retry_run(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        parent: EnvironmentCreationRun,
+        body: EnvironmentRetryRunCreateBody,
+    ) -> tuple[EnvironmentCreationRun, bool]:
+        digest = _payload_hash(body)
+        existing = self.session.scalar(
+            select(EnvironmentCreationRun).where(
+                EnvironmentCreationRun.tenant_id == tenant_id,
+                EnvironmentCreationRun.source_run_key == body.idempotencyKey,
+            )
+        )
+        if existing is not None:
+            if existing.payload_hash != digest or existing.parent_run_id != parent.id:
+                raise PurchaseServiceError(
+                    "operation_run_idempotency_conflict",
+                    "同一环境重试标识已提交不同请求",
+                    409,
+                )
+            return existing, True
+        if parent.executor_id is None:
+            raise PurchaseServiceError(
+                "operation_run_executor_missing", "原环境任务没有可用执行器", 409
+            )
+        failed_refs = self._effective_environment_failed_refs(
+            tenant_id=tenant_id, run=parent
+        )
+        requested_refs = set(body.accountRefs)
+        if not requested_refs.issubset(failed_refs):
+            raise PurchaseServiceError(
+                "operation_retry_rows_changed",
+                "待重试行已变化，请刷新任务后重新选择",
+                409,
+            )
+        now = utcnow()
+        run = EnvironmentCreationRun(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            actor_user_id=actor_user_id,
+            source_run_key=body.idempotencyKey,
+            payload_hash=digest,
+            executor_id=parent.executor_id,
+            parent_run_id=parent.id,
+            run_mode=(
+                "retry_row" if body.retryMode == "single" else "retry_failed"
+            ),
+            site=parent.site,
+            purchase_date=parent.purchase_date,
+            environment_group=parent.environment_group,
+            status="created",
+            phase="created",
+            progress_completed=0,
+            progress_total=len(body.accountRefs),
+            total_count=len(body.accountRefs),
+            success_count=0,
+            failed_count=0,
+            ip_ok_count=0,
+            ip_total_count=0,
+            request_summary={
+                "retryMode": body.retryMode,
+                "accountRefs": list(body.accountRefs),
+            },
+            source="cloud_web",
+            created_at=now,
+            updated_at=now,
+        )
+        self.session.add(run)
+        self.session.flush()
+        return run, False
+
+    def _effective_environment_failed_refs(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        run: EnvironmentCreationRun,
+    ) -> set[str]:
+        chain = [run]
+        seen = {run.id}
+        parent_id = run.parent_run_id
+        while parent_id is not None and len(chain) < 20:
+            if parent_id in seen:
+                raise PurchaseServiceError(
+                    "operation_run_parent_cycle", "环境任务重试链异常", 409
+                )
+            parent = self.session.scalar(
+                select(EnvironmentCreationRun).where(
+                    EnvironmentCreationRun.id == parent_id,
+                    EnvironmentCreationRun.tenant_id == tenant_id,
+                )
+            )
+            if parent is None:
+                break
+            chain.append(parent)
+            seen.add(parent.id)
+            parent_id = parent.parent_run_id
+        effective: dict[str, str] = {}
+        for item in reversed(chain):
+            for row in self.session.scalars(
+                select(EnvironmentCreationResult).where(
+                    EnvironmentCreationResult.run_id == item.id
+                )
+            ):
+                effective[row.account_ref] = row.status
+        return {
+            account_ref
+            for account_ref, status in effective.items()
+            if status == "failed"
+        }
+
     def get_environment_run(
         self, *, tenant_id: uuid.UUID, run_id: uuid.UUID
     ) -> EnvironmentCreationRun:
@@ -249,11 +371,20 @@ class OperationRunService:
                 .order_by(EnvironmentCreationResult.created_at, EnvironmentCreationResult.id)
             )
         )
+        task_result_code = (
+            self.session.scalar(
+                select(ExecutorTask.result_code).where(
+                    ExecutorTask.id == run.executor_task_id
+                )
+            )
+            if run.executor_task_id else None
+        )
         return {
             "runId": str(run.id),
             "runKey": run.source_run_key,
             "executorId": str(run.executor_id) if run.executor_id else None,
             "executorTaskId": str(run.executor_task_id) if run.executor_task_id else None,
+            "parentRunId": str(run.parent_run_id) if run.parent_run_id else None,
             "mode": run.run_mode,
             "site": run.site,
             "purchaseDate": run.purchase_date,
@@ -275,6 +406,7 @@ class OperationRunService:
             "createdAt": _iso(run.created_at),
             "updatedAt": _iso(run.updated_at),
             "terminal": run.status in self.TERMINAL_STATUSES,
+            "resultCode": task_result_code,
             "unchanged": unchanged,
             "rows": [
                 {

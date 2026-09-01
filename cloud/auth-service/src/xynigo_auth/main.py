@@ -86,6 +86,7 @@ from .executor_contract import (
     ExecutorTaskProgressBody,
     ExecutorTaskStartBody,
     ExecutorWorkspaceRpcBody,
+    ExecutorWorkspaceSnapshotRefreshBody,
     PairingCodeCreateBody,
 )
 from .executor_payload_crypto import ExecutorPayloadCipher
@@ -110,6 +111,7 @@ from .operation_contract import (
     EnvironmentCreationRunBody,
     EnvironmentCreationRunCreateBody,
     EnvironmentPlanParseBody,
+    EnvironmentRetryRunCreateBody,
     LogisticsQueryRunBody,
     LogisticsQueryRunCreateBody,
 )
@@ -1707,6 +1709,70 @@ def create_app(
         )
         return {"task": service.task_payload(task)}
 
+    @app.get("/v1/executors/{executor_id}/workspace-snapshot")
+    def get_executor_workspace_snapshot(
+        executor_id: uuid.UUID,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="resource.environment.create",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="executor.workspace_snapshot.read",
+        )
+        return executor_channel(session).workspace_snapshot_payload(
+            tenant_id=actor.tenant.id,
+            user_id=actor.user.id,
+            executor_id=executor_id,
+        )
+
+    @app.post(
+        "/v1/executors/{executor_id}/workspace-snapshot",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def refresh_executor_workspace_snapshot(
+        executor_id: uuid.UUID,
+        body: ExecutorWorkspaceSnapshotRefreshBody,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="resource.environment.create",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="executor.workspace_snapshot.refresh",
+        )
+        service = executor_channel(session)
+        task = service.create_config_task(
+            tenant_id=actor.tenant.id,
+            user_id=actor.user.id,
+            executor_id=executor_id,
+            task_type="workspace.snapshot.v1",
+            payload={},
+            idempotency_key=body.idempotencyKey,
+        )
+        return {
+            **service.workspace_snapshot_payload(
+                tenant_id=actor.tenant.id,
+                user_id=actor.user.id,
+                executor_id=executor_id,
+            ),
+            "task": service.task_payload(task),
+        }
+
     @app.post(
         "/v1/environment-plans/parse",
         status_code=status.HTTP_202_ACCEPTED,
@@ -2760,6 +2826,96 @@ def create_app(
         )
         session.refresh(run)
         return {"ok": True, "data": runs.environment_snapshot(run)}
+
+    @app.post(
+        "/v1/operation-runs/environment-creation/{run_id}/retry",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def retry_environment_operation_run(
+        run_id: uuid.UUID,
+        body: EnvironmentRetryRunCreateBody,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="resource.environment.create",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="resource.environment.run.retry",
+        )
+        runs = OperationRunService(session)
+        parent = runs.get_environment_run(
+            tenant_id=actor.tenant.id, run_id=run_id
+        )
+        try:
+            run, unchanged = runs.create_environment_retry_run(
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                parent=parent,
+                body=body,
+            )
+        except PurchaseServiceError as exc:
+            purchase_error(
+                request,
+                session,
+                actor,
+                "resource.environment.run.retry",
+                exc,
+                business_object_id=str(run_id),
+            )
+        if not unchanged:
+            task_type = (
+                "environment.retry-row.v1"
+                if body.retryMode == "single"
+                else "environment.retry-failed.v1"
+            )
+            task = executor_channel(session).create_config_task(
+                tenant_id=actor.tenant.id,
+                user_id=actor.user.id,
+                executor_id=run.executor_id,
+                task_type=task_type,
+                payload={
+                    "runId": str(run.id),
+                    "runKey": run.source_run_key,
+                    "parentRunId": str(parent.id),
+                    "retryMode": body.retryMode,
+                    "accountRefs": list(body.accountRefs),
+                    "totalCount": len(body.accountRefs),
+                    "site": run.site,
+                    "purchaseDate": run.purchase_date,
+                    "environmentGroup": run.environment_group,
+                },
+                idempotency_key=f"operation:{body.idempotencyKey}",
+                commit=False,
+            )
+            run.executor_task_id = task.id
+            run.status = "queued"
+            run.phase = "queued"
+            run.updated_at = utcnow()
+        result = runs.environment_snapshot(run, unchanged=unchanged)
+        _add_audit(
+            session,
+            request_id=request.state.request_id,
+            action="resource.environment.run.retry",
+            result="success",
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            business_object_type="environment_creation_run",
+            business_object_id=str(run.id),
+            change_summary={
+                "retryMode": body.retryMode,
+                "totalCount": len(body.accountRefs),
+                "unchanged": unchanged,
+            },
+            details={"parentRunId": str(parent.id)},
+            **_request_log_context(request),
+        )
+        session.commit()
+        return {"ok": True, "data": result}
 
     @app.put("/v1/operations/logistics-query-runs")
     def ingest_logistics_query_run(
@@ -5527,6 +5683,12 @@ def _validation_log_target(method: str, path: str) -> tuple[str | None, str | No
         return "fulfillment.logistics.run.create", None
     if method == "POST" and path == "/v1/environment-plans/parse":
         return "resource.environment.plan.parse", None
+    retry_run_match = re.fullmatch(
+        r"/v1/operation-runs/environment-creation/([0-9a-fA-F-]{36})/retry",
+        path,
+    )
+    if method == "POST" and retry_run_match:
+        return "resource.environment.run.retry", retry_run_match.group(1)
     if method == "PUT" and path == "/v1/resources/buyer-accounts/snapshot":
         return "resource.buyer_account.snapshot_sync", None
     if method == "POST" and path == "/v1/resources/buyer-accounts/preflight":

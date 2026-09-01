@@ -82,6 +82,34 @@ class EnvironmentCreationRunCreateBody(BaseModel):
         return self
 
 
+class EnvironmentRetryRunCreateBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    idempotencyKey: str = Field(min_length=8, max_length=128, pattern=SAFE_KEY_RE)
+    retryMode: Literal["single", "failed"]
+    accountRefs: list[str] = Field(min_length=1, max_length=2000)
+
+    @field_validator("accountRefs")
+    @classmethod
+    def validate_retry_refs(cls, value: list[str]) -> list[str]:
+        normalized = [_single_line(item) for item in value]
+        if any(
+            not item or len(item) > 128
+            or not all(character.isalnum() or character in "._:-" for character in item)
+            for item in normalized
+        ):
+            raise ValueError("retry account reference is invalid")
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("accountRefs must be unique")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_retry_mode(self) -> "EnvironmentRetryRunCreateBody":
+        if self.retryMode == "single" and len(self.accountRefs) != 1:
+            raise ValueError("single retry requires exactly one account")
+        return self
+
+
 class EnvironmentPlanParseBody(BaseModel):
     """Encrypted upload request for parsing a buyer-account workbook locally."""
 
@@ -148,6 +176,102 @@ class EnvironmentPlanParseResult(BaseModel):
         if any(value > self.count for value in bounded):
             raise ValueError("environment parse count exceeds total")
         return self
+
+
+class WorkspaceBuyerItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=100)
+    code: str = Field(min_length=1, max_length=16, pattern=r"^[A-Z0-9_-]+$")
+
+
+class WorkspaceEnvironmentPreferences(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    purchaseSite: Literal["US", "MX"]
+    purchaseTags: dict[Literal["US", "MX"], str]
+    importBuyerPlan: str = Field(default="", max_length=1000)
+    verifySampleCount: int = Field(ge=0, le=10)
+    buyers: list[WorkspaceBuyerItem] = Field(min_length=1, max_length=20)
+    buyerDefaultSplit: list[str] = Field(default_factory=list, max_length=20)
+    backupMaxCount: int = Field(ge=1, le=2000)
+
+    @field_validator("purchaseTags")
+    @classmethod
+    def validate_purchase_tags(
+        cls, value: dict[str, str]
+    ) -> dict[str, str]:
+        if set(value) != {"US", "MX"}:
+            raise ValueError("purchaseTags must contain US and MX")
+        normalized = {key: _single_line(item) for key, item in value.items()}
+        if any(len(item) > 255 for item in normalized.values()):
+            raise ValueError("purchase group is too long")
+        return normalized
+
+    @field_validator("buyerDefaultSplit")
+    @classmethod
+    def validate_default_split(cls, value: list[str]) -> list[str]:
+        normalized = [_single_line(item) for item in value]
+        if any(not item or len(item) > 100 for item in normalized):
+            raise ValueError("buyerDefaultSplit is invalid")
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("buyerDefaultSplit must be unique")
+        return normalized
+
+
+class WorkspacePreflightSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ready: bool
+    hubConnected: bool
+    groupFound: bool
+    proxyConfigured: bool
+    purchaseTag: str = Field(default="", max_length=12)
+    configuredWorkers: int = Field(ge=1, le=10)
+    effectiveWorkers: int = Field(ge=1, le=10)
+    message: str = Field(default="", max_length=300)
+
+    @field_validator("purchaseTag", "message")
+    @classmethod
+    def normalize_preflight_text(cls, value: str) -> str:
+        return _single_line(value)
+
+
+class ExecutorWorkspaceSnapshotResult(BaseModel):
+    """Strict non-sensitive snapshot used for fast cloud workspace restore."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schemaVersion: Literal[1] = 1
+    snapshotRevision: str = Field(pattern=r"^[a-f0-9]{64}$")
+    capturedAt: datetime
+    preferences: WorkspaceEnvironmentPreferences
+    groups: list[str] = Field(default_factory=list, max_length=500)
+    preflight: dict[Literal["US", "MX"], WorkspacePreflightSnapshot]
+
+    @field_validator("capturedAt")
+    @classmethod
+    def validate_snapshot_timezone(cls, value: datetime) -> datetime:
+        return _timezone_required(value)  # type: ignore[return-value]
+
+    @field_validator("groups")
+    @classmethod
+    def validate_groups(cls, value: list[str]) -> list[str]:
+        normalized = [_single_line(item) for item in value]
+        if any(not item or len(item) > 255 for item in normalized):
+            raise ValueError("workspace group is invalid")
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("workspace groups must be unique")
+        return normalized
+
+    @field_validator("preflight")
+    @classmethod
+    def validate_preflight_sites(
+        cls, value: dict[str, WorkspacePreflightSnapshot]
+    ) -> dict[str, WorkspacePreflightSnapshot]:
+        if set(value) != {"US", "MX"}:
+            raise ValueError("preflight must contain US and MX")
+        return value
 
 
 class LogisticsQueryRunCreateBody(BaseModel):

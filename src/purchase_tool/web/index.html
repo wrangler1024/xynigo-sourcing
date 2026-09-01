@@ -2578,6 +2578,7 @@ let envElapsedObservedAt = Date.now();
 let envRetryAccountId = '';
 let envRetryFailedSubmitting = false;
 let envFailedCount = 0;
+let lastEnvironmentRows = [];
 let envPreflightReady = false;
 let envGroupSaving = false;
 let larkReady = false;
@@ -2642,6 +2643,9 @@ let cloudEnvironmentTaskId = '';
 let cloudLogisticsRunId = '';
 let cloudLogisticsTaskId = '';
 let lastWorkspaceExecutorId = '';
+let cloudWorkspaceSnapshotCache = null;
+let cloudWorkspaceSnapshotRefreshPromise = null;
+const cloudEnvironmentAncestorCache = new Map();
 let safeParallelTasks = true;
 // 采购/买家号相关分组白名单：模块一、模块三均暂时隐藏店铺/后台分组
 const BUYER_GROUP_PATTERN = /采购|买家号|Registration/i;
@@ -3384,16 +3388,60 @@ function cloudEnvironmentLegacySnapshot(run) {
     stopped:rows.filter(row => row.state === 'stopped').length,
     ipOk:Number(run.ipOkCount || 0), ipTotal:Number(run.ipTotalCount || 0),
   };
+  const resultMessages = {
+    environment_retry_source_expired:'执行器中的敏感解析数据已安全清理，请按原站点、分组和日期重新上传原始 xlsx 后续跑。',
+    executor_offline:'本地执行器已离线，请启动原执行器后重试。',
+    lease_expired_after_start:'执行器连接中断，当前结果待核对，请勿直接重复提交。'
+  };
   return {
     running:!run.terminal, stopRequested:!!run.stopRequested,
     elapsedSec:cloudRunElapsed(run), rows, summary, ipChecks:checks,
     phase, ipCheckDone:checks.length, ipCheckTotal:Number(run.ipTotalCount || checks.length),
     fatalError:run.status === 'failed'
-      ? String((rows.find(row => row.error) || {}).error || '任务执行失败') : '',
+      ? String((rows.find(row => row.error) || {}).error
+        || resultMessages[String(run.resultCode || '')] || '任务执行失败') : '',
     mappingReady:false, tsvReady:false, resultReady:false,
     ledger:{enabled:false, running:false, rows:[]},
     hubConnected:cloudRunHubConnected(run),
   };
+}
+
+async function cloudEnvironmentSnapshotWithHistory(run) {
+  if (!run || !run.parentRunId) return cloudEnvironmentLegacySnapshot(run);
+  const chain = [run];
+  let parentId = String(run.parentRunId || '');
+  for (let depth = 0; parentId && depth < 10; depth += 1) {
+    let parent = cloudEnvironmentAncestorCache.get(parentId) || null;
+    if (!parent) {
+      parent = await cloudOperationSnapshot('environment', parentId);
+      if (parent && parent.terminal) {
+        cloudEnvironmentAncestorCache.set(parentId, parent);
+      }
+    }
+    if (!parent) break;
+    chain.unshift(parent);
+    parentId = String(parent.parentRunId || '');
+  }
+  const current = cloudEnvironmentLegacySnapshot(run);
+  const merged = new Map();
+  const checks = new Map();
+  chain.forEach(item => {
+    const snapshot = cloudEnvironmentLegacySnapshot(item);
+    snapshot.rows.forEach(row => merged.set(String(row.accountId || ''), row));
+    (snapshot.ipChecks || []).forEach(check =>
+      checks.set(String(check.envName || ''), check));
+  });
+  current.rows = Array.from(merged.values());
+  current.ipChecks = Array.from(checks.values());
+  current.summary = {
+    total:current.rows.length,
+    done:current.rows.filter(row => row.state === 'done').length,
+    failed:current.rows.filter(row => row.state === 'failed').length,
+    stopped:current.rows.filter(row => row.state === 'stopped').length,
+    ipOk:current.ipChecks.filter(item => item.ok).length,
+    ipTotal:current.ipChecks.length,
+  };
+  return current;
 }
 
 async function cloudOperationSnapshot(kind, runId='') {
@@ -3447,6 +3495,77 @@ async function cloudEnvironmentPlanParse(filename, contentBase64, site) {
   if (!taskId) throw new Error('云端未返回文件解析任务编号');
   const task = await waitCloudExecutorTask(taskId);
   return {result:task.resultSummary || {}, executorId:String(executor.id || '')};
+}
+
+function workspaceSnapshotTimeText(snapshot) {
+  const value = Date.parse(snapshot && snapshot.capturedAt || '');
+  if (!Number.isFinite(value)) return '更新时间未知';
+  return `更新于 ${new Date(value).toLocaleString('zh-CN', {hour12:false})}`;
+}
+
+async function refreshCloudWorkspaceSnapshot(executor) {
+  if (cloudWorkspaceSnapshotRefreshPromise) {
+    return cloudWorkspaceSnapshotRefreshPromise;
+  }
+  cloudWorkspaceSnapshotRefreshPromise = (async () => {
+    const created = await cloudFetchJson(
+      `/v1/executors/${encodeURIComponent(executor.id)}/workspace-snapshot`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          idempotencyKey:newWorkspaceMutationKey('workspace-snapshot')
+        })
+      });
+    const taskId = String(created.task && created.task.id || '');
+    if (!taskId) throw new Error('云端未返回工作区快照任务编号');
+    await waitCloudExecutorTask(taskId, 120000);
+    const latest = await cloudFetchJson(
+      `/v1/executors/${encodeURIComponent(executor.id)}/workspace-snapshot`);
+    if (latest.snapshot) {
+      cloudWorkspaceSnapshotCache = {
+        ...latest.snapshot,
+        executorId:String(executor.id),
+        stale:!!latest.stale,
+        ageSeconds:latest.ageSeconds,
+      };
+    }
+    return cloudWorkspaceSnapshotCache;
+  })();
+  try {
+    return await cloudWorkspaceSnapshotRefreshPromise;
+  } finally {
+    cloudWorkspaceSnapshotRefreshPromise = null;
+  }
+}
+
+async function cloudWorkspaceSnapshot(forceRefresh=false) {
+  const executor = await cloudFormalExecutor('workspace.snapshot.v1');
+  let envelope = null;
+  try {
+    envelope = await cloudFetchJson(
+      `/v1/executors/${encodeURIComponent(executor.id)}/workspace-snapshot`);
+    if (envelope.snapshot) {
+      cloudWorkspaceSnapshotCache = {
+        ...envelope.snapshot,
+        executorId:String(executor.id),
+        stale:!!envelope.stale,
+        ageSeconds:envelope.ageSeconds,
+      };
+    }
+  } catch (error) {
+    if (!cloudWorkspaceSnapshotCache) throw error;
+  }
+  const cached = cloudWorkspaceSnapshotCache;
+  if (forceRefresh || !cached) {
+    return await refreshCloudWorkspaceSnapshot(executor);
+  }
+  if (envelope && envelope.stale && !cloudWorkspaceSnapshotRefreshPromise) {
+    refreshCloudWorkspaceSnapshot(executor).then(snapshot => {
+      if (!snapshot || envPlanId || envRunning || backupRunning || envSubmitting) return;
+      if (activeModule === 'envbatch') loadEnvGroups();
+      else if (activeModule === 'query') loadGroups();
+    }).catch(() => {});
+  }
+  return cached;
 }
 
 async function cloudWorkspaceRpcRaw(path, opts={}) {
@@ -6473,6 +6592,7 @@ function renderEnvBatch(snap) {
   $('envSiteGroup').disabled = envSubmitting || envRunning || backupRunning || envGroupSaving || $('envSiteGroup').options.length < 2;
   updateEnvModeTabs();
   const rows = snap.rows || [];
+  lastEnvironmentRows = rows.map(row => ({...row}));
   const done = rows.filter(r => r.state === 'done').length;
   const stopped = rows.filter(r => r.state === 'stopped').length;
   const failed = rows.filter(r => r.state === 'failed').length;
@@ -6583,10 +6703,11 @@ async function pollEnvBatch() {
       if (run) {
         cloudEnvironmentRunId = String(run.runId || '');
         cloudEnvironmentTaskId = String(run.executorTaskId || '');
-        envMode = run.mode === 'bound' ? 'bound' : 'backup';
+        envMode = ['bound','retry_row','retry_failed'].includes(run.mode)
+          ? 'bound' : 'backup';
         if (run.mode === 'test') envBackup.type = '测试';
       }
-      const snapshot = cloudEnvironmentLegacySnapshot(run);
+      const snapshot = await cloudEnvironmentSnapshotWithHistory(run);
       if (envMode === 'backup') renderBackupBatch(snapshot);
       else renderEnvBatch(snapshot);
     } else if (envMode === 'backup') {
@@ -6611,11 +6732,19 @@ async function pollEnvBatch() {
 }
 setInterval(pollEnvBatch, 1500);
 
-async function refreshEnvPreflight() {
+async function refreshEnvPreflight(forceRefresh=false) {
   if (!authReady || !hasFeatureAccess('envbatch')) return;
   try {
     const site = $('envSite').value;
-    const state = await api('/api/envbatch/preflight?site=' + encodeURIComponent(site));
+    let state, snapshotMeta = null;
+    if (CLOUD_WEB_MODE) {
+      snapshotMeta = await cloudWorkspaceSnapshot(forceRefresh);
+      state = snapshotMeta && snapshotMeta.preflight
+        ? snapshotMeta.preflight[site] : null;
+      if (!state) throw new Error('云端快照缺少当前站点预检结果');
+    } else {
+      state = await api('/api/envbatch/preflight?site=' + encodeURIComponent(site));
+    }
     envPreflightReady = !!state.ready;
     envEffectiveWorkers = Number(state.effectiveWorkers || state.configuredWorkers || 1);
     setHubStatus(state.hubConnected);
@@ -6628,7 +6757,9 @@ async function refreshEnvPreflight() {
       state.proxyConfigured ? '代理链接已配置' : '代理链接未配置',
       `实际建环境并发 ${Number(state.effectiveWorkers || state.configuredWorkers || 1)}`
     ];
-    $('envPreflightText').textContent = `${state.ready ? '预检通过' : '预检阻断'}：${checks.join(' · ')}。${state.message || ''}`;
+    const snapshotText = snapshotMeta
+      ? ` · ${workspaceSnapshotTimeText(snapshotMeta)}${snapshotMeta.stale ? '（旧快照，后台刷新中）' : ''}` : '';
+    $('envPreflightText').textContent = `${state.ready ? '预检通过' : '预检阻断'}：${checks.join(' · ')}。${state.message || ''}${snapshotText}`;
   } catch (e) {
     envPreflightReady = false;
     $('envPreflightText').textContent = '预检失败：' + e.message;
@@ -7408,7 +7539,9 @@ const LOCAL_EXECUTOR_NUMBER_FIELDS = [
 ];
 
 function validateLocalExecutorConfigInputs() {
-  const payload = {};
+  const retryRefs = lastEnvironmentRows.filter(row => row.state === 'failed')
+    .map(row => String(row.accountId || '')).filter(Boolean);
+  const payload = {parentRunId:cloudEnvironmentRunId, accountRefs:retryRefs};
   let error = '';
   LOCAL_EXECUTOR_NUMBER_FIELDS.forEach(field => {
     const input = $(field.id);
@@ -9223,10 +9356,25 @@ $('btnEnvRetryFailed').onclick = async () => {
     '失败项批量重试正在提交',
     `本次只重试当前 failed 行（${retryCount} 个），正在等待本机执行器受理。`);
   try {
-    const result = await api('/api/envbatch/retry-failed', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(payload), idempotencyKey
-    });
+    let result;
+    if (CLOUD_WEB_MODE) {
+      const created = await cloudFetchJson(
+        `/v1/operation-runs/environment-creation/${encodeURIComponent(cloudEnvironmentRunId)}/retry`, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({
+            idempotencyKey, retryMode:'failed', accountRefs:retryRefs,
+          })
+        });
+      result = {...created.data, count:created.data.totalCount};
+      cloudEnvironmentRunId = String(result.runId || '');
+      cloudEnvironmentTaskId = String(result.executorTaskId || '');
+      renderEnvBatch(cloudEnvironmentLegacySnapshot(result));
+    } else {
+      result = await api('/api/envbatch/retry-failed', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({}), idempotencyKey
+      });
+    }
     clearWorkspaceMutationKey('env-retry-failed', idempotencyKey);
     envRunning = true;
     envProgressLoaded = false;
@@ -9262,10 +9410,29 @@ $('envTbody').addEventListener('click', async e => {
     'submitting', '失败步骤重试正在提交',
     '本次只继续失败账号的未完成步骤；已经完成的步骤不会重复执行。');
   try {
-    await api('/api/envbatch/retry-row', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({accountId})
-    });
+    if (CLOUD_WEB_MODE) {
+      const retryPayload = {
+        parentRunId:cloudEnvironmentRunId, accountRefs:[accountId]
+      };
+      const idempotencyKey = workspaceMutationKey(
+        'env-retry-row', retryPayload);
+      const created = await cloudFetchJson(
+        `/v1/operation-runs/environment-creation/${encodeURIComponent(cloudEnvironmentRunId)}/retry`, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({
+            idempotencyKey, retryMode:'single', accountRefs:[accountId],
+          })
+        });
+      clearWorkspaceMutationKey('env-retry-row', idempotencyKey);
+      cloudEnvironmentRunId = String(created.data.runId || '');
+      cloudEnvironmentTaskId = String(created.data.executorTaskId || '');
+      renderEnvBatch(cloudEnvironmentLegacySnapshot(created.data));
+    } else {
+      await api('/api/envbatch/retry-row', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({accountId})
+      });
+    }
     envRunning = true;
     envProgressLoaded = false;
     setEnvExecutionState(
@@ -9346,7 +9513,14 @@ async function loadGroups() {
 async function loadGroupsOnce() {
   try {
     let j;
-    try { j = await api('/api/groups'); }
+    try {
+      if (CLOUD_WEB_MODE) {
+        const snapshot = await cloudWorkspaceSnapshot();
+        j = {groups:Array.isArray(snapshot && snapshot.groups) ? snapshot.groups : []};
+      } else {
+        j = await api('/api/groups');
+      }
+    }
     catch (error) {
       if (error && error.code === 'executor_task_busy') {
         await new Promise(resolve => setTimeout(resolve, 1200));
@@ -9391,9 +9565,16 @@ async function loadEnvGroups() {
   envBuyers.forEach(b => { if (!(b.name in envBuyerCounts)) envBuyerCounts[b.name] = 0; });
   refreshAssignUi();
   try {
-    const [cfg, result] = await Promise.all([
-      api('/api/envbatch/preferences'), api('/api/groups')
-    ]);
+    let cfg, result, snapshotMeta = null;
+    if (CLOUD_WEB_MODE) {
+      snapshotMeta = await cloudWorkspaceSnapshot();
+      cfg = snapshotMeta.preferences || {};
+      result = {groups:Array.isArray(snapshotMeta.groups) ? snapshotMeta.groups : []};
+    } else {
+      [cfg, result] = await Promise.all([
+        api('/api/envbatch/preferences'), api('/api/groups')
+      ]);
+    }
     envBuyers = normalizeEnvBuyers(cfg.buyers);
     envDefaultSplit = normalizeEnvDefaultSplit(cfg.buyerDefaultSplit);
     envBuyers.forEach(b => { if (!(b.name in envBuyerCounts)) envBuyerCounts[b.name] = 0; });
@@ -9439,7 +9620,7 @@ async function loadEnvGroups() {
               body:JSON.stringify({purchaseSite:site, purchaseTags:{[site]:fallback}})
             });
             toast(`采购分组默认已设为「${fallback}」`);
-            await refreshEnvPreflight();
+            await refreshEnvPreflight(CLOUD_WEB_MODE);
           } catch (err) { /* 保存失败仅提示预检，不影响页面 */ }
         }
       } else if (configured) {
@@ -9448,6 +9629,9 @@ async function loadEnvGroups() {
     }
     siteSel.disabled = envSubmitting || envRunning || envGroupSaving;
     sel.disabled = envSubmitting || envRunning || envGroupSaving || groups.length === 0;
+    if (snapshotMeta) {
+      $('envPreflightText').textContent = `已恢复执行器非敏感快照 · ${workspaceSnapshotTimeText(snapshotMeta)}${snapshotMeta.stale ? ' · 正在后台刷新' : ''}`;
+    }
   } catch (e) {
     sel.innerHTML = '<option value="">分组接口不可用，请检查 HubStudio</option>';
     siteSel.disabled = envSubmitting || envRunning || envGroupSaving;
@@ -9484,6 +9668,7 @@ $('envSite').onchange = async e => {
       method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({purchaseSite:site})
     });
+    if (CLOUD_WEB_MODE) await cloudWorkspaceSnapshot(true);
     await loadEnvGroups();
     await refreshEnvPreflight();
     toast(`已切换到${site === 'US' ? '美国站' : '墨西哥站'}`);
@@ -9516,7 +9701,7 @@ $('envSiteGroup').onchange = async e => {
         purchaseTags:{[$('envSite').value]:selected}
       })
     });
-    await refreshEnvPreflight();
+    await refreshEnvPreflight(CLOUD_WEB_MODE);
     toast('采购分组已保存，预检状态已刷新');
   } catch (err) {
     toast('采购分组保存失败：' + err.message);
@@ -9706,6 +9891,7 @@ $('btnCfgSave').onclick = async () => {
     setHubStatus(j.hubConnected);
     safeParallelTasks = $('cfgSafeParallel').checked;
     pollTaskStatus();
+    if (CLOUD_WEB_MODE) await cloudWorkspaceSnapshot(true);
     await loadEnvGroups();
     await refreshEnvPreflight();
     if (j.hubConnected) { loadGroups(); toast('设置已保存：并发 ' + conc + '，HubStudio 连接正常'); }

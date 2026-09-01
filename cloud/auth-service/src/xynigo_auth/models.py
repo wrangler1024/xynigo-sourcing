@@ -976,6 +976,9 @@ class EnvironmentCreationRun(Base):
     executor_task_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("executor_tasks.id", ondelete="SET NULL")
     )
+    parent_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("environment_creation_runs.id", ondelete="SET NULL")
+    )
     run_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="bound")
     site: Mapped[str] = mapped_column(String(20), nullable=False)
     purchase_date: Mapped[str] = mapped_column(String(8), nullable=False)
@@ -1015,7 +1018,7 @@ class EnvironmentCreationRun(Base):
             name="ck_environment_run_status",
         ),
         CheckConstraint(
-            "run_mode IN ('bound', 'backup', 'test')",
+            "run_mode IN ('bound', 'backup', 'test', 'retry_row', 'retry_failed')",
             name="ck_environment_run_mode",
         ),
         CheckConstraint(
@@ -1027,6 +1030,7 @@ class EnvironmentCreationRun(Base):
         Index("ix_environment_run_tenant_completed", "tenant_id", "completed_at"),
         Index("ix_environment_run_tenant_status", "tenant_id", "status", "updated_at"),
         Index("ix_environment_run_executor_task", "executor_task_id", unique=True),
+        Index("ix_environment_run_parent", "parent_run_id", "created_at"),
     )
 
 
@@ -1397,6 +1401,13 @@ class LocalExecutor(Base):
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     config_revision: Mapped[str | None] = mapped_column(String(128))
     hub_status: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
+    workspace_snapshot: Mapped[dict[str, Any]] = mapped_column(
+        JSON, nullable=False, default=dict
+    )
+    workspace_snapshot_revision: Mapped[str | None] = mapped_column(String(64))
+    workspace_snapshot_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -1497,8 +1508,10 @@ class ExecutorTask(Base):
         ),
         CheckConstraint(
             "task_type IN ('config.read.v1', 'config.write.v1', "
-            "'workspace.rpc.v1', 'environment.parse.v1', 'logistics.query.v1', "
-            "'environment.create-bound.v1', 'environment.create-backup.v1')",
+            "'workspace.rpc.v1', 'workspace.snapshot.v1', "
+            "'environment.parse.v1', 'logistics.query.v1', "
+            "'environment.create-bound.v1', 'environment.create-backup.v1', "
+            "'environment.retry-row.v1', 'environment.retry-failed.v1')",
             name="ck_executor_task_type",
         ),
         CheckConstraint(
