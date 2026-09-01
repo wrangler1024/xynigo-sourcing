@@ -52,6 +52,7 @@ class FakeEnvJob(object):
         self.callback = None
         self.resource_name = resource_name
         self.stop_calls = 0
+        self.retry_failed_calls = 0
 
     def start(self, *_args, reserve_resources=None, on_finished=None,
               **_kwargs):
@@ -64,6 +65,15 @@ class FakeEnvJob(object):
     def request_stop(self):
         self.stop_calls += 1
         return {'stopping': True, 'stopRequested': True}
+
+    def retry_failed(self, reserve_resources=None, on_finished=None):
+        self.retry_failed_calls += 1
+        if reserve_resources:
+            reserve_resources({
+                'name:retry-one-mx', 'name:retry-two-mx'})
+        self.running = True
+        self.callback = lambda: on_finished(['account-one', 'account-two'])
+        return 2
 
 
 class ParallelRouteTests(unittest.TestCase):
@@ -151,6 +161,16 @@ class ParallelRouteTests(unittest.TestCase):
         self.assertEqual(self.state.backup_job.stop_calls, 1)
         self.assertEqual(len(self.state.tasks.snapshot()['tasks']), 1)
         self.state.backup_job.callback()
+
+    def test_environment_batch_retry_route_keeps_task_until_finished(self):
+        status, body = self.post('/api/envbatch/retry-failed', {})
+        self.assertEqual(status, 200)
+        self.assertTrue(body['started'])
+        self.assertEqual(body['count'], 2)
+        self.assertEqual(self.env_job.retry_failed_calls, 1)
+        self.assertEqual(len(self.state.tasks.snapshot()['tasks']), 1)
+        self.env_job.callback()
+        self.assertFalse(self.state.tasks.running())
 
     def test_compatibility_mode_returns_409(self):
         self.safe_parallel = False

@@ -26,7 +26,7 @@ API：
   POST /api/assistant/procurement-import/sheet-sync 追加 A:AH 数据、样式、链接并补齐 M 列图片
   GET  /api/assistant/procurement-import/sheet-sync/status 查询导入进度
   POST /api/envbatch/parse  模块三 xlsx 严格解析（只返回脱敏计划）
-  POST /api/envbatch/preview/start/retry-row 模块三预览/执行/单步重试
+  POST /api/envbatch/preview/start/retry-row/retry-failed 模块三预览/执行/重试
   GET  /api/envbatch/progress/export-mapping 模块三进度/安全映射导出
   GET  /api/export          ?format=xlsx|csv 下载结果
   GET/POST /api/config      本机配置（HubStudio 端口等，存 config.json）
@@ -1862,6 +1862,74 @@ class EnvBatchJob(object):
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def retry_failed(self, reserve_resources=None, on_finished=None):
+        with self.lock:
+            if self.running:
+                raise RuntimeError('模块三任务正在执行')
+            if not self.runner:
+                raise ValueError('没有可重试的模块三任务')
+            failed_rows = [
+                row for row in self.runner.rows if row.state == 'failed']
+            if not failed_rows:
+                raise ValueError('当前批次没有失败行可重试')
+            if any(not row.account.password for row in failed_rows):
+                raise ValueError('凭证内存已清理，请重新选择原始 xlsx 后续跑')
+            if reserve_resources:
+                reserve_resources(environment_resources(failed_rows))
+            account_ids = [row.account.account_id for row in failed_rows]
+            self._cancel_sensitive_cleanup_locked()
+            self.running = True
+            self.stop_requested = False
+            self.stop_available = True
+            self.stop_event = threading.Event()
+            self.runner.stop_event = self.stop_event
+            self.started_at = time.time()
+            self.finished_at = None
+            self.fatal_error = ''
+
+        def worker():
+            try:
+                self.runner.retry_failed()
+                result_rows = self.runner.rows
+                if self.ledger_enabled:
+                    service = (self._ledger_service or
+                               self.ledger_sync_factory())
+                    self._sync_ledger_rows(
+                        service, result_rows, self.runner.site,
+                        self.runner.purchase_date,
+                        self.runner.purchase_tag)
+                with self.lock:
+                    self.mapping_data = mapping_workbook_bytes(result_rows)
+                    self.tsv_data = None
+                    self.tsv_name = ''
+                    self.summary.update({
+                        'total': len(result_rows),
+                        'done': sum(
+                            row.state == 'done' for row in result_rows),
+                        'stopped': sum(
+                            row.state == 'stopped' for row in result_rows),
+                        'failed': sum(
+                            row.state == 'failed' for row in result_rows),
+                    })
+                self._schedule_sensitive_cleanup(self.runner)
+            except Exception as exc:
+                accounts = [row.account for row in self.runner.rows]
+                with self.lock:
+                    self.fatal_error = self._safe_error(exc, accounts)
+            finally:
+                with self.lock:
+                    self.finished_at = time.time()
+                    self.running = False
+                    self.stop_available = False
+                if on_finished:
+                    try:
+                        on_finished(account_ids)
+                    except Exception:
+                        pass
+
+        threading.Thread(target=worker, daemon=True).start()
+        return len(failed_rows)
+
     def retry_ledger(self, confirm_lark_write=False, on_finished=None):
         """Retry or supplement Feishu only; never re-run HubStudio steps."""
         if not confirm_lark_write:
@@ -3347,6 +3415,31 @@ class Handler(BaseHTTPRequestHandler):
                     STATE.tasks.finish(task_id)
                     raise
                 self._json({'started': True, 'taskId': task_id})
+            elif path == '/api/envbatch/retry-failed':
+                task_id = STATE.tasks.begin('env_batch')
+
+                def finish_environment_failed_retry(account_ids):
+                    try:
+                        payload = STATE.environment_result_payload(
+                            task_id, account_ids)
+                        STATE.enqueue_operation_result(
+                            '/v1/operations/environment-creation-runs',
+                            'resource.environment.create', payload)
+                    except Exception as exc:
+                        if hasattr(STATE, 'operation_sync_error'):
+                            STATE.operation_sync_error = scrub_text(exc)[:200]
+                    finally:
+                        STATE.tasks.finish(task_id)
+                try:
+                    count = STATE.env_job.retry_failed(
+                        reserve_resources=lambda resources:
+                            STATE.tasks.reserve(task_id, resources),
+                        on_finished=finish_environment_failed_retry)
+                except Exception:
+                    STATE.tasks.finish(task_id)
+                    raise
+                self._json({'started': True, 'count': count,
+                            'taskId': task_id})
             elif path == '/api/envbatch/retry-ledger':
                 self._json({
                     'error': '旧买家号台账直写已停用；云端会自动重试数据库到新 Base 的同步',

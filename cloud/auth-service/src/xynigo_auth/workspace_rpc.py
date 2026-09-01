@@ -57,6 +57,7 @@ POST_PERMISSIONS = {
     "/api/envbatch/start": "resource.environment.create",
     "/api/envbatch/stop": "resource.environment.create",
     "/api/envbatch/retry-row": "resource.environment.create",
+    "/api/envbatch/retry-failed": "resource.environment.create",
     "/api/envbatch/backup/start": "resource.environment.create",
     "/api/envbatch/backup/stop": "resource.environment.create",
     "/api/lark/config": "system.lark_connection.manage",

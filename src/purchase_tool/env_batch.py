@@ -1083,6 +1083,21 @@ class BatchEnvOrchestrator(object):
             self.state_store.remove()
         return row
 
+    def retry_failed(self):
+        """Retry every failed row from its persisted first incomplete step."""
+        failed_rows = [row for row in self.rows if row.state == 'failed']
+        if not failed_rows:
+            raise EnvBatchError('当前批次没有失败行可重试')
+        if self.max_workers > 1 and len(failed_rows) > 1:
+            with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
+                list(pool.map(self._run_one, failed_rows))
+        else:
+            for row in failed_rows:
+                self._run_one(row)
+        if self.state_store and all(item.state == 'done' for item in self.rows):
+            self.state_store.remove()
+        return failed_rows
+
     @staticmethod
     def _verification_sample(rows, count):
         done = [row for row in rows if row.state == 'done' and row.container_code]

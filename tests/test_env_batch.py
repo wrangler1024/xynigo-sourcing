@@ -645,6 +645,92 @@ class EnvBatchTests(unittest.TestCase):
             self.assertEqual(sum(call[0] == 'remark' for call in hub.calls), 1)
             self.assertFalse(store.path.exists())
 
+    def test_retry_failed_retries_all_failed_rows_without_repeating_steps(self):
+        class FailCookieTwiceHub(FakeHub):
+            def __init__(self):
+                super().__init__()
+                self.cookie_failures = 2
+
+            def env_import_cookie(self, code, cookie_text):
+                self.calls.append(('cookie', str(code), cookie_text))
+                if self.cookie_failures:
+                    self.cookie_failures -= 1
+                    raise RuntimeError('synthetic cookie failure')
+                return {}
+
+        source = workbook_bytes(demo_rows())
+        accounts = parse_vendor_workbook(BytesIO(source))
+        hub = FailCookieTwiceHub()
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ResumeStateStore(
+                batch_fingerprint(source, '2:新刚', 'MX', '20260819'), tmp)
+            runner = BatchEnvOrchestrator(
+                hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY,
+                purchase_date='20260819', state_store=store,
+                sleep_fn=lambda _seconds: None, max_workers=2)
+            runner.prepare(accounts, '2:新刚')
+            runner.run()
+            self.assertEqual(
+                [row.state for row in runner.rows], ['failed', 'failed'])
+            self.assertTrue(all(
+                row.error_step == 'cookie_imported' for row in runner.rows))
+
+            retried = runner.retry_failed()
+
+            self.assertEqual(len(retried), 2)
+            self.assertEqual(
+                [row.state for row in runner.rows], ['done', 'done'])
+            self.assertEqual(sum(call[0] == 'create' for call in hub.calls), 2)
+            self.assertEqual(sum(call[0] == 'cookie' for call in hub.calls), 4)
+            self.assertEqual(sum(call[0] == 'account' for call in hub.calls), 2)
+            self.assertEqual(sum(call[0] == 'remark' for call in hub.calls), 2)
+            self.assertFalse(store.path.exists())
+            with self.assertRaisesRegex(EnvBatchError, '没有失败行'):
+                runner.retry_failed()
+
+    def test_retry_failed_honors_safe_stop_for_queued_failed_rows(self):
+        class BlockingCookieHub(FakeHub):
+            def __init__(self):
+                super().__init__()
+                self.block_cookie = False
+                self.cookie_started = threading.Event()
+                self.release_cookie = threading.Event()
+
+            def env_import_cookie(self, code, cookie_text):
+                if self.block_cookie and not self.cookie_started.is_set():
+                    self.cookie_started.set()
+                    if not self.release_cookie.wait(2):
+                        raise RuntimeError('test timed out waiting for cookie')
+                return super().env_import_cookie(code, cookie_text)
+
+        accounts = parse_vendor_workbook(BytesIO(workbook_bytes(demo_rows())))
+        hub = BlockingCookieHub()
+        stop_event = threading.Event()
+        runner = BatchEnvOrchestrator(
+            hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY,
+            purchase_date='20260819', sleep_fn=lambda _seconds: None,
+            max_workers=1, stop_event=stop_event)
+        runner.prepare(accounts, '2:新刚')
+        for row in runner.rows:
+            row.completed_steps.add('env_created')
+            row.container_code = 'existing-' + row.account.account_id[:8]
+            row.serial_number = row.account.row_number
+            row.state = 'failed'
+            row.error_step = 'cookie_imported'
+        hub.block_cookie = True
+
+        worker = threading.Thread(target=runner.retry_failed)
+        worker.start()
+        self.assertTrue(hub.cookie_started.wait(1))
+        stop_event.set()
+        hub.release_cookie.set()
+        worker.join(3)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(
+            [row.state for row in runner.rows], ['done', 'stopped'])
+        self.assertEqual(sum(call[0] == 'cookie' for call in hub.calls), 1)
+
     def test_safe_stop_finishes_active_row_and_resumes_unstarted_rows(self):
         class BlockingFirstCreateHub(FakeHub):
             def __init__(self):

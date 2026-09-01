@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Xynigo Sourcing v0.12.11</title>
+<title>Xynigo Sourcing v0.12.12</title>
 <link rel="icon" type="image/png" sizes="260x260" href="/xynigo-x.png?v=6">
 <link rel="icon" type="image/x-icon" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256" href="/favicon.ico?v=6">
 <link rel="shortcut icon" href="/favicon.ico?v=6">
@@ -1439,7 +1439,7 @@
           <div class="hero-kicker">XYNIGO SOURCING WORKSPACE</div>
           <h1>让小犀帮你把每一单稳稳带回来，<span class="hero-call">Xyni, GO!</span></h1>
           <p id="moduleSummary">批量查询订单与物流状态，异常任务集中处理，结果一键导出。</p>
-          <div class="hero-meta"><span class="hero-chip">安全停止测试 v0.12.11</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
+          <div class="hero-meta"><span class="hero-chip">失败批量重试测试 v0.12.12</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
         </div>
         <div class="hero-lockup" role="img" aria-label="小犀与 Xynigo 完整品牌一体图形">
           <img src="xynigo-logo.png" alt="">
@@ -1991,9 +1991,10 @@
       </div>
       <div id="envBoundExports">
         <div class="action-row" style="margin-top:12px">
+          <button class="btn" id="btnEnvRetryFailed" disabled>🔄 批量重试失败项</button>
           <button class="btn primary" id="btnEnvMapping" disabled>📥 导出绑定映射清单（不含凭证）</button>
           <button class="btn hidden" id="btnEnvTsv" disabled>旧表直贴已停用</button>
-          <span class="hint">绑定映射清单仅用于本地留档；账号状态由建环境结果回传数据库。</span>
+          <span class="hint">批量操作只重试当前 failed 行并从失败步骤续跑；绑定映射清单仅用于本地留档。</span>
         </div>
         <div class="reg-plan">旧统一台账补写流程已从测试版运行链路移除。</div>
       </div>
@@ -2570,6 +2571,8 @@ let envProgressLoaded = false;
 let envPollInFlight = false;
 let envPollGraceUntil = 0;
 let envRetryAccountId = '';
+let envRetryFailedSubmitting = false;
+let envFailedCount = 0;
 let envPreflightReady = false;
 let envGroupSaving = false;
 let larkReady = false;
@@ -3116,7 +3119,7 @@ async function cloudFetchJson(path, opts={}) {
   const headers = new Headers(opts.headers || {});
   headers.set('Accept', 'application/json');
   headers.set('X-Xynigo-Source', 'cloud_web_workspace');
-  headers.set('X-Xynigo-Client-Version', '0.12.11-cloud-web');
+  headers.set('X-Xynigo-Client-Version', '0.12.12-cloud-web');
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     headers.set('X-Xynigo-Web-CSRF', 'same-origin');
   }
@@ -6026,6 +6029,10 @@ function updateEnvButtons() {
     || envStopSubmitting || envStopRequested;
   $('btnEnvStop').textContent = envStopSubmitting
     ? '⏳ 正在请求停止…' : (envStopRequested ? '⏳ 安全停止中…' : '⏹ 安全停止');
+  $('btnEnvRetryFailed').disabled = envMode !== 'bound' || busy
+    || !!envRetryAccountId || envRetryFailedSubmitting || envFailedCount < 1;
+  $('btnEnvRetryFailed').textContent = envRetryFailedSubmitting
+    ? '⏳ 正在提交批量重试…' : `🔄 批量重试失败项${envFailedCount ? `（${envFailedCount}）` : ''}`;
   $('envWriteLedger').disabled = envMode !== 'bound' || !larkReady || busy;
   if (envMode !== 'bound') $('envWriteLedger').checked = false;
 }
@@ -6097,6 +6104,7 @@ function setEnvMode(next) {
   $('envTbody').innerHTML = `<tr><td colspan="8" class="empty-tip">尚未开始</td></tr>`;
   $('envBar').style.width = '0%';
   $('envSummary').innerHTML = '<div class="stat-chip"><b>0</b>完成</div><div class="stat-chip"><b>0</b>失败</div>';
+  envFailedCount = 0;
   $('envIpList').textContent = '尚无后台出口 IP 检测结果';
   renderLedgerSummary({enabled:false});
   $('envVerifyCount').value = '1';
@@ -6238,6 +6246,7 @@ function renderEnvBatch(snap) {
   const done = rows.filter(r => r.state === 'done').length;
   const stopped = rows.filter(r => r.state === 'stopped').length;
   const failed = rows.filter(r => r.state === 'failed').length;
+  envFailedCount = failed;
   const settled = done + stopped + failed;
   $('envBar').style.width = (rows.length ? settled / rows.length * 100 : 0) + '%';
   $('envProgressText').textContent = `${done} 完成 / ${rows.length || envAccountCount}` + (stopped ? ` · ${stopped} 已停止` : '');
@@ -6266,7 +6275,8 @@ function renderEnvBatch(snap) {
     else if (r.state === 'stopped') state = '<span class="badge inuse">⏹ 已安全停止，未开始</span>';
     else if (r.state === 'running' || ENV_STEPS.includes(r.state)) state = `<span class="spinner"></span>${esc(ENV_STEP_LABEL[r.state] || '执行中')}…`;
     const retryPending = envRetryAccountId === String(r.accountId || '');
-    const retryDisabled = envRunning || envSubmitting || !!envRetryAccountId;
+    const retryDisabled = envRunning || envSubmitting
+      || envRetryFailedSubmitting || !!envRetryAccountId;
     const retry = r.state === 'failed'
       ? `<button class="btn-mini" data-env-retry="${esc(r.accountId)}"${retryDisabled ? ' disabled' : ''}>${retryPending ? '⏳ 重试中…' : '🔄 重试此步'}</button>`
       : '';
@@ -8829,6 +8839,47 @@ $('btnEnvBackupResult').onclick = () => {
     .catch(error => toast(error.message));
 };
 $('envDate').onchange = () => refreshAssignUi();
+
+$('btnEnvRetryFailed').onclick = async () => {
+  if (envSubmitting || envRunning || envRetryFailedSubmitting
+      || envRetryAccountId || envFailedCount < 1) return;
+  const retryCount = envFailedCount;
+  if (!confirm(`批量重试当前 ${retryCount} 个失败账号？\n\n系统只重试当前 failed 行，并从每行第一个未完成步骤继续；已完成步骤、已完成行和已安全停止行都不会重复执行。`)) return;
+  const payload = {};
+  const idempotencyKey = workspaceMutationKey('env-retry-failed', payload);
+  envRetryFailedSubmitting = true;
+  envRetryAccountId = '__batch__';
+  beginEnvSubmission(
+    '失败项批量重试正在提交',
+    `本次只重试当前 failed 行（${retryCount} 个），正在等待本机执行器受理。`);
+  try {
+    const result = await api('/api/envbatch/retry-failed', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload), idempotencyKey
+    });
+    clearWorkspaceMutationKey('env-retry-failed', idempotencyKey);
+    envRunning = true;
+    envProgressLoaded = false;
+    setEnvExecutionState(
+      'running', `已受理 ${result.count} 个失败账号的批量重试`,
+      '页面已恢复进度刷新；每行从原失败步骤继续，并继续支持安全停止。');
+    pollEnvBatch();
+    setTimeout(pollEnvBatch, 400);
+    toast(`已开始批量重试 ${result.count} 个失败账号`);
+  } catch (err) {
+    envPollGraceUntil = Date.now() + 30 * 1000;
+    envProgressLoaded = false;
+    setEnvExecutionState(
+      'warning', '批量重试响应失败，正在核对后台状态',
+      `${err.message}。页面会继续读取后台进度，请勿立即重复提交。`);
+    pollEnvBatch();
+    toast(err.message);
+  } finally {
+    envRetryFailedSubmitting = false;
+    envRetryAccountId = '';
+    finishEnvSubmission();
+  }
+};
 
 $('envTbody').addEventListener('click', async e => {
   const button = e.target.closest('[data-env-retry]');

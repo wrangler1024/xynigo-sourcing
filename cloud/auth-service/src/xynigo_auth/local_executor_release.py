@@ -14,9 +14,9 @@ from . import __version__
 
 
 REPOSITORY = "wrangler1024/xynigo-sourcing"
-RELEASE_VERSION = "0.12.11"
+RELEASE_VERSION = "0.12.12"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-01T03:34:57Z"
+RELEASE_PUBLISHED_AT = "2026-09-01T04:22:41Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,8 +31,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.12.11-45e1e74750b7",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.12.11.exe",
+        "runtimeId": "0.12.12-candidate",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.12.12.exe",
         "sha256": "6d09e7bb8a3793ffb7ee3cbbc67f324f81de4f000e17045245dcd68a6bd3a700",
         "size": 15_074_053,
         "installMode": "standard_per_user",
@@ -43,7 +43,7 @@ _PLATFORMS = {
         "trayMenu": True,
         "launcherFile": "Xynigo.exe",
         "greenFallback": {
-            "assetName": "Xynigo_Sourcing_Windows_20260901_v0.12.11.zip",
+            "assetName": "Xynigo_Sourcing_Windows_20260901_v0.12.12.zip",
             "sha256": "a6e1357b718a4987f41722bfd1641101a2fdb512de317747399d04e0739570f6",
             "size": 18_342_413,
             "installMode": "green_package",
@@ -57,7 +57,7 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.12.11.pkg",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.12.12.pkg",
         "sha256": "67582659dcac45784d5d30c7e8ca6599ba392ff048787b0d958b64711f5befb6",
         "size": 19_423_269,
         "installMode": "standard_system_application",
@@ -67,7 +67,7 @@ _PLATFORMS = {
         "notarized": False,
         "stapled": False,
         "greenFallback": {
-            "assetName": "Xynigo_Sourcing_macOS_arm64_20260901_v0.12.11.zip",
+            "assetName": "Xynigo_Sourcing_macOS_arm64_20260901_v0.12.12.zip",
             "sha256": "d085310ce14cd85b79b7c5b86dcdd66c3fadcce3543eae8c69fe168abc1a071d",
             "size": 18_312_841,
             "installMode": "green_package",
@@ -246,12 +246,12 @@ def latest_local_executor_release() -> dict[str, object]:
         ),
         "platforms": platforms,
         "notesZh": [
-            "v0.12.11 为买家号建环境和备用/测试环境新增协作式安全停止。",
-            "停止后立即不再领取新行，已经进入执行的并发行会完整完成整行写链路后退出。",
-            "买家号环境的未开始行写入脱敏断点；重新选择同一原始 xlsx 可从断点续跑。",
-            "备用/测试环境按同一参数重新提交时继续采用名称续排和幂等发现，避免重复创建。",
-            "停止期间跳过新的出口 IP 验证，不再启动额外 HubStudio 浏览器活动。",
-            "页面分别显示完成、失败和已停止行，并提示当前最大收尾并发数。",
+            "v0.12.12 为买家号建环境新增失败行批量重试。",
+            "批量操作只选择当前 failed 行，并从各行第一个未完成步骤继续。",
+            "已完成步骤、完成行和已安全停止行不会进入批量重试，避免重复创建或重复绑定。",
+            "批量重试遵从建环境实际并发配置，并统一预占所有目标环境资源。",
+            "批量重试继续支持协作式安全停止，当前并发行完整收尾、排队行转为已停止。",
+            "页面显示当前失败数量，提交阶段锁定重复点击并在响应中断后继续核对进度。",
             "覆盖安装保留配置、日志、运行数据和设备配对；绿色包继续作为显式回退。",
             "本次按内部快速迭代策略提供未签名标准安装包；下载前必须核对 SHA-256，并按飞书开发群教程手动确认系统安全提示。",
         ],

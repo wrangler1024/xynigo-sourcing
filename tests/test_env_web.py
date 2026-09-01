@@ -302,6 +302,74 @@ class EnvWebJobTests(unittest.TestCase):
         self.assertEqual(snap['summary']['failed'], 0)
         self.assertEqual(snap['summary']['ipTotal'], 0)
 
+    def test_batch_retry_failed_retries_only_failed_rows(self):
+        class FailCookieTwiceHub(FakeHub):
+            def __init__(self):
+                super().__init__()
+                self.cookie_failures = 2
+
+            def env_import_cookie(self, _code, _cookie_text):
+                self.calls.append(('cookie',))
+                if self.cookie_failures:
+                    self.cookie_failures -= 1
+                    raise RuntimeError('synthetic cookie failure')
+                return {}
+
+        workbook = Workbook()
+        sheet = workbook.active
+        for index in (1, 2):
+            sheet.append([
+                'retry%d@example.com' % index, 'retry-secret-%d' % index,
+                ('https://codes.example.test/get?orderNo=def12%d' % index),
+                '[{"name":"sid","value":"retry-cookie-%d"}]' % index,
+            ])
+        output = BytesIO()
+        workbook.save(output)
+        hub = FailCookieTwiceHub()
+        cfg = {
+            'purchaseTag': TEST_TAG, 'proxyLink': TEST_PROXY,
+            'envCreateWorkers': 2,
+        }
+        job = EnvBatchJob(lambda: hub, lambda: cfg)
+        parsed = job.parse(
+            'vendor.xlsx',
+            base64.b64encode(output.getvalue()).decode('ascii'))
+        reserved = []
+        finished_account_ids = []
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                    'purchase_tool.main.ResumeStateStore',
+                    lambda batch_id: ResumeStateStore(batch_id, tmp)):
+                job.start(
+                    parsed['planId'], '2:新刚', '20260819',
+                    verify_sample_count=0, confirm_write=True)
+                deadline = time.time() + 5
+                while job.snapshot()['running'] and time.time() < deadline:
+                    time.sleep(0.05)
+                self.assertEqual(job.snapshot()['summary']['failed'], 2)
+
+                count = job.retry_failed(
+                    reserve_resources=lambda resources: reserved.append(resources),
+                    on_finished=lambda account_ids:
+                        finished_account_ids.extend(account_ids))
+                self.assertEqual(count, 2)
+                deadline = time.time() + 5
+                while job.snapshot()['running'] and time.time() < deadline:
+                    time.sleep(0.05)
+
+        snap = job.snapshot()
+        self.assertEqual(snap['summary']['done'], 2)
+        self.assertEqual(snap['summary']['failed'], 0)
+        self.assertEqual(len(reserved), 1)
+        self.assertEqual(len(finished_account_ids), 2)
+        self.assertEqual(len(set(finished_account_ids)), 2)
+        self.assertEqual(
+            len([item for item in reserved[0] if item.startswith('name:')]), 2)
+        self.assertEqual(sum(call[0] == 'create' for call in hub.calls), 2)
+        self.assertEqual(sum(call[0] == 'cookie' for call in hub.calls), 4)
+        with self.assertRaisesRegex(ValueError, '没有失败行'):
+            job.retry_failed()
+
     def test_apply_generates_safe_mapping_without_legacy_credential_tsv(self):
         source = source_bytes()
         hub = FakeHub()

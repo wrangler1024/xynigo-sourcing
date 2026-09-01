@@ -186,6 +186,18 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         ):
             self.assertIn(marker, html)
 
+    def test_environment_failed_rows_can_be_retried_in_one_batch(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        for marker in (
+            'id="btnEnvRetryFailed"',
+            "let envRetryFailedSubmitting = false;",
+            "api('/api/envbatch/retry-failed'",
+            "workspaceMutationKey('env-retry-failed'",
+            "批量重试失败项",
+            "只重试当前 failed 行",
+        ):
+            self.assertIn(marker, html)
+
 
 if __name__ == "__main__":
     unittest.main()
