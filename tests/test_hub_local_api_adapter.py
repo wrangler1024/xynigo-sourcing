@@ -182,6 +182,28 @@ class HubStudioLocalApiAdapterTests(unittest.TestCase):
         self.assertIn('/browser/start', paths)
         self.assertIn('/browser/stop', paths)
 
+    def test_environment_lookup_uses_single_exact_filtered_page(self):
+        opener = FakeLocalApiOpener()
+        adapter = HubStudioLocalApiAdapter(
+            opener=opener, client_running_getter=lambda: True,
+            retries=1, timeout=1)
+
+        by_code = adapter.env_lookup(container_code='container-test-1')
+        by_name = adapter.env_lookup(
+            container_name='脱敏测试环境', tag_name='测试分组')
+
+        self.assertEqual(by_code['serialNumber'], 4254)
+        self.assertEqual(by_name['containerCode'], 'container-test-1')
+        env_calls = [body for _port, path, body, _headers in opener.calls
+                     if path == '/env/list']
+        self.assertEqual(env_calls, [
+            {'current': 1, 'size': 2,
+             'containerCodes': ['container-test-1']},
+            {'current': 1, 'size': 2,
+             'containerName': '脱敏测试环境',
+             'tagNames': ['测试分组']},
+        ])
+
     def test_batch_management_uses_only_explicit_mock_targets(self):
         opener = FakeLocalApiOpener()
         adapter = HubStudioLocalApiAdapter(

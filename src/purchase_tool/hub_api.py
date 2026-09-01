@@ -99,6 +99,10 @@ class HubStudioAdapter(object):
     def env_list(self, tag_name=None, page_size=200):
         raise NotImplementedError
 
+    def env_lookup(self, container_code=None, container_name=None,
+                   tag_name=None):
+        raise NotImplementedError
+
     def list_environment_summaries(self, query='', limit=100):
         raise NotImplementedError
 
@@ -374,6 +378,51 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
                 break
             current += 1
         return result
+
+    def env_lookup(self, container_code=None, container_name=None,
+                   tag_name=None):
+        """按环境 ID 或完整环境名定向查询，避免为单条回读全量翻页。"""
+        wanted_code = str(container_code or '').strip()
+        wanted_name = str(container_name or '').strip()
+        if bool(wanted_code) == bool(wanted_name):
+            raise HubApiError(
+                '环境定向查询必须且只能指定环境 ID 或环境名',
+                'hubstudio_environment_identifier_invalid')
+        if len(wanted_code) > 160 or len(wanted_name) > 160:
+            raise HubApiError(
+                '环境定向查询条件无效',
+                'hubstudio_environment_identifier_invalid')
+
+        body = {'current': 1, 'size': 2}
+        if wanted_code:
+            body['containerCodes'] = [wanted_code]
+        else:
+            body['containerName'] = wanted_name
+        if tag_name:
+            body['tagNames'] = [str(tag_name)]
+        data = self._post('/env/list', body) or {}
+        matched = []
+        for env in data.get('list', []):
+            if wanted_code:
+                exact = str(env.get('containerCode') or '') == wanted_code
+            else:
+                exact = str(env.get('containerName') or '') == wanted_name
+            if exact and (not tag_name or
+                          str(env.get('tagName') or '') == str(tag_name)):
+                matched.append(env)
+        unique = {}
+        for env in matched:
+            identity = str(env.get('containerCode') or '').strip()
+            if not identity:
+                identity = 'name:' + str(env.get('containerName') or '')
+            unique[identity] = env
+        if not unique:
+            return None
+        if len(unique) != 1:
+            raise HubApiError(
+                '环境定向查询匹配到多个环境',
+                'hubstudio_environment_ambiguous')
+        return next(iter(unique.values()))
 
     def open_container_codes(self):
         """当前已打开浏览器的 containerCode 集合（字符串）。"""

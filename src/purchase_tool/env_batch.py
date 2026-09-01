@@ -687,26 +687,6 @@ def batch_fingerprint(source_bytes, assignment_spec, site, purchase_date):
     return digest.hexdigest()
 
 
-def _existing_by_order(existing_envs, site, target_orders):
-    result = {}
-    for env in existing_envs:
-        match = REMARK_ORDER_RE.search(str(env.get('remark') or ''))
-        if not match:
-            continue
-        order_key = match.group(1).casefold()
-        if order_key not in target_orders:
-            continue
-        env_name = str(env.get('containerName') or '')
-        env_site = re.search(r'-(MX|US)-', env_name, re.I)
-        if env_site and env_site.group(1).upper() != site:
-            raise EnvBatchError(
-                'HubStudio 中同一号商单号已绑定到另一站点环境，需人工处理')
-        if order_key in result:
-            raise EnvBatchError('HubStudio 中同一号商单号对应多个环境，需人工处理')
-        result[order_key] = env
-    return result
-
-
 def _env_identity(env):
     """Return a stable, non-sensitive identity for cross-list membership."""
     code = str(env.get('containerCode') or '').strip()
@@ -721,7 +701,92 @@ def _env_identity(env):
     return None
 
 
-def validate_global_order_dedup(accounts, selected_envs, all_envs):
+class EnvironmentSnapshotIndex(object):
+    """一次快照生成的环境名与号商单号内存索引。"""
+
+    def __init__(self, selected_envs=None, all_envs=None):
+        self._lock = threading.RLock()
+        self.selected_envs = list(selected_envs or [])
+        self.all_envs = list(
+            self.selected_envs if all_envs is None else all_envs)
+        self.by_name = {}
+        self.selected_by_order = {}
+        self.by_order = {}
+        for env in self.selected_envs:
+            self._index_selected(env)
+        for env in self.all_envs:
+            self._index_order(self.by_order, env)
+        # 全局接口偶发短暂漏行时，正式分组快照仍必须参与全局查重。
+        for env in self.selected_envs:
+            self._index_order(self.by_order, env)
+
+    @staticmethod
+    def _append_unique(index, key, env):
+        if not key:
+            return
+        rows = index.setdefault(key, [])
+        identity = _env_identity(env)
+        if identity is not None and any(
+                _env_identity(item) == identity for item in rows):
+            return
+        rows.append(env)
+
+    @classmethod
+    def _index_order(cls, index, env):
+        match = REMARK_ORDER_RE.search(str(env.get('remark') or ''))
+        if match:
+            cls._append_unique(index, match.group(1).casefold(), env)
+
+    def _index_selected(self, env):
+        name = str(env.get('containerName') or '').strip()
+        if name:
+            self._append_unique(self.by_name, name, env)
+        self._index_order(self.selected_by_order, env)
+
+    def find_by_name(self, env_name):
+        with self._lock:
+            matched = list(self.by_name.get(str(env_name), ()))
+        if not matched:
+            return None
+        if len(matched) != 1:
+            raise EnvBatchError('HubStudio 中存在多个同名环境，需人工处理')
+        return matched[0]
+
+    def remember_selected(self, env):
+        """把本批新建/定向回读的环境加入索引，供并发 worker 复用。"""
+        if not isinstance(env, dict):
+            return
+        with self._lock:
+            identity = _env_identity(env)
+            if identity is None or not any(
+                    _env_identity(item) == identity
+                    for item in self.selected_envs):
+                self.selected_envs.append(env)
+            self._index_selected(env)
+            self._index_order(self.by_order, env)
+
+
+def _existing_by_order(existing_envs, site, target_orders,
+                       environment_index=None):
+    index = environment_index or EnvironmentSnapshotIndex(existing_envs)
+    result = {}
+    for order_key in target_orders:
+        matched = list(index.selected_by_order.get(order_key, ()))
+        for env in matched:
+            env_name = str(env.get('containerName') or '')
+            env_site = re.search(r'-(MX|US)-', env_name, re.I)
+            if env_site and env_site.group(1).upper() != site:
+                raise EnvBatchError(
+                    'HubStudio 中同一号商单号已绑定到另一站点环境，需人工处理')
+        if len(matched) > 1:
+            raise EnvBatchError('HubStudio 中同一号商单号对应多个环境，需人工处理')
+        if matched:
+            result[order_key] = matched[0]
+    return result
+
+
+def validate_global_order_dedup(accounts, selected_envs, all_envs,
+                                environment_index=None):
     """Reject target order numbers that already exist outside target group.
 
     ``selected_envs`` remains the authority for same-group idempotent recovery;
@@ -729,28 +794,22 @@ def validate_global_order_dedup(accounts, selected_envs, all_envs):
     as a global duplicate guard.  Error text intentionally omits order, group,
     environment and account values.
     """
+    index = environment_index or EnvironmentSnapshotIndex(
+        selected_envs, all_envs)
     target_orders = {account.order_no.casefold() for account in accounts}
     selected_ids = {
-        identity for identity in (_env_identity(env) for env in selected_envs)
+        identity for identity in (
+            _env_identity(env) for env in index.selected_envs)
         if identity is not None
     }
-    matches = {}
-    # Include selected rows in case the unfiltered API snapshot is briefly
-    # incomplete; identities collapse the normal duplicate representation.
-    for env in list(all_envs or []) + list(selected_envs or []):
-        match = REMARK_ORDER_RE.search(str(env.get('remark') or ''))
-        if not match:
-            continue
-        order_key = match.group(1).casefold()
-        if order_key not in target_orders:
-            continue
-        identity = _env_identity(env)
-        if identity is None:
-            raise EnvBatchError(
-                'HubStudio 已有号商单号记录缺少环境标识，无法安全查重')
-        matches.setdefault(order_key, {})[identity] = env
-
-    for identities in matches.values():
+    for order_key in target_orders:
+        identities = {}
+        for env in index.by_order.get(order_key, ()):
+            identity = _env_identity(env)
+            if identity is None:
+                raise EnvBatchError(
+                    'HubStudio 已有号商单号记录缺少环境标识，无法安全查重')
+            identities[identity] = env
         if any(identity not in selected_ids for identity in identities):
             raise EnvBatchError(
                 'HubStudio 中同一号商单号已存在于其他分组，'
@@ -762,7 +821,7 @@ def validate_global_order_dedup(accounts, selected_envs, all_envs):
 
 def build_batch_plan(accounts, assignment_spec, existing_envs=None,
                      site='MX', purchase_date=None, resume_state=None,
-                     all_existing_envs=None):
+                     all_existing_envs=None, environment_index=None):
     site = normalize_env_site(site)
     purchase_date = purchase_date or date.today().strftime('%Y%m%d')
     if not re.fullmatch(r'20\d{6}', purchase_date):
@@ -772,12 +831,19 @@ def build_batch_plan(accounts, assignment_spec, existing_envs=None,
     # 用户所选站点继续执行并原样写入 Cookie；纯错站数据仍整批拒收。
     validate_accounts_site(accounts, site, allow_mixed=True)
     existing_envs = list(existing_envs or [])
-    if all_existing_envs is not None:
+    all_existing_list = (
+        None if all_existing_envs is None else list(all_existing_envs))
+    environment_index = environment_index or EnvironmentSnapshotIndex(
+        existing_envs,
+        existing_envs if all_existing_list is None else all_existing_list)
+    if all_existing_list is not None:
         validate_global_order_dedup(
-            accounts, existing_envs, list(all_existing_envs))
+            accounts, existing_envs, all_existing_list,
+            environment_index=environment_index)
     existing_orders = _existing_by_order(
         existing_envs, site,
-        {account.order_no.casefold() for account in accounts})
+        {account.order_no.casefold() for account in accounts},
+        environment_index=environment_index)
     resume_rows = {
         row.get('accountId'): row
         for row in ((resume_state or {}).get('rows') or [])
@@ -922,7 +988,93 @@ class ResumeStateStore(object):
             pass
 
 
-class BatchEnvOrchestrator(object):
+class _EnvironmentLookupMixin(object):
+    """共享一次快照索引，并用精确条件回读单个环境。"""
+
+    def _set_environment_snapshot(self, selected_envs, all_envs=None):
+        self._environment_index = EnvironmentSnapshotIndex(
+            selected_envs, all_envs)
+        return self._environment_index
+
+    @staticmethod
+    def _created_container_code(result):
+        if not isinstance(result, dict):
+            return ''
+        return str(result.get('containerCode') or '').strip()
+
+    def _remote_env_lookup(self, env_name=None, container_code=None):
+        lookup = getattr(self.hub, 'env_lookup', None)
+        if callable(lookup):
+            if container_code:
+                env = lookup(container_code=container_code)
+            else:
+                env = lookup(
+                    container_name=env_name, tag_name=self.purchase_tag)
+            if env is None:
+                return None
+            if (env_name and
+                    str(env.get('containerName') or '') != str(env_name)):
+                raise EnvBatchError('环境定向回读名称不一致，已停止写入')
+            return env
+
+        # 兼容旧测试适配器或第三方实现；生产 Local API 适配器不会走此
+        # 分支。这里保留旧的安全回读语义，而不是在缺少能力时猜测结果。
+        for env in self.hub.env_list(self.purchase_tag):
+            if container_code:
+                matched = (str(env.get('containerCode') or '') ==
+                           str(container_code))
+            else:
+                matched = env.get('containerName') == env_name
+            if matched:
+                return env
+        return None
+
+    def _find_env(self, env_name, container_code=None, attempts=25):
+        if not container_code:
+            indexed = self._environment_index.find_by_name(env_name)
+            if indexed is not None:
+                return indexed
+        for attempt in range(attempts):
+            env = self._remote_env_lookup(
+                env_name=env_name, container_code=container_code)
+            if env is not None:
+                self._environment_index.remember_selected(env)
+                return env
+            if attempt + 1 < attempts:
+                self.sleep(1)
+        return None
+
+    def _create_or_adopt_env(self, env_name, build_body,
+                             verify_remote_name=False):
+        # 新批次以准备阶段的快照为唯一正常幂等依据，避免 50 行再产生
+        # 50 次 env/list 名称查询。失败重试才做一次精确名称接管检查。
+        existing = self._environment_index.find_by_name(env_name)
+        if existing is None and verify_remote_name:
+            existing = self._remote_env_lookup(env_name=env_name)
+        created_here = False
+        if existing is None:
+            try:
+                create_result = self.hub.env_create(build_body())
+                created_here = True
+            except Exception:
+                # 外部写结果不确定时，只按完整环境名做一次定向接管检查；
+                # 查不到才把原异常交给上层，绝不盲目重建。
+                adopted = self._remote_env_lookup(env_name=env_name)
+                if adopted is None:
+                    raise
+                existing = adopted
+            if existing is None:
+                self.sleep(self.write_interval)
+                container_code = self._created_container_code(create_result)
+                existing = self._find_env(
+                    env_name, container_code=container_code, attempts=25)
+                if existing is None:
+                    raise EnvBatchError('新建环境后回读超时')
+        self._environment_index.remember_selected(existing)
+        return existing, created_here
+
+
+class BatchEnvOrchestrator(_EnvironmentLookupMixin):
     """HubStudio 写链路串行执行；每步落脱敏状态后再进入下一步。"""
 
     def __init__(self, hub, purchase_tag, proxy_link, site='MX',
@@ -944,16 +1096,20 @@ class BatchEnvOrchestrator(object):
         # 1-10 可调；模块一开窗口场景的并发结论不适用于此处。
         self.max_workers = max(1, min(10, int(max_workers)))
         self._persist_lock = threading.Lock()
+        self._environment_index = EnvironmentSnapshotIndex()
         self.rows = []
 
     def prepare(self, accounts, assignment_spec):
         existing = self.hub.env_list(self.purchase_tag)
         all_existing = self.hub.env_list()
+        environment_index = self._set_environment_snapshot(
+            existing, all_existing)
         saved = self.state_store.load() if self.state_store else None
         self.rows = build_batch_plan(
             accounts, assignment_spec, existing_envs=existing,
             site=self.site, purchase_date=self.purchase_date,
-            resume_state=saved, all_existing_envs=all_existing)
+            resume_state=saved, all_existing_envs=all_existing,
+            environment_index=environment_index)
         self._persist()
         return self.rows
 
@@ -972,15 +1128,6 @@ class BatchEnvOrchestrator(object):
         row.state = 'done' if step == 'done' else step
         self._persist()
 
-    def _find_env(self, env_name, attempts=25):
-        for attempt in range(attempts):
-            for env in self.hub.env_list(self.purchase_tag):
-                if env.get('containerName') == env_name:
-                    return env
-            if attempt + 1 < attempts:
-                self.sleep(1)
-        raise EnvBatchError('新建环境后回读超时')
-
     def _run_one(self, row):
         if 'done' in row.completed_steps:
             row.state = 'done'
@@ -995,22 +1142,19 @@ class BatchEnvOrchestrator(object):
             return
         current_step = 'env_created'
         try:
+            verify_remote_name = row.state != 'pending'
             row.state = 'running'
             self._persist()
             if 'env_created' not in row.completed_steps:
-                existing = None
-                for env in self.hub.env_list(self.purchase_tag):
-                    if env.get('containerName') == row.env_name:
-                        existing = env
-                        break
-                if existing is None:
-                    self.hub.env_create(build_env_create_body(
+                existing, created_here = self._create_or_adopt_env(
+                    row.env_name,
+                    lambda: build_env_create_body(
                         row.env_name, self.site, self.rng,
                         proxy_link=self.proxy_link,
-                        purchase_tag=self.purchase_tag))
-                    self.sleep(self.write_interval)
-                    existing = self._find_env(row.env_name)
-                elif str(existing.get('remark') or '').strip():
+                        purchase_tag=self.purchase_tag),
+                    verify_remote_name=verify_remote_name)
+                if (not created_here and
+                        str(existing.get('remark') or '').strip()):
                     # 收养防护：同名但备注非空 = 其他批次/机器的成品
                     # （备用/测试/已绑号），拒绝收养防错绑与备注覆盖；
                     # 合法收养只有本批次断点续跑（备注必为空）。
@@ -1241,7 +1385,7 @@ class BackupPlanItem:
         }
 
 
-class BackupEnvOrchestrator(object):
+class BackupEnvOrchestrator(_EnvironmentLookupMixin):
     """备用/测试环境：只建环境+写固定备注。
 
     不导 Cookie、不绑号、不写飞书台账；无凭证流转。
@@ -1261,6 +1405,7 @@ class BackupEnvOrchestrator(object):
         self.stop_event = stop_event or threading.Event()
         self.max_workers = max(1, min(10, int(max_workers)))
         self._persist_lock = threading.Lock()
+        self._environment_index = EnvironmentSnapshotIndex()
         self.rows = []
         self.remark = ''
 
@@ -1268,6 +1413,7 @@ class BackupEnvOrchestrator(object):
         backup_type = normalize_backup_type(backup_type)
         self.remark = BACKUP_REMARK[backup_type]
         existing = self.hub.env_list(self.purchase_tag)
+        self._set_environment_snapshot(existing)
         names = backup_env_names(
             existing, buyer, count, backup_type, self.site, purchase_date)
         self.rows = [BackupPlanItem(env_name=name) for name in names]
@@ -1279,15 +1425,6 @@ class BackupEnvOrchestrator(object):
             if self.on_progress:
                 self.on_progress([row.public_dict() for row in self.rows])
 
-    def _find_env(self, env_name, attempts=25):
-        for attempt in range(attempts):
-            for env in self.hub.env_list(self.purchase_tag):
-                if env.get('containerName') == env_name:
-                    return env
-            if attempt + 1 < attempts:
-                self.sleep(1)
-        raise EnvBatchError('新建环境后回读超时')
-
     def _run_one(self, row):
         if row.state == 'done':
             return
@@ -1298,21 +1435,17 @@ class BackupEnvOrchestrator(object):
             row.error = '安全停止：未开始执行'
             self._persist()
             return
+        verify_remote_name = row.state != 'pending'
         row.state = 'running'
         self._persist()
         try:
-            existing = None
-            for env in self.hub.env_list(self.purchase_tag):
-                if env.get('containerName') == row.env_name:
-                    existing = env
-                    break
-            if existing is None:
-                self.hub.env_create(build_env_create_body(
+            existing, _created_here = self._create_or_adopt_env(
+                row.env_name,
+                lambda: build_env_create_body(
                     row.env_name, self.site, self.rng,
                     proxy_link=self.proxy_link,
-                    purchase_tag=self.purchase_tag))
-                self.sleep(self.write_interval)
-                existing = self._find_env(row.env_name)
+                    purchase_tag=self.purchase_tag),
+                verify_remote_name=verify_remote_name)
             row.container_code = str(existing.get('containerCode') or '')
             row.serial_number = existing.get('serialNumber')
             if not row.container_code or row.serial_number is None:

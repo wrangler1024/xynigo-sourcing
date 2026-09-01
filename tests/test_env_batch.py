@@ -19,7 +19,7 @@ os.environ.setdefault(
 
 from purchase_tool.env_batch import (
     BUYER_ROSTER, BatchEnvOrchestrator, BackupEnvOrchestrator,
-    EnvBatchError, RES_POOL, ResumeStateStore,
+    EnvironmentSnapshotIndex, EnvBatchError, RES_POOL, ResumeStateStore,
     VENDOR_TEMPLATE_HEADERS,
     backup_env_names, backup_result_tsv_bytes,
     batch_fingerprint, build_batch_plan, build_env_create_body,
@@ -64,28 +64,57 @@ class FakeHub(object):
         self.lock = threading.Lock()
         self.fail_cookie_once = fail_cookie_once
         self.fail_create_with_link = fail_create_with_link
+        self.env_list_calls = 0
+        self.env_lookup_calls = []
 
     def group_list(self):
         return [TEST_TAG, TEST_US_TAG]
 
     def env_list(self, tag=None):
         with self.lock:
+            self.env_list_calls += 1
             return [dict(item) for item in self.envs
                     if not tag or item.get('tagName', TEST_TAG) == tag]
+
+    def env_lookup(self, container_code=None, container_name=None,
+                   tag_name=None):
+        with self.lock:
+            self.env_lookup_calls.append({
+                'containerCode': str(container_code or ''),
+                'containerName': str(container_name or ''),
+                'tagName': str(tag_name or ''),
+            })
+            matched = []
+            for item in self.envs:
+                item_tag = item.get('tagName', TEST_TAG)
+                if tag_name and item_tag != tag_name:
+                    continue
+                if (container_code and
+                        str(item.get('containerCode') or '') ==
+                        str(container_code)):
+                    matched.append(item)
+                elif (container_name and
+                      str(item.get('containerName') or '') ==
+                      str(container_name)):
+                    matched.append(item)
+            if len(matched) > 1:
+                raise RuntimeError('synthetic ambiguous environment')
+            return dict(matched[0]) if matched else None
 
     def env_create(self, body):
         with self.lock:
             self.calls.append(('create', dict(body)))
             if self.fail_create_with_link:
                 raise RuntimeError('proxy rejected: ' + body['linkCode'])
-            self.envs.append({
+            created = {
                 'containerName': body['containerName'],
                 'containerCode': str(9000 + len(self.envs)),
                 'serialNumber': 1100 + len(self.envs),
                 'tagName': body['tagName'],
                 'remark': '',
-            })
-        return {}
+            }
+            self.envs.append(created)
+        return {'containerCode': created['containerCode']}
 
     def env_import_cookie(self, code, cookie_text):
         self.calls.append(('cookie', str(code), cookie_text))
@@ -953,6 +982,45 @@ class EnvBatchTests(unittest.TestCase):
             [row.env_name for row in runner.rows],
             ['XG-MX-0819-%03d' % n for n in range(1, 6)])
 
+    def test_bound_run_reuses_snapshot_and_only_uses_targeted_lookups(self):
+        accounts = parse_vendor_workbook(
+            BytesIO(workbook_bytes(demo_rows())))
+        hub = FakeHub()
+        runner = BatchEnvOrchestrator(
+            hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY,
+            purchase_date='20260819', sleep_fn=lambda _seconds: None,
+            max_workers=2)
+
+        runner.prepare(accounts, '2:新刚')
+        runner.run()
+
+        # 准备阶段固定为正式分组 + 全局各一次；执行阶段不得再做全量翻页。
+        self.assertEqual(hub.env_list_calls, 2)
+        self.assertEqual(len(hub.env_lookup_calls), 2)
+        self.assertEqual(
+            sum(bool(call['containerName'])
+                for call in hub.env_lookup_calls), 0)
+        self.assertEqual(
+            sum(bool(call['containerCode'])
+                for call in hub.env_lookup_calls), 2)
+        self.assertEqual({row.state for row in runner.rows}, {'done'})
+
+    def test_environment_snapshot_indexes_name_and_vendor_order(self):
+        selected = [{
+            'containerName': 'XG-MX-0819-001',
+            'containerCode': 'safe-1',
+            'serialNumber': 1001,
+            'remark': '单号:a1b2c3 | 采购员:新刚',
+        }]
+        index = EnvironmentSnapshotIndex(selected, list(selected))
+
+        self.assertEqual(
+            index.find_by_name('XG-MX-0819-001')['containerCode'],
+            'safe-1')
+        self.assertEqual(
+            index.by_order['a1b2c3'][0]['containerName'],
+            'XG-MX-0819-001')
+
     def test_backup_names_share_daily_serial_and_skip_existing(self):
         existing = [
             {'containerName': 'XG-MX-0819-003'},
@@ -1019,6 +1087,7 @@ class EnvBatchTests(unittest.TestCase):
                 'containerName': 'XG-MX-0819-001',
                 'containerCode': '8001', 'serialNumber': 2001,
                 'remark': occupied_remark})
+            runner.rows[0].state = 'failed'
             runner.run()
             self.assertEqual(runner.rows[0].state, 'failed')
             self.assertIn('拒绝收养', runner.rows[0].error)
@@ -1039,6 +1108,7 @@ class EnvBatchTests(unittest.TestCase):
         hub.envs.append({
             'containerName': 'XG-MX-0819-001',
             'containerCode': '8001', 'serialNumber': 2001, 'remark': ''})
+        runner.rows[0].state = 'failed'
         runner.run()
         self.assertEqual(runner.rows[0].state, 'done')
         self.assertEqual(sum(call[0] == 'create' for call in hub.calls), 0)
@@ -1049,19 +1119,23 @@ class EnvBatchTests(unittest.TestCase):
         class RateLimitedAfterCreateHub(FakeHub):
             def __init__(self):
                 super().__init__()
-                self.fail_next_list = False
+                self.fail_next_lookup = False
 
             def env_create(self, body):
                 result = super().env_create(body)
-                self.fail_next_list = True
+                self.fail_next_lookup = True
                 return result
 
-            def env_list(self, tag=None):
-                if self.fail_next_list:
-                    self.fail_next_list = False
+            def env_lookup(self, container_code=None, container_name=None,
+                           tag_name=None):
+                if self.fail_next_lookup:
+                    self.fail_next_lookup = False
                     raise RuntimeError(
                         '/env/list 返回 code=E010205: 请求太频繁，请稍后再试')
-                return super().env_list(tag)
+                return super().env_lookup(
+                    container_code=container_code,
+                    container_name=container_name,
+                    tag_name=tag_name)
 
         hub = RateLimitedAfterCreateHub()
         accounts = parse_vendor_workbook(
@@ -1079,6 +1153,30 @@ class EnvBatchTests(unittest.TestCase):
 
         runner.retry_one(runner.rows[0].account.account_id)
         self.assertEqual(runner.rows[0].state, 'done')
+        self.assertEqual(sum(call[0] == 'create' for call in hub.calls), 1)
+        self.assertEqual(sum(call[0] == 'cookie' for call in hub.calls), 1)
+        self.assertEqual(sum(call[0] == 'account' for call in hub.calls), 1)
+        self.assertEqual(sum(call[0] == 'remark' for call in hub.calls), 1)
+
+    def test_uncertain_create_result_is_adopted_without_duplicate_create(self):
+        class UncertainCreateHub(FakeHub):
+            def env_create(self, body):
+                super().env_create(body)
+                raise RuntimeError('synthetic response lost after create')
+
+        hub = UncertainCreateHub()
+        accounts = parse_vendor_workbook(
+            BytesIO(workbook_bytes(demo_rows()[:1])))
+        runner = BatchEnvOrchestrator(
+            hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY,
+            purchase_date='20260819', sleep_fn=lambda _seconds: None,
+            max_workers=1)
+        runner.prepare(accounts, '1:新刚')
+
+        runner.run()
+
+        self.assertEqual(runner.rows[0].state, 'done')
+        self.assertEqual(len(hub.envs), 1)
         self.assertEqual(sum(call[0] == 'create' for call in hub.calls), 1)
         self.assertEqual(sum(call[0] == 'cookie' for call in hub.calls), 1)
         self.assertEqual(sum(call[0] == 'account' for call in hub.calls), 1)
