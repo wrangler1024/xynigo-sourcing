@@ -8,12 +8,14 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .buyer_account_sync import enqueue_buyer_account_mirror
 from .models import (
     BuyerAccount,
+    EnvironmentAccountRunGuard,
     EnvironmentCreationResult,
     EnvironmentCreationRun,
     ExecutorTask,
@@ -270,22 +272,164 @@ class OperationRunService:
         self.session.flush()
         return run, False
 
-    def cleanup_failed_account_refs(
-        self, *, tenant_id: uuid.UUID, account_refs: set[str]
+    def acquire_environment_account_guards(
+        self,
+        *,
+        run: EnvironmentCreationRun,
+        account_refs: set[str],
+        allow_cleanup_failed: bool = True,
     ) -> set[str]:
-        """Return rows whose owned Hub environment still needs reconciliation."""
-        if not account_refs:
-            return set()
-        return set(
+        """Atomically reserve account refs for one environment Run.
+
+        Active and cleaning accounts fail closed.  A prior cleanup failure is
+        transferred to the new Run and returned so the executor can perform a
+        live HubStudio existence check before issuing any write.
+        """
+        normalized = {
+            str(value or "").strip() for value in account_refs
+            if str(value or "").strip()
+        }
+        if not normalized:
+            raise PurchaseServiceError(
+                "environment_run_accounts_missing",
+                "建环境任务缺少安全账号引用",
+                422,
+            )
+        now = utcnow()
+        existing = list(
             self.session.scalars(
-                select(EnvironmentCreationResult.account_ref)
+                select(EnvironmentAccountRunGuard)
                 .where(
-                    EnvironmentCreationResult.tenant_id == tenant_id,
-                    EnvironmentCreationResult.account_ref.in_(account_refs),
-                    EnvironmentCreationResult.created_in_run.is_(True),
-                    EnvironmentCreationResult.cleanup_status == "failed",
+                    EnvironmentAccountRunGuard.tenant_id == run.tenant_id,
+                    EnvironmentAccountRunGuard.account_ref.in_(normalized),
                 )
-                .distinct()
+                .with_for_update()
+            )
+        )
+        blocking = [
+            guard for guard in existing
+            if guard.run_id != run.id
+            and (
+                guard.state in {"active", "cleanup_pending"}
+                or (
+                    guard.state == "cleanup_failed"
+                    and not allow_cleanup_failed
+                )
+            )
+        ]
+        if blocking:
+            raise PurchaseServiceError(
+                "environment_cleanup_in_progress",
+                "上一批环境任务仍在执行或撤销中，请等待清理完成后再提交",
+                409,
+            )
+        by_ref = {guard.account_ref: guard for guard in existing}
+        cleanup_blocked: set[str] = set()
+        for account_ref in sorted(normalized):
+            guard = by_ref.get(account_ref)
+            if guard is None:
+                self.session.add(EnvironmentAccountRunGuard(
+                    id=uuid.uuid4(),
+                    tenant_id=run.tenant_id,
+                    account_ref=account_ref,
+                    run_id=run.id,
+                    state="active",
+                    created_at=now,
+                    updated_at=now,
+                ))
+                continue
+            if guard.state == "cleanup_failed":
+                cleanup_blocked.add(account_ref)
+            guard.run_id = run.id
+            guard.state = "active"
+            guard.updated_at = now
+        summary = dict(run.request_summary or {})
+        summary["accountRefs"] = sorted(normalized)
+        summary["cleanupBlockedAccountRefs"] = sorted(cleanup_blocked)
+        run.request_summary = summary
+        run.updated_at = now
+        try:
+            self.session.flush()
+        except IntegrityError as exc:
+            self.session.rollback()
+            raise PurchaseServiceError(
+                "environment_cleanup_in_progress",
+                "相同买家号已有环境任务正在提交，请稍后重试",
+                409,
+            ) from exc
+        return cleanup_blocked
+
+    def mark_environment_guards_cleanup_pending(
+        self, *, run_id: uuid.UUID, now: datetime | None = None
+    ) -> None:
+        now = now or utcnow()
+        for guard in self.session.scalars(
+            select(EnvironmentAccountRunGuard).where(
+                EnvironmentAccountRunGuard.run_id == run_id
+            )
+        ):
+            guard.state = "cleanup_pending"
+            guard.updated_at = now
+
+    def finalize_environment_account_guards(
+        self,
+        *,
+        run: EnvironmentCreationRun,
+        status: str,
+        summary: dict[str, Any] | None = None,
+        now: datetime | None = None,
+    ) -> None:
+        """Release successful guards or persist a fail-closed cleanup barrier."""
+        now = now or utcnow()
+        summary = summary or {}
+        guards = list(
+            self.session.scalars(
+                select(EnvironmentAccountRunGuard).where(
+                    EnvironmentAccountRunGuard.run_id == run.id
+                )
+            )
+        )
+        if not guards:
+            return
+        cleanup_total = int(summary.get("cleanupTotal") or 0)
+        cleanup_done = int(summary.get("cleanupDone") or 0)
+        cleanup_failed = int(summary.get("cleanupFailed") or 0)
+        inherited_refs = {
+            str(value or "").strip()
+            for value in (
+                (run.request_summary or {}).get("cleanupBlockedAccountRefs") or []
+            )
+            if str(value or "").strip()
+        }
+        retain_failed = status == "uncertain"
+        if status == "cancelled":
+            retain_failed = not (
+                run.started_at is None
+                or (
+                    cleanup_failed == 0
+                    and cleanup_done >= cleanup_total
+                )
+            )
+        elif status == "failed" and inherited_refs:
+            # A rerun admitted after an earlier cleanup failure performs a live
+            # HubStudio existence check before any writes.  If that check still
+            # fails, retain only the inherited uncertain accounts; unrelated
+            # accounts in the same batch must remain retryable.
+            for guard in guards:
+                if guard.account_ref in inherited_refs:
+                    guard.state = "cleanup_failed"
+                    guard.updated_at = now
+                else:
+                    self.session.delete(guard)
+            return
+        if retain_failed:
+            for guard in guards:
+                guard.state = "cleanup_failed"
+                guard.updated_at = now
+            return
+        self.session.execute(
+            delete(EnvironmentAccountRunGuard).where(
+                EnvironmentAccountRunGuard.run_id == run.id
             )
         )
 
@@ -579,6 +723,7 @@ class OperationResultService:
         now = utcnow()
         success_count = sum(item.status == "success" for item in body.results)
         failed_count = sum(item.status == "failed" for item in body.results)
+        stopped_count = sum(item.status == "stopped" for item in body.results)
         run = existing or EnvironmentCreationRun(
             id=uuid.uuid4(),
             tenant_id=tenant_id,
@@ -611,10 +756,12 @@ class OperationResultService:
         run.result_payload_hash = digest
         run.status = (
             "cancelled"
-            if preserve_cancelled
+            if preserve_cancelled or stopped_count
             else _run_status(success_count, len(body.results))
         )
-        run.phase = "cancelled" if preserve_cancelled else "completed"
+        run.phase = (
+            "cancelled" if preserve_cancelled or stopped_count else "completed"
+        )
         run.progress_completed = len(body.results)
         run.progress_total = len(body.results)
         run.total_count = len(body.results)
@@ -742,6 +889,24 @@ class OperationResultService:
                     item=item,
                     now=now,
                 )
+        OperationRunService(self.session).finalize_environment_account_guards(
+            run=run,
+            status=run.status,
+            summary={
+                "cleanupTotal": sum(
+                    item.createdInRun
+                    and item.cleanupStatus != "not_required"
+                    for item in body.results
+                ),
+                "cleanupDone": sum(
+                    item.cleanupStatus == "deleted" for item in body.results
+                ),
+                "cleanupFailed": sum(
+                    item.cleanupStatus == "failed" for item in body.results
+                ),
+            },
+            now=now,
+        )
         self.session.flush()
         result = self._environment_result(run, unchanged=False)
         result["resourceConflictCount"] = resource_conflicts

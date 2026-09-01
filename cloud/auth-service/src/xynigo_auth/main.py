@@ -2978,12 +2978,23 @@ def create_app(
                     for item in (plan_accounts or [])
                     if str(item.get("email") or "").strip()
                 }
-                cleanup_blocked_refs = sorted(
-                    runs.cleanup_failed_account_refs(
-                        tenant_id=actor.tenant.id,
-                        account_refs=account_refs,
+                try:
+                    cleanup_blocked_refs = sorted(
+                        runs.acquire_environment_account_guards(
+                            run=run,
+                            account_refs=account_refs,
+                        )
                     )
-                )
+                except PurchaseServiceError as exc:
+                    session.rollback()
+                    purchase_error(
+                        request,
+                        session,
+                        actor,
+                        action,
+                        exc,
+                        business_object_id=body.idempotencyKey,
+                    )
             task_type = (
                 "environment.create-bound.v1"
                 if body.mode == "bound"
@@ -3161,7 +3172,14 @@ def create_app(
                 parent=parent,
                 body=body,
             )
+            if not unchanged:
+                runs.acquire_environment_account_guards(
+                    run=run,
+                    account_refs=set(body.accountRefs),
+                    allow_cleanup_failed=False,
+                )
         except PurchaseServiceError as exc:
+            session.rollback()
             purchase_error(
                 request,
                 session,

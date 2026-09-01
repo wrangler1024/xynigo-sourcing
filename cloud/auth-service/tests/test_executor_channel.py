@@ -9,11 +9,12 @@ import uuid
 
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from test_auth_flow import build_test_app, start_login
 from xynigo_auth.models import (
     EnvironmentAccountPlan,
+    EnvironmentAccountRunGuard,
     EnvironmentCreationRun,
     ExecutorPairingCode,
     ExecutorTask,
@@ -606,6 +607,34 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
         assert snapshot["terminal"] is False
         assert snapshot["executorTaskId"]
 
+        overlapping_plan = web_client.post(
+            "/v1/environment-plans/parse",
+            json={
+                "idempotencyKey": "environment-parse-overlap-0002",
+                "filename": "synthetic-buyers.xlsx",
+                "contentBase64": environment_workbook(2),
+                "site": "MX",
+                "environmentGroup": "MX采购测试",
+            },
+            headers=CSRF,
+        )
+        assert overlapping_plan.status_code == 201, overlapping_plan.text
+        overlapping_body = {
+            **create_body,
+            "idempotencyKey": "environment-run-overlap-0002",
+            "cloudPlanId": overlapping_plan.json()["cloudPlanId"],
+        }
+        overlapping = web_client.post(
+            "/v1/operation-runs/environment-creation",
+            json=overlapping_body,
+            headers=CSRF,
+        )
+        assert overlapping.status_code == 409, overlapping.text
+        assert (
+            overlapping.json()["detail"]["code"]
+            == "environment_cleanup_in_progress"
+        )
+
         repeated = web_client.post(
             "/v1/operation-runs/environment-creation",
             json=create_body,
@@ -634,6 +663,9 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
             assert run is not None and task is not None
             assert run.executor_task_id == task.id
             assert task.task_type == "environment.create-bound.v1"
+            guards = list(session.scalars(select(EnvironmentAccountRunGuard)))
+            assert len(guards) == 2
+            assert {guard.state for guard in guards} == {"active"}
             serialized = json.dumps(task.payload_envelope)
             assert cloud_plan_id not in serialized
             assert "MX采购测试" not in serialized
@@ -787,6 +819,9 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
             assert stored_plan is not None
             assert stored_plan.status == "submitted"
             assert stored_plan.encrypted_payload is None
+            assert session.scalar(
+                select(func.count()).select_from(EnvironmentAccountRunGuard)
+            ) == 0
         latest = web_client.get(
             "/v1/operation-runs/environment-creation/latest"
         )

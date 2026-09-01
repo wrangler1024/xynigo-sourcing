@@ -1104,6 +1104,40 @@ class EnvironmentCreationResult(Base):
     )
 
 
+class EnvironmentAccountRunGuard(Base):
+    """Persistent tenant/account barrier across create and cleanup Runs."""
+
+    __tablename__ = "environment_account_run_guards"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    account_ref: Mapped[str] = mapped_column(String(128), nullable=False)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("environment_creation_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    state: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "account_ref",
+            name="uq_environment_account_run_guard",
+        ),
+        CheckConstraint(
+            "state IN ('active', 'cleanup_pending', 'cleanup_failed')",
+            name="ck_environment_account_run_guard_state",
+        ),
+        Index("ix_environment_account_run_guard_run", "run_id", "state"),
+    )
+
+
 class LogisticsQueryRun(Base):
     """One local SHEIN order / tracking query execution."""
 

@@ -43,6 +43,7 @@ from .operation_contract import (
     WorkspaceEnvironmentPreferences,
     WorkspaceRuntimeConfig,
 )
+from .operation_service import OperationRunService
 from .security import hash_token, random_url_token
 
 
@@ -1338,6 +1339,21 @@ class ExecutorChannelService:
                 run.ip_total_count = ip_total
             if progress_snapshot is not None:
                 self._upsert_environment_progress(run, progress_snapshot, heartbeat_at)
+            guard_service = OperationRunService(self.session)
+            if phase == "cancel_requested" or str(phase or "").endswith(
+                "rolling_back"
+            ):
+                guard_service.mark_environment_guards_cleanup_pending(
+                    run_id=run.id,
+                    now=heartbeat_at,
+                )
+            if status in OperationRunService.TERMINAL_STATUSES:
+                guard_service.finalize_environment_account_guards(
+                    run=run,
+                    status=status,
+                    summary=summary,
+                    now=heartbeat_at,
+                )
         elif progress_snapshot is not None:
             self._upsert_logistics_progress(run, progress_snapshot, heartbeat_at)
 

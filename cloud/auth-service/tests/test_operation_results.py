@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from copy import deepcopy
 import hashlib
+import uuid
 
+import pytest
 from sqlalchemy import func, select
 
 from test_purchase_api import authenticated_client
@@ -10,6 +12,7 @@ from xynigo_auth.feishu_operation_sync import FeishuOperationSyncWorker
 from xynigo_auth.models import (
     AuditEvent,
     BuyerAccount,
+    EnvironmentAccountRunGuard,
     EnvironmentCreationResult,
     EnvironmentCreationRun,
     LogisticsQueryResult,
@@ -17,6 +20,7 @@ from xynigo_auth.models import (
     OperationalSyncOutbox,
 )
 from xynigo_auth.operation_service import OperationRunService
+from xynigo_auth.purchase_service import PurchaseServiceError
 
 
 def environment_payload() -> dict[str, object]:
@@ -297,11 +301,148 @@ def test_cleanup_failed_account_refs_are_tenant_scoped_rerun_guards(tmp_path) ->
 
     account_ref = payload["results"][0]["accountRef"]
     with database.session_factory() as session:
-        run = session.scalar(select(EnvironmentCreationRun))
-        assert run is not None
-        blocked = OperationRunService(session).cleanup_failed_account_refs(
-            tenant_id=run.tenant_id,
-            account_refs={account_ref, "sha256-unrelated-account"},
+        old_run = session.scalar(select(EnvironmentCreationRun))
+        assert old_run is not None
+        session.add(EnvironmentAccountRunGuard(
+            id=uuid.uuid4(), tenant_id=old_run.tenant_id,
+            account_ref=account_ref, run_id=old_run.id,
+            state="cleanup_failed",
+        ))
+        new_run = EnvironmentCreationRun(
+            id=uuid.uuid4(), tenant_id=old_run.tenant_id,
+            actor_user_id=old_run.actor_user_id,
+            source_run_key="env-guard-transfer-0001",
+            payload_hash="b" * 64, run_mode="bound", site="US",
+            purchase_date="20260827",
+            environment_group="Synthetic-US-Purchase",
+            status="created", phase="created", progress_completed=0,
+            progress_total=1, total_count=1, success_count=0,
+            failed_count=0, ip_ok_count=0, ip_total_count=0,
+            request_summary={}, source="cloud_web",
         )
-        assert blocked == {account_ref}
+        session.add(new_run)
+        session.flush()
+        service = OperationRunService(session)
+        inherited = service.acquire_environment_account_guards(
+            run=new_run,
+            account_refs={account_ref},
+        )
+        assert inherited == {account_ref}
+        guard = session.scalar(select(EnvironmentAccountRunGuard))
+        assert guard is not None
+        assert guard.run_id == new_run.id
+        assert guard.state == "active"
+
+        competing = EnvironmentCreationRun(
+            id=uuid.uuid4(), tenant_id=old_run.tenant_id,
+            actor_user_id=old_run.actor_user_id,
+            source_run_key="env-guard-conflict-0001",
+            payload_hash="c" * 64, run_mode="bound", site="US",
+            purchase_date="20260827",
+            environment_group="Synthetic-US-Purchase",
+            status="created", phase="created", progress_completed=0,
+            progress_total=1, total_count=1, success_count=0,
+            failed_count=0, ip_ok_count=0, ip_total_count=0,
+            request_summary={}, source="cloud_web",
+        )
+        session.add(competing)
+        session.flush()
+        try:
+            service.acquire_environment_account_guards(
+                run=competing,
+                account_refs={account_ref},
+            )
+        except PurchaseServiceError as exc:
+            assert exc.code == "environment_cleanup_in_progress"
+        else:
+            raise AssertionError("concurrent environment Run was not blocked")
+    client.close()
+
+
+def test_cleanup_pending_guard_blocks_immediate_rerun_until_delete_finishes(
+    tmp_path,
+) -> None:
+    client, database, headers = authenticated_client(tmp_path)
+    payload = environment_payload()
+    payload["runKey"] = "env_batch-cleanup-pending-0001"
+    response = client.put(
+        "/v1/operations/environment-creation-runs",
+        json=payload,
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+    account_ref = payload["results"][0]["accountRef"]
+    with database.session_factory() as session:
+        previous = session.scalar(select(EnvironmentCreationRun))
+        assert previous is not None
+        service = OperationRunService(session)
+        service.acquire_environment_account_guards(
+            run=previous,
+            account_refs={account_ref},
+        )
+        service.mark_environment_guards_cleanup_pending(run_id=previous.id)
+        session.flush()
+        guard = session.scalar(select(EnvironmentAccountRunGuard))
+        assert guard is not None
+        assert guard.state == "cleanup_pending"
+
+        rerun = EnvironmentCreationRun(
+            id=uuid.uuid4(), tenant_id=previous.tenant_id,
+            actor_user_id=previous.actor_user_id,
+            source_run_key="env-guard-after-cleanup-0001",
+            payload_hash="d" * 64, run_mode="bound", site="US",
+            purchase_date="20260827",
+            environment_group="Synthetic-US-Purchase",
+            status="created", phase="created", progress_completed=0,
+            progress_total=1, total_count=1, success_count=0,
+            failed_count=0, ip_ok_count=0, ip_total_count=0,
+            request_summary={}, source="cloud_web",
+        )
+        session.add(rerun)
+        session.flush()
+        with pytest.raises(PurchaseServiceError) as blocked:
+            service.acquire_environment_account_guards(
+                run=rerun,
+                account_refs={account_ref},
+            )
+        assert blocked.value.code == "environment_cleanup_in_progress"
+
+        service.finalize_environment_account_guards(
+            run=previous,
+            status="cancelled",
+            summary={
+                "cleanupTotal": 1,
+                "cleanupDone": 1,
+                "cleanupFailed": 0,
+            },
+        )
+        session.flush()
+        assert session.scalar(select(EnvironmentAccountRunGuard)) is None
+
+        inherited = service.acquire_environment_account_guards(
+            run=rerun,
+            account_refs={account_ref},
+        )
+        assert inherited == set()
+        guard = session.scalar(select(EnvironmentAccountRunGuard))
+        assert guard is not None
+        assert guard.run_id == rerun.id
+        assert guard.state == "active"
+
+        rerun.started_at = previous.started_at
+        service.finalize_environment_account_guards(
+            run=rerun,
+            status="cancelled",
+            summary={
+                "cleanupTotal": 1,
+                "cleanupDone": 0,
+                "cleanupFailed": 1,
+            },
+        )
+        session.flush()
+        guard = session.scalar(select(EnvironmentAccountRunGuard))
+        assert guard is not None
+        assert guard.run_id == rerun.id
+        assert guard.state == "cleanup_failed"
     client.close()
