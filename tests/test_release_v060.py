@@ -285,6 +285,8 @@ class ReleaseV01212Tests(unittest.TestCase):
         self.assertIn('/api/buyer-library', html)
         self.assertIn('后台无头验证全部新建环境出口 IP', html)
         self.assertIn('不会打开可见的 HubStudio 环境窗口', html)
+        self.assertIn('环境创建完成，正在检测出口 IP', html)
+        self.assertIn("snap.phase === 'ip_checking'", html)
         self.assertIn('data-parent="system" data-module="localsettings"', html)
         self.assertIn(
             'data-parent="system" data-module="larkconnection" '

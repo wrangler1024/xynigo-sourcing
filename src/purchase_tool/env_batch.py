@@ -1118,13 +1118,15 @@ class BatchEnvOrchestrator(object):
                 break
         return chosen[:count]
 
-    def verify_ips(self, count=3, geo_lookup=None):
+    def verify_ips(self, count=3, geo_lookup=None, on_progress=None):
         geo_lookup = geo_lookup or lookup_ip_country
         results = []
         for row in self._verification_sample(self.rows, count):
             results.append(probe_env_ip(
                 self.hub, self.site, row.env_name, row.container_code,
                 geo_lookup))
+            if on_progress:
+                on_progress(results)
         return results
 
 
@@ -1325,7 +1327,7 @@ class BackupEnvOrchestrator(object):
                 self._run_one(row)
         return self.rows
 
-    def verify_ips(self, count=1, geo_lookup=None):
+    def verify_ips(self, count=1, geo_lookup=None, on_progress=None):
         geo_lookup = geo_lookup or lookup_ip_country
         done = [row for row in self.rows
                 if row.state == 'done' and row.container_code]
@@ -1334,6 +1336,8 @@ class BackupEnvOrchestrator(object):
             results.append(probe_env_ip(
                 self.hub, self.site, row.env_name, row.container_code,
                 geo_lookup))
+            if on_progress:
+                on_progress(results)
         return results
 
 

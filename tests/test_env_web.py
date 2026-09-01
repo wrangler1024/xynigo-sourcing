@@ -870,6 +870,52 @@ class BackupEnvJobTests(unittest.TestCase):
         self.assertFalse(final['running'])
         self.assertEqual(final['summary']['done'], 3)
 
+    def test_ip_verification_phase_and_progress_are_visible(self):
+        class BlockingIpHub(FakeHub):
+            def __init__(self):
+                super().__init__()
+                self.ip_started = threading.Event()
+                self.release_ip = threading.Event()
+
+            def browser_start(self, _code, headless=False):
+                self.calls.append(('browser_start', headless))
+                self.ip_started.set()
+                if not self.release_ip.wait(2):
+                    raise RuntimeError('test timed out waiting to release IP check')
+                return {'ip': '203.0.113.10'}
+
+            def browser_stop(self, _code):
+                self.calls.append(('browser_stop',))
+
+        hub = BlockingIpHub()
+        job = EnvBatchJob(lambda: hub, runtime_config)
+        parsed = job.parse(
+            'vendor.xlsx', base64.b64encode(source_bytes()).decode('ascii'))
+        with patch(
+                'purchase_tool.env_batch.lookup_ip_country',
+                return_value={
+                    'countryCode': 'MX', 'country': 'Mexico',
+                    'city': 'Mexico City', 'isp': 'Test ISP'}):
+            job.start(
+                parsed['planId'], '1:新刚', '20260819',
+                verify_sample_count=1, confirm_write=True)
+            self.assertTrue(hub.ip_started.wait(2))
+            checking = job.snapshot()
+            self.assertTrue(checking['running'])
+            self.assertEqual(checking['phase'], 'ip_checking')
+            self.assertEqual(checking['ipCheckDone'], 0)
+            self.assertEqual(checking['ipCheckTotal'], 1)
+            hub.release_ip.set()
+            deadline = time.time() + 5
+            while job.snapshot()['running'] and time.time() < deadline:
+                time.sleep(0.05)
+
+        final = job.snapshot()
+        self.assertEqual(final['phase'], 'completed')
+        self.assertEqual(final['ipCheckDone'], 1)
+        self.assertEqual(final['ipCheckTotal'], 1)
+        self.assertTrue(final['ipChecks'][0]['ok'])
+
     def test_backup_job_safe_stop_reports_unstarted_rows(self):
         class BlockingFirstCreateHub(FakeHub):
             def __init__(self):

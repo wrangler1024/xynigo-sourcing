@@ -1378,6 +1378,8 @@ class EnvBatchJob(object):
         self.runner = None
         self.summary = {}
         self.ip_checks = []
+        self.phase = 'idle'
+        self.ip_check_total = 0
         self.fatal_error = ''
         self.mapping_data = None
         self.mapping_name = ''
@@ -1535,6 +1537,10 @@ class EnvBatchJob(object):
         with self.lock:
             self.rows = [dict(row) for row in rows]
 
+    def _set_ip_checks(self, checks):
+        with self.lock:
+            self.ip_checks = [dict(item) for item in checks]
+
     @staticmethod
     def _wipe_runner_credentials(runner):
         if runner:
@@ -1688,6 +1694,8 @@ class EnvBatchJob(object):
             self.rows = []
             self.summary = {}
             self.ip_checks = []
+            self.phase = 'preparing'
+            self.ip_check_total = 0
             self.fatal_error = ''
             self.mapping_data = None
             self._cancel_sensitive_cleanup_locked()
@@ -1732,10 +1740,22 @@ class EnvBatchJob(object):
                     # prepare 会再次读取 HubStudio；若外部进程在预检后改变了
                     # 续排结果，必须在任何写入前补充预占并再次查冲突。
                     reserve_resources(environment_resources(runner.rows))
+                with self.lock:
+                    self.phase = 'creating'
                 result_rows = runner.run()
                 mapping = mapping_workbook_bytes(result_rows)
+                verification_total = min(
+                    verify_sample_count,
+                    sum(row.state == 'done' and bool(row.container_code)
+                        for row in result_rows))
+                with self.lock:
+                    self.phase = ('ip_checking'
+                                  if verification_total else 'finalizing')
+                    self.ip_check_total = verification_total
                 checks = ([] if stop_event.is_set()
-                          else runner.verify_ips(verify_sample_count))
+                          else runner.verify_ips(
+                              verify_sample_count,
+                              on_progress=self._set_ip_checks))
                 done = sum(row.state == 'done' for row in result_rows)
                 stopped = sum(row.state == 'stopped' for row in result_rows)
                 failed = sum(row.state == 'failed' for row in result_rows)
@@ -1751,6 +1771,7 @@ class EnvBatchJob(object):
                     self.tsv_data = None
                     self.tsv_name = ''
                     self.ip_checks = checks
+                    self.phase = 'finalizing'
                     self.summary = {
                         'total': len(result_rows),
                         'done': done,
@@ -1775,6 +1796,9 @@ class EnvBatchJob(object):
                     self.finished_at = time.time()
                     self.running = False
                     self.stop_available = False
+                    self.phase = ('failed' if self.fatal_error else
+                                  'stopped' if self.stop_requested else
+                                  'completed')
                 if on_finished:
                     try:
                         on_finished()
@@ -2074,6 +2098,9 @@ class EnvBatchJob(object):
                 'rows': [dict(row) for row in self.rows],
                 'summary': dict(self.summary),
                 'ipChecks': [dict(item) for item in self.ip_checks],
+                'phase': self.phase,
+                'ipCheckDone': len(self.ip_checks),
+                'ipCheckTotal': self.ip_check_total,
                 'fatalError': self.fatal_error,
                 'mappingReady': self.mapping_data is not None,
                 'tsvReady': self.tsv_data is not None,
@@ -2111,6 +2138,8 @@ class BackupEnvJob(object):
         self.rows = []
         self.summary = {}
         self.ip_checks = []
+        self.phase = 'idle'
+        self.ip_check_total = 0
         self.fatal_error = ''
         self.result_data = None
         self.result_name = ''
@@ -2166,6 +2195,10 @@ class BackupEnvJob(object):
         with self.lock:
             self.rows = [dict(row) for row in rows]
 
+    def _set_ip_checks(self, checks):
+        with self.lock:
+            self.ip_checks = [dict(item) for item in checks]
+
     def start(self, buyer, count, backup_type, purchase_date,
               verify_sample_count=1, confirm_write=False, site='MX',
               reserve_resources=None, on_finished=None):
@@ -2205,6 +2238,8 @@ class BackupEnvJob(object):
             self.rows = []
             self.summary = {}
             self.ip_checks = []
+            self.phase = 'preparing'
+            self.ip_check_total = 0
             self.fatal_error = ''
             self.result_data = None
             self.result_name = ''
@@ -2220,14 +2255,27 @@ class BackupEnvJob(object):
                 runner.prepare(buyer, count, backup_type, purchase_date)
                 if reserve_resources:
                     reserve_resources(environment_resources(runner.rows))
+                with self.lock:
+                    self.phase = 'creating'
                 result_rows = runner.run()
+                verification_total = min(
+                    verify_sample_count,
+                    sum(row.state == 'done' and bool(row.container_code)
+                        for row in result_rows))
+                with self.lock:
+                    self.phase = ('ip_checking'
+                                  if verification_total else 'finalizing')
+                    self.ip_check_total = verification_total
                 checks = ([] if stop_event.is_set()
-                          else runner.verify_ips(verify_sample_count))
+                          else runner.verify_ips(
+                              verify_sample_count,
+                              on_progress=self._set_ip_checks))
                 done = sum(row.state == 'done' for row in result_rows)
                 stopped = sum(row.state == 'stopped' for row in result_rows)
                 failed = sum(row.state == 'failed' for row in result_rows)
                 with self.lock:
                     self.ip_checks = checks
+                    self.phase = 'finalizing'
                     self.summary = {
                         'total': len(result_rows),
                         'done': done,
@@ -2254,6 +2302,9 @@ class BackupEnvJob(object):
                 with self.lock:
                     self.finished_at = time.time()
                     self.running = False
+                    self.phase = ('failed' if self.fatal_error else
+                                  'stopped' if self.stop_requested else
+                                  'completed')
                 if on_finished:
                     try:
                         on_finished()
@@ -2288,6 +2339,9 @@ class BackupEnvJob(object):
                 'rows': [dict(row) for row in self.rows],
                 'summary': dict(self.summary),
                 'ipChecks': [dict(item) for item in self.ip_checks],
+                'phase': self.phase,
+                'ipCheckDone': len(self.ip_checks),
+                'ipCheckTotal': self.ip_check_total,
                 'fatalError': self.fatal_error,
                 'resultReady': self.result_data is not None,
             }

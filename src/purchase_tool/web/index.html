@@ -6191,6 +6191,14 @@ function renderEnvExecutionState(snap, mode) {
         `已停止领取新行；最多 ${envEffectiveWorkers} 个已进入执行的并发行会完整收尾，期间请勿关闭执行器。`);
       return;
     }
+    if (snap.phase === 'ip_checking') {
+      const ipDone = Number(snap.ipCheckDone || 0);
+      const ipTotal = Number(snap.ipCheckTotal || 0);
+      setEnvExecutionState(
+        'running', `${taskName}环境创建完成，正在检测出口 IP`,
+        `检测进度 ${ipDone}/${ipTotal || '—'}；检测会在后台依次启动环境、读取出口 IP 并立即关闭，请保持 HubStudio 和执行器运行。`);
+      return;
+    }
     setEnvExecutionState(
       'running', `${taskName}正在后台执行`,
       `当前完成 ${done}/${total || '—'}，已用 ${snap.elapsedSec || 0} 秒；页面每 1.5 秒自动刷新，请勿重复点击“正式执行”。`);
@@ -6288,7 +6296,11 @@ function renderEnvBatch(snap) {
   const summary = snap.summary || {};
   $('envSummary').innerHTML = `<div class="stat-chip ok"><b>${summary.done ?? done}</b>完成</div><div class="stat-chip warn"><b>${summary.stopped ?? stopped}</b>已停止</div><div class="stat-chip bad"><b>${summary.failed ?? failed}</b>失败</div><div class="stat-chip blue"><b>${summary.ipOk || 0}/${summary.ipTotal || 0}</b>出口 IP 国家匹配</div>`;
   const checks = snap.ipChecks || [];
-  $('envIpList').textContent = checks.length ? '后台检测明细：\n' + checks.map(x => `${x.envName} → ${x.ip || '—'} · ${x.country || x.error || '未知'} ${x.ok ? '✓' : '⚠'}`).join('\n') : '尚无后台出口 IP 检测结果';
+  const ipChecking = snap.phase === 'ip_checking';
+  const ipProgress = `出口 IP 检测${ipChecking ? '中' : '完成'}：${Number(snap.ipCheckDone || checks.length)}/${Number(snap.ipCheckTotal || checks.length)}`;
+  $('envIpList').textContent = checks.length
+    ? ipProgress + '\n' + checks.map(x => `${x.envName} → ${x.ip || '—'} · ${x.country || x.error || '未知'} ${x.ok ? '✓' : '⚠'}`).join('\n')
+    : (ipChecking ? ipProgress + '\n正在启动首个环境并读取出口 IP，请稍候…' : '尚无后台出口 IP 检测结果');
 }
 
 function renderBackupBatch(snap) {
@@ -6329,7 +6341,11 @@ function renderBackupBatch(snap) {
   const summary = snap.summary || {};
   $('envSummary').innerHTML = `<div class="stat-chip ok"><b>${summary.done ?? done}</b>完成</div><div class="stat-chip warn"><b>${summary.stopped ?? stopped}</b>已停止</div><div class="stat-chip bad"><b>${summary.failed ?? failed}</b>失败</div><div class="stat-chip blue"><b>${summary.ipOk || 0}/${summary.ipTotal || 0}</b>出口 IP 国家匹配</div>`;
   const checks = snap.ipChecks || [];
-  $('envIpList').textContent = checks.length ? '后台检测明细：\n' + checks.map(x => `${x.envName} → ${x.ip || '—'} · ${x.country || x.error || '未知'} ${x.ok ? '✓' : '⚠'}`).join('\n') : '尚无后台出口 IP 检测结果';
+  const ipChecking = snap.phase === 'ip_checking';
+  const ipProgress = `出口 IP 检测${ipChecking ? '中' : '完成'}：${Number(snap.ipCheckDone || checks.length)}/${Number(snap.ipCheckTotal || checks.length)}`;
+  $('envIpList').textContent = checks.length
+    ? ipProgress + '\n' + checks.map(x => `${x.envName} → ${x.ip || '—'} · ${x.country || x.error || '未知'} ${x.ok ? '✓' : '⚠'}`).join('\n')
+    : (ipChecking ? ipProgress + '\n正在启动首个环境并读取出口 IP，请稍候…' : '尚无后台出口 IP 检测结果');
 }
 
 let envPollFailures = 0;
