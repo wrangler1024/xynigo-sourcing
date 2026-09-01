@@ -2926,6 +2926,7 @@ def create_app(
         if not unchanged:
             plan_record = None
             plan_accounts = None
+            cleanup_blocked_refs: list[str] = []
             channel = executor_channel(session)
             if body.mode == "bound":
                 if environment_plan_service is None:
@@ -2967,6 +2968,22 @@ def create_app(
                         status_code=exc.status,
                         detail={"code": exc.code, "message": str(exc)},
                     ) from exc
+                account_refs = {
+                    hashlib.sha256(
+                        str(item.get("email") or "")
+                        .strip()
+                        .casefold()
+                        .encode("utf-8")
+                    ).hexdigest()
+                    for item in (plan_accounts or [])
+                    if str(item.get("email") or "").strip()
+                }
+                cleanup_blocked_refs = sorted(
+                    runs.cleanup_failed_account_refs(
+                        tenant_id=actor.tenant.id,
+                        account_refs=account_refs,
+                    )
+                )
             task_type = (
                 "environment.create-bound.v1"
                 if body.mode == "bound"
@@ -2989,6 +3006,7 @@ def create_app(
             }
             if plan_accounts is not None:
                 task_payload["planAccounts"] = plan_accounts
+                task_payload["cleanupBlockedAccountRefs"] = cleanup_blocked_refs
             task = channel.create_config_task(
                 tenant_id=actor.tenant.id,
                 user_id=actor.user.id,

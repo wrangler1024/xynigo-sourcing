@@ -113,6 +113,25 @@ class LocalOperationExecutor(object):
             if not cloud_plan_id:
                 raise OperationExecutionError(
                     'operation_payload_invalid', '正式建环境任务缺少云端计划编号')
+            raw_cleanup_blocked = payload.get(
+                'cleanupBlockedAccountRefs') or []
+            if not isinstance(raw_cleanup_blocked, list):
+                raise OperationExecutionError(
+                    'operation_payload_invalid', '待清理账号引用格式无效')
+            cleanup_blocked_refs = []
+            for value in raw_cleanup_blocked:
+                account_ref = str(value or '').strip()
+                if (not 8 <= len(account_ref) <= 128
+                        or any(character not in
+                               'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-'
+                               for character in account_ref)):
+                    raise OperationExecutionError(
+                        'operation_payload_invalid', '待清理账号引用无效')
+                cleanup_blocked_refs.append(account_ref)
+            if (len(cleanup_blocked_refs) != len(set(cleanup_blocked_refs))
+                    or len(cleanup_blocked_refs) > total):
+                raise OperationExecutionError(
+                    'operation_payload_invalid', '待清理账号引用数量无效')
             local_plan_id = ''
             plan_accounts = payload.get('planAccounts')
             if plan_accounts is not None:
@@ -146,6 +165,7 @@ class LocalOperationExecutor(object):
                 'confirmWrite': True,
                 'site': site,
                 'environmentGroup': group,
+                'cleanupBlockedAccountRefs': cleanup_blocked_refs,
                 'operationRunKey': run_key,
             }
             backup = False

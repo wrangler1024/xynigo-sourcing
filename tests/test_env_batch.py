@@ -926,6 +926,17 @@ class EnvBatchTests(unittest.TestCase):
         self.assertIsNotNone(hub.env_lookup(
             container_code=recovered.container_code))
 
+        blocked = BatchEnvOrchestrator(
+            hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY,
+            purchase_date='20260819', sleep_fn=lambda _seconds: None,
+            max_workers=1,
+            reject_existing_account_refs={recovered.account.account_id})
+        with self.assertRaisesRegex(
+                EnvBatchError, '上次销毁失败.*任何写入前'):
+            blocked.prepare(accounts, '2:新刚')
+        self.assertEqual(
+            sum(call[0] == 'create' for call in hub.calls), 0)
+
     def test_stop_compensation_reconciles_delete_timeout_without_duplicate(self):
         class TimeoutAfterDeleteHub(FakeHub):
             def __init__(self):

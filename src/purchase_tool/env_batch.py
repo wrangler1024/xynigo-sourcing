@@ -924,7 +924,8 @@ def validate_global_order_dedup(accounts, selected_envs, all_envs,
 
 def build_batch_plan(accounts, assignment_spec, existing_envs=None,
                      site='MX', purchase_date=None, resume_state=None,
-                     all_existing_envs=None, environment_index=None):
+                     all_existing_envs=None, environment_index=None,
+                     reject_existing_account_refs=None):
     site = normalize_env_site(site)
     purchase_date = purchase_date or date.today().strftime('%Y%m%d')
     if not re.fullmatch(r'20\d{6}', purchase_date):
@@ -952,6 +953,11 @@ def build_batch_plan(accounts, assignment_spec, existing_envs=None,
         for row in ((resume_state or {}).get('rows') or [])
         if row.get('accountId')
     }
+    reject_existing_account_refs = {
+        str(value or '').strip()
+        for value in (reject_existing_account_refs or ())
+        if str(value or '').strip()
+    }
     mmdd = purchase_date[-4:]
     max_suffix = {buyer: 0 for _count, buyer in assignments}
     for buyer in max_suffix:
@@ -972,6 +978,10 @@ def build_batch_plan(accounts, assignment_spec, existing_envs=None,
         recovered = existing_orders.get(account.order_no.casefold())
         saved = resume_rows.get(account.account_id) or {}
         if recovered:
+            if account.account_id in reject_existing_account_refs:
+                raise EnvBatchError(
+                    '买家号对应的旧环境上次销毁失败且当前仍存在，已在任何'
+                    '写入前阻止新任务；请先删除该环境后重新执行')
             env_name = str(recovered.get('containerName') or '')
             if not env_name:
                 raise EnvBatchError('已存在环境缺少名称，无法安全恢复')
@@ -1229,7 +1239,8 @@ class BatchEnvOrchestrator(_EnvironmentLookupMixin):
     def __init__(self, hub, purchase_tag, proxy_link, site='MX',
                  purchase_date=None, state_store=None,
                  write_interval=0.3, sleep_fn=time.sleep, rng=None,
-                 on_progress=None, max_workers=5, stop_event=None):
+                 on_progress=None, max_workers=5, stop_event=None,
+                 reject_existing_account_refs=None):
         self.hub = hub
         self.site = normalize_env_site(site)
         self.purchase_tag = validate_purchase_tag(purchase_tag)
@@ -1246,6 +1257,11 @@ class BatchEnvOrchestrator(_EnvironmentLookupMixin):
         self.max_workers = max(1, min(10, int(max_workers)))
         self._persist_lock = threading.Lock()
         self._environment_index = EnvironmentSnapshotIndex()
+        self.reject_existing_account_refs = {
+            str(value or '').strip()
+            for value in (reject_existing_account_refs or ())
+            if str(value or '').strip()
+        }
         self.rows = []
 
     def prepare(self, accounts, assignment_spec):
@@ -1258,7 +1274,8 @@ class BatchEnvOrchestrator(_EnvironmentLookupMixin):
             accounts, assignment_spec, existing_envs=existing,
             site=self.site, purchase_date=self.purchase_date,
             resume_state=saved, all_existing_envs=all_existing,
-            environment_index=environment_index)
+            environment_index=environment_index,
+            reject_existing_account_refs=self.reject_existing_account_refs)
         self._persist()
         return self.rows
 

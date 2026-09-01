@@ -646,6 +646,7 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
         assert leased["payload"]["cloudPlanId"] == cloud_plan_id
         assert "planRef" not in leased["payload"]
         assert len(leased["payload"]["planAccounts"]) == 2
+        assert leased["payload"]["cleanupBlockedAccountRefs"] == []
         lease_token = leased["leaseToken"]
         leased_snapshot = web_client.get(
             f"/v1/operation-runs/environment-creation/{snapshot['runId']}"

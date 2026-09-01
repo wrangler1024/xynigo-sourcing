@@ -1801,7 +1801,8 @@ class EnvBatchJob(object):
               verify_sample_count=3, confirm_write=False, site='MX',
               environment_group=None,
               write_lark_ledger=False, confirm_lark_write=False,
-              reserve_resources=None, on_finished=None):
+              reserve_resources=None, on_finished=None,
+              cleanup_blocked_account_refs=None):
         if not confirm_write:
             raise ValueError('正式执行必须二次确认 HubStudio 写入')
         if write_lark_ledger and not confirm_lark_write:
@@ -1840,7 +1841,8 @@ class EnvBatchJob(object):
             pending['accounts'], assignment,
             existing_envs=selected_existing,
             site=runtime['site'], purchase_date=purchase_date,
-            all_existing_envs=all_existing)
+            all_existing_envs=all_existing,
+            reject_existing_account_refs=cleanup_blocked_account_refs)
         if reserve_resources:
             reserve_resources(environment_resources(checked_plan))
         ledger_service = None
@@ -1907,7 +1909,8 @@ class EnvBatchJob(object):
                     state_store=ResumeStateStore(batch_id),
                     on_progress=self._set_rows,
                     max_workers=runtime['workers'],
-                    stop_event=stop_event)
+                    stop_event=stop_event,
+                    reject_existing_account_refs=cleanup_blocked_account_refs)
                 with self.lock:
                     self.runner = runner
                 runner.prepare(accounts, assignment)
@@ -3697,7 +3700,9 @@ class Handler(BaseHTTPRequestHandler):
                         confirm_lark_write=bool(body.get('confirmLarkWrite')),
                         reserve_resources=lambda resources:
                             STATE.tasks.reserve(task_id, resources),
-                        on_finished=finish_environment_batch)
+                        on_finished=finish_environment_batch,
+                        cleanup_blocked_account_refs=body.get(
+                            'cleanupBlockedAccountRefs'))
                 except Exception:
                     STATE.tasks.finish(task_id)
                     raise

@@ -270,6 +270,25 @@ class OperationRunService:
         self.session.flush()
         return run, False
 
+    def cleanup_failed_account_refs(
+        self, *, tenant_id: uuid.UUID, account_refs: set[str]
+    ) -> set[str]:
+        """Return rows whose owned Hub environment still needs reconciliation."""
+        if not account_refs:
+            return set()
+        return set(
+            self.session.scalars(
+                select(EnvironmentCreationResult.account_ref)
+                .where(
+                    EnvironmentCreationResult.tenant_id == tenant_id,
+                    EnvironmentCreationResult.account_ref.in_(account_refs),
+                    EnvironmentCreationResult.created_in_run.is_(True),
+                    EnvironmentCreationResult.cleanup_status == "failed",
+                )
+                .distinct()
+            )
+        )
+
     def _effective_environment_failed_refs(
         self,
         *,

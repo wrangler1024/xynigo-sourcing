@@ -255,12 +255,14 @@ def test_environment_stop_reports_cleanup_and_ip_failure_reasons():
             'site': 'US', 'purchaseDate': '20260901',
             'environmentGroup': 'US采购', 'planRef': 'plan-local-0001',
             'totalCount': 1, 'verifySampleCount': 1,
+            'cleanupBlockedAccountRefs': ['a' * 64],
             'assignments': [{'purchaserLabel': '新刚', 'count': 1}],
         }, lambda **event: events.append(event))
 
     assert outcome == 'succeeded'
     assert code == 'environment_cancelled'
     assert summary['cleanupDone'] == 1
+    assert rpc.calls[0]['body']['cleanupBlockedAccountRefs'] == ['a' * 64]
     row = events[-1]['snapshot']['rows'][0]
     assert row['status'] == 'stopped'
     assert row['createdInRun'] is True

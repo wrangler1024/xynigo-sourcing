@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
 
 from sqlalchemy import func, select
 
@@ -15,6 +16,7 @@ from xynigo_auth.models import (
     LogisticsQueryRun,
     OperationalSyncOutbox,
 )
+from xynigo_auth.operation_service import OperationRunService
 
 
 def environment_payload() -> dict[str, object]:
@@ -263,4 +265,43 @@ def test_operation_contract_rejects_credentials_without_echoing_values(tmp_path)
     assert "synthetic-secret-must-not-echo" not in response.text
     with database.session_factory() as session:
         assert session.scalar(select(EnvironmentCreationRun)) is None
+    client.close()
+
+
+def test_cleanup_failed_account_refs_are_tenant_scoped_rerun_guards(tmp_path) -> None:
+    client, database, headers = authenticated_client(tmp_path)
+    payload = environment_payload()
+    payload["runKey"] = "env_batch-cleanup-failed-0001"
+    payload["results"] = [{
+        "accountRef": hashlib.sha256(
+            "buyer1@example.test".encode("utf-8")
+        ).hexdigest(),
+        "accountLabel": "bu***01@example.test",
+        "purchaserLabel": "合成采购员甲",
+        "environmentName": "SYN-US-0826-001",
+        "environmentRef": "132725138",
+        "environmentSerial": "9001",
+        "status": "stopped",
+        "createdInRun": True,
+        "cleanupStatus": "failed",
+        "cleanupErrorCode": "hubstudio_local_api_timeout",
+        "cleanupErrorSummary": "HubStudio Local API 请求超时",
+    }]
+    payload["ipChecks"] = []
+    response = client.put(
+        "/v1/operations/environment-creation-runs",
+        json=payload,
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+    account_ref = payload["results"][0]["accountRef"]
+    with database.session_factory() as session:
+        run = session.scalar(select(EnvironmentCreationRun))
+        assert run is not None
+        blocked = OperationRunService(session).cleanup_failed_account_refs(
+            tenant_id=run.tenant_id,
+            account_refs={account_ref, "sha256-unrelated-account"},
+        )
+        assert blocked == {account_ref}
     client.close()
