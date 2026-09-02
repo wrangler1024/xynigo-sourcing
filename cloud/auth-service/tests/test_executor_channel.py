@@ -115,22 +115,56 @@ def heartbeat(
     *,
     revision: str | None = None,
     capabilities: list[str] | None = None,
+    config_summary: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    body = {
+        "waitSeconds": 0,
+        "configRevision": revision,
+        "hubStatus": "ready",
+        "clientVersion": "0.12.5",
+        "protocolVersion": 1,
+        "capabilities": capabilities
+        or ["config.read.v1", "config.write.v1"],
+    }
+    if config_summary is not None:
+        body["configSummary"] = config_summary
     response = device_client.post(
         "/v1/executor-channel/poll",
-        json={
-            "waitSeconds": 0,
-            "configRevision": revision,
-            "hubStatus": "ready",
-            "clientVersion": "0.12.5",
-            "protocolVersion": 1,
-            "capabilities": capabilities
-            or ["config.read.v1", "config.write.v1"],
-        },
+        json=body,
         headers=device_headers(credential),
     )
     assert response.status_code == 200, response.text
     return response.json()
+
+
+def safe_config_summary() -> dict[str, object]:
+    return {
+        "schemaVersion": 2,
+        "configRevision": "c" * 64,
+        "capturedAt": datetime.now(UTC).isoformat(),
+        "runtimeConfig": {
+            "hubPort": 6873,
+            "concurrency": 2,
+            "envCreateWorkers": 5,
+            "verifySampleCount": 1,
+            "safeParallelTasks": True,
+        },
+        "configured": {
+            "hubApiKey": True,
+            "larkAppCredentials": True,
+            "larkLegacyTarget": False,
+            "purchaseAssistantDataSources": True,
+            "teamDefaultDataSource": False,
+        },
+        "dataSources": {
+            "dataSourceCount": 2,
+            "buyerProfileCount": 1,
+            "environmentBindingCount": 3,
+            "pendingOwnerConfirmationCount": 1,
+            "mappingConflictCount": 0,
+        },
+        "compliance": {"status": "ready", "issueCodes": []},
+    }
 
 
 def test_environment_plan_is_parsed_in_cloud_and_site_errors_are_structured(
@@ -1125,6 +1159,119 @@ def test_offline_revision_conflict_revoke_and_sensitive_config_are_blocked(tmp_p
         )
         assert after_revoke.status_code == 401
         assert heartbeat_response.json()["detail"]["code"] == "executor_revoked"
+
+
+def test_new_executor_reports_summary_and_rejects_cloud_config_writes(
+    tmp_path,
+) -> None:
+    app, _database, _oauth = build_test_app(tmp_path)
+    capabilities = [
+        "config.read.v1",
+        "config.write.v1",
+        "config.summary.v2",
+        "local.config.desktop.v1",
+        "workspace.rpc.v1",
+    ]
+    with TestClient(app) as web_client, TestClient(app) as device_client:
+        login(web_client)
+        paired = pair(
+            device_client,
+            create_pairing_code(web_client),
+            capabilities=capabilities,
+        )
+        executor_id = str(paired["executorId"])
+        credential = str(paired["deviceCredential"])
+        heartbeat(
+            device_client,
+            credential,
+            revision=REVISION_A,
+            capabilities=capabilities,
+            config_summary=safe_config_summary(),
+        )
+
+        runtime = web_client.get(
+            f"/v1/executors/{executor_id}/runtime-summary"
+        )
+        assert runtime.status_code == 200, runtime.text
+        payload = runtime.json()
+        assert payload["configSummary"]["schemaVersion"] == 2
+        assert payload["configSummary"]["dataSources"] == {
+            "dataSourceCount": 2,
+            "buyerProfileCount": 1,
+            "environmentBindingCount": 3,
+            "pendingOwnerConfirmationCount": 1,
+            "mappingConflictCount": 0,
+        }
+        assert payload["configSummaryStale"] is False
+        workspace = web_client.get(
+            f"/v1/executors/{executor_id}/workspace-snapshot"
+        )
+        assert workspace.status_code == 200
+        assert workspace.json()["snapshot"] is None
+        rendered = json.dumps(payload)
+        for forbidden in (
+            "spreadsheetToken", "sheetId", "appSecret", "apiKey",
+            "containerCode", "environmentName",
+        ):
+            assert forbidden not in rendered
+
+        read_blocked = web_client.post(
+            f"/v1/executors/{executor_id}/config/read",
+            json={}, headers=CSRF,
+        )
+        write_blocked = web_client.put(
+            f"/v1/executors/{executor_id}/config",
+            json={
+                "expectedRevision": REVISION_A,
+                "config": {"concurrency": 3},
+            },
+            headers=CSRF,
+        )
+        rpc_blocked = web_client.post(
+            f"/v1/executors/{executor_id}/workspace-rpc",
+            json={"method": "POST", "path": "/api/lark/config", "body": {}},
+            headers=CSRF,
+        )
+        for response in (read_blocked, write_blocked, rpc_blocked):
+            assert response.status_code == 410, response.text
+            assert response.json()["detail"]["code"] == (
+                "local_config_desktop_only"
+            )
+
+        business_rpc = web_client.post(
+            f"/v1/executors/{executor_id}/workspace-rpc",
+            json={"method": "GET", "path": "/api/groups"},
+            headers=CSRF,
+        )
+        assert business_rpc.status_code == 202, business_rpc.text
+
+
+def test_config_summary_rejects_unknown_sensitive_fields(tmp_path) -> None:
+    app, _database, _oauth = build_test_app(tmp_path)
+    capabilities = ["config.summary.v2", "local.config.desktop.v1"]
+    with TestClient(app) as web_client, TestClient(app) as device_client:
+        login(web_client)
+        paired = pair(
+            device_client,
+            create_pairing_code(web_client),
+            capabilities=capabilities,
+        )
+        summary = safe_config_summary()
+        summary["spreadsheetToken"] = "must-never-be-accepted"
+        response = device_client.post(
+            "/v1/executor-channel/poll",
+            json={
+                "waitSeconds": 0,
+                "configRevision": REVISION_A,
+                "hubStatus": "ready",
+                "clientVersion": "0.12.5",
+                "protocolVersion": 1,
+                "capabilities": capabilities,
+                "configSummary": summary,
+            },
+            headers=device_headers(str(paired["deviceCredential"])),
+        )
+        assert response.status_code == 422
 
 
 def test_web_device_access_is_tenant_isolated(tmp_path) -> None:

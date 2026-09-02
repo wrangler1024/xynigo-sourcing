@@ -45,6 +45,7 @@ from .operation_contract import (
 )
 from .operation_service import OperationRunService
 from .security import hash_token, random_url_token
+from .workspace_rpc import workspace_rpc_is_local_config
 
 
 PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -118,6 +119,7 @@ BUSINESS_RESULT_KEYS = frozenset(
 BUSINESS_RUN_STATUSES = frozenset(
     {"completed", "partial_failure", "failed", "cancelled", "uncertain"}
 )
+DESKTOP_CONFIG_ONLY_CAPABILITY = "local.config.desktop.v1"
 
 
 def utcnow() -> datetime:
@@ -394,8 +396,26 @@ class ExecutorChannelService:
                 .limit(10)
             )
         )
+        config_summary = (executor.workspace_snapshot or {}).get(
+            "configSummary")
+        if not isinstance(config_summary, dict):
+            config_summary = None
+        summary_age_seconds = None
+        if config_summary is not None:
+            try:
+                captured_at = datetime.fromisoformat(
+                    str(config_summary.get("capturedAt") or ""))
+                summary_age_seconds = max(
+                    0, int((utcnow() - as_utc(captured_at)).total_seconds()))
+            except (TypeError, ValueError):
+                config_summary = None
         return {
             "executor": self.executor_payload(executor),
+            "configSummary": config_summary,
+            "configSummaryAgeSeconds": summary_age_seconds,
+            "configSummaryStale": (
+                summary_age_seconds is None or summary_age_seconds > 120
+            ),
             "tasks": [self.task_payload(task) for task in tasks],
         }
 
@@ -418,6 +438,16 @@ class ExecutorChannelService:
         now = utcnow()
         if executor.status != "active":
             raise ExecutorServiceError("executor_revoked", status_code=409)
+        if DESKTOP_CONFIG_ONLY_CAPABILITY in set(executor.capabilities or []):
+            config_task = task_type in {"config.read.v1", "config.write.v1"}
+            config_rpc = (
+                task_type == "workspace.rpc.v1"
+                and workspace_rpc_is_local_config(str(payload.get("path") or ""))
+            )
+            if config_task or config_rpc:
+                raise ExecutorServiceError(
+                    "local_config_desktop_only", status_code=410
+                )
         if not self._online(executor, now=now) and task_type not in BUSINESS_TASK_TYPES:
             raise ExecutorServiceError("executor_offline", status_code=409)
         if task_type not in set(executor.capabilities or []):
@@ -615,6 +645,15 @@ class ExecutorChannelService:
         executor.capabilities = body.capabilities
         executor.config_revision = body.configRevision
         executor.hub_status = body.hubStatus
+        if body.configSummary is not None:
+            if as_utc(body.configSummary.capturedAt) > now + timedelta(minutes=5):
+                raise ExecutorServiceError(
+                    "config_summary_timestamp_invalid", status_code=422
+                )
+            snapshot = dict(executor.workspace_snapshot or {})
+            snapshot["configSummary"] = body.configSummary.model_dump(
+                mode="json")
+            executor.workspace_snapshot = snapshot
         self.session.commit()
 
         deadline = time.monotonic() + body.waitSeconds
@@ -793,7 +832,12 @@ class ExecutorChannelService:
         self._purge_sensitive_request(task, now=now)
         executor.last_seen_at = now
         if workspace_snapshot is not None:
-            executor.workspace_snapshot = workspace_snapshot.model_dump(mode="json")
+            previous_summary = (executor.workspace_snapshot or {}).get(
+                "configSummary")
+            next_snapshot = workspace_snapshot.model_dump(mode="json")
+            if isinstance(previous_summary, dict):
+                next_snapshot["configSummary"] = previous_summary
+            executor.workspace_snapshot = next_snapshot
             executor.workspace_snapshot_revision = workspace_snapshot.snapshotRevision
             executor.workspace_snapshot_at = workspace_snapshot.capturedAt
         terminal_status = "completed" if body.outcome == "succeeded" else "failed"
@@ -1184,13 +1228,15 @@ class ExecutorChannelService:
             executor_id=executor_id,
         )
         captured_at = executor.workspace_snapshot_at
+        public_snapshot = dict(executor.workspace_snapshot or {})
+        public_snapshot.pop("configSummary", None)
         age_seconds = (
             max(0, int((utcnow() - as_utc(captured_at)).total_seconds()))
             if captured_at else None
         )
         return {
             "executorId": str(executor.id),
-            "snapshot": executor.workspace_snapshot or None,
+            "snapshot": public_snapshot or None,
             "snapshotRevision": executor.workspace_snapshot_revision,
             "capturedAt": captured_at.isoformat() if captured_at else None,
             "ageSeconds": age_seconds,

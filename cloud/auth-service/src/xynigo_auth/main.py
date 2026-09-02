@@ -135,7 +135,9 @@ from .procurement_import_service import (
     CloudProcurementImportService,
     ProcurementImportWorker,
 )
-from .workspace_rpc import WorkspaceRpcError, workspace_rpc_permission
+from .workspace_rpc import (
+    WorkspaceRpcError, workspace_rpc_is_local_config,
+    workspace_rpc_permission)
 from .procurement_import_sheet import FeishuSheetsGateway
 from .purchase_contract import PurchaseDraft
 from .purchase_service import PurchaseOrderService, PurchaseServiceError
@@ -1711,12 +1713,18 @@ def create_app(
         ] = None,
         authorization: Annotated[str | None, Header()] = None,
     ) -> dict[str, object]:
-        try:
-            permission = workspace_rpc_permission(body.method, body.path)
-        except WorkspaceRpcError as exc:
-            raise HTTPException(
-                status_code=422, detail={"code": exc.code}
-            ) from exc
+        if workspace_rpc_is_local_config(body.path):
+            permission = (
+                "executor.config.read"
+                if body.method == "GET" else "executor.config.write"
+            )
+        else:
+            try:
+                permission = workspace_rpc_permission(body.method, body.path)
+            except WorkspaceRpcError as exc:
+                raise HTTPException(
+                    status_code=422, detail={"code": exc.code}
+                ) from exc
         actor = authorize_request(
             request,
             session,

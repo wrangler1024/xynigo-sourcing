@@ -4,6 +4,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 import tempfile
 import threading
+from types import SimpleNamespace
 import unittest
 import urllib.error
 import urllib.request
@@ -234,6 +235,56 @@ class DataSourceRegistryTests(unittest.TestCase):
             self.registry.bind_environment(
                 '同名环境 001', MEMBER_A, team_id,
                 expected_revision=snapshot['registryRevision'])
+
+    def test_cloud_summary_v2_contains_counts_but_no_private_identifiers(self):
+        snapshot = self.registry.migrate_legacy(legacy_config())
+        personal_id = next(
+            item['id'] for item in snapshot['registry']['dataSources']
+            if item['scope'] == 'personal')
+        claimed = self.registry.claim_legacy_personal(
+            MEMBER_A, personal_id,
+            expected_revision=snapshot['registryRevision'])
+        team_id = next(
+            item['id'] for item in snapshot['registry']['dataSources']
+            if item['scope'] == 'team')
+        self.registry.set_team_default(
+            team_id, expected_revision=claimed['configRevision'])
+        state = SimpleNamespace(
+            cfg={
+                'larkBuyerBaseToken': 'private-base-token',
+                'larkBuyerTableId': 'private-table-id',
+            },
+            local_config=SimpleNamespace(summary=lambda _cfg: {
+                'schemaVersion': 2,
+                'configRevision': 'a' * 64,
+                'runtimeConfig': {
+                    'hubPort': 6873,
+                    'concurrency': 2,
+                    'envCreateWorkers': 5,
+                    'verifySampleCount': 1,
+                    'safeParallelTasks': True,
+                },
+            }),
+            data_sources=self.registry,
+            data_source_registry_error='',
+            lark_credentials=SimpleNamespace(load=lambda: object()),
+            hub_api_key_store=SimpleNamespace(
+                load=lambda: 'private-hub-key'),
+        )
+
+        summary = main_module.AppState.config_summary_v2(state)
+        rendered = json.dumps(summary, ensure_ascii=False)
+
+        self.assertEqual(summary['schemaVersion'], 2)
+        self.assertEqual(summary['dataSources']['dataSourceCount'], 2)
+        self.assertEqual(summary['dataSources']['buyerProfileCount'], 1)
+        self.assertTrue(summary['configured']['hubApiKey'])
+        self.assertTrue(summary['configured']['larkAppCredentials'])
+        for forbidden in (
+                'private-base-token', 'private-table-id', 'private-hub-key',
+                'SpreadsheetPersonal123', 'SpreadsheetTeam123',
+                'spreadsheetToken', 'sheetId', 'containerCode'):
+            self.assertNotIn(forbidden, rendered)
 
 
 class FakeAuth(object):

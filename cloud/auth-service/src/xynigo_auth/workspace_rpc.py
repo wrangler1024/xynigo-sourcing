@@ -65,6 +65,26 @@ POST_PERMISSIONS = {
     "/api/hub-api-key": "system.integration.manage",
 }
 
+LOCAL_CONFIG_PATHS = frozenset({
+    "/api/config",
+    "/api/hub-api-key",
+    "/api/lark/config",
+    "/api/lark/open-target",
+    "/api/lark/status",
+    "/api/lark/template",
+    "/api/lark/target-url",
+    "/api/lark/target-metadata",
+    "/api/lark/preflight",
+})
+
+
+def workspace_rpc_is_local_config(target: str) -> bool:
+    parsed = urlsplit(str(target or ""))
+    return (
+        parsed.path in LOCAL_CONFIG_PATHS
+        or parsed.path.startswith("/api/local-config/data-sources")
+    )
+
 
 def workspace_rpc_permission(method: str, target: str) -> str:
     method = str(method or "").upper()

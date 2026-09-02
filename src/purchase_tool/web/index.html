@@ -382,6 +382,7 @@
   .local-executor-config-grid .field { margin: 0; min-width: 0; }
   .local-executor-config-grid .field.wide { grid-column: span 2; }
   .local-executor-config-grid .field label { min-height: 14px; margin-bottom: 5px; display: flex; align-items: flex-end; line-height: 1.25; white-space: nowrap; }
+  .local-executor-summary-value { min-height: 39px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; display: flex; align-items: center; background: #fbfcfd; color: var(--navy-950); font-size: 10px; font-weight: 850; overflow-wrap: anywhere; }
   .local-executor-config-grid input, .local-executor-config-grid select { width: 100%; min-height: 39px; }
   .local-executor-number-control { min-height: 39px; overflow: hidden; display: grid; grid-template-columns: 22px minmax(0,1fr) 22px; align-items: stretch; border: 1px solid var(--line); border-radius: 9px; background: #fbfcfd; }
   .local-executor-number-control:focus-within { border-color: var(--rhino-500); box-shadow: 0 0 0 3px rgba(32,174,179,.12); }
@@ -406,7 +407,6 @@
   .local-executor-config-switch input:checked + .local-executor-switch-track::after { transform: translateX(15px); }
   .local-executor-config-actions { margin-top: 10px; display: flex; align-items: stretch; gap: 8px; }
   .local-executor-config-actions .btn { min-height: 39px; padding: 8px 11px; }
-  #btnLocalExecutorSaveConfig.attention { border-color: #d9941e; background: linear-gradient(135deg,#d9941e 0%,#f2b747 100%); color: #fff; box-shadow: 0 0 0 3px rgba(242,183,71,.16), 0 8px 18px rgba(217,148,30,.22); font-weight: 900; }
   .local-executor-config-state { min-width: 0; min-height: 39px; margin: 0; padding: 7px 9px; border-radius: 9px; display: flex; flex: 1 1 auto; align-items: center; background: #f5f8fa; color: var(--navy-500); font-size: 9px; line-height: 1.35; }
   .local-executor-config-state.ok { border: 1px solid #bce5d2; background: var(--green-100); color: var(--green); }
   .local-executor-config-state.pending { border: 1px solid #f1d28b; background: var(--parcel-100); color: #815510; }
@@ -1360,7 +1360,7 @@
         <button class="secondary-tab" data-parent="analytics" data-planned="资源健康" disabled hidden>资源健康<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="system" data-module="localexecutor" data-cloud-only="1" hidden>本地执行器<span class="secondary-status">新增</span></button>
         <button class="secondary-tab" data-parent="system" data-module="localsettings" data-local-only="1" hidden>本机设置<span class="secondary-status">本机兼容</span></button>
-        <button class="secondary-tab" data-parent="system" data-module="larkconnection" data-required-role="super_admin" hidden>飞书连接<span class="secondary-status restricted">超管</span></button>
+        <button class="secondary-tab" data-parent="system" data-module="larkconnection" data-local-only="1" data-required-role="super_admin" hidden>飞书连接<span class="secondary-status restricted">本机超管</span></button>
         <button class="secondary-tab" data-parent="system" data-module="organizationaccess" hidden>组织与权限<span class="secondary-status">云端</span></button>
         <button class="secondary-tab" data-parent="system" data-module="sessionmanagement" hidden>登录会话<span class="secondary-status">云端</span></button>
         <button class="secondary-tab" data-parent="system" data-module="businesslogs" hidden>业务操作日志<span class="secondary-status">云端</span></button>
@@ -1501,19 +1501,21 @@
       </article>
 
       <article class="card">
-        <div class="local-executor-card-head"><div><div class="card-title">设备运行配置</div><p>端口、并发与安全策略；业务参数按任务选择，本机 config.json 仍是事实源。</p></div><span class="legend" id="localExecutorConfigRevision">尚未读取</span></div>
+        <div class="local-executor-card-head"><div><div class="card-title">设备配置摘要</div><p>云端仅展示执行器主动上报的严格摘要；所有修改都在 Windows/macOS 桌面客户端完成。</p></div><span class="legend" id="localExecutorConfigRevision">摘要不可用</span></div>
         <div class="local-executor-config-grid">
-          <div class="field"><label for="executorConfigHubPort">HubStudio API 端口</label><div class="local-executor-number-control"><button class="local-executor-number-step" type="button" data-executor-number-step="-1" data-target="executorConfigHubPort" aria-label="减少 HubStudio API 端口" disabled>−</button><input id="executorConfigHubPort" type="number" min="1" max="65535" step="1" inputmode="numeric" disabled><button class="local-executor-number-step" type="button" data-executor-number-step="1" data-target="executorConfigHubPort" aria-label="增加 HubStudio API 端口" disabled>+</button></div></div>
-          <div class="field"><label for="executorConfigConcurrency">查询并发数</label><div class="local-executor-number-control"><button class="local-executor-number-step" type="button" data-executor-number-step="-1" data-target="executorConfigConcurrency" aria-label="减少查询并发数" disabled>−</button><input id="executorConfigConcurrency" type="number" min="1" max="5" step="1" inputmode="numeric" disabled><button class="local-executor-number-step" type="button" data-executor-number-step="1" data-target="executorConfigConcurrency" aria-label="增加查询并发数" disabled>+</button></div></div>
-          <div class="field"><label for="executorConfigEnvWorkers">建环境并发数</label><div class="local-executor-number-control"><button class="local-executor-number-step" type="button" data-executor-number-step="-1" data-target="executorConfigEnvWorkers" aria-label="减少建环境并发数" disabled>−</button><input id="executorConfigEnvWorkers" type="number" min="1" max="10" step="1" inputmode="numeric" disabled><button class="local-executor-number-step" type="button" data-executor-number-step="1" data-target="executorConfigEnvWorkers" aria-label="增加建环境并发数" disabled>+</button></div></div>
-          <div class="field"><label for="executorConfigVerifyCount">新建完成抽检数</label><div class="local-executor-number-control"><button class="local-executor-number-step" type="button" data-executor-number-step="-1" data-target="executorConfigVerifyCount" aria-label="减少新建完成抽检数" disabled>−</button><input id="executorConfigVerifyCount" type="number" min="0" max="10" step="1" inputmode="numeric" disabled><button class="local-executor-number-step" type="button" data-executor-number-step="1" data-target="executorConfigVerifyCount" aria-label="增加新建完成抽检数" disabled>+</button></div></div>
-          <div class="field local-executor-switch-field"><label for="executorConfigSafeParallel">安全并行</label><label class="local-executor-config-switch"><span class="local-executor-switch-copy"><b>同时执行</b></span><input id="executorConfigSafeParallel" type="checkbox" aria-label="查物流与建环境安全并行" checked disabled><span class="local-executor-switch-track" aria-hidden="true"></span></label></div>
+          <div class="field"><label>HubStudio API 端口</label><span class="local-executor-summary-value" id="executorSummaryHubPort">—</span></div>
+          <div class="field"><label>查询并发</label><span class="local-executor-summary-value" id="executorSummaryConcurrency">—</span></div>
+          <div class="field"><label>建环境并发</label><span class="local-executor-summary-value" id="executorSummaryEnvWorkers">—</span></div>
+          <div class="field"><label>抽检数</label><span class="local-executor-summary-value" id="executorSummaryVerifyCount">—</span></div>
+          <div class="field"><label>安全并行</label><span class="local-executor-summary-value" id="executorSummarySafeParallel">—</span></div>
+          <div class="field wide"><label>本机集成</label><span class="local-executor-summary-value" id="executorSummaryIntegrations">—</span></div>
+          <div class="field wide"><label>采购助手映射</label><span class="local-executor-summary-value" id="executorSummaryDataSources">—</span></div>
+          <div class="field"><label>合规状态</label><span class="local-executor-summary-value" id="executorSummaryCompliance">—</span></div>
         </div>
         <div class="local-executor-config-actions">
-          <button class="btn primary" id="btnLocalExecutorReadConfig" type="button" disabled>读取设备配置</button>
-          <button class="btn" id="btnLocalExecutorSaveConfig" type="button" disabled>保存设备配置</button>
-          <button class="btn" id="btnLocalExecutorCancelTask" type="button" hidden>取消当前请求</button>
-          <div class="local-executor-config-state" id="localExecutorConfigState" role="status" aria-live="polite">请选择一台在线设备后读取。业务参数及敏感信息不会在这里传输。</div>
+          <button class="btn primary" id="btnLocalExecutorRefreshSummary" type="button" disabled>刷新只读摘要</button>
+          <a class="btn" id="btnLocalExecutorOpenSettings" href="xynigo://settings">打开桌面设置</a>
+          <div class="local-executor-config-state" id="localExecutorConfigState" role="status" aria-live="polite">请选择设备后读取；旧版本会显示“摘要不可用”，不会误报为未配置。</div>
         </div>
       </article>
     </section>
@@ -2197,6 +2199,7 @@
   <div class="module-panel hidden" id="settingsPanel">
     <section class="card settings-view" data-settings-view="localsettings">
       <div class="card-title">通用与查询设置 <span class="legend">仅保存在当前电脑</span></div>
+      <div class="credential-note" id="localSettingsPermissionNote">设备运行参数仅允许超级管理员修改；其他成员可在下方管理自己的采购助手个人数据源。</div>
       <div class="settings-grid">
         <div class="settings-field">
           <label>HubStudio Local API 端口</label>
@@ -2846,7 +2849,7 @@ const FEATURE_MODULES = {
     summary: '管理当前电脑的 HubStudio 连接、查询展示和环境创建偏好。'
   },
   larkconnection: {
-    label: '飞书连接', primary: 'system', requiredRole: 'super_admin',
+    label: '飞书连接', primary: 'system', localOnly: true, requiredRole: 'super_admin',
     requiredPermission: 'system.lark_connection.manage',
     summary: '由超级管理员集中维护企业应用凭证及各业务模块的飞书数据连接。'
   },
@@ -3073,11 +3076,8 @@ let localExecutorPairingTimer = null;
 let localExecutorPairingRequestId = '';
 let localExecutorProtocolPairingTimer = null;
 let localExecutorProtocolPairingDeadline = 0;
-let localExecutorConfigRevision = '';
-let localExecutorConfigBaseline = '';
-let localExecutorConfigEditable = false;
-let localExecutorConfigTaskId = '';
-let localExecutorConfigTaskTimer = null;
+let localExecutorConfigSummary = null;
+let localExecutorConfigSummaryLoading = false;
 let localExecutorLaunchTimer = null;
 let localExecutorLaunchDeadline = 0;
 let storeManagementRows = [];
@@ -3909,14 +3909,12 @@ async function cloudWebApi(path, opts={}) {
   if (executorPairingMatch) {
     return cloudFetchJson(`/v1/executors/pairing-codes/${executorPairingMatch[1]}`, opts);
   }
-  const executorDeviceMatch = path.match(/^\/api\/local-executor\/devices\/([0-9a-f-]{36})(?:\/(revoke|runtime-summary|config|config-read))?$/i);
+  const executorDeviceMatch = path.match(/^\/api\/local-executor\/devices\/([0-9a-f-]{36})(?:\/(revoke|runtime-summary))?$/i);
   if (executorDeviceMatch) {
     const deviceId = executorDeviceMatch[1];
     const action = executorDeviceMatch[2] || '';
     const target = action === 'revoke' ? `/v1/executors/${deviceId}/revoke`
       : action === 'runtime-summary' ? `/v1/executors/${deviceId}/runtime-summary`
-      : action === 'config-read' ? `/v1/executors/${deviceId}/config/read`
-      : action === 'config' ? `/v1/executors/${deviceId}/config`
       : `/v1/executors/${deviceId}`;
     return cloudFetchJson(target, opts);
   }
@@ -4123,7 +4121,7 @@ async function initializeAuthenticatedWorkspace(identity) {
     }
   }
   loadQueryDisplayConfig();
-  loadLarkRuntimeStatus();
+  if (!CLOUD_WEB_MODE) loadLarkRuntimeStatus();
 }
 
 async function refreshCloudSession() {
@@ -7846,118 +7844,80 @@ function setLocalExecutorConfigState(kind, message) {
   node.textContent = message;
 }
 
-const LOCAL_EXECUTOR_NUMBER_FIELDS = [
-  {id:'executorConfigHubPort', key:'hubPort', minimum:1, maximum:65535, label:'HubStudio 端口'},
-  {id:'executorConfigConcurrency', key:'concurrency', minimum:1, maximum:5, label:'查询并发数'},
-  {id:'executorConfigEnvWorkers', key:'envCreateWorkers', minimum:1, maximum:10, label:'建环境并发数'},
-  {id:'executorConfigVerifyCount', key:'verifySampleCount', minimum:0, maximum:10, label:'抽检数'}
-];
-
-function validateLocalExecutorConfigInputs() {
-  const payload = {};
-  let error = '';
-  LOCAL_EXECUTOR_NUMBER_FIELDS.forEach(field => {
-    const input = $(field.id);
-    const raw = String(input.value || '').trim();
-    const value = Number(raw);
-    const valid = raw !== '' && Number.isInteger(value)
-      && value >= field.minimum && value <= field.maximum;
-    input.setAttribute('aria-invalid', valid ? 'false' : 'true');
-    if (valid) payload[field.key] = value;
-    else if (!error) error = `${field.label}必须是 ${field.minimum}-${field.maximum} 的整数`;
-  });
-  payload.safeParallelTasks = $('executorConfigSafeParallel').checked;
-  return {valid:!error, error, payload};
-}
-
-function syncLocalExecutorNumberSteppers() {
-  LOCAL_EXECUTOR_NUMBER_FIELDS.forEach(field => {
-    const input = $(field.id);
-    const value = Number(input.value);
-    const valid = Number.isInteger(value);
-    document.querySelectorAll(`[data-executor-number-step][data-target="${field.id}"]`)
-      .forEach(button => {
-        const delta = Number(button.dataset.executorNumberStep);
-        const atBoundary = valid && (delta < 0
-          ? value <= field.minimum : value >= field.maximum);
-        button.disabled = input.disabled || atBoundary;
-      });
-  });
-}
-
-function updateLocalExecutorConfigDirtyState({announce=true} = {}) {
-  const button = $('btnLocalExecutorSaveConfig');
-  const canWrite = hasPermission('executor.config.write');
-  if (!localExecutorConfigEditable || !canWrite) {
-    LOCAL_EXECUTOR_NUMBER_FIELDS.forEach(field => {
-      $(field.id).setAttribute('aria-invalid', 'false');
-    });
-    syncLocalExecutorNumberSteppers();
-    button.disabled = true;
-    button.classList.remove('attention');
-    button.textContent = localExecutorConfigEditable ? '仅可读取' : '保存设备配置';
-    return;
-  }
-  const validation = validateLocalExecutorConfigInputs();
-  syncLocalExecutorNumberSteppers();
-  if (!validation.valid) {
-    button.disabled = true;
-    button.classList.remove('attention');
-    button.textContent = '请修正输入';
-    if (announce) setLocalExecutorConfigState('bad', validation.error);
-    return;
-  }
-  const dirty = JSON.stringify(validation.payload) !== localExecutorConfigBaseline;
-  button.disabled = !dirty || !!localExecutorConfigTaskId;
-  button.classList.toggle('attention', dirty);
-  button.textContent = dirty ? '保存修改（未保存）' : '暂无修改';
-  if (announce) {
-    setLocalExecutorConfigState(
-      dirty ? 'pending' : 'ok',
-      dirty
-        ? '有未保存的修改，请点击“保存修改（未保存）”使设置在所选电脑生效。'
-        : '设备配置已同步，当前没有未保存的修改。'
-    );
-  }
-}
-
-function setLocalExecutorConfigInputsEnabled(enabled) {
-  const canWrite = hasPermission('executor.config.write');
-  localExecutorConfigEditable = !!enabled && canWrite;
+function resetLocalExecutorConfig(message='请选择设备后读取只读摘要；本机配置不会由云端修改。') {
+  localExecutorConfigSummary = null;
+  $('localExecutorConfigRevision').textContent = '摘要不可用';
   [
-    'executorConfigHubPort', 'executorConfigConcurrency', 'executorConfigEnvWorkers',
-    'executorConfigVerifyCount', 'executorConfigSafeParallel'
-  ].forEach(id => { $(id).disabled = !enabled || !canWrite; });
-  updateLocalExecutorConfigDirtyState({announce:false});
-}
-
-function resetLocalExecutorConfig(message='请选择一台在线设备后读取。业务参数及敏感信息不会在这里传输。') {
-  localExecutorConfigRevision = '';
-  localExecutorConfigBaseline = '';
-  $('localExecutorConfigRevision').textContent = '尚未读取';
-  setLocalExecutorConfigInputsEnabled(false);
+    'executorSummaryHubPort', 'executorSummaryConcurrency',
+    'executorSummaryEnvWorkers', 'executorSummaryVerifyCount',
+    'executorSummarySafeParallel', 'executorSummaryIntegrations',
+    'executorSummaryDataSources', 'executorSummaryCompliance'
+  ].forEach(id => { $(id).textContent = '—'; });
   setLocalExecutorConfigState('', message);
 }
 
-function applyLocalExecutorConfig(config, revision) {
-  config = config && typeof config === 'object' ? config : {};
-  $('executorConfigHubPort').value = Number(config.hubPort || 6873);
-  $('executorConfigConcurrency').value = Number(config.concurrency || 2);
-  $('executorConfigEnvWorkers').value = Number(config.envCreateWorkers || 5);
-  $('executorConfigVerifyCount').value = Number(config.verifySampleCount ?? 3);
-  $('executorConfigSafeParallel').checked = config.safeParallelTasks !== false;
-  const validation = validateLocalExecutorConfigInputs();
-  localExecutorConfigBaseline = validation.valid ? JSON.stringify(validation.payload) : '';
-  localExecutorConfigRevision = String(revision || '');
-  $('localExecutorConfigRevision').textContent = localExecutorConfigRevision
-    ? `版本 ${localExecutorConfigRevision.slice(0, 10)}…` : '版本未知';
-  setLocalExecutorConfigInputsEnabled(!!localExecutorConfigRevision);
+function applyLocalExecutorConfigSummary(payload) {
+  const summary = payload && payload.configSummary;
+  const device = localExecutorSelectedDevice();
+  if (!summary || Number(summary.schemaVersion) !== 2) {
+    resetLocalExecutorConfig(
+      device && Array.isArray(device.capabilities) && device.capabilities.includes('config.summary.v2')
+        ? '执行器已支持安全摘要，但云端尚未收到有效上报，请稍后刷新。'
+        : '摘要不可用：所选设备版本过旧。请升级执行器后再查看，不能把缺少摘要误判为未配置。');
+    return false;
+  }
+  localExecutorConfigSummary = summary;
+  const runtime = summary.runtimeConfig || {};
+  const configured = summary.configured || {};
+  const sources = summary.dataSources || {};
+  const compliance = summary.compliance || {};
+  $('executorSummaryHubPort').textContent = String(runtime.hubPort ?? '—');
+  $('executorSummaryConcurrency').textContent = String(runtime.concurrency ?? '—');
+  $('executorSummaryEnvWorkers').textContent = String(runtime.envCreateWorkers ?? '—');
+  $('executorSummaryVerifyCount').textContent = String(runtime.verifySampleCount ?? '—');
+  $('executorSummarySafeParallel').textContent = runtime.safeParallelTasks ? '已开启' : '已关闭';
+  $('executorSummaryIntegrations').textContent = [
+    `Hub Key ${configured.hubApiKey ? '已配置' : '未配置'}`,
+    `飞书应用 ${configured.larkAppCredentials ? '已配置' : '未配置'}`,
+    `旧迁移源 ${configured.larkLegacyTarget ? '已配置' : '未配置'}`
+  ].join(' · ');
+  $('executorSummaryDataSources').textContent = `数据源 ${Number(sources.dataSourceCount || 0)} · 成员默认 ${Number(sources.buyerProfileCount || 0)} · 环境映射 ${Number(sources.environmentBindingCount || 0)} · 待认领 ${Number(sources.pendingOwnerConfirmationCount || 0)}`;
+  const issueCount = Array.isArray(compliance.issueCodes) ? compliance.issueCodes.length : 0;
+  $('executorSummaryCompliance').textContent = compliance.status === 'ready'
+    ? '正常' : `需检查（${issueCount}）`;
+  const revision = String(summary.configRevision || '');
+  $('localExecutorConfigRevision').textContent = revision
+    ? `摘要 v2 · ${revision.slice(0, 10)}…` : '摘要 v2';
+  const stale = Boolean(payload.configSummaryStale);
+  const captured = localExecutorTime(summary.capturedAt);
+  setLocalExecutorConfigState(
+    stale ? 'pending' : (compliance.status === 'ready' ? 'ok' : 'bad'),
+    stale
+      ? `只读摘要采集于 ${captured}，当前可能已过期；请确认执行器在线后刷新。`
+      : `只读摘要采集于 ${captured}。修改配置请在对应电脑的 Xynigo 桌面客户端完成。`
+  );
+  return true;
 }
 
-function localExecutorConfigPayload() {
-  const validation = validateLocalExecutorConfigInputs();
-  if (!validation.valid) throw new Error(validation.error);
-  return validation.payload;
+async function loadLocalExecutorConfigSummary({notify=false} = {}) {
+  const device = localExecutorSelectedDevice();
+  if (!device || localExecutorConfigSummaryLoading) return false;
+  localExecutorConfigSummaryLoading = true;
+  $('btnLocalExecutorRefreshSummary').disabled = true;
+  setLocalExecutorConfigState('', '正在读取设备主动上报的安全摘要…');
+  try {
+    const payload = await api(`/api/local-executor/devices/${device.id}/runtime-summary`);
+    const applied = applyLocalExecutorConfigSummary(payload);
+    if (notify && applied) toast('设备配置摘要已刷新');
+    return applied;
+  } catch (error) {
+    resetLocalExecutorConfig(`摘要读取失败：${error.message}`);
+    return false;
+  } finally {
+    localExecutorConfigSummaryLoading = false;
+    const selected = localExecutorSelectedDevice();
+    $('btnLocalExecutorRefreshSummary').disabled = !selected || selected.status === 'revoked';
+  }
 }
 
 function updateLocalExecutorSummary() {
@@ -7978,9 +7938,9 @@ function updateLocalExecutorSummary() {
     ? `${onlineDevices.length} 台本地执行器在线`
     : (activeDevices.length ? '已绑定设备当前均离线' : '尚未绑定本地执行器');
   $('localExecutorStatusDescription').textContent = online
-    ? '云端已收到设备心跳，可以安全读取或保存所选电脑的本地配置。'
+    ? '云端已收到设备心跳；配置仅展示只读摘要，修改请打开对应电脑的桌面设置。'
     : (activeDevices.length
-      ? '请确认所选电脑上的执行器窗口保持运行；离线时云端不会排队配置写入。'
+      ? '请确认所选电脑上的执行器窗口保持运行；离线时摘要可能过期，云端不会排队配置写入。'
       : '下载安装后生成一次性配对码，在执行器目录完成设备绑定。');
   $('localExecutorStatusDevice').textContent = selected
     ? `设备：${selected.displayName}` : '设备：未绑定';
@@ -8025,8 +7985,8 @@ function renderLocalExecutorDevices() {
     : (localExecutorLaunchDeadline ? '等待启动…' : '启动 Xynigo');
   $('btnLocalExecutorPair').disabled = !hasPermission('executor.device.pair')
     || !!localExecutorProtocolPairingDeadline;
-  $('btnLocalExecutorReadConfig').disabled = !online || !!localExecutorConfigTaskId
-    || !hasPermission('executor.config.read');
+  $('btnLocalExecutorRefreshSummary').disabled = !selected
+    || selected.status === 'revoked' || localExecutorConfigSummaryLoading;
   $('btnLocalExecutorRevoke').disabled = !selected || selected.status === 'revoked'
     || !hasPermission('executor.device.revoke');
 }
@@ -8086,6 +8046,9 @@ async function loadLocalExecutorDevices(force=false) {
       resetLocalExecutorConfig();
     }
     renderLocalExecutorDevices();
+    if (localExecutorSelectedDeviceId) {
+      await loadLocalExecutorConfigSummary();
+    }
   } catch (error) {
     if (force) toast(`设备状态读取失败：${error.message}`);
     $('localExecutorDeviceList').innerHTML = `<div class="local-executor-empty">设备状态读取失败：${esc(error.message)}</div>`;
@@ -8265,111 +8228,6 @@ async function createLocalExecutorPairingCode() {
   }
 }
 
-function stopLocalExecutorConfigTaskPolling() {
-  if (localExecutorConfigTaskTimer) clearTimeout(localExecutorConfigTaskTimer);
-  localExecutorConfigTaskTimer = null;
-  localExecutorConfigTaskId = '';
-  $('btnLocalExecutorCancelTask').hidden = true;
-  renderLocalExecutorDevices();
-  updateLocalExecutorConfigDirtyState({announce:false});
-}
-
-async function pollLocalExecutorConfigTask(taskId, action, deadline) {
-  localExecutorConfigTaskTimer = null;
-  try {
-    const payload = await api(`/api/local-executor/tasks/${taskId}`);
-    const task = payload.task || {};
-    const terminal = ['succeeded', 'failed', 'uncertain', 'cancelled'].includes(task.status);
-    if (!terminal) {
-      if (Date.now() >= deadline) throw new Error('等待本地执行器响应超时，可稍后刷新设备状态查看结果');
-      setLocalExecutorConfigState('', `请求已发送到本地执行器，当前状态：${task.status || 'queued'}…`);
-      localExecutorConfigTaskTimer = setTimeout(
-        () => pollLocalExecutorConfigTask(taskId, action, deadline), 1000);
-      return;
-    }
-    if (task.status !== 'succeeded') {
-      throw new Error(task.resultCode === 'lease_expired_after_start'
-        ? '连接中断，云端无法确认配置是否已经写入，请重新读取核对'
-        : `本地执行器返回：${task.resultCode || task.status}`);
-    }
-    const result = task.resultSummary || {};
-    if (!result.configRevision || !result.config) throw new Error('本地执行器返回的配置结果不完整');
-    applyLocalExecutorConfig(result.config, result.configRevision);
-    setLocalExecutorConfigState('ok', action === 'read'
-      ? '已从所选电脑读取最新配置。修改后可保存，保存前会再次校验配置版本。'
-      : '配置已原子写入所选电脑；敏感字段保持原值，未经过云端。');
-    await loadLocalExecutorDevices(false);
-  } catch (error) {
-    setLocalExecutorConfigState('bad', error.message);
-    if (error.code === 'config_revision_conflict') resetLocalExecutorConfig(error.message);
-  } finally {
-    if (!localExecutorConfigTaskTimer) stopLocalExecutorConfigTaskPolling();
-  }
-}
-
-async function startLocalExecutorConfigTask(action) {
-  const device = localExecutorSelectedDevice();
-  if (!device || device.connectivity !== 'online') {
-    setLocalExecutorConfigState('bad', '请选择一台在线设备。');
-    return;
-  }
-  if (localExecutorConfigTaskId) return;
-  let path = `/api/local-executor/devices/${device.id}/config-read`;
-  let options = {
-    method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'
-  };
-  if (action === 'write') {
-    if (!localExecutorConfigRevision) {
-      setLocalExecutorConfigState('bad', '保存前必须先读取所选电脑的最新配置。');
-      return;
-    }
-    let config;
-    try { config = localExecutorConfigPayload(); }
-    catch (error) { setLocalExecutorConfigState('bad', error.message); return; }
-    path = `/api/local-executor/devices/${device.id}/config`;
-    options = {
-      method:'PUT', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        expectedRevision:localExecutorConfigRevision,
-        idempotencyKey:(crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`),
-        config
-      })
-    };
-  }
-  $('btnLocalExecutorReadConfig').disabled = true;
-  $('btnLocalExecutorSaveConfig').disabled = true;
-  setLocalExecutorConfigState('', action === 'read'
-    ? '正在请求所选电脑读取 config.json…'
-    : '正在请求所选电脑校验版本并原子保存…');
-  try {
-    const payload = await api(path, options);
-    if (action === 'read' && payload.cachedResult) {
-      const result = payload.cachedResult;
-      if (!result.configRevision || !result.config) {
-        throw new Error('云端配置快照不完整，请等待当前任务结束后重新读取');
-      }
-      applyLocalExecutorConfig(result.config, result.configRevision);
-      setLocalExecutorConfigInputsEnabled(false);
-      const captured = result.capturedAt
-        ? localExecutorTime(result.capturedAt) : '时间未知';
-      setLocalExecutorConfigState(
-        'pending',
-        `所选执行器正在处理业务任务；已显示 ${captured} 的只读配置快照。任务结束后点击“读取设备配置”刷新，再进行修改。`
-      );
-      stopLocalExecutorConfigTaskPolling();
-      return;
-    }
-    localExecutorConfigTaskId = String(payload.task && payload.task.id || '');
-    if (!localExecutorConfigTaskId) throw new Error('云端没有返回配置请求编号');
-    $('btnLocalExecutorCancelTask').hidden = false;
-    pollLocalExecutorConfigTask(
-      localExecutorConfigTaskId, action, Date.now() + 90000);
-  } catch (error) {
-    setLocalExecutorConfigState('bad', error.message);
-    stopLocalExecutorConfigTaskPolling();
-  }
-}
-
 $('localExecutorPlatform').onchange = event => {
   renderLocalExecutorPlatform(event.target.value);
   const code = $('localExecutorPairingCode').textContent;
@@ -8398,42 +8256,9 @@ $('localExecutorDeviceList').onclick = event => {
   localExecutorSelectedDeviceId = button.dataset.executorDevice;
   resetLocalExecutorConfig();
   renderLocalExecutorDevices();
+  loadLocalExecutorConfigSummary();
 };
-$('localExecutorPanel').addEventListener('click', event => {
-  const button = event.target.closest('[data-executor-number-step]');
-  if (!button || button.disabled) return;
-  const input = $(button.dataset.target);
-  if (!input || input.disabled) return;
-  const minimum = Number(input.min);
-  const maximum = Number(input.max);
-  const current = Number(input.value);
-  const delta = Number(button.dataset.executorNumberStep);
-  const base = Number.isInteger(current) ? current : minimum;
-  input.value = String(Math.min(maximum, Math.max(minimum, base + delta)));
-  input.dispatchEvent(new Event('input', {bubbles:true}));
-  input.focus();
-});
-$('localExecutorPanel').addEventListener('input', event => {
-  if (!event.target.matches('.local-executor-config-grid input')) return;
-  updateLocalExecutorConfigDirtyState();
-});
-$('btnLocalExecutorReadConfig').onclick = () => startLocalExecutorConfigTask('read');
-$('btnLocalExecutorSaveConfig').onclick = () => startLocalExecutorConfigTask('write');
-$('btnLocalExecutorCancelTask').onclick = async () => {
-  if (!localExecutorConfigTaskId) return;
-  const button = $('btnLocalExecutorCancelTask');
-  button.disabled = true;
-  try {
-    await api(`/api/local-executor/tasks/${localExecutorConfigTaskId}/cancel`, {
-      method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'
-    });
-    setLocalExecutorConfigState('', '已请求取消；正在等待本地执行器确认。');
-  } catch (error) {
-    setLocalExecutorConfigState('bad', `取消失败：${error.message}`);
-  } finally {
-    button.disabled = false;
-  }
-};
+$('btnLocalExecutorRefreshSummary').onclick = () => loadLocalExecutorConfigSummary({notify:true});
 $('btnLocalExecutorRevoke').onclick = async () => {
   const device = localExecutorSelectedDevice();
   if (!device || device.status === 'revoked') return;
@@ -10353,6 +10178,16 @@ async function loadLocalSettingsPage() {
     $('cfgProxyState').textContent = cfg.proxySource === 'custom'
       ? '当前使用自定义代理链接；留空保存保持不变，勾选清除恢复内置默认。'
       : '已内置默认提取链接（前期写死），可直接使用；仅需要自定义时填写。';
+    const canWriteDeviceConfig = hasRole('super_admin')
+      && hasPermission('system.integration.manage');
+    [
+      'cfgPort', 'cfgConcurrency', 'cfgSafeParallel', 'cfgHideEnvName',
+      'cfgHideIp', 'cfgEnvVerify', 'cfgEnvWorkers', 'cfgPurchaseTagMX',
+      'cfgPurchaseTagUS', 'cfgProxyLink', 'cfgProxyClear', 'cfgEnvAssign'
+    ].forEach(id => { $(id).disabled = !canWriteDeviceConfig; });
+    $('btnCfgSave').disabled = !canWriteDeviceConfig;
+    $('btnCfgSave').textContent = canWriteDeviceConfig
+      ? '保存本机业务设置' : '仅超级管理员可修改';
     await loadLocalDataSources();
     return true;
   } catch (e) {
@@ -10403,6 +10238,10 @@ async function loadLarkConnectionPage() {
 }
 
 $('btnCfgSave').onclick = async () => {
+  if (!(hasRole('super_admin') && hasPermission('system.integration.manage'))) {
+    toast('设备运行参数仅允许超级管理员修改');
+    return;
+  }
   const port = parseInt($('cfgPort').value.trim(), 10);
   if (!port || port < 1 || port > 65535) { toast('端口无效，请输入 1-65535 的数字'); return; }
   const conc = parseInt($('cfgConcurrency').value.trim(), 10);

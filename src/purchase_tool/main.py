@@ -79,7 +79,8 @@ from .env_batch import (BACKUP_MAX_COUNT, BACKUP_REMARK, BUYER_CODES,
                         validate_purchase_tag)
 from .executor_channel import (
     CloudExecutorClient, ExecutorChannelStateStore, ExecutorChannelWorker,
-    config_revision, system_executor_credential_store)
+    LOCAL_CONFIG_RPC_PATHS, config_revision,
+    system_executor_credential_store)
 from .operation_executor import LocalOperationExecutor, backup_account_ref
 from .extension_bridge import ExtensionBridge, ExtensionBridgeError
 from .hub_api import HubApiError, HubStudioApi, DEFAULT_PORT
@@ -977,6 +978,8 @@ class AppState(object):
         self.lark_credentials = credential_store or system_credential_store()
         self.hub_api_key_store = (
             hub_api_key_store or system_hub_api_key_store())
+        self._config_summary_secure_lock = threading.RLock()
+        self._config_summary_secure_cache = {}
         self.purchase_assistant = PurchaseAssistantService.from_runtime_config(
             cfg, self.lark_credentials.load)
         self.hub_runtime_gate = HubRuntimeGate(max_requests=4)
@@ -1026,11 +1029,110 @@ class AppState(object):
             config_writer=self.apply_cloud_config,
             task_coordinator=self.tasks,
             hub_status_getter=self.hub_status,
+            config_summary_getter=self.config_summary_v2,
             # Device identity keeps the background channel alive.  A desktop
             # user session must come from interactive Feishu OAuth and must
             # never be reinstalled automatically after logout/switch-user.
             user_session_installer=None,
         )
+
+    def config_summary_v2(self):
+        """Return the strict, non-sensitive device summary sent to cloud."""
+        base = self.local_config.summary(self.cfg)
+        issue_codes = []
+        try:
+            registry = self.data_sources.snapshot()['registry']
+        except Exception:
+            registry = {
+                'dataSources': [],
+                'buyerProfiles': [],
+                'environmentBindings': [],
+                'teamDefaultDataSourceId': '',
+            }
+            issue_codes.append('data_source_registry_unavailable')
+        if self.data_source_registry_error:
+            if 'data_source_registry_unavailable' not in issue_codes:
+                issue_codes.append('data_source_registry_unavailable')
+        sources = list(registry.get('dataSources') or [])
+        pending_owners = sum(
+            1 for item in sources
+            if item.get('scope') == 'personal'
+            and item.get('migrationState') == 'needs_owner_confirmation')
+        secure_status = AppState._config_summary_secure_status(self)
+        lark_configured = secure_status['larkAppCredentials']
+        hub_key_configured = secure_status['hubApiKey']
+        issue_codes.extend(secure_status['issueCodes'])
+        legacy_target_configured = bool(
+            str(self.cfg.get('larkBuyerBaseToken') or '').strip()
+            and str(self.cfg.get('larkBuyerTableId') or '').strip())
+        return {
+            'schemaVersion': 2,
+            'configRevision': base['configRevision'],
+            'capturedAt': datetime.now(timezone.utc).isoformat(),
+            'runtimeConfig': base['runtimeConfig'],
+            'configured': {
+                'hubApiKey': hub_key_configured,
+                'larkAppCredentials': lark_configured,
+                'larkLegacyTarget': legacy_target_configured,
+                'purchaseAssistantDataSources': bool(sources),
+                'teamDefaultDataSource': bool(
+                    registry.get('teamDefaultDataSourceId')),
+            },
+            'dataSources': {
+                'dataSourceCount': len(sources),
+                'buyerProfileCount': len(
+                    registry.get('buyerProfiles') or []),
+                'environmentBindingCount': len(
+                    registry.get('environmentBindings') or []),
+                'pendingOwnerConfirmationCount': pending_owners,
+                'mappingConflictCount': 0,
+            },
+            'compliance': {
+                'status': 'ready' if not issue_codes else 'degraded',
+                'issueCodes': sorted(set(issue_codes)),
+            },
+        }
+
+    def _config_summary_secure_status(self):
+        """Cache Keychain/DPAPI presence checks to avoid polling the OS."""
+        lock = getattr(self, '_config_summary_secure_lock', None)
+        if lock is None:
+            lock = threading.RLock()
+            self._config_summary_secure_lock = lock
+        with lock:
+            cache = getattr(self, '_config_summary_secure_cache', {})
+            checked_at = float(cache.get('checkedAt') or 0)
+            if cache and time.monotonic() - checked_at < 300:
+                return copy.deepcopy(cache['status'])
+            issues = []
+            try:
+                lark_configured = self.lark_credentials.load() is not None
+            except Exception:
+                lark_configured = False
+                issues.append('lark_credential_store_unavailable')
+            try:
+                hub_configured = self.hub_api_key_store.load() is not None
+            except Exception:
+                hub_configured = False
+                issues.append('hub_api_key_store_unavailable')
+            status = {
+                'larkAppCredentials': lark_configured,
+                'hubApiKey': hub_configured,
+                'issueCodes': issues,
+            }
+            self._config_summary_secure_cache = {
+                'checkedAt': time.monotonic(),
+                'status': copy.deepcopy(status),
+            }
+            return status
+
+    def invalidate_config_summary_secure_status(self):
+        lock = getattr(self, '_config_summary_secure_lock', None)
+        if lock is None:
+            self._config_summary_secure_cache = {}
+            return
+        with lock:
+            self._config_summary_secure_cache = {}
 
     def apply_cloud_config(self, submitted):
         """Validate and atomically apply a non-secret cloud config task."""
@@ -1134,6 +1236,7 @@ class AppState(object):
                     pass
                 raise
             transaction.commit()
+        AppState.invalidate_config_summary_secure_status(self)
         return {
             'saved': True,
             'configured': not bool(clear),
@@ -3424,6 +3527,13 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith(PURCHASE_ASSISTANT_API_PREFIX + '/'):
                 return self._handle_purchase_assistant_get(parsed)
             if path.startswith('/api/'):
+                if (self._internal_executor_rpc_allowed()
+                        and (path in LOCAL_CONFIG_RPC_PATHS
+                             or path.startswith(DATA_SOURCE_API_PREFIX))):
+                    return self._json({
+                        'error': '本机配置只能在桌面客户端查看和修改',
+                        'code': 'local_config_desktop_only',
+                    }, 410)
                 self._require_auth(path)
             if path == '/':
                 self._file(INDEX_HTML, 'text/html')
@@ -3753,6 +3863,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._handle_extension_post(path, body)
             if path.startswith('/api/'):
                 self._require_same_origin()
+                if (self._internal_executor_rpc_allowed()
+                        and (path in LOCAL_CONFIG_RPC_PATHS
+                             or path.startswith(DATA_SOURCE_API_PREFIX))):
+                    return self._json({
+                        'error': '本机配置只能在桌面客户端查看和修改',
+                        'code': 'local_config_desktop_only',
+                    }, 410)
                 request_identity = self._require_auth(path)
             if path == '/api/auth/start':
                 self._json(STATE.auth.start_login(), 201)
@@ -4161,6 +4278,8 @@ class Handler(BaseHTTPRequestHandler):
                     **public_envbatch_preferences(cfg),
                 })
             elif path == '/api/config':
+                request_identity = STATE.auth.require(
+                    'system.integration.manage', role='super_admin')
                 lock = getattr(STATE, 'config_lock', None)
                 with lock if lock is not None else nullcontext():
                     service = state_local_config_service()
@@ -4311,6 +4430,10 @@ class Handler(BaseHTTPRequestHandler):
                         cfg = committed['config']
                         STATE.cfg = cfg
                         transaction.commit()
+                invalidate_summary = getattr(
+                    STATE, 'invalidate_config_summary_secure_status', None)
+                if callable(invalidate_summary):
+                    invalidate_summary()
                 response = {
                     'saved': True,
                     'configRevision': committed['configRevision'],

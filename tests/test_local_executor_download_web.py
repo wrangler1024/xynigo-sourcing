@@ -155,7 +155,7 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
             r"localExecutorDownload[^\n]{0,300}(?:已安装|已连接)",
         )
 
-    def test_p1_device_pairing_and_config_controls_call_cloud_apis(self):
+    def test_p1_device_pairing_and_summary_controls_call_cloud_apis(self):
         for element_id in (
             "localExecutorDeviceList",
             "btnLocalExecutorPair",
@@ -164,20 +164,20 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
             "localExecutorPairingCode",
             "localExecutorPairingStatus",
             "btnLocalExecutorRevoke",
-            "btnLocalExecutorReadConfig",
-            "btnLocalExecutorSaveConfig",
-            "executorConfigSafeParallel",
+            "btnLocalExecutorRefreshSummary",
+            "btnLocalExecutorOpenSettings",
+            "executorSummarySafeParallel",
         ):
             with self.subTest(element_id=element_id):
                 self.assertIn(f'id="{element_id}"', self.html)
         for endpoint in (
             "/v1/executors",
             "/v1/executors/pairing-codes",
-            "/v1/executor-tasks/",
+            "/runtime-summary",
         ):
             self.assertIn(endpoint, self.html)
-        self.assertIn("expectedRevision:localExecutorConfigRevision", self.html)
-        self.assertIn("config_revision_conflict", self.html)
+        self.assertNotIn("expectedRevision:localExecutorConfigRevision", self.html)
+        self.assertNotIn('id="btnLocalExecutorSaveConfig"', self.html)
         self.assertIn("window.location.href = 'xynigo://start'", self.html)
         self.assertIn(
             'window.location.href = `xynigo://pair?code=${encodeURIComponent(code)}`',
@@ -189,24 +189,26 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
         self.assertIn('已配对并收到真实心跳', self.html)
         self.assertIn('长期设备凭证不会进入此链接', self.html)
         self.assertIn("网页不会通过协议直接执行采购任务", self.html)
-        self.assertIn("业务参数及敏感信息不会在这里传输", self.html)
+        self.assertIn("云端仅展示执行器主动上报的严格摘要", self.html)
         self.assertIn('data-module="localsettings" data-local-only="1"', self.html)
 
-    def test_cloud_executor_config_is_limited_to_device_runtime_settings(self):
-        card_start = self.html.index('<div class="card-title">设备运行配置')
+    def test_cloud_executor_config_is_strict_read_only_summary(self):
+        card_start = self.html.index('<div class="card-title">设备配置摘要')
         card_end = self.html.index(
             '<div class="local-executor-config-actions">', card_start)
         card = self.html[card_start:card_end]
-        payload_start = self.html.index('const LOCAL_EXECUTOR_NUMBER_FIELDS')
+        payload_start = self.html.index('function applyLocalExecutorConfigSummary')
         payload_end = self.html.index(
             'function updateLocalExecutorSummary()', payload_start)
         payload = self.html[payload_start:payload_end]
         for required in (
-            'executorConfigHubPort',
-            'executorConfigConcurrency',
-            'executorConfigEnvWorkers',
-            'executorConfigVerifyCount',
-            'executorConfigSafeParallel',
+            'executorSummaryHubPort',
+            'executorSummaryConcurrency',
+            'executorSummaryEnvWorkers',
+            'executorSummaryVerifyCount',
+            'executorSummarySafeParallel',
+            'executorSummaryIntegrations',
+            'executorSummaryDataSources',
         ):
             self.assertIn(required, card)
             self.assertIn(required, payload)
@@ -221,17 +223,15 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
         ):
             self.assertNotIn(legacy, card)
             self.assertNotIn(legacy, payload)
-        self.assertIn('业务参数按任务选择', card)
-        self.assertNotIn('local-executor-config-scope', card)
+        self.assertIn('所有修改都在 Windows/macOS 桌面客户端完成', card)
+        self.assertIn('摘要不可用', card)
         self.assertIn(
             'grid-template-columns: minmax(112px,1.3fr) '
             'repeat(3,minmax(76px,1fr)) minmax(108px,1.2fr)', self.html)
         self.assertIn(
             'gap: 16px; align-items: stretch', self.html)
-        self.assertIn('class="local-executor-config-switch"', card)
-        self.assertIn('aria-label="查物流与建环境安全并行" checked', card)
-        self.assertIn('class="field local-executor-switch-field"', card)
-        self.assertNotIn('HubStudio Local API 端口', card)
+        self.assertNotIn('<input', card)
+        self.assertNotIn('<select', card)
         self.assertNotIn('localExecutorInstallGuide', self.html)
         self.assertNotIn('安装与连接说明', self.html)
         actions_start = self.html.index(
@@ -242,35 +242,22 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
             self.html[actions_start:actions_end],
         )
 
-    def test_executor_number_steppers_validate_ranges_and_surface_unsaved_changes(self):
-        ranges = {
-            'executorConfigHubPort': ('1', '65535'),
-            'executorConfigConcurrency': ('1', '5'),
-            'executorConfigEnvWorkers': ('1', '10'),
-            'executorConfigVerifyCount': ('0', '10'),
-        }
-        for element_id, (minimum, maximum) in ranges.items():
-            with self.subTest(element_id=element_id):
-                self.assertRegex(
-                    self.html,
-                    rf'id="{element_id}" type="number" min="{minimum}" '
-                    rf'max="{maximum}" step="1" inputmode="numeric"',
-                )
-                self.assertIn(f'data-target="{element_id}"', self.html)
-        self.assertEqual(
-            self.html.count('data-executor-number-step="-1"'), 4)
-        self.assertEqual(
-            self.html.count('data-executor-number-step="1"'), 4)
+    def test_executor_summary_handles_stale_and_legacy_devices(self):
         for source in (
-            'function validateLocalExecutorConfigInputs()',
-            'function syncLocalExecutorNumberSteppers()',
-            'function updateLocalExecutorConfigDirtyState',
-            "button.textContent = '请修正输入'",
-            "button.textContent = dirty ? '保存修改（未保存）' : '暂无修改'",
-            '有未保存的修改，请点击“保存修改（未保存）”',
-            '#btnLocalExecutorSaveConfig.attention',
+            'config.summary.v2',
+            'payload.configSummaryStale',
+            '摘要不可用：所选设备版本过旧',
+            '不能把缺少摘要误判为未配置',
+            '修改配置请在对应电脑的 Xynigo 桌面客户端完成',
         ):
             self.assertIn(source, self.html)
+        for removed in (
+            'data-executor-number-step',
+            'validateLocalExecutorConfigInputs',
+            'updateLocalExecutorConfigDirtyState',
+            'startLocalExecutorConfigTask',
+        ):
+            self.assertNotIn(removed, self.html)
 
     def test_topbar_hub_status_uses_cloud_executor_heartbeat(self):
         self.assertIn('function renderCloudExecutorHubStatus()', self.html)

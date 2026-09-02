@@ -290,11 +290,11 @@ class ReleaseV0136Tests(unittest.TestCase):
         self.assertIn('data-parent="system" data-module="localsettings"', html)
         self.assertIn(
             'data-parent="system" data-module="larkconnection" '
-            'data-required-role="super_admin"', html)
+            'data-local-only="1" data-required-role="super_admin"', html)
         self.assertIn('data-module="localsettings" data-local-only="1"', html)
         self.assertIn(
             '>本机设置<span class="secondary-status">本机兼容</span>', html)
-        self.assertIn('>飞书连接<span class="secondary-status restricted">超管</span>', html)
+        self.assertIn('>飞书连接<span class="secondary-status restricted">本机超管</span>', html)
         self.assertIn(
             'data-parent="system" data-planned="云端服务配置"', html)
         self.assertIn(

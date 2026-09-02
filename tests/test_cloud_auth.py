@@ -886,7 +886,7 @@ class AuthRouteGuardTests(unittest.TestCase):
         self.assertEqual(payload['code'], 'authentication_required')
         self.assertEqual(self.auth.required_permissions, [None])
 
-    def test_internal_executor_rpc_token_bypasses_only_local_auth_gate(self):
+    def test_internal_executor_rpc_cannot_read_desktop_config(self):
         request = Request(
             self._url('/api/config'),
             headers={
@@ -894,9 +894,11 @@ class AuthRouteGuardTests(unittest.TestCase):
                 'X-Xynigo-Source': 'executor_workspace_rpc',
             },
         )
-        with urlopen(request, timeout=3) as response:
-            payload = json.loads(response.read().decode('utf-8'))
-        self.assertIn('proxyConfigured', payload)
+        with self.assertRaises(HTTPError) as blocked:
+            urlopen(request, timeout=3)
+        self.assertEqual(blocked.exception.code, 410)
+        payload = json.loads(blocked.exception.read().decode('utf-8'))
+        self.assertEqual(payload['code'], 'local_config_desktop_only')
         self.assertEqual(self.auth.required_permissions, [])
 
         rejected = Request(
@@ -909,6 +911,33 @@ class AuthRouteGuardTests(unittest.TestCase):
         with self.assertRaises(HTTPError) as caught:
             urlopen(rejected, timeout=3)
         self.assertEqual(caught.exception.code, 401)
+
+    def test_regular_member_cannot_write_device_runtime_config(self):
+        calls = []
+
+        def require(permission=None, role=None):
+            calls.append((permission, role))
+            if permission == 'system.integration.manage':
+                raise LocalAuthError('permission_denied', status=403)
+            return {
+                'user': {'id': 'member-test'},
+                'roles': ['operator'],
+                'permissions': [],
+            }
+
+        main_module.STATE.auth = SimpleNamespace(require=require)
+        request = Request(
+            self._url('/api/config'),
+            data=b'{}', method='POST',
+            headers={'Content-Type': 'application/json'},
+        )
+        with self.assertRaises(HTTPError) as denied:
+            urlopen(request, timeout=3)
+        self.assertEqual(denied.exception.code, 403)
+        payload = json.loads(denied.exception.read().decode('utf-8'))
+        self.assertEqual(payload['code'], 'permission_denied')
+        self.assertIn(
+            ('system.integration.manage', 'super_admin'), calls)
 
     def test_business_log_route_requires_login_and_forwards_only_relative_path(self):
         forwarded = []

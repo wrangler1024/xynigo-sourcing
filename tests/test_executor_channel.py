@@ -31,6 +31,7 @@ class FakeExecutorClient(object):
         self.renewals = []
         self.pair_calls = []
         self.poll_calls = []
+        self.poll_summaries = []
         self.poll_callback = None
         self.renew_callback = None
         self.user_sessions = []
@@ -42,7 +43,9 @@ class FakeExecutorClient(object):
             'deviceCredential': DEVICE_CREDENTIAL,
         }
 
-    def poll(self, credential, revision, hub_status, wait_seconds=25):
+    def poll(self, credential, revision, hub_status, wait_seconds=25,
+             config_summary=None):
+        self.poll_summaries.append(config_summary)
         self.poll_calls.append(
             (credential, revision, hub_status, wait_seconds))
         if self.poll_callback:
@@ -173,7 +176,7 @@ class ExecutorTaskApplicationTests(unittest.TestCase):
     def tearDown(self):
         self.tempdir.cleanup()
 
-    def test_read_returns_public_config_and_never_returns_private_link(self):
+    def test_legacy_config_read_is_rejected_by_new_executor(self):
         worker, client, _holder, coordinator = self.build_worker({
             'concurrency': 2,
             'safeParallelTasks': True,
@@ -186,62 +189,51 @@ class ExecutorTaskApplicationTests(unittest.TestCase):
             'payload': {},
         })
         self.assertEqual(client.started[0][1], 'task-read')
-        self.assertEqual(client.finishes[0]['outcome'], 'succeeded')
-        summary = client.finishes[0]['resultSummary']
-        self.assertEqual(summary['config']['concurrency'], 2)
-        self.assertNotIn('proxyLink', summary['config'])
-        self.assertNotIn('private.invalid', json.dumps(summary))
+        self.assertEqual(client.finishes[0]['outcome'], 'failed')
+        self.assertEqual(
+            client.finishes[0]['resultCode'], 'local_config_desktop_only')
+        self.assertNotIn('private.invalid', json.dumps(client.finishes[0]))
         self.assertFalse(coordinator.running())
 
-    def test_legacy_business_preferences_do_not_change_device_revision(self):
-        worker, _client, holder, _coordinator = self.build_worker({
+    def test_workspace_rpc_cannot_bypass_desktop_config_boundary(self):
+        worker, _client, _holder, _coordinator = self.build_worker({
             'concurrency': 2,
             'safeParallelTasks': False,
-            'purchaseSite': 'MX',
-            'purchaseTags': {'MX': 'MX采购', 'US': 'US采购'},
-            'importBuyerPlan': '1:新刚',
         })
-        first = worker._apply_task('config.read.v1', {})[2]
-        holder['config']['purchaseSite'] = 'US'
-        holder['config']['purchaseTags']['US'] = '美国采购'
-        holder['config']['importBuyerPlan'] = '2:志恒'
-        second = worker._apply_task('config.read.v1', {})[2]
-        self.assertEqual(first['configRevision'], second['configRevision'])
-        self.assertEqual(first['config'], second['config'])
-        self.assertNotIn('purchaseSite', second['config'])
+        with self.assertRaises(LocalAuthError) as blocked:
+            worker._apply_task('workspace.rpc.v1', {
+                'method': 'POST',
+                'path': '/api/local-config/data-sources/team-default',
+                'body': {'sourceId': 'ds_' + '1' * 24},
+            })
+        self.assertEqual(blocked.exception.code, 'local_config_desktop_only')
+        self.assertEqual(blocked.exception.status, 410)
 
-    def test_write_checks_revision_and_applies_under_local_gate(self):
+    def test_legacy_config_write_is_rejected_without_mutation(self):
         initial = {
             'concurrency': 2,
             'safeParallelTasks': False,
             'proxyLink': 'https://private.invalid/secret',
         }
         worker, client, holder, coordinator = self.build_worker(initial)
-        public_initial = {
-            'concurrency': 2,
-            'safeParallelTasks': False,
-        }
         worker._execute_task(DEVICE_CREDENTIAL, {
             'id': 'task-write',
             'type': 'config.write.v1',
             'leaseToken': LEASE_TOKEN,
             'payload': {
-                'expectedRevision': config_revision(public_initial),
+                'expectedRevision': config_revision(initial),
                 'config': {
                     'concurrency': 3,
                     'safeParallelTasks': True,
                 },
             },
         })
-        self.assertEqual(holder['config']['concurrency'], 3)
-        self.assertTrue(holder['config']['safeParallelTasks'])
+        self.assertEqual(holder['config'], initial)
         self.assertEqual(client.finishes[0]['resultCode'],
-                         'config_write_succeeded')
-        self.assertNotIn(
-            'proxyLink', client.finishes[0]['resultSummary']['config'])
+                         'local_config_desktop_only')
         self.assertFalse(coordinator.running())
 
-    def test_revision_conflict_keeps_original_config(self):
+    def test_desktop_only_rejection_precedes_legacy_revision_handling(self):
         initial = {'concurrency': 2, 'safeParallelTasks': False}
         worker, client, holder, coordinator = self.build_worker(initial)
         worker._execute_task(DEVICE_CREDENTIAL, {
@@ -256,7 +248,7 @@ class ExecutorTaskApplicationTests(unittest.TestCase):
         self.assertEqual(holder['config'], initial)
         self.assertEqual(client.finishes[0]['outcome'], 'failed')
         self.assertEqual(client.finishes[0]['resultCode'],
-                         'config_revision_conflict')
+                         'local_config_desktop_only')
         self.assertFalse(coordinator.running())
 
     def test_running_business_task_blocks_config_write(self):
@@ -564,6 +556,26 @@ class ExecutorChannelLifecycleTests(unittest.TestCase):
             self.assertEqual(client.poll_calls[0][0], DEVICE_CREDENTIAL)
             self.assertEqual(state_store.load()['status'], 'online')
 
+    def test_worker_attaches_strict_config_summary_to_poll(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_store = ExecutorChannelStateStore(
+                os.path.join(directory, 'executor-channel.json'))
+            client = FakeExecutorClient()
+            worker = self.build_worker(
+                MemoryAuthSessionStore(DEVICE_CREDENTIAL), state_store, client)
+            summary = {
+                'schemaVersion': 2,
+                'configRevision': 'a' * 64,
+                'capturedAt': '2026-09-02T05:00:00+00:00',
+                'runtimeConfig': {'concurrency': 2},
+            }
+            worker.config_summary_getter = lambda: dict(summary)
+            client.poll_callback = worker.stop_event.set
+            self.assertTrue(worker.start())
+            worker.thread.join(timeout=2)
+            self.assertFalse(worker.thread.is_alive())
+            self.assertEqual(client.poll_summaries, [summary])
+
     def test_worker_reuses_loaded_credential_between_polls(self):
         class CountingCredentialStore(MemoryAuthSessionStore):
             def __init__(self):
@@ -647,7 +659,9 @@ class ExecutorChannelLifecycleTests(unittest.TestCase):
                 return super().update(**changes)
 
         class FlakyClient(FakeExecutorClient):
-            def poll(self, credential, revision, hub_status, wait_seconds=25):
+            def poll(self, credential, revision, hub_status, wait_seconds=25,
+                     config_summary=None):
+                del config_summary
                 self.poll_calls.append(
                     (credential, revision, hub_status, wait_seconds))
                 if len(self.poll_calls) <= 2:
@@ -674,7 +688,9 @@ class ExecutorChannelLifecycleTests(unittest.TestCase):
 
     def test_third_consecutive_poll_failure_reports_offline(self):
         class FlakyClient(FakeExecutorClient):
-            def poll(self, credential, revision, hub_status, wait_seconds=25):
+            def poll(self, credential, revision, hub_status, wait_seconds=25,
+                     config_summary=None):
+                del config_summary
                 self.poll_calls.append(
                     (credential, revision, hub_status, wait_seconds))
                 if len(self.poll_calls) >= 3:

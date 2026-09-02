@@ -38,8 +38,8 @@ from .operation_executor import (
 EXECUTOR_KEYCHAIN_SERVICE = 'io.xynigo.sourcing.executor'
 EXECUTOR_KEYCHAIN_ACCOUNT = 'xynigo-device-credential'
 SUPPORTED_CAPABILITIES = (
-    'config.read.v1',
-    'config.write.v1',
+    'config.summary.v2',
+    'local.config.desktop.v1',
     'workspace.rpc.v1',
     'workspace.snapshot.v1',
     'environment.parse.v1',
@@ -50,6 +50,17 @@ SUPPORTED_CAPABILITIES = (
     'environment.retry-row.v1',
     'environment.retry-failed.v1',
 )
+LOCAL_CONFIG_RPC_PATHS = frozenset({
+    '/api/config',
+    '/api/hub-api-key',
+    '/api/lark/config',
+    '/api/lark/open-target',
+    '/api/lark/status',
+    '/api/lark/template',
+    '/api/lark/target-url',
+    '/api/lark/target-metadata',
+    '/api/lark/preflight',
+})
 MAX_WORKSPACE_RPC_BYTES = 32 * 1024 * 1024
 LEASE_RENEW_INTERVAL_SECONDS = 15.0
 LEASE_RENEW_RETRY_SECONDS = 3.0
@@ -215,18 +226,22 @@ class CloudExecutorClient(object):
                 'cloud_response_invalid', '云端配对响应无效', 502)
         return {'executorId': executor_id, 'deviceCredential': credential}
 
-    def poll(self, credential, revision, hub_status, wait_seconds=25):
+    def poll(self, credential, revision, hub_status, wait_seconds=25,
+             config_summary=None):
+        body = {
+            'waitSeconds': max(0, min(25, int(wait_seconds))),
+            'configRevision': revision,
+            'hubStatus': hub_status,
+            'clientVersion': __version__,
+            'protocolVersion': 1,
+            'capabilities': list(SUPPORTED_CAPABILITIES),
+        }
+        if config_summary is not None:
+            body['configSummary'] = config_summary
         return self.client._request(
             '/v1/executor-channel/poll',
             method='POST',
-            payload={
-                'waitSeconds': max(0, min(25, int(wait_seconds))),
-                'configRevision': revision,
-                'hubStatus': hub_status,
-                'clientVersion': __version__,
-                'protocolVersion': 1,
-                'capabilities': list(SUPPORTED_CAPABILITIES),
-            },
+            payload=body,
             token=credential,
             source='local_executor_device',
             max_response_bytes=MAX_WORKSPACE_RPC_BYTES,
@@ -299,6 +314,7 @@ class ExecutorChannelWorker(object):
     def __init__(self, client, credential_store, state_store,
                  config_getter, public_config_getter, config_writer,
                  task_coordinator, hub_status_getter,
+                 config_summary_getter=None,
                  workspace_rpc_executor=None,
                  operation_task_executor=None,
                  user_session_installer=None,
@@ -311,6 +327,7 @@ class ExecutorChannelWorker(object):
         self.config_writer = config_writer
         self.task_coordinator = task_coordinator
         self.hub_status_getter = hub_status_getter
+        self.config_summary_getter = config_summary_getter
         self.workspace_rpc_executor = workspace_rpc_executor
         self.operation_task_executor = operation_task_executor
         self.user_session_installer = user_session_installer
@@ -396,6 +413,9 @@ class ExecutorChannelWorker(object):
                     self._flush_pending_finish(credential)
                 cfg = self.config_getter()
                 revision = config_revision(self.public_config_getter(cfg))
+                config_summary = (
+                    self.config_summary_getter()
+                    if callable(self.config_summary_getter) else None)
                 hub_ok, _hub_message = self.hub_status_getter(False)
                 if handshake_required:
                     self.state_store.update(
@@ -410,7 +430,8 @@ class ExecutorChannelWorker(object):
                     # A zero-wait poll confirms the secure channel within one
                     # network round trip.  Only an already-confirmed channel
                     # may enter the 25-second task long poll.
-                    wait_seconds=0 if handshake_required else 25)
+                    wait_seconds=0 if handshake_required else 25,
+                    config_summary=config_summary)
                 previous_state = self.state_store.load()
                 connected_at = (previous_state.get('connectedAt')
                                 if previous_state.get('status') == 'online'
@@ -636,6 +657,12 @@ class ExecutorChannelWorker(object):
                 'succeeded', 'workspace_snapshot_completed',
                 result['body'])
         if task_type == 'workspace.rpc.v1':
+            path = str(payload.get('path') or '').partition('?')[0]
+            if (path in LOCAL_CONFIG_RPC_PATHS
+                    or path.startswith('/api/local-config/data-sources')):
+                raise LocalAuthError(
+                    'local_config_desktop_only',
+                    '本机配置只能在桌面客户端修改', 410)
             if not callable(self.workspace_rpc_executor):
                 raise LocalAuthError(
                     'executor_capability_missing',
@@ -643,33 +670,12 @@ class ExecutorChannelWorker(object):
             return (
                 'succeeded', 'workspace_rpc_completed',
                 self.workspace_rpc_executor(payload))
-        current = self.config_getter()
-        current_public = self.public_config_getter(current)
-        current_revision = config_revision(current_public)
-        if task_type == 'config.read.v1':
-            return (
-                'succeeded', 'config_read_succeeded', {
-                    'configRevision': current_revision,
-                    'config': current_public,
-                })
-        if task_type != 'config.write.v1':
+        if task_type in {'config.read.v1', 'config.write.v1'}:
             raise LocalAuthError(
-                'executor_capability_missing', '不支持的云端执行器任务', 409)
-        expected = str(payload.get('expectedRevision') or '')
-        if expected != current_revision:
-            raise LocalAuthError(
-                'config_revision_conflict', '本地配置已变化，请刷新后重试', 409)
-        submitted = payload.get('config')
-        if not isinstance(submitted, dict):
-            raise ValueError('配置任务缺少配置对象')
-        updated = self.config_writer(submitted)
-        updated_public = self.public_config_getter(updated)
-        revision = config_revision(updated_public)
-        return (
-            'succeeded', 'config_write_succeeded', {
-                'configRevision': revision,
-                'config': updated_public,
-            })
+                'local_config_desktop_only',
+                '本机配置只能在桌面客户端修改', 410)
+        raise LocalAuthError(
+            'executor_capability_missing', '不支持的云端执行器任务', 409)
 
     def _flush_pending_finish(self, credential):
         pending = self.pending_finish

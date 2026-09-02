@@ -1,14 +1,16 @@
 """Strict wire contracts for the cloud-to-local executor P1 channel.
 
-The device credential travels only in the Authorization header.  Payloads are
-deliberately small and configuration writes are limited to the non-secret
-fields already supported by the desktop executor.
+The device credential travels only in the Authorization header. Payloads are
+deliberately small. Legacy config read/write contracts remain parseable during
+the upgrade window, while executors advertising ``local.config.desktop.v1``
+reject them and report only the strict ``config.summary.v2`` allowlist.
 """
 
 from __future__ import annotations
 
 import re
 import uuid
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -20,6 +22,8 @@ STABLE_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]{1,127}$")
 EXECUTOR_CAPABILITIES = Literal[
     "config.read.v1",
     "config.write.v1",
+    "config.summary.v2",
+    "local.config.desktop.v1",
     "workspace.rpc.v1",
     "workspace.snapshot.v1",
     "environment.parse.v1",
@@ -81,6 +85,75 @@ class ExecutorPairBody(StrictBody):
         return sorted(set(value))
 
 
+class ExecutorRuntimeConfigSummary(StrictBody):
+    hubPort: int = Field(ge=1, le=65535)
+    concurrency: int = Field(ge=1, le=5)
+    envCreateWorkers: int = Field(ge=1, le=10)
+    verifySampleCount: int = Field(ge=0, le=10)
+    safeParallelTasks: bool
+
+
+class ExecutorConfiguredSummary(StrictBody):
+    hubApiKey: bool
+    larkAppCredentials: bool
+    larkLegacyTarget: bool
+    purchaseAssistantDataSources: bool
+    teamDefaultDataSource: bool
+
+
+class ExecutorDataSourceSummary(StrictBody):
+    dataSourceCount: int = Field(ge=0, le=10000)
+    buyerProfileCount: int = Field(ge=0, le=10000)
+    environmentBindingCount: int = Field(ge=0, le=100000)
+    pendingOwnerConfirmationCount: int = Field(ge=0, le=10000)
+    mappingConflictCount: int = Field(ge=0, le=10000)
+
+
+class ExecutorComplianceSummary(StrictBody):
+    status: Literal["ready", "degraded"]
+    issueCodes: list[str] = Field(default_factory=list, max_length=16)
+
+    @field_validator("issueCodes")
+    @classmethod
+    def validate_issue_codes(cls, value: list[str]) -> list[str]:
+        normalized = sorted(set(str(item or "").strip() for item in value))
+        if any(not STABLE_CODE_PATTERN.fullmatch(item) for item in normalized):
+            raise ValueError("summary issue code format is invalid")
+        return normalized
+
+
+class ExecutorConfigSummaryV2(StrictBody):
+    schemaVersion: Literal[2]
+    configRevision: str
+    capturedAt: datetime
+    runtimeConfig: ExecutorRuntimeConfigSummary
+    configured: ExecutorConfiguredSummary
+    dataSources: ExecutorDataSourceSummary
+    compliance: ExecutorComplianceSummary
+
+    @field_validator("configRevision")
+    @classmethod
+    def validate_config_revision(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not REVISION_PATTERN.fullmatch(normalized):
+            raise ValueError("config summary revision format is invalid")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_summary_consistency(self) -> "ExecutorConfigSummaryV2":
+        if self.capturedAt.tzinfo is None:
+            raise ValueError("config summary capturedAt must include timezone")
+        has_sources = self.dataSources.dataSourceCount > 0
+        if self.configured.purchaseAssistantDataSources != has_sources:
+            raise ValueError("config summary data-source readiness is inconsistent")
+        if self.configured.teamDefaultDataSource and not has_sources:
+            raise ValueError("config summary team default requires a data source")
+        has_issues = bool(self.compliance.issueCodes)
+        if (self.compliance.status == "ready") == has_issues:
+            raise ValueError("config summary compliance status is inconsistent")
+        return self
+
+
 class ExecutorPollBody(StrictBody):
     waitSeconds: int = Field(default=25, ge=0, le=25)
     configRevision: str | None = None
@@ -91,6 +164,7 @@ class ExecutorPollBody(StrictBody):
         default_factory=list,
         max_length=16,
     )
+    configSummary: ExecutorConfigSummaryV2 | None = None
 
     @field_validator("configRevision")
     @classmethod
@@ -111,6 +185,12 @@ class ExecutorPollBody(StrictBody):
     @classmethod
     def unique_capabilities(cls, value: list[str]) -> list[str]:
         return sorted(set(value))
+
+    @model_validator(mode="after")
+    def require_summary_capability(self) -> "ExecutorPollBody":
+        if self.configSummary is not None and "config.summary.v2" not in self.capabilities:
+            raise ValueError("config summary capability is required")
+        return self
 
 
 class ExecutorConfigWriteBody(StrictBody):

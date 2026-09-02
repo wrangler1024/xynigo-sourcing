@@ -133,11 +133,32 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         self.assertNotIn("envActiveBuyers()", even_handler)
         self.assertIn('均分（默认三人）', html)
 
-        self.assertIn("payload.cachedResult", html)
-        self.assertIn("只读配置快照", html)
+        self.assertIn("payload.configSummaryStale", html)
+        self.assertIn("云端仅展示执行器主动上报的严格摘要", html)
         self.assertIn("云端正在内存解析并生成加密短期计划", html)
         self.assertIn("云端只短时保存加密执行计划", html)
         self.assertNotIn("coreVersion=148", html)
+
+    def test_cloud_device_config_is_summary_only(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        for marker in (
+            "设备配置摘要",
+            "config.summary.v2",
+            "applyLocalExecutorConfigSummary",
+            "configSummaryStale",
+            "xynigo://settings",
+            "摘要不可用：所选设备版本过旧",
+        ):
+            self.assertIn(marker, html)
+        for forbidden in (
+            'id="executorConfigHubPort"',
+            'id="executorConfigConcurrency"',
+            'id="btnLocalExecutorSaveConfig"',
+            'startLocalExecutorConfigTask',
+            "payload.cachedResult",
+            "config-read",
+        ):
+            self.assertNotIn(forbidden, html)
 
     def test_cloud_hub_badge_and_query_gate_share_selected_executor_state(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")
