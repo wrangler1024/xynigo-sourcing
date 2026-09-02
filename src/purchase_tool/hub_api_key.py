@@ -21,6 +21,30 @@ class HubApiKeyStoreError(RuntimeError):
     pass
 
 
+def mask_hub_api_key(value):
+    value = str(value or '').strip()
+    if not value:
+        return ''
+    return '••••' + value[-4:] if len(value) > 4 else '••••'
+
+
+def public_hub_api_key_status(store):
+    """Return only configured state and a non-reusable recognition hint."""
+    try:
+        value = store.load() if store is not None else None
+    except HubApiKeyStoreError:
+        return {
+            'hubApiKeyConfigured': False,
+            'hubApiKeyMasked': '',
+            'hubApiKeyStatus': 'unavailable',
+        }
+    return {
+        'hubApiKeyConfigured': value is not None,
+        'hubApiKeyMasked': mask_hub_api_key(value),
+        'hubApiKeyStatus': 'configured' if value is not None else 'missing',
+    }
+
+
 def _validated_key(value):
     key = str(value or '').strip()
     # The reused secure-store backend accepts at most 256 characters. 180 raw

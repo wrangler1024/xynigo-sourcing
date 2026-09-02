@@ -12,6 +12,7 @@ from http.server import ThreadingHTTPServer
 from unittest.mock import patch
 
 import purchase_tool.main as main_module
+from purchase_tool.hub_api_key import MemoryHubApiKeyStore
 from purchase_tool.main import (
     AppState, Handler, default_config, effective_proxy_link, load_config,
     lark_target_link, public_config, public_executor_config, public_lark_config,
@@ -157,6 +158,8 @@ class ConfigTests(unittest.TestCase):
         })
         rendered = json.dumps(public)
         self.assertTrue(public['proxyConfigured'])
+        self.assertEqual(public['proxyMasked'],
+                         'https://proxy.example.test/…')
         self.assertEqual(public['purchaseTags']['MX'], TEST_TAG)
         self.assertEqual(public['purchaseTags']['US'], '')
         self.assertNotIn('proxyLink', public)
@@ -465,6 +468,8 @@ class ConfigRouteTests(unittest.TestCase):
                 'permissions': ['system.lark_connection.manage'],
             }),
             lark_credentials=MemoryCredentialStore(),
+            hub_api_key_store=MemoryHubApiKeyStore(
+                'private-hub-key-1234'),
             env_job=env_job,
             reconnect_hub=lambda: True,
             hub_status=lambda: (True, ''))
@@ -505,6 +510,9 @@ class ConfigRouteTests(unittest.TestCase):
         self.assertNotIn(TEST_PROXY, config_text)
         self.assertNotIn('proxyLink', config_text)
         self.assertTrue(json.loads(config_text)['proxyConfigured'])
+        self.assertEqual(
+            json.loads(config_text)['hubApiKeyMasked'], '••••1234')
+        self.assertNotIn('private-hub-key-1234', config_text)
         self.assertRegex(
             json.loads(config_text)['configRevision'], r'^[0-9a-f]{64}$')
         self.assertTrue(json.loads(lark_config_text)['ready'])

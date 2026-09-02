@@ -80,6 +80,15 @@ class DataSourceRegistryTests(unittest.TestCase):
         self.assertNotIn('sheet_personal', rendered)
         self.assertNotIn('spreadsheetToken', rendered)
         self.assertNotIn('sheetId', rendered)
+        targets = {item['scope']: item for item in public['dataSources']}
+        self.assertEqual(
+            targets['personal']['targetMasked'],
+            'https://*.feishu.cn/sheets/••••l123')
+        self.assertEqual(
+            targets['team']['targetMasked'],
+            'https://*.feishu.cn/sheets/••••m123')
+        self.assertEqual(
+            targets['personal']['worksheetMasked'], '••••onal')
 
     def test_source_metadata_can_change_without_exposing_private_target(self):
         snapshot = self.registry.migrate_legacy(legacy_config())

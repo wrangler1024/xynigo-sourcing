@@ -71,6 +71,15 @@ class DesktopUIContractTests(unittest.TestCase):
             self.assertIn(marker, self.javascript)
         self.assertNotIn('已提交只读验证', self.javascript)
 
+    def test_configured_secrets_render_only_masked_recognition_hints(self):
+        for marker in (
+                'targetMasked', 'worksheetMasked', 'hubApiKeyMasked',
+                'appSecretMasked', '当前已配置', '仅显示不可逆掩码'):
+            self.assertIn(marker, self.javascript)
+        self.assertIn('.masked-config', self.css)
+        self.assertNotIn("field('source-url','飞书普通电子表格链接','https://",
+                         self.javascript)
+
     def test_update_panel_renders_live_cross_platform_progress(self):
         for marker in (
                 'updatePresentation', 'updatePanel', 'update-progress-track',

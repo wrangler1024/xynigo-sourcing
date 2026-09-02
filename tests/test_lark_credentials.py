@@ -65,6 +65,8 @@ class LarkCredentialTests(unittest.TestCase):
         status = public_credential_status(store)
         rendered = json.dumps(status)
         self.assertTrue(status['credentialConfigured'])
+        self.assertEqual(status['appIdMasked'], 'cli_pub***demo')
+        self.assertEqual(status['appSecretMasked'], '••••demo')
         self.assertNotIn('private-secret-demo', rendered)
         self.assertNotIn('cli_public_demo', rendered)
         self.assertIsNotNone(store.load())

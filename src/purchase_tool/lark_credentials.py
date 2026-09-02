@@ -4,7 +4,7 @@
 macOS uses the login Keychain through the non-interactive ``security -i``
 command channel without placing the secret in argv.  Windows stores a
 CurrentUser-DPAPI encrypted blob below LOCALAPPDATA.
-Only the App ID mask/configured state is exposed to the Web UI.
+Only masked recognition hints and configured state are exposed to the Web UI.
 """
 from dataclasses import dataclass
 import ctypes
@@ -55,6 +55,13 @@ def mask_app_id(value):
     if len(value) <= 10:
         return '***' if value else ''
     return value[:7] + '***' + value[-4:]
+
+
+def mask_app_secret(value):
+    value = str(value or '').strip()
+    if not value:
+        return ''
+    return '••••' + value[-4:] if len(value) > 4 else '••••'
 
 
 class MemoryCredentialStore(object):
@@ -296,4 +303,6 @@ def public_credential_status(store):
     return {
         'credentialConfigured': credentials is not None,
         'appIdMasked': mask_app_id(credentials.app_id) if credentials else '',
+        'appSecretMasked': (
+            mask_app_secret(credentials.app_secret) if credentials else ''),
     }

@@ -12,9 +12,9 @@ from urllib.parse import quote
 from . import __version__
 
 
-RELEASE_VERSION = "0.13.9"
+RELEASE_VERSION = "0.13.10"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-02T10:12:16Z"
+RELEASE_PUBLISHED_AT = "2026-09-02T10:24:29Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -29,8 +29,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.13.9-a7744ffb316f",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.9.exe",
+        "runtimeId": "0.13.10-96a359a5b0ca",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.10.exe",
         "sha256": "b2e03ab7735f555c400d2237fff84bb953684f2eb5f45f6214b2177afccc44d8",
         "size": 15_164_911,
         "installMode": "standard_per_user",
@@ -48,8 +48,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.13.9-a7744ffb316f",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.9.pkg",
+        "runtimeId": "0.13.10-96a359a5b0ca",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.10.pkg",
         "sha256": "cc884f9ceea9efb35a921c9fb5c5ce5967e43e3f19e1cd31eae07815737da22d",
         "size": 11_427_748,
         "installMode": "standard_system_application",
@@ -234,12 +234,11 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "修复诊断页更新状态只刷新数据却不重绘，点击更新后立即显示反馈。",
-            "新增下载百分比、已下载大小、实时速度和预计剩余时间。",
-            "校验、准备安装、等待系统安装器和重启阶段均有持续状态提示。",
-            "Windows 与 macOS 共用同一套更新进度界面和错误重试交互。",
-            "每个客户端版本从同一 Git 基线同步构建并发布 Windows 与 macOS 安装包。",
-            "更新忙态改为 0.8 秒刷新，空闲时恢复 5 秒轮询。",
+            "已配置的飞书数据源链接和工作表支持脱敏回显，完整标识不返回浏览器。",
+            "HubStudio API Key 与飞书 App Secret 显示固定掩码和末四位识别摘要。",
+            "飞书 App ID 与代理链接提供不可复用的安全识别摘要。",
+            "所有覆盖输入框继续保持空值，只有输入新值才会替换现有配置。",
+            "Windows 与 macOS 从同一 Git 基线同步构建并发布。",
             "稳定通道强制平台签名门槛；内部未签名包仅允许 test 通道。",
         ],
     }

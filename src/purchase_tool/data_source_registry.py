@@ -83,6 +83,14 @@ def _private_id(value, label):
     return text
 
 
+def _masked_private_id(value):
+    """Return a recognition hint without exposing a reusable identifier."""
+    text = str(value or '').strip()
+    if not text:
+        return ''
+    return '••••' + text[-4:] if len(text) > 4 else '••••'
+
+
 def _cell_range(value):
     text = str(value or '').strip().upper()
     if not CELL_RANGE_PATTERN.fullmatch(text):
@@ -400,6 +408,10 @@ class DataSourceRegistry(object):
                 'cellRange': source['cellRange'],
                 'enabled': source['enabled'],
                 'configured': True,
+                'targetMasked': (
+                    'https://*.feishu.cn/sheets/'
+                    + _masked_private_id(source['spreadsheetToken'])),
+                'worksheetMasked': _masked_private_id(source['sheetId']),
                 'migrationState': source['migrationState'],
                 'environmentCount': sum(
                     1 for item in registry['environmentBindings']

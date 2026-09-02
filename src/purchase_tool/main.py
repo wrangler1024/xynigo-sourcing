@@ -85,7 +85,8 @@ from .operation_executor import LocalOperationExecutor, backup_account_ref
 from .extension_bridge import ExtensionBridge, ExtensionBridgeError
 from .hub_api import HubApiError, HubStudioApi, DEFAULT_PORT
 from .hub_api_key import (
-    HubApiKeyStoreError, system_hub_api_key_store)
+    HubApiKeyStoreError, public_hub_api_key_status,
+    system_hub_api_key_store)
 from .instance_guard import acquire_executor_instance_guard
 from .lark_credentials import (LarkCredentialError, LarkCredentials,
                                public_credential_status,
@@ -444,6 +445,24 @@ def save_config(cfg):
         cfg, source='compatibility_route')['config']
 
 
+def masked_proxy_summary(cfg):
+    custom = str((cfg or {}).get('proxyLink') or '').strip()
+    if not custom:
+        return '系统默认代理模板'
+    try:
+        parsed = urlparse(custom)
+        hostname = str(parsed.hostname or '').strip()
+        if not parsed.scheme or not hostname:
+            return '自定义代理 · ••••'
+        port = (':%d' % parsed.port) if parsed.port else ''
+        auth = '••••@' if parsed.username or parsed.password else ''
+        path = '/…' if parsed.path and parsed.path != '/' else ''
+        return '%s://%s%s%s%s' % (
+            parsed.scheme, auth, hostname, port, path)
+    except (TypeError, ValueError):
+        return '自定义代理 · ••••'
+
+
 def public_config(cfg):
     result = {key: value for key, value in cfg.items()
               if key in CONFIG_FIELDS and key not in {
@@ -468,6 +487,7 @@ def public_config(cfg):
     result['proxyConfigured'] = bool(effective_proxy_link(cfg))
     result['proxySource'] = ('custom' if str(
         (cfg or {}).get('proxyLink') or '').strip() else 'default')
+    result['proxyMasked'] = masked_proxy_summary(cfg)
     try:
         site = normalize_env_site(cfg.get('purchaseSite') or 'MX')
     except ValueError:
@@ -524,9 +544,10 @@ def state_local_config_service():
     return local_config_service()
 
 
-def public_local_config(cfg):
+def public_local_config(cfg, hub_api_key_store=None):
     """Expose local settings with an opaque full-config desktop revision."""
     result = public_config(cfg)
+    result.update(public_hub_api_key_status(hub_api_key_store))
     result['configRevision'] = state_local_config_service().revision(cfg)
     return result
 
@@ -1261,6 +1282,8 @@ class AppState(object):
         return {
             'saved': True,
             'configured': not bool(clear),
+            'masked': public_hub_api_key_status(
+                self.hub_api_key_store)['hubApiKeyMasked'],
             'capability': self.hub_capabilities(force=True),
         }
 
@@ -3784,7 +3807,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(data)
             elif path == '/api/config':
-                self._json(public_local_config(STATE.cfg))
+                self._json(public_local_config(
+                    STATE.cfg, getattr(STATE, 'hub_api_key_store', None)))
             elif path == DATA_SOURCE_API_PREFIX:
                 identity = STATE.auth.require()
                 include_all = bool(set(identity.get('roles') or []) & {
