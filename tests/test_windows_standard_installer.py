@@ -189,7 +189,7 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
     def test_pairing_is_single_flight_and_python_output_is_utf8(self):
         for source in (
             'pairButton     *walk.PushButton',
-            'pairInFlight   bool',
+            'pairInFlight    bool',
             'AssignTo: &app.pairButton',
             'case "pair-device":',
             'app.startPair(code)',
@@ -210,6 +210,15 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
             'Size:       Size{Width: 1360, Height: 790}',
             'MinSize:    Size{Width: 1080, Height: 650}',
             'browser.MessageCallback = app.handleWebMessage',
+            'WebView2-v2',
+            'WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS',
+            '--disable-gpu',
+            'desktop-ready',
+            'desktopReadyWait',
+            'desktop_navigation_attempt',
+            '桌面界面暂未完成加载',
+            'open-desktop-browser',
+            'retry-desktop',
             'AssignTo: &app.pairPanel',
             '尚未配对 · 配对码 5 分钟内有效且只能使用一次',
             'app.setPairingVisible(false)',
@@ -315,7 +324,7 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
 
 class WindowsStandardInstallerArtifactTests(unittest.TestCase):
     def test_local_compiled_artifact_metadata_when_present(self):
-        metadata = ROOT / 'dist/Xynigo_Sourcing_Windows_Setup_v0.13.10.json'
+        metadata = ROOT / 'dist/Xynigo_Sourcing_Windows_Setup_v0.13.11.json'
         if not metadata.is_file():
             self.skipTest('standard installer artifact is built in packaging CI')
         import json

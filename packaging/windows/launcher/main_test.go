@@ -75,6 +75,35 @@ func TestLocalSettingsURLUsesDiscoveredLoopbackPort(t *testing.T) {
 	}
 }
 
+func TestDesktopPageURLUsesDiscoveredLoopbackPort(t *testing.T) {
+	got, err := desktopPageURL(
+		"http://127.0.0.1:8767/executor-status.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "http://127.0.0.1:8767/desktop/?platform=windows"; got != want {
+		t.Fatalf("desktopPageURL() = %q, want %q", got, want)
+	}
+	for _, raw := range []string{
+		"https://127.0.0.1:8767/executor-status.json",
+		"http://example.test:8767/executor-status.json",
+		"http://127.0.0.1/executor-status.json",
+	} {
+		if _, err := desktopPageURL(raw); err == nil {
+			t.Fatalf("desktopPageURL(%q) unexpectedly succeeded", raw)
+		}
+	}
+}
+
+func TestDesktopAttemptURLAddsCacheBuster(t *testing.T) {
+	got := desktopAttemptURL(
+		"http://127.0.0.1:8767/desktop/?platform=windows", 2)
+	want := "http://127.0.0.1:8767/desktop/?platform=windows&reload=2"
+	if got != want {
+		t.Fatalf("desktopAttemptURL() = %q, want %q", got, want)
+	}
+}
+
 func TestTCPListenerPIDsFindsCurrentProcess(t *testing.T) {
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {

@@ -35,6 +35,8 @@ const (
 	createNoWindow    = 0x08000000
 	updateCheckPath   = "/executor-control/update/check"
 	updateInstallPath = "/executor-control/update/install"
+	desktopReadyWait  = 4 * time.Second
+	desktopMaxRetries = 3
 )
 
 var (
@@ -154,18 +156,23 @@ type launcherApp struct {
 	trayStartStop  *walk.Action
 	trayUpdate     *walk.Action
 
-	mu             sync.Mutex
-	child          *exec.Cmd
-	childDone      chan error
-	launcherToken  string
-	statusURL      string
-	desktopURL     string
-	lastStatus     *localStatus
-	lastStatusAt   time.Time
-	statusFailures int
-	pairInFlight   bool
-	updateInFlight bool
-	exiting        bool
+	mu              sync.Mutex
+	child           *exec.Cmd
+	childDone       chan error
+	launcherToken   string
+	statusURL       string
+	desktopURL      string
+	desktopTarget   string
+	desktopStarted  time.Time
+	desktopAttempts int
+	desktopReady    bool
+	desktopRecovery bool
+	lastStatus      *localStatus
+	lastStatusAt    time.Time
+	statusFailures  int
+	pairInFlight    bool
+	updateInFlight  bool
+	exiting         bool
 }
 
 func main() {
@@ -347,8 +354,22 @@ func (app *launcherApp) buildWindow() error {
 	}
 
 	browser := edge.NewChromium()
-	browser.DataPath = filepath.Join(app.root, "运行数据", "WebView2")
+	// A manually upgraded launcher must not inherit a locked or corrupted
+	// WebView2 profile from the previous process tree. Keep this stable after
+	// the v2 migration so Feishu cookies persist across later upgrades.
+	browser.DataPath = filepath.Join(app.root, "运行数据", "WebView2-v2")
+	if arguments := os.Getenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"); !strings.Contains(arguments, "--disable-gpu") {
+		_ = os.Setenv(
+			"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+			strings.TrimSpace(arguments+" --disable-gpu --disable-gpu-compositing"))
+	}
 	browser.MessageCallback = app.handleWebMessage
+	browser.NavigationCompletedCallback = func(
+		_ *edge.ICoreWebView2,
+		_ *edge.ICoreWebView2NavigationCompletedEventArgs,
+	) {
+		appendStatusCenterLog(app.root, "desktop_navigation_completed_waiting_ready")
+	}
 	if !browser.Embed(uintptr(app.mw.Handle())) {
 		return errors.New("WebView2 运行时不可用，请安装 Microsoft Edge WebView2 Runtime")
 	}
@@ -537,26 +558,104 @@ func localSettingsURL(statusURL string) (string, error) {
 func (app *launcherApp) navigateDesktop() {
 	app.mu.Lock()
 	statusURL := app.statusURL
-	current := app.desktopURL
 	app.mu.Unlock()
+	target, err := desktopPageURL(statusURL)
+	if err != nil || app.browser == nil {
+		return
+	}
+
+	app.mu.Lock()
+	if app.desktopReady && app.desktopURL == target {
+		app.mu.Unlock()
+		return
+	}
+	if app.desktopTarget != target {
+		app.desktopTarget = target
+		app.desktopURL = ""
+		app.desktopStarted = time.Time{}
+		app.desktopAttempts = 0
+		app.desktopReady = false
+		app.desktopRecovery = false
+	}
+	if app.desktopRecovery {
+		app.mu.Unlock()
+		return
+	}
+	if app.desktopAttempts > 0 && time.Since(app.desktopStarted) < desktopReadyWait {
+		app.mu.Unlock()
+		return
+	}
+	if app.desktopAttempts >= desktopMaxRetries {
+		app.desktopRecovery = true
+		app.mu.Unlock()
+		app.showDesktopRecovery()
+		return
+	}
+	app.desktopAttempts++
+	attempt := app.desktopAttempts
+	app.desktopStarted = time.Now()
+	app.desktopReady = false
+	app.mu.Unlock()
+
+	appendStatusCenterLog(app.root, fmt.Sprintf("desktop_navigation_attempt=%d", attempt))
+	app.browser.Navigate(desktopAttemptURL(target, attempt))
+}
+
+func desktopPageURL(statusURL string) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(statusURL))
 	if err != nil || parsed.Scheme != "http" ||
-		strings.ToLower(parsed.Hostname()) != "127.0.0.1" ||
 		parsed.Port() == "" {
-		return
+		return "", errors.New("本机服务地址无效")
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host != "127.0.0.1" && host != "localhost" && host != "::1" {
+		return "", errors.New("桌面页面必须使用回环接口")
 	}
 	parsed.Path = "/desktop/"
 	parsed.RawPath = ""
 	parsed.RawQuery = "platform=windows"
 	parsed.Fragment = ""
-	target := parsed.String()
-	if target == current || app.browser == nil {
-		return
+	return parsed.String(), nil
+}
+
+func desktopAttemptURL(target string, attempt int) string {
+	parsed, err := url.Parse(target)
+	if err != nil {
+		return target
 	}
-	app.browser.Navigate(target)
+	query := parsed.Query()
+	query.Set("reload", strconv.Itoa(attempt))
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
+}
+
+func (app *launcherApp) retryDesktopNavigation() {
 	app.mu.Lock()
-	app.desktopURL = target
+	app.desktopURL = ""
+	app.desktopStarted = time.Time{}
+	app.desktopAttempts = 0
+	app.desktopReady = false
+	app.desktopRecovery = false
 	app.mu.Unlock()
+	appendStatusCenterLog(app.root, "desktop_navigation_manual_retry")
+	app.navigateDesktop()
+}
+
+func (app *launcherApp) showDesktopRecovery() {
+	appendStatusCenterLog(app.root, "desktop_navigation_recovery_page")
+	app.browser.NavigateToString(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><style>
+html,body{height:100%;margin:0;font-family:"Microsoft YaHei UI",sans-serif;color:#123252;background:#f4f8fb}
+body{display:grid;place-items:center}.card{width:min(560px,calc(100% - 64px));padding:42px;border:1px solid #d8e3ec;
+border-radius:24px;background:white;box-shadow:0 18px 45px rgba(18,50,82,.10);text-align:center}
+.x{width:58px;height:58px;margin:auto;display:grid;place-items:center;border-radius:16px;color:white;font-size:25px;
+font-weight:800;background:linear-gradient(135deg,#31b8ae,#087c83)}h2{font-size:22px;margin:20px 0 10px}
+p{font-size:14px;line-height:1.8;color:#64748b}.actions{display:flex;justify-content:center;gap:12px;margin-top:24px;flex-wrap:wrap}
+button{border:1px solid #cad7e2;border-radius:10px;background:white;color:#123252;padding:11px 18px;font:600 14px inherit;cursor:pointer}
+button.primary{border-color:#118e91;background:#118e91;color:white}</style><body><main class="card"><div class="x">X</div>
+<h2>桌面界面暂未完成加载</h2><p>本地执行器仍在后台运行。你可以重新加载界面，或先在系统浏览器中打开同一套本机管理页面。</p>
+<div class="actions"><button class="primary" onclick="send('retry-desktop')">重新加载界面</button>
+<button onclick="send('open-desktop-browser')">在系统浏览器打开</button><button onclick="send('open-logs')">打开日志目录</button></div>
+</main><script>function send(action){window.external.invoke(JSON.stringify({action:action,payload:{}}))}</script></body></html>`)
 }
 
 func (app *launcherApp) handleWebMessage(raw string) {
@@ -567,6 +666,34 @@ func (app *launcherApp) handleWebMessage(raw string) {
 	action, _ := message["action"].(string)
 	payload, _ := message["payload"].(map[string]any)
 	switch action {
+	case "desktop-ready":
+		platform, _ := payload["platform"].(string)
+		path, _ := payload["path"].(string)
+		origin, _ := payload["origin"].(string)
+		app.mu.Lock()
+		expected, expectedErr := url.Parse(app.desktopTarget)
+		app.mu.Unlock()
+		if platform != "windows" || path != "/desktop/" || expectedErr != nil ||
+			origin != expected.Scheme+"://"+expected.Host {
+			return
+		}
+		app.mu.Lock()
+		app.desktopReady = true
+		app.desktopURL = app.desktopTarget
+		app.desktopRecovery = false
+		attempts := app.desktopAttempts
+		app.mu.Unlock()
+		appendStatusCenterLog(app.root, fmt.Sprintf("desktop_ready attempts=%d", attempts))
+	case "retry-desktop":
+		app.retryDesktopNavigation()
+	case "open-desktop-browser":
+		app.mu.Lock()
+		statusURL := app.statusURL
+		app.mu.Unlock()
+		target, err := desktopPageURL(statusURL)
+		if err == nil {
+			_ = exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", target).Start()
+		}
 	case "open-external":
 		rawURL, _ := payload["url"].(string)
 		target, err := url.Parse(strings.TrimSpace(rawURL))

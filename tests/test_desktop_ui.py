@@ -93,6 +93,13 @@ class DesktopUIContractTests(unittest.TestCase):
             self.javascript,
         )
 
+    def test_windows_launcher_receives_desktop_ready_handshake(self):
+        self.assertIn(
+            "nativeAction('desktop-ready',{platform:platform,"
+            "path:location.pathname,origin:location.origin})",
+            self.javascript,
+        )
+
 
 class DesktopUIRouteTests(unittest.TestCase):
     def setUp(self):
