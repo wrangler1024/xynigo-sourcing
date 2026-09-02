@@ -10,6 +10,7 @@
   var toastTimer = null;
   var authPollTimer = null;
   var refreshTimer = null;
+  var updateBusyStates = ['checking','downloading','verifying','extracting','installing','restarting'];
   var state = {
     authMode: 'checking',
     identity: null,
@@ -28,13 +29,13 @@
 
   var sampleStatus = {
     schemaVersion: 1,
-    version: '0.13.8',
+    version: '0.13.9',
     localPort: 8765,
     executor: {running:true, paired:true, displayName:'采购电脑 · 上海办公室 03', platform:platform, architecture:platform === 'mac' ? 'arm64' : 'amd64'},
     cloudChannel: {status:'online', lastPollAt:new Date(Date.now() - 18000).toISOString(), phase:'polling'},
     hubStudio: {connected:true, status:'ready'},
     tasks: {activeCount:0, safeParallel:true, items:[]},
-    update: {enabled:true, state:'current', installMode:'standard', currentVersion:'0.13.8', latestVersion:'0.13.8', message:'已是推荐版本'}
+    update: {enabled:true, state:'current', installMode:'standard', currentVersion:'0.13.9', latestVersion:'0.13.9', message:'已是推荐版本'}
   };
   var sampleConfig = {hubPort:6873, concurrency:2, envCreateWorkers:5, verifySampleCount:3, safeParallelTasks:true, configRevision:'e5a931'};
   var sampleSources = {
@@ -109,6 +110,50 @@
   }
   function canConfigure() {
     return roleInfo().superAdmin && hasPermission('system.integration.manage');
+  }
+  function updateBusy(update) {
+    return updateBusyStates.indexOf(String(update && update.state || '')) >= 0;
+  }
+  function formatBytes(value) {
+    var bytes = Math.max(0, Number(value || 0));
+    if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    if (bytes >= 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return Math.round(bytes) + ' B';
+  }
+  function updatePresentation(update, activeTasks) {
+    var status = String(update.state || 'idle');
+    var latest = String(update.latestVersion || '').trim();
+    var percent = Math.max(0, Math.min(100, Number(update.downloadPercent || 0)));
+    var view = {label:'等待检查', pill:'pill', button:'重新检查更新', icon:'refresh', disabled:false, progress:false, indeterminate:false, percent:0};
+    if (!update.enabled || status === 'disabled') return {label:'在线更新不可用', pill:'pill-muted', button:'在线更新不可用', icon:'refresh', disabled:true, progress:false, indeterminate:false, percent:0};
+    if (status === 'checking') view = {label:'正在检查发布清单', pill:'pill-blue', button:'正在检查…', icon:'refresh', disabled:true, progress:true, indeterminate:true, percent:8};
+    else if (status === 'available') view = {label:'新版本已就绪', pill:'pill-warn', button:latest ? '更新到 v' + latest : '立即更新', icon:'download', disabled:Number(activeTasks || 0) > 0, progress:false, indeterminate:false, percent:0};
+    else if (status === 'downloading') view = {label:'正在下载安装包', pill:'pill-blue', button:percent ? '正在下载 ' + percent + '%' : '正在连接下载服务器…', icon:'download', disabled:true, progress:true, indeterminate:!percent, percent:percent};
+    else if (status === 'verifying') view = {label:'正在校验安装包', pill:'pill-blue', button:'正在校验…', icon:'shield', disabled:true, progress:true, indeterminate:true, percent:76};
+    else if (status === 'extracting') view = {label:'正在准备安装', pill:'pill-blue', button:'正在准备安装…', icon:'download', disabled:true, progress:true, indeterminate:true, percent:84};
+    else if (status === 'installing') view = {label:'等待系统安装器', pill:'pill-blue', button:'等待安装完成…', icon:'download', disabled:true, progress:true, indeterminate:true, percent:92};
+    else if (status === 'restarting') view = {label:'正在重启并加载新版', pill:'pill-blue', button:'正在重启…', icon:'refresh', disabled:true, progress:true, indeterminate:true, percent:98};
+    else if (status === 'error') view = {label:'更新未完成', pill:'pill-danger', button:'重试检查更新', icon:'refresh', disabled:false, progress:false, indeterminate:false, percent:0};
+    else if (status === 'current') view = {label:'已是最新版本', pill:'pill-ok', button:'重新检查更新', icon:'refresh', disabled:false, progress:false, indeterminate:false, percent:100};
+    if (status === 'available' && Number(activeTasks || 0) > 0) view.button = '任务结束后更新';
+    return view;
+  }
+  function updatePanel(update, activeTasks) {
+    var view = updatePresentation(update, activeTasks);
+    var received = Number(update.downloadReceivedBytes || 0);
+    var total = Number(update.downloadTotalBytes || 0);
+    var speed = Number(update.downloadSpeedBytesPerSecond || 0);
+    var eta = update.downloadEtaSeconds;
+    var meta = [];
+    if (received || total) meta.push(formatBytes(received) + (total ? ' / ' + formatBytes(total) : ''));
+    if (speed) meta.push(formatBytes(speed) + '/s');
+    if (eta != null && Number(eta) > 0) meta.push('约 ' + Math.ceil(Number(eta)) + ' 秒');
+    var progress = view.progress ? '<div class="update-progress" role="status" aria-live="polite"><div class="update-progress-head"><b>' + esc(view.label) + '</b><span>' + (view.indeterminate ? '处理中' : Math.round(view.percent) + '%') + '</span></div><div class="update-progress-track' + (view.indeterminate ? ' indeterminate' : '') + '"><i style="width:' + view.percent + '%"></i></div>' + (meta.length ? '<div class="update-progress-meta">' + esc(meta.join(' · ')) + '</div>' : '') + '</div>' : '';
+    var message = '<div class="update-message ' + (String(update.state || '') === 'error' ? 'error' : '') + '">' + icon(String(update.state || '') === 'error' ? 'alert' : 'shield') + '<span>' + esc(update.message || view.label) + '</span></div>';
+    return '<div class="version-row"><div><p>当前版本</p><b>v' + esc(update.currentVersion || currentStatus().version || '—') + '</b></div><span class="pill ' + view.pill + '">' + esc(view.label) + '</span></div>' +
+      (update.latestVersion && update.latestVersion !== update.currentVersion ? '<div class="latest-version">可更新版本 <b>v' + esc(update.latestVersion) + '</b></div>' : '') +
+      progress + message + '<div class="platform-note">' + (platform === 'mac' ? 'macOS 系统安装器 · SHA-256 与发布策略校验 · 更新后自动重启' : 'Windows 静默安装器 · SHA-256 与发布策略校验 · 更新后自动重启') + '</div>' +
+      button(view.button,'check-update',view.icon,update.state === 'available' ? 'primary' : '',view.disabled);
   }
   function api(path, options) {
     return fetch(path, options || {}).then(function (response) {
@@ -387,7 +432,7 @@
       diagnosticRow('gauge','HubStudio Local API',(s.hubStudio && s.hubStudio.connected ? '客户端运行中 · v1 已认证' : '当前未连接') + ' · 端口 ' + ((state.config && state.config.hubPort) || '6873'),s.hubStudio && s.hubStudio.connected) +
       diagnosticRow('database','飞书只读访问',sourceCount + ' 个数据源已登记 · ' + (state.lark && state.lark.ready ? '企业应用连接正常' : '等待连接验证'),!!(state.lark && state.lark.ready)) +
       diagnosticRow('route','环境映射完整性',bindingCount + ' 个已映射 · 0 个冲突',true) + '</section>' +
-      '<div class="side-stack"><section class="card section-card">' + sectionTitle('download','软件更新','签名安装包由云端发布清单验证','') + '<div class="section-body"><div class="version-row"><div><p>当前版本</p><b>v' + esc(s.version || update.currentVersion || '—') + '</b></div><span class="pill ' + (update.state === 'available' ? 'pill-warn' : 'pill-ok') + '">' + (update.state === 'available' ? '有新版本' : '已是最新') + '</span></div><div class="platform-note">' + (platform === 'mac' ? 'Universal App · Apple 签名与公证校验 · 自动检查更新' : 'x86_64 · 数字签名校验 · WebView2 Evergreen · 自动检查更新') + '</div>' + button('重新检查更新','check-update','refresh','',false) + '</div></section>' +
+      '<div class="side-stack"><section class="card section-card">' + sectionTitle('download','软件更新','下载安装、校验、安装与重启状态实时同步','') + '<div class="section-body update-section">' + updatePanel(update,s.tasks && s.tasks.activeCount) + '</div></section>' +
       '<section class="card section-card">' + sectionTitle('terminal','日志与维护','敏感字段在写入日志前完成脱敏','') + '<div class="section-body maintenance-buttons">' + button('打开日志目录','open-logs','folder') + button('导出脱敏诊断包','export-diagnostics','download') + button('备份当前配置','backup-config','refresh') + '<p class="path-note">' + (platform === 'mac' ? '~/Library/Application Support/XynigoSourcing/' : '%LOCALAPPDATA%\\Programs\\Xynigo\\') + '</p></div></section></div></div>';
   }
   function renderWorkspace() {
@@ -404,12 +449,20 @@
     }
     return api('/executor-status.json').then(function (value) {
       state.status = value;
-      if (render !== false && state.identity && state.view === 'overview') renderWorkspace();
+      if (render !== false && state.identity && (state.view === 'overview' || state.view === 'diagnostics')) renderWorkspace();
       return value;
     }).catch(function (error) {
-      if (render !== false) showError(error);
+      if (render !== false && !updateBusy(currentStatus().update)) showError(error);
       return null;
     });
+  }
+  function scheduleStatusRefresh(delay) {
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(function tick() {
+      loadStatus(true).finally(function () {
+        scheduleStatusRefresh(updateBusy(currentStatus().update) ? 800 : 5000);
+      });
+    }, delay == null ? 5000 : delay);
   }
   function loadWorkspaceData() {
     if (previewRole) {
@@ -439,8 +492,7 @@
     state.authMode = 'signedIn';
     clearTimeout(authPollTimer);
     loadWorkspaceData();
-    clearInterval(refreshTimer);
-    refreshTimer = setInterval(function () { loadStatus(true); }, 5000);
+    scheduleStatusRefresh(1000);
   }
   function initializeAuth() {
     loadStatus(false);
@@ -633,7 +685,7 @@
     else if (action === 'go-diagnostics') { state.view='diagnostics'; renderWorkspace(); }
     else if (action === 'open-logs') nativeAction('open-logs');
     else if (action === 'restart-executor') nativeAction('restart-executor');
-    else if (action === 'check-update') nativeAction('check-update');
+    else if (action === 'check-update') { nativeAction('check-update'); scheduleStatusRefresh(250); }
     else if (action === 'run-diagnostics') { nativeAction('run-diagnostics'); showToast('完整诊断已启动，结果会写入脱敏日志'); }
     else if (action === 'export-diagnostics') nativeAction('export-diagnostics');
     else if (action === 'backup-config') nativeAction('backup-config');
@@ -669,6 +721,13 @@
   window.xynigoDesktop = {
     refresh:function () { loadStatus(); },
     notify:function (message) { showToast(message); },
+    setUpdateStatus:function (patch) {
+      if (!patch || typeof patch !== 'object') return;
+      var current = currentStatus();
+      state.status = Object.assign({}, current, {update:Object.assign({}, current.update || {}, patch)});
+      if (state.identity && (state.view === 'overview' || state.view === 'diagnostics')) renderWorkspace();
+      scheduleStatusRefresh(250);
+    },
     navigate:function (view) {
       if (['overview','settings','sources','diagnostics'].indexOf(view) < 0 || !state.identity) return;
       state.view = view;

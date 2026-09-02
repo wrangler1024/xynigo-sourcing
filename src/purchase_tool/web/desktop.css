@@ -237,6 +237,24 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
 .version-row { display:flex; justify-content:space-between; }
 .version-row p { margin:0; color:var(--muted); font-size:10px; }
 .version-row b { display:block; margin-top:5px; font-size:20px; }
+.latest-version { margin-top:10px; color:var(--muted); font-size:10px; }
+.latest-version b { color:#0f766e; }
+.update-section { display:grid; gap:12px; }
+.update-progress { padding:12px; border:1px solid #dbeafe; border-radius:12px; background:#f8fbff; }
+.update-progress-head { display:flex; align-items:center; justify-content:space-between; gap:12px; color:#334155; font-size:10px; }
+.update-progress-head span { color:#0f766e; font-variant-numeric:tabular-nums; }
+.update-progress-track { height:7px; margin-top:9px; overflow:hidden; border-radius:999px; background:#dbeafe; }
+.update-progress-track i { display:block; min-width:3px; height:100%; border-radius:inherit; background:linear-gradient(90deg,#14b8a6,#0891b2); transition:width .25s ease; }
+.update-progress-track.indeterminate i { width:38% !important; animation:update-indeterminate 1.15s ease-in-out infinite; }
+.update-progress-meta { margin-top:7px; color:#64748b; font-size:9px; font-variant-numeric:tabular-nums; }
+.update-message { display:flex; align-items:flex-start; gap:8px; min-height:18px; color:#475569; font-size:10px; line-height:1.5; }
+.update-message .icon { flex:0 0 15px; width:15px; height:15px; margin-top:1px; color:#0f9f8f; }
+.update-message.error { color:#b91c1c; }
+.update-message.error .icon { color:#dc2626; }
+.pill.pill-blue { background:#eff6ff; color:#2563eb; }
+.pill.pill-danger { background:#fef2f2; color:#dc2626; }
+.pill.pill-muted { background:#f1f5f9; color:#64748b; }
+@keyframes update-indeterminate { 0% { transform:translateX(-110%); } 55% { transform:translateX(95%); } 100% { transform:translateX(270%); } }
 .platform-note { margin-top:14px; padding:12px; border-radius:11px; background:#f8fafc; color:var(--muted); font-size:10px; }
 .maintenance-buttons { display:grid; gap:8px; }
 .maintenance-buttons .button { justify-content:flex-start; }

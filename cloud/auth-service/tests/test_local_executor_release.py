@@ -28,7 +28,7 @@ def test_windows_standard_installer_requires_signature_timestamp_and_publisher()
     valid = {
         "windows-x86_64": {
             "installMode": "standard_per_user",
-            "runtimeId": "0.13.8-testbuild001",
+            "runtimeId": "0.13.9-testbuild001",
             "authenticodeSigned": True,
             "authenticodeTimestamped": True,
             "publisher": "Example Trusted Publisher",
@@ -55,7 +55,7 @@ def test_standard_installer_requires_versioned_runtime_id(platform_key: str):
                 if platform_key.startswith("windows-")
                 else "standard_system_application"
             ),
-            "runtimeId": "0.13.8-build001",
+            "runtimeId": "0.13.9-build001",
             "authenticodeSigned": True,
             "authenticodeTimestamped": True,
             "publisher": "Example Trusted Publisher",
@@ -76,7 +76,7 @@ def test_macos_standard_installer_requires_full_gatekeeper_evidence():
     valid = {
         "macos-arm64": {
             "installMode": "standard_system_application",
-            "runtimeId": "0.13.8-testbuild001",
+            "runtimeId": "0.13.9-testbuild001",
             "developerIdInstallerSigned": True,
             "notarized": True,
             "stapled": True,
@@ -117,12 +117,12 @@ def test_unsigned_standard_installer_requires_explicit_internal_test_gate():
     platforms = {
         "windows-x86_64": {
             "installMode": "standard_per_user",
-            "runtimeId": "0.13.8-testbuild001",
+            "runtimeId": "0.13.9-testbuild001",
             "internalUnsignedTest": True,
         },
         "macos-arm64": {
             "installMode": "standard_system_application",
-            "runtimeId": "0.13.8-testbuild001",
+            "runtimeId": "0.13.9-testbuild001",
             "internalUnsignedTest": True,
         },
     }
@@ -146,7 +146,7 @@ def test_standard_installer_can_keep_a_valid_green_fallback(monkeypatch):
     platform = {
         "label": "Windows x86_64",
         "installMode": "standard_per_user",
-        "runtimeId": "0.13.8-testbuild001",
+        "runtimeId": "0.13.9-testbuild001",
         "assetName": "Xynigo_Setup.exe",
         "sha256": "c" * 64,
         "size": 2,

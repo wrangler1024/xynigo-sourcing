@@ -610,6 +610,26 @@ func (app *launcherApp) notifyWeb(message string) {
 	})
 }
 
+func (app *launcherApp) publishUpdateState(state string, message string, percent int) {
+	if app.browser == nil {
+		return
+	}
+	payload := map[string]any{
+		"state":   state,
+		"stage":   state,
+		"message": message,
+	}
+	if percent >= 0 {
+		payload["downloadPercent"] = percent
+	}
+	encoded, _ := json.Marshal(payload)
+	app.mw.Synchronize(func() {
+		app.browser.Eval(
+			"window.xynigoDesktop&&window.xynigoDesktop.setUpdateStatus(" +
+				string(encoded) + ")")
+	})
+}
+
 func (app *launcherApp) openLogs() {
 	directory := filepath.Join(app.root, "日志")
 	if _, err := os.Stat(directory); errors.Is(err, os.ErrNotExist) {
@@ -778,6 +798,11 @@ func (app *launcherApp) handleUpdateAction() {
 	app.updateButton.SetText(busyText)
 	app.updateButton.SetEnabled(false)
 	_ = app.trayUpdate.SetEnabled(false)
+	if action == "install" {
+		go app.publishUpdateState("downloading", "更新请求已确认，正在连接下载服务器…", 0)
+	} else {
+		go app.publishUpdateState("checking", "正在检查云端发布清单…", -1)
+	}
 	controlPath := updateCheckPath
 	if action == "install" {
 		controlPath = updateInstallPath
@@ -789,11 +814,13 @@ func (app *launcherApp) handleUpdateAction() {
 		app.mu.Unlock()
 		if err != nil {
 			appendStatusCenterLog(app.root, "update_"+action+"_failed: "+err.Error())
+			app.publishUpdateState("error", err.Error(), -1)
 			app.mw.Synchronize(func() {
 				walk.MsgBox(app.mw, "在线更新失败", err.Error(), walk.MsgBoxIconError)
 			})
 		} else {
 			appendStatusCenterLog(app.root, "update_"+action+"_accepted")
+			app.notifyWeb("更新请求已接受，页面将实时显示处理进度")
 		}
 		app.refreshStatus()
 	}()

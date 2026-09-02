@@ -12,9 +12,9 @@ from urllib.parse import quote
 from . import __version__
 
 
-RELEASE_VERSION = "0.13.8"
+RELEASE_VERSION = "0.13.9"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-02T09:19:39Z"
+RELEASE_PUBLISHED_AT = "2026-09-02T09:38:00Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -29,8 +29,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.13.8-025670e824db",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.8.exe",
+        "runtimeId": "0.13.9-d3d9223a7468",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.9.exe",
         "sha256": "f1ed56e166a27ec7e02044a55e950586d9341eecc358a3762abfce5a253a3514",
         "size": 15_158_644,
         "installMode": "standard_per_user",
@@ -48,8 +48,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.13.8-025670e824db",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.8.pkg",
+        "runtimeId": "0.13.9-d3d9223a7468",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.9.pkg",
         "sha256": "51305aff73662bf24efd76fb7d0af9c1f7e777698b7670648bbff8d712daa274",
         "size": 11_422_380,
         "installMode": "standard_system_application",
@@ -222,11 +222,11 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "数据源注册表新增安全详情、认领、名称与启用状态编辑。",
-            "已有数据源可重新选择飞书表格和工作表，替换后保留默认值与环境映射。",
-            "团队数据源可设置或取消团队默认，重新验证会执行真实飞书只读检查。",
-            "Spreadsheet Token、Sheet ID 和表格内容继续禁止在前端回显。",
-            "Windows 与 macOS 继续支持认证下载、SHA-256 校验、平台安装与自动重启。",
+            "修复诊断页更新状态只刷新数据却不重绘，点击更新后立即显示反馈。",
+            "新增下载百分比、已下载大小、实时速度和预计剩余时间。",
+            "校验、准备安装、等待系统安装器和重启阶段均有持续状态提示。",
+            "Windows 与 macOS 共用同一套更新进度界面和错误重试交互。",
+            "更新忙态改为 0.8 秒刷新，空闲时恢复 5 秒轮询。",
             "稳定通道强制平台签名门槛；内部未签名包仅允许 test 通道。",
         ],
     }

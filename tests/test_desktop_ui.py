@@ -71,6 +71,19 @@ class DesktopUIContractTests(unittest.TestCase):
             self.assertIn(marker, self.javascript)
         self.assertNotIn('已提交只读验证', self.javascript)
 
+    def test_update_panel_renders_live_cross_platform_progress(self):
+        for marker in (
+                'updatePresentation', 'updatePanel', 'update-progress-track',
+                'downloadReceivedBytes', 'downloadSpeedBytesPerSecond',
+                'downloadEtaSeconds', '等待系统安装器',
+                'Windows 静默安装器', 'setUpdateStatus',
+                "state.view === 'diagnostics'", 'scheduleStatusRefresh(250)'):
+            self.assertIn(marker, self.javascript + self.css)
+        self.assertIn(
+            "updateBusy(currentStatus().update) ? 800 : 5000",
+            self.javascript,
+        )
+
 
 class DesktopUIRouteTests(unittest.TestCase):
     def setUp(self):

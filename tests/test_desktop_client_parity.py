@@ -74,6 +74,14 @@ class DesktopClientParityTests(unittest.TestCase):
         self.assertIn('sender.orderOut(nil)', self.macos)
         self.assertIn('NSStatusBar.system.statusItem', self.macos)
 
+    def test_both_platforms_publish_native_update_transitions_to_web_ui(self):
+        for source in (self.windows, self.macos):
+            self.assertIn('publishUpdateState', source)
+            self.assertIn('setUpdateStatus', source)
+            self.assertIn('更新请求已接受，页面将实时显示处理进度', source)
+        self.assertIn('安装包已通过校验，请在系统“安装器”中确认安装。',
+                      self.macos)
+
 
 if __name__ == '__main__':
     unittest.main()

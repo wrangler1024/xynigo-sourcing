@@ -275,6 +275,24 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         )
     }
 
+    private func publishUpdateState(
+        _ state: String,
+        _ message: String,
+        percent: Int? = nil
+    ) {
+        var payload: [String: Any] = [
+            "state": state,
+            "stage": state,
+            "message": message,
+        ]
+        if let percent { payload["downloadPercent"] = percent }
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let encoded = String(data: data, encoding: .utf8) else { return }
+        webView?.evaluateJavaScript(
+            "window.xynigoDesktop && window.xynigoDesktop.setUpdateStatus(\(encoded))"
+        )
+    }
+
     private func buildMainMenu() {
         let mainMenu = NSMenu()
         let appItem = NSMenuItem()
@@ -1004,6 +1022,10 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
             alert.addButton(withTitle: "取消")
             if alert.runModal() != .alertFirstButtonReturn { return }
         }
+        publishUpdateState(
+            install ? "downloading" : "checking",
+            install ? "更新请求已确认，正在连接下载服务器…" : "正在检查云端发布清单…",
+            percent: install ? 0 : nil)
         postControl(install ? "executor-control/update/install" : "executor-control/update/check")
     }
 
@@ -1020,7 +1042,11 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
                 self.updateInFlight = false
                 let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
                 if error != nil || ![200, 202].contains(statusCode) {
+                    self.publishUpdateState(
+                        "error", "本地执行器未接受更新请求，请重试。")
                     self.showAlert("更新请求失败", "本地执行器未接受更新请求。", .warning)
+                } else {
+                    self.notifyWeb("更新请求已接受，页面将实时显示处理进度")
                 }
                 self.refreshStatus()
             }
@@ -1036,6 +1062,8 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         statusDetail.stringValue = "请在“安装器”中确认安装；完成后客户端会自动重启。"
         updateButton.title = "等待安装完成…"
         updateButton.isEnabled = false
+        publishUpdateState(
+            "installing", "安装包已通过校验，请在系统“安装器”中确认安装。")
         pollInstalledRuntime(
             previousRuntimeID: previousRuntimeID,
             deadline: Date().addingTimeInterval(15 * 60))
@@ -1056,6 +1084,8 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         if Date() >= deadline {
             waitingForUpdateInstall = false
             updateInFlight = false
+            publishUpdateState(
+                "error", "系统安装器未在 15 分钟内完成，原版本已恢复运行。")
             showAlert(
                 "更新尚未完成",
                 "系统安装器未在 15 分钟内完成。原版本将继续运行，可稍后重新检查更新。",
@@ -1072,6 +1102,8 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
 
     private func relaunchInstalledUpdate() {
         do {
+            publishUpdateState(
+                "restarting", "安装完成，正在重启并加载新版本。")
             let marker = try dataDirectory().appendingPathComponent(
                 "skip-update-once")
             try Data("1\n".utf8).write(to: marker, options: .atomic)
