@@ -14,7 +14,7 @@ from . import __version__
 
 
 REPOSITORY = "wrangler1024/xynigo-sourcing"
-RELEASE_VERSION = "0.13.5"
+RELEASE_VERSION = "0.13.6"
 RELEASE_CHANNEL = "test"
 RELEASE_PUBLISHED_AT = "2026-09-02T03:43:21Z"
 
@@ -31,8 +31,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.13.5-6dfb4fe46a55",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.5.exe",
+        "runtimeId": "0.13.6-cumulative",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.6.exe",
         "sha256": "abad6da33f03e5babf3a204ad0166c0b85b1b03f41c17e584147b4256d18a401",
         "size": 15_039_988,
         "installMode": "standard_per_user",
@@ -43,7 +43,7 @@ _PLATFORMS = {
         "trayMenu": True,
         "launcherFile": "Xynigo.exe",
         "greenFallback": {
-            "assetName": "Xynigo_Sourcing_Windows_20260902_v0.13.5.zip",
+            "assetName": "Xynigo_Sourcing_Windows_20260902_v0.13.6.zip",
             "sha256": "e9b1d41c5f445bbb3b79442775d3d22630c2ecf54d401e4d8f627dd896a38818",
             "size": 18_446_451,
             "installMode": "green_package",
@@ -57,7 +57,7 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.5.pkg",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.6.pkg",
         "sha256": "ca853c717bcdfe11084404f963ec3094ef7c005cafc5eb2328c35e02836d9b74",
         "size": 11_568_677,
         "installMode": "standard_system_application",
@@ -67,7 +67,7 @@ _PLATFORMS = {
         "notarized": False,
         "stapled": False,
         "greenFallback": {
-            "assetName": "Xynigo_Sourcing_macOS_arm64_20260902_v0.13.5.zip",
+            "assetName": "Xynigo_Sourcing_macOS_arm64_20260902_v0.13.6.zip",
             "sha256": "e373fe7cc2bb697be1edb10e3ffb4327531c4355f64fbac807f221b13a2dfed6",
             "size": 10_453_092,
             "installMode": "green_package",

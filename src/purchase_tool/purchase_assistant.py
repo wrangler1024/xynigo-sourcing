@@ -20,9 +20,19 @@ RECIPIENT_FIELDS = (
     '收货人城市', '收货人州/省', '邮编',
 )
 REQUIRED_RECIPIENT_INDEXES = (0, 1, 2, 4, 5, 6)
+SOURCE_REQUIRED_HEADERS = (
+    '销售订单号',
+    *tuple(RECIPIENT_FIELDS[index] for index in REQUIRED_RECIPIENT_INDEXES),
+)
 CELL_RANGE_PATTERN = re.compile(
     r'^[A-Z]{1,3}[1-9]\d*:[A-Z]{1,3}(?:[1-9]\d*)?$')
+SPREADSHEET_TOKEN_PATTERN = re.compile(r'^[A-Za-z0-9_-]{10,200}$')
+SHEET_ID_PATTERN = re.compile(r'^[A-Za-z0-9_-]{1,100}$')
 ALLOWED_API_HOSTS = {'open.feishu.cn', 'open.larksuite.com'}
+ALLOWED_SHEET_HOST_SUFFIXES = ('.feishu.cn', '.larksuite.com')
+SOURCE_MODES = {'personal', 'team'}
+SOURCE_INSPECTION_TTL_SECONDS = 300.0
+MAX_SOURCE_COLUMNS = 702
 
 
 class PurchaseAssistantError(RuntimeError):
@@ -39,6 +49,58 @@ def normalize(value: Any) -> str:
     if isinstance(value, float) and value.is_integer():
         value = int(value)
     return re.sub(r'\s+', ' ', str(value)).strip()
+
+
+def column_name(index: int) -> str:
+    """Return the 1-based spreadsheet column name without accepting 0."""
+    try:
+        value = int(index)
+    except (TypeError, ValueError) as exc:
+        raise PurchaseAssistantError('工作表列数无效') from exc
+    if value < 1 or value > MAX_SOURCE_COLUMNS:
+        raise PurchaseAssistantError('工作表列数超出支持范围')
+    result = ''
+    while value:
+        value, remainder = divmod(value - 1, 26)
+        result = chr(65 + remainder) + result
+    return result
+
+
+def parse_spreadsheet_url(value: Any) -> str:
+    """Extract a Sheets token while refusing non-Feishu origins."""
+    raw = str(value or '').strip()
+    if len(raw) > 2048:
+        raise PurchaseAssistantError('飞书表格链接过长')
+    parsed = urlparse(raw)
+    hostname = str(parsed.hostname or '').casefold()
+    allowed_host = any(
+        hostname == suffix[1:] or hostname.endswith(suffix)
+        for suffix in ALLOWED_SHEET_HOST_SUFFIXES)
+    if (parsed.scheme != 'https' or not allowed_host or parsed.username
+            or parsed.password):
+        raise PurchaseAssistantError('请粘贴企业飞书普通电子表格链接')
+    match = re.fullmatch(r'/sheets/([A-Za-z0-9_-]{10,200})/?', parsed.path)
+    if not match or not SPREADSHEET_TOKEN_PATTERN.fullmatch(match.group(1)):
+        raise PurchaseAssistantError('飞书表格链接格式无效')
+    return match.group(1)
+
+
+def validate_source_headers(values: Any) -> tuple[list[str], str]:
+    """Validate only row 1 and derive the smallest stable read range."""
+    if not isinstance(values, list) or not values or not isinstance(values[0], list):
+        raise PurchaseAssistantError('目标工作表缺少第 1 行表头')
+    headers = [normalize(value) for value in values[0]]
+    while headers and not headers[-1]:
+        headers.pop()
+    if not headers or any(not header for header in headers):
+        raise PurchaseAssistantError('目标工作表表头为空或不连续')
+    if len(set(headers)) != len(headers):
+        raise PurchaseAssistantError('目标工作表存在重复表头')
+    missing = [field for field in SOURCE_REQUIRED_HEADERS if field not in headers]
+    if missing:
+        raise PurchaseAssistantError(
+            '目标工作表缺少必要字段：' + '、'.join(missing))
+    return headers, 'A1:%s' % column_name(len(headers))
 
 
 def rows_from_values(values: Any) -> list[dict[str, str]]:
@@ -193,8 +255,7 @@ class PurchaseAssistantConfig:
             or 'https://open.feishu.cn/open-apis').rstrip('/')
         ttl = float(mapping.get('purchaseAssistantCacheTtlSeconds') or 8)
         if not token or not sheet_id:
-            raise PurchaseAssistantError(
-                '未配置采购执行协作表 token 和 sheet_id')
+            raise PurchaseAssistantError('尚未配置收件信息数据源')
         if not CELL_RANGE_PATTERN.fullmatch(cell_range):
             raise PurchaseAssistantError('采购助手表格范围格式无效')
         parsed = urlparse(api_base)
@@ -290,37 +351,98 @@ class PurchaseAssistantSheetProvider(object):
         self._token_expires_at = now + max(1, expires_in - 120)
         return token
 
-    def _fetch_values(self, retry_auth=True):
-        expression = '%s!%s' % (
-            self.config.sheet_id, self.config.cell_range)
-        url = (self.config.api_base + '/sheets/v2/spreadsheets/'
-               + quote(self.config.spreadsheet_token, safe='') + '/values/'
-               + quote(expression, safe=''))
+    def _request_authorized(self, method, url, retry_auth=True):
         try:
             response = self.transport.request_json(
-                'GET', url,
+                method, url,
                 headers={'Authorization': 'Bearer ' + self._get_token()})
         except TokenRejectedError:
             if not retry_auth:
                 raise PurchaseAssistantError('飞书应用无权读取采购协作表')
             self._invalidate_token()
-            return self._fetch_values(retry_auth=False)
+            return self._request_authorized(method, url, retry_auth=False)
         code = response.get('code')
         if code != 0:
             if code in {99991661, 99991663, 99991668} and retry_auth:
                 self._invalidate_token()
-                return self._fetch_values(retry_auth=False)
+                return self._request_authorized(
+                    method, url, retry_auth=False)
             if code in {91403, 99991672}:
                 raise PurchaseAssistantError(
                     '飞书应用无表格读取权限，请检查 API 权限和文档共享范围')
             raise PurchaseAssistantError(
                 '飞书表格 API 返回错误（code=%s）' % code)
+        return response
+
+    def _fetch_values_for(self, sheet_id, cell_range):
+        sheet = normalize(sheet_id)
+        wanted_range = normalize(cell_range).upper()
+        if not SHEET_ID_PATTERN.fullmatch(sheet):
+            raise PurchaseAssistantError('飞书工作表标识无效')
+        if not CELL_RANGE_PATTERN.fullmatch(wanted_range):
+            raise PurchaseAssistantError('采购助手表格范围格式无效')
+        expression = '%s!%s' % (sheet, wanted_range)
+        url = (self.config.api_base + '/sheets/v2/spreadsheets/'
+               + quote(self.config.spreadsheet_token, safe='') + '/values/'
+               + quote(expression, safe=''))
+        response = self._request_authorized('GET', url)
         data = response.get('data') or {}
         value_range = data.get('valueRange') or data.get('value_range') or {}
         values = value_range.get('values')
         if not isinstance(values, list):
             raise PurchaseAssistantError('飞书表格 API 未返回单元格数据')
         return values
+
+    def _fetch_values(self):
+        return self._fetch_values_for(
+            self.config.sheet_id, self.config.cell_range)
+
+    def list_sheets(self):
+        url = (self.config.api_base + '/sheets/v3/spreadsheets/'
+               + quote(self.config.spreadsheet_token, safe='')
+               + '/sheets/query')
+        response = self._request_authorized('GET', url)
+        data = response.get('data') or {}
+        result = []
+        for item in data.get('sheets') or ():
+            if (not isinstance(item, dict)
+                    or item.get('resource_type') != 'sheet'):
+                continue
+            sheet_id = normalize(item.get('sheet_id'))
+            name = normalize(item.get('title'))
+            grid = item.get('grid_properties') or {}
+            if (not SHEET_ID_PATTERN.fullmatch(sheet_id) or not name
+                    or not isinstance(grid, dict)):
+                continue
+            try:
+                row_count = max(0, int(grid.get('row_count') or 0))
+                column_count = max(
+                    1, min(MAX_SOURCE_COLUMNS,
+                           int(grid.get('column_count') or 1)))
+            except (TypeError, ValueError):
+                continue
+            result.append({
+                'sheetId': sheet_id,
+                'sheetName': name,
+                'rowCount': row_count,
+                'columnCount': column_count,
+                'hidden': bool(item.get('hidden')),
+            })
+        if not result:
+            raise PurchaseAssistantError('该飞书电子表格没有可用工作表')
+        return result
+
+    def validate_sheet(self, sheet_id, column_count):
+        last_column = column_name(max(
+            1, min(MAX_SOURCE_COLUMNS, int(column_count or 1))))
+        values = self._fetch_values_for(
+            sheet_id, 'A1:%s1' % last_column)
+        headers, cell_range = validate_source_headers(values)
+        return {
+            'headers': headers,
+            'cellRange': cell_range,
+            'headerCount': len(headers),
+        }
 
     def _read_rows(self):
         with self._lock:
@@ -342,19 +464,183 @@ class PurchaseAssistantSheetProvider(object):
 
 
 class PurchaseAssistantService(object):
-    def __init__(self, provider=None, config_error=''):
+    def __init__(self, provider=None, config_error='', credential_getter=None,
+                 source_config=None, transport_factory=None):
         self.provider = provider
         self.config_error = str(config_error or '')
+        self.credential_getter = credential_getter
+        self.source_config = dict(source_config or {})
+        self.transport_factory = transport_factory
         self.session_token = secrets.token_urlsafe(32)
+        self._source_lock = threading.RLock()
+        self._inspections = {}
+        self._validated_targets = {}
 
     @classmethod
     def from_runtime_config(cls, mapping, credential_getter):
+        service = cls(
+            credential_getter=credential_getter,
+            source_config=mapping,
+        )
+        service.reconfigure(mapping)
+        return service
+
+    def _transport(self):
+        return (self.transport_factory()
+                if callable(self.transport_factory) else None)
+
+    def _provider_for_config(self, config):
+        return PurchaseAssistantSheetProvider(
+            config,
+            self.credential_getter,
+            transport=self._transport(),
+        )
+
+    def reconfigure(self, mapping):
+        self.source_config = dict(mapping or {})
         try:
-            config = PurchaseAssistantConfig.from_runtime_config(mapping)
-            return cls(PurchaseAssistantSheetProvider(
-                config, credential_getter))
+            config = PurchaseAssistantConfig.from_runtime_config(
+                self.source_config)
+            self.provider = self._provider_for_config(config)
+            self.config_error = ''
         except (PurchaseAssistantError, TypeError, ValueError) as exc:
-            return cls(config_error=str(exc))
+            self.provider = None
+            self.config_error = str(exc)
+        with self._source_lock:
+            self._inspections.clear()
+            self._validated_targets.clear()
+
+    @staticmethod
+    def _profile(mapping, mode):
+        title = 'Personal' if mode == 'personal' else 'Team'
+        prefix = 'purchaseAssistant' + title
+        token = normalize(mapping.get(prefix + 'SpreadsheetToken'))
+        sheet_id = normalize(mapping.get(prefix + 'SheetId'))
+        cell_range = normalize(mapping.get(prefix + 'CellRange')).upper()
+        sheet_name = normalize(mapping.get(prefix + 'SheetName'))
+        return {
+            'mode': mode,
+            'configured': bool(token and sheet_id and cell_range),
+            'label': ('个人速填表' if mode == 'personal'
+                      else '采购执行协作表'),
+            'sheetName': sheet_name,
+            'cellRange': cell_range,
+            'managed': mode == 'team',
+        }
+
+    def source_status(self):
+        mapping = self.source_config
+        mode = normalize(
+            mapping.get('purchaseAssistantSourceMode')).casefold()
+        if mode not in SOURCE_MODES:
+            mode = 'team'
+        personal = self._profile(mapping, 'personal')
+        team = self._profile(mapping, 'team')
+        active = personal if mode == 'personal' else team
+        return {
+            'mode': mode,
+            'configured': bool(self.configured and active['configured']),
+            'active': dict(active),
+            'personal': personal,
+            'team': team,
+        }
+
+    def _clean_source_sessions(self):
+        cutoff = time.monotonic() - SOURCE_INSPECTION_TTL_SECONDS
+        self._inspections = {
+            key: value for key, value in self._inspections.items()
+            if float(value.get('createdAt') or 0) >= cutoff
+        }
+        self._validated_targets = {
+            key: value for key, value in self._validated_targets.items()
+            if float(value.get('createdAt') or 0) >= cutoff
+        }
+
+    def inspect_source(self, spreadsheet_url):
+        if not callable(self.credential_getter):
+            raise PurchaseAssistantError('小犀代采飞书企业应用凭证尚未配置')
+        token = parse_spreadsheet_url(spreadsheet_url)
+        api_base = normalize(
+            self.source_config.get('purchaseAssistantApiBase')
+            or 'https://open.feishu.cn/open-apis').rstrip('/')
+        ttl = float(
+            self.source_config.get('purchaseAssistantCacheTtlSeconds') or 8)
+        provider = self._provider_for_config(PurchaseAssistantConfig(
+            spreadsheet_token=token,
+            sheet_id='inspection',
+            cell_range='A1:A1',
+            api_base=api_base,
+            cache_ttl_seconds=ttl,
+        ))
+        sheets = provider.list_sheets()
+        inspection_id = secrets.token_urlsafe(18)
+        safe_sheets = []
+        selections = {}
+        for item in sheets:
+            selection_id = secrets.token_urlsafe(12)
+            selections[selection_id] = dict(item)
+            safe_sheets.append({
+                'selectionId': selection_id,
+                'sheetName': item['sheetName'],
+                'rowCount': item['rowCount'],
+                'columnCount': item['columnCount'],
+                'hidden': item['hidden'],
+            })
+        with self._source_lock:
+            self._clean_source_sessions()
+            self._inspections[inspection_id] = {
+                'createdAt': time.monotonic(),
+                'provider': provider,
+                'selections': selections,
+            }
+        return {
+            'inspectionId': inspection_id,
+            'sheets': safe_sheets,
+            'expiresInSeconds': int(SOURCE_INSPECTION_TTL_SECONDS),
+        }
+
+    def validate_source(self, inspection_id, selection_id):
+        inspection_key = normalize(inspection_id)
+        selection_key = normalize(selection_id)
+        with self._source_lock:
+            self._clean_source_sessions()
+            inspection = self._inspections.get(inspection_key)
+            if not inspection:
+                raise PurchaseAssistantError('表格读取结果已失效，请重新读取工作表')
+            sheet = (inspection.get('selections') or {}).get(selection_key)
+            if not sheet:
+                raise PurchaseAssistantError('请选择有效的工作表')
+            provider = inspection['provider']
+        checked = provider.validate_sheet(
+            sheet['sheetId'], sheet['columnCount'])
+        validation_id = secrets.token_urlsafe(18)
+        with self._source_lock:
+            self._validated_targets[validation_id] = {
+                'createdAt': time.monotonic(),
+                'spreadsheetToken': provider.config.spreadsheet_token,
+                'sheetId': sheet['sheetId'],
+                'sheetName': sheet['sheetName'],
+                'cellRange': checked['cellRange'],
+            }
+        return {
+            'validationId': validation_id,
+            'sheetName': sheet['sheetName'],
+            'cellRange': checked['cellRange'],
+            'headerCount': checked['headerCount'],
+            'requiredFieldCount': len(SOURCE_REQUIRED_HEADERS),
+        }
+
+    def consume_validated_target(self, validation_id):
+        key = normalize(validation_id)
+        with self._source_lock:
+            self._clean_source_sessions()
+            target = self._validated_targets.pop(key, None)
+        if not target:
+            raise PurchaseAssistantError('数据源校验结果已失效，请重新校验')
+        return {
+            key: value for key, value in target.items()
+            if key != 'createdAt'
+        }
 
     @property
     def configured(self):

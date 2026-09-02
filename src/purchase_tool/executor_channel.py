@@ -18,7 +18,7 @@ import sys
 import tempfile
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from . import __version__
 from .cloud_auth import (
@@ -64,11 +64,17 @@ TERMINAL_LEASE_ERROR_CODES = frozenset({
 CHANNEL_STATE_FIELDS = frozenset({
     'executorId', 'displayName', 'platform', 'architecture', 'pairedAt',
     'lastPollAt', 'lastErrorCode', 'status', 'configRevision',
+    'connectionPhase', 'connectionAttempt', 'nextRetryAt', 'connectedAt',
 })
 
 
 def _now_iso():
     return datetime.now(timezone.utc).isoformat()
+
+
+def _future_iso(seconds):
+    return (datetime.now(timezone.utc)
+            + timedelta(seconds=max(0.0, float(seconds)))).isoformat()
 
 
 def default_executor_state_path():
@@ -332,6 +338,7 @@ class ExecutorChannelWorker(object):
         backoff = 1.0
         consecutive_failures = 0
         credential = None
+        handshake_required = True
         user_session_ready = False
         user_session_refresh_at = 0.0
         while not self.stop_event.is_set():
@@ -356,6 +363,9 @@ class ExecutorChannelWorker(object):
                             self.state_store.update(
                                 status=desired_status,
                                 lastErrorCode=desired_error,
+                                connectionPhase='',
+                                connectionAttempt=0,
+                                nextRetryAt=None,
                             )
                         # An already-running executor must notice a later
                         # xynigo://pair process. Missing unpaired credentials
@@ -364,10 +374,20 @@ class ExecutorChannelWorker(object):
                         self._wait(30.0 if paired else 1.0)
                         continue
                     self.state_store.update(
-                        status='connecting', lastErrorCode='')
+                        status='connecting', lastErrorCode='',
+                        connectionPhase='authorizing',
+                        connectionAttempt=1,
+                        nextRetryAt=None)
+                    handshake_required = True
                 if (callable(self.user_session_installer)
                         and (not user_session_ready
                              or time.monotonic() >= user_session_refresh_at)):
+                    self.state_store.update(
+                        status=('reconnecting' if consecutive_failures
+                                else 'connecting'),
+                        connectionPhase='authorizing',
+                        connectionAttempt=consecutive_failures + 1,
+                        nextRetryAt=None)
                     issued = self.client.issue_user_session(credential)
                     self.user_session_installer(issued['sessionToken'])
                     user_session_ready = True
@@ -377,12 +397,30 @@ class ExecutorChannelWorker(object):
                 cfg = self.config_getter()
                 revision = config_revision(self.public_config_getter(cfg))
                 hub_ok, _hub_message = self.hub_status_getter(False)
+                if handshake_required:
+                    self.state_store.update(
+                        status=('reconnecting' if consecutive_failures
+                                else 'connecting'),
+                        connectionPhase='handshake',
+                        connectionAttempt=consecutive_failures + 1,
+                        nextRetryAt=None)
                 response = self.client.poll(
                     credential, revision,
-                    'ready' if hub_ok else 'offline', wait_seconds=25)
+                    'ready' if hub_ok else 'offline',
+                    # A zero-wait poll confirms the secure channel within one
+                    # network round trip.  Only an already-confirmed channel
+                    # may enter the 25-second task long poll.
+                    wait_seconds=0 if handshake_required else 25)
+                previous_state = self.state_store.load()
+                connected_at = (previous_state.get('connectedAt')
+                                if previous_state.get('status') == 'online'
+                                else None) or _now_iso()
                 self.state_store.update(
                     status='online', lastPollAt=_now_iso(),
-                    lastErrorCode='', configRevision=revision)
+                    lastErrorCode='', configRevision=revision,
+                    connectionPhase='listening', connectionAttempt=0,
+                    nextRetryAt=None, connectedAt=connected_at)
+                handshake_required = False
                 backoff = 1.0
                 consecutive_failures = 0
                 task = response.get('task') if isinstance(response, dict) else None
@@ -395,27 +433,41 @@ class ExecutorChannelWorker(object):
                         self.credential_store.clear()
                     finally:
                         self.state_store.update(
-                            status='revoked', lastErrorCode=exc.code)
+                            status='revoked', lastErrorCode=exc.code,
+                            connectionPhase='', connectionAttempt=0,
+                            nextRetryAt=None)
                     credential = None
+                    handshake_required = True
                     user_session_ready = False
                     user_session_refresh_at = 0.0
                     backoff = 1.0
                     self._wait(1.0)
                     continue
                 consecutive_failures += 1
+                handshake_required = True
+                retry_delay = (
+                    backoff + self.random() * min(1.0, backoff / 4.0))
                 self.state_store.update(
                     status=('offline' if consecutive_failures >= 3
                             else 'reconnecting'),
-                    lastErrorCode=exc.code)
-                self._wait(backoff + self.random() * min(1.0, backoff / 4.0))
+                    lastErrorCode=exc.code,
+                    connectionPhase='retry_wait',
+                    connectionAttempt=consecutive_failures,
+                    nextRetryAt=_future_iso(retry_delay))
+                self._wait(retry_delay)
                 backoff = min(30.0, backoff * 2.0)
             except Exception:
                 consecutive_failures += 1
+                handshake_required = True
+                retry_delay = backoff
                 self.state_store.update(
                     status=('error' if consecutive_failures >= 3
                             else 'reconnecting'),
-                    lastErrorCode='executor_channel_failed')
-                self._wait(backoff)
+                    lastErrorCode='executor_channel_failed',
+                    connectionPhase='retry_wait',
+                    connectionAttempt=consecutive_failures,
+                    nextRetryAt=_future_iso(retry_delay))
+                self._wait(retry_delay)
                 backoff = min(30.0, backoff * 2.0)
 
     def _execute_task(self, credential, task):
@@ -453,6 +505,10 @@ class ExecutorChannelWorker(object):
                     renewal_error[:] = [exc]
                     if (isinstance(exc, LocalAuthError)
                             and exc.code in TERMINAL_LEASE_ERROR_CODES):
+                        # The task can no longer report durable progress.  Ask
+                        # the local orchestrator to stop after its current
+                        # atomic row instead of continuing a large invisible
+                        # batch.  Transient network failures keep retrying.
                         cancellation_event.set()
                         return
                     retrying = True
@@ -653,6 +709,10 @@ def pair_executor(pairing_code, display_name=None, client=None,
             'lastErrorCode': '',
             'status': 'paired',
             'configRevision': None,
+            'connectionPhase': '',
+            'connectionAttempt': 0,
+            'nextRetryAt': None,
+            'connectedAt': None,
         })
     except Exception:
         try:

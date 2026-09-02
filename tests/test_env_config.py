@@ -162,6 +162,25 @@ class ConfigTests(unittest.TestCase):
         self.assertNotIn('proxyLink', public)
         self.assertNotIn(TEST_PROXY, rendered)
 
+    def test_legacy_purchase_assistant_target_migrates_to_private_team_profile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / 'config.json'
+            config_path.write_text(json.dumps({
+                'purchaseAssistantSpreadsheetToken': 'SpreadsheetTeam123',
+                'purchaseAssistantSheetId': 'sheet_team',
+                'purchaseAssistantCellRange': 'A1:AQ',
+            }), encoding='utf-8')
+            with patch.object(main_module, 'CONFIG_PATH', str(config_path)):
+                loaded = load_config()
+        self.assertEqual(loaded['purchaseAssistantSourceMode'], 'team')
+        self.assertEqual(
+            loaded['purchaseAssistantTeamSpreadsheetToken'],
+            'SpreadsheetTeam123')
+        self.assertEqual(loaded['purchaseAssistantTeamSheetId'], 'sheet_team')
+        rendered = json.dumps(public_config(loaded), ensure_ascii=False)
+        self.assertNotIn('SpreadsheetTeam123', rendered)
+        self.assertNotIn('purchaseAssistant', rendered)
+
     def test_cloud_executor_config_contains_only_runtime_and_safety_fields(self):
         cfg = default_config()
         cfg.update({

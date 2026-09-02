@@ -94,7 +94,8 @@ from .lark_runtime import build_buyer_ledger_service
 from .operation_result_sync import OperationResultSyncQueue
 from .procurement_import import ProcurementImportService
 from .purchase_assistant import (
-    PurchaseAssistantError, PurchaseAssistantService)
+    PurchaseAssistantConfig, PurchaseAssistantError,
+    PurchaseAssistantService)
 from .redaction import scrub_text
 from .resource_center import ResourceCenterService
 from .shein_query import QueryOrchestrator, normalize_site
@@ -135,6 +136,15 @@ CONFIG_FIELDS = frozenset({
     'purchaseAssistantSpreadsheetToken', 'purchaseAssistantSheetId',
     'purchaseAssistantCellRange', 'purchaseAssistantApiBase',
     'purchaseAssistantCacheTtlSeconds',
+    'purchaseAssistantSourceMode',
+    'purchaseAssistantPersonalSpreadsheetToken',
+    'purchaseAssistantPersonalSheetId',
+    'purchaseAssistantPersonalCellRange',
+    'purchaseAssistantPersonalSheetName',
+    'purchaseAssistantTeamSpreadsheetToken',
+    'purchaseAssistantTeamSheetId',
+    'purchaseAssistantTeamCellRange',
+    'purchaseAssistantTeamSheetName',
 })
 CONFIG_REQUEST_FIELDS = (CONFIG_FIELDS - {
     'larkBuyerBaseToken', 'larkBuyerTableId',
@@ -143,7 +153,16 @@ CONFIG_REQUEST_FIELDS = (CONFIG_FIELDS - {
     'larkBuyerTargetVerified',
     'purchaseAssistantSpreadsheetToken', 'purchaseAssistantSheetId',
     'purchaseAssistantCellRange', 'purchaseAssistantApiBase',
-    'purchaseAssistantCacheTtlSeconds'}) | {'proxyClear'}
+    'purchaseAssistantCacheTtlSeconds',
+    'purchaseAssistantSourceMode',
+    'purchaseAssistantPersonalSpreadsheetToken',
+    'purchaseAssistantPersonalSheetId',
+    'purchaseAssistantPersonalCellRange',
+    'purchaseAssistantPersonalSheetName',
+    'purchaseAssistantTeamSpreadsheetToken',
+    'purchaseAssistantTeamSheetId',
+    'purchaseAssistantTeamCellRange',
+    'purchaseAssistantTeamSheetName'}) | {'proxyClear'}
 
 # Cloud device configuration is intentionally narrower than the legacy local
 # config.json contract. Business choices belong to each environment/purchase
@@ -258,6 +277,12 @@ def default_config():
     legacy_tag = os.environ.get('XYNIGO_PURCHASE_TAG', '')
     mx_tag = os.environ.get('XYNIGO_PURCHASE_TAG_MX', legacy_tag)
     us_tag = os.environ.get('XYNIGO_PURCHASE_TAG_US', '')
+    assistant_token = os.environ.get(
+        'XYNIGO_PURCHASE_ASSISTANT_SPREADSHEET_TOKEN', '')
+    assistant_sheet_id = os.environ.get(
+        'XYNIGO_PURCHASE_ASSISTANT_SHEET_ID', '')
+    assistant_cell_range = os.environ.get(
+        'XYNIGO_PURCHASE_ASSISTANT_CELL_RANGE', 'A1:AQ')
     return {
         'hubPort': DEFAULT_PORT,
         'serverPort': 8765,
@@ -285,14 +310,20 @@ def default_config():
         # HubStudio purchase assistant reads one ordinary Sheet through the
         # same enterprise-app credential held in Keychain/DPAPI. These route
         # coordinates are local-only and never exposed through public config.
-        'purchaseAssistantSpreadsheetToken': os.environ.get(
-            'XYNIGO_PURCHASE_ASSISTANT_SPREADSHEET_TOKEN', ''),
-        'purchaseAssistantSheetId': os.environ.get(
-            'XYNIGO_PURCHASE_ASSISTANT_SHEET_ID', ''),
-        'purchaseAssistantCellRange': os.environ.get(
-            'XYNIGO_PURCHASE_ASSISTANT_CELL_RANGE', 'A1:AQ'),
+        'purchaseAssistantSpreadsheetToken': assistant_token,
+        'purchaseAssistantSheetId': assistant_sheet_id,
+        'purchaseAssistantCellRange': assistant_cell_range,
         'purchaseAssistantApiBase': 'https://open.feishu.cn/open-apis',
         'purchaseAssistantCacheTtlSeconds': 8,
+        'purchaseAssistantSourceMode': 'team',
+        'purchaseAssistantPersonalSpreadsheetToken': '',
+        'purchaseAssistantPersonalSheetId': '',
+        'purchaseAssistantPersonalCellRange': '',
+        'purchaseAssistantPersonalSheetName': '',
+        'purchaseAssistantTeamSpreadsheetToken': assistant_token,
+        'purchaseAssistantTeamSheetId': assistant_sheet_id,
+        'purchaseAssistantTeamCellRange': assistant_cell_range,
+        'purchaseAssistantTeamSheetName': '',
     }
 
 
@@ -320,6 +351,59 @@ def effective_proxy_link(cfg):
     return str((cfg or {}).get('proxyLink') or '').strip() or DEFAULT_PROXY_LINK
 
 
+def normalize_purchase_assistant_profiles(cfg):
+    """Migrate the legacy single target into two non-public source profiles."""
+    cfg = dict(cfg or {})
+    mode = str(cfg.get('purchaseAssistantSourceMode') or '').strip().lower()
+    if mode not in {'personal', 'team'}:
+        mode = 'team'
+    cfg['purchaseAssistantSourceMode'] = mode
+
+    active_token = str(
+        cfg.get('purchaseAssistantSpreadsheetToken') or '').strip()
+    active_sheet = str(cfg.get('purchaseAssistantSheetId') or '').strip()
+    active_range = str(
+        cfg.get('purchaseAssistantCellRange') or 'A1:AQ').strip().upper()
+    prefix = ('purchaseAssistantPersonal' if mode == 'personal'
+              else 'purchaseAssistantTeam')
+    if (active_token and active_sheet
+            and not str(cfg.get(prefix + 'SpreadsheetToken') or '').strip()
+            and not str(cfg.get(prefix + 'SheetId') or '').strip()):
+        cfg[prefix + 'SpreadsheetToken'] = active_token
+        cfg[prefix + 'SheetId'] = active_sheet
+        cfg[prefix + 'CellRange'] = active_range
+
+    for profile_mode, fallback_range in (
+            ('Personal', 'A1:H'), ('Team', 'A1:AQ')):
+        profile_prefix = 'purchaseAssistant' + profile_mode
+        token = str(
+            cfg.get(profile_prefix + 'SpreadsheetToken') or '').strip()
+        sheet_id = str(cfg.get(profile_prefix + 'SheetId') or '').strip()
+        cell_range = str(
+            cfg.get(profile_prefix + 'CellRange') or '').strip().upper()
+        if token and sheet_id and not cell_range:
+            cfg[profile_prefix + 'CellRange'] = fallback_range
+
+    selected_prefix = ('purchaseAssistantPersonal'
+                       if mode == 'personal' else 'purchaseAssistantTeam')
+    selected_token = str(
+        cfg.get(selected_prefix + 'SpreadsheetToken') or '').strip()
+    selected_sheet = str(
+        cfg.get(selected_prefix + 'SheetId') or '').strip()
+    selected_range = str(
+        cfg.get(selected_prefix + 'CellRange') or '').strip().upper()
+    if selected_token and selected_sheet and selected_range:
+        cfg['purchaseAssistantSpreadsheetToken'] = selected_token
+        cfg['purchaseAssistantSheetId'] = selected_sheet
+        cfg['purchaseAssistantCellRange'] = selected_range
+    else:
+        cfg['purchaseAssistantSpreadsheetToken'] = ''
+        cfg['purchaseAssistantSheetId'] = ''
+        cfg['purchaseAssistantCellRange'] = selected_range or (
+            'A1:H' if mode == 'personal' else 'A1:AQ')
+    return cfg
+
+
 def load_config():
     cfg = default_config()
     try:
@@ -330,7 +414,7 @@ def load_config():
                         if key in CONFIG_FIELDS})
     except Exception:
         pass
-    return cfg
+    return normalize_purchase_assistant_profiles(cfg)
 
 
 def save_config(cfg):
@@ -378,7 +462,16 @@ def public_config(cfg):
                   'purchaseAssistantSheetId',
                   'purchaseAssistantCellRange',
                   'purchaseAssistantApiBase',
-                  'purchaseAssistantCacheTtlSeconds'}}
+                  'purchaseAssistantCacheTtlSeconds',
+                  'purchaseAssistantSourceMode',
+                  'purchaseAssistantPersonalSpreadsheetToken',
+                  'purchaseAssistantPersonalSheetId',
+                  'purchaseAssistantPersonalCellRange',
+                  'purchaseAssistantPersonalSheetName',
+                  'purchaseAssistantTeamSpreadsheetToken',
+                  'purchaseAssistantTeamSheetId',
+                  'purchaseAssistantTeamCellRange',
+                  'purchaseAssistantTeamSheetName'}}
     result['proxyConfigured'] = bool(effective_proxy_link(cfg))
     result['proxySource'] = ('custom' if str(
         (cfg or {}).get('proxyLink') or '').strip() else 'default')
@@ -923,6 +1016,45 @@ class AppState(object):
                     pass
             return dict(cfg)
 
+    def apply_purchase_assistant_source(self, mode, validation_id=''):
+        """Switch the local read-only Sheet target without exposing its IDs."""
+        selected_mode = str(mode or '').strip().lower()
+        if selected_mode not in {'personal', 'team'}:
+            raise PurchaseAssistantError('收件信息数据源类型无效')
+        with self.config_lock:
+            cfg = dict(self.cfg)
+            profile = ('purchaseAssistantPersonal'
+                       if selected_mode == 'personal'
+                       else 'purchaseAssistantTeam')
+            if selected_mode == 'personal' and str(
+                    validation_id or '').strip():
+                target = self.purchase_assistant.consume_validated_target(
+                    validation_id)
+                cfg[profile + 'SpreadsheetToken'] = target[
+                    'spreadsheetToken']
+                cfg[profile + 'SheetId'] = target['sheetId']
+                cfg[profile + 'CellRange'] = target['cellRange']
+                cfg[profile + 'SheetName'] = target['sheetName']
+            token = str(
+                cfg.get(profile + 'SpreadsheetToken') or '').strip()
+            sheet_id = str(cfg.get(profile + 'SheetId') or '').strip()
+            cell_range = str(
+                cfg.get(profile + 'CellRange') or '').strip().upper()
+            if not token or not sheet_id or not cell_range:
+                raise PurchaseAssistantError(
+                    '当前数据源尚未配置，请先读取并校验表格'
+                    if selected_mode == 'personal' else
+                    '管理员尚未下发团队采购执行协作表')
+            cfg['purchaseAssistantSourceMode'] = selected_mode
+            cfg['purchaseAssistantSpreadsheetToken'] = token
+            cfg['purchaseAssistantSheetId'] = sheet_id
+            cfg['purchaseAssistantCellRange'] = cell_range
+            PurchaseAssistantConfig.from_runtime_config(cfg)
+            save_config(cfg)
+            self.cfg = cfg
+            self.purchase_assistant.reconfigure(cfg)
+            return self.purchase_assistant.source_status()
+
     def _build_hub_adapter(self):
         self.hub_api_key_error = ''
         try:
@@ -1092,6 +1224,10 @@ class AppState(object):
                 'status': channel_status,
                 'lastPollAt': channel.get('lastPollAt'),
                 'lastErrorCode': str(channel.get('lastErrorCode') or ''),
+                'phase': str(channel.get('connectionPhase') or ''),
+                'attempt': int(channel.get('connectionAttempt') or 0),
+                'nextRetryAt': channel.get('nextRetryAt'),
+                'connectedAt': channel.get('connectedAt'),
             },
             'hubStudio': {
                 'connected': bool(hub_ok),
@@ -2652,10 +2788,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._purchase_assistant_json({
                 'ok': True,
                 'service': 'xynigo-sourcing',
-                'apiVersion': 2,
+                'apiVersion': 3,
                 'features': {
                     'taskSearch': True,
                     'recipientRead': True,
+                    'sourceConfiguration': True,
                     'hubStudioAutomation': True,
                     'hubStudioEnvironmentControl': True,
                 },
@@ -2690,6 +2827,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._purchase_assistant_json({
                     'ok': True,
                     'hubStudio': STATE.hub_capabilities(force=True),
+                })
+            if path == PURCHASE_ASSISTANT_API_PREFIX + '/data-source':
+                return self._purchase_assistant_json({
+                    'ok': True,
+                    'source': service.source_status(),
                 })
             if path == PURCHASE_ASSISTANT_API_PREFIX + '/tasks':
                 query = parse_qs(parsed.query, keep_blank_values=True)
@@ -2787,6 +2929,47 @@ class Handler(BaseHTTPRequestHandler):
                 'code': 'request_invalid',
                 'error': '请求数据格式无效',
             }, 400)
+        if path.startswith(PURCHASE_ASSISTANT_API_PREFIX + '/data-source/'):
+            try:
+                if path == (PURCHASE_ASSISTANT_API_PREFIX
+                            + '/data-source/inspect'):
+                    return self._purchase_assistant_json({
+                        'ok': True,
+                        **service.inspect_source(body.get('spreadsheetUrl')),
+                    })
+                if path == (PURCHASE_ASSISTANT_API_PREFIX
+                            + '/data-source/validate'):
+                    return self._purchase_assistant_json({
+                        'ok': True,
+                        **service.validate_source(
+                            body.get('inspectionId'),
+                            body.get('selectionId')),
+                    })
+                if path == (PURCHASE_ASSISTANT_API_PREFIX
+                            + '/data-source/save'):
+                    source = STATE.apply_purchase_assistant_source(
+                        body.get('mode'), body.get('validationId'))
+                    return self._purchase_assistant_json({
+                        'ok': True,
+                        'source': source,
+                    })
+                return self._purchase_assistant_json({
+                    'ok': False,
+                    'code': 'not_found',
+                    'error': '接口不存在',
+                }, 404)
+            except PurchaseAssistantError as exc:
+                return self._purchase_assistant_json({
+                    'ok': False,
+                    'code': 'source_invalid',
+                    'error': str(exc),
+                }, 422)
+            except Exception:
+                return self._purchase_assistant_json({
+                    'ok': False,
+                    'code': 'source_configuration_failed',
+                    'error': '收件信息数据源配置失败',
+                }, 500)
         capability = STATE.hub_capabilities(force=True)
         if not capability.get('available'):
             return self._purchase_assistant_json({

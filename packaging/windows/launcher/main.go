@@ -76,6 +76,10 @@ type localStatus struct {
 		Status        string `json:"status"`
 		LastPollAt    string `json:"lastPollAt"`
 		LastErrorCode string `json:"lastErrorCode"`
+		Phase         string `json:"phase"`
+		Attempt       int    `json:"attempt"`
+		NextRetryAt   string `json:"nextRetryAt"`
+		ConnectedAt   string `json:"connectedAt"`
 	} `json:"cloudChannel"`
 	HubStudio struct {
 		Connected bool   `json:"connected"`
@@ -782,7 +786,11 @@ func (app *launcherApp) renderStatus(status *localStatus, err error) {
 		app.deviceState.SetTextColor(amber)
 		app.setPairingVisible(true)
 	}
-	app.heartbeatValue.SetText(relativeTime(status.CloudChannel.LastPollAt))
+	if status.CloudChannel.Status == "online" {
+		app.heartbeatValue.SetText(relativeTime(status.CloudChannel.LastPollAt))
+	} else {
+		app.heartbeatValue.SetText(lastOnlineText(status.CloudChannel.LastPollAt))
+	}
 	cloudText := cloudStatusText(status.CloudChannel.Status)
 	app.cloudValue.SetText(cloudText)
 	if unpaired {
@@ -793,14 +801,14 @@ func (app *launcherApp) renderStatus(status *localStatus, err error) {
 		app.statusDetail.SetText("在云端工作台生成一次性配对码，然后在下方完成绑定。")
 		_ = app.trayStatus.SetText("● 等待设备配对")
 	} else if status.CloudChannel.Status == "online" && status.Tasks.ActiveCount > 0 {
-		app.cloudNote.SetText("心跳正常")
+		app.cloudNote.SetText("安全通道已建立")
 		app.cloudSignal.SetTextColor(green)
 		app.statusSignal.SetTextColor(blue)
 		app.statusTitle.SetText("本地执行器正在执行任务")
 		app.statusDetail.SetText("云端通道与 HubStudio 正常，当前任务将在本机安全执行。")
 		_ = app.trayStatus.SetText(fmt.Sprintf("● 正在执行 %d 个任务", status.Tasks.ActiveCount))
 	} else if status.CloudChannel.Status == "online" {
-		app.cloudNote.SetText("心跳正常")
+		app.cloudNote.SetText("安全通道已建立")
 		app.cloudSignal.SetTextColor(green)
 		app.statusSignal.SetTextColor(green)
 		app.statusTitle.SetText("本地执行器在线")
@@ -810,12 +818,33 @@ func (app *launcherApp) renderStatus(status *localStatus, err error) {
 			app.statusDetail.SetText("云端通道正常；HubStudio 尚未连接，请先启动并登录 HubStudio。")
 		}
 		_ = app.trayStatus.SetText("● 本地执行器在线")
+	} else if status.CloudChannel.Status == "connecting" || status.CloudChannel.Status == "reconnecting" || status.CloudChannel.Status == "paired" {
+		app.cloudNote.SetText(connectionPhaseText(
+			status.CloudChannel.Phase,
+			status.CloudChannel.Attempt,
+			status.CloudChannel.NextRetryAt))
+		app.cloudSignal.SetTextColor(amber)
+		app.statusSignal.SetTextColor(amber)
+		if status.CloudChannel.Status == "reconnecting" {
+			app.statusTitle.SetText("正在恢复云端连接")
+		} else {
+			app.statusTitle.SetText("正在连接云端工作台")
+		}
+		app.statusDetail.SetText(connectionPhaseDetail(
+			status.CloudChannel.Phase,
+			status.CloudChannel.NextRetryAt))
+		_ = app.trayStatus.SetText("● 正在连接云端")
 	} else {
-		app.cloudNote.SetText("正在自动重连")
+		app.cloudNote.SetText(connectionPhaseText(
+			status.CloudChannel.Phase,
+			status.CloudChannel.Attempt,
+			status.CloudChannel.NextRetryAt))
 		app.cloudSignal.SetTextColor(red)
 		app.statusSignal.SetTextColor(red)
 		app.statusTitle.SetText("云端连接已中断")
-		app.statusDetail.SetText("本机服务保持运行；网络恢复后会自动重连，不会重复执行写任务。")
+		app.statusDetail.SetText(connectionPhaseDetail(
+			status.CloudChannel.Phase,
+			status.CloudChannel.NextRetryAt))
 		_ = app.trayStatus.SetText("● 本地执行器离线")
 	}
 	_ = app.trayCloud.SetText("云端：" + strings.TrimPrefix(cloudText, "云端"))
@@ -947,6 +976,56 @@ func activeTaskNote(status *localStatus) string {
 	return fmt.Sprintf("%s · %02d:%02d", label, minutes, seconds)
 }
 
+func connectionPhaseText(phase string, attempt int, nextRetryAt string) string {
+	if attempt < 1 {
+		attempt = 1
+	}
+	switch phase {
+	case "authorizing":
+		return fmt.Sprintf("验证设备身份 · 第 %d 次", attempt)
+	case "handshake":
+		return fmt.Sprintf("建立安全通道 · 第 %d 次", attempt)
+	case "retry_wait":
+		if seconds, ok := retryCountdown(nextRetryAt); ok {
+			return fmt.Sprintf("%d 秒后自动重试 · 已尝试 %d 次", seconds, attempt)
+		}
+		return fmt.Sprintf("准备自动重试 · 已尝试 %d 次", attempt)
+	case "listening":
+		return "安全通道已建立"
+	default:
+		return "正在准备连接"
+	}
+}
+
+func connectionPhaseDetail(phase string, nextRetryAt string) string {
+	switch phase {
+	case "authorizing":
+		return "连接进度 1/3：正在读取并验证这台设备的配对身份。"
+	case "handshake":
+		return "连接进度 2/3：正在快速握手；成功后会立即进入云端任务监听。"
+	case "retry_wait":
+		if seconds, ok := retryCountdown(nextRetryAt); ok {
+			return fmt.Sprintf("本机服务和现有任务不受影响；将在 %d 秒后自动重试云端连接。", seconds)
+		}
+		return "本机服务和现有任务不受影响；正在准备自动重试云端连接。"
+	default:
+		return "本机服务保持运行；网络恢复后会自动重连，不会重复执行写任务。"
+	}
+}
+
+func retryCountdown(value string) (int, bool) {
+	parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(value))
+	if err != nil {
+		return 0, false
+	}
+	remaining := time.Until(parsed)
+	if remaining <= 0 {
+		return 0, true
+	}
+	seconds := int((remaining + time.Second - 1) / time.Second)
+	return seconds, true
+}
+
 func cloudStatusText(status string) string {
 	switch status {
 	case "online":
@@ -984,6 +1063,14 @@ func relativeTime(value string) string {
 		return fmt.Sprintf("心跳：%d 秒前", int(delta.Seconds()))
 	}
 	return fmt.Sprintf("心跳：%d 分钟前", int(delta.Minutes()))
+}
+
+func lastOnlineText(value string) string {
+	text := relativeTime(value)
+	if text == "等待云端心跳" {
+		return "等待首次握手"
+	}
+	return strings.Replace(text, "心跳：", "上次在线：", 1)
 }
 
 func (app *launcherApp) ensureExecutor() {

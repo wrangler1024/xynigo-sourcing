@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
+from unittest.mock import patch
 
 import purchase_tool.main as main_module
 from purchase_tool.main import Handler
@@ -16,8 +17,10 @@ from purchase_tool.purchase_assistant import (
     PurchaseAssistantService,
     PurchaseAssistantSheetProvider,
     find_recipient,
+    parse_spreadsheet_url,
     rows_to_tasks,
     search_tasks,
+    validate_source_headers,
 )
 
 
@@ -108,6 +111,20 @@ class FakeTransport(object):
                 'tenant_access_token': 'tenant-token-for-test',
                 'expire': 7200,
             }
+        if url.endswith('/sheets/query'):
+            return {
+                'code': 0,
+                'data': {'revision': 1, 'sheets': [{
+                    'resource_type': 'sheet',
+                    'sheet_id': 'sheet_test',
+                    'title': '收件信息（粘贴区）',
+                    'grid_properties': {
+                        'row_count': 500,
+                        'column_count': 20,
+                    },
+                    'hidden': False,
+                }]},
+            }
         row = sample_row()
         headers_row = [key for key in row if key != '__row_number']
         return {
@@ -156,14 +173,116 @@ class PurchaseAssistantUnitTests(unittest.TestCase):
     def test_missing_sheet_coordinates_disable_service_safely(self):
         service = PurchaseAssistantService.from_runtime_config({}, lambda: None)
         self.assertFalse(service.configured)
-        with self.assertRaisesRegex(PurchaseAssistantError, 'token'):
+        with self.assertRaisesRegex(PurchaseAssistantError, '收件信息数据源'):
             service.search('ORDER')
+
+    def test_personal_sheet_inspection_uses_opaque_ids_and_validates_headers(self):
+        transport = FakeTransport()
+        credentials = SimpleNamespace(
+            app_id='cli_test', app_secret='secret-for-test')
+        mapping = {
+            'purchaseAssistantSourceMode': 'team',
+            'purchaseAssistantSpreadsheetToken': 'spreadsheet-team',
+            'purchaseAssistantSheetId': 'sheet_team',
+            'purchaseAssistantCellRange': 'A1:AQ',
+            'purchaseAssistantTeamSpreadsheetToken': 'spreadsheet-team',
+            'purchaseAssistantTeamSheetId': 'sheet_team',
+            'purchaseAssistantTeamCellRange': 'A1:AQ',
+            'purchaseAssistantTeamSheetName': '采购执行协作区',
+        }
+        service = PurchaseAssistantService(
+            credential_getter=lambda: credentials,
+            source_config=mapping,
+            transport_factory=lambda: transport,
+        )
+        service.reconfigure(mapping)
+        inspected = service.inspect_source(
+            'https://tenant.feishu.cn/sheets/SpreadsheetPersonal123')
+        self.assertEqual(len(inspected['sheets']), 1)
+        self.assertNotIn('sheetId', inspected['sheets'][0])
+        self.assertNotIn('spreadsheetToken', inspected)
+        checked = service.validate_source(
+            inspected['inspectionId'],
+            inspected['sheets'][0]['selectionId'])
+        self.assertEqual(checked['cellRange'], 'A1:Q')
+        self.assertNotIn('sheetId', checked)
+        target = service.consume_validated_target(checked['validationId'])
+        self.assertEqual(target['spreadsheetToken'], 'SpreadsheetPersonal123')
+        self.assertEqual(target['sheetId'], 'sheet_test')
+
+    def test_sheet_url_and_header_contract_fail_closed(self):
+        self.assertEqual(
+            parse_spreadsheet_url(
+                'https://tenant.feishu.cn/sheets/SpreadsheetPersonal123'),
+            'SpreadsheetPersonal123')
+        with self.assertRaisesRegex(PurchaseAssistantError, '企业飞书'):
+            parse_spreadsheet_url(
+                'https://example.com/sheets/SpreadsheetPersonal123')
+        with self.assertRaisesRegex(PurchaseAssistantError, '缺少必要字段'):
+            validate_source_headers([['销售订单号', '收货人姓名']])
+
+    def test_app_state_saves_personal_profile_and_can_switch_back_to_team(self):
+        transport = FakeTransport()
+        credentials = SimpleNamespace(
+            app_id='cli_test', app_secret='secret-for-test')
+        mapping = {
+            'purchaseAssistantSourceMode': 'team',
+            'purchaseAssistantSpreadsheetToken': 'SpreadsheetTeam123',
+            'purchaseAssistantSheetId': 'sheet_team',
+            'purchaseAssistantCellRange': 'A1:AQ',
+            'purchaseAssistantApiBase': 'https://open.feishu.cn/open-apis',
+            'purchaseAssistantCacheTtlSeconds': 8,
+            'purchaseAssistantTeamSpreadsheetToken': 'SpreadsheetTeam123',
+            'purchaseAssistantTeamSheetId': 'sheet_team',
+            'purchaseAssistantTeamCellRange': 'A1:AQ',
+            'purchaseAssistantTeamSheetName': '采购执行协作区',
+        }
+        service = PurchaseAssistantService(
+            credential_getter=lambda: credentials,
+            source_config=mapping,
+            transport_factory=lambda: transport,
+        )
+        service.reconfigure(mapping)
+        session_token = service.session_token
+        inspected = service.inspect_source(
+            'https://tenant.feishu.cn/sheets/SpreadsheetPersonal123')
+        checked = service.validate_source(
+            inspected['inspectionId'],
+            inspected['sheets'][0]['selectionId'])
+        state = SimpleNamespace(
+            config_lock=threading.RLock(),
+            cfg=dict(mapping),
+            purchase_assistant=service,
+        )
+        with patch.object(main_module, 'save_config') as save:
+            personal = main_module.AppState.apply_purchase_assistant_source(
+                state, 'personal', checked['validationId'])
+            self.assertEqual(personal['mode'], 'personal')
+            self.assertEqual(
+                state.cfg['purchaseAssistantPersonalCellRange'], 'A1:Q')
+            self.assertEqual(service.session_token, session_token)
+            team = main_module.AppState.apply_purchase_assistant_source(
+                state, 'team')
+        self.assertEqual(team['mode'], 'team')
+        self.assertEqual(
+            state.cfg['purchaseAssistantSpreadsheetToken'],
+            'SpreadsheetTeam123')
+        self.assertEqual(save.call_count, 2)
 
 
 class PurchaseAssistantHttpTests(unittest.TestCase):
     def setUp(self):
         self.original_state = main_module.STATE
-        self.service = PurchaseAssistantService(provider=FakeProvider())
+        self.service = PurchaseAssistantService(
+            provider=FakeProvider(),
+            source_config={
+                'purchaseAssistantSourceMode': 'team',
+                'purchaseAssistantTeamSpreadsheetToken': 'spreadsheet-team',
+                'purchaseAssistantTeamSheetId': 'sheet-team',
+                'purchaseAssistantTeamCellRange': 'A1:AQ',
+                'purchaseAssistantTeamSheetName': '采购执行协作区',
+            },
+        )
         self.hub = FakeHubControls()
         self.hub_capability = {
             'available': True,
@@ -179,6 +298,8 @@ class PurchaseAssistantHttpTests(unittest.TestCase):
         main_module.STATE.hub = self.hub
         main_module.STATE.hub_capabilities = (
             lambda force=False: dict(self.hub_capability))
+        main_module.STATE.apply_purchase_assistant_source = (
+            lambda mode, validation_id='': self.service.source_status())
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         self.thread = threading.Thread(
             target=self.server.serve_forever, daemon=True)
@@ -254,9 +375,10 @@ class PurchaseAssistantHttpTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(health['configured'])
         self.assertEqual(health['service'], 'xynigo-sourcing')
-        self.assertEqual(health['apiVersion'], 2)
+        self.assertEqual(health['apiVersion'], 3)
         self.assertTrue(health['features']['taskSearch'])
         self.assertTrue(health['features']['recipientRead'])
+        self.assertTrue(health['features']['sourceConfiguration'])
         self.assertTrue(health['features']['hubStudioAutomation'])
         self.assertNotIn('recipient', health)
         self._pair()
@@ -324,6 +446,29 @@ class PurchaseAssistantHttpTests(unittest.TestCase):
             headers)
         self.assertEqual(recipient_status, 200)
         self.assertEqual(recipient['recipient']['postalCode'], '36000')
+
+    def test_data_source_status_and_save_do_not_depend_on_hubstudio(self):
+        self.hub_capability.update({
+            'available': False,
+            'reasonCode': 'hubstudio_local_api_disabled',
+            'message': 'HubStudio Local API 未开启',
+        })
+        token = self._pair()
+        headers = {
+            'Origin': EXTENSION_ORIGIN,
+            'X-Xynigo-Client': 'chrome-extension',
+            'Authorization': 'Bearer ' + token,
+        }
+        status, _response_headers, payload = self._get(
+            '/api/purchase-assistant/v1/data-source', headers)
+        self.assertEqual(status, 200)
+        self.assertEqual(payload['source']['mode'], 'team')
+        self.assertNotIn('spreadsheetToken', json.dumps(payload))
+        status, _response_headers, payload = self._post(
+            '/api/purchase-assistant/v1/data-source/save',
+            {'mode': 'team'}, headers)
+        self.assertEqual(status, 200)
+        self.assertTrue(payload['ok'])
 
     def test_mock_environment_open_close_and_batch_use_restricted_bridge(self):
         token = self._pair()

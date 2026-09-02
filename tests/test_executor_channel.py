@@ -102,6 +102,10 @@ class ExecutorChannelStateTests(unittest.TestCase):
                 'lastErrorCode': '',
                 'status': 'paired',
                 'configRevision': None,
+                'connectionPhase': '',
+                'connectionAttempt': 0,
+                'nextRetryAt': None,
+                'connectedAt': None,
             })
             loaded = store.load()
             self.assertEqual(set(loaded), CHANNEL_STATE_FIELDS)
@@ -585,6 +589,28 @@ class ExecutorChannelLifecycleTests(unittest.TestCase):
             self.assertEqual(len(client.poll_calls), 2)
             self.assertEqual(store.loads, 1)
 
+    def test_first_poll_is_fast_handshake_then_enters_long_poll(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_store = ExecutorChannelStateStore(
+                os.path.join(directory, 'executor-channel.json'))
+            client = FakeExecutorClient()
+            worker = self.build_worker(
+                MemoryAuthSessionStore(DEVICE_CREDENTIAL), state_store, client)
+            client.poll_callback = lambda: (
+                worker.stop_event.set()
+                if len(client.poll_calls) >= 2 else None)
+            self.assertTrue(worker.start())
+            worker.thread.join(timeout=2)
+            self.assertFalse(worker.thread.is_alive())
+            self.assertEqual(
+                [call[3] for call in client.poll_calls], [0, 25])
+            state = state_store.load()
+            self.assertEqual(state['status'], 'online')
+            self.assertEqual(state['connectionPhase'], 'listening')
+            self.assertEqual(state['connectionAttempt'], 0)
+            self.assertIsNone(state['nextRetryAt'])
+            self.assertTrue(state['connectedAt'])
+
     def test_worker_installs_owner_session_before_first_poll(self):
         with tempfile.TemporaryDirectory() as directory:
             state_store = ExecutorChannelStateStore(
@@ -640,6 +666,8 @@ class ExecutorChannelLifecycleTests(unittest.TestCase):
             worker.thread.join(timeout=2)
             self.assertFalse(worker.thread.is_alive())
             self.assertEqual(len(client.poll_calls), 3)
+            self.assertEqual(
+                [call[3] for call in client.poll_calls], [0, 0, 0])
             self.assertEqual(state_store.load()['status'], 'online')
             self.assertGreaterEqual(state_store.statuses.count('reconnecting'), 2)
             self.assertNotIn('offline', state_store.statuses)
@@ -663,7 +691,11 @@ class ExecutorChannelLifecycleTests(unittest.TestCase):
             self.assertTrue(worker.start())
             worker.thread.join(timeout=2)
             self.assertFalse(worker.thread.is_alive())
-            self.assertEqual(state_store.load()['status'], 'offline')
+            state = state_store.load()
+            self.assertEqual(state['status'], 'offline')
+            self.assertEqual(state['connectionPhase'], 'retry_wait')
+            self.assertEqual(state['connectionAttempt'], 3)
+            self.assertTrue(state['nextRetryAt'])
 
 
 if __name__ == '__main__':

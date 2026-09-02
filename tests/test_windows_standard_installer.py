@@ -143,6 +143,12 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
             'ProgressBar{AssignTo: &app.updateProgress',
             'DownloadPercent',
             '下载 %d%%',
+            '验证设备身份',
+            '建立安全通道',
+            '秒后自动重试',
+            '连接进度 1/3',
+            '连接进度 2/3',
+            '上次在线：',
             'case "verifying"',
             'case "installing"',
             '/executor-control/update/check',
@@ -277,7 +283,7 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
 
 class WindowsStandardInstallerArtifactTests(unittest.TestCase):
     def test_local_compiled_artifact_metadata_when_present(self):
-        metadata = ROOT / 'dist/Xynigo_Sourcing_Windows_Setup_v0.13.5.json'
+        metadata = ROOT / 'dist/Xynigo_Sourcing_Windows_Setup_v0.13.6.json'
         if not metadata.is_file():
             self.skipTest('standard installer artifact is built in packaging CI')
         import json
@@ -336,6 +342,10 @@ class LocalExecutorStatusContractTests(unittest.TestCase):
                     'status': 'online',
                     'lastPollAt': '2026-08-27T00:00:00+00:00',
                     'lastErrorCode': '',
+                    'connectionPhase': 'listening',
+                    'connectionAttempt': 0,
+                    'nextRetryAt': None,
+                    'connectedAt': '2026-08-27T00:00:00+00:00',
                 }):
             payload = state.local_executor_status()
         self.assertTrue(payload['executor']['running'])
@@ -347,6 +357,11 @@ class LocalExecutorStatusContractTests(unittest.TestCase):
         self.assertEqual(payload['update']['stage'], 'downloading')
         self.assertEqual(payload['update']['downloadPercent'], 50)
         self.assertEqual(payload['update']['downloadTotalBytes'], 10_000_000)
+        self.assertEqual(payload['cloudChannel']['phase'], 'listening')
+        self.assertEqual(payload['cloudChannel']['attempt'], 0)
+        self.assertEqual(
+            payload['cloudChannel']['connectedAt'],
+            '2026-08-27T00:00:00+00:00')
         encoded = __import__('json').dumps(payload, ensure_ascii=False)
         for forbidden in (
             'executor-internal-id', 'query-sensitive-id',
