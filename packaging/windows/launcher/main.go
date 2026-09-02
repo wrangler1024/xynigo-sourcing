@@ -124,6 +124,7 @@ type launcherApp struct {
 	root string
 
 	mw             *walk.MainWindow
+	webHost        *walk.Composite
 	browser        *edge.Chromium
 	notify         *walk.NotifyIcon
 	statusSignal   *walk.Label
@@ -144,6 +145,7 @@ type launcherApp struct {
 	deviceState    *walk.Label
 	heartbeatValue *walk.Label
 	pairPanel      *walk.Composite
+	pairControls   *walk.Composite
 	pairEdit       *walk.LineEdit
 	pairButton     *walk.PushButton
 	startButton    *walk.PushButton
@@ -231,6 +233,7 @@ func main() {
 	appendStatusCenterLog(root, "launcher_executor_start_dispatched")
 	go app.statusLoop()
 	go app.commandLoop()
+	go app.initializeBrowserWhenReady()
 	if command != "show" && command != "background" {
 		go app.handleCommand(command)
 	}
@@ -320,37 +323,186 @@ func (app *launcherApp) buildWindow() error {
 		Children: []Widget{
 			Composite{
 				AssignTo: &app.pairPanel,
+				Visible:  true,
+				Background: SolidColorBrush{
+					Color: walk.RGB(244, 248, 251),
+				},
+				Layout: VBox{
+					Margins: Margins{Left: 28, Top: 24, Right: 28, Bottom: 24},
+					Spacing: 16,
+				},
+				Children: []Widget{
+					Composite{
+						Background: SolidColorBrush{Color: walk.RGB(244, 248, 251)},
+						Layout:     HBox{MarginsZero: true, Spacing: 12},
+						Children: []Widget{
+							Label{
+								Text: "X", TextColor: walk.RGB(255, 255, 255),
+								Background:    SolidColorBrush{Color: walk.RGB(17, 142, 145)},
+								Font:          Font{Family: "Segoe UI", PointSize: 18, Bold: true},
+								MinSize:       Size{Width: 48, Height: 48},
+								TextAlignment: AlignCenter,
+							},
+							Composite{
+								Background: SolidColorBrush{Color: walk.RGB(244, 248, 251)},
+								Layout:     VBox{MarginsZero: true, Spacing: 2},
+								Children: []Widget{
+									Label{
+										Text: "Xynigo 本地执行器", TextColor: walk.RGB(18, 50, 82),
+										Font: Font{Family: "Microsoft YaHei UI", PointSize: 15, Bold: true},
+									},
+									Label{
+										Text:      "Windows 原生兼容模式 · 后台执行器保持运行",
+										TextColor: walk.RGB(109, 131, 150),
+										Font:      Font{Family: "Microsoft YaHei UI", PointSize: 8},
+									},
+								},
+							},
+							HSpacer{},
+							PushButton{Text: "在浏览器中打开完整界面", OnClicked: app.openDesktopBrowser},
+							PushButton{Text: "打开云端工作台", OnClicked: app.openCloudWorkspace},
+						},
+					},
+					Composite{
+						Border:     true,
+						Background: SolidColorBrush{Color: walk.RGB(236, 253, 245)},
+						Layout: VBox{
+							Margins: Margins{Left: 18, Top: 14, Right: 18, Bottom: 14},
+							Spacing: 5,
+						},
+						Children: []Widget{
+							Composite{
+								Background: SolidColorBrush{Color: walk.RGB(236, 253, 245)},
+								Layout:     HBox{MarginsZero: true, Spacing: 8},
+								Children: []Widget{
+									Label{
+										AssignTo: &app.statusSignal, Text: "●",
+										TextColor: walk.RGB(162, 107, 11),
+										Font:      Font{Family: "Segoe UI Symbol", PointSize: 10, Bold: true},
+									},
+									Label{
+										AssignTo: &app.statusTitle, Text: "正在读取本机状态",
+										TextColor: walk.RGB(18, 50, 82),
+										Font:      Font{Family: "Microsoft YaHei UI", PointSize: 12, Bold: true},
+									},
+									HSpacer{},
+									Label{
+										AssignTo: &app.heartbeatValue, Text: "等待心跳",
+										TextColor: walk.RGB(109, 131, 150),
+									},
+								},
+							},
+							Label{
+								AssignTo:  &app.statusDetail,
+								Text:      "WebView2 未完成渲染，已切换到不会依赖网页组件的原生状态页。",
+								TextColor: walk.RGB(75, 98, 119),
+							},
+						},
+					},
+					Composite{
+						Background: SolidColorBrush{Color: walk.RGB(244, 248, 251)},
+						Layout:     HBox{MarginsZero: true, Spacing: 12},
+						Children: []Widget{
+							statusCard("云端通道", &app.cloudSignal, &app.cloudValue, &app.cloudNote,
+								"正在连接", "等待安全通道", walk.RGB(255, 255, 255),
+								walk.RGB(18, 50, 82), walk.RGB(109, 131, 150), walk.RGB(162, 107, 11)),
+							statusCard("HubStudio", &app.hubSignal, &app.hubValue, &app.hubNote,
+								"正在检查", "等待 Local API", walk.RGB(255, 255, 255),
+								walk.RGB(18, 50, 82), walk.RGB(109, 131, 150), walk.RGB(57, 119, 155)),
+							statusCard("本机任务", &app.taskSignal, &app.taskValue, &app.taskNote,
+								"当前空闲", "没有运行中的任务", walk.RGB(255, 255, 255),
+								walk.RGB(18, 50, 82), walk.RGB(109, 131, 150), walk.RGB(20, 132, 93)),
+							statusCard("执行器版本", nil, &app.versionValue, &app.versionNote,
+								"—", "等待读取版本", walk.RGB(255, 255, 255),
+								walk.RGB(18, 50, 82), walk.RGB(109, 131, 150), walk.RGB(162, 107, 11)),
+						},
+					},
+					Composite{
+						Border:     true,
+						Background: SolidColorBrush{Color: walk.RGB(255, 255, 255)},
+						Layout: VBox{
+							Margins: Margins{Left: 18, Top: 14, Right: 18, Bottom: 14},
+							Spacing: 8,
+						},
+						Children: []Widget{
+							Composite{
+								Background: SolidColorBrush{Color: walk.RGB(255, 255, 255)},
+								Layout:     HBox{MarginsZero: true, Spacing: 8},
+								Children: []Widget{
+									Label{
+										Text: "已绑定设备", TextColor: walk.RGB(17, 142, 145),
+										Font: Font{Family: "Microsoft YaHei UI", PointSize: 9, Bold: true},
+									},
+									HSpacer{},
+									Label{AssignTo: &app.deviceState, Text: "等待执行器"},
+								},
+							},
+							Label{
+								AssignTo: &app.deviceValue, Text: "正在读取设备状态",
+								TextColor: walk.RGB(18, 50, 82),
+								Font:      Font{Family: "Microsoft YaHei UI", PointSize: 12, Bold: true},
+							},
+							Composite{
+								AssignTo:   &app.pairControls,
+								Visible:    false,
+								Background: SolidColorBrush{Color: walk.RGB(255, 255, 255)},
+								Layout:     HBox{MarginsZero: true, Spacing: 8},
+								Children: []Widget{
+									Label{Text: "配对码"},
+									LineEdit{
+										AssignTo: &app.pairEdit, CueBanner: "ABCD-EFGH",
+										MaxLength: 9, MinSize: Size{Width: 180},
+									},
+									PushButton{
+										AssignTo: &app.pairButton, Text: "配对这台电脑",
+										OnClicked: func() { app.startPair(app.pairEdit.Text()) },
+									},
+								},
+							},
+						},
+					},
+					Composite{
+						Background: SolidColorBrush{Color: walk.RGB(244, 248, 251)},
+						Layout:     HBox{MarginsZero: true, Spacing: 10},
+						Children: []Widget{
+							PushButton{Text: "本机设置", OnClicked: app.openLegacySettings},
+							PushButton{Text: "打开日志目录", OnClicked: app.openLogs},
+							PushButton{
+								AssignTo: &app.startButton, Text: "重新启动执行器",
+								OnClicked: func() { go app.restartExecutor() },
+							},
+							PushButton{
+								AssignTo: &app.updateButton, Text: "检查更新",
+								OnClicked: app.handleUpdateAction,
+							},
+							HSpacer{},
+							PushButton{Text: "重试 WebView2", OnClicked: app.retryDesktopNavigation},
+						},
+					},
+					ProgressBar{AssignTo: &app.updateProgress, Visible: false},
+				},
+			},
+			Composite{
+				AssignTo: &app.webHost,
 				Visible:  false,
 				Layout:   VBox{MarginsZero: true, SpacingZero: true},
-				Children: []Widget{
-					Label{AssignTo: &app.statusSignal},
-					Label{AssignTo: &app.statusTitle},
-					Label{AssignTo: &app.statusDetail},
-					Label{AssignTo: &app.cloudSignal},
-					Label{AssignTo: &app.cloudValue},
-					Label{AssignTo: &app.cloudNote},
-					Label{AssignTo: &app.hubSignal},
-					Label{AssignTo: &app.hubValue},
-					Label{AssignTo: &app.hubNote},
-					Label{AssignTo: &app.taskSignal},
-					Label{AssignTo: &app.taskValue},
-					Label{AssignTo: &app.taskNote},
-					Label{AssignTo: &app.versionValue},
-					Label{AssignTo: &app.versionNote},
-					Label{AssignTo: &app.deviceValue},
-					Label{AssignTo: &app.deviceState},
-					Label{AssignTo: &app.heartbeatValue},
-					LineEdit{AssignTo: &app.pairEdit},
-					PushButton{AssignTo: &app.pairButton},
-					PushButton{AssignTo: &app.startButton},
-					PushButton{AssignTo: &app.updateButton},
-					ProgressBar{AssignTo: &app.updateProgress},
-				},
 			},
 		},
 	}
 	if err := window.Create(); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (app *launcherApp) initializeBrowserWhenReady() {
+	time.Sleep(1200 * time.Millisecond)
+	app.mw.Synchronize(app.initializeBrowser)
+}
+
+func (app *launcherApp) initializeBrowser() {
+	if app.browser != nil || app.webHost == nil {
+		return
 	}
 
 	browser := edge.NewChromium()
@@ -370,24 +522,35 @@ func (app *launcherApp) buildWindow() error {
 	) {
 		appendStatusCenterLog(app.root, "desktop_navigation_completed_waiting_ready")
 	}
-	if !browser.Embed(uintptr(app.mw.Handle())) {
-		return errors.New("WebView2 运行时不可用，请安装 Microsoft Edge WebView2 Runtime")
+	appendStatusCenterLog(app.root, "desktop_webview2_initializing")
+	if !browser.Embed(uintptr(app.webHost.Handle())) {
+		appendStatusCenterLog(app.root, "desktop_webview2_unavailable_native_fallback")
+		app.showDesktopRecovery()
+		return
 	}
+	appendStatusCenterLog(app.root, "desktop_webview2_initialized")
 	if settings, err := browser.GetSettings(); err == nil {
 		_ = settings.PutAreDefaultContextMenusEnabled(false)
 		_ = settings.PutAreDevToolsEnabled(false)
 		_ = settings.PutIsStatusBarEnabled(false)
 		_ = settings.PutIsZoomControlEnabled(false)
 	}
-	browser.NavigateToString(`<!doctype html><meta charset="utf-8"><style>
-html,body{height:100%;margin:0;font-family:"Microsoft YaHei UI",sans-serif;color:#123252}
-body{display:grid;place-items:center;text-align:center}.x{width:52px;height:52px;margin:auto;display:grid;
-place-items:center;border-radius:14px;color:white;font-size:22px;font-weight:800;background:linear-gradient(135deg,#31b8ae,#087c83)}
-h2{font-size:16px;margin:18px 0 6px}p{font-size:12px;color:#64748b}</style>
-<div><div class="x">X</div><h2>正在启动 Xynigo 本地执行器</h2><p>正在准备 WebView2 与本机安全服务…</p></div>`)
 	app.browser = browser
-	app.mw.SizeChanged().Attach(browser.Resize)
-	return nil
+	_ = browser.Hide()
+	app.webHost.SizeChanged().Attach(browser.Resize)
+	time.AfterFunc(desktopReadyWait*time.Duration(desktopMaxRetries)+2*time.Second, func() {
+		app.mw.Synchronize(func() {
+			app.mu.Lock()
+			ready := app.desktopReady
+			recovery := app.desktopRecovery
+			app.mu.Unlock()
+			if !ready && !recovery {
+				appendStatusCenterLog(app.root, "desktop_watchdog_native_fallback")
+				app.showDesktopRecovery()
+			}
+		})
+	})
+	app.navigateDesktop()
 }
 
 func statusCard(
@@ -492,7 +655,10 @@ func (app *launcherApp) showStatusCenter() {
 		app.mw.SetVisible(true)
 		_ = app.mw.BringToTop()
 		_ = app.mw.Activate()
-		if app.browser != nil {
+		app.mu.Lock()
+		recovery := app.desktopRecovery
+		app.mu.Unlock()
+		if app.browser != nil && !recovery {
 			app.browser.Focus()
 		}
 	})
@@ -500,6 +666,10 @@ func (app *launcherApp) showStatusCenter() {
 
 func (app *launcherApp) showPairing() {
 	app.showStatusCenter()
+	app.setPairingVisible(true)
+	if app.pairEdit != nil {
+		app.pairEdit.SetFocus()
+	}
 	if app.browser != nil {
 		app.browser.Eval(`window.xynigoDesktop&&window.xynigoDesktop.focusPairing()`)
 	}
@@ -537,6 +707,23 @@ func (app *launcherApp) openLegacySettings() {
 		return
 	}
 	_ = exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", settingsURL).Start()
+}
+
+func (app *launcherApp) openDesktopBrowser() {
+	app.mu.Lock()
+	statusURL := app.statusURL
+	app.mu.Unlock()
+	target, err := desktopPageURL(statusURL)
+	if err != nil {
+		walk.MsgBox(
+			app.mw,
+			"完整界面暂不可用",
+			"本地执行器尚未就绪，请稍后重试。",
+			walk.MsgBoxIconWarning,
+		)
+		return
+	}
+	_ = exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", target).Start()
 }
 
 func localSettingsURL(statusURL string) (string, error) {
@@ -630,6 +817,16 @@ func desktopAttemptURL(target string, attempt int) string {
 }
 
 func (app *launcherApp) retryDesktopNavigation() {
+	if app.browser == nil {
+		appendStatusCenterLog(app.root, "desktop_navigation_retry_unavailable")
+		walk.MsgBox(
+			app.mw,
+			"WebView2 尚未就绪",
+			"请继续使用原生兼容页，或在系统浏览器中打开完整界面。",
+			walk.MsgBoxIconInformation,
+		)
+		return
+	}
 	app.mu.Lock()
 	app.desktopURL = ""
 	app.desktopStarted = time.Time{}
@@ -638,24 +835,26 @@ func (app *launcherApp) retryDesktopNavigation() {
 	app.desktopRecovery = false
 	app.mu.Unlock()
 	appendStatusCenterLog(app.root, "desktop_navigation_manual_retry")
+	_ = app.browser.Hide()
+	app.webHost.SetVisible(false)
+	app.pairPanel.SetVisible(true)
 	app.navigateDesktop()
 }
 
 func (app *launcherApp) showDesktopRecovery() {
 	appendStatusCenterLog(app.root, "desktop_navigation_recovery_page")
-	app.browser.NavigateToString(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><style>
-html,body{height:100%;margin:0;font-family:"Microsoft YaHei UI",sans-serif;color:#123252;background:#f4f8fb}
-body{display:grid;place-items:center}.card{width:min(560px,calc(100% - 64px));padding:42px;border:1px solid #d8e3ec;
-border-radius:24px;background:white;box-shadow:0 18px 45px rgba(18,50,82,.10);text-align:center}
-.x{width:58px;height:58px;margin:auto;display:grid;place-items:center;border-radius:16px;color:white;font-size:25px;
-font-weight:800;background:linear-gradient(135deg,#31b8ae,#087c83)}h2{font-size:22px;margin:20px 0 10px}
-p{font-size:14px;line-height:1.8;color:#64748b}.actions{display:flex;justify-content:center;gap:12px;margin-top:24px;flex-wrap:wrap}
-button{border:1px solid #cad7e2;border-radius:10px;background:white;color:#123252;padding:11px 18px;font:600 14px inherit;cursor:pointer}
-button.primary{border-color:#118e91;background:#118e91;color:white}</style><body><main class="card"><div class="x">X</div>
-<h2>桌面界面暂未完成加载</h2><p>本地执行器仍在后台运行。你可以重新加载界面，或先在系统浏览器中打开同一套本机管理页面。</p>
-<div class="actions"><button class="primary" onclick="send('retry-desktop')">重新加载界面</button>
-<button onclick="send('open-desktop-browser')">在系统浏览器打开</button><button onclick="send('open-logs')">打开日志目录</button></div>
-</main><script>function send(action){window.external.invoke(JSON.stringify({action:action,payload:{}}))}</script></body></html>`)
+	app.mu.Lock()
+	app.desktopReady = false
+	app.desktopRecovery = true
+	app.mu.Unlock()
+	if app.browser != nil {
+		_ = app.browser.Hide()
+	}
+	if app.webHost != nil {
+		app.webHost.SetVisible(false)
+	}
+	app.pairPanel.SetVisible(true)
+	app.mw.SetTitle("Xynigo 本地执行器 · 原生兼容模式")
 }
 
 func (app *launcherApp) handleWebMessage(raw string) {
@@ -683,17 +882,18 @@ func (app *launcherApp) handleWebMessage(raw string) {
 		app.desktopRecovery = false
 		attempts := app.desktopAttempts
 		app.mu.Unlock()
+		app.pairPanel.SetVisible(false)
+		app.webHost.SetVisible(true)
+		if app.browser != nil {
+			_ = app.browser.Show()
+			app.browser.Resize()
+		}
+		app.mw.SetTitle("Xynigo 本地执行器")
 		appendStatusCenterLog(app.root, fmt.Sprintf("desktop_ready attempts=%d", attempts))
 	case "retry-desktop":
 		app.retryDesktopNavigation()
 	case "open-desktop-browser":
-		app.mu.Lock()
-		statusURL := app.statusURL
-		app.mu.Unlock()
-		target, err := desktopPageURL(statusURL)
-		if err == nil {
-			_ = exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", target).Start()
-		}
+		app.openDesktopBrowser()
 	case "open-external":
 		rawURL, _ := payload["url"].(string)
 		target, err := url.Parse(strings.TrimSpace(rawURL))
@@ -1310,6 +1510,9 @@ func (app *launcherApp) renderUpdateStatus(status *localStatus) {
 func (app *launcherApp) setPairingVisible(visible bool) {
 	if app.trayPair != nil {
 		_ = app.trayPair.SetVisible(visible)
+	}
+	if app.pairControls != nil {
+		app.pairControls.SetVisible(visible)
 	}
 }
 

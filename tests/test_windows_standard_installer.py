@@ -141,7 +141,7 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
         for source in (
             'Xynigo 本地执行器',
             'edge.NewChromium()',
-            'browser.Embed(uintptr(app.mw.Handle()))',
+            'browser.Embed(uintptr(app.webHost.Handle()))',
             '/desktop/',
             'platform=windows',
             'walk.NewNotifyIcon',
@@ -216,7 +216,11 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
             'desktop-ready',
             'desktopReadyWait',
             'desktop_navigation_attempt',
-            '桌面界面暂未完成加载',
+            'Windows 原生兼容模式 · 后台执行器保持运行',
+            'desktop_watchdog_native_fallback',
+            'app.browser.Hide()',
+            'app.pairPanel.SetVisible(true)',
+            '在浏览器中打开完整界面',
             'open-desktop-browser',
             'retry-desktop',
             'AssignTo: &app.pairPanel',
@@ -324,7 +328,7 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
 
 class WindowsStandardInstallerArtifactTests(unittest.TestCase):
     def test_local_compiled_artifact_metadata_when_present(self):
-        metadata = ROOT / 'dist/Xynigo_Sourcing_Windows_Setup_v0.13.12.json'
+        metadata = ROOT / 'dist/Xynigo_Sourcing_Windows_Setup_v0.13.13.json'
         if not metadata.is_file():
             self.skipTest('standard installer artifact is built in packaging CI')
         import json
