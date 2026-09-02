@@ -310,7 +310,7 @@ func (app *launcherApp) buildWindow() error {
 	icon := "xynigo-x.ico"
 	window := MainWindow{
 		AssignTo:   &app.mw,
-		Title:      "Xynigo 本地执行器状态中心",
+		Title:      "Xynigo 桌面客户端",
 		Icon:       icon,
 		Size:       Size{Width: 860, Height: 630},
 		MinSize:    Size{Width: 800, Height: 600},
@@ -326,7 +326,7 @@ func (app *launcherApp) buildWindow() error {
 					ImageView{Image: logo, Mode: ImageViewModeShrink, MinSize: Size{Width: 238, Height: 82}, MaxSize: Size{Width: 238, Height: 82}},
 					Composite{Background: SolidColorBrush{Color: soft}, Layout: VBox{MarginsZero: true, Spacing: 3}, Children: []Widget{
 						VSpacer{},
-						Label{Text: "LOCAL EXECUTOR STATUS CENTER", TextColor: teal, Font: Font{Family: "Microsoft YaHei UI", PointSize: 8, Bold: true}},
+						Label{Text: "XYNIGO DESKTOP", TextColor: teal, Font: Font{Family: "Microsoft YaHei UI", PointSize: 8, Bold: true}},
 						Label{Text: "连接云端工作台与这台采购电脑", TextColor: navy, Font: Font{Family: "Microsoft YaHei UI", PointSize: 15, Bold: true}},
 						Label{Text: "关闭窗口后仍在系统托盘运行，不影响已接收的后台任务。", TextColor: muted},
 						VSpacer{},
@@ -450,7 +450,7 @@ func (app *launcherApp) buildTray() error {
 	app.trayStatus = newTrayStatusAction("● 本地执行器正在启动")
 	app.trayCloud = newTrayStatusAction("云端：正在连接")
 	app.trayHub = newTrayStatusAction("HubStudio：正在检查")
-	openStatus := newTrayAction("打开状态中心", app.showStatusCenter)
+	openStatus := newTrayAction("打开桌面客户端", app.showStatusCenter)
 	openCloud := newTrayAction("打开云端工作台", app.openCloudWorkspace)
 	openLocalSettings := newTrayAction("打开本机设置", app.openLocalSettings)
 	app.trayStartStop = newTrayAction("重新启动执行器", func() { go app.restartExecutor() })
@@ -458,7 +458,7 @@ func (app *launcherApp) buildTray() error {
 	app.trayPair = newTrayAction("配对这台电脑…", app.showPairing)
 	logs := newTrayAction("打开日志目录", app.openLogs)
 	about := newTrayAction("关于 Xynigo", func() {
-		walk.MsgBox(app.mw, "关于 Xynigo", "Xynigo Sourcing 本地执行器\n云端 Web 统一入口 · 本机安全执行", walk.MsgBoxIconInformation)
+		walk.MsgBox(app.mw, "关于 Xynigo", "Xynigo Sourcing 桌面客户端\n云端业务工作台 · 本机安全执行", walk.MsgBoxIconInformation)
 	})
 	exit := newTrayAction("退出 Xynigo", app.exitApplication)
 	for _, action := range []*walk.Action{

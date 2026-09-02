@@ -79,8 +79,8 @@ PY
 cp -R "$EXTRACT_ROOT/Xynigo-Sourcing/runtime/." "$RESOURCES/runtime/"
 
 echo "[3/7] Build native launcher, app metadata and icon ..."
-/usr/bin/swiftc -O -target arm64-apple-macos13.0 \
-  -framework AppKit packaging/macos/launcher.swift \
+/usr/bin/swiftc -parse-as-library -O -target arm64-apple-macos13.0 \
+  -framework AppKit packaging/macos/desktop_client.swift \
   -o "$CONTENTS/MacOS/xynigo-launcher"
 cp packaging/macos/启动本地执行器.command "$RESOURCES/启动本地执行器.command"
 cp packaging/macos/协议启动.command "$RESOURCES/协议启动.command"
@@ -113,6 +113,7 @@ payload = {
         'CFBundleURLName': 'Xynigo local executor launcher',
         'CFBundleURLSchemes': ['xynigo'],
     }],
+    'LSApplicationCategoryType': 'public.app-category.business',
     'LSMinimumSystemVersion': '13.0',
     'LSMultipleInstancesProhibited': True,
 }
@@ -151,6 +152,11 @@ metadata = {
     'channel': os.environ['CHANNEL'],
     'platform': 'macos-arm64',
     'installMode': 'standard_system_application',
+    'launcherFile': 'xynigo-launcher',
+    'statusCenter': True,
+    'menuBar': True,
+    'dockIcon': True,
+    'executorLaunchMode': 'managed_child',
     'dataDirectory': '~/Library/Application Support/XynigoSourcing',
     'autoStart': False,
     'protocol': 'xynigo',
@@ -266,6 +272,11 @@ metadata = {
     'channel': os.environ['CHANNEL'],
     'platform': 'macos-arm64',
     'installMode': 'standard_system_application',
+    'launcherFile': 'xynigo-launcher',
+    'statusCenter': True,
+    'menuBar': True,
+    'dockIcon': True,
+    'executorLaunchMode': 'managed_child',
     'installLocation': '/Applications/Xynigo Sourcing.app',
     'dataDirectory': '~/Library/Application Support/XynigoSourcing',
     'requiresElevation': True,

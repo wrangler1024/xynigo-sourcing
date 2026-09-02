@@ -128,13 +128,18 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
             'MigrationPageCreate',
             '迁移旧版数据',
             'Xynigo.exe',
-            '本地执行器状态中心.lnk',
-            '启动 Xynigo 状态中心',
+            '启动 Xynigo 桌面客户端',
         ):
             self.assertIn(source, self.installer)
+        self.assertIn(
+            'Delete "$SMPROGRAMS\\${APP_NAME}\\本地执行器状态中心.lnk"',
+            self.installer,
+        )
         for source in (
-            'Xynigo 本地执行器状态中心',
+            'Xynigo 桌面客户端',
+            'XYNIGO DESKTOP',
             'walk.NewNotifyIcon',
+            '打开桌面客户端',
             '打开云端工作台',
             '打开本机设置',
             'view=localsettings',
@@ -206,7 +211,7 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
             '● 正在执行 %d 个任务',
             '云端：',
             'HubStudio：已连接',
-            '打开状态中心',
+            '打开桌面客户端',
         ):
             self.assertIn(source, self.gui_launcher)
         self.assertNotIn('Grid{Columns: 2, Spacing: 10}', self.gui_launcher)

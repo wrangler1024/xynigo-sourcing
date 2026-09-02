@@ -90,12 +90,12 @@ VIAddVersionKey /LANG=0 "LegalCopyright" "Copyright Xynigo contributors"
 !define MUI_HEADERIMAGE_BITMAP "${INSTALLER_HEADER_BITMAP}"
 !define MUI_FINISHPAGE_NOAUTOCLOSE
 !define MUI_UNFINISHPAGE_NOAUTOCLOSE
-!define MUI_WELCOMEPAGE_TITLE "安装 Xynigo 本地执行器"
-!define MUI_WELCOMEPAGE_TEXT "连接 Xynigo 云端工作台与这台采购电脑。$\r$\n$\r$\n安装完成后，Xynigo 将通过状态中心和系统托盘运行；云端页面仍是唯一业务工作台。"
+!define MUI_WELCOMEPAGE_TITLE "安装 Xynigo 桌面客户端"
+!define MUI_WELCOMEPAGE_TEXT "连接 Xynigo 云端工作台与这台采购电脑。$\r$\n$\r$\n安装完成后，Xynigo 将通过桌面客户端和系统托盘运行；采购业务继续由云端工作台统一承载。"
 !define MUI_FINISHPAGE_TITLE "Xynigo 已安装完成"
-!define MUI_FINISHPAGE_TEXT "本地执行器、状态中心和托盘菜单已经安装。$\r$\n$\r$\n点击“完成”后可立即打开状态中心并连接云端。"
+!define MUI_FINISHPAGE_TEXT "桌面客户端、本地执行器和托盘菜单已经安装。$\r$\n$\r$\n点击“完成”后可立即打开客户端并连接云端。"
 !define MUI_FINISHPAGE_RUN "$INSTDIR\Xynigo.exe"
-!define MUI_FINISHPAGE_RUN_TEXT "启动 Xynigo 状态中心"
+!define MUI_FINISHPAGE_RUN_TEXT "启动 Xynigo 桌面客户端"
 !define MUI_FINISHPAGE_RUN_PARAMETERS "--show"
 
 !insertmacro MUI_PAGE_WELCOME
@@ -315,8 +315,7 @@ Section "$(CoreSectionName)" SEC_CORE
   CreateDirectory "$SMPROGRAMS\${APP_NAME}"
   CreateShortcut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" \
     "$INSTDIR\Xynigo.exe" "--show" "$INSTDIR\xynigo-x.ico"
-  CreateShortcut "$SMPROGRAMS\${APP_NAME}\本地执行器状态中心.lnk" \
-    "$INSTDIR\Xynigo.exe" "--show" "$INSTDIR\xynigo-x.ico"
+  Delete "$SMPROGRAMS\${APP_NAME}\本地执行器状态中心.lnk"
   CreateShortcut "$SMPROGRAMS\${APP_NAME}\卸载 ${APP_NAME}.lnk" \
     "$INSTDIR\卸载 Xynigo Sourcing.exe"
 

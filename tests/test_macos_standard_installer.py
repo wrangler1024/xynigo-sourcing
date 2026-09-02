@@ -107,7 +107,7 @@ class MacOSStandardInstallerContractTests(unittest.TestCase):
     def setUpClass(cls):
         cls.builder = (ROOT / '组装macOS标准安装包.sh').read_text(
             encoding='utf-8')
-        cls.launcher = (ROOT / 'packaging/macos/launcher.swift').read_text(
+        cls.launcher = (ROOT / 'packaging/macos/desktop_client.swift').read_text(
             encoding='utf-8')
         cls.start_script = (
             ROOT / 'packaging/macos/启动本地执行器.command'
@@ -143,24 +143,49 @@ class MacOSStandardInstallerContractTests(unittest.TestCase):
     def test_launcher_only_accepts_low_risk_protocol_and_fixed_scripts(self):
         self.assertIn('^xynigo://', self.launcher)
         self.assertNotIn('xynigo://purchase', self.launcher.lower())
-        self.assertIn('协议启动.command', self.launcher)
-        self.assertIn('启动本地执行器.command', self.launcher)
-        self.assertIn('protocol-request.txt', self.launcher)
-        self.assertIn('.posixPermissions: 0o600', self.launcher)
+        self.assertIn('URLComponents(url: url', self.launcher)
+        self.assertIn('desktopPairPattern', self.launcher)
+        self.assertIn('pairField.stringValue = code', self.launcher)
         self.assertNotIn('/bin/bash -c', self.launcher)
 
-    def test_launcher_keeps_menu_bar_desktop_settings_entry(self):
+    def test_launcher_has_visible_desktop_window_and_menu_bar_entry(self):
         for marker in (
+                'NSWindow(',
+                'Xynigo 桌面客户端',
+                'styleMask: [.titled, .closable, .miniaturizable, .resizable]',
+                'application.setActivationPolicy(.regular)',
                 'NSStatusBar.system.statusItem',
+                '打开桌面客户端',
                 '打开本机设置',
                 '打开云端工作台',
-                '启动或重新连接执行器',
+                '启动执行器',
+                '配对这台电脑',
+                '检查更新',
                 'view=localsettings',
                 'xynigo://(?:start/?|wake/?|settings/?|pair',
                 'configuredServerPort()',
                 '127.0.0.1',
         ):
             self.assertIn(marker, self.launcher)
+
+    def test_launcher_manages_executor_without_terminal(self):
+        for marker in (
+                'private var childProcess: Process?',
+                'process.arguments = ["--no-browser"]',
+                'XYNIGO_LAUNCHER_TOKEN',
+                'executor-status.json',
+                'probe(port + 1, lastPort, completion)',
+                'executor-control/shutdown',
+                'status.schemaVersion == 1',
+                '本地执行器.log',
+                '[.posixPermissions: 0o600]',
+        ):
+            self.assertIn(marker, self.launcher)
+        direct_launch = self.launcher[
+            self.launcher.index('private func startManagedExecutor()'):
+            self.launcher.index('private func executorEnvironment')
+        ]
+        self.assertNotIn('Terminal', direct_launch)
 
     def test_standard_scripts_pin_data_root_and_disable_green_updater(self):
         for script in (self.start_script, self.protocol_script,
@@ -184,6 +209,12 @@ class MacOSStandardInstallerContractTests(unittest.TestCase):
         self.assertIn("'notarized': False", self.builder)
         self.assertIn("'releaseEligible': False", self.builder)
         self.assertIn("'requiresElevation': True", self.builder)
+        self.assertIn("'statusCenter': True", self.builder)
+        self.assertIn("'menuBar': True", self.builder)
+        self.assertIn("'dockIcon': True", self.builder)
+        self.assertIn("'executorLaunchMode': 'managed_child'", self.builder)
+        self.assertIn('packaging/macos/desktop_client.swift', self.builder)
+        self.assertIn('/usr/bin/swiftc -parse-as-library', self.builder)
 
 
 class MacOSStandardInstallerArtifactTests(unittest.TestCase):
@@ -196,6 +227,10 @@ class MacOSStandardInstallerArtifactTests(unittest.TestCase):
         self.assertTrue(installer.is_file())
         self.assertEqual(payload['platform'], 'macos-arm64')
         self.assertEqual(payload['installMode'], 'standard_system_application')
+        self.assertTrue(payload['statusCenter'])
+        self.assertTrue(payload['menuBar'])
+        self.assertTrue(payload['dockIcon'])
+        self.assertEqual(payload['executorLaunchMode'], 'managed_child')
         self.assertTrue(payload['runtimeId'].startswith(
             payload['version'] + '-'))
         self.assertEqual(len(payload['runtimeRevision']), 12)
