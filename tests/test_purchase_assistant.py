@@ -237,6 +237,32 @@ class PurchaseAssistantUnitTests(unittest.TestCase):
         with self.assertRaisesRegex(PurchaseAssistantError, '缺少必要字段'):
             validate_source_headers([['销售订单号', '收货人姓名']])
 
+    def test_stored_source_can_be_revalidated_without_returning_private_ids(self):
+        transport = FakeTransport()
+        credentials = SimpleNamespace(
+            app_id='cli_test', app_secret='secret-for-test')
+        service = PurchaseAssistantService(
+            credential_getter=lambda: credentials,
+            source_config={
+                'purchaseAssistantApiBase':
+                    'https://open.feishu.cn/open-apis',
+            },
+            transport_factory=lambda: transport,
+        )
+        checked = service.revalidate_target({
+            'spreadsheetToken': 'SpreadsheetPersonal123',
+            'sheetId': 'sheet_test',
+            'cellRange': 'A1:H',
+            'sheetName': '收件信息（粘贴区）',
+        })
+        rendered = json.dumps(checked, ensure_ascii=False)
+
+        self.assertTrue(checked['valid'])
+        self.assertEqual(checked['cellRange'], 'A1:Q')
+        self.assertEqual(checked['headerCount'], 17)
+        self.assertNotIn('SpreadsheetPersonal123', rendered)
+        self.assertNotIn('sheet_test', rendered)
+
     def test_app_state_saves_member_profile_without_mutating_global_config(self):
         transport = FakeTransport()
         credentials = SimpleNamespace(

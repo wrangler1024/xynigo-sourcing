@@ -401,6 +401,9 @@ class DataSourceRegistry(object):
                 'enabled': source['enabled'],
                 'configured': True,
                 'migrationState': source['migrationState'],
+                'environmentCount': sum(
+                    1 for item in registry['environmentBindings']
+                    if item['dataSourceId'] == source['id']),
             })
         profiles = [item for item in registry['buyerProfiles']
                     if include_all or item['memberId'] == member]
@@ -416,6 +419,129 @@ class DataSourceRegistry(object):
             'teamDefaultDataSourceId': registry['teamDefaultDataSourceId'],
             'counts': self._count_summary(registry),
         }
+
+    def source(self, source_id):
+        wanted = _source_id(source_id)
+        source = next((
+            item for item in self.service.load()['dataSources']
+            if item['id'] == wanted
+        ), None)
+        if source is None:
+            raise DataSourceRegistryError('数据源不存在')
+        return copy.deepcopy(source)
+
+    def update_source_metadata(self, source_id, label, enabled,
+                               expected_revision=None):
+        wanted = _source_id(source_id)
+        normalized_label = _plain_text(label, '数据源名称', 120)
+        if not isinstance(enabled, bool):
+            raise DataSourceRegistryError('数据源启用状态必须是布尔值')
+
+        def update(current, _submitted):
+            candidate = copy.deepcopy(current)
+            source = next((
+                item for item in candidate['dataSources']
+                if item['id'] == wanted
+            ), None)
+            if source is None:
+                raise DataSourceRegistryError('数据源不存在')
+            source['label'] = normalized_label
+            source['enabled'] = enabled
+            return candidate
+
+        return self.service.commit_patch(
+            {}, update, expected_revision=expected_revision,
+            source='update_data_source_metadata')
+
+    def replace_source_target(self, source_id, target, owner_member_id='',
+                              expected_revision=None):
+        old_id = _source_id(source_id)
+        if not isinstance(target, dict):
+            raise DataSourceRegistryError('数据源目标格式无效')
+        token = _private_id(
+            target.get('spreadsheetToken'), '飞书 Spreadsheet Token')
+        sheet_id = _private_id(target.get('sheetId'), '飞书 Sheet ID')
+        cell_range = _cell_range(target.get('cellRange'))
+        sheet_name = _plain_text(
+            target.get('sheetName'), '工作表名称', 255, allow_blank=True)
+        requested_owner = _member_id(owner_member_id, allow_blank=True)
+        result_ids = {}
+
+        def update(current, _submitted):
+            candidate = copy.deepcopy(current)
+            old = next((
+                item for item in candidate['dataSources']
+                if item['id'] == old_id
+            ), None)
+            if old is None:
+                raise DataSourceRegistryError('数据源不存在')
+            owner = ''
+            if old['scope'] == 'personal':
+                owner = old['ownerMemberId'] or requested_owner
+                if not owner:
+                    raise DataSourceRegistryError('个人数据源需要先确认归属')
+                new_id = _member_source_id(
+                    owner, token, sheet_id, cell_range)
+            else:
+                new_id = _team_source_id(token, sheet_id, cell_range)
+            duplicate = next((
+                item for item in candidate['dataSources']
+                if item['id'] == new_id and item['id'] != old_id
+            ), None)
+            if duplicate is not None:
+                raise DataSourceRegistryError('该飞书工作表已经登记为其他数据源')
+            label = old['label']
+            if label.startswith('旧'):
+                label = (
+                    ('个人速填表 · ' if old['scope'] == 'personal'
+                     else '团队采购表 · ') + sheet_name
+                    if sheet_name else
+                    ('个人速填表' if old['scope'] == 'personal'
+                     else '团队采购表'))
+            replacement = {
+                'id': new_id,
+                'scope': old['scope'],
+                'ownerMemberId': owner,
+                'label': label[:120],
+                'spreadsheetToken': token,
+                'sheetId': sheet_id,
+                'cellRange': cell_range,
+                'sheetName': sheet_name,
+                'enabled': old['enabled'],
+                'migrationState': 'ready',
+            }
+            candidate['dataSources'] = [
+                replacement if item['id'] == old_id else item
+                for item in candidate['dataSources']
+            ]
+            for profile in candidate['buyerProfiles']:
+                if profile['defaultDataSourceId'] == old_id:
+                    profile['defaultDataSourceId'] = new_id
+            for binding in candidate['environmentBindings']:
+                if binding['dataSourceId'] == old_id:
+                    binding['dataSourceId'] = new_id
+            if candidate['teamDefaultDataSourceId'] == old_id:
+                candidate['teamDefaultDataSourceId'] = new_id
+            legacy = candidate.get('legacyMigration') or {}
+            for key in ('personalSourceId', 'teamSourceId'):
+                if legacy.get(key) == old_id:
+                    legacy[key] = new_id
+            if old['scope'] == 'personal' and not old['ownerMemberId']:
+                candidate['buyerProfiles'] = [
+                    item for item in candidate['buyerProfiles']
+                    if item['memberId'] != owner
+                ] + [{
+                    'memberId': owner,
+                    'defaultDataSourceId': new_id,
+                }]
+            result_ids.update(oldDataSourceId=old_id, dataSourceId=new_id)
+            return candidate
+
+        result = self.service.commit_patch(
+            {}, update, expected_revision=expected_revision,
+            source='replace_data_source_target')
+        result.update(result_ids)
+        return result
 
     def claim_legacy_personal(self, member_id, source_id,
                               expected_revision=None):

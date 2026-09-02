@@ -135,6 +135,23 @@ LOG_DIR = os.path.join(DATA_DIR, '查询日志')
 PURCHASE_ASSISTANT_API_PREFIX = '/api/purchase-assistant/v1'
 DATA_SOURCE_API_PREFIX = '/api/local-config/data-sources'
 
+
+def editable_data_source(identity, source_id, *, allow_unclaimed=False):
+    """Resolve a source and enforce its desktop editing boundary."""
+    source = STATE.data_sources.source(source_id)
+    member_id = str((identity.get('user') or {}).get('id') or '')
+    roles = set(identity.get('roles') or [])
+    admin = bool(roles & {'admin', 'super_admin'})
+    if source['scope'] == 'team' and not admin:
+        raise LocalAuthError('permission_denied', status=403)
+    owner = str(source.get('ownerMemberId') or '')
+    if (source['scope'] == 'personal'
+            and owner not in {member_id}
+            and not (allow_unclaimed and not owner)
+            and not admin):
+        raise LocalAuthError('permission_denied', status=403)
+    return source
+
 CONFIG_FIELDS = frozenset({
     'hubPort', 'serverPort', 'concurrency', 'importBuyerPlan',
     'verifySampleCount', 'hiddenQueryColumns', 'purchaseSite',
@@ -4378,6 +4395,50 @@ class Handler(BaseHTTPRequestHandler):
                     'saved': True,
                     **STATE.data_sources.public_snapshot(
                         member_id, include_all=include_all),
+                })
+            elif path == DATA_SOURCE_API_PREFIX + '/metadata':
+                editable_data_source(request_identity, body.get('sourceId'))
+                STATE.data_sources.update_source_metadata(
+                    body.get('sourceId'), body.get('label'),
+                    body.get('enabled'),
+                    expected_revision=body.get('expectedRevision'))
+                member_id = request_identity['user']['id']
+                include_all = bool(set(request_identity.get('roles') or []) & {
+                    'admin', 'super_admin'})
+                self._json({
+                    'saved': True,
+                    **STATE.data_sources.public_snapshot(
+                        member_id, include_all=include_all),
+                })
+            elif path == DATA_SOURCE_API_PREFIX + '/replace':
+                source = editable_data_source(
+                    request_identity, body.get('sourceId'),
+                    allow_unclaimed=True)
+                STATE.data_sources.service.assert_revision(
+                    body.get('expectedRevision'))
+                member_id = request_identity['user']['id']
+                target = STATE.purchase_assistant.consume_validated_target(
+                    body.get('validationId'), owner_key=member_id)
+                owner = (
+                    source.get('ownerMemberId') or member_id
+                    if source['scope'] == 'personal' else '')
+                STATE.data_sources.replace_source_target(
+                    source['id'], target, owner_member_id=owner,
+                    expected_revision=body.get('expectedRevision'))
+                include_all = bool(set(request_identity.get('roles') or []) & {
+                    'admin', 'super_admin'})
+                self._json({
+                    'saved': True,
+                    **STATE.data_sources.public_snapshot(
+                        member_id, include_all=include_all),
+                })
+            elif path == DATA_SOURCE_API_PREFIX + '/revalidate':
+                source = editable_data_source(
+                    request_identity, body.get('sourceId'),
+                    allow_unclaimed=True)
+                self._json({
+                    'ok': True,
+                    **STATE.purchase_assistant.revalidate_target(source),
                 })
             elif path == DATA_SOURCE_API_PREFIX + '/inspect':
                 member_id = request_identity['user']['id']

@@ -664,6 +664,41 @@ class PurchaseAssistantService(object):
             if key not in {'createdAt', 'ownerKey'}
         }
 
+    def revalidate_target(self, target):
+        """Recheck one stored source without exposing its private IDs."""
+        if not isinstance(target, dict):
+            raise PurchaseAssistantError('数据源配置无效')
+        token = normalize(target.get('spreadsheetToken'))
+        sheet_id = normalize(target.get('sheetId'))
+        if not token or not sheet_id:
+            raise PurchaseAssistantError('数据源配置不完整')
+        api_base = normalize(
+            self.source_config.get('purchaseAssistantApiBase')
+            or 'https://open.feishu.cn/open-apis').rstrip('/')
+        ttl = float(
+            self.source_config.get('purchaseAssistantCacheTtlSeconds') or 8)
+        provider = self._provider_for_config(PurchaseAssistantConfig(
+            spreadsheet_token=token,
+            sheet_id=sheet_id,
+            cell_range=normalize(target.get('cellRange') or 'A1:H').upper(),
+            api_base=api_base,
+            cache_ttl_seconds=ttl,
+        ))
+        sheet = next((
+            item for item in provider.list_sheets()
+            if normalize(item.get('sheetId')) == sheet_id
+        ), None)
+        if sheet is None:
+            raise PurchaseAssistantError('已登记的工作表不存在或当前应用不可见')
+        checked = provider.validate_sheet(sheet_id, sheet['columnCount'])
+        return {
+            'valid': True,
+            'sheetName': sheet['sheetName'],
+            'cellRange': checked['cellRange'],
+            'headerCount': checked['headerCount'],
+            'requiredFieldCount': len(SOURCE_REQUIRED_HEADERS),
+        }
+
     @property
     def configured(self):
         return self.provider is not None

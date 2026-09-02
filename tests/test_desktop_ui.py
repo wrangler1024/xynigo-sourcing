@@ -60,6 +60,17 @@ class DesktopUIContractTests(unittest.TestCase):
         self.assertIn("auth_failed: '云端认证请求失败'",
                       self.javascript)
 
+    def test_existing_data_sources_have_real_management_actions(self):
+        for marker in (
+                '查看详情', '认领为我的', '重新配置',
+                '更换表格/工作表', '保存修改', '设为团队默认',
+                '/api/local-config/data-sources/metadata',
+                '/api/local-config/data-sources/replace',
+                '/api/local-config/data-sources/revalidate',
+                '/api/local-config/data-sources/claim-personal'):
+            self.assertIn(marker, self.javascript)
+        self.assertNotIn('已提交只读验证', self.javascript)
+
 
 class DesktopUIRouteTests(unittest.TestCase):
     def setUp(self):

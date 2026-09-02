@@ -12,7 +12,7 @@ from urllib.parse import quote
 from . import __version__
 
 
-RELEASE_VERSION = "0.13.7"
+RELEASE_VERSION = "0.13.8"
 RELEASE_CHANNEL = "test"
 RELEASE_PUBLISHED_AT = "2026-09-02T09:02:40Z"
 
@@ -29,8 +29,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.13.7-055d3db5fe6a",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.7.exe",
+        "runtimeId": "0.13.8-055d3db5fe6a",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.8.exe",
         "sha256": "4c95474ca098b9422d4a596c5a2c2ceb4fe3fc76f7b634cc1f3dbac877551c6d",
         "size": 15_152_599,
         "installMode": "standard_per_user",
@@ -48,8 +48,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.13.7-055d3db5fe6a",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.7.pkg",
+        "runtimeId": "0.13.8-055d3db5fe6a",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.8.pkg",
         "sha256": "b536f01620066358f3572030ec1a2e6be64ade075b3ab55a18f7eb75f6da4cb1",
         "size": 11_419_537,
         "installMode": "standard_system_application",
@@ -222,12 +222,11 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "Windows 与 macOS 标准客户端统一支持在线检查、认证下载和 SHA-256 二次校验。",
-            "Windows 使用当前用户静默安装并自动重启；macOS 使用系统安装器授权并在完成后自动重启。",
-            "macOS 取消或超时后恢复原版本执行器，不会留下不可用的中间状态。",
+            "数据源注册表新增安全详情、认领、名称与启用状态编辑。",
+            "已有数据源可重新选择飞书表格和工作表，替换后保留默认值与环境映射。",
+            "团队数据源可设置或取消团队默认，重新验证会执行真实飞书只读检查。",
+            "Spreadsheet Token、Sheet ID 和表格内容继续禁止在前端回显。",
+            "Windows 与 macOS 继续支持认证下载、SHA-256 校验、平台安装与自动重启。",
             "稳定通道强制平台签名门槛；内部未签名包仅允许 test 通道。",
-            "执行器自动兼容线上旧版能力协议，本机配置继续严格限制在桌面端。",
-            "macOS 与 Windows 客户端统一使用 X 品牌图标。",
-            "更新保留配置、日志、运行数据、数据源注册表和设备配对。",
         ],
     }

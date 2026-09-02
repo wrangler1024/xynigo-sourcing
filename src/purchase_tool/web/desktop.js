@@ -28,13 +28,13 @@
 
   var sampleStatus = {
     schemaVersion: 1,
-    version: '0.13.7',
+    version: '0.13.8',
     localPort: 8765,
     executor: {running:true, paired:true, displayName:'采购电脑 · 上海办公室 03', platform:platform, architecture:platform === 'mac' ? 'arm64' : 'amd64'},
     cloudChannel: {status:'online', lastPollAt:new Date(Date.now() - 18000).toISOString(), phase:'polling'},
     hubStudio: {connected:true, status:'ready'},
     tasks: {activeCount:0, safeParallel:true, items:[]},
-    update: {enabled:true, state:'current', installMode:'standard', currentVersion:'0.13.7', latestVersion:'0.13.7', message:'已是推荐版本'}
+    update: {enabled:true, state:'current', installMode:'standard', currentVersion:'0.13.8', latestVersion:'0.13.8', message:'已是推荐版本'}
   };
   var sampleConfig = {hubPort:6873, concurrency:2, envCreateWorkers:5, verifySampleCount:3, safeParallelTasks:true, configRevision:'e5a931'};
   var sampleSources = {
@@ -299,6 +299,16 @@
     var source = (currentSources().dataSources || []).find(function (item) { return item.id === id; });
     return source ? source.label : '数据源不可用';
   }
+  function sourceById(id) {
+    return (currentSources().dataSources || []).find(function (item) { return item.id === id; }) || null;
+  }
+  function sourceCanEdit(source) {
+    var role = roleInfo();
+    if (!source) return false;
+    if (source.scope === 'team') return role.admin;
+    if (!source.ownerMemberId) return false;
+    return role.admin || source.ownerMemberId === role.id;
+  }
   function memberName(id) {
     var role = roleInfo();
     if (id === role.id) return role.name;
@@ -316,7 +326,9 @@
     return '<div class="source-grid">' + sources.map(function (source) {
       var count = Number(source.environmentCount || bindings.filter(function (b) { return b.dataSourceId === source.id; }).length);
       var personal = source.scope === 'personal';
-      return '<article class="card source-card"><div class="source-head"><span class="source-icon ' + (personal ? '' : 'team') + '">' + icon(personal ? 'user' : 'users') + '</span><div><h3>' + esc(source.label) + '</h3><span class="pill ' + (personal ? '' : 'pill-blue') + '">' + (personal ? '个人' : '团队') + '</span><p>归属：' + (personal ? esc(memberName(source.ownerMemberId) || '待认领') : '采购团队') + '</p></div></div><div class="source-details"><div><span>工作表</span><b>' + esc(source.sheetName || '名称未记录') + '</b></div><div><span>读取范围</span><b>' + esc(source.cellRange || '—') + '</b></div><div><span>关联环境</span><b>' + count + ' 个</b></div></div><div class="source-foot">' + icon(source.migrationState === 'ready' ? 'check' : 'alert') + '<span style="margin-left:5px">' + (source.migrationState === 'ready' ? '表头校验通过' : '等待确认归属') + '</span>' + button('重新验证','validate-source:'+source.id,'','ghost small') + '</div></article>';
+      var pending = personal && !source.ownerMemberId;
+      var actions = button('查看详情','source-details:'+source.id,'','ghost small') + (pending ? button('认领为我的','claim-source:'+source.id,'','small') : (sourceCanEdit(source) ? button('重新配置','source-reconfigure:'+source.id,'','ghost small') : '')) + button('重新验证','revalidate-source:'+source.id,'','ghost small');
+      return '<article class="card source-card"><div class="source-head"><span class="source-icon ' + (personal ? '' : 'team') + '">' + icon(personal ? 'user' : 'users') + '</span><div><h3>' + esc(source.label) + '</h3><span class="pill ' + (personal ? '' : 'pill-blue') + '">' + (personal ? '个人' : '团队') + '</span><p>归属：' + (personal ? esc(source.ownerMemberId ? memberName(source.ownerMemberId) : '待认领') : '采购团队') + '</p></div></div><div class="source-details"><div><span>工作表</span><b>' + esc(source.sheetName || '名称未记录') + '</b></div><div><span>读取范围</span><b>' + esc(source.cellRange || '—') + '</b></div><div><span>关联环境</span><b>' + count + ' 个</b></div></div><div class="source-foot"><span class="source-state">' + icon(source.migrationState === 'ready' ? 'check' : 'alert') + '<span style="margin-left:5px">' + (source.migrationState === 'ready' ? (source.enabled === false ? '当前已停用' : '表头校验通过') : '等待确认归属') + '</span></span><span class="source-actions">' + actions + '</span></div></article>';
     }).join('') + '</div>';
   }
   function buyerDefaults() {
@@ -469,10 +481,28 @@
     }).catch(function (error) { state.authMode = 'signedOut'; state.notice = error.message; renderAuth(); });
   }
 
-  function openSourceModal() {
+  function openSourceModal(sourceId) {
     var role = roleInfo();
-    state.sourceDraft = {scope:'personal',inspection:null,validation:null};
-    modalRoot.innerHTML = '<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true"><h2>添加飞书数据源</h2><p>仅在本机读取和校验表格。完整链接、token、sheet ID 与数据内容不会上传云端。</p><div class="modal-body"><div class="field"><span>数据源类型</span><div class="source-types"><button class="source-type active" data-source-scope="personal">' + icon('user') + '<b>个人速填表</b><span>绑定当前采购员</span></button><button class="source-type" data-source-scope="team"' + (role.admin ? '' : ' disabled') + '>' + icon('users') + '<b>团队协作表</b><span>多人共享或兜底</span></button></div></div>' + field('source-url','飞书普通电子表格链接','','仅接受企业飞书 /sheets/ 链接','text',false,'https://tenant.feishu.cn/sheets/...') + '<div class="field-grid"><div class="field"><label for="source-sheet">选择工作表</label><select id="source-sheet" class="select" disabled><option>请先读取表格</option></select></div><div class="field" style="display:flex;align-items:flex-end"><button class="button" data-action="inspect-source">读取工作表</button></div></div><div id="source-validation" class="validation-box">' + icon('shield') + '<span>链接只在本机解析；请选择工作表并完成字段校验。</span></div></div><div class="modal-footer"><button class="button" data-action="modal-close">取消</button><button class="button" data-action="validate-source-draft" disabled id="source-validate">校验字段</button><button class="button primary" data-action="save-source-draft" disabled id="source-save">校验并保存</button></div></section></div>';
+    var existing = sourceId ? sourceById(sourceId) : null;
+    var editing = !!existing;
+    var scope = existing ? existing.scope : 'personal';
+    state.sourceDraft = {scope:scope,sourceId:sourceId || '',inspection:null,validation:null};
+    var personalDisabled = editing ? ' disabled' : '';
+    var teamDisabled = (editing || !role.admin) ? ' disabled' : '';
+    var title = editing ? '重新配置飞书数据源' : '添加飞书数据源';
+    var intro = editing ? '重新读取并校验表格后，将原子替换当前数据源并保留采购员默认值与环境映射。' : '仅在本机读取和校验表格。完整链接、token、sheet ID 与数据内容不会上传云端。';
+    modalRoot.innerHTML = '<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true"><h2>' + title + '</h2><p>' + intro + '</p><div class="modal-body"><div class="field"><span>数据源类型</span><div class="source-types"><button class="source-type ' + (scope === 'personal' ? 'active' : '') + '" data-source-scope="personal"' + personalDisabled + '>' + icon('user') + '<b>个人速填表</b><span>绑定当前采购员</span></button><button class="source-type ' + (scope === 'team' ? 'active' : '') + '" data-source-scope="team"' + teamDisabled + '>' + icon('users') + '<b>团队协作表</b><span>多人共享或兜底</span></button></div></div>' + field('source-url','飞书普通电子表格链接','','仅接受企业飞书 /sheets/ 链接；现有链接不会回显','text',false,'https://tenant.feishu.cn/sheets/...') + '<div class="field-grid"><div class="field"><label for="source-sheet">选择工作表</label><select id="source-sheet" class="select" disabled><option>请先读取表格</option></select></div><div class="field" style="display:flex;align-items:flex-end"><button class="button" data-action="inspect-source">读取工作表</button></div></div><div id="source-validation" class="validation-box">' + icon('shield') + '<span>链接只在本机解析；请选择工作表并完成字段校验。</span></div></div><div class="modal-footer"><button class="button" data-action="modal-close">取消</button><button class="button" data-action="validate-source-draft" disabled id="source-validate">校验字段</button><button class="button primary" data-action="save-source-draft" disabled id="source-save">' + (editing ? '替换并保留映射' : '校验并保存') + '</button></div></section></div>';
+  }
+  function openSourceDetails(sourceId) {
+    var source = sourceById(sourceId);
+    if (!source) return showError(new Error('数据源不存在或已更新'));
+    var editable = sourceCanEdit(source);
+    var pending = source.scope === 'personal' && !source.ownerMemberId;
+    var owner = source.scope === 'team' ? '采购团队' : (source.ownerMemberId ? memberName(source.ownerMemberId) : '待认领');
+    var teamDefault = source.scope === 'team' && currentSources().teamDefaultDataSourceId === source.id;
+    var policyButton = source.scope === 'team' && editable ? '<button class="button" data-action="toggle-team-default:' + esc(source.id) + '">' + (teamDefault ? '取消团队默认' : '设为团队默认') + '</button>' : '';
+    state.sourceDraft = {sourceId:sourceId,scope:source.scope};
+    modalRoot.innerHTML = '<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true"><h2>数据源详情</h2><p>敏感表格标识只保存在本机注册表，详情页不会回显 token、Sheet ID 或表格内容。</p><div class="modal-body"><div class="source-details"><div><span>类型</span><b>' + (source.scope === 'team' ? '团队协作表' : '个人速填表') + '</b></div><div><span>归属</span><b>' + esc(owner) + '</b></div><div><span>数据源编号</span><b>' + esc(safeId(source.id)) + '</b></div><div><span>工作表</span><b>' + esc(source.sheetName || '名称未记录') + '</b></div><div><span>读取范围</span><b>' + esc(source.cellRange || '—') + '</b></div><div><span>关联环境</span><b>' + Number(source.environmentCount || 0) + ' 个</b></div></div>' + field('source-label','显示名称',source.label,'1–120 个字符；仅修改本机显示名称','text',!editable) + '<label class="toggle-row"><div><b>启用此数据源</b><p>停用后不会用于采购员默认值或环境解析，现有映射仍保留。</p></div><input id="source-enabled" class="switch" type="checkbox"' + (source.enabled !== false ? ' checked' : '') + (editable ? '' : ' disabled') + '></label><div class="validation-box">' + icon('lock') + '<span>Spreadsheet Token 与 Sheet ID：已安全保存且禁止回显。</span></div></div><div class="modal-footer"><button class="button" data-action="modal-close">关闭</button>' + (pending ? '<button class="button primary" data-action="claim-source:' + esc(source.id) + '">认领为我的个人表</button>' : '') + policyButton + (editable ? '<button class="button" data-action="source-reconfigure:' + esc(source.id) + '">更换表格/工作表</button><button class="button primary" data-action="save-source-metadata">保存修改</button>' : '') + '</div></section></div>';
   }
   function closeModal() { modalRoot.innerHTML = ''; state.sourceDraft = null; }
   function inspectSource() {
@@ -503,10 +533,39 @@
   function saveSourceDraft() {
     var draft = state.sourceDraft;
     if (!draft || !draft.validation) return;
-    var path = draft.scope === 'team' ? '/api/local-config/data-sources/team' : '/api/local-config/data-sources/personal';
-    post(path,{validationId:draft.validation.validationId,setDefault:draft.scope === 'team',expectedRevision:state.sources && state.sources.registryRevision || ''}).then(function (result) {
-      state.sources = result; closeModal(); renderWorkspace(); showToast('数据源已安全保存到本机注册表');
+    var replacing = !!draft.sourceId;
+    var path = replacing ? '/api/local-config/data-sources/replace' : (draft.scope === 'team' ? '/api/local-config/data-sources/team' : '/api/local-config/data-sources/personal');
+    post(path,{sourceId:draft.sourceId || '',validationId:draft.validation.validationId,setDefault:draft.scope === 'team',expectedRevision:state.sources && state.sources.registryRevision || ''}).then(function (result) {
+      state.sources = result; closeModal(); renderWorkspace(); showToast(replacing ? '数据源已替换，原有默认值与环境映射已保留' : '数据源已安全保存到本机注册表');
     }).catch(showError);
+  }
+  function saveSourceMetadata() {
+    var draft = state.sourceDraft;
+    var label = document.getElementById('source-label');
+    var enabled = document.getElementById('source-enabled');
+    if (!draft || !draft.sourceId || !label || !enabled) return;
+    var value = label.value.trim();
+    if (!value || value.length > 120) return showError(new Error('显示名称必须为 1–120 个字符'));
+    post('/api/local-config/data-sources/metadata',{sourceId:draft.sourceId,label:value,enabled:enabled.checked,expectedRevision:state.sources.registryRevision}).then(function (result) {
+      state.sources=result; closeModal(); renderWorkspace(); showToast('数据源名称与启用状态已保存');
+    }).catch(function (error) { if (error.code === 'config_revision_conflict') loadWorkspaceData(); showError(error); });
+  }
+  function claimSource(sourceId) {
+    post('/api/local-config/data-sources/claim-personal',{sourceId:sourceId,expectedRevision:state.sources.registryRevision}).then(function (result) {
+      state.sources=result; closeModal(); renderWorkspace(); showToast('旧个人速填表已认领，并设为你的默认数据源');
+    }).catch(function (error) { if (error.code === 'config_revision_conflict') loadWorkspaceData(); showError(error); });
+  }
+  function revalidateSource(sourceId) {
+    post('/api/local-config/data-sources/revalidate',{sourceId:sourceId}).then(function (result) {
+      showToast((result.sheetName || sourceName(sourceId)) + ' 验证通过：' + Number(result.headerCount || 0) + ' 列，范围 ' + (result.cellRange || '已确认'));
+    }).catch(showError);
+  }
+  function toggleTeamDefault(sourceId) {
+    var current = currentSources().teamDefaultDataSourceId;
+    var path = current === sourceId ? '/api/local-config/data-sources/team-default/clear' : '/api/local-config/data-sources/team-default';
+    post(path,{sourceId:sourceId,expectedRevision:state.sources.registryRevision}).then(function (result) {
+      state.sources=result; closeModal(); renderWorkspace(); showToast(current === sourceId ? '已取消团队默认数据源' : '已设为团队默认数据源');
+    }).catch(function (error) { if (error.code === 'config_revision_conflict') loadWorkspaceData(); showError(error); });
   }
 
   function saveSettings() {
@@ -550,7 +609,7 @@
     var tabButton = event.target.closest('[data-source-tab]');
     if (tabButton) { state.sourceTab=tabButton.getAttribute('data-source-tab'); renderWorkspace(); return; }
     var scopeButton = event.target.closest('[data-source-scope]');
-    if (scopeButton && state.sourceDraft) {
+    if (scopeButton && state.sourceDraft && !scopeButton.disabled) {
       state.sourceDraft.scope=scopeButton.getAttribute('data-source-scope');
       document.querySelectorAll('[data-source-scope]').forEach(function (node) { node.classList.toggle('active',node===scopeButton); });
       return;
@@ -588,14 +647,19 @@
     else if (action === 'test-hub') saveHubKey();
     else if (action === 'test-lark') saveLarkCredentials();
     else if (action === 'add-source') openSourceModal();
+    else if (action.indexOf('source-details:') === 0) openSourceDetails(action.split(':')[1]);
+    else if (action.indexOf('source-reconfigure:') === 0) openSourceModal(action.split(':')[1]);
+    else if (action.indexOf('claim-source:') === 0) claimSource(action.split(':')[1]);
+    else if (action.indexOf('revalidate-source:') === 0) revalidateSource(action.split(':')[1]);
+    else if (action.indexOf('toggle-team-default:') === 0) toggleTeamDefault(action.split(':')[1]);
     else if (action === 'modal-close') closeModal();
     else if (action === 'inspect-source') inspectSource();
     else if (action === 'validate-source-draft') validateSourceDraft();
     else if (action === 'save-source-draft') saveSourceDraft();
+    else if (action === 'save-source-metadata') saveSourceMetadata();
     else if (action === 'discover-environments') {
       api('/api/local-config/data-sources/environment-options?limit=200').then(function (x) { state.environments=x.environments || []; renderWorkspace(); showToast('已从 HubStudio 重新发现 ' + state.environments.length + ' 个环境'); }).catch(showError);
     }
-    else if (action.indexOf('validate-source:') === 0) { showToast(sourceName(action.slice(16)) + ' 已提交只读验证'); }
   });
   document.addEventListener('change', function (event) {
     var row = event.target.closest('tr[data-container]');

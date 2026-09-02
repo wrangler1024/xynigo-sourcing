@@ -211,8 +211,10 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
 .source-details { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:14px; padding:11px; border-radius:10px; background:#f8fafc; }
 .source-details span { display:block; color:var(--muted); font-size:9px; }
 .source-details b { display:block; margin-top:4px; color:#334155; font-size:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.source-foot { display:flex; align-items:center; margin-top:13px; color:#047857; font-size:9px; font-weight:800; }
-.source-foot .button { margin-left:auto; min-height:26px; }
+.source-foot { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:13px; color:#047857; font-size:9px; font-weight:800; }
+.source-state { display:flex; align-items:center; min-width:0; }
+.source-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px; }
+.source-foot .button { min-height:26px; }
 .table-card { overflow:hidden; }
 .table-toolbar { display:flex; gap:10px; padding:13px; border-bottom:1px solid #f1f5f9; }
 .table-toolbar .input { max-width:360px; margin:0; }

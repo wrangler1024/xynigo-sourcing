@@ -81,6 +81,54 @@ class DataSourceRegistryTests(unittest.TestCase):
         self.assertNotIn('spreadsheetToken', rendered)
         self.assertNotIn('sheetId', rendered)
 
+    def test_source_metadata_can_change_without_exposing_private_target(self):
+        snapshot = self.registry.migrate_legacy(legacy_config())
+        team_id = next(
+            item['id'] for item in snapshot['registry']['dataSources']
+            if item['scope'] == 'team')
+
+        updated = self.registry.update_source_metadata(
+            team_id, '采购团队默认协作表', False,
+            expected_revision=snapshot['registryRevision'])
+        source = self.registry.source(team_id)
+        public = self.registry.public_snapshot(MEMBER_A, include_all=True)
+
+        self.assertEqual(source['label'], '采购团队默认协作表')
+        self.assertFalse(source['enabled'])
+        self.assertNotIn('SpreadsheetTeam123', json.dumps(public))
+        self.assertNotEqual(
+            updated['configRevision'], snapshot['registryRevision'])
+
+    def test_replacing_team_target_preserves_default_and_environment_mapping(self):
+        snapshot = self.registry.migrate_legacy(legacy_config())
+        team_id = next(
+            item['id'] for item in snapshot['registry']['dataSources']
+            if item['scope'] == 'team')
+        defaulted = self.registry.set_team_default(
+            team_id, expected_revision=snapshot['registryRevision'])
+        bound = self.registry.bind_environment(
+            'container-001', MEMBER_A, team_id,
+            expected_revision=defaulted['configRevision'])
+
+        replaced = self.registry.replace_source_target(
+            team_id, {
+                'spreadsheetToken': 'SpreadsheetTeamReplacement123',
+                'sheetId': 'sheet_team_replacement',
+                'cellRange': 'A1:AQ',
+                'sheetName': '新团队协作表',
+            }, expected_revision=bound['configRevision'])
+        registry = self.registry.snapshot()['registry']
+        new_id = replaced['dataSourceId']
+
+        self.assertNotEqual(new_id, team_id)
+        self.assertEqual(registry['teamDefaultDataSourceId'], new_id)
+        self.assertEqual(
+            registry['environmentBindings'][0]['dataSourceId'], new_id)
+        self.assertEqual(
+            registry['legacyMigration']['teamSourceId'], new_id)
+        self.assertFalse(any(
+            item['id'] == team_id for item in registry['dataSources']))
+
     def test_migration_is_idempotent_and_does_not_follow_active_mode(self):
         first = self.registry.migrate_legacy(legacy_config())
         changed_legacy = legacy_config()
@@ -394,6 +442,17 @@ class FakePurchaseAssistant(object):
             'sheetName': '测试工作表',
         }
 
+    def revalidate_target(self, target):
+        if 'spreadsheetToken' not in target or 'sheetId' not in target:
+            raise AssertionError('private target is required internally')
+        return {
+            'valid': True,
+            'sheetName': target.get('sheetName') or '测试工作表',
+            'cellRange': target['cellRange'],
+            'headerCount': 43,
+            'requiredFieldCount': 8,
+        }
+
 
 class FakeHub(object):
     def list_environment_summaries(self, query='', limit=100):
@@ -463,6 +522,55 @@ class DataSourceRegistryRouteTests(unittest.TestCase):
             claimed['buyerProfiles'][0]['memberId'], MEMBER_A)
         self.assertNotIn('SpreadsheetPersonal123', rendered)
         self.assertNotIn('spreadsheetToken', rendered)
+
+    def test_admin_can_view_edit_revalidate_and_replace_team_source(self):
+        self.auth.roles = ['admin']
+        initial = self._request('/api/local-config/data-sources')
+        team_id = next(
+            item['id'] for item in initial['dataSources']
+            if item['scope'] == 'team')
+        renamed = self._request(
+            '/api/local-config/data-sources/metadata', {
+                'sourceId': team_id,
+                'label': '团队采购主表',
+                'enabled': True,
+                'expectedRevision': initial['registryRevision'],
+            })
+        checked = self._request(
+            '/api/local-config/data-sources/revalidate', {
+                'sourceId': team_id,
+            })
+        replaced = self._request(
+            '/api/local-config/data-sources/replace', {
+                'sourceId': team_id,
+                'validationId': 'validation-safe',
+                'expectedRevision': renamed['registryRevision'],
+            })
+        rendered = json.dumps(replaced, ensure_ascii=False)
+
+        self.assertEqual(
+            next(item for item in renamed['dataSources']
+                 if item['id'] == team_id)['label'],
+            '团队采购主表')
+        self.assertTrue(checked['valid'])
+        self.assertEqual(checked['headerCount'], 43)
+        self.assertTrue(replaced['saved'])
+        self.assertNotIn('SpreadsheetFreshRoute123', rendered)
+        self.assertNotIn('sheet_fresh_route', rendered)
+
+    def test_non_admin_cannot_edit_team_source(self):
+        initial = self._request('/api/local-config/data-sources')
+        team_id = next(
+            item['id'] for item in initial['dataSources']
+            if item['scope'] == 'team')
+        with self.assertRaises(urllib.error.HTTPError) as denied:
+            self._request('/api/local-config/data-sources/metadata', {
+                'sourceId': team_id,
+                'label': '不允许修改',
+                'enabled': True,
+                'expectedRevision': initial['registryRevision'],
+            })
+        self.assertEqual(denied.exception.code, 403)
 
     def test_environment_binding_requires_admin_role(self):
         initial = self._request('/api/local-config/data-sources')
