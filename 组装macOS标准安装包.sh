@@ -126,7 +126,9 @@ PY
 
 ICONSET="$WORK_ROOT/xynigo.iconset"
 mkdir -p "$ICONSET"
-SOURCE_ICON="src/purchase_tool/web/xynigo-favicon.png"
+# Keep the macOS application icon aligned with the Windows launcher,
+# installer, shortcuts and tray icon. Both are rendered from the approved X.
+SOURCE_ICON="src/purchase_tool/web/xynigo-x.png"
 for spec in \
   "16 icon_16x16.png" "32 icon_16x16@2x.png" \
   "32 icon_32x32.png" "64 icon_32x32@2x.png" \

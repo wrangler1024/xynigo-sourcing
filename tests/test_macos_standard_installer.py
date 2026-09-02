@@ -144,6 +144,16 @@ class MacOSStandardInstallerContractTests(unittest.TestCase):
             "find \"$VERIFIED_APP\" -name '._*' -print -quit",
             self.builder)
 
+    def test_app_icon_uses_the_shared_x_brand_asset(self):
+        self.assertIn(
+            'SOURCE_ICON="src/purchase_tool/web/xynigo-x.png"',
+            self.builder,
+        )
+        self.assertNotIn(
+            'SOURCE_ICON="src/purchase_tool/web/xynigo-favicon.png"',
+            self.builder,
+        )
+
     def test_launcher_only_accepts_low_risk_protocol_and_fixed_scripts(self):
         self.assertIn('^xynigo://', self.launcher)
         self.assertNotIn('xynigo://purchase', self.launcher.lower())
