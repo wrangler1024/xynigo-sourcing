@@ -4159,6 +4159,7 @@ function renderCloudExecutorHubStatus() {
   const onlineDevices = localExecutorDevices.filter(item =>
     item.status !== 'revoked' && item.connectivity === 'online');
   if (!onlineDevices.length) {
+    hubConnected = false;
     pill.className = 'pill bad';
     pill.textContent = '☁ 本地执行器均离线';
     pill.title = CLOUD_EXECUTOR_OFFLINE_MESSAGE;
@@ -4168,11 +4169,13 @@ function renderCloudExecutorHubStatus() {
   const device = selected && selected.connectivity === 'online'
     ? selected : onlineDevices[0];
   if (device.hubStatus === 'ready') {
+    hubConnected = true;
     pill.className = 'pill ok';
     pill.textContent = 'HubStudio 已连接';
     pill.title = `${device.displayName || '本地执行器'}在线，HubStudio Local API 正常。`;
     return;
   }
+  hubConnected = false;
   pill.className = 'pill checking';
   pill.textContent = '🟠 执行器在线 · HubStudio 未连接';
   pill.title = `${device.displayName || '本地执行器'}已在线，但尚未报告 HubStudio 可用。`;
@@ -4180,7 +4183,9 @@ function renderCloudExecutorHubStatus() {
 
 function setHubStatus(connected) {
   if (CLOUD_WEB_MODE) {
-    hubConnected = connected;
+    // The cloud workspace must use the selected executor heartbeat as the
+    // single HubStudio fact source.  Loopback compatibility stubs report
+    // disconnected by design and must not overwrite an online device state.
     renderCloudExecutorHubStatus();
     return;
   }

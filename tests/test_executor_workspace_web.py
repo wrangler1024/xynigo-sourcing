@@ -104,6 +104,25 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         self.assertIn("云端只短时保存加密执行计划", html)
         self.assertNotIn("coreVersion=148", html)
 
+    def test_cloud_hub_badge_and_query_gate_share_selected_executor_state(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        renderer = html[
+            html.index("function renderCloudExecutorHubStatus()"):
+            html.index("function setHubStatus(connected)")
+        ]
+        self.assertIn("hubConnected = true;", renderer)
+        self.assertGreaterEqual(renderer.count("hubConnected = false;"), 2)
+        setter = html[
+            html.index("function setHubStatus(connected)"):
+            html.index("function setHiddenQueryColumns(columns)")
+        ]
+        cloud_branch = setter[
+            setter.index("if (CLOUD_WEB_MODE)"):
+            setter.index("if (connected === hubConnected")
+        ]
+        self.assertIn("renderCloudExecutorHubStatus();", cloud_branch)
+        self.assertNotIn("hubConnected = connected;", cloud_branch)
+
     def test_cloud_workspace_renews_sessions_and_idempotently_submits_writes(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")
         for marker in (
