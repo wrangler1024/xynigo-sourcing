@@ -3383,6 +3383,7 @@ function cloudLogisticsLegacySnapshot(run) {
   return {
     running:!run.terminal,
     terminal:!!run.terminal,
+    cancelled:run.status === 'cancelled',
     current:rows.filter(row => row.state === 'running').map(row => row.serial).join(', '),
     elapsedSec:cloudRunElapsed(run), rows,
     progressCompleted:Number(run.progressCompleted || 0),
@@ -6253,7 +6254,7 @@ function render(snap) {
   setHubStatus(snap.hubConnected);
   renderRows(lastRows);
   renderStats(lastRows);
-  if (!lastRows.length && Number(snap.progressTotal || 0) > 0) {
+  if ((snap.cancelled || !lastRows.length) && Number(snap.progressTotal || 0) > 0) {
     const current = Number(snap.progressCompleted || 0);
     const total = Number(snap.progressTotal || 0);
     $('progressText').textContent = `${current} / ${total}`;
@@ -6263,12 +6264,17 @@ function render(snap) {
   $('btnStop').disabled = !isRunning;
   const retryable = lastRows.filter(r => ['fail', 'inuse', 'pending', 'stopped'].includes(r.state)).length;
   $('btnRetryFail').disabled = isRunning || !retryable;
-  $('btnRetryFail').textContent = retryable ? `↻ 重查异常行（${retryable}）` : '↻ 重查异常行';
+  const stopped = lastRows.filter(r => r.state === 'stopped').length;
+  $('btnRetryFail').textContent = retryable
+    ? `↻ ${stopped === retryable ? '查询未完成行' : '重查异常行'}（${retryable}）`
+    : '↻ 重查异常行';
   const terminalStartFailure = !isRunning && snap.terminal
     && !lastRows.length && snap.errorCode;
   $('currentEnv').textContent = isRunning
     ? ((snap.current ? '正在查询：' + snap.current : '执行器正在预检和准备') + ' …')
-    : (terminalStartFailure
+    : (snap.cancelled
+      ? `查询已停止：已完成 ${Number(snap.progressCompleted || 0)} / ${Number(snap.progressTotal || lastRows.length || 0)}`
+      : terminalStartFailure
       ? logisticsRunFailureText(snap.errorCode)
       : (snap.rows && snap.rows.length ? '查询结束' : '待开始'));
   paintContinuousElapsed('elapsed', queryElapsedBase);
@@ -6279,7 +6285,7 @@ function render(snap) {
     const ok = snap.rows.filter(r => r.state === 'ok' && !r.riskOrder).length;
     const risk = snap.rows.filter(r => r.state === 'ok' && r.riskOrder).length;
     const riskText = risk ? `，风险订单 ${risk}` : '';
-    toast(stopRequested ? '已停止查询' : `查询完成：成功 ${ok} / ${snap.rows.length}${riskText}，可点击「导出 Excel（含轨迹截图）」保存结果`);
+    toast(stopRequested || snap.cancelled ? '已停止查询' : `查询完成：成功 ${ok} / ${snap.rows.length}${riskText}，可点击「导出 Excel（含轨迹截图）」保存结果`);
   }
 }
 

@@ -193,6 +193,21 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         )
         self.assertIn('id="cntStopped"', html)
 
+    def test_cancelled_logistics_run_shows_real_completed_count(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        snapshot = html[
+            html.index("function cloudLogisticsLegacySnapshot(run)"):
+            html.index("function logisticsRunFailureText(code)")
+        ]
+        self.assertIn("cancelled:run.status === 'cancelled'", snapshot)
+        renderer = html[
+            html.index("function render(snap)"):
+            html.index("/* ---------- 轮询 ---------- */")
+        ]
+        self.assertIn("snap.cancelled || !lastRows.length", renderer)
+        self.assertIn("查询已停止：已完成", renderer)
+        self.assertIn("'查询未完成行'", renderer)
+
     def test_cloud_copy_is_synced_from_single_ui_source(self):
         self.assertEqual(
             LOCAL_HTML.read_bytes(),
