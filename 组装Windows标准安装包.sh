@@ -171,6 +171,8 @@ metadata = {
     'protocol': 'xynigo',
     'statusCenter': True,
     'trayMenu': True,
+    'desktopUI': 'webview2',
+    'webViewRuntime': 'evergreen',
     'launcherFile': 'Xynigo.exe',
     'assetName': installer.name,
     'size': installer.stat().st_size,

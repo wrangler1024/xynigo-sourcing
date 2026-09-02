@@ -109,6 +109,9 @@ class MacOSStandardInstallerContractTests(unittest.TestCase):
             encoding='utf-8')
         cls.launcher = (ROOT / 'packaging/macos/desktop_client.swift').read_text(
             encoding='utf-8')
+        cls.desktop_ui = (
+            ROOT / 'src/purchase_tool/web/desktop.js'
+        ).read_text(encoding='utf-8')
         cls.start_script = (
             ROOT / 'packaging/macos/启动本地执行器.command'
         ).read_text(encoding='utf-8')
@@ -124,6 +127,7 @@ class MacOSStandardInstallerContractTests(unittest.TestCase):
         self.assertIn('icu.samforo.xynigo.sourcing', self.builder)
         self.assertIn("'CFBundleURLSchemes': ['xynigo']", self.builder)
         self.assertIn("'LSMinimumSystemVersion': '13.0'", self.builder)
+        self.assertIn("'NSAllowsLocalNetworking': True", self.builder)
         for forbidden in ('LaunchAgents', 'LaunchDaemons', 'LoginItems'):
             self.assertNotIn('mkdir -p "$PACKAGE_ROOT/Library/%s' % forbidden,
                              self.builder)
@@ -151,7 +155,11 @@ class MacOSStandardInstallerContractTests(unittest.TestCase):
     def test_launcher_has_visible_desktop_window_and_menu_bar_entry(self):
         for marker in (
                 'NSWindow(',
-                'Xynigo 桌面客户端',
+                'Xynigo 本地执行器',
+                'WKWebView(',
+                'WKScriptMessageHandler',
+                '/desktop/',
+                'URLQueryItem(name: "platform", value: "mac")',
                 'styleMask: [.titled, .closable, .miniaturizable, .resizable]',
                 'application.setActivationPolicy(.regular)',
                 'NSStatusBar.system.statusItem',
@@ -167,6 +175,8 @@ class MacOSStandardInstallerContractTests(unittest.TestCase):
                 '127.0.0.1',
         ):
             self.assertIn(marker, self.launcher)
+        self.assertIn('使用飞书授权登录', self.desktop_ui)
+        self.assertIn('/api/auth/start', self.desktop_ui)
 
     def test_launcher_manages_executor_without_terminal(self):
         for marker in (
@@ -212,9 +222,11 @@ class MacOSStandardInstallerContractTests(unittest.TestCase):
         self.assertIn("'statusCenter': True", self.builder)
         self.assertIn("'menuBar': True", self.builder)
         self.assertIn("'dockIcon': True", self.builder)
+        self.assertIn("'desktopUI': 'wkwebview'", self.builder)
         self.assertIn("'executorLaunchMode': 'managed_child'", self.builder)
         self.assertIn('packaging/macos/desktop_client.swift', self.builder)
         self.assertIn('/usr/bin/swiftc -parse-as-library', self.builder)
+        self.assertIn('-framework AppKit -framework WebKit', self.builder)
 
 
 class MacOSStandardInstallerArtifactTests(unittest.TestCase):
@@ -231,6 +243,8 @@ class MacOSStandardInstallerArtifactTests(unittest.TestCase):
         self.assertTrue(payload['menuBar'])
         self.assertTrue(payload['dockIcon'])
         self.assertEqual(payload['executorLaunchMode'], 'managed_child')
+        if 'desktopUI' in payload:
+            self.assertEqual(payload['desktopUI'], 'wkwebview')
         self.assertTrue(payload['runtimeId'].startswith(
             payload['version'] + '-'))
         self.assertEqual(len(payload['runtimeRevision']), 12)

@@ -24,6 +24,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/jchv/go-webview2/pkg/edge"
 	"github.com/lxn/walk"
 	. "github.com/lxn/walk/declarative"
 )
@@ -118,6 +119,7 @@ type launcherApp struct {
 	root string
 
 	mw             *walk.MainWindow
+	browser        *edge.Chromium
 	notify         *walk.NotifyIcon
 	statusSignal   *walk.Label
 	statusTitle    *walk.Label
@@ -154,6 +156,7 @@ type launcherApp struct {
 	childDone      chan error
 	launcherToken  string
 	statusURL      string
+	desktopURL     string
 	lastStatus     *localStatus
 	lastStatusAt   time.Time
 	statusFailures int
@@ -293,100 +296,73 @@ func writeCommand(root, command string) error {
 
 func (app *launcherApp) buildWindow() error {
 	if err := walk.Resources.SetRootDirPath(app.root); err != nil {
-		return fmt.Errorf("无法定位状态中心资源目录：%w", err)
+		return fmt.Errorf("无法定位桌面客户端资源目录：%w", err)
 	}
-	white := walk.RGB(255, 255, 255)
-	navy := walk.RGB(8, 37, 72)
-	muted := walk.RGB(83, 113, 139)
-	teal := walk.RGB(17, 127, 134)
-	soft := walk.RGB(232, 248, 247)
-	canvas := walk.RGB(244, 247, 250)
-	green := walk.RGB(20, 132, 93)
-
-	// Declarative Walk resolves string images relative to its global resource
-	// root. Pinning it above makes startup independent of the browser, shortcut,
-	// terminal or installer working directory.
-	logo := "xynigo-logo.png"
-	icon := "xynigo-x.ico"
 	window := MainWindow{
 		AssignTo:   &app.mw,
-		Title:      "Xynigo 桌面客户端",
-		Icon:       icon,
-		Size:       Size{Width: 860, Height: 630},
-		MinSize:    Size{Width: 800, Height: 600},
-		Background: SolidColorBrush{Color: canvas},
+		Title:      "Xynigo 本地执行器",
+		Icon:       "xynigo-x.ico",
+		Size:       Size{Width: 1360, Height: 790},
+		MinSize:    Size{Width: 1080, Height: 650},
+		Background: SolidColorBrush{Color: walk.RGB(255, 255, 255)},
 		Font:       Font{Family: "Microsoft YaHei UI", PointSize: 9},
 		Layout:     VBox{MarginsZero: true, SpacingZero: true},
 		Children: []Widget{
 			Composite{
-				Background: SolidColorBrush{Color: soft},
-				MinSize:    Size{Height: 108},
-				Layout:     HBox{Margins: Margins{Left: 24, Top: 12, Right: 24, Bottom: 12}, Spacing: 24},
+				AssignTo: &app.pairPanel,
+				Visible:  false,
+				Layout:   VBox{MarginsZero: true, SpacingZero: true},
 				Children: []Widget{
-					ImageView{Image: logo, Mode: ImageViewModeShrink, MinSize: Size{Width: 238, Height: 82}, MaxSize: Size{Width: 238, Height: 82}},
-					Composite{Background: SolidColorBrush{Color: soft}, Layout: VBox{MarginsZero: true, Spacing: 3}, Children: []Widget{
-						VSpacer{},
-						Label{Text: "XYNIGO DESKTOP", TextColor: teal, Font: Font{Family: "Microsoft YaHei UI", PointSize: 8, Bold: true}},
-						Label{Text: "连接云端工作台与这台采购电脑", TextColor: navy, Font: Font{Family: "Microsoft YaHei UI", PointSize: 15, Bold: true}},
-						Label{Text: "关闭窗口后仍在系统托盘运行，不影响已接收的后台任务。", TextColor: muted},
-						VSpacer{},
-					}},
+					Label{AssignTo: &app.statusSignal},
+					Label{AssignTo: &app.statusTitle},
+					Label{AssignTo: &app.statusDetail},
+					Label{AssignTo: &app.cloudSignal},
+					Label{AssignTo: &app.cloudValue},
+					Label{AssignTo: &app.cloudNote},
+					Label{AssignTo: &app.hubSignal},
+					Label{AssignTo: &app.hubValue},
+					Label{AssignTo: &app.hubNote},
+					Label{AssignTo: &app.taskSignal},
+					Label{AssignTo: &app.taskValue},
+					Label{AssignTo: &app.taskNote},
+					Label{AssignTo: &app.versionValue},
+					Label{AssignTo: &app.versionNote},
+					Label{AssignTo: &app.deviceValue},
+					Label{AssignTo: &app.deviceState},
+					Label{AssignTo: &app.heartbeatValue},
+					LineEdit{AssignTo: &app.pairEdit},
+					PushButton{AssignTo: &app.pairButton},
+					PushButton{AssignTo: &app.startButton},
+					PushButton{AssignTo: &app.updateButton},
+					ProgressBar{AssignTo: &app.updateProgress},
 				},
 			},
-			Composite{Background: SolidColorBrush{Color: canvas}, Layout: VBox{Margins: Margins{Left: 22, Top: 18, Right: 22, Bottom: 14}, Spacing: 12}, Children: []Widget{
-				Composite{
-					Border: true, Background: SolidColorBrush{Color: white}, MinSize: Size{Height: 76},
-					Layout: HBox{Margins: Margins{Left: 14, Top: 12, Right: 16, Bottom: 12}, Spacing: 12},
-					Children: []Widget{
-						Label{AssignTo: &app.statusSignal, Text: "●", TextColor: green, Font: Font{Family: "Segoe UI Symbol", PointSize: 18, Bold: true}, MinSize: Size{Width: 32}, TextAlignment: AlignCenter},
-						Composite{Background: SolidColorBrush{Color: white}, Layout: VBox{MarginsZero: true, Spacing: 2}, Children: []Widget{
-							Label{AssignTo: &app.statusTitle, Text: "执行器已启动，等待设备配对", TextColor: navy, Font: Font{Family: "Microsoft YaHei UI", PointSize: 11, Bold: true}},
-							Label{AssignTo: &app.statusDetail, Text: "在云端工作台生成一次性配对码，然后在下方完成绑定。", TextColor: muted},
-						}},
-						HSpacer{},
-						Label{AssignTo: &app.heartbeatValue, Text: "尚未建立云端心跳", TextColor: muted, TextAlignment: AlignFar},
-					},
-				},
-				Composite{Layout: Grid{Columns: 4, Spacing: 9}, Background: SolidColorBrush{Color: canvas}, Children: []Widget{
-					statusCard("云端通道", &app.cloudSignal, &app.cloudValue, &app.cloudNote, "等待配对", "需要一次性配对码", white, navy, muted, teal),
-					statusCard("HubStudio", &app.hubSignal, &app.hubValue, &app.hubNote, "正在检查", "等待本机服务", white, navy, muted, teal),
-					statusCard("本机任务", &app.taskSignal, &app.taskValue, &app.taskNote, "当前空闲", "没有运行中的任务", white, navy, muted, teal),
-					statusCard("执行器版本", nil, &app.versionValue, &app.versionNote, "—", "等待检查更新", white, navy, muted, teal),
-				}},
-				Composite{
-					Border: true, Background: SolidColorBrush{Color: white}, MinSize: Size{Height: 104},
-					Layout: VBox{Margins: Margins{Left: 15, Top: 12, Right: 15, Bottom: 12}, Spacing: 8},
-					Children: []Widget{
-						Composite{Background: SolidColorBrush{Color: white}, Layout: HBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
-							Composite{Background: SolidColorBrush{Color: white}, Layout: VBox{MarginsZero: true, Spacing: 2}, Children: []Widget{
-								Label{Text: "设备配对", TextColor: navy, Font: Font{Family: "Microsoft YaHei UI", PointSize: 10, Bold: true}},
-								Label{AssignTo: &app.deviceValue, Text: "尚未配对 · 配对码 5 分钟内有效且只能使用一次", TextColor: muted},
-							}},
-							HSpacer{},
-							Label{AssignTo: &app.deviceState, Text: "待配对", TextColor: teal, Font: Font{Family: "Microsoft YaHei UI", PointSize: 9, Bold: true}, TextAlignment: AlignFar},
-						}},
-						Composite{AssignTo: &app.pairPanel, Background: SolidColorBrush{Color: white}, Layout: HBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
-							LineEdit{AssignTo: &app.pairEdit, CueBanner: "输入云端生成的 8 位一次性配对码", MaxLength: 9},
-							PushButton{AssignTo: &app.pairButton, Text: "配对这台电脑", MinSize: Size{Width: 142, Height: 34}, OnClicked: func() { app.startPair(app.pairEdit.Text()) }},
-						}},
-					},
-				},
-					Composite{Background: SolidColorBrush{Color: canvas}, Layout: HBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
-						PushButton{Text: "打开云端工作台", MinSize: Size{Width: 142, Height: 38}, OnClicked: func() { app.openCloudWorkspace() }},
-						PushButton{Text: "本机设置", MinSize: Size{Width: 108, Height: 38}, OnClicked: func() { app.openLocalSettings() }},
-						PushButton{AssignTo: &app.startButton, Text: "重新启动执行器", MinSize: Size{Width: 132, Height: 38}, OnClicked: func() { go app.restartExecutor() }},
-						PushButton{AssignTo: &app.updateButton, Text: "检查更新", MinSize: Size{Width: 108, Height: 38}, OnClicked: app.handleUpdateAction},
-					ProgressBar{AssignTo: &app.updateProgress, MinValue: 0, MaxValue: 100, Value: 0, Visible: false, MinSize: Size{Width: 150, Height: 18}},
-					HSpacer{},
-					PushButton{Text: "刷新状态", MinSize: Size{Width: 96, Height: 38}, OnClicked: func() { go app.refreshStatus() }},
-				}},
-				Label{Text: "云端心跳是在线状态的最终依据；退出 Xynigo 后本机任务将停止。", TextColor: muted, TextAlignment: AlignCenter},
-			}},
 		},
 	}
 	if err := window.Create(); err != nil {
 		return err
 	}
+
+	browser := edge.NewChromium()
+	browser.DataPath = filepath.Join(app.root, "运行数据", "WebView2")
+	browser.MessageCallback = app.handleWebMessage
+	if !browser.Embed(uintptr(app.mw.Handle())) {
+		return errors.New("WebView2 运行时不可用，请安装 Microsoft Edge WebView2 Runtime")
+	}
+	if settings, err := browser.GetSettings(); err == nil {
+		_ = settings.PutAreDefaultContextMenusEnabled(false)
+		_ = settings.PutAreDevToolsEnabled(false)
+		_ = settings.PutIsStatusBarEnabled(false)
+		_ = settings.PutIsZoomControlEnabled(false)
+	}
+	browser.NavigateToString(`<!doctype html><meta charset="utf-8"><style>
+html,body{height:100%;margin:0;font-family:"Microsoft YaHei UI",sans-serif;color:#123252}
+body{display:grid;place-items:center;text-align:center}.x{width:52px;height:52px;margin:auto;display:grid;
+place-items:center;border-radius:14px;color:white;font-size:22px;font-weight:800;background:linear-gradient(135deg,#31b8ae,#087c83)}
+h2{font-size:16px;margin:18px 0 6px}p{font-size:12px;color:#64748b}</style>
+<div><div class="x">X</div><h2>正在启动 Xynigo 本地执行器</h2><p>正在准备 WebView2 与本机安全服务…</p></div>`)
+	app.browser = browser
+	app.mw.SizeChanged().Attach(browser.Resize)
 	return nil
 }
 
@@ -492,16 +468,17 @@ func (app *launcherApp) showStatusCenter() {
 		app.mw.SetVisible(true)
 		_ = app.mw.BringToTop()
 		_ = app.mw.Activate()
+		if app.browser != nil {
+			app.browser.Focus()
+		}
 	})
 }
 
 func (app *launcherApp) showPairing() {
 	app.showStatusCenter()
-	app.mw.Synchronize(func() {
-		if app.pairEdit != nil && app.pairEdit.Visible() {
-			_ = app.pairEdit.SetFocus()
-		}
-	})
+	if app.browser != nil {
+		app.browser.Eval(`window.xynigoDesktop&&window.xynigoDesktop.focusPairing()`)
+	}
 }
 
 func (app *launcherApp) openCloudWorkspace() {
@@ -512,14 +489,27 @@ func (app *launcherApp) openLocalSettings() {
 	app.mu.Lock()
 	statusURL := app.statusURL
 	app.mu.Unlock()
-	settingsURL, err := localSettingsURL(statusURL)
-	if err != nil {
+	if statusPort(statusURL) == 0 {
 		walk.MsgBox(
 			app.mw,
 			"本机设置暂不可用",
 			"本地执行器尚未就绪，请稍后重试或先点击“重新启动执行器”。",
 			walk.MsgBoxIconWarning,
 		)
+		return
+	}
+	app.showStatusCenter()
+	if app.browser != nil {
+		app.browser.Eval(`window.xynigoDesktop&&window.xynigoDesktop.navigate("settings")`)
+	}
+}
+
+func (app *launcherApp) openLegacySettings() {
+	app.mu.Lock()
+	statusURL := app.statusURL
+	app.mu.Unlock()
+	settingsURL, err := localSettingsURL(statusURL)
+	if err != nil {
 		return
 	}
 	_ = exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", settingsURL).Start()
@@ -541,6 +531,82 @@ func localSettingsURL(statusURL string) (string, error) {
 	return parsed.String(), nil
 }
 
+func (app *launcherApp) navigateDesktop() {
+	app.mu.Lock()
+	statusURL := app.statusURL
+	current := app.desktopURL
+	app.mu.Unlock()
+	parsed, err := url.Parse(strings.TrimSpace(statusURL))
+	if err != nil || parsed.Scheme != "http" ||
+		strings.ToLower(parsed.Hostname()) != "127.0.0.1" ||
+		parsed.Port() == "" {
+		return
+	}
+	parsed.Path = "/desktop/"
+	parsed.RawPath = ""
+	parsed.RawQuery = "platform=windows"
+	parsed.Fragment = ""
+	target := parsed.String()
+	if target == current || app.browser == nil {
+		return
+	}
+	app.browser.Navigate(target)
+	app.mu.Lock()
+	app.desktopURL = target
+	app.mu.Unlock()
+}
+
+func (app *launcherApp) handleWebMessage(raw string) {
+	var message map[string]any
+	if len(raw) > 8192 || json.Unmarshal([]byte(raw), &message) != nil {
+		return
+	}
+	action, _ := message["action"].(string)
+	payload, _ := message["payload"].(map[string]any)
+	switch action {
+	case "open-external":
+		rawURL, _ := payload["url"].(string)
+		target, err := url.Parse(strings.TrimSpace(rawURL))
+		if err != nil || target.Scheme != "https" || target.Hostname() == "" ||
+			len(rawURL) > 4096 || strings.ContainsAny(rawURL, "\r\n\x00") {
+			return
+		}
+		_ = exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", rawURL).Start()
+	case "open-logs":
+		app.openLogs()
+	case "restart-executor":
+		go app.restartExecutor()
+	case "check-update":
+		app.handleUpdateAction()
+	case "pair-device":
+		code, _ := payload["code"].(string)
+		app.startPair(code)
+	case "run-diagnostics":
+		go func() {
+			app.refreshStatus()
+			app.notifyWeb("已刷新本机连接、任务与更新状态")
+		}()
+	case "export-diagnostics":
+		go app.exportDiagnosticSummary()
+	case "backup-config":
+		go app.backupCurrentConfig()
+	case "open-legacy-settings":
+		app.openLegacySettings()
+	}
+}
+
+func (app *launcherApp) notifyWeb(message string) {
+	if app.browser == nil {
+		return
+	}
+	encoded, _ := json.Marshal(message)
+	app.mw.Synchronize(func() {
+		app.browser.Eval(
+			"window.xynigoDesktop&&window.xynigoDesktop.notify(" +
+				string(encoded) + ")")
+	})
+}
+
 func (app *launcherApp) openLogs() {
 	directory := filepath.Join(app.root, "日志")
 	if _, err := os.Stat(directory); errors.Is(err, os.ErrNotExist) {
@@ -548,6 +614,100 @@ func (app *launcherApp) openLogs() {
 	}
 	_ = os.MkdirAll(directory, 0o700)
 	_ = exec.Command("explorer.exe", directory).Start()
+}
+
+func desktopTimestamp() string {
+	return time.Now().Format("20060102-150405")
+}
+
+func copyFileExclusive(source, target string) error {
+	input, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer input.Close()
+	output, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(output, input)
+	closeErr := output.Close()
+	if copyErr != nil {
+		_ = os.Remove(target)
+		return copyErr
+	}
+	return closeErr
+}
+
+func (app *launcherApp) backupCurrentConfig() {
+	source := filepath.Join(app.root, "config.json")
+	if _, err := os.Stat(source); err != nil {
+		app.mw.Synchronize(func() {
+			walk.MsgBox(app.mw, "暂无配置可备份", "本机尚未生成 config.json。", walk.MsgBoxIconInformation)
+		})
+		return
+	}
+	directory := filepath.Join(app.root, "历史备份")
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		app.showDiagnosticWriteError("配置备份失败")
+		return
+	}
+	target := filepath.Join(directory, "config-"+desktopTimestamp()+".json")
+	if err := copyFileExclusive(source, target); err != nil {
+		app.showDiagnosticWriteError("配置备份失败")
+		return
+	}
+	_ = exec.Command("explorer.exe", "/select,", target).Start()
+	app.notifyWeb("当前配置已备份到本机历史备份目录")
+}
+
+func (app *launcherApp) exportDiagnosticSummary() {
+	app.mu.Lock()
+	status := app.lastStatus
+	runtime := ""
+	if status != nil {
+		runtime = status.Version
+	}
+	app.mu.Unlock()
+	directory := filepath.Join(app.root, "日志")
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		app.showDiagnosticWriteError("诊断包导出失败")
+		return
+	}
+	cloud, hub, paired, tasks := "未连接", "未连接", "未完成", 0
+	if status != nil {
+		cloud = cloudStatusText(status.CloudChannel.Status)
+		if status.HubStudio.Connected {
+			hub = "已连接"
+		}
+		if status.Executor.Paired {
+			paired = "已完成"
+		}
+		tasks = status.Tasks.ActiveCount
+	}
+	lines := strings.Join([]string{
+		"Xynigo 脱敏诊断摘要",
+		"生成时间：" + time.Now().UTC().Format(time.RFC3339),
+		"运行时：" + runtime,
+		"云端通道：" + cloud,
+		"HubStudio：" + hub,
+		fmt.Sprintf("活动任务数：%d", tasks),
+		"设备配对：" + paired,
+		"说明：本文件不包含凭证、飞书链接、业务明文或设备令牌。",
+	}, "\r\n") + "\r\n"
+	target := filepath.Join(directory, "Xynigo-脱敏诊断-"+desktopTimestamp()+".txt")
+	if err := os.WriteFile(target, []byte(lines), 0o600); err != nil {
+		app.showDiagnosticWriteError("诊断包导出失败")
+		return
+	}
+	_ = exec.Command("explorer.exe", "/select,", target).Start()
+	app.notifyWeb("脱敏诊断摘要已生成，不包含凭证和业务明文")
+}
+
+func (app *launcherApp) showDiagnosticWriteError(title string) {
+	app.mw.Synchronize(func() {
+		walk.MsgBox(app.mw, title, "无法写入本机目标目录。", walk.MsgBoxIconError)
+	})
 }
 
 func (app *launcherApp) handleUpdateAction() {
@@ -781,6 +941,7 @@ func (app *launcherApp) renderStatus(status *localStatus, err error) {
 		_ = app.notify.SetToolTip("Xynigo 本地执行器 · 未运行")
 		return
 	}
+	app.navigateDesktop()
 	app.startButton.SetText("重新启动执行器")
 	_ = app.trayStartStop.SetText("重新启动执行器")
 	app.versionValue.SetText("v" + status.Version)
@@ -985,9 +1146,6 @@ func (app *launcherApp) renderUpdateStatus(status *localStatus) {
 }
 
 func (app *launcherApp) setPairingVisible(visible bool) {
-	if app.pairPanel != nil {
-		app.pairPanel.SetVisible(visible)
-	}
 	if app.trayPair != nil {
 		_ = app.trayPair.SetVisible(visible)
 	}

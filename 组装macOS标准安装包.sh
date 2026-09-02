@@ -80,7 +80,7 @@ cp -R "$EXTRACT_ROOT/Xynigo-Sourcing/runtime/." "$RESOURCES/runtime/"
 
 echo "[3/7] Build native launcher, app metadata and icon ..."
 /usr/bin/swiftc -parse-as-library -O -target arm64-apple-macos13.0 \
-  -framework AppKit packaging/macos/desktop_client.swift \
+  -framework AppKit -framework WebKit packaging/macos/desktop_client.swift \
   -o "$CONTENTS/MacOS/xynigo-launcher"
 cp packaging/macos/启动本地执行器.command "$RESOURCES/启动本地执行器.command"
 cp packaging/macos/协议启动.command "$RESOURCES/协议启动.command"
@@ -116,6 +116,9 @@ payload = {
     'LSApplicationCategoryType': 'public.app-category.business',
     'LSMinimumSystemVersion': '13.0',
     'LSMultipleInstancesProhibited': True,
+    'NSAppTransportSecurity': {
+        'NSAllowsLocalNetworking': True,
+    },
 }
 with Path(os.environ['INFO_PLIST']).open('wb') as handle:
     plistlib.dump(payload, handle, sort_keys=True)
@@ -156,6 +159,7 @@ metadata = {
     'statusCenter': True,
     'menuBar': True,
     'dockIcon': True,
+    'desktopUI': 'wkwebview',
     'executorLaunchMode': 'managed_child',
     'dataDirectory': '~/Library/Application Support/XynigoSourcing',
     'autoStart': False,
@@ -276,6 +280,7 @@ metadata = {
     'statusCenter': True,
     'menuBar': True,
     'dockIcon': True,
+    'desktopUI': 'wkwebview',
     'executorLaunchMode': 'managed_child',
     'installLocation': '/Applications/Xynigo Sourcing.app',
     'dataDirectory': '~/Library/Application Support/XynigoSourcing',

@@ -119,6 +119,8 @@ LangString DesktopSectionName ${LANG_SIMPCHINESE} "创建桌面快捷方式"
 LangString DesktopSectionName ${LANG_ENGLISH} "Create a desktop shortcut"
 LangString UnsupportedArchitecture ${LANG_SIMPCHINESE} "当前安装包仅支持 64 位 Windows。"
 LangString UnsupportedArchitecture ${LANG_ENGLISH} "This package requires 64-bit Windows."
+LangString WebView2Missing ${LANG_SIMPCHINESE} "Xynigo 桌面客户端需要 Microsoft Edge WebView2 Runtime。点击“是”打开微软官方下载页；安装运行时后请重新运行本安装包。"
+LangString WebView2Missing ${LANG_ENGLISH} "Xynigo Desktop requires Microsoft Edge WebView2 Runtime. Click Yes to open Microsoft's official download page, install the runtime, and then run this setup again."
 LangString InvalidMigrationDir ${LANG_SIMPCHINESE} "指定的绿色包迁移目录无效；必须包含 VERSION.json。"
 LangString InvalidMigrationDir ${LANG_ENGLISH} "The selected green-package migration directory is invalid; VERSION.json is required."
 LangString MigrationFailed ${LANG_SIMPCHINESE} "旧绿色包数据迁移失败。安装已停止，原目录不会被修改。"
@@ -237,6 +239,17 @@ Function .onInit
   ${EndIf}
   ${IfNot} ${RunningX64}
     MessageBox MB_ICONSTOP "$(UnsupportedArchitecture)"
+    Abort
+  ${EndIf}
+  SetRegView 32
+  ReadRegStr $1 HKLM "Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
+  ${If} $1 == ""
+    ReadRegStr $1 HKCU "Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
+  ${EndIf}
+  ${If} $1 == ""
+    MessageBox MB_ICONSTOP|MB_YESNO "$(WebView2Missing)" IDNO webview2_abort
+    ExecShell "open" "https://developer.microsoft.com/microsoft-edge/webview2/"
+    webview2_abort:
     Abort
   ${EndIf}
 FunctionEnd

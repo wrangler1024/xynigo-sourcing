@@ -80,6 +80,9 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
         cls.gui_launcher = (
             ROOT / 'packaging/windows/launcher/main.go'
         ).read_text(encoding='utf-8')
+        cls.desktop_ui = (
+            ROOT / 'src/purchase_tool/web/desktop.js'
+        ).read_text(encoding='utf-8')
         cls.signer = (
             ROOT / 'packaging/windows/sign-windows-artifacts.ps1'
         ).read_text(encoding='utf-8')
@@ -121,7 +124,7 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
         self.assertIn('set /p XYNIGO_PAIR_CODE=', self.pair_launcher)
         self.assertIn('Xynigo.cmd" pair', self.pair_launcher)
 
-    def test_branded_installer_status_center_and_tray_are_first_class(self):
+    def test_branded_installer_desktop_webview_and_tray_are_first_class(self):
         for source in (
             'MUI_WELCOMEFINISHPAGE_BITMAP',
             'MUI_HEADERIMAGE_BITMAP',
@@ -136,8 +139,11 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
             self.installer,
         )
         for source in (
-            'Xynigo 桌面客户端',
-            'XYNIGO DESKTOP',
+            'Xynigo 本地执行器',
+            'edge.NewChromium()',
+            'browser.Embed(uintptr(app.mw.Handle()))',
+            '/desktop/',
+            'platform=windows',
             'walk.NewNotifyIcon',
             '打开桌面客户端',
             '打开云端工作台',
@@ -165,16 +171,10 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
             '/executor-status.json',
         ):
             self.assertIn(source, self.gui_launcher)
-        self.assertIn('logo := "xynigo-logo.png"', self.gui_launcher)
-        self.assertIn('icon := "xynigo-x.ico"', self.gui_launcher)
-        self.assertNotIn(
-            'logo := filepath.Join(app.root, "xynigo-logo.png")',
-            self.gui_launcher,
-        )
-        self.assertNotIn(
-            'icon := filepath.Join(app.root, "xynigo-x.ico")',
-            self.gui_launcher,
-        )
+        self.assertIn('Icon:       "xynigo-x.ico"', self.gui_launcher)
+        self.assertIn('使用飞书授权登录', self.desktop_ui)
+        self.assertIn('/api/auth/start', self.desktop_ui)
+        self.assertIn('/api/local-config/data-sources', self.desktop_ui)
         self.assertTrue((ROOT / 'packaging/windows/branding/'
                          'installer-welcome.bmp').is_file())
         self.assertTrue((ROOT / 'packaging/windows/branding/'
@@ -185,7 +185,8 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
             'pairButton     *walk.PushButton',
             'pairInFlight   bool',
             'AssignTo: &app.pairButton',
-            'app.startPair(app.pairEdit.Text())',
+            'case "pair-device":',
+            'app.startPair(code)',
             'if app.pairInFlight || app.exiting',
             'app.pairButton.SetEnabled(false)',
             'defer app.finishPair()',
@@ -198,10 +199,11 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
             self.gui_launcher,
         )
 
-    def test_status_center_v2_is_native_full_width_and_state_driven(self):
+    def test_desktop_v3_is_webview2_full_width_and_state_driven(self):
         for source in (
-            'Size:       Size{Width: 860, Height: 630}',
-            'Grid{Columns: 4, Spacing: 9}',
+            'Size:       Size{Width: 1360, Height: 790}',
+            'MinSize:    Size{Width: 1080, Height: 650}',
+            'browser.MessageCallback = app.handleWebMessage',
             'AssignTo: &app.pairPanel',
             '尚未配对 · 配对码 5 分钟内有效且只能使用一次',
             'app.setPairingVisible(false)',
@@ -214,7 +216,20 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
             '打开桌面客户端',
         ):
             self.assertIn(source, self.gui_launcher)
-        self.assertNotIn('Grid{Columns: 2, Spacing: 10}', self.gui_launcher)
+        self.assertIn('grid-template-columns:repeat(4', (
+            ROOT / 'src/purchase_tool/web/desktop.css'
+        ).read_text(encoding='utf-8'))
+
+    def test_webview2_runtime_is_checked_before_install(self):
+        self.assertIn(
+            '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}',
+            self.installer,
+        )
+        self.assertIn('WebView2Missing', self.installer)
+        self.assertIn(
+            'https://developer.microsoft.com/microsoft-edge/webview2/',
+            self.installer,
+        )
 
     def test_same_version_upgrade_replaces_launcher_and_preserves_user_data(self):
         launcher_output = (
@@ -244,6 +259,8 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
         self.assertIn("'installMode': 'standard_per_user'", self.builder)
         self.assertIn("'statusCenter': True", self.builder)
         self.assertIn("'trayMenu': True", self.builder)
+        self.assertIn("'desktopUI': 'webview2'", self.builder)
+        self.assertIn("'webViewRuntime': 'evergreen'", self.builder)
         self.assertIn("'launcherFile': 'Xynigo.exe'", self.builder)
         self.assertIn('makensis is required', self.builder)
 
@@ -255,8 +272,10 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
             "'trayMenu': True",
             "'installMode': 'green_package'",
             "'Xynigo.exe', 'xynigo-logo.png', 'xynigo-x.ico'",
-            '双击“Xynigo.exe”打开品牌状态中心',
+            '双击“Xynigo.exe”打开桌面客户端',
             '绿色版不注册 xynigo:// 系统协议',
+            "'desktopUI': 'webview2'",
+            "'webViewRuntime': 'evergreen'",
             'XYNIGO_BUILD_LABEL',
         ):
             self.assertIn(source, self.green_builder)
@@ -306,6 +325,8 @@ class WindowsStandardInstallerArtifactTests(unittest.TestCase):
         self.assertTrue(payload['statusCenter'])
         self.assertTrue(payload['trayMenu'])
         self.assertEqual(payload['launcherFile'], 'Xynigo.exe')
+        if 'desktopUI' in payload:
+            self.assertEqual(payload['desktopUI'], 'webview2')
         self.assertEqual(len(payload['sha256']), 64)
         self.assertGreater(payload['size'], 1_000_000)
 

@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import WebKit
 
 private let desktopCloudURL = URL(string: "https://xynigo.samforo.icu")!
 private let desktopDataFolder = "XynigoSourcing"
@@ -71,8 +72,10 @@ private final class DesktopCard: NSBox {
     }
 }
 
-final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
+    WKNavigationDelegate, WKScriptMessageHandler {
     private var window: NSWindow?
+    private var webView: WKWebView?
     private var statusItem: NSStatusItem?
     private var startMenuItem: NSMenuItem?
     private var settingsMenuItem: NSMenuItem?
@@ -158,6 +161,9 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         quitting = true
         pollTimer?.invalidate()
+        webView?.configuration.userContentController.removeScriptMessageHandler(
+            forName: "xynigo"
+        )
         stopManagedExecutor()
         return .terminateNow
     }
@@ -166,6 +172,102 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         sender.orderOut(nil)
         statusItem?.button?.toolTip = "Xynigo 桌面客户端仍在运行"
         return false
+    }
+
+    func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage
+    ) {
+        guard message.name == "xynigo",
+              message.frameInfo.isMainFrame,
+              let sourceURL = message.frameInfo.request.url,
+              sourceURL.scheme == "http",
+              sourceURL.host == "127.0.0.1",
+              let body = message.body as? [String: Any],
+              let action = body["action"] as? String else {
+            return
+        }
+        let payload = body["payload"] as? [String: Any] ?? [:]
+        switch action {
+        case "open-external":
+            guard let raw = payload["url"] as? String,
+                  let url = URL(string: raw),
+                  url.scheme == "https" else { return }
+            NSWorkspace.shared.open(url)
+        case "open-logs":
+            openLogs()
+        case "restart-executor":
+            restartExecutor()
+        case "check-update":
+            handleUpdate()
+        case "pair-device":
+            guard let code = payload["code"] as? String else { return }
+            pairField.stringValue = code
+            pairDevice()
+        case "run-diagnostics":
+            refreshStatus()
+            notifyWeb("已刷新本机连接、任务与更新状态")
+        case "export-diagnostics":
+            exportDiagnosticSummary()
+        case "backup-config":
+            backupCurrentConfig()
+        case "open-legacy-settings":
+            openLegacySettings()
+        default:
+            break
+        }
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        guard let url = navigationAction.request.url else {
+            decisionHandler(.cancel)
+            return
+        }
+        if url.scheme == "about" ||
+            (url.scheme == "http" && url.host == "127.0.0.1") {
+            decisionHandler(.allow)
+            return
+        }
+        if url.scheme == "https" {
+            NSWorkspace.shared.open(url)
+        }
+        decisionHandler(.cancel)
+    }
+
+    private func loadDesktopUI(_ baseURL: URL, view: String? = nil) {
+        guard var components = URLComponents(
+            url: baseURL,
+            resolvingAgainstBaseURL: false
+        ) else { return }
+        components.path = "/desktop/"
+        var items = [URLQueryItem(name: "platform", value: "mac")]
+        if let view { items.append(URLQueryItem(name: "view", value: view)) }
+        components.queryItems = items
+        guard let url = components.url else { return }
+        if let current = webView?.url,
+           current.host == url.host,
+           current.port == url.port,
+           current.path == url.path {
+            if let view {
+                webView?.evaluateJavaScript(
+                    "window.xynigoDesktop && window.xynigoDesktop.navigate(\"\(view)\")"
+                )
+            }
+            return
+        }
+        webView?.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
+    }
+
+    private func notifyWeb(_ message: String) {
+        guard let data = try? JSONSerialization.data(withJSONObject: message),
+              let encoded = String(data: data, encoding: .utf8) else { return }
+        webView?.evaluateJavaScript(
+            "window.xynigoDesktop && window.xynigoDesktop.notify(\(encoded))"
+        )
     }
 
     private func buildMainMenu() {
@@ -186,65 +288,52 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
 
     private func buildWindow() {
         let desktopWindow = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 920, height: 650),
+            contentRect: NSRect(x: 0, y: 0, width: 1360, height: 746),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
-        desktopWindow.title = "Xynigo 桌面客户端"
-        desktopWindow.minSize = NSSize(width: 820, height: 610)
+        desktopWindow.title = "Xynigo 本地执行器"
+        desktopWindow.minSize = NSSize(width: 1080, height: 650)
         desktopWindow.center()
         desktopWindow.delegate = self
         desktopWindow.isReleasedWhenClosed = false
         desktopWindow.tabbingMode = .disallowed
-        desktopWindow.backgroundColor = NSColor(
-            calibratedRed: 0.957,
-            green: 0.969,
-            blue: 0.980,
-            alpha: 1
+        desktopWindow.backgroundColor = .white
+
+        let controller = WKUserContentController()
+        controller.add(self, name: "xynigo")
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        configuration.websiteDataStore = .default()
+        let browser = WKWebView(frame: .zero, configuration: configuration)
+        browser.navigationDelegate = self
+        browser.allowsBackForwardNavigationGestures = false
+        browser.allowsLinkPreview = false
+        browser.translatesAutoresizingMaskIntoConstraints = false
+        browser.loadHTMLString(
+            """
+            <!doctype html><meta charset="utf-8"><style>
+            html,body{height:100%;margin:0;font-family:-apple-system;background:#fff;color:#123252}
+            body{display:grid;place-items:center;text-align:center}.x{width:52px;height:52px;margin:auto;
+            display:grid;place-items:center;border-radius:14px;color:white;font-size:22px;font-weight:800;
+            background:linear-gradient(135deg,#31b8ae,#087c83);box-shadow:0 12px 32px #d5efed}
+            h2{font-size:16px;margin:18px 0 6px}p{font-size:12px;color:#64748b}
+            </style><div><div class="x">X</div><h2>正在启动 Xynigo 本地执行器</h2>
+            <p>正在自动发现本机安全服务端口…</p></div>
+            """,
+            baseURL: nil
         )
-
-        let root = NSStackView()
-        root.orientation = .vertical
-        root.spacing = 14
-        root.edgeInsets = NSEdgeInsets(top: 22, left: 24, bottom: 20, right: 24)
-        root.translatesAutoresizingMaskIntoConstraints = false
-        root.addArrangedSubview(makeHeader())
-        root.addArrangedSubview(makeStatusBanner())
-
-        let grid = NSGridView(views: [
-            [statusCard("云端通道", cloudValue, cloudNote),
-             statusCard("HubStudio", hubValue, hubNote)],
-            [statusCard("本机任务", taskValue, taskNote),
-             statusCard("执行器版本", versionValue, versionNote)],
-        ])
-        grid.rowSpacing = 10
-        grid.columnSpacing = 10
-        grid.translatesAutoresizingMaskIntoConstraints = false
-        grid.column(at: 0).width = 422
-        grid.column(at: 1).width = 422
-        root.addArrangedSubview(grid)
-
-        configurePairingCard()
-        root.addArrangedSubview(pairingCard)
-        root.addArrangedSubview(makeActionBar())
-        let footer = label(
-            "关闭窗口后客户端继续在菜单栏运行；选择“退出 Xynigo”才会停止本机执行器。",
-            11,
-            .regular,
-            NSColor(calibratedWhite: 0.43, alpha: 1)
-        )
-        footer.alignment = .center
-        root.addArrangedSubview(footer)
 
         guard let contentView = desktopWindow.contentView else { return }
-        contentView.addSubview(root)
+        contentView.addSubview(browser)
         NSLayoutConstraint.activate([
-            root.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            root.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            root.topAnchor.constraint(equalTo: contentView.topAnchor),
-            root.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor),
+            browser.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            browser.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            browser.topAnchor.constraint(equalTo: contentView.topAnchor),
+            browser.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
+        webView = browser
         window = desktopWindow
     }
 
@@ -303,7 +392,7 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         row.alignment = .centerY
         row.spacing = 12
         card.contentView = row
-        card.heightAnchor.constraint(greaterThanOrEqualToConstant: 76).isActive = true
+        card.heightAnchor.constraint(equalToConstant: 90).isActive = true
         return card
     }
 
@@ -328,7 +417,7 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         stack.alignment = .leading
         stack.spacing = 4
         card.contentView = stack
-        card.heightAnchor.constraint(greaterThanOrEqualToConstant: 82).isActive = true
+        card.heightAnchor.constraint(equalToConstant: 82).isActive = true
         return card
     }
 
@@ -350,6 +439,7 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         stack.alignment = .leading
         stack.spacing = 6
         pairingCard.contentView = stack
+        pairingCard.heightAnchor.constraint(equalToConstant: 104).isActive = true
     }
 
     private func makeActionBar() -> NSView {
@@ -436,7 +526,9 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
 
     @objc private func focusPairing() {
         showDesktopClient()
-        pairField.becomeFirstResponder()
+        webView?.evaluateJavaScript(
+            "window.xynigoDesktop && window.xynigoDesktop.focusPairing()"
+        )
     }
 
     @objc private func openCloudWorkspace() {
@@ -455,10 +547,16 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
             return
         }
         pendingOpenSettings = false
-        guard var components = URLComponents(
-            url: baseURL,
-            resolvingAgainstBaseURL: false
-        ) else { return }
+        showDesktopClient()
+        loadDesktopUI(baseURL, view: "settings")
+    }
+
+    private func openLegacySettings() {
+        guard let baseURL = statusBaseURL,
+              var components = URLComponents(
+                url: baseURL,
+                resolvingAgainstBaseURL: false
+              ) else { return }
         components.path = "/"
         components.percentEncodedQuery = desktopSettingsQuery
         if let url = components.url { NSWorkspace.shared.open(url) }
@@ -476,6 +574,77 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         } catch {
             showAlert("日志目录不可用", "无法打开本机日志目录。", .warning)
         }
+    }
+
+    private func backupCurrentConfig() {
+        do {
+            let directory = try dataDirectory()
+            let source = directory.appendingPathComponent("config.json")
+            guard FileManager.default.fileExists(atPath: source.path) else {
+                showAlert("暂无配置可备份", "本机尚未生成 config.json。", .informational)
+                return
+            }
+            let backups = directory.appendingPathComponent("历史备份", isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: backups,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+            let target = backups.appendingPathComponent(
+                "config-\(desktopTimestamp()).json"
+            )
+            try FileManager.default.copyItem(at: source, to: target)
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: target.path
+            )
+            NSWorkspace.shared.activateFileViewerSelecting([target])
+            notifyWeb("当前配置已备份到本机历史备份目录")
+        } catch {
+            showAlert("配置备份失败", "无法创建本机配置备份。", .warning)
+        }
+    }
+
+    private func exportDiagnosticSummary() {
+        do {
+            let directory = try dataDirectory()
+            let logs = directory.appendingPathComponent("日志", isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: logs,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+            let target = logs.appendingPathComponent(
+                "Xynigo-脱敏诊断-\(desktopTimestamp()).txt"
+            )
+            let status = lastStatus
+            let lines = [
+                "Xynigo 脱敏诊断摘要",
+                "生成时间：\(ISO8601DateFormatter().string(from: Date()))",
+                "运行时：\(runtimeID() ?? "不可用")",
+                "云端通道：\(status.map { cloudStatus($0.cloudChannel.status) } ?? "未连接")",
+                "HubStudio：\(status?.hubStudio.connected == true ? "已连接" : "未连接")",
+                "活动任务数：\(status?.tasks.activeCount ?? 0)",
+                "设备配对：\(status?.executor.paired == true ? "已完成" : "未完成")",
+                "说明：本文件不包含凭证、飞书链接、业务明文或设备令牌。",
+            ].joined(separator: "\n") + "\n"
+            try lines.write(to: target, atomically: true, encoding: .utf8)
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: target.path
+            )
+            NSWorkspace.shared.activateFileViewerSelecting([target])
+            notifyWeb("脱敏诊断摘要已生成，不包含凭证和业务明文")
+        } catch {
+            showAlert("诊断包导出失败", "无法生成脱敏诊断摘要。", .warning)
+        }
+    }
+
+    private func desktopTimestamp() -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return formatter.string(from: Date())
     }
 
     @objc private func showAbout() {
@@ -697,6 +866,7 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
     private func apply(_ status: DesktopStatus, _ baseURL: URL) {
         lastStatus = status
         statusBaseURL = baseURL
+        loadDesktopUI(baseURL)
         settingsButton.isEnabled = true
         settingsMenuItem?.isEnabled = true
         startButton.title = "重新启动执行器"

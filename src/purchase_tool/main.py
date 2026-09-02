@@ -119,6 +119,9 @@ EXTENSION_CONNECT_HTML = os.path.join(
     BASE_DIR, 'web', 'extension-connect.html')
 EXTENSION_CONNECT_JS = os.path.join(
     BASE_DIR, 'web', 'extension-connect.js')
+DESKTOP_HTML = os.path.join(BASE_DIR, 'web', 'desktop.html')
+DESKTOP_CSS = os.path.join(BASE_DIR, 'web', 'desktop.css')
+DESKTOP_JS = os.path.join(BASE_DIR, 'web', 'desktop.js')
 ENV_TEMPLATE_XLSX = os.path.join(
     BASE_DIR, 'web', '采购工具买家号入库模板.xlsx')
 LARK_LEDGER_TEMPLATE_XLSX = os.path.join(
@@ -3435,7 +3438,7 @@ class Handler(BaseHTTPRequestHandler):
             'data': result['data'],
         })
 
-    def _file(self, path, mime):
+    def _file(self, path, mime, extra_headers=None):
         with open(path, 'rb') as f:
             body = f.read()
         self.send_response(200)
@@ -3443,6 +3446,9 @@ class Handler(BaseHTTPRequestHandler):
                         if mime.startswith('text/') else mime)
         self.send_header('Content-Type', content_type)
         self.send_header('Cache-Control', 'no-store')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        for name, value in (extra_headers or {}).items():
+            self.send_header(name, value)
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -3551,6 +3557,22 @@ class Handler(BaseHTTPRequestHandler):
                 self._file(EXTENSION_CONNECT_HTML, 'text/html')
             elif path == '/extension-connect.js':
                 self._file(EXTENSION_CONNECT_JS, 'text/javascript')
+            elif path in {'/desktop', '/desktop/'}:
+                self._file(DESKTOP_HTML, 'text/html', {
+                    'Content-Security-Policy': (
+                        "default-src 'self'; img-src 'self' data:; "
+                        "style-src 'self' 'unsafe-inline'; "
+                        "script-src 'self'; connect-src 'self'; "
+                        "object-src 'none'; frame-src 'none'; "
+                        "base-uri 'none'; form-action 'self'"
+                    ),
+                    'Referrer-Policy': 'no-referrer',
+                    'X-Frame-Options': 'DENY',
+                })
+            elif path == '/desktop.css':
+                self._file(DESKTOP_CSS, 'text/css')
+            elif path == '/desktop.js':
+                self._file(DESKTOP_JS, 'text/javascript')
             elif path == '/executor-status.json':
                 payload = STATE.local_executor_status()
                 payload['localPort'] = int(self.server.server_port)

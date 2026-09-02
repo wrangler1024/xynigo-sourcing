@@ -166,6 +166,8 @@ version_info = {
     'launcherFile': 'Xynigo.exe',
     'statusCenter': True,
     'trayMenu': True,
+    'desktopUI': 'webview2',
+    'webViewRuntime': 'evergreen',
     'buildLabel': build_label,
     'releaseEligible': not bool(build_label),
     'managedPaths': [
@@ -185,13 +187,14 @@ with open(os.path.join(stage, 'VERSION.json'), 'w', encoding='utf-8') as handle:
 guide = '''Xynigo Sourcing v%s Windows 绿色包
 
 1. 必须先完整解压 ZIP，不能直接在压缩包中双击。
-2. 双击“Xynigo.exe”打开品牌状态中心；执行器会在后台启动并驻留系统托盘。
-3. 首次连接云端时，在 Web 生成配对码，然后在状态中心输入配对码；也可使用“配对本地执行器.bat”。
+2. 双击“Xynigo.exe”打开桌面客户端；执行器会在后台启动并驻留系统托盘。
+3. 首次连接云端时，在 Web 生成配对码，然后在桌面客户端输入配对码；也可使用“配对本地执行器.bat”。
 4. “启动.bat”保留为兼容入口；需要旧本机界面或排查 HubStudio 时，双击“启动-本地执行器.bat”。
 5. 绿色版不注册 xynigo:// 系统协议，网页无法静默启动本机程序；请由用户明确双击 Xynigo.exe。
-6. 标准安装版后续统一在 Xynigo 状态中心检查更新；绿色版需重新下载并覆盖。
+6. 标准安装版后续统一在 Xynigo 桌面客户端检查更新；绿色版需重新下载并覆盖。
 7. config.json、查询日志、运行数据和用户导入文件不会被更新覆盖或上传。
 8. 更新失败时程序会从本机备份自动回滚并重新启动。
+9. Windows 10 如缺少 Microsoft Edge WebView2 Runtime，请先从微软官网安装；Windows 11 已内置。
 ''' % version
 with open(os.path.join(stage, '使用说明.txt'), 'w', encoding='utf-8') as handle:
     handle.write(guide)
