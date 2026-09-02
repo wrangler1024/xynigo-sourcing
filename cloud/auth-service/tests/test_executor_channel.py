@@ -356,6 +356,34 @@ def test_config_read_write_lease_and_idempotent_finish(tmp_path) -> None:
         assert started.status_code == 200
         assert started.json()["task"]["status"] == "running"
 
+        with database.session_factory() as session:
+            running_task = session.get(ExecutorTask, uuid.UUID(read_task_id))
+            assert running_task is not None
+            running_task.lease_until = datetime.now(UTC) + timedelta(seconds=2)
+            previous_lease_until = running_task.lease_until
+            session.commit()
+        progressed = device_client.post(
+            f"/v1/executor-channel/tasks/{read_task_id}/progress",
+            json={
+                "leaseToken": lease_token,
+                "phase": "config.executing",
+                "current": 0,
+                "total": 1,
+            },
+            headers=device_headers(credential),
+        )
+        assert progressed.status_code == 200, progressed.text
+        with database.session_factory() as session:
+            running_task = session.get(ExecutorTask, uuid.UUID(read_task_id))
+            assert running_task is not None
+            refreshed_lease_until = running_task.lease_until
+            assert refreshed_lease_until is not None
+            if refreshed_lease_until.tzinfo is None:
+                refreshed_lease_until = refreshed_lease_until.replace(tzinfo=UTC)
+            assert refreshed_lease_until > previous_lease_until + timedelta(
+                seconds=30
+            )
+
         finish_body = {
             "leaseToken": lease_token,
             "outcome": "succeeded",
@@ -1455,6 +1483,101 @@ def test_formal_logistics_run_queues_ahead_of_background_workspace_read(
                 "workspace.rpc.v1",
             ]
             assert [task.priority for task in tasks] == [10, 100]
+
+
+def test_formal_logistics_progress_preserves_complete_headless_row(tmp_path) -> None:
+    app, _database, _oauth = build_test_app(tmp_path)
+    capabilities = ["workspace.rpc.v1", "logistics.query.v1"]
+
+    with TestClient(app) as web_client, TestClient(app) as device_client:
+        login(web_client)
+        paired = pair(
+            device_client,
+            create_pairing_code(web_client),
+            capabilities=capabilities,
+        )
+        executor_id = str(paired["executorId"])
+        credential = str(paired["deviceCredential"])
+        heartbeat(
+            device_client,
+            credential,
+            revision=REVISION_A,
+            capabilities=capabilities,
+        )
+        created = web_client.post(
+            "/v1/operation-runs/logistics-query",
+            json={
+                "idempotencyKey": "logistics-progress-complete-row-0001",
+                "executorId": executor_id,
+                "queryMode": "initial",
+                "site": "MX",
+                "environmentSerials": ["4973"],
+            },
+            headers=CSRF,
+        )
+        assert created.status_code == 202, created.text
+        run = created.json()["data"]
+        leased = heartbeat(
+            device_client,
+            credential,
+            revision=REVISION_A,
+            capabilities=capabilities,
+        )["task"]
+        task_id = str(leased["id"])
+        lease_token = str(leased["leaseToken"])
+        assert task_id == run["executorTaskId"]
+        assert device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/start",
+            json={"leaseToken": lease_token},
+            headers=device_headers(credential),
+        ).status_code == 200
+
+        progress = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/progress",
+            json={
+                "leaseToken": lease_token,
+                "phase": "logistics.running",
+                "current": 1,
+                "total": 1,
+                "snapshot": {"rows": [{
+                    "environmentSerial": "4973",
+                    "environmentName": "XG-MX-0829-105",
+                    "status": "ok",
+                    "currentStep": "ok",
+                    "completedSteps": ["query_completed"],
+                    "platformOrderNo": "GSH1RD06000M253",
+                    "orderTime": "2026-09-01 10:20:30",
+                    "amount": "$MXN123.45",
+                    "platformStatus": "Enviado",
+                    "statusLabel": "已发货",
+                    "fulfillmentStage": "En tránsito.",
+                    "trackingNumbers": ["49426326790694"],
+                    "packageNumbers": ["PKG-001"],
+                    "carrier": "IMILE",
+                    "cancelled": False,
+                    "riskOrder": False,
+                    "riskSummary": "",
+                    "ipAddress": "203.0.113.10",
+                    "timeZone": "America/Mexico_City",
+                    "utcOffsetMinutes": -360,
+                    "queriedAt": "2026-09-01T10:21:31-06:00",
+                    "errorSummary": "",
+                    "screenshotStatus": "ok",
+                }]},
+            },
+            headers=device_headers(credential),
+        )
+        assert progress.status_code == 200, progress.text
+        restored = web_client.get(
+            f"/v1/operation-runs/logistics-query/{run['runId']}"
+        ).json()["data"]
+        row = restored["rows"][0]
+        assert row["orderTime"] == "2026-09-01 10:20:30"
+        assert row["amount"] == "$MXN123.45"
+        assert row["fulfillmentStage"] == "En tránsito."
+        assert row["ipAddress"] == "203.0.113.10"
+        assert row["queriedAt"] == "2026-09-01T10:21:31"
+        assert row["screenshotStatus"] == "ok"
 
 
 def test_busy_executor_config_read_returns_last_safe_snapshot(tmp_path) -> None:

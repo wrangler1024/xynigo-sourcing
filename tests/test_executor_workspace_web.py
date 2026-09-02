@@ -158,10 +158,40 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
 
     def test_binary_results_no_longer_navigate_to_cloud_local_api_paths(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")
-        self.assertIn("downloadWorkspaceResource('/api/export?format=xlsx'", html)
+        self.assertIn("'/api/export?format=xlsx', '物流单号查询结果.xlsx'", html)
         self.assertIn("workspaceImageUrl(path)", html)
         self.assertNotIn("location.href = '/api/export?format=xlsx'", html)
         self.assertNotIn("image.src = '/api/screenshot?serial='", html)
+
+    def test_logistics_export_reports_progress_and_blocks_duplicate_clicks(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        handler = html[
+            html.index("$('btnExport').onclick = async () => {"):
+            html.index("$('btnRetryFail').onclick")
+        ]
+        for marker in (
+            "if (button.disabled) return;",
+            "button.disabled = true;",
+            "button.textContent = '正在生成 Excel…';",
+            "已生成 ${filename}，请查看浏览器下载记录",
+            "button.disabled = false;",
+            "button.textContent = originalLabel;",
+        ):
+            self.assertIn(marker, handler)
+
+    def test_stopped_logistics_rows_are_not_rendered_as_success(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        renderer = html[
+            html.index("function renderRows(rows)"):
+            html.index("function renderStats(rows)")
+        ]
+        self.assertIn("if (s === 'stopped')", renderer)
+        self.assertIn("⏹ 已停止，未完成查询", renderer)
+        self.assertLess(
+            renderer.index("if (s === 'stopped')"),
+            renderer.index("// ok"),
+        )
+        self.assertIn('id="cntStopped"', html)
 
     def test_cloud_copy_is_synced_from_single_ui_source(self):
         self.assertEqual(

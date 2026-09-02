@@ -3,6 +3,7 @@ import json
 import os
 import stat
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 from pathlib import Path
@@ -31,6 +32,7 @@ class FakeExecutorClient(object):
         self.pair_calls = []
         self.poll_calls = []
         self.poll_callback = None
+        self.renew_callback = None
         self.user_sessions = []
 
     def pair(self, code, name, system, architecture):
@@ -56,6 +58,9 @@ class FakeExecutorClient(object):
 
     def renew(self, credential, task_id, lease_token):
         self.renewals.append((credential, task_id, lease_token))
+        if self.renew_callback:
+            return self.renew_callback()
+        return {'task': {'cancellationRequested': False}}
 
     def progress(self, credential, task_id, lease_token, phase,
                  current=None, total=None, stable_code=None, snapshot=None):
@@ -340,6 +345,59 @@ class ExecutorTaskApplicationTests(unittest.TestCase):
                          'logistics_completed')
         self.assertEqual(client.finishes[0]['resultSummary']['runStatus'],
                          'completed')
+        self.assertFalse(coordinator.running())
+
+    def test_formal_task_retries_one_transient_lease_renewal_failure(self):
+        worker, client, _holder, coordinator = self.build_worker({
+            'concurrency': 2, 'safeParallelTasks': True,
+        })
+        renewal_recovered = threading.Event()
+
+        def renew():
+            if len(client.renewals) == 1:
+                raise LocalAuthError('cloud_unreachable')
+            renewal_recovered.set()
+            return {'task': {'cancellationRequested': False}}
+
+        def execute_operation(_task_type, _payload, _report,
+                              cancellation_event=None):
+            self.assertTrue(renewal_recovered.wait(1.0))
+            self.assertFalse(cancellation_event.is_set())
+            return 'succeeded', 'logistics_completed', {
+                'runStatus': 'completed',
+                'phase': 'logistics.completed',
+                'progressCompleted': 1,
+                'progressTotal': 1,
+                'totalCount': 1,
+                'successCount': 1,
+                'failedCount': 0,
+                'stoppedCount': 0,
+            }
+
+        client.renew_callback = renew
+        worker.operation_task_executor = execute_operation
+        with patch(
+                'purchase_tool.executor_channel.LEASE_RENEW_INTERVAL_SECONDS',
+                0.01), patch(
+                'purchase_tool.executor_channel.LEASE_RENEW_RETRY_SECONDS',
+                0.01):
+            worker._execute_task(DEVICE_CREDENTIAL, {
+                'id': 'task-renew-retry',
+                'type': 'logistics.query.v1',
+                'leaseToken': LEASE_TOKEN,
+                'payload': {
+                    'runKey': 'logistics-run-renew-retry',
+                    'site': 'MX',
+                    'queryMode': 'initial',
+                    'environmentSerials': ['101'],
+                },
+            })
+
+        self.assertGreaterEqual(len(client.renewals), 2)
+        self.assertEqual(client.finishes[0]['outcome'], 'succeeded')
+        self.assertNotEqual(
+            worker.state_store.load().get('lastErrorCode'),
+            'executor_lease_renew_failed')
         self.assertFalse(coordinator.running())
 
     def test_dedicated_environment_parse_task_uses_local_parser(self):

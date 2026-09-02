@@ -51,6 +51,16 @@ SUPPORTED_CAPABILITIES = (
     'environment.retry-failed.v1',
 )
 MAX_WORKSPACE_RPC_BYTES = 32 * 1024 * 1024
+LEASE_RENEW_INTERVAL_SECONDS = 15.0
+LEASE_RENEW_RETRY_SECONDS = 3.0
+TERMINAL_LEASE_ERROR_CODES = frozenset({
+    'executor_revoked',
+    'executor_credential_invalid',
+    'executor_task_not_found',
+    'executor_lease_invalid',
+    'executor_lease_expired',
+    'executor_task_state_conflict',
+})
 CHANNEL_STATE_FIELDS = frozenset({
     'executorId', 'displayName', 'platform', 'architecture', 'pairedAt',
     'lastPollAt', 'lastErrorCode', 'status', 'configRevision',
@@ -424,10 +434,15 @@ class ExecutorChannelWorker(object):
             cancellation_event.set()
 
         def renew_loop():
-            while not renewal_stop.wait(15.0):
+            retrying = False
+            while not renewal_stop.wait(
+                    LEASE_RENEW_RETRY_SECONDS if retrying
+                    else LEASE_RENEW_INTERVAL_SECONDS):
                 try:
                     renewed = self.client.renew(
                         credential, task_id, lease_token)
+                    renewal_error[:] = []
+                    retrying = False
                     renewed_task = (
                         renewed.get('task')
                         if isinstance(renewed, dict) else None)
@@ -435,8 +450,12 @@ class ExecutorChannelWorker(object):
                             and renewed_task.get('cancellationRequested')):
                         cancellation_event.set()
                 except Exception as exc:
-                    renewal_error.append(exc)
-                    return
+                    renewal_error[:] = [exc]
+                    if (isinstance(exc, LocalAuthError)
+                            and exc.code in TERMINAL_LEASE_ERROR_CODES):
+                        cancellation_event.set()
+                        return
+                    retrying = True
 
         renew_thread = threading.Thread(
             target=renew_loop, name='xynigo-executor-lease', daemon=True)

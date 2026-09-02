@@ -477,7 +477,7 @@ def create_app(
 
     app = FastAPI(
         title="Xynigo Auth Service",
-        version="0.13.3",
+        version="0.13.5",
         docs_url=None,
         redoc_url=None,
         lifespan=lifespan,
@@ -693,7 +693,7 @@ def create_app(
             response.headers["Content-Security-Policy"] = (
                 "default-src 'none'; "
                 f"script-src {WEB_INLINE_SCRIPT_CSP}; style-src 'unsafe-inline'; "
-                "img-src 'self' data: https:; connect-src 'self'; "
+                "img-src 'self' data: blob: https:; connect-src 'self'; "
                 "base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
             )
         elif request.url.path == "/v1/auth/local/complete":

@@ -623,22 +623,40 @@ class LogisticsRunProgressItem(BaseModel):
     currentStep: str = Field(default="", max_length=64)
     completedSteps: list[str] = Field(default_factory=list, max_length=20)
     platformOrderNo: str = Field(default="", max_length=160)
+    orderTime: str = Field(default="", max_length=64)
+    amount: str = Field(default="", max_length=64)
     platformStatus: str = Field(default="", max_length=100)
     statusLabel: str = Field(default="", max_length=100)
+    fulfillmentStage: str = Field(default="", max_length=100)
     trackingNumbers: list[str] = Field(default_factory=list, max_length=20)
     packageNumbers: list[str] = Field(default_factory=list, max_length=20)
     carrier: str = Field(default="", max_length=100)
+    cancelled: bool = False
+    riskOrder: bool = False
+    riskSummary: str = Field(default="", max_length=300)
+    ipAddress: str = Field(default="", max_length=64)
+    timeZone: str = Field(default="", max_length=100)
+    utcOffsetMinutes: int | None = Field(default=None, ge=-840, le=840)
+    queriedAt: datetime | None = None
     errorSummary: str = Field(default="", max_length=300)
+    screenshotStatus: str = Field(default="", max_length=32)
 
     @field_validator(
         "environmentSerial",
         "environmentName",
         "currentStep",
         "platformOrderNo",
+        "orderTime",
+        "amount",
         "platformStatus",
         "statusLabel",
+        "fulfillmentStage",
         "carrier",
+        "riskSummary",
+        "ipAddress",
+        "timeZone",
         "errorSummary",
+        "screenshotStatus",
     )
     @classmethod
     def normalize_logistics_progress_text(cls, value: str) -> str:
@@ -653,6 +671,11 @@ class LogisticsRunProgressItem(BaseModel):
         if len(normalized) != len(set(normalized)):
             raise ValueError("progress list items must be unique")
         return normalized
+
+    @field_validator("queriedAt")
+    @classmethod
+    def validate_progress_query_timezone(cls, value: datetime | None) -> datetime | None:
+        return _timezone_required(value)
 
 
 class LogisticsQueryRunBody(BaseModel):

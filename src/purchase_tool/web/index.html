@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Xynigo Sourcing v0.13.3</title>
+<title>Xynigo Sourcing v0.13.5</title>
 <link rel="icon" type="image/png" sizes="260x260" href="/xynigo-x.png?v=6">
 <link rel="icon" type="image/x-icon" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256" href="/favicon.ico?v=6">
 <link rel="shortcut icon" href="/favicon.ico?v=6">
@@ -1439,7 +1439,7 @@
           <div class="hero-kicker">XYNIGO SOURCING WORKSPACE</div>
           <h1>让小犀帮你把每一单稳稳带回来，<span class="hero-call">Xyni, GO!</span></h1>
           <p id="moduleSummary">批量查询订单与物流状态，异常任务集中处理，结果一键导出。</p>
-          <div class="hero-meta"><span class="hero-chip">安全撤销优化测试 v0.13.3</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
+          <div class="hero-meta"><span class="hero-chip">执行器续租修复测试 v0.13.5</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
         </div>
         <div class="hero-lockup" role="img" aria-label="小犀与 Xynigo 完整品牌一体图形">
           <img src="xynigo-logo.png" alt="">
@@ -1767,6 +1767,7 @@
       <span class="s-login">登录失效 <b id="cntLogin">0</b></span>
       <span class="s-inuse">使用中 <b id="cntInuse">0</b></span>
       <span class="s-fail">失败 <b id="cntFail">0</b></span>
+      <span class="s-inuse">已停止 <b id="cntStopped">0</b></span>
       <span>未查询 <b id="cntPending">0</b></span>
     </div>
   </section>
@@ -3153,7 +3154,7 @@ async function cloudFetchJson(path, opts={}) {
   const headers = new Headers(opts.headers || {});
   headers.set('Accept', 'application/json');
   headers.set('X-Xynigo-Source', 'cloud_web_workspace');
-  headers.set('X-Xynigo-Client-Version', '0.13.3-cloud-web');
+  headers.set('X-Xynigo-Client-Version', '0.13.5-cloud-web');
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     headers.set('X-Xynigo-Web-CSRF', 'same-origin');
   }
@@ -3343,6 +3344,16 @@ function cloudRunElapsed(run) {
   return Math.max(0, Math.floor(((Number.isFinite(ended) ? ended : Date.now()) - started) / 1000));
 }
 
+function cloudSiteTime(value, utcOffsetMinutes) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (utcOffsetMinutes === null || utcOffsetMinutes === undefined || utcOffsetMinutes === '') return raw;
+  const offset = Number(utcOffsetMinutes);
+  const parsed = Date.parse(raw);
+  if (!Number.isFinite(parsed) || !Number.isFinite(offset)) return raw;
+  return new Date(parsed + offset * 60000).toISOString().slice(0, 19).replace('T', ' ');
+}
+
 function cloudRunHubConnected(run) {
   const executor = localExecutorDevices.find(item => item.id === run.executorId);
   return !!(executor && executor.connectivity === 'online'
@@ -3363,7 +3374,8 @@ function cloudLogisticsLegacySnapshot(run) {
     pkgs:Array.isArray(row.packageNumbers) ? row.packageNumbers : [],
     carrier:String(row.carrier || ''), kanDan:!!row.cancelled,
     riskOrder:!!row.riskOrder, riskMessage:String(row.riskSummary || ''),
-    ip:String(row.ipAddress || ''), time:String(row.queriedAt || ''),
+    ip:String(row.ipAddress || ''),
+    time:cloudSiteTime(row.queriedAt, row.utcOffsetMinutes),
     timeZone:String(row.timeZone || ''), utcOffsetMinutes:row.utcOffsetMinutes,
     error:String(row.errorSummary || ''),
     screenshotState:String(row.screenshotStatus || 'pending'),
@@ -3766,7 +3778,7 @@ function workspaceDownloadName(disposition, fallback) {
 async function downloadWorkspaceResource(path, fallbackName) {
   if (!CLOUD_WEB_MODE) {
     location.href = path;
-    return;
+    return fallbackName;
   }
   const result = await cloudWorkspaceRpcRaw(path);
   if (result.responseType !== 'base64') {
@@ -3774,13 +3786,15 @@ async function downloadWorkspaceResource(path, fallbackName) {
   }
   const blob = base64ToBlob(result.bodyBase64, result.contentType);
   const url = URL.createObjectURL(blob);
+  const filename = workspaceDownloadName(result.contentDisposition, fallbackName);
   const link = document.createElement('a');
   link.href = url;
-  link.download = workspaceDownloadName(result.contentDisposition, fallbackName);
+  link.download = filename;
   document.body.appendChild(link);
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return filename;
 }
 
 async function workspaceImageUrl(path) {
@@ -6186,6 +6200,7 @@ function renderRows(rows) {
     if (s === 'login') return `<tr class="row-login"><td class="mono">${serial}</td><td class="col-envName">${name}</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="mono col-ip">${esc(r.ip) || '—'}</td><td><span class="badge login">🔴 登录失效</span></td>${finish()}</tr>`;
     if (s === 'inuse') return `<tr class="row-inuse"><td class="mono">${serial}</td><td class="col-envName">${name}</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="col-ip">—</td><td><span class="badge inuse">🟡 环境使用中，已跳过</span></td>${finish()}</tr>`;
     if (s === 'fail') return `<tr class="row-fail"><td class="mono">${serial}</td><td class="col-envName">${name}</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="mono col-ip">${esc(r.ip) || '—'}</td><td><span class="badge fail">⚠ ${esc(r.error) || '失败'}</span></td>${finish()}</tr>`;
+    if (s === 'stopped') return `<tr class="row-inuse"><td class="mono">${serial}</td><td class="col-envName">${name}</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="col-ip">—</td><td><span class="badge inuse">⏹ 已停止，未完成查询</span></td>${finish()}</tr>`;
     // ok
     const st = (r.status || '') + (r.statusCn ? ' ' + r.statusCn : '');
     const stBadge = r.status ? `<span class="badge ${ST_CLS[r.status] || 'st-procesando'}">${esc(st)}</span>` : '—';
@@ -6193,8 +6208,11 @@ function renderRows(rows) {
       ? r.tracks.map(x => `<span class="mono">${esc(x)}</span>`).join('；')
       : (r.riskOrder ? '—（风险订单待验证，无物流）'
         : (r.kanDan ? '—（砍单退款，无物流）' : '（待揽收，暂无单号）'));
+    const screenshotSize = Number(r.screenshotSizeKb || 0);
+    const screenshotLabel = screenshotSize > 0
+      ? `🖼 查看（${esc(screenshotSize)}KB）` : '🖼 查看';
     const shot = r.screenshotState === 'ok'
-      ? `<button class="btn-mini" type="button" data-shot="${serial}" data-shot-order="${esc(r.orderNo)}">🖼 查看（${esc(r.screenshotSizeKb)}KB）</button>`
+      ? `<button class="btn-mini" type="button" data-shot="${serial}" data-shot-order="${esc(r.orderNo)}">${screenshotLabel}</button>`
       : (r.screenshotState === 'fail'
         ? `<span title="${esc(r.screenshotError)}">⚠ 截图失败</span>`
         : '—（暂无物流）');
@@ -6206,7 +6224,7 @@ function renderRows(rows) {
 }
 
 function renderStats(rows) {
-  const cnt = { ok: 0, login: 0, inuse: 0, fail: 0, pending: 0, kan: 0, risk: 0 };
+  const cnt = { ok: 0, login: 0, inuse: 0, fail: 0, stopped: 0, pending: 0, kan: 0, risk: 0 };
   rows.forEach(r => {
     if (r.state === 'pending' || r.state === 'running') cnt.pending++;
     else if (r.state === 'ok') {
@@ -6219,7 +6237,8 @@ function renderStats(rows) {
   $('cntOk').textContent = cnt.ok; $('cntKan').textContent = cnt.kan;
   $('cntRisk').textContent = cnt.risk;
   $('cntLogin').textContent = cnt.login; $('cntInuse').textContent = cnt.inuse;
-  $('cntFail').textContent = cnt.fail; $('cntPending').textContent = cnt.pending;
+  $('cntFail').textContent = cnt.fail; $('cntStopped').textContent = cnt.stopped;
+  $('cntPending').textContent = cnt.pending;
   const done = rows.filter(r => !['pending', 'running'].includes(r.state)).length;
   $('progressText').textContent = `${done} / ${rows.length}`;
   $('bar').style.width = (rows.length ? done / rows.length * 100 : 0) + '%';
@@ -7145,8 +7164,21 @@ document.addEventListener('keydown', e => {
 });
 
 $('btnExport').onclick = async () => {
-  try { await downloadWorkspaceResource('/api/export?format=xlsx', '物流单号查询结果.xlsx'); }
-  catch (error) { toast(error.message); }
+  const button = $('btnExport');
+  if (button.disabled) return;
+  const originalLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = '正在生成 Excel…';
+  try {
+    const filename = await downloadWorkspaceResource(
+      '/api/export?format=xlsx', '物流单号查询结果.xlsx');
+    toast(`已生成 ${filename}，请查看浏览器下载记录`);
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = originalLabel;
+  }
 };
 
 $('btnRetryFail').onclick = async () => {

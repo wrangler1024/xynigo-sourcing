@@ -711,7 +711,9 @@ class ExecutorChannelService:
         self._require_lease(task, body.leaseToken)
         if task.status not in {"running", "cancel_requested"}:
             raise ExecutorServiceError("executor_task_state_conflict", status_code=409)
-        executor.last_seen_at = utcnow()
+        now = utcnow()
+        task.lease_until = now + timedelta(seconds=self.lease_seconds)
+        executor.last_seen_at = now
         self._sync_operation_run(
             task,
             status="running",
@@ -719,7 +721,7 @@ class ExecutorChannelService:
             attempt=task.attempt,
             progress_current=body.current,
             progress_total=body.total,
-            heartbeat_at=executor.last_seen_at,
+            heartbeat_at=now,
             progress_snapshot=body.snapshot,
         )
         self._event(
@@ -1485,12 +1487,23 @@ class ExecutorChannelService:
             row.current_step = item.currentStep or None
             row.completed_steps = list(item.completedSteps)
             row.platform_order_no = item.platformOrderNo or None
+            row.order_time_text = item.orderTime or None
+            row.amount_text = item.amount or None
             row.platform_status = item.platformStatus or None
             row.status_label = item.statusLabel or None
+            row.fulfillment_stage = item.fulfillmentStage or None
             row.tracking_numbers = list(item.trackingNumbers)
             row.package_numbers = list(item.packageNumbers)
             row.carrier = item.carrier or None
+            row.cancelled = item.cancelled
+            row.risk_order = item.riskOrder
+            row.risk_summary = item.riskSummary or None
+            row.ip_address = item.ipAddress or None
+            row.time_zone = item.timeZone or None
+            row.utc_offset_minutes = item.utcOffsetMinutes
+            row.queried_at = item.queriedAt
             row.error_summary = item.errorSummary or None
+            row.screenshot_status = item.screenshotStatus or None
             row.updated_at = now
 
     @staticmethod

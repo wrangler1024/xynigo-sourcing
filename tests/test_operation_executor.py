@@ -288,7 +288,17 @@ def test_logistics_task_reports_incremental_terminal_result():
             'rows': [{
                 'serial': '101', 'envName': 'XG-MX-001',
                 'state': 'ok', 'orderNo': 'order-001',
-                'tracks': ['track-001'],
+                'orderTime': '2026-09-01 10:20:30',
+                'amount': '$MXN123.45',
+                'status': 'Enviado', 'statusCn': '已发货',
+                'stage': 'En tránsito.',
+                'tracks': ['track-001'], 'pkgs': ['package-001'],
+                'carrier': 'IMILE', 'kanDan': False,
+                'riskOrder': False, 'riskMessage': '',
+                'ip': '203.0.113.10', 'timeZone': 'America/Mexico_City',
+                'utcOffsetMinutes': -360,
+                'time': '2026-09-01 10:21:31',
+                'screenshotState': 'ok',
             }, {
                 'serial': '102', 'envName': 'XG-MX-002',
                 'state': 'login', 'error': '登录失效',
@@ -312,6 +322,13 @@ def test_logistics_task_reports_incremental_terminal_result():
     assert summary['failedCount'] == 1
     assert events[-1]['current'] == 2
     assert events[-1]['snapshot']['rows'][1]['status'] == 'login'
+    completed = events[-1]['snapshot']['rows'][0]
+    assert completed['orderTime'] == '2026-09-01 10:20:30'
+    assert completed['amount'] == '$MXN123.45'
+    assert completed['fulfillmentStage'] == 'En tránsito.'
+    assert completed['ipAddress'] == '203.0.113.10'
+    assert completed['queriedAt'] == '2026-09-01T10:21:31-06:00'
+    assert completed['screenshotStatus'] == 'ok'
 
 
 def test_environment_single_retry_filters_parent_rows_into_child_run():

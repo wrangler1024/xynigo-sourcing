@@ -11,6 +11,7 @@ import hashlib
 import json
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 
 from .redaction import scrub_text
 
@@ -499,6 +500,8 @@ class LocalOperationExecutor(object):
                 ['query_completed'] if state == 'ok'
                 else ['query_attempted'] if state in LOGISTICS_TERMINAL_STATES
                 else [])
+            utc_offset = LocalOperationExecutor._utc_offset_minutes(
+                source.get('utcOffsetMinutes'))
             result.append({
                 'environmentSerial': str(source.get('serial') or '')[:64],
                 'environmentName': str(source.get('envName') or '')[:255],
@@ -506,16 +509,51 @@ class LocalOperationExecutor(object):
                 'currentStep': ('querying' if state == 'running' else state),
                 'completedSteps': completed_steps,
                 'platformOrderNo': str(source.get('orderNo') or '')[:160],
+                'orderTime': str(source.get('orderTime') or '')[:64],
+                'amount': str(source.get('amount') or '')[:64],
                 'platformStatus': str(source.get('status') or '')[:100],
                 'statusLabel': str(source.get('statusCn') or '')[:100],
+                'fulfillmentStage': str(source.get('stage') or '')[:100],
                 'trackingNumbers': [
                     str(item)[:200] for item in source.get('tracks') or []],
                 'packageNumbers': [
                     str(item)[:200] for item in source.get('pkgs') or []],
                 'carrier': str(source.get('carrier') or '')[:100],
+                'cancelled': bool(source.get('kanDan')),
+                'riskOrder': bool(source.get('riskOrder')),
+                'riskSummary': str(source.get('riskMessage') or '')[:300],
+                'ipAddress': str(source.get('ip') or '')[:64],
+                'timeZone': str(source.get('timeZone') or '')[:100],
+                'utcOffsetMinutes': utc_offset,
+                'queriedAt': LocalOperationExecutor._local_timestamp(
+                    source.get('time'), utc_offset),
                 'errorSummary': scrub_text(source.get('error') or '')[:300],
+                'screenshotStatus': str(
+                    source.get('screenshotState') or '')[:32],
             })
         return result
+
+    @staticmethod
+    def _utc_offset_minutes(value):
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if -840 <= parsed <= 840 else None
+
+    @staticmethod
+    def _local_timestamp(value, utc_offset_minutes):
+        text = str(value or '').strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.strptime(text, '%Y-%m-%d %H:%M:%S')
+            zone = (
+                timezone(timedelta(minutes=utc_offset_minutes))
+                if utc_offset_minutes is not None else timezone.utc)
+            return parsed.replace(tzinfo=zone).isoformat()
+        except (TypeError, ValueError, OverflowError):
+            return None
 
     @staticmethod
     def _environment_summary(snapshot, total, rows):
