@@ -109,6 +109,8 @@ class MacOSStandardInstallerContractTests(unittest.TestCase):
             encoding='utf-8')
         cls.launcher = (ROOT / 'packaging/macos/desktop_client.swift').read_text(
             encoding='utf-8')
+        cls.main = (ROOT / 'src/purchase_tool/main.py').read_text(
+            encoding='utf-8')
         cls.desktop_ui = (
             ROOT / 'src/purchase_tool/web/desktop.js'
         ).read_text(encoding='utf-8')
@@ -207,6 +209,24 @@ class MacOSStandardInstallerContractTests(unittest.TestCase):
         ]
         self.assertNotIn('Terminal', direct_launch)
 
+    def test_standard_client_supports_authenticated_online_update(self):
+        for marker in (
+                'process.terminationStatus == 42',
+                'waitForSystemInstaller(',
+                'pollInstalledRuntime(',
+                'skip-update-once',
+                'relaunchInstalledUpdate()',
+                '/usr/bin/open',
+                '等待系统安装器完成更新'):
+            self.assertIn(marker, self.launcher)
+        self.assertIn("sys.platform == 'darwin'", self.main)
+        self.assertIn("'onlineUpdate': True", self.builder)
+        self.assertIn(
+            "'onlineUpdateFlow': "
+            "'authenticated_download_sha256_system_installer'",
+            self.builder)
+        self.assertIn("'updateAutoRelaunch': True", self.builder)
+
     def test_standard_scripts_pin_data_root_and_disable_green_updater(self):
         for script in (self.start_script, self.protocol_script,
                        self.migration_script):
@@ -241,7 +261,7 @@ class MacOSStandardInstallerContractTests(unittest.TestCase):
 
 class MacOSStandardInstallerArtifactTests(unittest.TestCase):
     def test_local_compiled_artifact_metadata_when_present(self):
-        metadata = ROOT / 'dist/Xynigo_Sourcing_macOS_Standard_v0.13.6.json'
+        metadata = ROOT / 'dist/Xynigo_Sourcing_macOS_Standard_v0.13.7.json'
         if not metadata.is_file():
             self.skipTest('macOS standard installer is built in packaging CI')
         payload = json.loads(metadata.read_text(encoding='utf-8'))
@@ -253,6 +273,9 @@ class MacOSStandardInstallerArtifactTests(unittest.TestCase):
         self.assertTrue(payload['menuBar'])
         self.assertTrue(payload['dockIcon'])
         self.assertEqual(payload['executorLaunchMode'], 'managed_child')
+        if 'onlineUpdate' in payload:
+            self.assertTrue(payload['onlineUpdate'])
+            self.assertTrue(payload['updateAutoRelaunch'])
         if 'desktopUI' in payload:
             self.assertEqual(payload['desktopUI'], 'wkwebview')
         self.assertTrue(payload['runtimeId'].startswith(

@@ -1016,7 +1016,8 @@ class AppState(object):
         ).strip().casefold()
         update_client = (
             StandardInstallerUpdateClient(self.auth)
-            if install_mode == 'standard' and os.name == 'nt' else None)
+            if (install_mode == 'standard'
+                and (os.name == 'nt' or sys.platform == 'darwin')) else None)
         self.updates = UpdateCoordinator(
             os.environ.get('XYNIGO_INSTALL_DIR'),
             __version__,
@@ -1424,8 +1425,13 @@ class AppState(object):
                 'state': str(update.get('state') or 'disabled'),
                 'stage': str(update.get('stage') or ''),
                 'installMode': str(update.get('installMode') or ''),
+                'installFlow': str(update.get('installFlow') or ''),
                 'currentVersion': str(update.get('currentVersion') or ''),
+                'currentRuntimeId': str(
+                    update.get('currentRuntimeId') or ''),
                 'latestVersion': str(update.get('latestVersion') or ''),
+                'latestRuntimeId': str(
+                    update.get('latestRuntimeId') or ''),
                 'message': str(update.get('message') or ''),
                 'downloadReceivedBytes': int(
                     update.get('downloadReceivedBytes') or 0),

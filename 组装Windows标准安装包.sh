@@ -173,6 +173,8 @@ metadata = {
     'trayMenu': True,
     'desktopUI': 'webview2',
     'webViewRuntime': 'evergreen',
+    'onlineUpdate': True,
+    'onlineUpdateFlow': 'authenticated_download_sha256_silent_installer',
     'launcherFile': 'Xynigo.exe',
     'assetName': installer.name,
     'size': installer.stat().st_size,

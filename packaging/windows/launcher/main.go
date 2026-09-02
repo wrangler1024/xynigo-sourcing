@@ -99,8 +99,11 @@ type localStatus struct {
 		State                       string `json:"state"`
 		Stage                       string `json:"stage"`
 		InstallMode                 string `json:"installMode"`
+		InstallFlow                 string `json:"installFlow"`
 		CurrentVersion              string `json:"currentVersion"`
+		CurrentRuntimeID            string `json:"currentRuntimeId"`
 		LatestVersion               string `json:"latestVersion"`
+		LatestRuntimeID             string `json:"latestRuntimeId"`
 		Message                     string `json:"message"`
 		DownloadReceivedBytes       int64  `json:"downloadReceivedBytes"`
 		DownloadTotalBytes          int64  `json:"downloadTotalBytes"`
@@ -1069,7 +1072,12 @@ func (app *launcherApp) renderUpdateStatus(status *localStatus) {
 		enabled = false
 	case "available":
 		latest := strings.TrimSpace(update.LatestVersion)
-		if latest == "" {
+		if update.CurrentVersion != "" && update.CurrentVersion == latest &&
+			update.CurrentRuntimeID != "" && update.LatestRuntimeID != "" &&
+			update.CurrentRuntimeID != update.LatestRuntimeID {
+			buttonText = "安装最新构建"
+			trayText = "安装最新构建"
+		} else if latest == "" {
 			buttonText = "立即更新"
 			trayText = "立即更新"
 		} else {

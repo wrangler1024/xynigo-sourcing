@@ -50,7 +50,11 @@ private struct DesktopUpdateSummary: Decodable {
     let enabled: Bool
     let state: String
     let installMode: String
+    let installFlow: String?
+    let currentVersion: String?
+    let currentRuntimeId: String?
     let latestVersion: String?
+    let latestRuntimeId: String?
     let message: String?
     let downloadPercent: Int?
 }
@@ -111,6 +115,7 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
     private var childLogHandle: FileHandle?
     private var pairInFlight = false
     private var updateInFlight = false
+    private var waitingForUpdateInstall = false
     private var quitting = false
     private var pendingOpenSettings = false
     private let launcherToken = UUID().uuidString.replacingOccurrences(of: "-", with: "")
@@ -727,6 +732,7 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
             let logHandle = try FileHandle(forWritingTo: logURL)
             try logHandle.seekToEnd()
             let process = Process()
+            let launchedRuntimeID = runtimeID() ?? ""
             process.executableURL = runtime
             process.arguments = ["--no-browser"]
             process.currentDirectoryURL = directory
@@ -740,7 +746,12 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
                         self.childProcess = nil
                         try? self.childLogHandle?.close()
                         self.childLogHandle = nil
-                        if !self.quitting {
+                        if (!self.quitting
+                                && process.terminationReason == .exit
+                                && process.terminationStatus == 42) {
+                            self.waitForSystemInstaller(
+                                previousRuntimeID: launchedRuntimeID)
+                        } else if !self.quitting {
                             self.renderOffline("执行器已退出；可点击“启动执行器”重试。")
                         }
                     }
@@ -811,6 +822,7 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
     }
 
     @objc private func refreshStatus() {
+        if waitingForUpdateInstall { return }
         discoverStatus { [weak self] status, baseURL in
             guard let self else { return }
             if let status, let baseURL {
@@ -953,7 +965,12 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         switch update.state {
         case "checking": title = "正在检查…"; enabled = false
         case "available":
-            title = clean(update.latestVersion).map { "更新到 v\($0)" } ?? "立即更新"
+            if (clean(update.currentVersion) == clean(update.latestVersion)
+                    && clean(update.currentRuntimeId) != clean(update.latestRuntimeId)) {
+                title = "安装最新构建"
+            } else {
+                title = clean(update.latestVersion).map { "更新到 v\($0)" } ?? "立即更新"
+            }
             if activeTasks > 0 { title = "任务结束后更新"; enabled = false }
         case "downloading": title = "下载 \(update.downloadPercent ?? 0)%"; enabled = false
         case "verifying": title = "正在校验…"; enabled = false
@@ -1008,6 +1025,78 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
                 self.refreshStatus()
             }
         }.resume()
+    }
+
+    private func waitForSystemInstaller(previousRuntimeID: String) {
+        waitingForUpdateInstall = true
+        updateInFlight = true
+        statusBaseURL = nil
+        lastStatus = nil
+        statusTitle.stringValue = "等待系统安装器完成更新"
+        statusDetail.stringValue = "请在“安装器”中确认安装；完成后客户端会自动重启。"
+        updateButton.title = "等待安装完成…"
+        updateButton.isEnabled = false
+        pollInstalledRuntime(
+            previousRuntimeID: previousRuntimeID,
+            deadline: Date().addingTimeInterval(15 * 60))
+    }
+
+    private func pollInstalledRuntime(
+        previousRuntimeID: String,
+        deadline: Date
+    ) {
+        guard !quitting, waitingForUpdateInstall else { return }
+        let installedRuntimeID = runtimeID() ?? ""
+        if (!previousRuntimeID.isEmpty
+                && !installedRuntimeID.isEmpty
+                && installedRuntimeID != previousRuntimeID) {
+            relaunchInstalledUpdate()
+            return
+        }
+        if Date() >= deadline {
+            waitingForUpdateInstall = false
+            updateInFlight = false
+            showAlert(
+                "更新尚未完成",
+                "系统安装器未在 15 分钟内完成。原版本将继续运行，可稍后重新检查更新。",
+                .warning)
+            startManagedExecutor()
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.pollInstalledRuntime(
+                previousRuntimeID: previousRuntimeID,
+                deadline: deadline)
+        }
+    }
+
+    private func relaunchInstalledUpdate() {
+        do {
+            let marker = try dataDirectory().appendingPathComponent(
+                "skip-update-once")
+            try Data("1\n".utf8).write(to: marker, options: .atomic)
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o600], ofItemAtPath: marker.path)
+            let relaunch = Process()
+            relaunch.executableURL = URL(fileURLWithPath: "/bin/sh")
+            relaunch.arguments = [
+                "-c",
+                "/bin/sleep 1; /usr/bin/open \"$1\"",
+                "xynigo-update-relaunch",
+                Bundle.main.bundleURL.path,
+            ]
+            try relaunch.run()
+            quitting = true
+            waitingForUpdateInstall = false
+            NSApp.terminate(nil)
+        } catch {
+            waitingForUpdateInstall = false
+            updateInFlight = false
+            showAlert(
+                "更新已安装",
+                "新版本已经写入，但自动重启失败。请重新打开 Xynigo Sourcing。",
+                .warning)
+        }
     }
 
     @objc private func pairDevice() {

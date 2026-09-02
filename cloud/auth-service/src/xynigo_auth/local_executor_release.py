@@ -12,7 +12,7 @@ from urllib.parse import quote
 from . import __version__
 
 
-RELEASE_VERSION = "0.13.6"
+RELEASE_VERSION = "0.13.7"
 RELEASE_CHANNEL = "test"
 RELEASE_PUBLISHED_AT = "2026-09-02T04:05:38Z"
 
@@ -29,8 +29,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.13.6-7a987abfb710",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.6.exe",
+        "runtimeId": "0.13.7-7a987abfb710",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.7.exe",
         "sha256": "308d321a6bb8f22876ba09615252aa1e622cc7620e26258ec11ba29673beeaa4",
         "size": 15_051_711,
         "installMode": "standard_per_user",
@@ -46,7 +46,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.6.pkg",
+        "runtimeId": "0.13.7-7a987abfb710",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.7.pkg",
         "sha256": "89427dd3c56482b5fa3e18f3fbc3926be454094746657e1f5eb31bc77d441f39",
         "size": 11_574_449,
         "installMode": "standard_system_application",
@@ -88,21 +89,21 @@ def validate_release_platforms(
     for platform_key, source in platforms.items():
         install_mode = str(source.get("installMode") or "")
         if install_mode.startswith("standard"):
+            runtime_id = str(source.get("runtimeId") or "").strip()
+            if (
+                not runtime_id.startswith(RELEASE_VERSION + "-")
+                or len(runtime_id) > 96
+                or any(
+                    character not in
+                    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+                    for character in runtime_id
+                )
+            ):
+                raise RuntimeError(
+                    f"{platform_key} standard installer requires runtimeId"
+                )
             trusted = False
             if platform_key == "windows-x86_64":
-                runtime_id = str(source.get("runtimeId") or "").strip()
-                if (
-                    not runtime_id.startswith(RELEASE_VERSION + "-")
-                    or len(runtime_id) > 96
-                    or any(
-                        character not in
-                        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
-                        for character in runtime_id
-                    )
-                ):
-                    raise RuntimeError(
-                        "Windows standard installer requires runtimeId"
-                    )
                 trusted = bool(
                     source.get("authenticodeSigned") is True
                     and source.get("authenticodeTimestamped") is True
@@ -216,19 +217,12 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "累计合并内部 0.13.4 连接体验改造与 0.13.5 物流修复。",
-            "执行器启动和断线恢复先快速握手，健康网络下通常可在 1 至 3 秒显示在线。",
-            "Windows 状态中心显示身份验证、握手、在线监听、重试次数和倒计时。",
-            "采购助手支持个人速填表与团队协作表切换，敏感表格标识不回传前端。",
-            "本地执行器租约续期遇到瞬时网络错误后自动重试，不再永久停止续租。",
-            "云端成功接收进度时同步延长租约，避免单次续租抖动造成进度冻结。",
-            "租约确实失效时，本地查询会在当前环境结束后安全停止，不再继续不可见的大批量任务。",
-            "物流查询进行中实时回传下单时间、金额、履约阶段、出口 IP、站点时间和截图状态。",
-            "已停止的物流行明确显示为未完成查询，不再错误渲染为成功。",
-            "物流截图支持云端预览，Excel 导出增加生成状态、成功提示和重复点击保护。",
-            "停止批次显示真实完成数量，截图预览和 Excel 导出已修复。",
-            "绿色包已停止分发；Windows 使用标准版在线升级，macOS 从系统管理下载标准安装包覆盖升级。",
-            "标准版覆盖安装保留配置、日志、运行数据和设备配对。",
-            "本次按内部快速迭代策略提供未签名标准安装包；下载前必须核对 SHA-256，并按飞书开发群教程手动确认系统安全提示。",
+            "Windows 与 macOS 标准客户端统一支持在线检查、认证下载和 SHA-256 二次校验。",
+            "Windows 使用当前用户静默安装并自动重启；macOS 使用系统安装器授权并在完成后自动重启。",
+            "macOS 取消或超时后恢复原版本执行器，不会留下不可用的中间状态。",
+            "稳定通道强制平台签名门槛；内部未签名包仅允许 test 通道。",
+            "执行器自动兼容线上旧版能力协议，本机配置继续严格限制在桌面端。",
+            "macOS 与 Windows 客户端统一使用 X 品牌图标。",
+            "更新保留配置、日志、运行数据、数据源注册表和设备配对。",
         ],
     }

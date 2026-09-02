@@ -164,6 +164,7 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
             '上次在线：',
             'case "verifying"',
             'case "installing"',
+            '安装最新构建',
             '/executor-control/update/check',
             '/executor-control/update/install',
             '打开日志目录',
@@ -175,6 +176,11 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
         self.assertIn('使用飞书授权登录', self.desktop_ui)
         self.assertIn('/api/auth/start', self.desktop_ui)
         self.assertIn('/api/local-config/data-sources', self.desktop_ui)
+        self.assertIn("'onlineUpdate': True", self.builder)
+        self.assertIn(
+            "'onlineUpdateFlow': "
+            "'authenticated_download_sha256_silent_installer'",
+            self.builder)
         self.assertTrue((ROOT / 'packaging/windows/branding/'
                          'installer-welcome.bmp').is_file())
         self.assertTrue((ROOT / 'packaging/windows/branding/'
@@ -309,7 +315,7 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
 
 class WindowsStandardInstallerArtifactTests(unittest.TestCase):
     def test_local_compiled_artifact_metadata_when_present(self):
-        metadata = ROOT / 'dist/Xynigo_Sourcing_Windows_Setup_v0.13.6.json'
+        metadata = ROOT / 'dist/Xynigo_Sourcing_Windows_Setup_v0.13.7.json'
         if not metadata.is_file():
             self.skipTest('standard installer artifact is built in packaging CI')
         import json
@@ -324,6 +330,8 @@ class WindowsStandardInstallerArtifactTests(unittest.TestCase):
         self.assertEqual(payload['protocol'], 'xynigo')
         self.assertTrue(payload['statusCenter'])
         self.assertTrue(payload['trayMenu'])
+        if 'onlineUpdate' in payload:
+            self.assertTrue(payload['onlineUpdate'])
         self.assertEqual(payload['launcherFile'], 'Xynigo.exe')
         if 'desktopUI' in payload:
             self.assertEqual(payload['desktopUI'], 'webview2')

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 import zipfile
 
 from purchase_tool.updater import (
@@ -84,8 +85,9 @@ class WritingTransport(object):
 
 
 class FakeStandardAuth(object):
-    def __init__(self, data):
+    def __init__(self, data, platform_key='windows-x86_64'):
         self.data = data
+        self.platform_key = platform_key
         self.digest = __import__('hashlib').sha256(data).hexdigest()
         self.downloads = []
 
@@ -93,17 +95,25 @@ class FakeStandardAuth(object):
         return {
             'schemaVersion': 1,
             'version': '0.12.7',
+            'channel': 'test',
             'notesZh': ['标准安装包在线升级'],
             'platforms': {
-                'windows-x86_64': {
+                self.platform_key: {
                     'runtimeId': '0.12.7-newbuild001',
-                    'installMode': 'standard_per_user',
-                    'assetName': 'Xynigo_Setup.exe',
+                    'installMode': (
+                        'standard_system_application'
+                        if self.platform_key.startswith('macos-')
+                        else 'standard_per_user'),
+                    'assetName': (
+                        'Xynigo_Setup.pkg'
+                        if self.platform_key.startswith('macos-')
+                        else 'Xynigo_Setup.exe'),
                     'downloadUrl': (
                         '/v1/local-executor/releases/'
-                        'windows-x86_64/primary/download'),
+                        + self.platform_key + '/primary/download'),
                     'sha256': self.digest,
                     'size': len(self.data),
+                    'internalUnsignedTest': True,
                 },
             },
         }
@@ -344,6 +354,52 @@ class UpdaterTests(unittest.TestCase):
         finally:
             import shutil
             shutil.rmtree(str(prepared.work_dir), ignore_errors=True)
+
+    def test_standard_client_downloads_verified_macos_pkg(self):
+        data = b'm' * 1_100_000
+        auth = FakeStandardAuth(data, platform_key='macos-arm64')
+        client = StandardInstallerUpdateClient(
+            auth, platform_key='macos-arm64')
+        info = client.get_latest_release()
+        prepared = client.prepare_update(info, output=lambda _line: None)
+        try:
+            self.assertEqual(prepared.package_root.suffix, '.pkg')
+            self.assertEqual(prepared.package_root.read_bytes(), data)
+            self.assertEqual(client.install_flow, 'macos_system_installer')
+            self.assertEqual(len(auth.downloads), 1)
+        finally:
+            import shutil
+            shutil.rmtree(str(prepared.work_dir), ignore_errors=True)
+
+    def test_macos_standard_client_opens_verified_pkg_with_system_installer(self):
+        data = b'm' * 1_100_000
+        auth = FakeStandardAuth(data, platform_key='macos-arm64')
+        client = StandardInstallerUpdateClient(
+            auth, platform_key='macos-arm64')
+        prepared = client.prepare_update(
+            client.get_latest_release(), output=lambda _line: None)
+        try:
+            with patch('purchase_tool.updater.sys.platform', 'darwin'), patch(
+                    'purchase_tool.updater.subprocess.Popen') as popen:
+                client.launch_installer(prepared, '/Applications', '0.12.6')
+            command = popen.call_args.args[0]
+            self.assertEqual(command[0], '/usr/bin/open')
+            self.assertEqual(Path(command[1]), prepared.package_root.resolve())
+            self.assertTrue(popen.call_args.kwargs['start_new_session'])
+        finally:
+            import shutil
+            shutil.rmtree(str(prepared.work_dir), ignore_errors=True)
+
+    def test_standard_catalog_rejects_unsigned_package_outside_test_channel(self):
+        data = b'x' * 1_100_000
+        auth = FakeStandardAuth(data)
+        catalog = auth.local_executor_release_catalog()
+        catalog['channel'] = 'stable'
+        auth.local_executor_release_catalog = lambda: catalog
+        client = StandardInstallerUpdateClient(
+            auth, platform_key='windows-x86_64')
+        with self.assertRaisesRegex(UpdateError, '签名信任门槛'):
+            client.get_latest_release()
 
     def test_source_mode_keeps_green_package_update_disabled(self):
         manager = UpdateCoordinator(None, '0.6.0')

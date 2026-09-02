@@ -460,6 +460,37 @@ class StandardInstallerUpdateClient(object):
     def __init__(self, auth_service, platform_key=None):
         self.auth_service = auth_service
         self.platform_key = platform_key
+        selected = platform_key
+        if selected is None:
+            try:
+                selected = current_platform_key()
+            except UpdateError:
+                selected = ''
+        self.install_flow = (
+            'macos_system_installer'
+            if str(selected).startswith('macos-') else 'windows_silent')
+
+    @staticmethod
+    def _validate_trust(catalog, platform_key, package):
+        channel = str(catalog.get('channel') or '').strip().casefold()
+        internal_test = (
+            channel == 'test'
+            and package.get('internalUnsignedTest') is True)
+        if platform_key.startswith('windows-'):
+            trusted = bool(
+                package.get('authenticodeSigned') is True
+                and package.get('authenticodeTimestamped') is True
+                and str(package.get('publisher') or '').strip())
+        elif platform_key.startswith('macos-'):
+            trusted = bool(
+                package.get('developerIdInstallerSigned') is True
+                and package.get('notarized') is True
+                and package.get('stapled') is True
+                and str(package.get('publisher') or '').strip())
+        else:
+            raise UpdateError('云端包含不支持的标准安装包平台')
+        if not trusted and not internal_test:
+            raise UpdateError('云端标准安装包未通过平台签名信任门槛')
 
     def get_latest_release(self):
         platform_key = self.platform_key or current_platform_key()
@@ -474,6 +505,7 @@ class StandardInstallerUpdateClient(object):
         install_mode = str(package.get('installMode') or '')
         if not install_mode.startswith('standard'):
             raise UpdateError('云端当前平台不是标准安装包')
+        self._validate_trust(catalog, platform_key, package)
         runtime_id = normalize_runtime_id(package.get('runtimeId'))
         if not runtime_id.startswith(version + '-'):
             raise UpdateError('标准安装包构建修订与版本不一致')
@@ -492,8 +524,12 @@ class StandardInstallerUpdateClient(object):
         )
 
     def prepare_update(self, release, output=print, progress=None, stage=None):
-        if not release.platform_key.startswith('windows-'):
-            raise UpdateError('当前标准安装包在线升级仅支持 Windows')
+        if release.platform_key.startswith('windows-'):
+            expected_suffix = '.exe'
+        elif release.platform_key.startswith('macos-'):
+            expected_suffix = '.pkg'
+        else:
+            raise UpdateError('当前平台不支持标准安装包在线升级')
         asset_name = str(release.manifest.get('assetName') or '').strip()
         download_path = str(release.manifest.get('downloadUrl') or '').strip()
         expected_hash = str(release.manifest.get('sha256') or '').strip().lower()
@@ -501,7 +537,8 @@ class StandardInstallerUpdateClient(object):
             expected_size = int(release.manifest.get('size') or 0)
         except (TypeError, ValueError) as exc:
             raise UpdateError('标准安装包文件大小无效') from exc
-        if (not asset_name.endswith('.exe') or '/' in asset_name
+        if (not asset_name.casefold().endswith(expected_suffix)
+                or '/' in asset_name
                 or '\\' in asset_name):
             raise UpdateError('标准安装包文件名无效')
         expected_path = (
@@ -557,22 +594,35 @@ class StandardInstallerUpdateClient(object):
     @staticmethod
     def launch_installer(prepared, install_dir, current_version):
         del install_dir, current_version
-        if os.name != 'nt':
-            raise UpdateError('Windows 标准安装包只能在 Windows 上升级')
         installer = Path(prepared.package_root).resolve()
-        if not installer.is_file() or installer.suffix.casefold() != '.exe':
+        if not installer.is_file():
             raise UpdateError('已校验的标准安装包不存在')
-        command = [str(installer), '/S', '/ONLINEUPDATE=1']
-        flags = (
-            getattr(subprocess, 'DETACHED_PROCESS', 0x00000008)
-            | getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0x00000200)
-        )
+        if prepared.release.platform_key.startswith('windows-'):
+            if os.name != 'nt' or installer.suffix.casefold() != '.exe':
+                raise UpdateError('Windows 标准安装包只能在 Windows 上升级')
+            command = [str(installer), '/S', '/ONLINEUPDATE=1']
+            popen_kwargs = {
+                'creationflags': (
+                    getattr(subprocess, 'DETACHED_PROCESS', 0x00000008)
+                    | getattr(
+                        subprocess, 'CREATE_NEW_PROCESS_GROUP', 0x00000200)),
+            }
+        elif prepared.release.platform_key.startswith('macos-'):
+            if sys.platform != 'darwin' or installer.suffix.casefold() != '.pkg':
+                raise UpdateError('macOS 标准安装包只能在 macOS 上升级')
+            # The system Installer owns authorization and transactional
+            # replacement of /Applications. The native launcher watches the
+            # bundle runtimeId and relaunches the new application afterward.
+            command = ['/usr/bin/open', str(installer)]
+            popen_kwargs = {'start_new_session': True}
+        else:
+            raise UpdateError('当前平台无法启动标准安装程序')
         try:
             subprocess.Popen(
                 command,
                 cwd=str(prepared.work_dir),
                 close_fds=True,
-                creationflags=flags,
+                **popen_kwargs,
             )
         except OSError as exc:
             raise UpdateError('无法启动标准安装包：%s' % exc) from exc
@@ -648,6 +698,10 @@ class UpdateCoordinator(object):
         self.client = client or (
             GitHubUpdateClient() if self.enabled and not self.standard_mode
             else None)
+        self.install_flow = str(
+            getattr(self.client, 'install_flow', '') or
+            ('standard_installer' if self.standard_mode
+             else 'transactional_replace'))
         self.input_fn = input_fn
         self.output = output
         self.focus_fn = focus_fn or bring_console_to_front
@@ -688,6 +742,7 @@ class UpdateCoordinator(object):
                 'installMode': self.install_mode,
                 'confirmationMode': (
                     'direct' if self.standard_mode else 'console'),
+                'installFlow': self.install_flow,
                 'currentVersion': self.current_version,
                 'currentRuntimeId': self.current_runtime_id,
                 'latestVersion': self.latest_version,
