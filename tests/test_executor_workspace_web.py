@@ -8,6 +8,19 @@ CLOUD_HTML = ROOT / "cloud/auth-service/src/xynigo_auth/web/index.html"
 
 
 class ExecutorWorkspaceWebTests(unittest.TestCase):
+    def test_desktop_settings_entry_uses_local_revision_guard(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        for marker in (
+            "LOCAL_DESKTOP_SETTINGS_VIEW",
+            "get('view') === 'localsettings'",
+            "let localSettingsConfigRevision = '';",
+            "localSettingsConfigRevision = String(cfg.configRevision || '');",
+            "expectedRevision:localSettingsConfigRevision",
+            "e.code === 'config_revision_conflict'",
+            "已刷新最新值，请重新确认后保存",
+        ):
+            self.assertIn(marker, html)
+
     def test_cloud_workspace_routes_business_calls_through_new_executor(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")
         for marker in (

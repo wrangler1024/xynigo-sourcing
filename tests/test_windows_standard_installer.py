@@ -136,6 +136,8 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
             'Xynigo 本地执行器状态中心',
             'walk.NewNotifyIcon',
             '打开云端工作台',
+            '打开本机设置',
+            'view=localsettings',
             '配对这台电脑',
             '重新启动执行器',
             '检查更新',

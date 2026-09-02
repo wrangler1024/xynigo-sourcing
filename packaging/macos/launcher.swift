@@ -2,15 +2,17 @@ import AppKit
 import Foundation
 
 private let dataFolderName = "XynigoSourcing"
+private let cloudWorkspaceURL = URL(string: "https://xynigo.samforo.icu")!
 
 final class XynigoAppDelegate: NSObject, NSApplicationDelegate {
     private var handledURL = false
+    private var statusItem: NSStatusItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        installMenuBar()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
             guard let self = self, !self.handledURL else { return }
             self.launchExecutor()
-            NSApplication.shared.terminate(nil)
         }
     }
 
@@ -19,7 +21,13 @@ final class XynigoAppDelegate: NSObject, NSApplicationDelegate {
         guard urls.count == 1, let raw = urls.first?.absoluteString,
               isAllowedProtocol(raw) else {
             showInvalidRequest()
-            application.terminate(nil)
+            return
+        }
+        if raw.range(
+            of: #"^xynigo://settings/?$"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil {
+            openLocalSettings()
             return
         }
         do {
@@ -28,7 +36,53 @@ final class XynigoAppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             showLaunchError()
         }
-        application.terminate(nil)
+    }
+
+    private func installMenuBar() {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        item.button?.title = "X"
+        item.button?.toolTip = "Xynigo 本地执行器"
+        let menu = NSMenu()
+        menu.addItem(withTitle: "打开本机设置", action: #selector(openLocalSettingsMenu), keyEquivalent: ",")
+        menu.addItem(withTitle: "打开云端工作台", action: #selector(openCloudWorkspace), keyEquivalent: "")
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(withTitle: "启动或重新连接执行器", action: #selector(startExecutorMenu), keyEquivalent: "")
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(withTitle: "退出 Xynigo", action: #selector(quitApplication), keyEquivalent: "q")
+        for entry in menu.items { entry.target = self }
+        item.menu = menu
+        statusItem = item
+    }
+
+    @objc private func openLocalSettingsMenu() {
+        openLocalSettings()
+    }
+
+    @objc private func openCloudWorkspace() {
+        NSWorkspace.shared.open(cloudWorkspaceURL)
+    }
+
+    @objc private func startExecutorMenu() {
+        launchExecutor()
+    }
+
+    @objc private func quitApplication() {
+        NSApplication.shared.terminate(nil)
+    }
+
+    private func openLocalSettings() {
+        do {
+            let port = try configuredServerPort()
+            guard let url = URL(string: "http://127.0.0.1:\(port)/?view=localsettings") else {
+                throw NSError(domain: "XynigoLauncher", code: 3)
+            }
+            NSWorkspace.shared.open(url)
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "本机设置暂不可用"
+            alert.informativeText = "请先从菜单栏启动本地执行器，等待服务就绪后重试。"
+            alert.runModal()
+        }
     }
 
     private func launchExecutor() {
@@ -64,8 +118,18 @@ final class XynigoAppDelegate: NSObject, NSApplicationDelegate {
               !raw.contains("\n"), !raw.contains("\r"), !raw.contains("\0") else {
             return false
         }
-        let pattern = #"^xynigo://(?:start/?|wake/?|pair\?code=[A-HJ-NP-Z2-9]{4}-?[A-HJ-NP-Z2-9]{4})$"#
+        let pattern = #"^xynigo://(?:start/?|wake/?|settings/?|pair\?code=[A-HJ-NP-Z2-9]{4}-?[A-HJ-NP-Z2-9]{4})$"#
         return raw.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
+    private func configuredServerPort() throws -> Int {
+        let config = try applicationDataDirectory().appendingPathComponent("config.json")
+        guard FileManager.default.fileExists(atPath: config.path) else { return 8765 }
+        let data = try Data(contentsOf: config)
+        let object = try JSONSerialization.jsonObject(with: data)
+        guard let payload = object as? [String: Any] else { return 8765 }
+        let port = payload["serverPort"] as? Int ?? 8765
+        return (1...65535).contains(port) ? port : 8765
     }
 
     private func applicationDataDirectory() throws -> URL {

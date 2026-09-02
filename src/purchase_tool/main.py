@@ -41,7 +41,6 @@ import os
 import re
 import secrets
 import sys
-import tempfile
 import threading
 import time
 import webbrowser
@@ -91,6 +90,8 @@ from .lark_links import (LarkLedgerTargetConfig, build_lark_base_link,
                          parse_lark_base_link, resolve_lark_ledger_link)
 from .lark_openapi import LarkOpenApiClient
 from .lark_runtime import build_buyer_ledger_service
+from .local_config_service import (
+    LocalConfigRevisionConflict, LocalConfigService)
 from .operation_result_sync import OperationResultSyncQueue
 from .procurement_import import ProcurementImportService
 from .purchase_assistant import (
@@ -174,6 +175,9 @@ EXECUTOR_RUNTIME_CONFIG_FIELDS = (
     'verifySampleCount',
     'safeParallelTasks',
 )
+
+_LOCAL_CONFIG_SERVICES = {}
+_LOCAL_CONFIG_SERVICES_LOCK = threading.Lock()
 
 PUBLIC_AUTH_API_PATHS = frozenset({
     '/api/auth/status',
@@ -405,50 +409,12 @@ def normalize_purchase_assistant_profiles(cfg):
 
 
 def load_config():
-    cfg = default_config()
-    try:
-        with open(CONFIG_PATH, encoding='utf-8') as f:
-            saved = json.load(f)
-        if isinstance(saved, dict):
-            cfg.update({key: value for key, value in saved.items()
-                        if key in CONFIG_FIELDS})
-    except Exception:
-        pass
-    return normalize_purchase_assistant_profiles(cfg)
+    return local_config_service().load()
 
 
 def save_config(cfg):
-    unknown = set(cfg) - CONFIG_FIELDS
-    if unknown:
-        raise ValueError('配置包含不允许保存的字段')
-    path = os.path.abspath(CONFIG_PATH)
-    parent = os.path.dirname(path)
-    os.makedirs(parent, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(prefix='.config-', suffix='.tmp', dir=parent)
-    try:
-        try:
-            os.fchmod(fd, 0o600)
-        except (AttributeError, OSError):
-            pass
-        with os.fdopen(fd, 'w', encoding='utf-8') as handle:
-            json.dump(cfg, handle, ensure_ascii=False, indent=2)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_name, path)
-        try:
-            os.chmod(path, 0o600)
-        except OSError:
-            pass
-    except Exception:
-        try:
-            os.close(fd)
-        except OSError:
-            pass
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
+    return local_config_service().commit(
+        cfg, source='compatibility_route')['config']
 
 
 def public_config(cfg):
@@ -501,6 +467,41 @@ def public_executor_config(cfg):
         for key in EXECUTOR_RUNTIME_CONFIG_FIELDS
         if key in public
     }
+
+
+def local_config_service(path=None):
+    """Return the single local-config authority for one resolved data path."""
+    resolved = os.path.abspath(str(path or CONFIG_PATH))
+    with _LOCAL_CONFIG_SERVICES_LOCK:
+        service = _LOCAL_CONFIG_SERVICES.get(resolved)
+        if service is None:
+            service = LocalConfigService(
+                resolved,
+                allowed_fields=CONFIG_FIELDS,
+                default_factory=default_config,
+                normalizer=normalize_purchase_assistant_profiles,
+                summary_projector=public_executor_config,
+                audit_value_fields=(
+                    set(EXECUTOR_RUNTIME_CONFIG_FIELDS) | {'serverPort'}),
+            )
+            _LOCAL_CONFIG_SERVICES[resolved] = service
+        return service
+
+
+def state_local_config_service():
+    """Use AppState's service unless a compatibility test/path overrides it."""
+    service = getattr(STATE, 'local_config', None)
+    if (isinstance(service, LocalConfigService)
+            and service.path == os.path.abspath(CONFIG_PATH)):
+        return service
+    return local_config_service()
+
+
+def public_local_config(cfg):
+    """Expose local settings with an opaque full-config desktop revision."""
+    result = public_config(cfg)
+    result['configRevision'] = state_local_config_service().revision(cfg)
+    return result
 
 
 def public_envbatch_preferences(cfg):
@@ -932,7 +933,9 @@ class AppState(object):
 
     def __init__(self, credential_store=None, auth_service=None,
                  extension_bridge=None, hub_api_key_store=None):
-        cfg = load_config()
+        self.local_config = local_config_service()
+        self.config_lock = self.local_config.lock
+        cfg = self.local_config.load()
         self.cfg = cfg
         self.auth = auth_service or LocalAuthService()
         self.operation_sync_error = ''
@@ -984,7 +987,6 @@ class AppState(object):
             client=update_client,
             current_runtime_id=os.environ.get('XYNIGO_RUNTIME_ID'),
         )
-        self.config_lock = threading.RLock()
         self.executor_channel = ExecutorChannelWorker(
             client=CloudExecutorClient(),
             credential_store=system_executor_credential_store(),
@@ -1002,7 +1004,9 @@ class AppState(object):
         with self.config_lock:
             old_cfg = dict(self.cfg)
             cfg = updated_executor_config(old_cfg, submitted)
-            save_config(cfg)
+            committed = self.local_config.commit(
+                cfg, source='cloud_legacy_config_write')
+            cfg = committed['config']
             self.cfg = cfg
             reconnect_needed = (
                 cfg.get('hubPort') != old_cfg.get('hubPort')
@@ -1050,7 +1054,14 @@ class AppState(object):
             cfg['purchaseAssistantSheetId'] = sheet_id
             cfg['purchaseAssistantCellRange'] = cell_range
             PurchaseAssistantConfig.from_runtime_config(cfg)
-            save_config(cfg)
+            service = getattr(self, 'local_config', None)
+            if isinstance(service, LocalConfigService):
+                committed = service.commit(
+                    cfg, source='purchase_assistant_source')
+                cfg = committed['config']
+            else:
+                # Compatibility for focused unit fixtures and older embedders.
+                save_config(cfg)
             self.cfg = cfg
             self.purchase_assistant.reconfigure(cfg)
             return self.purchase_assistant.source_status()
@@ -3492,7 +3503,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(data)
             elif path == '/api/config':
-                self._json(public_config(STATE.cfg))
+                self._json(public_local_config(STATE.cfg))
             elif path == '/api/lark/status':
                 self._json(public_lark_runtime_status(
                     STATE.cfg, STATE.lark_credentials))
@@ -4006,7 +4017,7 @@ class Handler(BaseHTTPRequestHandler):
                             '环境创建任务运行中，不能切换站点或采购分组')
                     old_cfg = load_config()
                     cfg = updated_envbatch_preferences(old_cfg, body)
-                    save_config(cfg)
+                    cfg = save_config(cfg)
                     STATE.cfg = cfg
                 self._json({
                     'saved': True,
@@ -4015,8 +4026,12 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/config':
                 lock = getattr(STATE, 'config_lock', None)
                 with lock if lock is not None else nullcontext():
-                    old_cfg = load_config()
-                    cfg = updated_config(old_cfg, body)
+                    service = state_local_config_service()
+                    submitted = dict(body)
+                    expected_revision = submitted.pop(
+                        'expectedRevision', None)
+                    old_cfg = service.load()
+                    cfg = updated_config(old_cfg, submitted)
                     task_snapshot = STATE.tasks.snapshot()
                     if any(item.get('kind') == 'config'
                            for item in task_snapshot.get('tasks') or []):
@@ -4031,14 +4046,23 @@ class Handler(BaseHTTPRequestHandler):
                                     for name in runtime_fields)):
                         raise RuntimeError(
                             '后台任务运行中，不能修改端口、并发数或并行模式')
-                    save_config(cfg)
+                    committed = service.commit(
+                        cfg,
+                        expected_revision=expected_revision,
+                        source='desktop_local_api')
+                    cfg = committed['config']
                     STATE.cfg = cfg
                     reconnect_needed = (
                         cfg.get('hubPort') != old_cfg.get('hubPort')
                         or cfg.get('concurrency') != old_cfg.get('concurrency'))
                     connected = (STATE.reconnect_hub() if reconnect_needed
                                  else STATE.hub_status()[0])
-                self._json({'saved': True, 'hubConnected': connected})
+                self._json({
+                    'saved': True,
+                    'hubConnected': connected,
+                    'configRevision': committed['configRevision'],
+                    'changedFields': committed['changedFields'],
+                })
             elif path == '/api/lark/config':
                 credentials = submitted_lark_credentials(body)
                 resolved_target = resolve_submitted_lark_target(
@@ -4060,7 +4084,7 @@ class Handler(BaseHTTPRequestHandler):
                     except Exception as exc:
                         cfg['larkBuyerTargetVerified'] = False
                         target_validation_error = public_error(exc)
-                save_config(cfg)
+                cfg = save_config(cfg)
                 STATE.cfg = cfg
                 response = {
                     'saved': True,
@@ -4073,7 +4097,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/lark/target-metadata':
                 cfg = refreshed_lark_target_labels(
                     STATE.cfg, STATE.lark_credentials)
-                save_config(cfg)
+                cfg = save_config(cfg)
                 STATE.cfg = cfg
                 self._json({
                     'refreshed': True,
@@ -4085,7 +4109,7 @@ class Handler(BaseHTTPRequestHandler):
                 cfg = refreshed_lark_target_labels(
                     STATE.cfg, STATE.lark_credentials,
                     client=service.client)
-                save_config(cfg)
+                cfg = save_config(cfg)
                 STATE.cfg = cfg
                 validate_unified_schema(service.client.list_fields())
                 self._json({
@@ -4117,6 +4141,12 @@ class Handler(BaseHTTPRequestHandler):
                     'code': e.code,
                     'error': str(e),
                 }, e.status)
+        except LocalConfigRevisionConflict as e:
+            self._json({
+                'error': str(e),
+                'code': e.code,
+                'configRevision': e.actual_revision,
+            }, 409)
         except RuntimeError as e:
             self._json({'error': str(e)}, 409)
         except ValueError as e:

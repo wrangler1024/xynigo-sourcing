@@ -55,6 +55,26 @@ func TestStatusPortOnlyAcceptsLoopbackHTTP(t *testing.T) {
 	}
 }
 
+func TestLocalSettingsURLUsesDiscoveredLoopbackPort(t *testing.T) {
+	got, err := localSettingsURL(
+		"http://127.0.0.1:8767/executor-status.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "http://127.0.0.1:8767/?view=localsettings"; got != want {
+		t.Fatalf("localSettingsURL() = %q, want %q", got, want)
+	}
+	for _, raw := range []string{
+		"https://127.0.0.1:8767/executor-status.json",
+		"http://example.test:8767/executor-status.json",
+		"http://127.0.0.1/executor-status.json",
+	} {
+		if _, err := localSettingsURL(raw); err == nil {
+			t.Fatalf("localSettingsURL(%q) unexpectedly succeeded", raw)
+		}
+	}
+}
+
 func TestTCPListenerPIDsFindsCurrentProcess(t *testing.T) {
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {

@@ -140,6 +140,19 @@ class MacOSStandardInstallerContractTests(unittest.TestCase):
         self.assertIn('.posixPermissions: 0o600', self.launcher)
         self.assertNotIn('/bin/bash -c', self.launcher)
 
+    def test_launcher_keeps_menu_bar_desktop_settings_entry(self):
+        for marker in (
+                'NSStatusBar.system.statusItem',
+                '打开本机设置',
+                '打开云端工作台',
+                '启动或重新连接执行器',
+                'view=localsettings',
+                'xynigo://(?:start/?|wake/?|settings/?|pair',
+                'configuredServerPort()',
+                '127.0.0.1',
+        ):
+            self.assertIn(marker, self.launcher)
+
     def test_standard_scripts_pin_data_root_and_disable_green_updater(self):
         for script in (self.start_script, self.protocol_script,
                        self.migration_script):

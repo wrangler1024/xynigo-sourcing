@@ -2967,8 +2967,12 @@ const PERMISSION_MENU_GROUPS = [
     ]
   }
 ];
-let activePrimary = 'fulfillment';
-let activeModule = 'query';
+const LOCAL_DESKTOP_SETTINGS_VIEW = (
+  ['127.0.0.1', 'localhost', '::1'].includes(location.hostname)
+  && new URLSearchParams(location.search).get('view') === 'localsettings'
+);
+let activePrimary = LOCAL_DESKTOP_SETTINGS_VIEW ? 'system' : 'fulfillment';
+let activeModule = LOCAL_DESKTOP_SETTINGS_VIEW ? 'localsettings' : 'query';
 let queryProgressLoaded = false;
 let queryPollInFlight = false;
 let querySubmitting = false;
@@ -2976,7 +2980,9 @@ let queryPollGraceUntil = 0;
 let groupLoadInFlight = null;
 const MAX_OPEN_FEATURE_TABS = 10;
 let openFeatureTabs = ['query'];
+if (LOCAL_DESKTOP_SETTINGS_VIEW) openFeatureTabs = ['localsettings'];
 let localSettingsPageLoaded = false;
+let localSettingsConfigRevision = '';
 let larkConnectionPageLoaded = false;
 let memberManagementPageLoaded = false;
 let roleManagementPageLoaded = false;
@@ -10172,6 +10178,7 @@ async function loadLarkConfigStatus({refreshPending=false} = {}) {
 async function loadLocalSettingsPage() {
   try {
     const cfg = await api('/api/config');
+    localSettingsConfigRevision = String(cfg.configRevision || '');
     $('cfgPort').value = cfg.hubPort || 6873;
     $('cfgConcurrency').value = cfg.concurrency || 2;
     safeParallelTasks = cfg.safeParallelTasks !== false;
@@ -10230,8 +10237,9 @@ $('btnCfgSave').onclick = async () => {
     if ($('cfgHideIp').checked) hiddenQueryColumns.push('ip');
     const j = await api('/api/config', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ hubPort: port, concurrency: conc, safeParallelTasks:$('cfgSafeParallel').checked, verifySampleCount: verifyCount, envCreateWorkers: envWorkers, importBuyerPlan, hiddenQueryColumns, purchaseSite:$('envSite').value, purchaseTags, proxyLink, proxyClear })
+      body: JSON.stringify({ expectedRevision:localSettingsConfigRevision, hubPort: port, concurrency: conc, safeParallelTasks:$('cfgSafeParallel').checked, verifySampleCount: verifyCount, envCreateWorkers: envWorkers, importBuyerPlan, hiddenQueryColumns, purchaseSite:$('envSite').value, purchaseTags, proxyLink, proxyClear })
     });
+    localSettingsConfigRevision = String(j.configRevision || localSettingsConfigRevision);
     setHiddenQueryColumns(hiddenQueryColumns);
     $('envVerify').checked = verifyCount > 0;
     $('envVerifyCount').value = '1';
@@ -10244,7 +10252,15 @@ $('btnCfgSave').onclick = async () => {
     await refreshEnvPreflight();
     if (j.hubConnected) { loadGroups(); toast('设置已保存：并发 ' + conc + '，HubStudio 连接正常'); }
     else toast('设置已保存，但未检测到该端口上的 HubStudio');
-  } catch (e) { toast(e.message); }
+  } catch (e) {
+    if (e.code === 'config_revision_conflict') {
+      localSettingsPageLoaded = false;
+      await loadLocalSettingsPage();
+      toast('本机设置已在其他窗口变化，已刷新最新值，请重新确认后保存');
+      return;
+    }
+    toast(e.message);
+  }
 };
 
 function setLarkSaveFeedback(kind, message) {

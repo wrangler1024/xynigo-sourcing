@@ -458,13 +458,16 @@ class ConfigRouteTests(unittest.TestCase):
                  'larkBuyerBaseToken': 'bascnPublicSafeExample',
                  'larkBuyerTableId': 'tblPublicSafeExample'},
             config_lock=threading.RLock(),
-            tasks=SimpleNamespace(snapshot=lambda: {'tasks': []}),
+            tasks=SimpleNamespace(
+                snapshot=lambda: {'tasks': []}, running=lambda: False),
             auth=SimpleNamespace(require=lambda permission=None, role=None: {
                 'roles': ['super_admin'],
                 'permissions': ['system.lark_connection.manage'],
             }),
             lark_credentials=MemoryCredentialStore(),
-            env_job=env_job)
+            env_job=env_job,
+            reconnect_hub=lambda: True,
+            hub_status=lambda: (True, ''))
         main_module.STATE.lark_credentials.save(
             'cli_public_safe_example', 'sanitized-secret-value')
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
@@ -502,6 +505,8 @@ class ConfigRouteTests(unittest.TestCase):
         self.assertNotIn(TEST_PROXY, config_text)
         self.assertNotIn('proxyLink', config_text)
         self.assertTrue(json.loads(config_text)['proxyConfigured'])
+        self.assertRegex(
+            json.loads(config_text)['configRevision'], r'^[0-9a-f]{64}$')
         self.assertTrue(json.loads(lark_config_text)['ready'])
         self.assertNotIn('bascnPublicSafeExample', lark_config_text)
         self.assertNotIn('tblPublicSafeExample', lark_config_text)
@@ -538,6 +543,35 @@ class ConfigRouteTests(unittest.TestCase):
         self.assertEqual(persisted['purchaseSite'], 'US')
         self.assertNotIn('hubPort', persisted)
         self.assertNotIn(TEST_PROXY, json.dumps(persisted))
+
+    def test_config_route_uses_expected_revision_and_reports_conflict(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = str(Path(tmp) / 'config.json')
+            initial = default_config()
+            with patch.object(main_module, 'CONFIG_PATH', config_path):
+                save_config(initial)
+                main_module.STATE.cfg = initial
+                snapshot = json.loads(self._get_json('/api/config'))
+                response = self._post_json('/api/config', {
+                    'expectedRevision': snapshot['configRevision'],
+                    'hubPort': 6999,
+                })
+                self.assertTrue(response['saved'])
+                self.assertNotEqual(
+                    response['configRevision'], snapshot['configRevision'])
+                self.assertEqual(response['changedFields'], ['hubPort'])
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    self._post_json('/api/config', {
+                        'expectedRevision': snapshot['configRevision'],
+                        'hubPort': 7000,
+                    })
+                conflict = json.loads(caught.exception.read().decode('utf-8'))
+                reloaded = load_config()
+        self.assertEqual(caught.exception.code, 409)
+        self.assertEqual(conflict['code'], 'config_revision_conflict')
+        self.assertEqual(conflict['configRevision'],
+                         response['configRevision'])
+        self.assertEqual(reloaded['hubPort'], 6999)
 
     def test_lark_unified_ledger_template_is_downloadable(self):
         url = 'http://127.0.0.1:%d/api/lark/template' % (

@@ -371,11 +371,11 @@ func (app *launcherApp) buildWindow() error {
 						}},
 					},
 				},
-				Composite{Background: SolidColorBrush{Color: canvas}, Layout: HBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
-					PushButton{Text: "打开云端工作台", MinSize: Size{Width: 142, Height: 38}, OnClicked: func() { app.openCloudWorkspace() }},
-					PushButton{AssignTo: &app.startButton, Text: "重新启动执行器", MinSize: Size{Width: 132, Height: 38}, OnClicked: func() { go app.restartExecutor() }},
-					PushButton{Text: "打开日志目录", MinSize: Size{Width: 112, Height: 38}, OnClicked: func() { app.openLogs() }},
-					PushButton{AssignTo: &app.updateButton, Text: "检查更新", MinSize: Size{Width: 108, Height: 38}, OnClicked: app.handleUpdateAction},
+					Composite{Background: SolidColorBrush{Color: canvas}, Layout: HBox{MarginsZero: true, Spacing: 8}, Children: []Widget{
+						PushButton{Text: "打开云端工作台", MinSize: Size{Width: 142, Height: 38}, OnClicked: func() { app.openCloudWorkspace() }},
+						PushButton{Text: "本机设置", MinSize: Size{Width: 108, Height: 38}, OnClicked: func() { app.openLocalSettings() }},
+						PushButton{AssignTo: &app.startButton, Text: "重新启动执行器", MinSize: Size{Width: 132, Height: 38}, OnClicked: func() { go app.restartExecutor() }},
+						PushButton{AssignTo: &app.updateButton, Text: "检查更新", MinSize: Size{Width: 108, Height: 38}, OnClicked: app.handleUpdateAction},
 					ProgressBar{AssignTo: &app.updateProgress, MinValue: 0, MaxValue: 100, Value: 0, Visible: false, MinSize: Size{Width: 150, Height: 18}},
 					HSpacer{},
 					PushButton{Text: "刷新状态", MinSize: Size{Width: 96, Height: 38}, OnClicked: func() { go app.refreshStatus() }},
@@ -452,6 +452,7 @@ func (app *launcherApp) buildTray() error {
 	app.trayHub = newTrayStatusAction("HubStudio：正在检查")
 	openStatus := newTrayAction("打开状态中心", app.showStatusCenter)
 	openCloud := newTrayAction("打开云端工作台", app.openCloudWorkspace)
+	openLocalSettings := newTrayAction("打开本机设置", app.openLocalSettings)
 	app.trayStartStop = newTrayAction("重新启动执行器", func() { go app.restartExecutor() })
 	app.trayUpdate = newTrayAction("检查更新", app.handleUpdateAction)
 	app.trayPair = newTrayAction("配对这台电脑…", app.showPairing)
@@ -462,7 +463,7 @@ func (app *launcherApp) buildTray() error {
 	exit := newTrayAction("退出 Xynigo", app.exitApplication)
 	for _, action := range []*walk.Action{
 		app.trayStatus, app.trayCloud, app.trayHub, walk.NewSeparatorAction(),
-		openStatus, openCloud, app.trayPair, walk.NewSeparatorAction(),
+		openStatus, openCloud, openLocalSettings, app.trayPair, walk.NewSeparatorAction(),
 		app.trayStartStop, app.trayUpdate, logs, walk.NewSeparatorAction(), about, exit,
 	} {
 		if err := notify.ContextMenu().Actions().Add(action); err != nil {
@@ -505,6 +506,39 @@ func (app *launcherApp) showPairing() {
 
 func (app *launcherApp) openCloudWorkspace() {
 	_ = exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", cloudWorkspaceURL).Start()
+}
+
+func (app *launcherApp) openLocalSettings() {
+	app.mu.Lock()
+	statusURL := app.statusURL
+	app.mu.Unlock()
+	settingsURL, err := localSettingsURL(statusURL)
+	if err != nil {
+		walk.MsgBox(
+			app.mw,
+			"本机设置暂不可用",
+			"本地执行器尚未就绪，请稍后重试或先点击“重新启动执行器”。",
+			walk.MsgBoxIconWarning,
+		)
+		return
+	}
+	_ = exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", settingsURL).Start()
+}
+
+func localSettingsURL(statusURL string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(statusURL))
+	if err != nil || parsed.Scheme != "http" || parsed.Port() == "" {
+		return "", errors.New("本机服务地址无效")
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host != "127.0.0.1" && host != "localhost" && host != "::1" {
+		return "", errors.New("本机服务地址必须使用回环接口")
+	}
+	parsed.Path = "/"
+	parsed.RawPath = ""
+	parsed.RawQuery = "view=localsettings"
+	parsed.Fragment = ""
+	return parsed.String(), nil
 }
 
 func (app *launcherApp) openLogs() {
