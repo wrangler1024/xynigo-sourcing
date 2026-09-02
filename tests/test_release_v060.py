@@ -323,6 +323,7 @@ class ReleaseV0136Tests(unittest.TestCase):
         self.assertIn('id="workspaceTabScrollRight"', html)
         self.assertIn('id="workspaceTabListToggle"', html)
         self.assertIn('id="workspaceTabMenuList"', html)
+
         self.assertIn('function updateWorkspaceTabControls()', html)
         self.assertIn('function closeOtherFeatureTabs()', html)
         self.assertIn('function closeRightFeatureTabs()', html)
@@ -708,6 +709,16 @@ class ReleaseV0136Tests(unittest.TestCase):
         self.assertIn("{'n': '_rvRel:LocalImageIdentifier', 't': 'i'}",
                       cell_images_py)
         self.assertIn("{'n': 'CalcOrigin', 't': 'i'}", cell_images_py)
+
+    def test_device_channel_does_not_auto_install_owner_user_session(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root / 'src/purchase_tool/main.py').read_text(
+            encoding='utf-8')
+        self.assertIn('user_session_installer=None', source)
+        self.assertNotIn(
+            'user_session_installer=self.auth.install_executor_session',
+            source)
+        self.assertIn('interactive Feishu OAuth', source)
 
 
 if __name__ == '__main__':

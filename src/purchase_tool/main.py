@@ -54,6 +54,8 @@ from .buyer_library import BuyerLibraryJob, DatabaseBuyerLibraryService
 from .buyer_ledger_sync import validate_unified_schema
 from .buyer_register import BuyerRegistrationTask, RegistrationOrchestrator
 from .cloud_auth import DEFAULT_AUTH_BASE_URL, LocalAuthError, LocalAuthService
+from .data_source_registry import (
+    DataSourceRegistry, DataSourceRegistryError)
 from .excel_export import EXPORT_HEAD, export_bytes
 from .env_batch import (BACKUP_MAX_COUNT, BACKUP_REMARK, BUYER_CODES,
                         BUYER_ROSTER, BatchEnvOrchestrator,
@@ -123,8 +125,11 @@ LARK_LEDGER_TEMPLATE_XLSX = os.path.join(
 DATA_DIR = os.path.abspath(
     os.environ.get('XYNIGO_DATA_DIR') or os.getcwd())
 CONFIG_PATH = os.path.join(DATA_DIR, 'config.json')
+LOCAL_BINDINGS_PATH = os.path.join(
+    DATA_DIR, '运行数据', 'local-bindings-v1.json')
 LOG_DIR = os.path.join(DATA_DIR, '查询日志')
 PURCHASE_ASSISTANT_API_PREFIX = '/api/purchase-assistant/v1'
+DATA_SOURCE_API_PREFIX = '/api/local-config/data-sources'
 
 CONFIG_FIELDS = frozenset({
     'hubPort', 'serverPort', 'concurrency', 'importBuyerPlan',
@@ -953,6 +958,15 @@ class AppState(object):
         self.config_lock = self.local_config.lock
         cfg = self.local_config.load()
         self.cfg = cfg
+        self.data_sources = DataSourceRegistry(LOCAL_BINDINGS_PATH)
+        self.data_source_registry_error = ''
+        try:
+            self.data_sources.migrate_legacy(cfg)
+        except (DataSourceRegistryError, OSError, RuntimeError):
+            # Keep the device channel and unrelated tools available. Any data
+            # source resolution remains fail-closed until the file is repaired.
+            self.data_source_registry_error = \
+                'data_source_registry_migration_failed'
         self.auth = auth_service or LocalAuthService()
         self.operation_sync_error = ''
         self.operation_sync = OperationResultSyncQueue(
@@ -1012,7 +1026,10 @@ class AppState(object):
             config_writer=self.apply_cloud_config,
             task_coordinator=self.tasks,
             hub_status_getter=self.hub_status,
-            user_session_installer=self.auth.install_executor_session,
+            # Device identity keeps the background channel alive.  A desktop
+            # user session must come from interactive Feishu OAuth and must
+            # never be reinstalled automatically after logout/switch-user.
+            user_session_installer=None,
         )
 
     def apply_cloud_config(self, submitted):
@@ -3537,6 +3554,12 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(data)
             elif path == '/api/config':
                 self._json(public_local_config(STATE.cfg))
+            elif path == DATA_SOURCE_API_PREFIX:
+                identity = STATE.auth.require()
+                include_all = bool(set(identity.get('roles') or []) & {
+                    'admin', 'super_admin'})
+                self._json(STATE.data_sources.public_snapshot(
+                    identity['user']['id'], include_all=include_all))
             elif path == '/api/lark/status':
                 self._json(public_lark_runtime_status(
                     STATE.cfg, STATE.lark_credentials))
@@ -3587,6 +3610,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._auth_error(e)
         except ConnectionError as e:
             self._json({'error': 'HubStudio 未连接：%s' % e}, 503)
+        except DataSourceRegistryError as e:
+            self._json({'error': str(e), 'code': e.code}, 409)
         except ValueError as e:
             self._json({'error': str(e)}, 400)
         except Exception as e:
@@ -4099,6 +4124,53 @@ class Handler(BaseHTTPRequestHandler):
                     'configRevision': committed['configRevision'],
                     'changedFields': committed['changedFields'],
                 })
+            elif path == DATA_SOURCE_API_PREFIX + '/claim-personal':
+                member_id = request_identity['user']['id']
+                STATE.data_sources.claim_legacy_personal(
+                    member_id,
+                    body.get('sourceId'),
+                    expected_revision=body.get('expectedRevision'))
+                self._json({
+                    'saved': True,
+                    **STATE.data_sources.public_snapshot(member_id),
+                })
+            elif path == DATA_SOURCE_API_PREFIX + '/buyer-default':
+                member_id = request_identity['user']['id']
+                STATE.data_sources.set_buyer_default(
+                    member_id,
+                    body.get('sourceId'),
+                    expected_revision=body.get('expectedRevision'))
+                self._json({
+                    'saved': True,
+                    **STATE.data_sources.public_snapshot(member_id),
+                })
+            elif path == DATA_SOURCE_API_PREFIX + '/environment-binding':
+                if not set(request_identity.get('roles') or []) & {
+                        'admin', 'super_admin'}:
+                    raise LocalAuthError('permission_denied', status=403)
+                member_id = str(body.get('memberId') or '').strip()
+                STATE.data_sources.bind_environment(
+                    body.get('containerCode'),
+                    member_id,
+                    body.get('sourceId'),
+                    expected_revision=body.get('expectedRevision'))
+                self._json({
+                    'saved': True,
+                    **STATE.data_sources.public_snapshot(
+                        request_identity['user']['id'], include_all=True),
+                })
+            elif path == DATA_SOURCE_API_PREFIX + '/team-default':
+                if not set(request_identity.get('roles') or []) & {
+                        'admin', 'super_admin'}:
+                    raise LocalAuthError('permission_denied', status=403)
+                STATE.data_sources.set_team_default(
+                    body.get('sourceId'),
+                    expected_revision=body.get('expectedRevision'))
+                self._json({
+                    'saved': True,
+                    **STATE.data_sources.public_snapshot(
+                        request_identity['user']['id'], include_all=True),
+                })
             elif path == '/api/lark/config':
                 lock = getattr(STATE, 'config_lock', None)
                 with lock if lock is not None else nullcontext():
@@ -4207,6 +4279,8 @@ class Handler(BaseHTTPRequestHandler):
                 'code': e.code,
                 'configRevision': e.actual_revision,
             }, 409)
+        except DataSourceRegistryError as e:
+            self._json({'error': str(e), 'code': e.code}, 409)
         except RuntimeError as e:
             self._json({'error': str(e)}, 409)
         except ValueError as e:
