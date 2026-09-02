@@ -50,6 +50,14 @@ SUPPORTED_CAPABILITIES = (
     'environment.retry-row.v1',
     'environment.retry-failed.v1',
 )
+MODERN_ONLY_CAPABILITIES = frozenset({
+    'config.summary.v2',
+    'local.config.desktop.v1',
+})
+COMPATIBLE_CAPABILITIES = tuple(
+    capability for capability in SUPPORTED_CAPABILITIES
+    if capability not in MODERN_ONLY_CAPABILITIES
+)
 LOCAL_CONFIG_RPC_PATHS = frozenset({
     '/api/config',
     '/api/hub-api-key',
@@ -203,22 +211,46 @@ class CloudExecutorClient(object):
             os.environ.get('XYNIGO_AUTH_BASE_URL') or DEFAULT_AUTH_BASE_URL,
             timeout=35.0,
         )
+        self.compatibility_mode = False
+
+    @staticmethod
+    def _requires_compatibility_retry(exc):
+        return (
+            isinstance(exc, LocalAuthError)
+            and exc.status == 422
+            and exc.code == 'validation_failed'
+        )
+
+    def _capabilities(self):
+        return list(
+            COMPATIBLE_CAPABILITIES
+            if self.compatibility_mode else SUPPORTED_CAPABILITIES)
 
     def pair(self, pairing_code, display_name, system, architecture):
-        payload = self.client._request(
-            '/v1/executor-channel/pair',
-            method='POST',
-            payload={
-                'pairingCode': str(pairing_code or '').strip(),
-                'displayName': str(display_name or '').strip(),
-                'platform': system,
-                'architecture': architecture,
-                'clientVersion': __version__,
-                'protocolVersion': 1,
-                'capabilities': list(SUPPORTED_CAPABILITIES),
-            },
-            source='local_executor_device',
-        )
+        body = {
+            'pairingCode': str(pairing_code or '').strip(),
+            'displayName': str(display_name or '').strip(),
+            'platform': system,
+            'architecture': architecture,
+            'clientVersion': __version__,
+            'protocolVersion': 1,
+            'capabilities': self._capabilities(),
+        }
+        try:
+            payload = self.client._request(
+                '/v1/executor-channel/pair',
+                method='POST', payload=body,
+                source='local_executor_device')
+        except LocalAuthError as exc:
+            if (self.compatibility_mode
+                    or not self._requires_compatibility_retry(exc)):
+                raise
+            self.compatibility_mode = True
+            body['capabilities'] = self._capabilities()
+            payload = self.client._request(
+                '/v1/executor-channel/pair',
+                method='POST', payload=body,
+                source='local_executor_device')
         executor_id = str(payload.get('executorId') or '').strip()
         credential = _validated_token(payload.get('deviceCredential'))
         if not executor_id or str(payload.get('credentialType')) != 'Bearer':
@@ -234,18 +266,32 @@ class CloudExecutorClient(object):
             'hubStatus': hub_status,
             'clientVersion': __version__,
             'protocolVersion': 1,
-            'capabilities': list(SUPPORTED_CAPABILITIES),
+            'capabilities': self._capabilities(),
         }
-        if config_summary is not None:
+        if config_summary is not None and not self.compatibility_mode:
             body['configSummary'] = config_summary
-        return self.client._request(
-            '/v1/executor-channel/poll',
-            method='POST',
-            payload=body,
-            token=credential,
-            source='local_executor_device',
-            max_response_bytes=MAX_WORKSPACE_RPC_BYTES,
-        )
+        try:
+            return self.client._request(
+                '/v1/executor-channel/poll',
+                method='POST', payload=body, token=credential,
+                source='local_executor_device',
+                max_response_bytes=MAX_WORKSPACE_RPC_BYTES)
+        except LocalAuthError as exc:
+            if (self.compatibility_mode
+                    or not self._requires_compatibility_retry(exc)):
+                raise
+            # The deployed cloud may briefly lag the desktop protocol during
+            # a rolling upgrade. Keep local configuration fail-closed while
+            # advertising only capabilities understood by the older poll
+            # contract. A process restart probes the modern contract again.
+            self.compatibility_mode = True
+            body['capabilities'] = self._capabilities()
+            body.pop('configSummary', None)
+            return self.client._request(
+                '/v1/executor-channel/poll',
+                method='POST', payload=body, token=credential,
+                source='local_executor_device',
+                max_response_bytes=MAX_WORKSPACE_RPC_BYTES)
 
     def issue_user_session(self, credential):
         payload = self.client._request(

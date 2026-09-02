@@ -214,6 +214,29 @@
   function statusCard(title, value, detail, iconName, tone, ok) {
     return '<article class="card status-card"><div class="status-card-head"><span class="status-icon ' + (tone || '') + '">' + icon(iconName) + '</span><span class="normal" style="' + (ok ? '' : 'color:#b45309') + '"><i style="' + (ok ? '' : 'background:#f59e0b') + '"></i>' + (ok ? '正常' : '注意') + '</span></div><p class="label">' + esc(title) + '</p><p class="value">' + esc(value) + '</p><p class="detail">' + esc(detail) + '</p></article>';
   }
+  function cloudPresentation(channel, paired) {
+    channel = channel || {};
+    if (!paired) return {value:'等待配对', detail:'需要一次性配对码'};
+    if (channel.status === 'online') {
+      return {value:'已连接', detail:relativeTime(channel.lastPollAt)};
+    }
+    var failures = {
+      validation_failed: '客户端与云端协议不兼容',
+      auth_failed: '云端认证请求失败',
+      cloud_unreachable: '暂时无法访问云端',
+      executor_credential_invalid: '设备凭证已失效',
+      executor_revoked: '设备已被撤销',
+      executor_credential_unavailable: '无法读取设备凭证'
+    };
+    var failure = failures[channel.lastErrorCode];
+    if (failure) {
+      return {value:failure, detail:relativeTime(channel.lastPollAt)};
+    }
+    return {
+      value:channel.status === 'reconnecting' ? '正在重连' : '正在连接',
+      detail:relativeTime(channel.lastPollAt)
+    };
+  }
   function renderOverview() {
     var s = currentStatus();
     var paired = !!(s.executor && s.executor.paired);
@@ -222,8 +245,9 @@
     var activeCount = Number(s.tasks && s.tasks.activeCount || 0);
     var update = s.update || {};
     var healthy = paired && cloudOnline && hubReady;
-    var cloudValue = paired ? (cloudOnline ? '已连接' : '正在连接') : '等待配对';
-    var cloudDetail = paired ? relativeTime(s.cloudChannel && s.cloudChannel.lastPollAt) : '需要一次性配对码';
+    var cloud = cloudPresentation(s.cloudChannel, paired);
+    var cloudValue = cloud.value;
+    var cloudDetail = cloud.detail;
     var actions = button('刷新状态','refresh-status','refresh') + button('打开云端工作台','open-cloud','arrow','primary');
     var pair = paired ? '' : '<section class="pair-strip">' + icon('alert') + '<div><b>这台电脑尚未配对</b><div style="font-size:10px;color:#92400e;margin-top:3px">在云端生成 8 位一次性配对码后完成绑定。</div></div><input id="pair-code" class="input" placeholder="ABCD-EFGH" maxlength="9"><button class="button primary" data-action="pair-device">配对这台电脑</button></section>';
     return header('overview',actions) + '<div class="content stack">' + pair +

@@ -211,6 +211,9 @@ class CloudAuthClient(object):
                 raw = exc.read(MAX_RESPONSE_BYTES + 1)
                 payload = json.loads(raw.decode('utf-8')) if raw else {}
                 detail = payload.get('detail') if isinstance(payload, dict) else None
+                response_code = (
+                    str(payload.get('code') or '').strip()
+                    if isinstance(payload, dict) else '')
                 if isinstance(detail, dict):
                     code = str(detail.get('code') or code)
                 elif (isinstance(detail, list)
@@ -226,6 +229,8 @@ class CloudAuthClient(object):
                         code = 'purchase_contract_version_unsupported'
                     else:
                         code = 'purchase_contract_invalid'
+                elif response_code:
+                    code = response_code
             except Exception:
                 pass
             raise LocalAuthError(

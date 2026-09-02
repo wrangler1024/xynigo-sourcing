@@ -11,8 +11,11 @@ from pathlib import Path
 from purchase_tool.cloud_auth import LocalAuthError, MemoryAuthSessionStore
 from purchase_tool.executor_channel import (
     CHANNEL_STATE_FIELDS,
+    COMPATIBLE_CAPABILITIES,
+    CloudExecutorClient,
     ExecutorChannelStateStore,
     ExecutorChannelWorker,
+    MODERN_ONLY_CAPABILITIES,
     config_revision,
     pair_executor,
 )
@@ -88,6 +91,71 @@ class FakeExecutorClient(object):
             'resultCode': result_code,
             'resultSummary': result_summary,
         })
+
+
+class ExecutorProtocolCompatibilityTests(unittest.TestCase):
+    class RejectModernContractClient(object):
+        def __init__(self):
+            self.calls = []
+
+        def _request(self, path, **kwargs):
+            payload = dict(kwargs.get('payload') or {})
+            self.calls.append((path, payload))
+            if set(payload.get('capabilities') or ()) & MODERN_ONLY_CAPABILITIES:
+                raise LocalAuthError('validation_failed', status=422)
+            if path.endswith('/pair'):
+                return {
+                    'executorId': '00000000-0000-0000-0000-000000000001',
+                    'deviceCredential': DEVICE_CREDENTIAL,
+                    'credentialType': 'Bearer',
+                }
+            return {'task': None}
+
+    def test_poll_falls_back_once_without_sending_local_config_summary(self):
+        wire = self.RejectModernContractClient()
+        client = CloudExecutorClient(client=wire)
+        summary = {'schemaVersion': 2, 'configRevision': 'a' * 64}
+
+        self.assertEqual(
+            client.poll(DEVICE_CREDENTIAL, 'a' * 64, 'ready', 0, summary),
+            {'task': None},
+        )
+        self.assertEqual(
+            client.poll(DEVICE_CREDENTIAL, 'b' * 64, 'ready', 0, summary),
+            {'task': None},
+        )
+
+        self.assertEqual(len(wire.calls), 3)
+        self.assertIn('configSummary', wire.calls[0][1])
+        for _path, payload in wire.calls[1:]:
+            self.assertEqual(
+                payload['capabilities'], list(COMPATIBLE_CAPABILITIES))
+            self.assertNotIn('configSummary', payload)
+        self.assertTrue(client.compatibility_mode)
+
+    def test_pairing_uses_the_same_bounded_compatibility_retry(self):
+        wire = self.RejectModernContractClient()
+        client = CloudExecutorClient(client=wire)
+        result = client.pair('ABCD-EFGH', '采购电脑 A', 'macos', 'arm64')
+
+        self.assertEqual(result['executorId'],
+                         '00000000-0000-0000-0000-000000000001')
+        self.assertEqual(len(wire.calls), 2)
+        self.assertEqual(
+            wire.calls[1][1]['capabilities'],
+            list(COMPATIBLE_CAPABILITIES),
+        )
+
+    def test_non_validation_error_never_downgrades_the_contract(self):
+        class OfflineClient(object):
+            def _request(self, _path, **_kwargs):
+                raise LocalAuthError('cloud_unreachable', status=503)
+
+        client = CloudExecutorClient(client=OfflineClient())
+        with self.assertRaises(LocalAuthError) as caught:
+            client.poll(DEVICE_CREDENTIAL, 'a' * 64, 'ready', 0, {})
+        self.assertEqual(caught.exception.code, 'cloud_unreachable')
+        self.assertFalse(client.compatibility_mode)
 
 
 class ExecutorChannelStateTests(unittest.TestCase):

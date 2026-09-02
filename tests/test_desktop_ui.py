@@ -52,6 +52,14 @@ class DesktopUIContractTests(unittest.TestCase):
             self.javascript,
         )
 
+    def test_cloud_channel_failures_are_not_shown_as_endless_connecting(self):
+        self.assertIn('function cloudPresentation(channel, paired)',
+                      self.javascript)
+        self.assertIn("validation_failed: '客户端与云端协议不兼容'",
+                      self.javascript)
+        self.assertIn("auth_failed: '云端认证请求失败'",
+                      self.javascript)
+
 
 class DesktopUIRouteTests(unittest.TestCase):
     def setUp(self):

@@ -674,6 +674,33 @@ class CloudAuthTests(unittest.TestCase):
         self.assertEqual(caught.exception.status, 422)
         self.assertIn('契约版本不一致', str(caught.exception))
 
+    def test_non_purchase_validation_error_preserves_top_level_code(self):
+        def reject_poll(request, timeout=0):
+            del timeout
+            body = json.dumps({
+                'detail': [{
+                    'type': 'literal_error',
+                    'loc': ['body', 'capabilities', 0],
+                    'msg': 'unsupported capability',
+                }],
+                'code': 'validation_failed',
+            }).encode('utf-8')
+            raise HTTPError(
+                request.full_url,
+                422,
+                'Unprocessable Entity',
+                {},
+                io.BytesIO(body),
+            )
+
+        client = CloudAuthClient(
+            'https://xynigo.example.test', opener=reject_poll)
+        with self.assertRaises(LocalAuthError) as caught:
+            client._request(
+                '/v1/executor-channel/poll', method='POST', payload={})
+        self.assertEqual(caught.exception.code, 'validation_failed')
+        self.assertEqual(caught.exception.status, 422)
+
     def test_cloud_admin_client_supports_delete_without_a_request_body(self):
         client = CloudAuthClient('https://xynigo.example.test')
         calls = []
