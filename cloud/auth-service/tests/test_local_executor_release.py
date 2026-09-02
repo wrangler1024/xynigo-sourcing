@@ -24,14 +24,32 @@ def test_active_release_catalog_no_longer_advertises_green_packages() -> None:
         assert resolve_local_executor_release_asset(platform_key, "green") is None
 
 
-def test_active_release_catalog_pins_each_platform_runtime() -> None:
+def test_active_release_catalog_keeps_platform_runtimes_synchronized() -> None:
     payload = release_catalog.latest_local_executor_release()
-    assert payload["platforms"]["windows-x86_64"]["runtimeId"] == (
-        "0.13.9-a235e6747c42"
-    )
-    assert payload["platforms"]["macos-arm64"]["runtimeId"] == (
-        "0.13.9-6f23deb28c2f"
-    )
+    windows = payload["platforms"]["windows-x86_64"]["runtimeId"]
+    macos = payload["platforms"]["macos-arm64"]["runtimeId"]
+    assert windows == macos == "0.13.9-a9e06269286a"
+
+
+def test_synchronized_release_rejects_platform_runtime_drift() -> None:
+    platforms = {
+        "windows-x86_64": {
+            "installMode": "standard_per_user",
+            "runtimeId": "0.13.9-build-a",
+            "internalUnsignedTest": True,
+        },
+        "macos-arm64": {
+            "installMode": "standard_system_application",
+            "runtimeId": "0.13.9-build-b",
+            "internalUnsignedTest": True,
+        },
+    }
+    with pytest.raises(RuntimeError, match="share one runtimeId"):
+        validate_release_platforms(
+            platforms,
+            allow_unsigned_internal_test=True,
+            require_synchronized_runtime=True,
+        )
 
 
 def test_windows_standard_installer_requires_signature_timestamp_and_publisher():

@@ -29,7 +29,7 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.13.9-a235e6747c42",
+        "runtimeId": "0.13.9-a9e06269286a",
         "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.9.exe",
         "sha256": "90cb72bb57523a5dc40fc352ee3095462e298b095c0f8b12647a6a5d06b71df6",
         "size": 15_159_845,
@@ -48,7 +48,7 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.13.9-6f23deb28c2f",
+        "runtimeId": "0.13.9-a9e06269286a",
         "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.9.pkg",
         "sha256": "44da150787e955e21e8de9c37e6d409c342f84fc71c4aa2dad25a92971748022",
         "size": 11_426_056,
@@ -88,6 +88,7 @@ def validate_release_platforms(
     platforms: dict[str, dict[str, object]],
     *,
     allow_unsigned_internal_test: bool = False,
+    require_synchronized_runtime: bool = False,
 ) -> None:
     """Validate installer trust, with one explicit internal-test escape hatch."""
 
@@ -152,11 +153,22 @@ def validate_release_platforms(
                 fallback,
                 field_name="greenFallback",
             )
+    if require_synchronized_runtime:
+        standard_runtime_ids = {
+            str(source.get("runtimeId") or "").strip()
+            for source in platforms.values()
+            if str(source.get("installMode") or "").startswith("standard")
+        }
+        if len(standard_runtime_ids) > 1:
+            raise RuntimeError(
+                "Windows and macOS release artifacts must share one runtimeId"
+            )
 
 
 validate_release_platforms(
     _PLATFORMS,
     allow_unsigned_internal_test=RELEASE_CHANNEL == "test",
+    require_synchronized_runtime=True,
 )
 
 
@@ -226,6 +238,7 @@ def latest_local_executor_release() -> dict[str, object]:
             "新增下载百分比、已下载大小、实时速度和预计剩余时间。",
             "校验、准备安装、等待系统安装器和重启阶段均有持续状态提示。",
             "Windows 与 macOS 共用同一套更新进度界面和错误重试交互。",
+            "每个客户端版本从同一 Git 基线同步构建并发布 Windows 与 macOS 安装包。",
             "更新忙态改为 0.8 秒刷新，空闲时恢复 5 秒轮询。",
             "稳定通道强制平台签名门槛；内部未签名包仅允许 test 通道。",
         ],
