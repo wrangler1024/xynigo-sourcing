@@ -28,7 +28,7 @@ def test_active_release_catalog_keeps_platform_runtimes_synchronized() -> None:
     payload = release_catalog.latest_local_executor_release()
     windows = payload["platforms"]["windows-x86_64"]["runtimeId"]
     macos = payload["platforms"]["macos-arm64"]["runtimeId"]
-    assert windows == macos == "0.13.9-a9e06269286a"
+    assert windows == macos == "0.13.9-a7744ffb316f"
 
 
 def test_synchronized_release_rejects_platform_runtime_drift() -> None:
