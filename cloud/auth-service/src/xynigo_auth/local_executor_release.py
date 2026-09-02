@@ -40,15 +40,6 @@ _PLATFORMS = {
         "statusCenter": True,
         "trayMenu": True,
         "launcherFile": "Xynigo.exe",
-        "greenFallback": {
-            "assetName": "Xynigo_Sourcing_Windows_20260902_v0.13.6.zip",
-            "sha256": "55dc523f11acf25c231ea5d84c6358114cded8799d4bfbee828735907518c5a1",
-            "size": 18_452_119,
-            "installMode": "green_package",
-            "launcherFile": "Xynigo.exe",
-            "statusCenter": True,
-            "trayMenu": True,
-        },
     },
     "macos-arm64": {
         "label": "macOS Apple Silicon",
@@ -64,13 +55,6 @@ _PLATFORMS = {
         "developerIdInstallerSigned": False,
         "notarized": False,
         "stapled": False,
-        "greenFallback": {
-            "assetName": "Xynigo_Sourcing_macOS_arm64_20260902_v0.13.6.zip",
-            "sha256": "f118d85b114df67f0933e13ef28542621b9ac7ee34ee38ad6b837de2639a6594",
-            "size": 10_459_947,
-            "installMode": "green_package",
-            "launcherFile": "启动-Mac.command",
-        },
     },
 }
 
@@ -243,7 +227,8 @@ def latest_local_executor_release() -> dict[str, object]:
             "已停止的物流行明确显示为未完成查询，不再错误渲染为成功。",
             "物流截图支持云端预览，Excel 导出增加生成状态、成功提示和重复点击保护。",
             "停止批次显示真实完成数量，截图预览和 Excel 导出已修复。",
-            "覆盖安装保留配置、日志、运行数据和设备配对；绿色包继续作为显式回退。",
+            "绿色包已停止分发；Windows 使用标准版在线升级，macOS 从系统管理下载标准安装包覆盖升级。",
+            "标准版覆盖安装保留配置、日志、运行数据和设备配对。",
             "本次按内部快速迭代策略提供未签名标准安装包；下载前必须核对 SHA-256，并按飞书开发群教程手动确认系统安全提示。",
         ],
     }

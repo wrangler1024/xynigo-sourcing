@@ -184,13 +184,7 @@ def test_authenticated_member_can_read_immutable_local_executor_release(
             if platform == "windows-x86_64":
                 assert info["runtimeId"].startswith("0.13.6-")
             assert "github.com" not in info["downloadUrl"]
-            fallback = info["greenFallback"]
-            assert fallback["assetName"].endswith(".zip")
-            assert fallback["installMode"] == "green_package"
-            assert len(fallback["sha256"]) == 64
-            assert fallback["downloadUrl"] == (
-                f"/v1/local-executor/releases/{platform}/green/download"
-            )
+            assert "greenFallback" not in info
 
 
 def test_authenticated_member_downloads_allowlisted_asset_through_system_origin(

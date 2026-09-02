@@ -16,6 +16,14 @@ def test_compose_mounts_reviewed_release_assets_read_only() -> None:
     assert "./release-assets:/app/release-assets:ro" in compose
 
 
+def test_active_release_catalog_no_longer_advertises_green_packages() -> None:
+    payload = release_catalog.latest_local_executor_release()
+    assert payload["platforms"]
+    for platform_key, item in payload["platforms"].items():
+        assert "greenFallback" not in item
+        assert resolve_local_executor_release_asset(platform_key, "green") is None
+
+
 def test_windows_standard_installer_requires_signature_timestamp_and_publisher():
     valid = {
         "windows-x86_64": {
