@@ -1,9 +1,8 @@
 """Trusted local-executor release catalog exposed to the cloud Web workspace.
 
-The catalog deliberately points to an immutable GitHub tag instead of the
-moving ``latest`` alias.  A new application version must update this module in
-the same reviewed release change; otherwise the import-time version guard
-prevents the cloud UI from advertising a stale installer.
+Installer downloads stay on the authenticated Xynigo system origin. A new
+application version must update this module in the same reviewed release
+change; otherwise the import-time guard prevents advertising a stale build.
 """
 
 from __future__ import annotations
@@ -13,7 +12,6 @@ from urllib.parse import quote
 from . import __version__
 
 
-REPOSITORY = "wrangler1024/xynigo-sourcing"
 RELEASE_VERSION = "0.13.6"
 RELEASE_CHANNEL = "test"
 RELEASE_PUBLISHED_AT = "2026-09-02T04:05:38Z"
@@ -172,14 +170,6 @@ validate_release_platforms(
 )
 
 
-def _release_download_url(asset_name: str) -> str:
-    encoded_asset = quote(asset_name, safe="._-")
-    return (
-        f"https://github.com/{REPOSITORY}/releases/download/"
-        f"v{RELEASE_VERSION}/{encoded_asset}"
-    )
-
-
 def _system_download_path(platform_key: str, variant: str) -> str:
     encoded_platform = quote(platform_key, safe="_-.")
     encoded_variant = quote(variant, safe="_-")
@@ -238,20 +228,21 @@ def latest_local_executor_release() -> dict[str, object]:
         "version": RELEASE_VERSION,
         "channel": RELEASE_CHANNEL,
         "publishedAt": RELEASE_PUBLISHED_AT,
-        "releaseUrl": (
-            f"https://github.com/{REPOSITORY}/releases/tag/v{RELEASE_VERSION}"
-        ),
-        "manifestUrl": _release_download_url(
-            f"Xynigo_Sourcing_v{RELEASE_VERSION}_update.json"
-        ),
+        "releaseUrl": "",
+        "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
+            "累计合并内部 0.13.4 连接体验改造与 0.13.5 物流修复。",
+            "执行器启动和断线恢复先快速握手，健康网络下通常可在 1 至 3 秒显示在线。",
+            "Windows 状态中心显示身份验证、握手、在线监听、重试次数和倒计时。",
+            "采购助手支持个人速填表与团队协作表切换，敏感表格标识不回传前端。",
             "本地执行器租约续期遇到瞬时网络错误后自动重试，不再永久停止续租。",
             "云端成功接收进度时同步延长租约，避免单次续租抖动造成进度冻结。",
             "租约确实失效时，本地查询会在当前环境结束后安全停止，不再继续不可见的大批量任务。",
             "物流查询进行中实时回传下单时间、金额、履约阶段、出口 IP、站点时间和截图状态。",
             "已停止的物流行明确显示为未完成查询，不再错误渲染为成功。",
             "物流截图支持云端预览，Excel 导出增加生成状态、成功提示和重复点击保护。",
+            "停止批次显示真实完成数量，截图预览和 Excel 导出已修复。",
             "覆盖安装保留配置、日志、运行数据和设备配对；绿色包继续作为显式回退。",
             "本次按内部快速迭代策略提供未签名标准安装包；下载前必须核对 SHA-256，并按飞书开发群教程手动确认系统安全提示。",
         ],

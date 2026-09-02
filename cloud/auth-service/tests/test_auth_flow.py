@@ -170,7 +170,8 @@ def test_authenticated_member_can_read_immutable_local_executor_release(
         assert payload["schemaVersion"] == 1
         assert payload["version"] == "0.13.6"
         assert payload["channel"] == "test"
-        assert payload["releaseUrl"].endswith("/releases/tag/v0.13.6")
+        assert payload["releaseUrl"] == ""
+        assert payload["manifestUrl"] == ""
         assert set(payload["platforms"]) == {"windows-x86_64", "macos-arm64"}
         for platform, info in payload["platforms"].items():
             assert info["size"] > 1_000_000
