@@ -24,6 +24,16 @@ def test_active_release_catalog_no_longer_advertises_green_packages() -> None:
         assert resolve_local_executor_release_asset(platform_key, "green") is None
 
 
+def test_active_release_catalog_pins_each_platform_runtime() -> None:
+    payload = release_catalog.latest_local_executor_release()
+    assert payload["platforms"]["windows-x86_64"]["runtimeId"] == (
+        "0.13.9-a235e6747c42"
+    )
+    assert payload["platforms"]["macos-arm64"]["runtimeId"] == (
+        "0.13.9-6f23deb28c2f"
+    )
+
+
 def test_windows_standard_installer_requires_signature_timestamp_and_publisher():
     valid = {
         "windows-x86_64": {
