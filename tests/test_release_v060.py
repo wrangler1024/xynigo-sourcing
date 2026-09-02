@@ -609,7 +609,7 @@ class ReleaseV0136Tests(unittest.TestCase):
         self.assertNotIn('id="cfgLarkBaseToken"', html)
         self.assertNotIn('id="cfgLarkTableId"', html)
         self.assertIn('包含 table=tbl...', html)
-        self.assertIn('body:JSON.stringify({appId, appSecret, ledgerUrl, clearCredential, clearLedgerTarget})', html)
+        self.assertIn('body:JSON.stringify({appId, appSecret, ledgerUrl, clearCredential, clearLedgerTarget, expectedRevision:larkConfigRevision})', html)
         self.assertIn('/api/lark/config', html)
         self.assertIn('/api/lark/preflight', html)
         self.assertNotIn('/api/lark/target-metadata', html)

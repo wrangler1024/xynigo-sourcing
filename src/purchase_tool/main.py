@@ -99,6 +99,7 @@ from .purchase_assistant import (
     PurchaseAssistantService)
 from .redaction import scrub_text
 from .resource_center import ResourceCenterService
+from .secure_store_transaction import SecureStoreTransaction
 from .shein_query import QueryOrchestrator, normalize_site
 from .task_runtime import (HubRuntimeGate, LocalTaskCoordinator,
                            environment_resources)
@@ -731,6 +732,21 @@ def submitted_lark_credentials(body):
         raise ValueError(str(exc)) from exc
 
 
+def restore_lark_credentials(store, snapshot):
+    """Restore a captured Keychain/DPAPI value without exposing it."""
+    if snapshot is None:
+        store.clear()
+    else:
+        store.save(snapshot.app_id, snapshot.app_secret)
+
+
+def restore_hub_api_key(store, snapshot):
+    if snapshot is None:
+        store.clear()
+    else:
+        store.save(snapshot)
+
+
 def resolve_submitted_lark_target(body, credential_store,
                                   client_factory=LarkOpenApiClient):
     url = str((body or {}).get('ledgerUrl') or '').strip()
@@ -1078,11 +1094,28 @@ class AppState(object):
             runtime_gate=self.hub_runtime_gate)
 
     def save_hub_api_key(self, value=None, clear=False):
-        if clear:
-            self.hub_api_key_store.clear()
-        else:
-            self.hub_api_key_store.save(value)
-        self.reconnect_hub()
+        transaction = SecureStoreTransaction(
+            self.hub_api_key_store.load,
+            lambda snapshot: restore_hub_api_key(
+                self.hub_api_key_store, snapshot),
+            'HubStudio API Key',
+        )
+        with transaction:
+            transaction.mutate(
+                self.hub_api_key_store.clear if clear else
+                lambda: self.hub_api_key_store.save(value))
+            try:
+                self.reconnect_hub()
+            except Exception:
+                # Restore both the secure value and the in-memory adapter.  A
+                # second reconnect failure must not hide the original failure.
+                transaction.rollback()
+                try:
+                    self.reconnect_hub()
+                except Exception:
+                    pass
+                raise
+            transaction.commit()
         return {
             'saved': True,
             'configured': not bool(clear),
@@ -3508,8 +3541,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(public_lark_runtime_status(
                     STATE.cfg, STATE.lark_credentials))
             elif path == '/api/lark/config':
-                self._json(public_lark_config(
-                    STATE.cfg, STATE.lark_credentials))
+                response = public_lark_config(
+                    STATE.cfg, STATE.lark_credentials)
+                response['configRevision'] = \
+                    state_local_config_service().revision(STATE.cfg)
+                self._json(response)
             elif path == '/api/lark/open-target':
                 self._redirect(lark_target_link(STATE.cfg))
             elif path == '/api/lark/target-url':
@@ -4064,30 +4100,54 @@ class Handler(BaseHTTPRequestHandler):
                     'changedFields': committed['changedFields'],
                 })
             elif path == '/api/lark/config':
-                credentials = submitted_lark_credentials(body)
-                resolved_target = resolve_submitted_lark_target(
-                    body, STATE.lark_credentials)
-                cfg = updated_lark_config(
-                    load_config(), body, resolved_target)
-                target_validation_error = ''
-                if body.get('clearCredential'):
-                    STATE.lark_credentials.clear()
-                elif credentials:
-                    STATE.lark_credentials.save(
-                        credentials.app_id, credentials.app_secret)
-                if (str(cfg.get('larkBuyerBaseToken') or '').strip()
-                        and str(cfg.get('larkBuyerTableId') or '').strip()
-                        and not body.get('clearCredential')):
-                    try:
-                        cfg = refreshed_lark_target_labels(
-                            cfg, STATE.lark_credentials)
-                    except Exception as exc:
-                        cfg['larkBuyerTargetVerified'] = False
-                        target_validation_error = public_error(exc)
-                cfg = save_config(cfg)
-                STATE.cfg = cfg
+                lock = getattr(STATE, 'config_lock', None)
+                with lock if lock is not None else nullcontext():
+                    service = state_local_config_service()
+                    submitted = dict(body)
+                    expected_revision = submitted.pop(
+                        'expectedRevision', None)
+                    current = service.load()
+                    service.assert_revision(expected_revision, current)
+                    credentials = submitted_lark_credentials(submitted)
+                    resolved_target = resolve_submitted_lark_target(
+                        submitted, STATE.lark_credentials)
+                    cfg = updated_lark_config(
+                        current, submitted, resolved_target)
+                    target_validation_error = ''
+                    transaction = SecureStoreTransaction(
+                        STATE.lark_credentials.load,
+                        lambda snapshot: restore_lark_credentials(
+                            STATE.lark_credentials, snapshot),
+                        '飞书应用凭证',
+                    )
+                    with transaction:
+                        if submitted.get('clearCredential'):
+                            transaction.mutate(
+                                STATE.lark_credentials.clear)
+                        elif credentials:
+                            transaction.mutate(
+                                lambda: STATE.lark_credentials.save(
+                                    credentials.app_id,
+                                    credentials.app_secret))
+                        if (str(cfg.get('larkBuyerBaseToken') or '').strip()
+                                and str(cfg.get('larkBuyerTableId') or '').strip()
+                                and not submitted.get('clearCredential')):
+                            try:
+                                cfg = refreshed_lark_target_labels(
+                                    cfg, STATE.lark_credentials)
+                            except Exception as exc:
+                                cfg['larkBuyerTargetVerified'] = False
+                                target_validation_error = public_error(exc)
+                        committed = service.commit(
+                            cfg,
+                            expected_revision=expected_revision,
+                            source='desktop_lark_config')
+                        cfg = committed['config']
+                        STATE.cfg = cfg
+                        transaction.commit()
                 response = {
                     'saved': True,
+                    'configRevision': committed['configRevision'],
                     **public_lark_config(cfg, STATE.lark_credentials),
                 }
                 if target_validation_error:

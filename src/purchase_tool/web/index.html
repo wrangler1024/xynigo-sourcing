@@ -2983,6 +2983,7 @@ let openFeatureTabs = ['query'];
 if (LOCAL_DESKTOP_SETTINGS_VIEW) openFeatureTabs = ['localsettings'];
 let localSettingsPageLoaded = false;
 let localSettingsConfigRevision = '';
+let larkConfigRevision = '';
 let larkConnectionPageLoaded = false;
 let memberManagementPageLoaded = false;
 let roleManagementPageLoaded = false;
@@ -10165,6 +10166,7 @@ function renderLarkConfigStatus(state) {
 async function loadLarkConfigStatus({refreshPending=false} = {}) {
   try {
     let state = await api('/api/lark/config');
+    larkConfigRevision = String(state.configRevision || '');
     renderLarkConfigStatus(state);
     void refreshPending;
     return state;
@@ -10289,8 +10291,9 @@ async function saveLarkConfig() {
     setLarkSaveFeedback('checking', '正在安全保存应用凭证并解析台账链接…');
     const state = await api('/api/lark/config', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({appId, appSecret, ledgerUrl, clearCredential, clearLedgerTarget})
+      body:JSON.stringify({appId, appSecret, ledgerUrl, clearCredential, clearLedgerTarget, expectedRevision:larkConfigRevision})
     });
+    larkConfigRevision = String(state.configRevision || larkConfigRevision);
     for (const id of ['cfgLarkAppId','cfgLarkAppSecret','cfgLarkLedgerUrl']) $(id).value = '';
     $('cfgLarkClearCredential').checked = false;
     $('cfgLarkClearTarget').checked = false;
@@ -10302,6 +10305,12 @@ async function saveLarkConfig() {
     setLarkSaveFeedback(validationError ? 'bad' : 'ok', message);
     toast(message.replace(/^✓\s*/, ''));
   } catch (err) {
+    if (err.code === 'config_revision_conflict') {
+      await loadLarkConfigStatus();
+      setLarkSaveFeedback('bad', '⚠ 本机配置已在其他窗口变化，已刷新最新状态，请重新确认后保存');
+      toast('本机配置已刷新，请重新确认飞书设置');
+      return;
+    }
     setLarkSaveFeedback('bad', '⚠ 保存失败：' + err.message);
     toast('飞书配置保存失败：' + err.message);
   } finally {

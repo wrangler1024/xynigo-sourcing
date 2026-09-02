@@ -98,6 +98,13 @@ class LocalConfigServiceTests(unittest.TestCase):
                          first['configRevision'])
         self.assertEqual(self.path.read_bytes(), before)
 
+    def test_assert_revision_rejects_before_external_store_mutation(self):
+        current = self.service.load()
+        revision = self.service.revision(current)
+        self.assertEqual(self.service.assert_revision(revision), revision)
+        with self.assertRaises(LocalConfigRevisionConflict):
+            self.service.assert_revision('0' * 64)
+
     def test_commit_patch_runs_domain_validator_inside_revision_gate(self):
         expected = self.service.revision()
 

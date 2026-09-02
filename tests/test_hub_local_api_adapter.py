@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 import unittest
 from urllib.error import URLError
@@ -8,7 +9,8 @@ from urllib.error import URLError
 from purchase_tool import hub_api
 from purchase_tool.hub_api import HubApiError, HubStudioLocalApiAdapter
 from purchase_tool.hub_api_key import (
-    HubApiKeyStoreError, SystemHubApiKeyStore, _wrap_key)
+    HubApiKeyStoreError, MemoryHubApiKeyStore, SystemHubApiKeyStore, _wrap_key)
+from purchase_tool.main import AppState
 
 
 class FakeResponse(object):
@@ -339,6 +341,42 @@ class HubStudioLocalApiAdapterTests(unittest.TestCase):
             store.save('k' * 181)
         with self.assertRaisesRegex(HubApiKeyStoreError, '格式无效'):
             store.save('密' * 61)
+
+    def test_api_key_rolls_back_when_adapter_reconnect_raises(self):
+        store = MemoryHubApiKeyStore('old-hub-key')
+        reconnect_calls = []
+
+        def reconnect():
+            reconnect_calls.append(store.load())
+            if len(reconnect_calls) == 1:
+                raise RuntimeError('simulated adapter failure')
+            return True
+
+        state = SimpleNamespace(
+            hub_api_key_store=store,
+            reconnect_hub=reconnect,
+            hub_capabilities=lambda force=False: {'available': True},
+        )
+
+        with self.assertRaisesRegex(RuntimeError, 'adapter failure'):
+            AppState.save_hub_api_key(state, 'new-hub-key')
+
+        self.assertEqual(store.load(), 'old-hub-key')
+        self.assertEqual(reconnect_calls, ['new-hub-key', 'old-hub-key'])
+
+    def test_api_key_success_keeps_new_secure_value(self):
+        store = MemoryHubApiKeyStore('old-hub-key')
+        state = SimpleNamespace(
+            hub_api_key_store=store,
+            reconnect_hub=lambda: True,
+            hub_capabilities=lambda force=False: {'available': True},
+        )
+
+        result = AppState.save_hub_api_key(state, 'new-hub-key')
+
+        self.assertTrue(result['saved'])
+        self.assertTrue(result['configured'])
+        self.assertEqual(store.load(), 'new-hub-key')
 
     def test_source_and_installers_have_no_hubstudio_cli_dependency(self):
         root = Path(__file__).resolve().parents[1]

@@ -80,6 +80,14 @@ class LocalConfigService(object):
             current = self._load_locked(False) if config is None else config
             return local_config_revision(current)
 
+    def assert_revision(self, expected_revision, config=None):
+        """Reject stale callers before they mutate a separate secure store."""
+        with self.lock:
+            current = (self._load_locked(strict=True)
+                       if config is None else copy.deepcopy(config))
+            self._require_revision(current, expected_revision)
+            return local_config_revision(current)
+
     def summary(self, config=None):
         """Return the allowlisted, versioned summary used outside the host."""
         with self.lock:

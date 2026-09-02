@@ -635,6 +635,60 @@ class ConfigRouteTests(unittest.TestCase):
         self.assertEqual(response['targetBaseName'], '公开脱敏测试 Base')
         self.assertEqual(
             response['targetTableName'], '买家号统一台账（测试）')
+        self.assertRegex(response['configRevision'], r'^[0-9a-f]{64}$')
+
+    def test_lark_credential_rolls_back_when_config_commit_fails(self):
+        old_credentials = main_module.STATE.lark_credentials.load()
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = str(Path(tmp) / 'config.json')
+            initial = default_config()
+            with patch.object(main_module, 'CONFIG_PATH', config_path):
+                save_config(initial)
+                main_module.STATE.cfg = initial
+                revision = json.loads(
+                    self._get_json('/api/lark/config'))['configRevision']
+                with patch(
+                        'purchase_tool.local_config_service.'
+                        'LocalConfigService.commit',
+                        side_effect=OSError('simulated config commit failure')):
+                    with self.assertRaises(urllib.error.HTTPError) as caught:
+                        self._post_json('/api/lark/config', {
+                            'appId': 'cli_replacement_example',
+                            'appSecret': 'replacement-secret-value',
+                            'expectedRevision': revision,
+                        })
+                error_body = caught.exception.read().decode('utf-8')
+                persisted = load_config()
+        restored = main_module.STATE.lark_credentials.load()
+        self.assertEqual(caught.exception.code, 500)
+        self.assertEqual(restored, old_credentials)
+        self.assertEqual(persisted, initial)
+        self.assertNotIn('replacement-secret-value', error_body)
+
+    def test_lark_revision_conflict_happens_before_credential_mutation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = str(Path(tmp) / 'config.json')
+            initial = default_config()
+            with patch.object(main_module, 'CONFIG_PATH', config_path):
+                save_config(initial)
+                main_module.STATE.cfg = initial
+                stale_revision = json.loads(
+                    self._get_json('/api/lark/config'))['configRevision']
+                changed = dict(initial, concurrency=3)
+                main_module.STATE.cfg = save_config(changed)
+                with patch.object(
+                        main_module.STATE.lark_credentials, 'save',
+                        wraps=main_module.STATE.lark_credentials.save) as save:
+                    with self.assertRaises(urllib.error.HTTPError) as caught:
+                        self._post_json('/api/lark/config', {
+                            'appId': 'cli_replacement_example',
+                            'appSecret': 'replacement-secret-value',
+                            'expectedRevision': stale_revision,
+                        })
+                conflict = json.loads(caught.exception.read().decode('utf-8'))
+        self.assertEqual(caught.exception.code, 409)
+        self.assertEqual(conflict['code'], 'config_revision_conflict')
+        save.assert_not_called()
 
     def test_post_lark_config_reports_target_name_validation_failure(self):
         with tempfile.TemporaryDirectory() as tmp:
