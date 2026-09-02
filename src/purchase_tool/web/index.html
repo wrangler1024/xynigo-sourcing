@@ -3370,10 +3370,23 @@ function cloudLogisticsLegacySnapshot(run) {
   }));
   return {
     running:!run.terminal,
+    terminal:!!run.terminal,
     current:rows.filter(row => row.state === 'running').map(row => row.serial).join(', '),
     elapsedSec:cloudRunElapsed(run), rows,
+    progressCompleted:Number(run.progressCompleted || 0),
+    progressTotal:Number(run.progressTotal || run.totalCount || 0),
+    errorCode:String(run.resultCode || ''),
     site:run.site, hubConnected:cloudRunHubConnected(run),
   };
+}
+
+function logisticsRunFailureText(code) {
+  return ({
+    operation_local_request_failed:'本地执行器未能启动查询；可能仍有上一批本机查询在收尾，请打开执行器状态中心核对',
+    config_task_failed:'本地执行器启动查询时发生异常，请打开执行器日志目录查看原因',
+    operation_task_failed:'本地执行器查询任务异常结束',
+    lease_expired_after_start:'执行器连接中断，查询结果需要核对',
+  })[String(code || '')] || `查询启动失败（${String(code || 'unknown')}）`;
 }
 
 function cloudEnvironmentLegacySnapshot(run) {
@@ -6221,15 +6234,28 @@ function render(snap) {
   setHubStatus(snap.hubConnected);
   renderRows(lastRows);
   renderStats(lastRows);
+  if (!lastRows.length && Number(snap.progressTotal || 0) > 0) {
+    const current = Number(snap.progressCompleted || 0);
+    const total = Number(snap.progressTotal || 0);
+    $('progressText').textContent = `${current} / ${total}`;
+    $('bar').style.width = (total ? current / total * 100 : 0) + '%';
+  }
   $('btnStart').disabled = querySubmitting || isRunning;
   $('btnStop').disabled = !isRunning;
   const retryable = lastRows.filter(r => ['fail', 'inuse', 'pending', 'stopped'].includes(r.state)).length;
   $('btnRetryFail').disabled = isRunning || !retryable;
   $('btnRetryFail').textContent = retryable ? `↻ 重查异常行（${retryable}）` : '↻ 重查异常行';
+  const terminalStartFailure = !isRunning && snap.terminal
+    && !lastRows.length && snap.errorCode;
   $('currentEnv').textContent = isRunning
-    ? '正在查询：' + (snap.current || '') + ' …'
-    : (snap.rows && snap.rows.length ? '查询结束' : '待开始');
+    ? ((snap.current ? '正在查询：' + snap.current : '执行器正在预检和准备') + ' …')
+    : (terminalStartFailure
+      ? logisticsRunFailureText(snap.errorCode)
+      : (snap.rows && snap.rows.length ? '查询结束' : '待开始'));
   paintContinuousElapsed('elapsed', queryElapsedBase);
+  if (wasRunning && terminalStartFailure) {
+    toast(logisticsRunFailureText(snap.errorCode));
+  }
   if (wasRunning && !isRunning && snap.rows && snap.rows.length) {
     const ok = snap.rows.filter(r => r.state === 'ok' && !r.riskOrder).length;
     const risk = snap.rows.filter(r => r.state === 'ok' && r.riskOrder).length;

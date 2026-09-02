@@ -623,6 +623,14 @@ class OperationRunService:
                 .order_by(LogisticsQueryResult.created_at, LogisticsQueryResult.id)
             )
         )
+        task_result_code = (
+            self.session.scalar(
+                select(ExecutorTask.result_code).where(
+                    ExecutorTask.id == run.executor_task_id
+                )
+            )
+            if run.executor_task_id else None
+        )
         return {
             "runId": str(run.id),
             "runKey": run.source_run_key,
@@ -645,6 +653,7 @@ class OperationRunService:
             "createdAt": _iso(run.created_at),
             "updatedAt": _iso(run.updated_at),
             "terminal": run.status in self.TERMINAL_STATUSES,
+            "resultCode": task_result_code,
             "unchanged": unchanged,
             "rows": [
                 {

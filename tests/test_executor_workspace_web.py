@@ -123,6 +123,22 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         self.assertIn("renderCloudExecutorHubStatus();", cloud_branch)
         self.assertNotIn("hubConnected = connected;", cloud_branch)
 
+    def test_cloud_logistics_start_failure_is_not_rendered_as_waiting(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        snapshot = html[
+            html.index("function cloudLogisticsLegacySnapshot(run)"):
+            html.index("function logisticsRunFailureText(code)")
+        ]
+        self.assertIn("terminal:!!run.terminal", snapshot)
+        self.assertIn("errorCode:String(run.resultCode || '')", snapshot)
+        renderer = html[
+            html.index("function render(snap)"):
+            html.index("/* ---------- 轮询 ---------- */")
+        ]
+        self.assertIn("terminalStartFailure", renderer)
+        self.assertIn("执行器正在预检和准备", renderer)
+        self.assertIn("logisticsRunFailureText(snap.errorCode)", renderer)
+
     def test_cloud_workspace_renews_sessions_and_idempotently_submits_writes(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")
         for marker in (
