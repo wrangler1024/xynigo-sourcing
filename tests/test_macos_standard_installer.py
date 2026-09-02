@@ -130,6 +130,15 @@ class MacOSStandardInstallerContractTests(unittest.TestCase):
         self.assertIn("'autoStart': False", self.builder)
         self.assertIn('BundleIsRelocatable', self.builder)
         self.assertIn("find \"$APP\" -name '._*' -type f -delete", self.builder)
+        self.assertIn('RUNTIME_ID="${VERSION}-${RUNTIME_REVISION}"',
+                      self.builder)
+        self.assertIn("'runtimeRevision': os.environ['RUNTIME_REVISION']",
+                      self.builder)
+        self.assertIn("'runtimeId': os.environ['RUNTIME_ID']", self.builder)
+        self.assertIn('/usr/bin/ditto -x "$PAYLOAD_ARCHIVE"', self.builder)
+        self.assertIn(
+            "find \"$VERIFIED_APP\" -name '._*' -print -quit",
+            self.builder)
 
     def test_launcher_only_accepts_low_risk_protocol_and_fixed_scripts(self):
         self.assertIn('^xynigo://', self.launcher)
@@ -187,6 +196,9 @@ class MacOSStandardInstallerArtifactTests(unittest.TestCase):
         self.assertTrue(installer.is_file())
         self.assertEqual(payload['platform'], 'macos-arm64')
         self.assertEqual(payload['installMode'], 'standard_system_application')
+        self.assertTrue(payload['runtimeId'].startswith(
+            payload['version'] + '-'))
+        self.assertEqual(len(payload['runtimeRevision']), 12)
         self.assertTrue(payload['requiresElevation'])
         self.assertFalse(payload['autoStart'])
         self.assertFalse(payload['releaseEligible'])

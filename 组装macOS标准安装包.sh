@@ -11,6 +11,14 @@ case "$CHANNEL" in
   stable|test) ;;
   *) echo "XYNIGO_RELEASE_CHANNEL must be stable or test: $CHANNEL" >&2; exit 2 ;;
 esac
+RUNTIME_REVISION="${XYNIGO_MACOS_RUNTIME_REVISION:-$(git rev-parse --short=12 HEAD)}"
+case "$RUNTIME_REVISION" in
+  ''|*[!A-Za-z0-9._-]*)
+    echo "XYNIGO_MACOS_RUNTIME_REVISION contains invalid characters: $RUNTIME_REVISION" >&2
+    exit 2
+    ;;
+esac
+RUNTIME_ID="${VERSION}-${RUNTIME_REVISION}"
 for tool in pkgbuild productbuild swiftc iconutil codesign sips; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "$tool is required to build the macOS standard installer." >&2
@@ -127,7 +135,8 @@ for spec in \
 done
 /usr/bin/iconutil -c icns "$ICONSET" -o "$RESOURCES/xynigo.icns"
 
-RESOURCES="$RESOURCES" VERSION="$VERSION" CHANNEL="$CHANNEL" python3 - <<'PY'
+RESOURCES="$RESOURCES" VERSION="$VERSION" CHANNEL="$CHANNEL" \
+RUNTIME_REVISION="$RUNTIME_REVISION" RUNTIME_ID="$RUNTIME_ID" python3 - <<'PY'
 import json
 import os
 from pathlib import Path
@@ -137,6 +146,8 @@ metadata = {
     'schemaVersion': 1,
     'product': 'Xynigo Sourcing',
     'version': os.environ['VERSION'],
+    'runtimeRevision': os.environ['RUNTIME_REVISION'],
+    'runtimeId': os.environ['RUNTIME_ID'],
     'channel': os.environ['CHANNEL'],
     'platform': 'macos-arm64',
     'installMode': 'standard_system_application',
@@ -213,9 +224,30 @@ if grep -Eiq 'LaunchAgents|LaunchDaemons|LoginItems' "$PAYLOAD_LIST"; then
   exit 1
 fi
 
+# pkgbuild serializes supported extended attributes as AppleDouble payload
+# records. Verify them using copyfile-aware extraction, which matches Installer
+# semantics, so metadata sidecars cannot leak into the installed application.
+EXPANDED_PACKAGE="$WORK_ROOT/expanded-package"
+VERIFIED_ROOT="$WORK_ROOT/verified-root"
+/usr/sbin/pkgutil --expand "$OUTPUT_FILE" "$EXPANDED_PACKAGE"
+PAYLOAD_ARCHIVE="$EXPANDED_PACKAGE/XynigoSourcing-component.pkg/Payload"
+if [ ! -f "$PAYLOAD_ARCHIVE" ]; then
+  echo "installer component payload is missing" >&2
+  exit 1
+fi
+mkdir -p "$VERIFIED_ROOT"
+/usr/bin/ditto -x "$PAYLOAD_ARCHIVE" "$VERIFIED_ROOT"
+VERIFIED_APP="$VERIFIED_ROOT/Applications/Xynigo Sourcing.app"
+/usr/bin/codesign --verify --deep --strict "$VERIFIED_APP"
+if find "$VERIFIED_APP" -name '._*' -print -quit | grep -q .; then
+  echo "decoded installer payload contains AppleDouble sidecar files" >&2
+  exit 1
+fi
+
 echo "[7/7] Write non-release artifact metadata and SHA-256 ..."
 OUTPUT_FILE="$OUTPUT_FILE" METADATA_FILE="$METADATA_FILE" \
-SHA_FILE="$SHA_FILE" VERSION="$VERSION" CHANNEL="$CHANNEL" python3 - <<'PY'
+SHA_FILE="$SHA_FILE" VERSION="$VERSION" CHANNEL="$CHANNEL" \
+RUNTIME_REVISION="$RUNTIME_REVISION" RUNTIME_ID="$RUNTIME_ID" python3 - <<'PY'
 import hashlib
 import json
 import os
@@ -229,6 +261,8 @@ metadata = {
     'schemaVersion': 1,
     'product': 'Xynigo Sourcing',
     'version': os.environ['VERSION'],
+    'runtimeRevision': os.environ['RUNTIME_REVISION'],
+    'runtimeId': os.environ['RUNTIME_ID'],
     'channel': os.environ['CHANNEL'],
     'platform': 'macos-arm64',
     'installMode': 'standard_system_application',
