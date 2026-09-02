@@ -95,6 +95,13 @@ class LauncherUpdateControlTests(unittest.TestCase):
         self.assertEqual(payload['state'], 'checking')
         self.assertEqual(self.updates.checked, 1)
 
+    def test_authenticated_launcher_ping_has_no_update_side_effect(self):
+        status, payload = self._post('/executor-control/ping')
+        self.assertEqual(status, 200)
+        self.assertTrue(payload['accepted'])
+        self.assertEqual(self.updates.checked, 0)
+        self.assertEqual(self.updates.installed, 0)
+
     def test_install_rejects_active_tasks_then_accepts_idle_executor(self):
         self.updates.state = 'available'
         self.tasks.append({'kind': 'query'})

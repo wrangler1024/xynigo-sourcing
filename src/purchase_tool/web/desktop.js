@@ -29,13 +29,13 @@
 
   var sampleStatus = {
     schemaVersion: 1,
-    version: '0.13.11',
+    version: '0.13.12',
     localPort: 8765,
     executor: {running:true, paired:true, displayName:'采购电脑 · 上海办公室 03', platform:platform, architecture:platform === 'mac' ? 'arm64' : 'amd64'},
     cloudChannel: {status:'online', lastPollAt:new Date(Date.now() - 18000).toISOString(), phase:'polling'},
     hubStudio: {connected:true, status:'ready'},
     tasks: {activeCount:0, safeParallel:true, items:[]},
-    update: {enabled:true, state:'current', installMode:'standard', currentVersion:'0.13.11', latestVersion:'0.13.11', message:'已是推荐版本'}
+    update: {enabled:true, state:'current', installMode:'standard', currentVersion:'0.13.12', latestVersion:'0.13.12', message:'已是推荐版本'}
   };
   var sampleConfig = {hubPort:6873, concurrency:2, envCreateWorkers:5, verifySampleCount:3, safeParallelTasks:true, configRevision:'e5a931'};
   var sampleSources = {

@@ -1052,7 +1052,7 @@ wheels = [
 
 [[package]]
 name = "xynigo-auth-service"
-version = "0.13.11"
+version = "0.13.12"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },

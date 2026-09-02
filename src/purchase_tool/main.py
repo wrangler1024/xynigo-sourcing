@@ -3908,6 +3908,9 @@ class Handler(BaseHTTPRequestHandler):
                     daemon=True,
                 ).start()
                 return
+            if path == '/executor-control/ping':
+                self._json({'accepted': True})
+                return
             if path == '/executor-control/update/check':
                 started = STATE.updates.check_async(force=True)
                 payload = STATE.updates.snapshot()

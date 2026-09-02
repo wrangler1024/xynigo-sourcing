@@ -195,6 +195,12 @@ class MacOSStandardInstallerContractTests(unittest.TestCase):
                 'private var childProcess: Process?',
                 'process.arguments = ["--no-browser"]',
                 'XYNIGO_LAUNCHER_TOKEN',
+                'launcher-token-v1',
+                'executor-control/ping',
+                'orphan_takeover_started',
+                'terminateOwnedListener',
+                '/usr/sbin/lsof',
+                'update_request_rejected',
                 'executor-status.json',
                 'probe(port + 1, lastPort, completion)',
                 'executor-control/shutdown',
@@ -269,7 +275,7 @@ class MacOSStandardInstallerContractTests(unittest.TestCase):
 
 class MacOSStandardInstallerArtifactTests(unittest.TestCase):
     def test_local_compiled_artifact_metadata_when_present(self):
-        metadata = ROOT / 'dist/Xynigo_Sourcing_macOS_Standard_v0.13.11.json'
+        metadata = ROOT / 'dist/Xynigo_Sourcing_macOS_Standard_v0.13.12.json'
         if not metadata.is_file():
             self.skipTest('macOS standard installer is built in packaging CI')
         payload = json.loads(metadata.read_text(encoding='utf-8'))
