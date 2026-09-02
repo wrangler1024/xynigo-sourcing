@@ -59,6 +59,9 @@ BUSINESS_TASK_TYPES = frozenset(
         "environment.retry-failed.v1",
     }
 )
+BACKGROUND_TASK_TYPES = frozenset(
+    {"config.read.v1", "workspace.rpc.v1", "workspace.snapshot.v1"}
+)
 ENCRYPTED_TASK_TYPES = frozenset(
     {
         "workspace.rpc.v1",
@@ -484,6 +487,21 @@ class ExecutorChannelService:
                 or active_count >= MAX_QUEUED_WORKSPACE_RPC_TASKS
             ):
                 raise ExecutorServiceError("executor_task_busy", status_code=409)
+        elif task_type in BUSINESS_TASK_TYPES:
+            # A page refresh can have a short config/snapshot/RPC read queued
+            # or leased at the exact moment the user submits a formal Run.
+            # Accept the Run and serialize it behind that read instead of
+            # making the user click repeatedly. Other formal writes remain a
+            # hard conflict so two business batches cannot overlap.
+            active_business_or_write = self.session.scalar(
+                select(ExecutorTask.id).where(
+                    ExecutorTask.executor_id == executor.id,
+                    ExecutorTask.task_type.not_in(BACKGROUND_TASK_TYPES),
+                    ExecutorTask.status.in_(ACTIVE_TASK_STATUSES),
+                ).limit(1)
+            )
+            if active_business_or_write is not None:
+                raise ExecutorServiceError("executor_task_busy", status_code=409)
         else:
             active = self.session.scalar(
                 select(ExecutorTask.id).where(
@@ -503,6 +521,7 @@ class ExecutorChannelService:
             payload_envelope=(
                 {} if task_type in ENCRYPTED_TASK_TYPES else payload
             ),
+            priority=10 if task_type in BUSINESS_TASK_TYPES else 100,
             created_by_user_id=user_id,
         )
         self.session.add(task)

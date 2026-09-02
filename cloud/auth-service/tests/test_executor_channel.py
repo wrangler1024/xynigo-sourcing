@@ -1395,6 +1395,68 @@ def test_workspace_rpc_short_reads_queue_while_config_tasks_remain_exclusive(
         assert config_read.json()["detail"]["code"] == "executor_task_busy"
 
 
+def test_formal_logistics_run_queues_ahead_of_background_workspace_read(
+    tmp_path,
+) -> None:
+    app, database, _oauth = build_test_app(tmp_path)
+    capabilities = ["workspace.rpc.v1", "logistics.query.v1"]
+
+    with TestClient(app) as web_client, TestClient(app) as device_client:
+        login(web_client)
+        paired = pair(
+            device_client,
+            create_pairing_code(web_client),
+            capabilities=capabilities,
+        )
+        executor_id = str(paired["executorId"])
+        credential = str(paired["deviceCredential"])
+        heartbeat(
+            device_client,
+            credential,
+            revision=REVISION_A,
+            capabilities=capabilities,
+        )
+
+        background = web_client.post(
+            f"/v1/executors/{executor_id}/workspace-rpc",
+            json={"method": "GET", "path": "/api/groups"},
+            headers=CSRF,
+        )
+        assert background.status_code == 202, background.text
+
+        formal = web_client.post(
+            "/v1/operation-runs/logistics-query",
+            json={
+                "idempotencyKey": "logistics-priority-over-read-0001",
+                "executorId": executor_id,
+                "queryMode": "initial",
+                "site": "MX",
+                "environmentSerials": ["5564"],
+            },
+            headers=CSRF,
+        )
+        assert formal.status_code == 202, formal.text
+        leased = heartbeat(
+            device_client,
+            credential,
+            revision=REVISION_A,
+            capabilities=capabilities,
+        )["task"]
+        assert leased["type"] == "logistics.query.v1"
+
+        with database.session_factory() as session:
+            tasks = list(
+                session.scalars(
+                    select(ExecutorTask).order_by(ExecutorTask.priority.asc())
+                )
+            )
+            assert [task.task_type for task in tasks] == [
+                "logistics.query.v1",
+                "workspace.rpc.v1",
+            ]
+            assert [task.priority for task in tasks] == [10, 100]
+
+
 def test_busy_executor_config_read_returns_last_safe_snapshot(tmp_path) -> None:
     app, database, _oauth = build_test_app(tmp_path)
     capabilities = ["config.read.v1", "workspace.rpc.v1"]
