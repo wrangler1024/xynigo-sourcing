@@ -55,7 +55,8 @@ from .buyer_ledger_sync import validate_unified_schema
 from .buyer_register import BuyerRegistrationTask, RegistrationOrchestrator
 from .cloud_auth import DEFAULT_AUTH_BASE_URL, LocalAuthError, LocalAuthService
 from .data_source_registry import (
-    DataSourceRegistry, DataSourceRegistryError)
+    DataSourceMappingRequired, DataSourceRegistry, DataSourceRegistryError,
+    runtime_config_for_source)
 from .excel_export import EXPORT_HEAD, export_bytes
 from .env_batch import (BACKUP_MAX_COUNT, BACKUP_REMARK, BUYER_CODES,
                         BUYER_ROSTER, BatchEnvOrchestrator,
@@ -97,8 +98,7 @@ from .local_config_service import (
 from .operation_result_sync import OperationResultSyncQueue
 from .procurement_import import ProcurementImportService
 from .purchase_assistant import (
-    PurchaseAssistantConfig, PurchaseAssistantError,
-    PurchaseAssistantService)
+    PurchaseAssistantError, PurchaseAssistantService)
 from .redaction import scrub_text
 from .resource_center import ResourceCenterService
 from .secure_store_transaction import SecureStoreTransaction
@@ -1053,51 +1053,52 @@ class AppState(object):
                     pass
             return dict(cfg)
 
-    def apply_purchase_assistant_source(self, mode, validation_id=''):
-        """Switch the local read-only Sheet target without exposing its IDs."""
+    def purchase_assistant_for_member(self, member_id, container_code=''):
+        """Resolve one member/environment source into an isolated provider."""
+        if self.data_source_registry_error:
+            raise DataSourceMappingRequired()
+        source = self.data_sources.resolve(
+            member_id,
+            container_code=container_code,
+            allow_team_default=True,
+        )
+        runtime_config = runtime_config_for_source(self.cfg, source)
+        service = self.purchase_assistant.for_runtime_config(runtime_config)
+        status = service.source_status()
+        status.update({
+            'dataSourceId': source['id'],
+            'scope': source['scope'],
+            'label': source['label'],
+        })
+        status['active'].update({
+            'dataSourceId': source['id'],
+            'scope': source['scope'],
+            'label': source['label'],
+        })
+        return service, status
+
+    def apply_purchase_assistant_source(self, member_id, mode,
+                                        validation_id='',
+                                        expected_revision=None):
+        """Apply an extension source choice to the signed-in member only."""
         selected_mode = str(mode or '').strip().lower()
         if selected_mode not in {'personal', 'team'}:
             raise PurchaseAssistantError('收件信息数据源类型无效')
-        with self.config_lock:
-            cfg = dict(self.cfg)
-            profile = ('purchaseAssistantPersonal'
-                       if selected_mode == 'personal'
-                       else 'purchaseAssistantTeam')
-            if selected_mode == 'personal' and str(
-                    validation_id or '').strip():
+        if selected_mode == 'personal':
+            if str(validation_id or '').strip():
                 target = self.purchase_assistant.consume_validated_target(
-                    validation_id)
-                cfg[profile + 'SpreadsheetToken'] = target[
-                    'spreadsheetToken']
-                cfg[profile + 'SheetId'] = target['sheetId']
-                cfg[profile + 'CellRange'] = target['cellRange']
-                cfg[profile + 'SheetName'] = target['sheetName']
-            token = str(
-                cfg.get(profile + 'SpreadsheetToken') or '').strip()
-            sheet_id = str(cfg.get(profile + 'SheetId') or '').strip()
-            cell_range = str(
-                cfg.get(profile + 'CellRange') or '').strip().upper()
-            if not token or not sheet_id or not cell_range:
-                raise PurchaseAssistantError(
-                    '当前数据源尚未配置，请先读取并校验表格'
-                    if selected_mode == 'personal' else
-                    '管理员尚未下发团队采购执行协作表')
-            cfg['purchaseAssistantSourceMode'] = selected_mode
-            cfg['purchaseAssistantSpreadsheetToken'] = token
-            cfg['purchaseAssistantSheetId'] = sheet_id
-            cfg['purchaseAssistantCellRange'] = cell_range
-            PurchaseAssistantConfig.from_runtime_config(cfg)
-            service = getattr(self, 'local_config', None)
-            if isinstance(service, LocalConfigService):
-                committed = service.commit(
-                    cfg, source='purchase_assistant_source')
-                cfg = committed['config']
+                    validation_id, owner_key=member_id)
+                self.data_sources.upsert_personal(
+                    member_id, target,
+                    expected_revision=expected_revision)
             else:
-                # Compatibility for focused unit fixtures and older embedders.
-                save_config(cfg)
-            self.cfg = cfg
-            self.purchase_assistant.reconfigure(cfg)
-            return self.purchase_assistant.source_status()
+                self.data_sources.resolve(
+                    member_id, allow_team_default=False)
+        else:
+            self.data_sources.use_team_default(
+                member_id, expected_revision=expected_revision)
+        _service, status = self.purchase_assistant_for_member(member_id)
+        return status
 
     def _build_hub_adapter(self):
         self.hub_api_key_error = ''
@@ -2844,7 +2845,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_purchase_assistant_get(self, parsed):
         path = parsed.path
-        service = STATE.purchase_assistant
+        bridge = STATE.purchase_assistant
         if path == PURCHASE_ASSISTANT_API_PREFIX + '/health':
             return self._purchase_assistant_json({
                 'ok': True,
@@ -2858,7 +2859,7 @@ class Handler(BaseHTTPRequestHandler):
                     'hubStudioEnvironmentControl': True,
                 },
                 'version': __version__,
-                'configured': bool(service.configured),
+                'configured': bool(bridge.configured),
             })
         if path == PURCHASE_ASSISTANT_API_PREFIX + '/session':
             if not self._purchase_assistant_pair_allowed():
@@ -2869,9 +2870,9 @@ class Handler(BaseHTTPRequestHandler):
                 }, 403)
             return self._purchase_assistant_json({
                 'ok': True,
-                'sessionToken': service.issue_session(),
+                'sessionToken': bridge.issue_session(),
             })
-        if not service.authorize(self.headers.get('Authorization')):
+        if not bridge.authorize(self.headers.get('Authorization')):
             return self._purchase_assistant_json({
                 'ok': False,
                 'code': 'session_required',
@@ -2884,21 +2885,34 @@ class Handler(BaseHTTPRequestHandler):
                 'error': '采购助手请求来源无效',
             }, 403)
         try:
+            identity = STATE.auth.require()
+            member_id = identity['user']['id']
             if path == PURCHASE_ASSISTANT_API_PREFIX + '/capabilities':
                 return self._purchase_assistant_json({
                     'ok': True,
                     'hubStudio': STATE.hub_capabilities(force=True),
                 })
             if path == PURCHASE_ASSISTANT_API_PREFIX + '/data-source':
+                query = parse_qs(parsed.query, keep_blank_values=True)
+                container_code = str(
+                    (query.get('containerCode') or [''])[0]).strip()
+                _service, source_status = \
+                    STATE.purchase_assistant_for_member(
+                        member_id, container_code=container_code)
                 return self._purchase_assistant_json({
                     'ok': True,
-                    'source': service.source_status(),
+                    'source': source_status,
                 })
             if path == PURCHASE_ASSISTANT_API_PREFIX + '/tasks':
                 query = parse_qs(parsed.query, keep_blank_values=True)
                 keyword = str((query.get('query') or [''])[0]).strip()
+                container_code = str(
+                    (query.get('containerCode') or [''])[0]).strip()
                 if len(keyword) > 100:
                     raise PurchaseAssistantError('任务搜索条件过长')
+                service, _source_status = \
+                    STATE.purchase_assistant_for_member(
+                        member_id, container_code=container_code)
                 if not keyword:
                     return self._purchase_assistant_json({
                         'ok': True,
@@ -2921,6 +2935,12 @@ class Handler(BaseHTTPRequestHandler):
                 key = str(unquote(encoded)).strip()
                 if not key or len(key) > 300:
                     raise PurchaseAssistantError('采购任务标识无效')
+                query = parse_qs(parsed.query, keep_blank_values=True)
+                container_code = str(
+                    (query.get('containerCode') or [''])[0]).strip()
+                service, _source_status = \
+                    STATE.purchase_assistant_for_member(
+                        member_id, container_code=container_code)
                 return self._purchase_assistant_json({
                     'ok': True,
                     'recipient': service.recipient(key),
@@ -2950,6 +2970,31 @@ class Handler(BaseHTTPRequestHandler):
             return self._purchase_assistant_json({
                 'ok': False, 'code': 'not_found', 'error': '接口不存在',
             }, 404)
+        except LocalAuthError as exc:
+            return self._purchase_assistant_json({
+                'ok': False,
+                'code': exc.code,
+                'error': str(exc),
+            }, exc.status)
+        except LocalConfigRevisionConflict as exc:
+            return self._purchase_assistant_json({
+                'ok': False,
+                'code': exc.code,
+                'error': str(exc),
+                'configRevision': exc.actual_revision,
+            }, 409)
+        except DataSourceMappingRequired as exc:
+            return self._purchase_assistant_json({
+                'ok': False,
+                'code': exc.code,
+                'error': str(exc),
+            }, 409)
+        except DataSourceRegistryError as exc:
+            return self._purchase_assistant_json({
+                'ok': False,
+                'code': exc.code,
+                'error': str(exc),
+            }, 409)
         except PurchaseAssistantError as exc:
             return self._purchase_assistant_json({
                 'ok': False,
@@ -2971,14 +3016,14 @@ class Handler(BaseHTTPRequestHandler):
             }, 500)
 
     def _handle_purchase_assistant_post(self, path, body):
-        service = STATE.purchase_assistant
+        bridge = STATE.purchase_assistant
         if not self._purchase_assistant_request_allowed():
             return self._purchase_assistant_json({
                 'ok': False,
                 'code': 'origin_forbidden',
                 'error': '采购助手请求来源无效',
             }, 403)
-        if not service.authorize(self.headers.get('Authorization')):
+        if not bridge.authorize(self.headers.get('Authorization')):
             return self._purchase_assistant_json({
                 'ok': False,
                 'code': 'session_required',
@@ -2990,26 +3035,32 @@ class Handler(BaseHTTPRequestHandler):
                 'code': 'request_invalid',
                 'error': '请求数据格式无效',
             }, 400)
-        if path.startswith(PURCHASE_ASSISTANT_API_PREFIX + '/data-source/'):
-            try:
+        try:
+            identity = STATE.auth.require()
+            member_id = identity['user']['id']
+            if path.startswith(
+                    PURCHASE_ASSISTANT_API_PREFIX + '/data-source/'):
                 if path == (PURCHASE_ASSISTANT_API_PREFIX
                             + '/data-source/inspect'):
                     return self._purchase_assistant_json({
                         'ok': True,
-                        **service.inspect_source(body.get('spreadsheetUrl')),
+                        **bridge.inspect_source(
+                            body.get('spreadsheetUrl'), owner_key=member_id),
                     })
                 if path == (PURCHASE_ASSISTANT_API_PREFIX
                             + '/data-source/validate'):
                     return self._purchase_assistant_json({
                         'ok': True,
-                        **service.validate_source(
+                        **bridge.validate_source(
                             body.get('inspectionId'),
-                            body.get('selectionId')),
+                            body.get('selectionId'), owner_key=member_id),
                     })
                 if path == (PURCHASE_ASSISTANT_API_PREFIX
                             + '/data-source/save'):
                     source = STATE.apply_purchase_assistant_source(
-                        body.get('mode'), body.get('validationId'))
+                        member_id, body.get('mode'),
+                        body.get('validationId'),
+                        expected_revision=body.get('expectedRevision'))
                     return self._purchase_assistant_json({
                         'ok': True,
                         'source': source,
@@ -3019,29 +3070,16 @@ class Handler(BaseHTTPRequestHandler):
                     'code': 'not_found',
                     'error': '接口不存在',
                 }, 404)
-            except PurchaseAssistantError as exc:
+            capability = STATE.hub_capabilities(force=True)
+            if not capability.get('available'):
                 return self._purchase_assistant_json({
                     'ok': False,
-                    'code': 'source_invalid',
-                    'error': str(exc),
-                }, 422)
-            except Exception:
-                return self._purchase_assistant_json({
-                    'ok': False,
-                    'code': 'source_configuration_failed',
-                    'error': '收件信息数据源配置失败',
-                }, 500)
-        capability = STATE.hub_capabilities(force=True)
-        if not capability.get('available'):
-            return self._purchase_assistant_json({
-                'ok': False,
-                'code': str(capability.get('reasonCode') or
-                            'hubstudio_unavailable'),
-                'error': str(capability.get('message') or
-                             'HubStudio 自动化暂不可用'),
-                'hubStudio': capability,
-            }, 503)
-        try:
+                    'code': str(capability.get('reasonCode') or
+                                'hubstudio_unavailable'),
+                    'error': str(capability.get('message') or
+                                 'HubStudio 自动化暂不可用'),
+                    'hubStudio': capability,
+                }, 503)
             if path in {
                     PURCHASE_ASSISTANT_API_PREFIX + '/hub/environments/open',
                     PURCHASE_ASSISTANT_API_PREFIX + '/hub/environments/close'}:
@@ -3070,6 +3108,37 @@ class Handler(BaseHTTPRequestHandler):
             return self._purchase_assistant_json({
                 'ok': False, 'code': 'not_found', 'error': '接口不存在',
             }, 404)
+        except LocalAuthError as exc:
+            return self._purchase_assistant_json({
+                'ok': False,
+                'code': exc.code,
+                'error': str(exc),
+            }, exc.status)
+        except LocalConfigRevisionConflict as exc:
+            return self._purchase_assistant_json({
+                'ok': False,
+                'code': exc.code,
+                'error': str(exc),
+                'configRevision': exc.actual_revision,
+            }, 409)
+        except DataSourceMappingRequired as exc:
+            return self._purchase_assistant_json({
+                'ok': False,
+                'code': exc.code,
+                'error': str(exc),
+            }, 409)
+        except DataSourceRegistryError as exc:
+            return self._purchase_assistant_json({
+                'ok': False,
+                'code': exc.code,
+                'error': str(exc),
+            }, 409)
+        except PurchaseAssistantError as exc:
+            return self._purchase_assistant_json({
+                'ok': False,
+                'code': 'source_invalid',
+                'error': str(exc),
+            }, 422)
         except HubApiError as exc:
             return self._purchase_assistant_json({
                 'ok': False,
@@ -3077,6 +3146,13 @@ class Handler(BaseHTTPRequestHandler):
                 'error': str(exc),
             }, 422)
         except Exception:
+            if path.startswith(
+                    PURCHASE_ASSISTANT_API_PREFIX + '/data-source/'):
+                return self._purchase_assistant_json({
+                    'ok': False,
+                    'code': 'source_configuration_failed',
+                    'error': '收件信息数据源配置失败',
+                }, 500)
             return self._purchase_assistant_json({
                 'ok': False,
                 'code': 'hubstudio_operation_failed',
@@ -4126,23 +4202,41 @@ class Handler(BaseHTTPRequestHandler):
                 })
             elif path == DATA_SOURCE_API_PREFIX + '/claim-personal':
                 member_id = request_identity['user']['id']
+                include_all = bool(set(request_identity.get('roles') or []) & {
+                    'admin', 'super_admin'})
                 STATE.data_sources.claim_legacy_personal(
                     member_id,
                     body.get('sourceId'),
                     expected_revision=body.get('expectedRevision'))
                 self._json({
                     'saved': True,
-                    **STATE.data_sources.public_snapshot(member_id),
+                    **STATE.data_sources.public_snapshot(
+                        member_id, include_all=include_all),
                 })
             elif path == DATA_SOURCE_API_PREFIX + '/buyer-default':
                 member_id = request_identity['user']['id']
+                include_all = bool(set(request_identity.get('roles') or []) & {
+                    'admin', 'super_admin'})
                 STATE.data_sources.set_buyer_default(
                     member_id,
                     body.get('sourceId'),
                     expected_revision=body.get('expectedRevision'))
                 self._json({
                     'saved': True,
-                    **STATE.data_sources.public_snapshot(member_id),
+                    **STATE.data_sources.public_snapshot(
+                        member_id, include_all=include_all),
+                })
+            elif path == DATA_SOURCE_API_PREFIX + '/buyer-default/clear':
+                member_id = request_identity['user']['id']
+                include_all = bool(set(request_identity.get('roles') or []) & {
+                    'admin', 'super_admin'})
+                STATE.data_sources.use_team_default(
+                    member_id,
+                    expected_revision=body.get('expectedRevision'))
+                self._json({
+                    'saved': True,
+                    **STATE.data_sources.public_snapshot(
+                        member_id, include_all=include_all),
                 })
             elif path == DATA_SOURCE_API_PREFIX + '/environment-binding':
                 if not set(request_identity.get('roles') or []) & {

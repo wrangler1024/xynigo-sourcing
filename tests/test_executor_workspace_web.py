@@ -8,6 +8,28 @@ CLOUD_HTML = ROOT / "cloud/auth-service/src/xynigo_auth/web/index.html"
 
 
 class ExecutorWorkspaceWebTests(unittest.TestCase):
+    def test_member_scoped_data_source_controls_are_local_and_safe(self):
+        local_html = LOCAL_HTML.read_text(encoding="utf-8")
+        cloud_html = CLOUD_HTML.read_text(encoding="utf-8")
+        self.assertEqual(local_html, cloud_html)
+        for marker in (
+            "采购助手数据源",
+            "localDataSourceState",
+            "/api/local-config/data-sources/claim-personal",
+            "/api/local-config/data-sources/buyer-default/clear",
+            "/api/local-config/data-sources/environment-binding",
+            "expectedRevision:localDataSourceState",
+            "必须使用 containerCode，不使用环境名",
+            "页面仅展示安全摘要",
+        ):
+            self.assertIn(marker, local_html)
+        data_source_section = local_html[
+            local_html.index("采购助手数据源"):
+            local_html.index('data-settings-view="larkconnection"')
+        ]
+        self.assertNotIn("spreadsheetToken", data_source_section)
+        self.assertNotIn("sheetId", data_source_section)
+
     def test_desktop_settings_entry_uses_local_revision_guard(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")
         for marker in (

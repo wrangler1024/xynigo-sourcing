@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 import json
+from pathlib import Path
+import tempfile
 import threading
 import unittest
 from http.server import ThreadingHTTPServer
@@ -7,9 +9,10 @@ from types import SimpleNamespace
 from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
-from unittest.mock import patch
 
 import purchase_tool.main as main_module
+from purchase_tool.data_source_registry import (
+    DataSourceMappingRequired, DataSourceRegistry)
 from purchase_tool.main import Handler
 from purchase_tool.purchase_assistant import (
     PurchaseAssistantConfig,
@@ -25,6 +28,8 @@ from purchase_tool.purchase_assistant import (
 
 
 EXTENSION_ORIGIN = 'chrome-extension://' + 'a' * 32
+MEMBER_A = '11111111-1111-4111-8111-111111111111'
+MEMBER_B = '22222222-2222-4222-8222-222222222222'
 
 
 def sample_row(**overrides):
@@ -197,16 +202,27 @@ class PurchaseAssistantUnitTests(unittest.TestCase):
         )
         service.reconfigure(mapping)
         inspected = service.inspect_source(
-            'https://tenant.feishu.cn/sheets/SpreadsheetPersonal123')
+            'https://tenant.feishu.cn/sheets/SpreadsheetPersonal123',
+            owner_key=MEMBER_A)
         self.assertEqual(len(inspected['sheets']), 1)
         self.assertNotIn('sheetId', inspected['sheets'][0])
         self.assertNotIn('spreadsheetToken', inspected)
+        with self.assertRaisesRegex(PurchaseAssistantError, '当前登录成员'):
+            service.validate_source(
+                inspected['inspectionId'],
+                inspected['sheets'][0]['selectionId'],
+                owner_key=MEMBER_B)
         checked = service.validate_source(
             inspected['inspectionId'],
-            inspected['sheets'][0]['selectionId'])
+            inspected['sheets'][0]['selectionId'],
+            owner_key=MEMBER_A)
         self.assertEqual(checked['cellRange'], 'A1:Q')
         self.assertNotIn('sheetId', checked)
-        target = service.consume_validated_target(checked['validationId'])
+        with self.assertRaisesRegex(PurchaseAssistantError, '当前登录成员'):
+            service.consume_validated_target(
+                checked['validationId'], owner_key=MEMBER_B)
+        target = service.consume_validated_target(
+            checked['validationId'], owner_key=MEMBER_A)
         self.assertEqual(target['spreadsheetToken'], 'SpreadsheetPersonal123')
         self.assertEqual(target['sheetId'], 'sheet_test')
 
@@ -221,7 +237,7 @@ class PurchaseAssistantUnitTests(unittest.TestCase):
         with self.assertRaisesRegex(PurchaseAssistantError, '缺少必要字段'):
             validate_source_headers([['销售订单号', '收货人姓名']])
 
-    def test_app_state_saves_personal_profile_and_can_switch_back_to_team(self):
+    def test_app_state_saves_member_profile_without_mutating_global_config(self):
         transport = FakeTransport()
         credentials = SimpleNamespace(
             app_id='cli_test', app_secret='secret-for-test')
@@ -245,29 +261,47 @@ class PurchaseAssistantUnitTests(unittest.TestCase):
         service.reconfigure(mapping)
         session_token = service.session_token
         inspected = service.inspect_source(
-            'https://tenant.feishu.cn/sheets/SpreadsheetPersonal123')
+            'https://tenant.feishu.cn/sheets/SpreadsheetPersonal123',
+            owner_key=MEMBER_A)
         checked = service.validate_source(
             inspected['inspectionId'],
-            inspected['sheets'][0]['selectionId'])
-        state = SimpleNamespace(
-            config_lock=threading.RLock(),
-            cfg=dict(mapping),
-            purchase_assistant=service,
-        )
-        with patch.object(main_module, 'save_config') as save:
+            inspected['sheets'][0]['selectionId'],
+            owner_key=MEMBER_A)
+        with tempfile.TemporaryDirectory() as tempdir:
+            registry = DataSourceRegistry(
+                Path(tempdir) / 'local-bindings-v1.json')
+            migrated = registry.migrate_legacy(mapping)
+            team_id = next(
+                item['id'] for item in migrated['registry']['dataSources']
+                if item['scope'] == 'team')
+            registry.set_team_default(
+                team_id,
+                expected_revision=migrated['registryRevision'])
+            state = SimpleNamespace(
+                config_lock=threading.RLock(),
+                cfg=dict(mapping),
+                data_sources=registry,
+                data_source_registry_error='',
+                purchase_assistant=service,
+            )
+            state.purchase_assistant_for_member = (
+                lambda member_id, container_code='':
+                    main_module.AppState.purchase_assistant_for_member(
+                        state, member_id, container_code))
             personal = main_module.AppState.apply_purchase_assistant_source(
-                state, 'personal', checked['validationId'])
+                state, MEMBER_A, 'personal', checked['validationId'])
             self.assertEqual(personal['mode'], 'personal')
             self.assertEqual(
-                state.cfg['purchaseAssistantPersonalCellRange'], 'A1:Q')
+                registry.resolve(MEMBER_A)['cellRange'], 'A1:Q')
             self.assertEqual(service.session_token, session_token)
             team = main_module.AppState.apply_purchase_assistant_source(
-                state, 'team')
-        self.assertEqual(team['mode'], 'team')
+                state, MEMBER_A, 'team')
+            self.assertEqual(team['mode'], 'team')
+            self.assertEqual(
+                state.cfg['purchaseAssistantSpreadsheetToken'],
+                'SpreadsheetTeam123')
         self.assertEqual(
-            state.cfg['purchaseAssistantSpreadsheetToken'],
-            'SpreadsheetTeam123')
-        self.assertEqual(save.call_count, 2)
+            service.session_token, session_token)
 
 
 class PurchaseAssistantHttpTests(unittest.TestCase):
@@ -294,12 +328,36 @@ class PurchaseAssistantHttpTests(unittest.TestCase):
             'reasonCode': 'ok',
             'message': 'HubStudio Local API 已就绪',
         }
+        self.member_id = MEMBER_A
+        self.member_services = {
+            MEMBER_A: self.service,
+            MEMBER_B: self.service,
+        }
+        self.member_service_calls = []
         main_module.STATE = SimpleNamespace(purchase_assistant=self.service)
+        main_module.STATE.auth = SimpleNamespace(require=lambda *args, **kwargs: {
+            'user': {'id': self.member_id, 'name': '脱敏测试成员'},
+            'tenant': {'id': 'tenant-test'},
+            'roles': ['operator'],
+            'permissions': [],
+        })
+        def service_for_member(member_id, container_code=''):
+            self.member_service_calls.append((member_id, container_code))
+            scoped = self.member_services[member_id]
+            status = scoped.source_status()
+            status.update({
+                'dataSourceId': 'ds_' + '1' * 24,
+                'scope': 'team',
+                'label': '脱敏团队数据源',
+            })
+            return scoped, status
+        main_module.STATE.purchase_assistant_for_member = service_for_member
         main_module.STATE.hub = self.hub
         main_module.STATE.hub_capabilities = (
             lambda force=False: dict(self.hub_capability))
         main_module.STATE.apply_purchase_assistant_source = (
-            lambda mode, validation_id='': self.service.source_status())
+            lambda member_id, mode, validation_id='',
+            expected_revision=None: service_for_member(member_id)[1])
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         self.thread = threading.Thread(
             target=self.server.serve_forever, daemon=True)
@@ -418,6 +476,62 @@ class PurchaseAssistantHttpTests(unittest.TestCase):
             })
         self.assertEqual(status, 403)
         self.assertEqual(payload['code'], 'origin_forbidden')
+
+    def test_extension_session_still_requires_current_feishu_login(self):
+        from purchase_tool.cloud_auth import LocalAuthError
+        token = self._pair()
+        main_module.STATE.auth.require = lambda *args, **kwargs: (
+            (_ for _ in ()).throw(LocalAuthError(
+                'authentication_required', status=401)))
+        status, _headers, payload = self._get(
+            '/api/purchase-assistant/v1/tasks?query=ORDER', {
+                'Origin': EXTENSION_ORIGIN,
+                'X-Xynigo-Client': 'chrome-extension',
+                'Authorization': 'Bearer ' + token,
+            })
+        self.assertEqual(status, 401)
+        self.assertEqual(payload['code'], 'authentication_required')
+
+    def test_member_switch_selects_a_new_request_scoped_provider(self):
+        provider_b = FakeProvider()
+        provider_b.rows = [sample_row(
+            **{'销售订单号': 'ORDER-MEMBER-B',
+               '系统订单键': 'demo|ORDER-MEMBER-B'})]
+        service_b = PurchaseAssistantService(
+            provider=provider_b,
+            source_config=self.service.source_config,
+        )
+        self.member_services[MEMBER_B] = service_b
+        token = self._pair()
+        headers = {
+            'Origin': EXTENSION_ORIGIN,
+            'X-Xynigo-Client': 'chrome-extension',
+            'Authorization': 'Bearer ' + token,
+        }
+        self.member_id = MEMBER_B
+        status, _headers, payload = self._get(
+            '/api/purchase-assistant/v1/tasks?query=ORDER-MEMBER-B'
+            '&containerCode=container-member-b', headers)
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload['tasks'][0]['salesOrderNo'], 'ORDER-MEMBER-B')
+        self.assertIn((MEMBER_B, 'container-member-b'),
+                      self.member_service_calls)
+
+    def test_missing_member_mapping_fails_closed_with_stable_code(self):
+        def missing(_member_id, container_code=''):
+            del container_code
+            raise DataSourceMappingRequired()
+        main_module.STATE.purchase_assistant_for_member = missing
+        token = self._pair()
+        status, _headers, payload = self._get(
+            '/api/purchase-assistant/v1/tasks?query=ORDER', {
+                'Origin': EXTENSION_ORIGIN,
+                'X-Xynigo-Client': 'chrome-extension',
+                'Authorization': 'Bearer ' + token,
+            })
+        self.assertEqual(status, 409)
+        self.assertEqual(payload['code'], 'data_source_mapping_required')
 
     def test_hubstudio_unavailable_does_not_block_recipient_reading(self):
         self.hub_capability.update({

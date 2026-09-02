@@ -14,6 +14,7 @@ from purchase_tool.data_source_registry import (
     DataSourceMappingRequired,
     DataSourceRegistry,
     DataSourceRegistryError,
+    runtime_config_for_source,
 )
 from purchase_tool.local_config_service import LocalConfigRevisionConflict
 from purchase_tool.main import Handler
@@ -166,6 +167,59 @@ class DataSourceRegistryTests(unittest.TestCase):
                 MEMBER_B, allow_team_default=True,
                 allowed_data_source_ids=[])
         self.assertRegex(updated['configRevision'], r'^[0-9a-f]{64}$')
+
+    def test_validated_personal_sources_are_member_scoped(self):
+        first = self.registry.upsert_personal(MEMBER_A, {
+            'spreadsheetToken': 'SpreadsheetPersonal123',
+            'sheetId': 'sheet_personal',
+            'cellRange': 'A1:Q',
+            'sheetName': '成员 A 个人表',
+        })
+        second = self.registry.upsert_personal(MEMBER_B, {
+            'spreadsheetToken': 'SpreadsheetPersonal123',
+            'sheetId': 'sheet_personal',
+            'cellRange': 'A1:Q',
+            'sheetName': '成员 B 个人表',
+        }, expected_revision=first['configRevision'])
+
+        source_a = self.registry.resolve(MEMBER_A)
+        source_b = self.registry.resolve(MEMBER_B)
+        self.assertNotEqual(source_a['id'], source_b['id'])
+        self.assertEqual(source_a['ownerMemberId'], MEMBER_A)
+        self.assertEqual(source_b['ownerMemberId'], MEMBER_B)
+        runtime = runtime_config_for_source(legacy_config(), source_a)
+        self.assertEqual(
+            runtime['purchaseAssistantSpreadsheetToken'],
+            'SpreadsheetPersonal123')
+        self.assertEqual(runtime['purchaseAssistantSourceMode'], 'personal')
+        self.assertEqual(runtime['purchaseAssistantTeamSpreadsheetToken'], '')
+        self.assertRegex(second['configRevision'], r'^[0-9a-f]{64}$')
+
+    def test_clearing_personal_default_uses_only_explicit_team_policy(self):
+        snapshot = self.registry.migrate_legacy(legacy_config())
+        personal_id = next(
+            item['id'] for item in snapshot['registry']['dataSources']
+            if item['scope'] == 'personal')
+        team_id = next(
+            item['id'] for item in snapshot['registry']['dataSources']
+            if item['scope'] == 'team')
+        claimed = self.registry.claim_legacy_personal(
+            MEMBER_A, personal_id,
+            expected_revision=snapshot['registryRevision'])
+        with self.assertRaises(DataSourceMappingRequired):
+            self.registry.use_team_default(
+                MEMBER_A, expected_revision=claimed['configRevision'])
+        self.assertEqual(self.registry.resolve(MEMBER_A)['id'], personal_id)
+        policy = self.registry.set_team_default(
+            team_id, expected_revision=claimed['configRevision'])
+        self.registry.use_team_default(
+            MEMBER_A, expected_revision=policy['configRevision'])
+
+        with self.assertRaises(DataSourceMappingRequired):
+            self.registry.resolve(MEMBER_A)
+        self.assertEqual(
+            self.registry.resolve(MEMBER_A, allow_team_default=True)['id'],
+            team_id)
 
     def test_stale_revision_and_environment_name_are_rejected(self):
         snapshot = self.registry.migrate_legacy(legacy_config())

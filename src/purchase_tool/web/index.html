@@ -1042,6 +1042,16 @@
   @keyframes taskPulse { 70% { box-shadow: 0 0 0 7px rgba(32,174,179,0); } 100% { box-shadow: 0 0 0 0 rgba(32,174,179,0); } }
   .settings-status { margin-bottom: 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .settings-actions { margin-top: 16px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .data-source-list { display: grid; grid-template-columns: repeat(2,minmax(260px,1fr)); gap: 10px; }
+  .data-source-card { min-width: 0; padding: 13px 14px; border: 1px solid var(--line); border-radius: 13px; background: #f8fafb; }
+  .data-source-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .data-source-card-head strong { color: var(--navy-950); font-size: 12px; }
+  .data-source-card-copy { margin-top: 7px; color: var(--navy-500); font-size: 10px; line-height: 1.6; overflow-wrap: anywhere; }
+  .data-source-card-actions { margin-top: 10px; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .data-source-admin { margin-top: 14px; padding: 13px; border: 1px solid #cfe0e9; border-radius: 13px; background: var(--rhino-100); }
+  .data-source-admin h4 { margin: 0 0 10px; color: #126f74; font-size: 11px; }
+  .data-source-admin select, .data-source-admin input { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: var(--navy-950); }
+  .data-source-empty { padding: 18px; border: 1px dashed var(--line); border-radius: 12px; color: var(--navy-500); font-size: 11px; text-align: center; }
   .admin-toolbar { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
   .admin-toolbar .field { min-width: 180px; }
   .admin-toolbar select { width: 100%; }
@@ -1140,6 +1150,7 @@
   #envThead th { position: sticky; top: 0; z-index: 1; background: var(--surface); box-shadow: inset 0 -1px 0 var(--line); }
   @media (max-width: 760px) {
     .settings-grid { grid-template-columns: 1fr; }
+    .data-source-list { grid-template-columns: 1fr; }
     .local-executor-layout, .local-executor-platform-grid, .local-executor-device-layout { grid-template-columns: 1fr; }
     .local-executor-steps { grid-template-columns: 1fr; }
     .local-executor-status { align-items: flex-start; flex-direction: column; }
@@ -2253,6 +2264,51 @@
       </div>
     </section>
 
+    <section class="card settings-view" data-settings-view="localsettings">
+      <div class="card-title">采购助手数据源 <span class="legend">按当前飞书成员与 HubStudio containerCode 绑定</span></div>
+      <div class="settings-status">
+        <span class="pill checking" id="localDataSourceStatus">正在读取成员数据源…</span>
+        <span class="hint" id="localDataSourceDetail">表格标识仅保存在本机安全注册表，页面不会回显。</span>
+        <button class="btn" id="btnLocalDataSourcesRefresh" type="button">刷新</button>
+      </div>
+      <div class="credential-note">旧版个人速填表必须由实际使用人认领后才能启用；旧版团队表不会自动成为默认项。采购助手运行时按“环境精确绑定 → 当前成员个人默认 → 管理员明确设置的团队默认”解析，未匹配时停止读取。</div>
+      <div class="data-source-list" id="localDataSourceList" style="margin-top:14px">
+        <div class="data-source-empty">正在读取本机数据源注册表…</div>
+      </div>
+      <div class="settings-actions">
+        <button class="btn" id="btnUseTeamDataSource" type="button" hidden>当前成员改用团队默认</button>
+        <span class="hint" id="localDataSourceCurrent">尚未解析当前成员默认数据源。</span>
+      </div>
+      <div class="data-source-admin" id="localDataSourceAdmin" hidden>
+        <h4>管理员映射</h4>
+        <div class="settings-grid">
+          <div class="settings-field">
+            <label>团队默认数据源</label>
+            <select id="localTeamDefaultSource"><option value="">请选择团队数据源</option></select>
+          </div>
+          <div class="settings-field" style="align-self:end">
+            <button class="btn primary" id="btnSaveTeamDataSource" type="button">保存团队默认</button>
+          </div>
+          <div class="settings-field">
+            <label>采购员成员 UUID</label>
+            <input type="text" id="localBindingMemberId" maxlength="36" autocomplete="off" placeholder="飞书登录对应的 Xynigo 成员 UUID">
+          </div>
+          <div class="settings-field">
+            <label>HubStudio containerCode</label>
+            <input type="text" id="localBindingContainerCode" maxlength="128" autocomplete="off" placeholder="必须使用 containerCode，不使用环境名">
+          </div>
+          <div class="settings-field">
+            <label>环境数据源</label>
+            <select id="localBindingSource"><option value="">请选择数据源</option></select>
+          </div>
+          <div class="settings-field" style="align-self:end">
+            <button class="btn primary" id="btnSaveEnvironmentDataSource" type="button">保存环境映射</button>
+          </div>
+        </div>
+        <div class="hint" style="margin-top:10px">个人数据源只能绑定给其所有者；团队数据源可绑定给任意成员。环境名可能重复，因此后端只接受 containerCode。</div>
+      </div>
+    </section>
+
     <section class="card settings-view" data-settings-view="larkconnection" hidden>
       <div class="card-title">飞书连接 <span class="legend">集中维护各业务模块的飞书数据连接</span></div>
       <div class="credential-note">权限要求：仅超级管理员可查看和修改飞书连接。成员与角色后端接入后，其他用户不显示此入口，直接调用配置接口也会被拒绝。</div>
@@ -2983,6 +3039,8 @@ let openFeatureTabs = ['query'];
 if (LOCAL_DESKTOP_SETTINGS_VIEW) openFeatureTabs = ['localsettings'];
 let localSettingsPageLoaded = false;
 let localSettingsConfigRevision = '';
+let localDataSourceState = null;
+let localDataSourceSaving = false;
 let larkConfigRevision = '';
 let larkConnectionPageLoaded = false;
 let memberManagementPageLoaded = false;
@@ -10177,6 +10235,101 @@ async function loadLarkConfigStatus({refreshPending=false} = {}) {
   }
 }
 
+function localDataSourceIsAdmin() {
+  return hasRole('admin') || hasRole('super_admin');
+}
+
+function renderLocalDataSources() {
+  const state = localDataSourceState || {};
+  const sources = Array.isArray(state.dataSources) ? state.dataSources : [];
+  const profiles = Array.isArray(state.buyerProfiles) ? state.buyerProfiles : [];
+  const currentMemberId = String(authIdentity && authIdentity.user && authIdentity.user.id || '');
+  const profile = profiles.find(item => String(item.memberId || '') === currentMemberId) || null;
+  const sourceById = new Map(sources.map(item => [String(item.id || ''), item]));
+  const currentPersonal = profile && sourceById.get(String(profile.defaultDataSourceId || ''));
+  const teamDefault = sourceById.get(String(state.teamDefaultDataSourceId || ''));
+  const status = $('localDataSourceStatus');
+  const available = sources.filter(item => item.enabled && item.migrationState === 'ready');
+  status.className = 'pill ' + ((currentPersonal || teamDefault) ? 'ok' : 'bad');
+  status.textContent = currentPersonal
+    ? '当前成员使用个人默认'
+    : (teamDefault ? '当前成员使用团队默认' : '当前成员尚无可用映射');
+  $('localDataSourceDetail').textContent = `本机登记 ${sources.length} 个数据源、${Number(state.counts && state.counts.environmentBindingCount || 0)} 条环境映射；页面仅展示安全摘要。`;
+  $('localDataSourceCurrent').textContent = currentPersonal
+    ? `当前默认：${currentPersonal.label || '个人数据源'}`
+    : (teamDefault ? `当前回退：${teamDefault.label || '团队默认数据源'}` : '未配置个人默认，也没有管理员团队默认；采购助手将停止读取。');
+  $('btnUseTeamDataSource').hidden = !currentPersonal || !teamDefault;
+  $('localDataSourceList').innerHTML = sources.length ? sources.map(source => {
+    const ownedByCurrent = source.scope === 'personal' && String(source.ownerMemberId || '') === currentMemberId;
+    const claimable = source.scope === 'personal' && !source.ownerMemberId && source.migrationState === 'needs_owner_confirmation';
+    const isPersonalDefault = Boolean(profile && String(profile.defaultDataSourceId || '') === String(source.id || ''));
+    const isTeamDefault = source.scope === 'team' && String(state.teamDefaultDataSourceId || '') === String(source.id || '');
+    const scopeLabel = source.scope === 'personal' ? '个人' : '团队';
+    const stateLabel = claimable ? '待认领' : (!source.enabled ? '已停用' : (isPersonalDefault || isTeamDefault ? '默认' : '可用'));
+    const actions = [];
+    if (claimable) actions.push(`<button class="btn-mini" data-local-source-action="claim" data-source-id="${esc(source.id)}">认领为我的个人源</button>`);
+    if (ownedByCurrent && !isPersonalDefault && source.enabled) actions.push(`<button class="btn-mini" data-local-source-action="personal-default" data-source-id="${esc(source.id)}">设为我的默认</button>`);
+    if (localDataSourceIsAdmin() && source.scope === 'team' && !isTeamDefault && source.enabled) actions.push(`<button class="btn-mini" data-local-source-action="team-default" data-source-id="${esc(source.id)}">设为团队默认</button>`);
+    return `<div class="data-source-card">
+      <div class="data-source-card-head"><strong>${esc(source.label || '未命名数据源')}</strong><span class="badge ${claimable ? 'inuse' : (source.enabled ? 'ok' : 'fail')}">${scopeLabel} · ${stateLabel}</span></div>
+      <div class="data-source-card-copy">工作表：${esc(source.sheetName || '名称未记录')} · 范围 ${esc(source.cellRange || '—')}${source.scope === 'personal' && source.ownerMemberId ? `<br>所有者：${esc(source.ownerMemberId)}` : ''}</div>
+      ${actions.length ? `<div class="data-source-card-actions">${actions.join('')}</div>` : ''}
+    </div>`;
+  }).join('') : '<div class="data-source-empty">本机尚未登记采购助手数据源。请先在运营采购助手中读取并校验个人飞书表格，或由管理员完成团队源迁移。</div>';
+  const admin = localDataSourceIsAdmin();
+  $('localDataSourceAdmin').hidden = !admin;
+  if (admin) {
+    const teamOptions = sources.filter(item => item.scope === 'team' && item.enabled && item.migrationState === 'ready');
+    $('localTeamDefaultSource').innerHTML = '<option value="">请选择团队数据源</option>' + teamOptions.map(item => `<option value="${esc(item.id)}"${String(item.id) === String(state.teamDefaultDataSourceId || '') ? ' selected' : ''}>${esc(item.label || item.id)}</option>`).join('');
+    $('localBindingSource').innerHTML = '<option value="">请选择数据源</option>' + available.map(item => `<option value="${esc(item.id)}">${item.scope === 'personal' ? '个人' : '团队'} · ${esc(item.label || item.id)}</option>`).join('');
+    if (!$('localBindingMemberId').value) $('localBindingMemberId').value = currentMemberId;
+  }
+}
+
+async function loadLocalDataSources({notify=false} = {}) {
+  $('localDataSourceStatus').className = 'pill checking';
+  $('localDataSourceStatus').textContent = '正在读取成员数据源…';
+  try {
+    localDataSourceState = await api('/api/local-config/data-sources');
+    renderLocalDataSources();
+    if (notify) toast('采购助手数据源已刷新');
+    return true;
+  } catch (error) {
+    localDataSourceState = null;
+    $('localDataSourceStatus').className = 'pill bad';
+    $('localDataSourceStatus').textContent = '数据源读取失败';
+    $('localDataSourceDetail').textContent = error.message;
+    $('localDataSourceList').innerHTML = `<div class="data-source-empty">读取失败：${esc(error.message)}</div>`;
+    if (notify) toast(error.message);
+    return false;
+  }
+}
+
+async function mutateLocalDataSource(path, payload, successMessage) {
+  if (localDataSourceSaving) return null;
+  localDataSourceSaving = true;
+  try {
+    const result = await api(path, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({...payload, expectedRevision:localDataSourceState && localDataSourceState.registryRevision || ''})
+    });
+    localDataSourceState = result;
+    renderLocalDataSources();
+    toast(successMessage);
+    return result;
+  } catch (error) {
+    if (error.code === 'config_revision_conflict') {
+      await loadLocalDataSources();
+      toast('数据源映射已在其他窗口变化，已刷新最新状态，请重新确认');
+      return null;
+    }
+    toast(error.message);
+    return null;
+  } finally {
+    localDataSourceSaving = false;
+  }
+}
+
 async function loadLocalSettingsPage() {
   try {
     const cfg = await api('/api/config');
@@ -10200,12 +10353,47 @@ async function loadLocalSettingsPage() {
     $('cfgProxyState').textContent = cfg.proxySource === 'custom'
       ? '当前使用自定义代理链接；留空保存保持不变，勾选清除恢复内置默认。'
       : '已内置默认提取链接（前期写死），可直接使用；仅需要自定义时填写。';
+    await loadLocalDataSources();
     return true;
   } catch (e) {
     toast('设置读取失败：' + e.message);
     return false;
   }
 }
+
+$('btnLocalDataSourcesRefresh').onclick = () => loadLocalDataSources({notify:true});
+$('localDataSourceList').onclick = event => {
+  const button = event.target.closest('[data-local-source-action]');
+  if (!button) return;
+  const sourceId = button.dataset.sourceId || '';
+  if (button.dataset.localSourceAction === 'claim') {
+    if (!confirm('确认这是当前登录成员实际使用的旧个人速填表？\n\n认领后其他成员不能再使用这个个人数据源。')) return;
+    mutateLocalDataSource('/api/local-config/data-sources/claim-personal', {sourceId}, '个人数据源认领成功');
+  } else if (button.dataset.localSourceAction === 'personal-default') {
+    mutateLocalDataSource('/api/local-config/data-sources/buyer-default', {sourceId}, '个人默认数据源已更新');
+  } else if (button.dataset.localSourceAction === 'team-default') {
+    if (!confirm('将此数据源设为组织团队默认？没有个人默认和环境精确映射的成员会使用它。')) return;
+    mutateLocalDataSource('/api/local-config/data-sources/team-default', {sourceId}, '团队默认数据源已更新');
+  }
+};
+$('btnUseTeamDataSource').onclick = () => {
+  if (!confirm('当前成员改用管理员设置的团队默认数据源？个人数据源记录会保留，但不再作为成员默认。')) return;
+  mutateLocalDataSource('/api/local-config/data-sources/buyer-default/clear', {}, '当前成员已改用团队默认');
+};
+$('btnSaveTeamDataSource').onclick = () => {
+  const sourceId = $('localTeamDefaultSource').value;
+  if (!sourceId) { toast('请选择团队默认数据源'); return; }
+  mutateLocalDataSource('/api/local-config/data-sources/team-default', {sourceId}, '团队默认数据源已更新');
+};
+$('btnSaveEnvironmentDataSource').onclick = () => {
+  const memberId = $('localBindingMemberId').value.trim();
+  const containerCode = $('localBindingContainerCode').value.trim();
+  const sourceId = $('localBindingSource').value;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(memberId)) { toast('成员 UUID 格式无效'); return; }
+  if (!containerCode || !/^[A-Za-z0-9._:-]{1,128}$/.test(containerCode)) { toast('请输入有效的 HubStudio containerCode，不能使用环境名'); return; }
+  if (!sourceId) { toast('请选择环境数据源'); return; }
+  mutateLocalDataSource('/api/local-config/data-sources/environment-binding', {memberId, containerCode, sourceId}, '环境数据源映射已保存');
+};
 
 async function loadLarkConnectionPage() {
   const state = await loadLarkConfigStatus();

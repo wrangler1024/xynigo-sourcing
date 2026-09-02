@@ -510,6 +510,16 @@ class PurchaseAssistantService(object):
             self._inspections.clear()
             self._validated_targets.clear()
 
+    def for_runtime_config(self, mapping):
+        """Return an isolated request-scoped service without mutating self."""
+        service = PurchaseAssistantService(
+            credential_getter=self.credential_getter,
+            source_config=mapping,
+            transport_factory=self.transport_factory,
+        )
+        service.reconfigure(mapping)
+        return service
+
     @staticmethod
     def _profile(mapping, mode):
         title = 'Personal' if mode == 'personal' else 'Team'
@@ -556,7 +566,7 @@ class PurchaseAssistantService(object):
             if float(value.get('createdAt') or 0) >= cutoff
         }
 
-    def inspect_source(self, spreadsheet_url):
+    def inspect_source(self, spreadsheet_url, owner_key=''):
         if not callable(self.credential_getter):
             raise PurchaseAssistantError('小犀代采飞书企业应用凭证尚未配置')
         token = parse_spreadsheet_url(spreadsheet_url)
@@ -590,6 +600,7 @@ class PurchaseAssistantService(object):
             self._clean_source_sessions()
             self._inspections[inspection_id] = {
                 'createdAt': time.monotonic(),
+                'ownerKey': normalize(owner_key),
                 'provider': provider,
                 'selections': selections,
             }
@@ -599,14 +610,17 @@ class PurchaseAssistantService(object):
             'expiresInSeconds': int(SOURCE_INSPECTION_TTL_SECONDS),
         }
 
-    def validate_source(self, inspection_id, selection_id):
+    def validate_source(self, inspection_id, selection_id, owner_key=''):
         inspection_key = normalize(inspection_id)
         selection_key = normalize(selection_id)
+        owner = normalize(owner_key)
         with self._source_lock:
             self._clean_source_sessions()
             inspection = self._inspections.get(inspection_key)
             if not inspection:
                 raise PurchaseAssistantError('表格读取结果已失效，请重新读取工作表')
+            if normalize(inspection.get('ownerKey')) != owner:
+                raise PurchaseAssistantError('表格读取结果不属于当前登录成员')
             sheet = (inspection.get('selections') or {}).get(selection_key)
             if not sheet:
                 raise PurchaseAssistantError('请选择有效的工作表')
@@ -617,6 +631,7 @@ class PurchaseAssistantService(object):
         with self._source_lock:
             self._validated_targets[validation_id] = {
                 'createdAt': time.monotonic(),
+                'ownerKey': owner,
                 'spreadsheetToken': provider.config.spreadsheet_token,
                 'sheetId': sheet['sheetId'],
                 'sheetName': sheet['sheetName'],
@@ -630,16 +645,23 @@ class PurchaseAssistantService(object):
             'requiredFieldCount': len(SOURCE_REQUIRED_HEADERS),
         }
 
-    def consume_validated_target(self, validation_id):
+    def consume_validated_target(self, validation_id, owner_key=''):
         key = normalize(validation_id)
+        owner = normalize(owner_key)
         with self._source_lock:
             self._clean_source_sessions()
-            target = self._validated_targets.pop(key, None)
+            target = self._validated_targets.get(key)
+            if (target is not None
+                    and normalize(target.get('ownerKey')) != owner):
+                raise PurchaseAssistantError(
+                    '数据源校验结果不属于当前登录成员')
+            if target is not None:
+                target = self._validated_targets.pop(key)
         if not target:
             raise PurchaseAssistantError('数据源校验结果已失效，请重新校验')
         return {
             key: value for key, value in target.items()
-            if key != 'createdAt'
+            if key not in {'createdAt', 'ownerKey'}
         }
 
     @property

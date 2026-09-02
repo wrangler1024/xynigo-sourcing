@@ -104,6 +104,11 @@ def _legacy_source_id(scope, token, sheet_id, cell_range):
     return 'ds_' + digest
 
 
+def _member_source_id(member_id, token, sheet_id, cell_range):
+    return _legacy_source_id(
+        'personal:' + _member_id(member_id), token, sheet_id, cell_range)
+
+
 def _normalize_source(item):
     if not isinstance(item, dict):
         raise DataSourceRegistryError('数据源记录必须是对象')
@@ -246,6 +251,34 @@ def normalize_registry(mapping):
         'teamDefaultDataSourceId': team_default,
         'legacyMigration': normalized_legacy,
     }
+
+
+def runtime_config_for_source(base_config, source):
+    """Build a request-local legacy config view for one resolved source."""
+    normalized = _normalize_source(source)
+    if (not normalized['enabled']
+            or normalized['migrationState'] != 'ready'):
+        raise DataSourceMappingRequired()
+    mapping = copy.deepcopy(dict(base_config or {}))
+    for title in ('Personal', 'Team'):
+        prefix = 'purchaseAssistant' + title
+        for suffix in (
+                'SpreadsheetToken', 'SheetId', 'CellRange', 'SheetName'):
+            mapping[prefix + suffix] = ''
+    mode = normalized['scope']
+    profile = ('purchaseAssistantPersonal' if mode == 'personal'
+               else 'purchaseAssistantTeam')
+    mapping['purchaseAssistantSourceMode'] = mode
+    mapping['purchaseAssistantSpreadsheetToken'] = normalized[
+        'spreadsheetToken']
+    mapping['purchaseAssistantSheetId'] = normalized['sheetId']
+    mapping['purchaseAssistantCellRange'] = normalized['cellRange']
+    mapping[profile + 'SpreadsheetToken'] = normalized[
+        'spreadsheetToken']
+    mapping[profile + 'SheetId'] = normalized['sheetId']
+    mapping[profile + 'CellRange'] = normalized['cellRange']
+    mapping[profile + 'SheetName'] = normalized['sheetName']
+    return mapping
 
 
 class DataSourceRegistry(object):
@@ -408,6 +441,52 @@ class DataSourceRegistry(object):
             {}, update, expected_revision=expected_revision,
             source='claim_legacy_personal_source')
 
+    def upsert_personal(self, member_id, target, expected_revision=None):
+        member = _member_id(member_id)
+        if not isinstance(target, dict):
+            raise DataSourceRegistryError('个人数据源目标格式无效')
+        token = _private_id(
+            target.get('spreadsheetToken'), '飞书 Spreadsheet Token')
+        sheet_id = _private_id(target.get('sheetId'), '飞书 Sheet ID')
+        cell_range = _cell_range(target.get('cellRange'))
+        sheet_name = _plain_text(
+            target.get('sheetName'), '工作表名称', 255, allow_blank=True)
+        wanted = _member_source_id(member, token, sheet_id, cell_range)
+        label = ('个人速填表 · ' + sheet_name) if sheet_name else '个人速填表'
+
+        def update(current, _submitted):
+            candidate = copy.deepcopy(current)
+            record = {
+                'id': wanted,
+                'scope': 'personal',
+                'ownerMemberId': member,
+                'label': label[:120],
+                'spreadsheetToken': token,
+                'sheetId': sheet_id,
+                'cellRange': cell_range,
+                'sheetName': sheet_name,
+                'enabled': True,
+                'migrationState': 'ready',
+            }
+            candidate['dataSources'] = [
+                item for item in candidate['dataSources']
+                if item['id'] != wanted
+            ] + [record]
+            candidate['buyerProfiles'] = [
+                item for item in candidate['buyerProfiles']
+                if item['memberId'] != member
+            ] + [{
+                'memberId': member,
+                'defaultDataSourceId': wanted,
+            }]
+            return candidate
+
+        result = self.service.commit_patch(
+            {}, update, expected_revision=expected_revision,
+            source='upsert_personal_data_source')
+        result['dataSourceId'] = wanted
+        return result
+
     def set_buyer_default(self, member_id, source_id,
                           expected_revision=None):
         member = _member_id(member_id)
@@ -433,6 +512,44 @@ class DataSourceRegistry(object):
         return self.service.commit_patch(
             {}, update, expected_revision=expected_revision,
             source='buyer_default_data_source')
+
+    def clear_buyer_default(self, member_id, expected_revision=None):
+        member = _member_id(member_id)
+
+        def update(current, _submitted):
+            candidate = copy.deepcopy(current)
+            candidate['buyerProfiles'] = [
+                item for item in candidate['buyerProfiles']
+                if item['memberId'] != member
+            ]
+            return candidate
+
+        return self.service.commit_patch(
+            {}, update, expected_revision=expected_revision,
+            source='clear_buyer_default_data_source')
+
+    def use_team_default(self, member_id, expected_revision=None):
+        member = _member_id(member_id)
+
+        def update(current, _submitted):
+            wanted = current['teamDefaultDataSourceId']
+            source = next((
+                item for item in current['dataSources']
+                if item['id'] == wanted and item['scope'] == 'team'
+                and item['enabled'] and item['migrationState'] == 'ready'
+            ), None)
+            if source is None:
+                raise DataSourceMappingRequired()
+            candidate = copy.deepcopy(current)
+            candidate['buyerProfiles'] = [
+                item for item in candidate['buyerProfiles']
+                if item['memberId'] != member
+            ]
+            return candidate
+
+        return self.service.commit_patch(
+            {}, update, expected_revision=expected_revision,
+            source='use_team_default_data_source')
 
     def bind_environment(self, container_code, member_id, source_id,
                          expected_revision=None):
@@ -480,6 +597,20 @@ class DataSourceRegistry(object):
         return self.service.commit_patch(
             {}, update, expected_revision=expected_revision,
             source='team_default_data_source')
+
+    def team_default(self, allowed_data_source_ids=None):
+        registry = self.service.load()
+        wanted = registry['teamDefaultDataSourceId']
+        allowed = (None if allowed_data_source_ids is None else
+                   {_source_id(item) for item in allowed_data_source_ids})
+        source = next((
+            item for item in registry['dataSources']
+            if item['id'] == wanted and item['scope'] == 'team'
+            and item['enabled'] and item['migrationState'] == 'ready'
+        ), None)
+        if source is None or (allowed is not None and wanted not in allowed):
+            raise DataSourceMappingRequired()
+        return copy.deepcopy(source)
 
     def resolve(self, member_id, container_code=None,
                 allow_team_default=False, allowed_data_source_ids=None):
