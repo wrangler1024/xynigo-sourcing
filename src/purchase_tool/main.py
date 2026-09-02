@@ -3746,6 +3746,20 @@ class Handler(BaseHTTPRequestHandler):
                     'admin', 'super_admin'})
                 self._json(STATE.data_sources.public_snapshot(
                     identity['user']['id'], include_all=include_all))
+            elif path == DATA_SOURCE_API_PREFIX + '/environment-options':
+                identity = STATE.auth.require()
+                if not set(identity.get('roles') or []) & {
+                        'admin', 'super_admin'}:
+                    raise LocalAuthError('permission_denied', status=403)
+                search = str((query.get('query') or [''])[0]).strip()
+                if len(search) > 160:
+                    raise ValueError('环境搜索条件过长')
+                environments = STATE.hub.list_environment_summaries(
+                    search, limit=(query.get('limit') or ['200'])[0])
+                self._json({
+                    'environments': environments,
+                    'count': len(environments),
+                })
             elif path == '/api/lark/status':
                 self._json(public_lark_runtime_status(
                     STATE.cfg, STATE.lark_credentials))
@@ -3796,6 +3810,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._auth_error(e)
         except ConnectionError as e:
             self._json({'error': 'HubStudio 未连接：%s' % e}, 503)
+        except HubApiError as e:
+            self._json({
+                'error': str(e),
+                'code': e.reason_code,
+            }, 503)
         except DataSourceRegistryError as e:
             self._json({'error': str(e), 'code': e.code}, 409)
         except ValueError as e:
@@ -4332,6 +4351,55 @@ class Handler(BaseHTTPRequestHandler):
                     **STATE.data_sources.public_snapshot(
                         member_id, include_all=include_all),
                 })
+            elif path == DATA_SOURCE_API_PREFIX + '/inspect':
+                member_id = request_identity['user']['id']
+                self._json({
+                    'ok': True,
+                    **STATE.purchase_assistant.inspect_source(
+                        body.get('spreadsheetUrl'), owner_key=member_id),
+                })
+            elif path == DATA_SOURCE_API_PREFIX + '/validate':
+                member_id = request_identity['user']['id']
+                self._json({
+                    'ok': True,
+                    **STATE.purchase_assistant.validate_source(
+                        body.get('inspectionId'), body.get('selectionId'),
+                        owner_key=member_id),
+                })
+            elif path == DATA_SOURCE_API_PREFIX + '/personal':
+                member_id = request_identity['user']['id']
+                STATE.data_sources.service.assert_revision(
+                    body.get('expectedRevision'))
+                target = STATE.purchase_assistant.consume_validated_target(
+                    body.get('validationId'), owner_key=member_id)
+                STATE.data_sources.upsert_personal(
+                    member_id, target,
+                    expected_revision=body.get('expectedRevision'))
+                include_all = bool(set(request_identity.get('roles') or []) & {
+                    'admin', 'super_admin'})
+                self._json({
+                    'saved': True,
+                    **STATE.data_sources.public_snapshot(
+                        member_id, include_all=include_all),
+                })
+            elif path == DATA_SOURCE_API_PREFIX + '/team':
+                if not set(request_identity.get('roles') or []) & {
+                        'admin', 'super_admin'}:
+                    raise LocalAuthError('permission_denied', status=403)
+                member_id = request_identity['user']['id']
+                STATE.data_sources.service.assert_revision(
+                    body.get('expectedRevision'))
+                target = STATE.purchase_assistant.consume_validated_target(
+                    body.get('validationId'), owner_key=member_id)
+                STATE.data_sources.upsert_team(
+                    target,
+                    set_default=bool(body.get('setDefault')),
+                    expected_revision=body.get('expectedRevision'))
+                self._json({
+                    'saved': True,
+                    **STATE.data_sources.public_snapshot(
+                        member_id, include_all=True),
+                })
             elif path == DATA_SOURCE_API_PREFIX + '/buyer-default':
                 member_id = request_identity['user']['id']
                 include_all = bool(set(request_identity.get('roles') or []) & {
@@ -4372,12 +4440,36 @@ class Handler(BaseHTTPRequestHandler):
                     **STATE.data_sources.public_snapshot(
                         request_identity['user']['id'], include_all=True),
                 })
+            elif path == (DATA_SOURCE_API_PREFIX
+                          + '/environment-binding/remove'):
+                if not set(request_identity.get('roles') or []) & {
+                        'admin', 'super_admin'}:
+                    raise LocalAuthError('permission_denied', status=403)
+                STATE.data_sources.unbind_environment(
+                    body.get('containerCode'), body.get('memberId'),
+                    expected_revision=body.get('expectedRevision'))
+                self._json({
+                    'saved': True,
+                    **STATE.data_sources.public_snapshot(
+                        request_identity['user']['id'], include_all=True),
+                })
             elif path == DATA_SOURCE_API_PREFIX + '/team-default':
                 if not set(request_identity.get('roles') or []) & {
                         'admin', 'super_admin'}:
                     raise LocalAuthError('permission_denied', status=403)
                 STATE.data_sources.set_team_default(
                     body.get('sourceId'),
+                    expected_revision=body.get('expectedRevision'))
+                self._json({
+                    'saved': True,
+                    **STATE.data_sources.public_snapshot(
+                        request_identity['user']['id'], include_all=True),
+                })
+            elif path == DATA_SOURCE_API_PREFIX + '/team-default/clear':
+                if not set(request_identity.get('roles') or []) & {
+                        'admin', 'super_admin'}:
+                    raise LocalAuthError('permission_denied', status=403)
+                STATE.data_sources.clear_team_default(
                     expected_revision=body.get('expectedRevision'))
                 self._json({
                     'saved': True,
@@ -4498,6 +4590,11 @@ class Handler(BaseHTTPRequestHandler):
             }, 409)
         except DataSourceRegistryError as e:
             self._json({'error': str(e), 'code': e.code}, 409)
+        except PurchaseAssistantError as e:
+            self._json({
+                'error': str(e),
+                'code': 'source_invalid',
+            }, 422)
         except RuntimeError as e:
             self._json({'error': str(e)}, 409)
         except ValueError as e:

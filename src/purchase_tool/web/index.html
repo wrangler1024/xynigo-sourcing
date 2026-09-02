@@ -1048,6 +1048,9 @@
   .data-source-card-head strong { color: var(--navy-950); font-size: 12px; }
   .data-source-card-copy { margin-top: 7px; color: var(--navy-500); font-size: 10px; line-height: 1.6; overflow-wrap: anywhere; }
   .data-source-card-actions { margin-top: 10px; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .data-source-setup { margin-top: 14px; padding: 13px; border: 1px solid var(--line); border-radius: 13px; background: #f8fafb; }
+  .data-source-setup h4 { margin: 0 0 10px; color: var(--navy-900); font-size: 11px; }
+  .data-source-setup select, .data-source-setup input { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: var(--navy-950); }
   .data-source-admin { margin-top: 14px; padding: 13px; border: 1px solid #cfe0e9; border-radius: 13px; background: var(--rhino-100); }
   .data-source-admin h4 { margin: 0 0 10px; color: #126f74; font-size: 11px; }
   .data-source-admin select, .data-source-admin input { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: var(--navy-950); }
@@ -2275,6 +2278,39 @@
         <button class="btn" id="btnLocalDataSourcesRefresh" type="button">刷新</button>
       </div>
       <div class="credential-note">旧版个人速填表必须由实际使用人认领后才能启用；旧版团队表不会自动成为默认项。采购助手运行时按“环境精确绑定 → 当前成员个人默认 → 管理员明确设置的团队默认”解析，未匹配时停止读取。</div>
+      <div class="data-source-setup">
+        <h4>新增或更新数据源</h4>
+        <div class="settings-grid">
+          <div class="settings-field">
+            <label>数据源范围</label>
+            <select id="localDataSourceScope">
+              <option value="personal">我的个人速填表</option>
+              <option value="team" id="localDataSourceTeamScope">团队采购执行表（管理员）</option>
+            </select>
+          </div>
+          <div class="settings-field">
+            <label>飞书电子表格完整链接（不回显）</label>
+            <input type="password" id="localDataSourceUrl" autocomplete="new-password" placeholder="粘贴 /sheets/ 电子表格链接；读取后立即清空">
+          </div>
+          <div class="settings-field">
+            <label>工作表</label>
+            <select id="localDataSourceSheet" disabled><option value="">请先读取工作表</option></select>
+          </div>
+          <div class="settings-field" style="align-self:end">
+            <div class="settings-actions" style="margin-top:0">
+              <button class="btn" id="btnInspectLocalDataSource" type="button">读取工作表</button>
+              <button class="btn" id="btnValidateLocalDataSource" type="button" disabled>校验字段</button>
+            </div>
+          </div>
+          <div class="settings-field full" id="localDataSourceTeamDefaultField" hidden>
+            <label><input type="checkbox" id="localDataSourceSetDefault" style="width:auto;min-height:auto"> 保存后设为团队默认</label>
+          </div>
+        </div>
+        <div class="settings-actions">
+          <button class="btn primary" id="btnCommitLocalDataSource" type="button" disabled>保存已校验数据源</button>
+          <span class="hint" id="localDataSourceSetupState">链接只用于本次读取；保存前必须通过表头校验。</span>
+        </div>
+      </div>
       <div class="data-source-list" id="localDataSourceList" style="margin-top:14px">
         <div class="data-source-empty">正在读取本机数据源注册表…</div>
       </div>
@@ -2290,15 +2326,20 @@
             <select id="localTeamDefaultSource"><option value="">请选择团队数据源</option></select>
           </div>
           <div class="settings-field" style="align-self:end">
-            <button class="btn primary" id="btnSaveTeamDataSource" type="button">保存团队默认</button>
+            <div class="settings-actions" style="margin-top:0">
+              <button class="btn primary" id="btnSaveTeamDataSource" type="button">保存团队默认</button>
+              <button class="btn" id="btnClearTeamDataSource" type="button">清除默认</button>
+            </div>
           </div>
           <div class="settings-field">
-            <label>采购员成员 UUID</label>
-            <input type="text" id="localBindingMemberId" maxlength="36" autocomplete="off" placeholder="飞书登录对应的 Xynigo 成员 UUID">
+            <label>采购员成员</label>
+            <input type="text" id="localBindingMemberId" list="localBindingMemberOptions" maxlength="36" autocomplete="off" placeholder="选择成员；离线时可填准确 UUID">
+            <datalist id="localBindingMemberOptions"></datalist>
           </div>
           <div class="settings-field">
-            <label>HubStudio containerCode</label>
-            <input type="text" id="localBindingContainerCode" maxlength="128" autocomplete="off" placeholder="必须使用 containerCode，不使用环境名">
+            <label>HubStudio 环境</label>
+            <input type="text" id="localBindingContainerCode" list="localBindingEnvironmentOptions" maxlength="128" autocomplete="off" placeholder="选择环境；离线时可填准确 containerCode">
+            <datalist id="localBindingEnvironmentOptions"></datalist>
           </div>
           <div class="settings-field">
             <label>环境数据源</label>
@@ -2308,7 +2349,12 @@
             <button class="btn primary" id="btnSaveEnvironmentDataSource" type="button">保存环境映射</button>
           </div>
         </div>
-        <div class="hint" style="margin-top:10px">个人数据源只能绑定给其所有者；团队数据源可绑定给任意成员。环境名可能重复，因此后端只接受 containerCode。</div>
+        <div class="settings-actions">
+          <button class="btn" id="btnRefreshLocalBindingOptions" type="button">刷新成员与环境候选</button>
+          <span class="hint" id="localBindingOptionsState">候选加载后仍按成员 UUID 和 containerCode 保存，不按显示名称匹配。</span>
+        </div>
+        <div class="data-source-list" id="localEnvironmentBindingList" style="margin-top:12px"></div>
+        <div class="hint" style="margin-top:10px">个人数据源只能绑定给其所有者；团队数据源可绑定给任意成员。环境名可能重复，因此后端只接受 containerCode；候选读取失败时保留手工输入兜底。</div>
       </div>
     </section>
 
@@ -3044,6 +3090,10 @@ let localSettingsPageLoaded = false;
 let localSettingsConfigRevision = '';
 let localDataSourceState = null;
 let localDataSourceSaving = false;
+let localDataSourceInspection = null;
+let localDataSourceValidation = null;
+let localDataSourceMembers = [];
+let localDataSourceEnvironments = [];
 let larkConfigRevision = '';
 let larkConnectionPageLoaded = false;
 let memberManagementPageLoaded = false;
@@ -10064,6 +10114,38 @@ function localDataSourceIsAdmin() {
   return hasRole('admin') || hasRole('super_admin');
 }
 
+function localDataSourceMemberLabel(memberId) {
+  const member = localDataSourceMembers.find(item => String(item.id || '') === String(memberId || ''));
+  if (member) return member.name || member.id;
+  const currentMemberId = String(authIdentity && authIdentity.user && authIdentity.user.id || '');
+  if (String(memberId || '') === currentMemberId) return String(authIdentity && authIdentity.user && authIdentity.user.name || '当前成员');
+  return memberId || '未知成员';
+}
+
+function localDataSourceEnvironmentLabel(containerCode) {
+  const environment = localDataSourceEnvironments.find(item => String(item.containerCode || '') === String(containerCode || ''));
+  if (!environment) return containerCode || '未知环境';
+  return `${environment.containerName || '未命名环境'}${environment.serialNumber ? ` · #${environment.serialNumber}` : ''}`;
+}
+
+function resetLocalDataSourceSetup(message='链接只用于本次读取；保存前必须通过表头校验。') {
+  localDataSourceInspection = null;
+  localDataSourceValidation = null;
+  $('localDataSourceUrl').value = '';
+  $('localDataSourceSheet').innerHTML = '<option value="">请先读取工作表</option>';
+  $('localDataSourceSheet').disabled = true;
+  $('btnValidateLocalDataSource').disabled = true;
+  $('btnCommitLocalDataSource').disabled = true;
+  $('localDataSourceSetupState').textContent = message;
+}
+
+function renderLocalDataSourceScope() {
+  const admin = localDataSourceIsAdmin();
+  $('localDataSourceTeamScope').disabled = !admin;
+  if (!admin && $('localDataSourceScope').value === 'team') $('localDataSourceScope').value = 'personal';
+  $('localDataSourceTeamDefaultField').hidden = !admin || $('localDataSourceScope').value !== 'team';
+}
+
 function renderLocalDataSources() {
   const state = localDataSourceState || {};
   const sources = Array.isArray(state.dataSources) ? state.dataSources : [];
@@ -10073,6 +10155,7 @@ function renderLocalDataSources() {
   const sourceById = new Map(sources.map(item => [String(item.id || ''), item]));
   const currentPersonal = profile && sourceById.get(String(profile.defaultDataSourceId || ''));
   const teamDefault = sourceById.get(String(state.teamDefaultDataSourceId || ''));
+  const bindings = Array.isArray(state.environmentBindings) ? state.environmentBindings : [];
   const status = $('localDataSourceStatus');
   const available = sources.filter(item => item.enabled && item.migrationState === 'ready');
   status.className = 'pill ' + ((currentPersonal || teamDefault) ? 'ok' : 'bad');
@@ -10097,18 +10180,52 @@ function renderLocalDataSources() {
     if (localDataSourceIsAdmin() && source.scope === 'team' && !isTeamDefault && source.enabled) actions.push(`<button class="btn-mini" data-local-source-action="team-default" data-source-id="${esc(source.id)}">设为团队默认</button>`);
     return `<div class="data-source-card">
       <div class="data-source-card-head"><strong>${esc(source.label || '未命名数据源')}</strong><span class="badge ${claimable ? 'inuse' : (source.enabled ? 'ok' : 'fail')}">${scopeLabel} · ${stateLabel}</span></div>
-      <div class="data-source-card-copy">工作表：${esc(source.sheetName || '名称未记录')} · 范围 ${esc(source.cellRange || '—')}${source.scope === 'personal' && source.ownerMemberId ? `<br>所有者：${esc(source.ownerMemberId)}` : ''}</div>
+      <div class="data-source-card-copy">工作表：${esc(source.sheetName || '名称未记录')} · 范围 ${esc(source.cellRange || '—')}${source.scope === 'personal' && source.ownerMemberId ? `<br>所有者：${esc(localDataSourceMemberLabel(source.ownerMemberId))}` : ''}</div>
       ${actions.length ? `<div class="data-source-card-actions">${actions.join('')}</div>` : ''}
     </div>`;
   }).join('') : '<div class="data-source-empty">本机尚未登记采购助手数据源。请先在运营采购助手中读取并校验个人飞书表格，或由管理员完成团队源迁移。</div>';
   const admin = localDataSourceIsAdmin();
+  renderLocalDataSourceScope();
   $('localDataSourceAdmin').hidden = !admin;
   if (admin) {
     const teamOptions = sources.filter(item => item.scope === 'team' && item.enabled && item.migrationState === 'ready');
     $('localTeamDefaultSource').innerHTML = '<option value="">请选择团队数据源</option>' + teamOptions.map(item => `<option value="${esc(item.id)}"${String(item.id) === String(state.teamDefaultDataSourceId || '') ? ' selected' : ''}>${esc(item.label || item.id)}</option>`).join('');
+    $('btnClearTeamDataSource').disabled = !state.teamDefaultDataSourceId;
     $('localBindingSource').innerHTML = '<option value="">请选择数据源</option>' + available.map(item => `<option value="${esc(item.id)}">${item.scope === 'personal' ? '个人' : '团队'} · ${esc(item.label || item.id)}</option>`).join('');
     if (!$('localBindingMemberId').value) $('localBindingMemberId').value = currentMemberId;
+    $('localEnvironmentBindingList').innerHTML = bindings.length ? bindings.map(binding => {
+      const source = sourceById.get(String(binding.dataSourceId || ''));
+      return `<div class="data-source-card">
+        <div class="data-source-card-head"><strong>${esc(localDataSourceEnvironmentLabel(binding.containerCode))}</strong><span class="badge ok">精确映射</span></div>
+        <div class="data-source-card-copy">采购员：${esc(localDataSourceMemberLabel(binding.memberId))}<br>数据源：${esc(source && source.label || '数据源不可用')}</div>
+        <div class="data-source-card-actions"><button class="btn-mini" type="button" data-local-binding-remove data-member-id="${esc(binding.memberId)}" data-container-code="${esc(binding.containerCode)}">删除映射</button></div>
+      </div>`;
+    }).join('') : '<div class="data-source-empty">当前没有环境精确映射。</div>';
   }
+}
+
+async function loadLocalBindingOptions({notify=false} = {}) {
+  if (!localDataSourceIsAdmin()) return false;
+  $('localBindingOptionsState').textContent = '正在读取云端成员与本机 HubStudio 环境候选…';
+  const [memberResult, environmentResult] = await Promise.allSettled([
+    api('/api/admin/members?status=active'),
+    api('/api/local-config/data-sources/environment-options?limit=200')
+  ]);
+  if (memberResult.status === 'fulfilled') {
+    localDataSourceMembers = Array.isArray(memberResult.value.members) ? memberResult.value.members : [];
+    $('localBindingMemberOptions').innerHTML = localDataSourceMembers.map(member => `<option value="${esc(member.id)}">${esc(member.name || '未命名成员')}</option>`).join('');
+  }
+  if (environmentResult.status === 'fulfilled') {
+    localDataSourceEnvironments = Array.isArray(environmentResult.value.environments) ? environmentResult.value.environments : [];
+    $('localBindingEnvironmentOptions').innerHTML = localDataSourceEnvironments.map(environment => `<option value="${esc(environment.containerCode)}">${esc(localDataSourceEnvironmentLabel(environment.containerCode))}</option>`).join('');
+  }
+  renderLocalDataSources();
+  const errors = [memberResult, environmentResult].filter(item => item.status === 'rejected').map(item => item.reason && item.reason.message || '读取失败');
+  $('localBindingOptionsState').textContent = errors.length
+    ? `部分候选读取失败：${errors.join('；')}。仍可手工填写准确标识。`
+    : `已加载 ${localDataSourceMembers.length} 名成员、${localDataSourceEnvironments.length} 个环境；保存仍使用稳定标识。`;
+  if (notify) toast(errors.length ? '部分候选读取失败，已保留手工输入' : '成员与环境候选已刷新');
+  return !errors.length;
 }
 
 async function loadLocalDataSources({notify=false} = {}) {
@@ -10117,6 +10234,7 @@ async function loadLocalDataSources({notify=false} = {}) {
   try {
     localDataSourceState = await api('/api/local-config/data-sources');
     renderLocalDataSources();
+    if (localDataSourceIsAdmin() && (!localDataSourceMembers.length || !localDataSourceEnvironments.length)) await loadLocalBindingOptions();
     if (notify) toast('采购助手数据源已刷新');
     return true;
   } catch (error) {
@@ -10196,7 +10314,75 @@ async function loadLocalSettingsPage() {
   }
 }
 
+$('localDataSourceScope').onchange = () => renderLocalDataSourceScope();
+$('localDataSourceSheet').onchange = () => {
+  localDataSourceValidation = null;
+  $('btnCommitLocalDataSource').disabled = true;
+  $('localDataSourceSetupState').textContent = '工作表已变更，请重新校验字段。';
+};
+$('btnInspectLocalDataSource').onclick = async () => {
+  const spreadsheetUrl = $('localDataSourceUrl').value.trim();
+  if (!spreadsheetUrl) { toast('请粘贴飞书电子表格完整链接'); return; }
+  resetLocalDataSourceSetup('正在读取工作表；链接已从输入框清空…');
+  const button = $('btnInspectLocalDataSource');
+  button.disabled = true;
+  try {
+    const result = await api('/api/local-config/data-sources/inspect', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({spreadsheetUrl})
+    });
+    localDataSourceInspection = result;
+    const sheets = Array.isArray(result.sheets) ? result.sheets : [];
+    $('localDataSourceSheet').innerHTML = '<option value="">请选择工作表</option>' + sheets.map(sheet => `<option value="${esc(sheet.selectionId)}">${esc(sheet.sheetName || '未命名工作表')} · ${Number(sheet.rowCount || 0)} 行 × ${Number(sheet.columnCount || 0)} 列${sheet.hidden ? ' · 已隐藏' : ''}</option>`).join('');
+    $('localDataSourceSheet').disabled = !sheets.length;
+    $('btnValidateLocalDataSource').disabled = !sheets.length;
+    $('localDataSourceSetupState').textContent = sheets.length
+      ? `已安全读取 ${sheets.length} 个工作表，请选择并校验字段。`
+      : '电子表格中没有可选工作表。';
+  } catch (error) {
+    resetLocalDataSourceSetup('读取失败：' + error.message);
+    toast(error.message);
+  } finally {
+    button.disabled = false;
+  }
+};
+$('btnValidateLocalDataSource').onclick = async () => {
+  const selectionId = $('localDataSourceSheet').value;
+  if (!localDataSourceInspection || !selectionId) { toast('请先读取并选择工作表'); return; }
+  const button = $('btnValidateLocalDataSource');
+  button.disabled = true;
+  localDataSourceValidation = null;
+  $('btnCommitLocalDataSource').disabled = true;
+  try {
+    const result = await api('/api/local-config/data-sources/validate', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({inspectionId:localDataSourceInspection.inspectionId, selectionId})
+    });
+    localDataSourceValidation = result;
+    $('btnCommitLocalDataSource').disabled = false;
+    $('localDataSourceSetupState').textContent = `字段校验通过：${result.sheetName || '工作表'} · ${result.cellRange || '范围已确认'} · ${Number(result.headerCount || 0)} 个表头。`;
+  } catch (error) {
+    $('localDataSourceSetupState').textContent = '字段校验失败：' + error.message;
+    toast(error.message);
+  } finally {
+    button.disabled = false;
+  }
+};
+$('btnCommitLocalDataSource').onclick = async () => {
+  if (!localDataSourceValidation || !localDataSourceValidation.validationId) { toast('请先通过工作表字段校验'); return; }
+  const scope = $('localDataSourceScope').value;
+  if (scope === 'team' && !localDataSourceIsAdmin()) { toast('只有管理员可以保存团队数据源'); return; }
+  const savePath = scope === 'team'
+    ? '/api/local-config/data-sources/team'
+    : '/api/local-config/data-sources/personal';
+  const result = await mutateLocalDataSource(
+    savePath,
+    {validationId:localDataSourceValidation.validationId, setDefault:scope === 'team' && $('localDataSourceSetDefault').checked},
+    scope === 'team' ? '团队数据源已安全保存' : '个人数据源已安全保存并设为默认');
+  if (result) resetLocalDataSourceSetup('数据源已保存；页面不会回显表格链接或私有标识。');
+};
 $('btnLocalDataSourcesRefresh').onclick = () => loadLocalDataSources({notify:true});
+$('btnRefreshLocalBindingOptions').onclick = () => loadLocalBindingOptions({notify:true});
 $('localDataSourceList').onclick = event => {
   const button = event.target.closest('[data-local-source-action]');
   if (!button) return;
@@ -10220,6 +10406,11 @@ $('btnSaveTeamDataSource').onclick = () => {
   if (!sourceId) { toast('请选择团队默认数据源'); return; }
   mutateLocalDataSource('/api/local-config/data-sources/team-default', {sourceId}, '团队默认数据源已更新');
 };
+$('btnClearTeamDataSource').onclick = () => {
+  if (!localDataSourceState || !localDataSourceState.teamDefaultDataSourceId) return;
+  if (!confirm('清除团队默认数据源？没有个人默认或环境精确映射的成员将停止读取采购助手数据。')) return;
+  mutateLocalDataSource('/api/local-config/data-sources/team-default/clear', {}, '团队默认数据源已清除');
+};
 $('btnSaveEnvironmentDataSource').onclick = () => {
   const memberId = $('localBindingMemberId').value.trim();
   const containerCode = $('localBindingContainerCode').value.trim();
@@ -10228,6 +10419,14 @@ $('btnSaveEnvironmentDataSource').onclick = () => {
   if (!containerCode || !/^[A-Za-z0-9._:-]{1,128}$/.test(containerCode)) { toast('请输入有效的 HubStudio containerCode，不能使用环境名'); return; }
   if (!sourceId) { toast('请选择环境数据源'); return; }
   mutateLocalDataSource('/api/local-config/data-sources/environment-binding', {memberId, containerCode, sourceId}, '环境数据源映射已保存');
+};
+$('localEnvironmentBindingList').onclick = event => {
+  const button = event.target.closest('[data-local-binding-remove]');
+  if (!button) return;
+  const memberId = button.dataset.memberId || '';
+  const containerCode = button.dataset.containerCode || '';
+  if (!confirm(`删除“${localDataSourceEnvironmentLabel(containerCode)}”与“${localDataSourceMemberLabel(memberId)}”的精确映射？`)) return;
+  mutateLocalDataSource('/api/local-config/data-sources/environment-binding/remove', {memberId, containerCode}, '环境数据源映射已删除');
 };
 
 async function loadLarkConnectionPage() {

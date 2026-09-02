@@ -109,6 +109,10 @@ def _member_source_id(member_id, token, sheet_id, cell_range):
         'personal:' + _member_id(member_id), token, sheet_id, cell_range)
 
 
+def _team_source_id(token, sheet_id, cell_range):
+    return _legacy_source_id('team', token, sheet_id, cell_range)
+
+
 def _normalize_source(item):
     if not isinstance(item, dict):
         raise DataSourceRegistryError('数据源记录必须是对象')
@@ -487,6 +491,47 @@ class DataSourceRegistry(object):
         result['dataSourceId'] = wanted
         return result
 
+    def upsert_team(self, target, set_default=False,
+                    expected_revision=None):
+        if not isinstance(target, dict):
+            raise DataSourceRegistryError('团队数据源目标格式无效')
+        token = _private_id(
+            target.get('spreadsheetToken'), '飞书 Spreadsheet Token')
+        sheet_id = _private_id(target.get('sheetId'), '飞书 Sheet ID')
+        cell_range = _cell_range(target.get('cellRange'))
+        sheet_name = _plain_text(
+            target.get('sheetName'), '工作表名称', 255, allow_blank=True)
+        wanted = _team_source_id(token, sheet_id, cell_range)
+        label = ('团队采购表 · ' + sheet_name) if sheet_name else '团队采购表'
+
+        def update(current, _submitted):
+            candidate = copy.deepcopy(current)
+            record = {
+                'id': wanted,
+                'scope': 'team',
+                'ownerMemberId': '',
+                'label': label[:120],
+                'spreadsheetToken': token,
+                'sheetId': sheet_id,
+                'cellRange': cell_range,
+                'sheetName': sheet_name,
+                'enabled': True,
+                'migrationState': 'ready',
+            }
+            candidate['dataSources'] = [
+                item for item in candidate['dataSources']
+                if item['id'] != wanted
+            ] + [record]
+            if set_default:
+                candidate['teamDefaultDataSourceId'] = wanted
+            return candidate
+
+        result = self.service.commit_patch(
+            {}, update, expected_revision=expected_revision,
+            source='upsert_team_data_source')
+        result['dataSourceId'] = wanted
+        return result
+
     def set_buyer_default(self, member_id, source_id,
                           expected_revision=None):
         member = _member_id(member_id)
@@ -581,6 +626,24 @@ class DataSourceRegistry(object):
             {}, update, expected_revision=expected_revision,
             source='environment_data_source_binding')
 
+    def unbind_environment(self, container_code, member_id,
+                           expected_revision=None):
+        container = _container_code(container_code)
+        member = _member_id(member_id)
+
+        def update(current, _submitted):
+            candidate = copy.deepcopy(current)
+            candidate['environmentBindings'] = [
+                item for item in candidate['environmentBindings']
+                if (item['containerCode'], item['memberId'])
+                != (container, member)
+            ]
+            return candidate
+
+        return self.service.commit_patch(
+            {}, update, expected_revision=expected_revision,
+            source='remove_environment_data_source_binding')
+
     def set_team_default(self, source_id, expected_revision=None):
         wanted = _source_id(source_id)
 
@@ -597,6 +660,16 @@ class DataSourceRegistry(object):
         return self.service.commit_patch(
             {}, update, expected_revision=expected_revision,
             source='team_default_data_source')
+
+    def clear_team_default(self, expected_revision=None):
+        def update(current, _submitted):
+            candidate = copy.deepcopy(current)
+            candidate['teamDefaultDataSourceId'] = ''
+            return candidate
+
+        return self.service.commit_patch(
+            {}, update, expected_revision=expected_revision,
+            source='clear_team_default_data_source')
 
     def team_default(self, allowed_data_source_ids=None):
         registry = self.service.load()

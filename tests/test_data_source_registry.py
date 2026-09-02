@@ -196,6 +196,51 @@ class DataSourceRegistryTests(unittest.TestCase):
         self.assertEqual(runtime['purchaseAssistantTeamSpreadsheetToken'], '')
         self.assertRegex(second['configRevision'], r'^[0-9a-f]{64}$')
 
+    def test_fresh_install_can_create_and_clear_team_source_policy(self):
+        created = self.registry.upsert_team({
+            'spreadsheetToken': 'SpreadsheetFreshTeam123',
+            'sheetId': 'sheet_fresh_team',
+            'cellRange': 'A1:AQ',
+            'sheetName': '全新安装团队表',
+        }, set_default=True)
+
+        source = self.registry.resolve(
+            MEMBER_B, allow_team_default=True)
+        public = self.registry.public_snapshot(MEMBER_A, include_all=True)
+        rendered = json.dumps(public, ensure_ascii=False)
+
+        self.assertEqual(source['scope'], 'team')
+        self.assertEqual(
+            public['teamDefaultDataSourceId'], created['dataSourceId'])
+        self.assertNotIn('SpreadsheetFreshTeam123', rendered)
+        self.assertNotIn('sheet_fresh_team', rendered)
+
+        cleared = self.registry.clear_team_default(
+            expected_revision=created['configRevision'])
+        self.assertEqual(
+            cleared['config']['teamDefaultDataSourceId'], '')
+        with self.assertRaises(DataSourceMappingRequired):
+            self.registry.resolve(MEMBER_B, allow_team_default=True)
+
+    def test_environment_binding_can_be_removed_without_removing_source(self):
+        created = self.registry.upsert_team({
+            'spreadsheetToken': 'SpreadsheetFreshTeam123',
+            'sheetId': 'sheet_fresh_team',
+            'cellRange': 'A1:AQ',
+            'sheetName': '全新安装团队表',
+        })
+        bound = self.registry.bind_environment(
+            'container-009', MEMBER_A, created['dataSourceId'],
+            expected_revision=created['configRevision'])
+        removed = self.registry.unbind_environment(
+            'container-009', MEMBER_A,
+            expected_revision=bound['configRevision'])
+
+        self.assertEqual(removed['config']['environmentBindings'], [])
+        self.assertEqual(len(removed['config']['dataSources']), 1)
+        with self.assertRaises(DataSourceMappingRequired):
+            self.registry.resolve(MEMBER_A, container_code='container-009')
+
     def test_clearing_personal_default_uses_only_explicit_team_policy(self):
         snapshot = self.registry.migrate_legacy(legacy_config())
         personal_id = next(
@@ -305,6 +350,63 @@ class FakeAuth(object):
         }
 
 
+class FakePurchaseAssistant(object):
+    def __init__(self):
+        self.consume_count = 0
+
+    def inspect_source(self, spreadsheet_url, owner_key=''):
+        if spreadsheet_url != 'https://example.test/sheets/fresh':
+            raise AssertionError('unexpected spreadsheet URL')
+        return {
+            'inspectionId': 'inspection-safe',
+            'sheets': [{
+                'selectionId': 'selection-safe',
+                'sheetName': '测试工作表',
+                'rowCount': 20,
+                'columnCount': 43,
+                'hidden': False,
+            }],
+            'expiresInSeconds': 600,
+            '_ownerForTest': owner_key,
+        }
+
+    def validate_source(self, inspection_id, selection_id, owner_key=''):
+        if (inspection_id, selection_id) != (
+                'inspection-safe', 'selection-safe'):
+            raise AssertionError('unexpected inspection selection')
+        return {
+            'validationId': 'validation-safe',
+            'sheetName': '测试工作表',
+            'cellRange': 'A1:AQ',
+            'headerCount': 43,
+            'requiredFieldCount': 8,
+            '_ownerForTest': owner_key,
+        }
+
+    def consume_validated_target(self, validation_id, owner_key=''):
+        if validation_id != 'validation-safe' or owner_key != MEMBER_A:
+            raise AssertionError('unexpected validation owner')
+        self.consume_count += 1
+        return {
+            'spreadsheetToken': 'SpreadsheetFreshRoute123',
+            'sheetId': 'sheet_fresh_route',
+            'cellRange': 'A1:AQ',
+            'sheetName': '测试工作表',
+        }
+
+
+class FakeHub(object):
+    def list_environment_summaries(self, query='', limit=100):
+        self.query = query
+        self.limit = int(limit)
+        return [{
+            'containerCode': 'container-001',
+            'serialNumber': '7',
+            'containerName': '脱敏测试环境',
+            'tagName': '采购组',
+        }]
+
+
 class DataSourceRegistryRouteTests(unittest.TestCase):
     def setUp(self):
         self.original_state = main_module.STATE
@@ -313,9 +415,12 @@ class DataSourceRegistryRouteTests(unittest.TestCase):
             Path(self.tempdir.name) / 'local-bindings-v1.json')
         self.registry.migrate_legacy(legacy_config())
         self.auth = FakeAuth()
+        self.purchase_assistant = FakePurchaseAssistant()
         main_module.STATE = type('State', (), {
             'auth': self.auth,
             'data_sources': self.registry,
+            'purchase_assistant': self.purchase_assistant,
+            'hub': FakeHub(),
         })()
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         self.thread = threading.Thread(
@@ -382,6 +487,114 @@ class DataSourceRegistryRouteTests(unittest.TestCase):
         self.assertEqual(
             saved['environmentBindings'][0]['containerCode'],
             'container-001')
+
+    def test_current_member_can_create_personal_source_on_fresh_install(self):
+        self.registry = DataSourceRegistry(
+            Path(self.tempdir.name) / 'fresh-bindings-v1.json')
+        main_module.STATE.data_sources = self.registry
+        initial = self._request('/api/local-config/data-sources')
+        inspected = self._request(
+            '/api/local-config/data-sources/inspect', {
+                'spreadsheetUrl': 'https://example.test/sheets/fresh',
+            })
+        checked = self._request(
+            '/api/local-config/data-sources/validate', {
+                'inspectionId': inspected['inspectionId'],
+                'selectionId': inspected['sheets'][0]['selectionId'],
+            })
+        saved = self._request(
+            '/api/local-config/data-sources/personal', {
+                'validationId': checked['validationId'],
+                'expectedRevision': initial['registryRevision'],
+            })
+        rendered = json.dumps(saved, ensure_ascii=False)
+
+        self.assertTrue(saved['saved'])
+        self.assertEqual(saved['dataSources'][0]['scope'], 'personal')
+        self.assertEqual(saved['buyerProfiles'][0]['memberId'], MEMBER_A)
+        self.assertNotIn('SpreadsheetFreshRoute123', rendered)
+        self.assertNotIn('sheet_fresh_route', rendered)
+
+    def test_team_source_and_environment_options_require_admin(self):
+        initial = self._request('/api/local-config/data-sources')
+        body = {
+            'validationId': 'validation-safe',
+            'setDefault': True,
+            'expectedRevision': initial['registryRevision'],
+        }
+        with self.assertRaises(urllib.error.HTTPError) as denied:
+            self._request('/api/local-config/data-sources/team', body)
+        self.assertEqual(denied.exception.code, 403)
+        with self.assertRaises(urllib.error.HTTPError) as options_denied:
+            self._request(
+                '/api/local-config/data-sources/environment-options')
+        self.assertEqual(options_denied.exception.code, 403)
+
+        self.auth.roles = ['admin']
+        saved = self._request('/api/local-config/data-sources/team', body)
+        options = self._request(
+            '/api/local-config/data-sources/environment-options?query=test')
+        fresh_team = next(
+            item for item in saved['dataSources']
+            if item['label'] == '团队采购表 · 测试工作表')
+
+        self.assertTrue(saved['saved'])
+        self.assertEqual(fresh_team['scope'], 'team')
+        self.assertEqual(
+            saved['teamDefaultDataSourceId'], fresh_team['id'])
+        self.assertEqual(options['environments'][0]['containerCode'],
+                         'container-001')
+
+    def test_admin_can_remove_mapping_and_clear_team_default(self):
+        self.auth.roles = ['admin']
+        initial = self._request('/api/local-config/data-sources')
+        team_id = next(
+            item['id'] for item in initial['dataSources']
+            if item['scope'] == 'team')
+        policy = self._request(
+            '/api/local-config/data-sources/team-default', {
+                'sourceId': team_id,
+                'expectedRevision': initial['registryRevision'],
+            })
+        bound = self._request(
+            '/api/local-config/data-sources/environment-binding', {
+                'memberId': MEMBER_A,
+                'containerCode': 'container-001',
+                'sourceId': team_id,
+                'expectedRevision': policy['registryRevision'],
+            })
+        removed = self._request(
+            '/api/local-config/data-sources/environment-binding/remove', {
+                'memberId': MEMBER_A,
+                'containerCode': 'container-001',
+                'expectedRevision': bound['registryRevision'],
+            })
+        cleared = self._request(
+            '/api/local-config/data-sources/team-default/clear', {
+                'expectedRevision': removed['registryRevision'],
+            })
+
+        self.assertEqual(removed['environmentBindings'], [])
+        self.assertEqual(cleared['teamDefaultDataSourceId'], '')
+
+    def test_stale_revision_does_not_consume_validated_source(self):
+        initial = self._request('/api/local-config/data-sources')
+        team_id = next(
+            item['id'] for item in initial['dataSources']
+            if item['scope'] == 'team')
+        self.registry.set_team_default(
+            team_id, expected_revision=initial['registryRevision'])
+
+        with self.assertRaises(urllib.error.HTTPError) as stale:
+            self._request('/api/local-config/data-sources/personal', {
+                'validationId': 'validation-safe',
+                'expectedRevision': initial['registryRevision'],
+            })
+
+        payload = json.loads(stale.exception.read().decode('utf-8'))
+        self.assertEqual(stale.exception.code, 409)
+        self.assertEqual(payload['code'], 'config_revision_conflict')
+        self.assertEqual(self.purchase_assistant.consume_count, 0)
 
 
 if __name__ == '__main__':
