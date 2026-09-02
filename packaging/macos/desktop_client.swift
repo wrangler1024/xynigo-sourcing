@@ -1015,12 +1015,32 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         }
         let install = status.update.state == "available"
         if install {
+            guard let hostWindow = window else {
+                showAlert(
+                    "无法显示更新确认",
+                    "请重新打开桌面客户端后再试。",
+                    .warning)
+                return
+            }
             let alert = NSAlert()
             alert.messageText = "确认更新 Xynigo"
             alert.informativeText = "将下载并校验新版本，随后由系统安装器完成更新。"
             alert.addButton(withTitle: "继续更新")
-            alert.addButton(withTitle: "取消")
-            if alert.runModal() != .alertFirstButtonReturn { return }
+            let cancelButton = alert.addButton(withTitle: "取消")
+            cancelButton.keyEquivalent = "\u{1b}"
+            alert.beginSheetModal(for: hostWindow) { [weak self] response in
+                guard response == .alertFirstButtonReturn else { return }
+                self?.beginUpdateRequest(install: true)
+            }
+            return
+        }
+        beginUpdateRequest(install: false)
+    }
+
+    private func beginUpdateRequest(install: Bool) {
+        if install, (lastStatus?.tasks.activeCount ?? 0) > 0 {
+            showAlert("任务执行中", "请等待当前本机任务完成后再更新。", .warning)
+            return
         }
         publishUpdateState(
             install ? "downloading" : "checking",

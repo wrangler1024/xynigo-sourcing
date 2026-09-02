@@ -219,6 +219,14 @@ class MacOSStandardInstallerContractTests(unittest.TestCase):
                 '/usr/bin/open',
                 '等待系统安装器完成更新'):
             self.assertIn(marker, self.launcher)
+        update_handler = self.launcher[
+            self.launcher.index('@objc private func handleUpdate()'):
+            self.launcher.index('private func postControl(')
+        ]
+        self.assertIn('beginSheetModal(for: hostWindow)', update_handler)
+        self.assertIn('cancelButton.keyEquivalent = "\\u{1b}"',
+                      update_handler)
+        self.assertNotIn('runModal()', update_handler)
         self.assertIn("sys.platform == 'darwin'", self.main)
         self.assertIn("'onlineUpdate': True", self.builder)
         self.assertIn(
