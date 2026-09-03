@@ -12,9 +12,9 @@ from urllib.parse import quote
 from . import __version__
 
 
-RELEASE_VERSION = "0.13.18"
+RELEASE_VERSION = "0.13.19"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-03T06:50:28Z"
+RELEASE_PUBLISHED_AT = "2026-09-03T07:07:15Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -29,8 +29,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.13.18-9d259397f7b0",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.18.exe",
+        "runtimeId": "0.13.19-18697c3db45b",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.19.exe",
         "sha256": "82ab0ac064ad80e0db5ad1d29e02381558387105511e8a27472467980deb1605",
         "size": 15_179_356,
         "installMode": "standard_per_user",
@@ -48,8 +48,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.13.18-9d259397f7b0",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.18.pkg",
+        "runtimeId": "0.13.19-18697c3db45b",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.19.pkg",
         "sha256": "1de1f3757bb2845181143f8474cb85c63a86039fde294658c833ff13501ace88",
         "size": 11_453_795,
         "installMode": "standard_system_application",
@@ -234,11 +234,10 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "物流查询启动前会验证目标环境可真实启动并返回调试端口。",
-            "HubStudio 浏览器内核缺失等系统故障会立即终止整批任务。",
-            "运行时内核故障会即时下调 HubStudio 状态，避免存活误报。",
-            "云端仅在执行器在线且 HubStudio 状态为 ready 时创建任务。",
-            "桌面客户端本机任务状态卡可查看实时脱敏任务明细。",
+            "Windows 主窗口仅在新版桌面页面完成就绪握手后显示。",
+            "正常启动与 WebView2 重试期间不再闪现原生兼容状态页。",
+            "WebView2 连续加载失败后仍会安全切换到原生兼容页。",
+            "云端物流任务继续要求执行器版本不低于 v0.13.18。",
             "Windows 与 macOS 从同一 Git 基线同步构建并发布。",
             "稳定通道强制平台签名门槛；内部未签名包仅允许 test 通道。",
         ],
