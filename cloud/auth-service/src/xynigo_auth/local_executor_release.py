@@ -14,7 +14,7 @@ from . import __version__
 
 RELEASE_VERSION = "0.13.18"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-03T06:42:30Z"
+RELEASE_PUBLISHED_AT = "2026-09-03T06:50:28Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -29,10 +29,10 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.13.18-23389d01f04e",
+        "runtimeId": "0.13.18-9d259397f7b0",
         "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.18.exe",
-        "sha256": "cd31b297b9ba4fd9717efc1bb6730b1b588f1bb2fda301207c4ffda561023fac",
-        "size": 15_176_101,
+        "sha256": "82ab0ac064ad80e0db5ad1d29e02381558387105511e8a27472467980deb1605",
+        "size": 15_179_356,
         "installMode": "standard_per_user",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_silent_installer",
@@ -48,10 +48,10 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.13.18-23389d01f04e",
+        "runtimeId": "0.13.18-9d259397f7b0",
         "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.18.pkg",
-        "sha256": "67490b6f64d6f68a5d52ff13933ef3a220e7e3d91227ac21d2fd1e08b231813a",
-        "size": 11_449_987,
+        "sha256": "1de1f3757bb2845181143f8474cb85c63a86039fde294658c833ff13501ace88",
+        "size": 11_453_795,
         "installMode": "standard_system_application",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_system_installer",
@@ -234,10 +234,11 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "Windows HubStudio 检测要求至少一个进程拥有有效主窗口。",
-            "忽略退出主界面后残留的无窗口 Hubstudio 后台子进程。",
-            "进程检查使用隐藏的本机 PowerShell，不会弹出控制台窗口。",
-            "继续保留执行设备刷新记忆与 HubStudio 三态展示。",
+            "物流查询启动前会验证目标环境可真实启动并返回调试端口。",
+            "HubStudio 浏览器内核缺失等系统故障会立即终止整批任务。",
+            "运行时内核故障会即时下调 HubStudio 状态，避免存活误报。",
+            "云端仅在执行器在线且 HubStudio 状态为 ready 时创建任务。",
+            "桌面客户端本机任务状态卡可查看实时脱敏任务明细。",
             "Windows 与 macOS 从同一 Git 基线同步构建并发布。",
             "稳定通道强制平台签名门槛；内部未签名包仅允许 test 通道。",
         ],
