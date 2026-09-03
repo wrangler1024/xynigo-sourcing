@@ -3605,6 +3605,7 @@ function cloudLogisticsLegacySnapshot(run) {
 function logisticsRunFailureText(code) {
   return ({
     executor_offline:'所选本地执行器已离线，请启动执行器并重新选择设备',
+    executor_upgrade_required:'所选执行器版本过旧，请先在线更新到 v0.13.18 或更高版本',
     executor_hub_unavailable:'所选执行器尚未确认 HubStudio 可用，请先启动并检查 HubStudio',
     hubstudio_client_not_running:'所选电脑未检测到 HubStudio，请启动 HubStudio 后重试',
     hubstudio_local_api_unreachable:'无法连接所选电脑的 HubStudio Local API，请检查 HubStudio 本地 API 设置',
@@ -6505,7 +6506,7 @@ function render(snap) {
     && !lastRows.length && snap.errorCode;
   const terminalSystemFailure = !isRunning && snap.terminal
     && !!snap.errorCode && [
-      'executor_offline', 'executor_hub_unavailable',
+      'executor_offline', 'executor_upgrade_required', 'executor_hub_unavailable',
       'hubstudio_client_not_running', 'hubstudio_local_api_unreachable',
       'hubstudio_local_api_timeout', 'hubstudio_browser_core_missing',
       'hubstudio_browser_launch_invalid'

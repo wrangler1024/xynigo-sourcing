@@ -117,12 +117,13 @@ def heartbeat(
     capabilities: list[str] | None = None,
     config_summary: dict[str, object] | None = None,
     hub_status: str = "ready",
+    client_version: str = "0.13.18",
 ) -> dict[str, object]:
     body = {
         "waitSeconds": 0,
         "configRevision": revision,
         "hubStatus": hub_status,
-        "clientVersion": "0.12.5",
+        "clientVersion": client_version,
         "protocolVersion": 1,
         "capabilities": capabilities
         or ["config.read.v1", "config.write.v1"],
@@ -1621,6 +1622,25 @@ def test_formal_logistics_run_requires_online_executor_and_ready_hubstudio(
         assert unavailable.status_code == 409, unavailable.text
         assert unavailable.json()["detail"]["code"] == \
             "executor_hub_unavailable"
+
+        heartbeat(
+            device_client,
+            credential,
+            capabilities=capabilities,
+            hub_status="ready",
+            client_version="0.13.17",
+        )
+        upgrade_required = web_client.post(
+            "/v1/operation-runs/logistics-query",
+            json={
+                **base_payload,
+                "idempotencyKey": "logistics-upgrade-blocked-0001",
+            },
+            headers=CSRF,
+        )
+        assert upgrade_required.status_code == 409, upgrade_required.text
+        assert upgrade_required.json()["detail"]["code"] == \
+            "executor_upgrade_required"
 
 
 def test_formal_logistics_run_queues_ahead_of_background_workspace_read(

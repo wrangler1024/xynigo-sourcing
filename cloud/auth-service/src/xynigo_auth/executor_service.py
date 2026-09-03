@@ -60,6 +60,7 @@ BUSINESS_TASK_TYPES = frozenset(
         "environment.retry-failed.v1",
     }
 )
+MIN_SAFE_LOGISTICS_CLIENT_VERSION = (0, 13, 18)
 BACKGROUND_TASK_TYPES = frozenset(
     {"config.read.v1", "workspace.rpc.v1", "workspace.snapshot.v1"}
 )
@@ -71,6 +72,19 @@ ENCRYPTED_TASK_TYPES = frozenset(
         *BUSINESS_TASK_TYPES,
     }
 )
+
+
+def _client_version_tuple(value: object) -> tuple[int, int, int]:
+    core = str(value or '').strip().split('-', 1)[0]
+    parts = core.split('.')
+    if len(parts) < 3:
+        return (0, 0, 0)
+    try:
+        return tuple(int(part) for part in parts[:3])
+    except (TypeError, ValueError):
+        return (0, 0, 0)
+
+
 TERMINAL_TASK_STATUSES = frozenset(
     {"succeeded", "failed", "uncertain", "cancelled"}
 )
@@ -453,6 +467,14 @@ class ExecutorChannelService:
         if task_type in BUSINESS_TASK_TYPES and executor.hub_status != "ready":
             raise ExecutorServiceError(
                 "executor_hub_unavailable", status_code=409
+            )
+        if (
+            task_type == "logistics.query.v1"
+            and _client_version_tuple(executor.client_version)
+            < MIN_SAFE_LOGISTICS_CLIENT_VERSION
+        ):
+            raise ExecutorServiceError(
+                "executor_upgrade_required", status_code=409
             )
         if task_type not in set(executor.capabilities or []):
             raise ExecutorServiceError("executor_capability_missing", status_code=409)
