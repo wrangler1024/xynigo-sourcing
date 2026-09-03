@@ -2,7 +2,23 @@
 import base64
 import unittest
 
-from purchase_tool.cdp import PageTarget
+from purchase_tool.cdp import CdpClient, PageTarget
+
+
+class CdpVersionTests(unittest.TestCase):
+    def test_version_info_returns_only_browser_and_protocol(self):
+        client = CdpClient.__new__(CdpClient)
+        client._http = lambda path: {
+            'Browser': 'HeadlessChrome/148.0.0.0',
+            'Protocol-Version': '1.3',
+            'User-Agent': 'sensitive-full-fingerprint',
+            'webSocketDebuggerUrl': 'ws://127.0.0.1/devtools/browser/private',
+        } if path == '/json/version' else {}
+
+        self.assertEqual(client.version_info(), {
+            'browser': 'HeadlessChrome/148.0.0.0',
+            'protocolVersion': '1.3',
+        })
 
 
 class CdpScreenshotTests(unittest.TestCase):

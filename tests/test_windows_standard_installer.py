@@ -376,6 +376,16 @@ class LocalExecutorStatusContractTests(unittest.TestCase):
                 'resourceCount': 3,
             }],
         })
+        state.hub_core_repair = SimpleNamespace(snapshot=lambda: {
+            'state': 'required',
+            'running': False,
+            'browserType': 'chrome',
+            'coreVersion': '148',
+            'message': '检测到 HubStudio 浏览器内核缺失',
+            'errorCode': 'hubstudio_browser_core_missing',
+            'repairAvailable': True,
+            'auditState': 'not_started',
+        })
         state.updates = SimpleNamespace(snapshot=lambda: {
             'enabled': True,
             'state': 'available',
@@ -411,6 +421,11 @@ class LocalExecutorStatusContractTests(unittest.TestCase):
         self.assertTrue(payload['executor']['running'])
         self.assertTrue(payload['executor']['paired'])
         self.assertTrue(payload['hubStudio']['connected'])
+        self.assertEqual(
+            payload['hubStudio']['coreRepair']['state'], 'required')
+        self.assertTrue(payload['hubStudio']['coreRepair']['repairAvailable'])
+        self.assertNotIn(
+            'containerCode', str(payload['hubStudio']['coreRepair']))
         self.assertEqual(payload['tasks']['activeCount'], 1)
         task = payload['tasks']['items'][0]
         self.assertEqual(task['label'], '订单物流查询')

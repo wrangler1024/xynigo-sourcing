@@ -104,6 +104,17 @@ class DesktopUIContractTests(unittest.TestCase):
         self.assertIn('aria-label="', self.javascript)
         self.assertIn("state.taskDetailsOpen = false", self.javascript)
 
+    def test_hub_core_repair_requires_confirmation_and_shows_audit_state(self):
+        rendered = self.javascript + self.css
+        for marker in (
+                'coreRepairPanel', 'repair-hub-core',
+                'confirm-hub-core-repair', '/api/hub-core-repair/start',
+                '下载并修复 HubStudio 内核', '下载后自动验证',
+                '全程写入脱敏审计日志', 'auditState',
+                '.core-repair-panel'):
+            self.assertIn(marker, rendered)
+        self.assertIn('不会从第三方地址下载安装程序', self.javascript)
+
     def test_windows_launcher_receives_desktop_ready_handshake(self):
         self.assertIn(
             "nativeAction('desktop-ready',{platform:platform,"

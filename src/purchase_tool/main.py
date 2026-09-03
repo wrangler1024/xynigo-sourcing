@@ -84,6 +84,7 @@ from .executor_channel import (
 from .operation_executor import LocalOperationExecutor, backup_account_ref
 from .extension_bridge import ExtensionBridge, ExtensionBridgeError
 from .hub_api import HubApiError, HubStudioApi, DEFAULT_PORT
+from .hub_core_repair import HubCoreRepairCoordinator, HubCoreRepairError
 from .hub_api_key import (
     HubApiKeyStoreError, public_hub_api_key_status,
     system_hub_api_key_store)
@@ -133,6 +134,7 @@ CONFIG_PATH = os.path.join(DATA_DIR, 'config.json')
 LOCAL_BINDINGS_PATH = os.path.join(
     DATA_DIR, '运行数据', 'local-bindings-v1.json')
 LOG_DIR = os.path.join(DATA_DIR, '查询日志')
+HUB_CORE_AUDIT_PATH = os.path.join(LOG_DIR, 'hub-core-repair-audit.jsonl')
 PURCHASE_ASSISTANT_API_PREFIX = '/api/purchase-assistant/v1'
 DATA_SOURCE_API_PREFIX = '/api/local-config/data-sources'
 
@@ -243,6 +245,8 @@ AUTH_PERMISSION_BY_PATH = {
     '/api/lark/target-metadata': 'system.lark_connection.manage',
     '/api/lark/preflight': 'system.lark_connection.manage',
     '/api/hub-api-key': 'system.integration.manage',
+    '/api/hub-core-repair/status': 'system.integration.manage',
+    '/api/hub-core-repair/start': 'system.integration.manage',
     '/api/extension/pair/approve': 'operations.access',
     '/api/procurement/claims': 'procurement.execution.manage',
     '/api/assistant/procurement-import/parse': 'assistant.access',
@@ -1027,6 +1031,12 @@ class AppState(object):
         self.tasks = LocalTaskCoordinator(
             lambda: bool(self.cfg.get('safeParallelTasks')))
         self.hub = self._build_hub_adapter()
+        self.hub_core_repair = HubCoreRepairCoordinator(
+            lambda: self.hub, self.tasks, HUB_CORE_AUDIT_PATH,
+            device_info_getter=lambda: {
+                **ExecutorChannelStateStore().load(),
+                'clientVersion': __version__,
+            })
         self._hub_status = HubStatusCache(lambda: self.hub)
         self._hub_reads = HubReadCache()
         self.orch = QueryOrchestrator(
@@ -1409,6 +1419,35 @@ class AppState(object):
                             'HubStudio 自动化暂不可用'),
             }
         hub_ok = bool(hub_capability.get('available'))
+        raw_core_repair = (
+            self.hub_core_repair.snapshot()
+            if hasattr(self, 'hub_core_repair') else {
+                'state': 'idle', 'running': False,
+                'browserType': '', 'coreVersion': '',
+                'message': '', 'errorCode': '',
+                'repairAvailable': False,
+            })
+        core_repair = {
+            'state': str(raw_core_repair.get('state') or 'idle'),
+            'running': bool(raw_core_repair.get('running')),
+            'browserType': str(
+                raw_core_repair.get('browserType') or '')[:16],
+            'coreVersion': str(
+                raw_core_repair.get('coreVersion') or '')[:8],
+            'message': scrub_text(
+                raw_core_repair.get('message') or '')[:240],
+            'errorCode': str(
+                raw_core_repair.get('errorCode') or '')[:80],
+            'repairAvailable': bool(
+                raw_core_repair.get('repairAvailable')),
+            'auditState': str(
+                raw_core_repair.get('auditState') or '')[:32],
+            'startedAt': raw_core_repair.get('startedAt'),
+            'finishedAt': raw_core_repair.get('finishedAt'),
+        }
+        required_core = hub_capability.get('requiredCore')
+        required_core = required_core if isinstance(required_core, dict) \
+            else {}
         channel_status = str(channel.get('status') or 'not_paired')
         paired = bool(channel.get('executorId')) and channel_status not in {
             'not_paired', 'revoked', 'credential_error'}
@@ -1458,6 +1497,13 @@ class AppState(object):
                 'reasonCode': str(
                     hub_capability.get('reasonCode') or ''),
                 'message': str(hub_capability.get('message') or ''),
+                'requiredCore': ({
+                    'browserType': str(
+                        required_core.get('browserType') or '')[:16],
+                    'version': str(
+                        required_core.get('version') or '')[:8],
+                } if required_core else {}),
+                'coreRepair': core_repair,
             },
             'tasks': {
                 'activeCount': len(safe_tasks),
@@ -3632,6 +3678,8 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/hub-status':
                 ok, err = STATE.hub_status(force=True)
                 self._json({'connected': ok, 'error': err})
+            elif path == '/api/hub-core-repair/status':
+                self._json(STATE.hub_core_repair.snapshot())
             elif path == '/api/update/status':
                 STATE.updates.check_async()
                 self._json(STATE.updates.snapshot())
@@ -3983,6 +4031,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(STATE.save_hub_api_key(
                     value=body.get('apiKey'),
                     clear=bool(body.get('clear'))))
+            elif path == '/api/hub-core-repair/start':
+                self._json(
+                    STATE.hub_core_repair.start(actor=request_identity), 202)
             elif path.startswith('/api/admin/'):
                 cloud_path, cloud_method = admin_cloud_write_target(path)
                 self._json(STATE.auth.admin_request(
@@ -4717,6 +4768,8 @@ class Handler(BaseHTTPRequestHandler):
                     'error': str(e),
                     'code': 'source_invalid',
                 }, 422)
+        except HubCoreRepairError as e:
+            self._json({'error': str(e), 'code': e.code}, e.status)
         except HubApiError as e:
             self._json({
                 'error': str(e),

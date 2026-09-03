@@ -12,6 +12,7 @@ TASK_LABELS = {
     'env_batch': '买家号建环境',
     'backup_env': '备用/测试环境创建',
     'config': '本地配置更新',
+    'hub_core_repair': 'HubStudio 内核修复',
 }
 
 

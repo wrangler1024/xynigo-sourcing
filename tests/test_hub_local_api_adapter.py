@@ -131,9 +131,36 @@ class HubStudioLocalApiAdapterTests(unittest.TestCase):
         self.assertTrue(capability['clientRunning'])
         self.assertEqual(
             capability['reasonCode'], 'hubstudio_browser_core_missing')
+        self.assertEqual(capability['requiredCore'], {
+            'browserType': 'chrome', 'version': '148'})
+        self.assertEqual(adapter.core_requirement_snapshot(), {
+            'known': True,
+            'browserType': 'chrome',
+            'version': '148',
+            'containerCode': 'container-test-1',
+        })
         # The stronger runtime failure must override a superficially healthy
         # group/list heartbeat without another Local API request.
         self.assertEqual(len(opener.calls), 1)
+
+    def test_download_core_uses_official_local_api_contract(self):
+        opener = FakeLocalApiOpener()
+        adapter = HubStudioLocalApiAdapter(
+            opener=opener, client_running_getter=lambda: True,
+            retries=1, timeout=1)
+
+        adapter.download_core('chrome', '148')
+
+        self.assertEqual(opener.calls[-1][1:3], (
+            '/browser/download-core',
+            {'Cores': [{'BrowserType': 1, 'Version': '148'}]},
+        ))
+        self.assertGreaterEqual(opener.timeouts[-1], 1200)
+        with self.assertRaises(HubApiError) as caught:
+            adapter.download_core('webkit', 'latest')
+        self.assertEqual(
+            caught.exception.reason_code,
+            'hubstudio_core_download_target_invalid')
 
     def test_healthy_api_requires_running_client_process(self):
         process_checks = []

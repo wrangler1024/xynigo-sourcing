@@ -502,6 +502,8 @@ class QueryOrchestrator(object):
             self._record_systemic_hub_failure(exc, fail_rows=False)
             raise
         target_code = ''
+        target_browser_type = ''
+        target_core_version = ''
         for serial in serials:
             env = index.get(serial)
             if not env:
@@ -513,6 +515,9 @@ class QueryOrchestrator(object):
             code = str(env.get('containerCode') or '').strip()
             if code and code not in open_codes:
                 target_code = code
+                target_browser_type = str(
+                    env.get('browser') or 'chrome').casefold()
+                target_core_version = str(env.get('coreVersion') or '')
                 break
         if not target_code:
             return {'checked': False}
@@ -532,6 +537,14 @@ class QueryOrchestrator(object):
                     'hubstudio_browser_launch_invalid')
             return {'checked': True, 'debuggingPort': debugging_port}
         except HubApiError as exc:
+            marker = getattr(self.hub, 'mark_runtime_failure', None)
+            if (callable(marker)
+                    and exc.reason_code == 'hubstudio_browser_core_missing'):
+                marker(
+                    exc.reason_code, str(exc),
+                    browser_type=(exc.browser_type or target_browser_type),
+                    core_version=(exc.core_version or target_core_version),
+                    container_code=target_code)
             self._record_systemic_hub_failure(exc, fail_rows=False)
             raise
         finally:

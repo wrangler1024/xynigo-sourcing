@@ -439,12 +439,30 @@
   function diagnosticRow(iconName, title, detail, ok) {
     return '<div class="diagnostic-row"><span class="row-icon">' + icon(iconName) + '</span><div><b>' + title + '</b><p>' + esc(detail) + '</p></div>' + icon(ok ? 'check' : 'alert') + '</div>';
   }
+  function coreTypeLabel(value) {
+    return String(value || '').toLowerCase() === 'firefox' ? 'Firefox' : 'Chrome';
+  }
+  function coreRepairPanel(repair, activeCount, canRepair) {
+    repair = repair || {};
+    if (!repair.state || repair.state === 'idle') return '';
+    var running = !!repair.running;
+    var ready = repair.state === 'ready';
+    var failed = repair.state === 'failed';
+    var label = coreTypeLabel(repair.browserType) + ' ' + esc(repair.coreVersion || '未知版本');
+    var stage = repair.state === 'required' ? '等待确认' : (repair.state === 'downloading' ? '正在下载' : (repair.state === 'verifying' ? '正在验证' : (ready ? '验证通过' : '修复失败')));
+    var action = repair.repairAvailable && !running && canRepair
+      ? button(failed ? '重新下载并验证' : '下载并修复','repair-hub-core','download','primary',!!activeCount)
+      : (repair.repairAvailable && !canRepair ? '<span class="pill pill-warn">需超级管理员</span>' : '');
+    return '<section class="core-repair-panel ' + (ready ? 'ready' : (failed ? 'failed' : 'active')) + '"><span class="core-repair-icon">' + icon(ready ? 'check' : (failed ? 'alert' : 'download')) + '</span><div class="core-repair-copy"><b>HubStudio 内核修复 · ' + label + '</b><p>' + esc(repair.message || '') + '</p><span>' + stage + ' · 审计状态 ' + esc(repair.auditState || '待记录') + '</span></div>' + action + '</section>';
+  }
   function renderDiagnostics() {
     var s = currentStatus();
     var ds = currentSources();
     var update = s.update || {};
     var sourceCount = ds.counts && ds.counts.dataSourceCount || (ds.dataSources || []).length;
     var bindingCount = ds.counts && ds.counts.environmentBindingCount || (ds.environmentBindings || []).length;
+    var coreRepair = s.hubStudio && s.hubStudio.coreRepair || {};
+    var activeCount = Number(s.tasks && s.tasks.activeCount || 0);
     var actions = button('运行完整诊断','run-diagnostics','play','primary');
     return header('diagnostics',actions) + '<div class="content diagnostic-layout"><section class="card section-card">' + sectionTitle('shield','连接与配置检查','只读检测，不会修改配置或启动 HubStudio 环境',nowTime() + ' 检查') +
       diagnosticRow('monitor','本机配置文件','schema v2 · revision ' + safeId(state.config && state.config.configRevision) + ' · 文件权限正常',!!state.config) +
@@ -452,7 +470,7 @@
       diagnosticRow('cloud','云端出站通道',(s.cloudChannel && s.cloudChannel.status === 'online' ? 'TLS 正常 · ' : '正在重连 · ') + relativeTime(s.cloudChannel && s.cloudChannel.lastPollAt),s.cloudChannel && s.cloudChannel.status === 'online') +
       diagnosticRow('gauge','HubStudio Local API',(s.hubStudio && s.hubStudio.connected ? '客户端运行中 · v1 已认证' : '当前未连接') + ' · 端口 ' + ((state.config && state.config.hubPort) || '6873'),s.hubStudio && s.hubStudio.connected) +
       diagnosticRow('database','飞书只读访问',sourceCount + ' 个数据源已登记 · ' + (state.lark && state.lark.ready ? '企业应用连接正常' : '等待连接验证'),!!(state.lark && state.lark.ready)) +
-      diagnosticRow('route','环境映射完整性',bindingCount + ' 个已映射 · 0 个冲突',true) + '</section>' +
+      diagnosticRow('route','环境映射完整性',bindingCount + ' 个已映射 · 0 个冲突',true) + coreRepairPanel(coreRepair, activeCount, roleInfo().admin) + '</section>' +
       '<div class="side-stack"><section class="card section-card">' + sectionTitle('download','软件更新','下载安装、校验、安装与重启状态实时同步','') + '<div class="section-body update-section">' + updatePanel(update,s.tasks && s.tasks.activeCount) + '</div></section>' +
       '<section class="card section-card">' + sectionTitle('terminal','日志与维护','敏感字段在写入日志前完成脱敏','') + '<div class="section-body maintenance-buttons">' + button('打开日志目录','open-logs','folder') + button('导出脱敏诊断包','export-diagnostics','download') + button('备份当前配置','backup-config','refresh') + '<p class="path-note">' + (platform === 'mac' ? '~/Library/Application Support/XynigoSourcing/' : '%LOCALAPPDATA%\\Programs\\Xynigo\\') + '</p></div></section></div></div>';
   }
@@ -550,6 +568,20 @@
   function openTaskDetails() {
     state.taskDetailsOpen = true;
     renderTaskDetailsModal();
+  }
+  function openCoreRepairModal() {
+    var repair = currentStatus().hubStudio && currentStatus().hubStudio.coreRepair || {};
+    if (!repair.repairAvailable) return showError(new Error('当前没有可下载的 HubStudio 内核修复项'));
+    var label = coreTypeLabel(repair.browserType) + ' ' + esc(repair.coreVersion || '');
+    modalRoot.innerHTML = '<div class="modal-backdrop"><section class="modal core-repair-modal" role="dialog" aria-modal="true" aria-label="下载并修复 HubStudio 内核"><h2>下载并修复 HubStudio 内核</h2><p>本地执行器将通过 HubStudio 官方 Local API 下载 ' + label + '，不会从第三方地址下载安装程序。</p><div class="core-repair-confirm"><span>' + icon('shield') + '</span><div><b>下载后自动验证</b><p>执行器会启动并关闭一个出现缺失错误的环境，通过 CDP 核对实际内核大版本。修复期间暂停本机业务任务。</p></div></div><div class="core-repair-confirm"><span>' + icon('terminal') + '</span><div><b>全程写入脱敏审计日志</b><p>仅记录操作者、设备本地任务、内核类型/版本、时间与结果码，不记录账号、Cookie 或完整浏览器指纹。</p></div></div><div class="modal-footer"><button class="button" data-action="modal-close">取消</button><button class="button primary" data-action="confirm-hub-core-repair">确认下载并验证</button></div></section></div>';
+  }
+  function startCoreRepair(buttonNode) {
+    buttonNode.disabled = true;
+    post('/api/hub-core-repair/start',{}).then(function () {
+      closeModal();
+      showToast('HubStudio 内核下载已开始，可在诊断与维护页面查看状态');
+      return loadStatus(true);
+    }).catch(showError).finally(function () { buttonNode.disabled = false; });
   }
   function beginAuth() {
     if (previewRole) {
@@ -724,6 +756,8 @@
     else if (action === 'go-diagnostics') { state.view='diagnostics'; renderWorkspace(); }
     else if (action === 'task-details') openTaskDetails();
     else if (action === 'refresh-task-details') loadStatus(false).then(function () { showToast('本机任务明细已刷新'); });
+    else if (action === 'repair-hub-core') openCoreRepairModal();
+    else if (action === 'confirm-hub-core-repair') startCoreRepair(actionNode);
     else if (action === 'open-logs') nativeAction('open-logs');
     else if (action === 'restart-executor') nativeAction('restart-executor');
     else if (action === 'check-update') { nativeAction('check-update'); scheduleStatusRefresh(250); }

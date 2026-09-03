@@ -260,8 +260,8 @@ class TrackingScreenshotTests(unittest.TestCase):
                     'HubStudio 浏览器内核不存在',
                     'hubstudio_browser_core_missing', api_code=-10007)
 
-            def mark_runtime_failure(self, code, message):
-                self.marked.append((code, message))
+            def mark_runtime_failure(self, code, message, **details):
+                self.marked.append((code, message, details))
 
         hub = MissingCoreHub()
         job = QueryOrchestrator(hub, settle_seconds=0, env_interval=0)

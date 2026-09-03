@@ -57,6 +57,26 @@ class FakeOrchestrator(object):
         pass
 
 
+class FakeHubCoreRepair(object):
+    def __init__(self):
+        self.actor = None
+
+    def snapshot(self):
+        return {
+            'state': 'required', 'running': False,
+            'browserType': 'chrome', 'coreVersion': '148',
+            'repairAvailable': True,
+        }
+
+    def start(self, actor=None):
+        self.actor = actor
+        return {
+            'state': 'downloading', 'running': True,
+            'browserType': 'chrome', 'coreVersion': '148',
+            'repairAvailable': False,
+        }
+
+
 class FakeEnvJob(object):
     def __init__(self, resource_name='NEW-MX-0825-001'):
         self.running = False
@@ -103,6 +123,7 @@ class ParallelRouteTests(unittest.TestCase):
                 }),
             hub=FakeHub(),
             orch=self.orch,
+            hub_core_repair=FakeHubCoreRepair(),
             env_job=self.env_job,
             backup_job=FakeEnvJob('BACKUP-MX-0825-001'),
             reg_job=SimpleNamespace(running=False),
@@ -130,6 +151,13 @@ class ParallelRouteTests(unittest.TestCase):
         with urllib.request.urlopen(request, timeout=3) as response:
             return response.status, json.loads(response.read().decode('utf-8'))
 
+    def get(self, path):
+        with urllib.request.urlopen(
+                'http://127.0.0.1:%d%s' % (
+                    self.server.server_address[1], path), timeout=3) as response:
+            return response.status, json.loads(
+                response.read().decode('utf-8'))
+
     def post_error(self, path, payload):
         with self.assertRaises(urllib.error.HTTPError) as caught:
             self.post(path, payload)
@@ -149,6 +177,18 @@ class ParallelRouteTests(unittest.TestCase):
         self.orch.callback()
         self.env_job.callback()
         self.assertFalse(self.state.tasks.running())
+
+    def test_hub_core_repair_status_and_start_routes(self):
+        status, snapshot = self.get('/api/hub-core-repair/status')
+        self.assertEqual(status, 200)
+        self.assertEqual(snapshot['coreVersion'], '148')
+
+        status, started = self.post('/api/hub-core-repair/start', {})
+        self.assertEqual(status, 202)
+        self.assertTrue(started['running'])
+        actor = self.state.hub_core_repair.actor
+        self.assertEqual(actor['permission'], 'system.integration.manage')
+        self.assertEqual(actor['role'], 'super_admin')
 
     def test_query_rejects_missing_browser_core_before_task_is_created(self):
         self.orch.preflight_error = HubApiError(

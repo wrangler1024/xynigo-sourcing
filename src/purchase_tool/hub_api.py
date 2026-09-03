@@ -28,6 +28,9 @@ DEFAULT_PORT = 6873
 KNOWN_FALLBACK_PORTS = (6873, 6874, 6875)
 RATE_LIMIT_CODE = 'E010205'
 RUNTIME_FAILURE_TTL_SECONDS = 120.0
+CORE_VERSION_RE = re.compile(r'^[1-9][0-9]{1,2}$')
+MISSING_CORE_RE = re.compile(
+    r'\b(Chrome|Firefox)\s*\[\s*([0-9]{2,3})\s*\]\s*Core\b', re.I)
 
 # 强制直连不走系统代理：同事电脑开着 Clash 类系统代理时，urllib 默认会把
 # 127.0.0.1 的请求也送进代理导致"连接失败"（PowerShell/浏览器则默认绕过本地）
@@ -36,9 +39,11 @@ OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 class HubApiError(Exception):
     def __init__(self, message, reason_code='hubstudio_local_api_error',
-                 api_code=None):
+                 api_code=None, browser_type='', core_version=''):
         self.reason_code = str(reason_code)
         self.api_code = None if api_code is None else str(api_code)
+        self.browser_type = str(browser_type or '').casefold()
+        self.core_version = str(core_version or '')
         super().__init__(str(message))
 
 
@@ -47,6 +52,13 @@ def _safe_api_message(value):
     return re.sub(
         r'(?i)(api[-_ ]?key|authorization|token|secret|cookie)\s*[:=]\s*\S+',
         r'\1=[REDACTED]', text)
+
+
+def _missing_core_details(message):
+    match = MISSING_CORE_RE.search(str(message or ''))
+    if not match:
+        return '', ''
+    return match.group(1).casefold(), match.group(2)
 
 
 def _windows_hidden_process_kwargs():
@@ -131,6 +143,15 @@ class HubStudioAdapter(object):
     def browser_stop(self, container_code):
         raise NotImplementedError
 
+    def download_core(self, browser_type, version):
+        raise NotImplementedError
+
+    def core_requirement_snapshot(self):
+        raise NotImplementedError
+
+    def clear_core_requirement(self):
+        raise NotImplementedError
+
     def env_delete(self, container_codes):
         raise NotImplementedError
 
@@ -160,6 +181,7 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
         self.headers = {'Content-Type': 'application/json'}
         self._runtime_failure_lock = threading.Lock()
         self._runtime_failure = None
+        self._core_requirement = None
         if api_key:
             self.headers['local-api-key'] = api_key
 
@@ -167,7 +189,8 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
     def _base_for_port(port):
         return 'http://127.0.0.1:%s/api/v1' % int(port)
 
-    def mark_runtime_failure(self, reason_code, message):
+    def mark_runtime_failure(self, reason_code, message, browser_type='',
+                             core_version='', container_code=''):
         """Temporarily downgrade a superficially healthy Local API.
 
         ``group/list`` can remain available after HubStudio loses its browser
@@ -179,12 +202,30 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
                 'hubstudio_browser_core_missing',
                 'hubstudio_browser_launch_invalid'}:
             return False
+        parsed_type, parsed_version = _missing_core_details(message)
+        browser_type = str(browser_type or parsed_type or '').casefold()
+        core_version = str(core_version or parsed_version or '')
+        container_code = str(container_code or '')
         with self._runtime_failure_lock:
+            previous = dict(self._runtime_failure or {})
             self._runtime_failure = {
                 'reasonCode': reason,
                 'message': _safe_api_message(message),
+                'browserType': browser_type or previous.get('browserType', ''),
+                'coreVersion': core_version or previous.get('coreVersion', ''),
+                'containerCode': (
+                    container_code or previous.get('containerCode', '')),
                 'expiresAt': time.monotonic() + RUNTIME_FAILURE_TTL_SECONDS,
             }
+            if (reason == 'hubstudio_browser_core_missing'
+                    and self._runtime_failure.get('browserType')
+                    and self._runtime_failure.get('coreVersion')
+                    and self._runtime_failure.get('containerCode')):
+                self._core_requirement = {
+                    'browserType': self._runtime_failure['browserType'],
+                    'coreVersion': self._runtime_failure['coreVersion'],
+                    'containerCode': self._runtime_failure['containerCode'],
+                }
         return True
 
     def clear_runtime_failure(self):
@@ -194,13 +235,14 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
     def _runtime_failure_snapshot(self):
         with self._runtime_failure_lock:
             failure = dict(self._runtime_failure or {})
-            if failure and time.monotonic() >= float(
-                    failure.get('expiresAt') or 0):
+            if (failure and self._core_requirement is None
+                    and time.monotonic() >= float(
+                        failure.get('expiresAt') or 0)):
                 self._runtime_failure = None
                 failure = {}
         if not failure:
             return None
-        return {
+        result = {
             'available': False,
             'clientRunning': True,
             'localApiEnabled': True,
@@ -210,6 +252,33 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
             'reasonCode': failure['reasonCode'],
             'message': failure['message'],
         }
+        if failure.get('browserType') and failure.get('coreVersion'):
+            result['requiredCore'] = {
+                'browserType': failure['browserType'],
+                'version': failure['coreVersion'],
+            }
+        return result
+
+    def core_requirement_snapshot(self):
+        """Return an internal repair target captured from a real launch error."""
+        with self._runtime_failure_lock:
+            failure = dict(self._core_requirement or {})
+        known = bool(
+            failure.get('browserType') in {'chrome', 'firefox'}
+            and CORE_VERSION_RE.fullmatch(
+                str(failure.get('coreVersion') or ''))
+            and str(failure.get('containerCode') or ''))
+        return {
+            'known': known,
+            'browserType': str(failure.get('browserType') or ''),
+            'version': str(failure.get('coreVersion') or ''),
+            'containerCode': (
+                str(failure.get('containerCode') or '') if known else ''),
+        }
+
+    def clear_core_requirement(self):
+        with self._runtime_failure_lock:
+            self._core_requirement = None
 
     def _post(self, path, body, retries=None, timeout=None):
         """POST JSON；普通异常短退避，限流则触发跨线程共享冷却。"""
@@ -243,13 +312,18 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
                 api_code = str(j.get('code') or '')
                 safe_message = _safe_api_message(j.get('msg'))
                 browser_core_missing = api_code == '-10007'
+                core_browser_type, core_version = _missing_core_details(
+                    safe_message)
                 auth_failed = (
                     api_code in {'401', '403', 'E010401', 'E010403'}
                     or any(marker in safe_message.casefold() for marker in (
                         'unauthorized', 'forbidden', 'api key', 'api-key',
                         '鉴权', '认证', '密钥')))
                 last_err = HubApiError(
-                    'HubStudio 浏览器内核不存在' if browser_core_missing else
+                    ('HubStudio %s %s 浏览器内核不存在' % (
+                        (core_browser_type or 'browser').capitalize(),
+                        core_version or '未知版本'))
+                    if browser_core_missing else
                     'HubStudio Local API 认证失败' if auth_failed else
                     ('HubStudio Local API 返回 code=%s%s' % (
                         api_code,
@@ -261,7 +335,9 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
                      ('hubstudio_local_api_rate_limited'
                       if api_code == RATE_LIMIT_CODE else
                       'hubstudio_local_api_error')),
-                    api_code=api_code)
+                    api_code=api_code,
+                    browser_type=core_browser_type,
+                    core_version=core_version)
                 if api_code == RATE_LIMIT_CODE:
                     # HubStudio 的 E010205 是时间窗限流；原 0.4/0.8 秒
                     # 单线程重试会被并行 worker 继续打断。把 2/4/8 秒
@@ -594,15 +670,41 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
             with self.runtime_gate.browser():
                 result = self._post('/browser/start', body) or {}
         except HubApiError as exc:
-            self.mark_runtime_failure(exc.reason_code, str(exc))
+            self.mark_runtime_failure(
+                exc.reason_code, str(exc),
+                browser_type=exc.browser_type,
+                core_version=exc.core_version,
+                container_code=container_code)
             raise
-        self.clear_runtime_failure()
+        with self._runtime_failure_lock:
+            repair_pending = self._core_requirement is not None
+        if not repair_pending:
+            self.clear_runtime_failure()
         return result
 
     def browser_stop(self, container_code):
         with self.runtime_gate.browser():
             return self._post('/browser/stop',
                               {'containerCode': str(container_code)}) or {}
+
+    def download_core(self, browser_type, version):
+        """Ask HubStudio itself to download one explicitly identified core."""
+        normalized_type = str(browser_type or '').strip().casefold()
+        normalized_version = str(version or '').strip()
+        browser_code = {'chrome': 1, 'firefox': 2}.get(normalized_type)
+        if browser_code is None or not CORE_VERSION_RE.fullmatch(
+                normalized_version):
+            raise HubApiError(
+                'HubStudio 内核下载参数无效',
+                'hubstudio_core_download_target_invalid')
+        body = {'Cores': [{
+            'BrowserType': browser_code,
+            'Version': normalized_version,
+        }]}
+        with self.runtime_gate.browser():
+            return self._post(
+                '/browser/download-core', body,
+                retries=1, timeout=max(1200.0, float(self.timeout)))
 
     def env_delete(self, container_codes):
         """Delete explicitly identified environments through the Local API.

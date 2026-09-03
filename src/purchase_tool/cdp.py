@@ -50,6 +50,14 @@ class CdpClient(object):
         """列出当前普通页签（不包扩展 background page）。"""
         return [x for x in self._http('/json/list') if x.get('type') == 'page']
 
+    def version_info(self):
+        """Return the running browser's non-sensitive CDP version summary."""
+        raw = self._http('/json/version')
+        return {
+            'browser': str(raw.get('Browser') or '')[:80],
+            'protocolVersion': str(raw.get('Protocol-Version') or '')[:32],
+        }
+
     def attach_page(self, target_id=None, url_contains=None):
         """连接已存在页签，用于注册流在 SHEIN/Outlook 之间切换。"""
         matches = self.list_pages()
