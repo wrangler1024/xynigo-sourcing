@@ -47,7 +47,7 @@ class FakeCdp(object):
 
     def version_info(self):
         return {
-            'browser': 'HeadlessChrome/148.0.0.0',
+            'browser': 'HeadlessChrome/148.0.7204.0',
             'protocolVersion': '1.3',
         }
 
