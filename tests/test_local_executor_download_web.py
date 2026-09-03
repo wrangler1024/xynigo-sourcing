@@ -30,10 +30,10 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
             self.html,
             r"localexecutor:\s*\{[\s\S]*?label: '本地执行器', primary: 'system'",
         )
-        self.assertIn(
-            "$('localExecutorEntry').onclick = () => openFeatureTab('localexecutor')",
-            self.html,
-        )
+        self.assertIn("$('localExecutorEntry').onclick = openRuntimeDrawer", self.html)
+        self.assertIn('id="runtimeEnvironmentEntry"', self.html)
+        self.assertIn('id="runtimeManageDevices"', self.html)
+        self.assertIn("openFeatureTab('localexecutor')", self.html)
 
     def test_download_panel_uses_cloud_release_catalog_and_platform_choice(self):
         for element_id in (
@@ -259,14 +259,15 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
         ):
             self.assertNotIn(removed, self.html)
 
-    def test_topbar_hub_status_uses_cloud_executor_heartbeat(self):
+    def test_runtime_bar_hub_status_uses_selected_executor_heartbeat(self):
         self.assertIn('function renderCloudExecutorHubStatus()', self.html)
         self.assertIn("item.connectivity === 'online'", self.html)
-        self.assertIn("device.hubStatus === 'ready'", self.html)
+        self.assertIn("selected.hubStatus === 'ready'", self.html)
         self.assertIn("pill.textContent = 'HubStudio 已连接'", self.html)
         self.assertNotIn('🟢 HubStudio 已连接', self.html)
-        self.assertIn('🟠 执行器在线 · HubStudio 未连接', self.html)
-        self.assertIn('☁ 本地执行器均离线', self.html)
+        self.assertIn("pill.textContent = 'HubStudio 未连接'", self.html)
+        self.assertIn("pill.textContent = 'HubStudio 等待设备'", self.html)
+        self.assertNotIn('onlineDevices[0]', self.html)
         self.assertNotIn('☁ 本机执行器离线', self.html)
 
     def test_topbar_executor_status_refreshes_outside_executor_page(self):
@@ -283,36 +284,31 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
             self.html,
         )
 
-    def test_topbar_executor_status_does_not_expose_device_count(self):
-        self.assertIn("? '本地执行器在线'", self.html)
-        self.assertIn("activeDevices.length ? '本地执行器离线'", self.html)
-        self.assertIn(": '本地执行器待连接'", self.html)
+    def test_runtime_bar_executor_status_shows_the_selected_device(self):
+        self.assertIn("? '未选择执行器'", self.html)
+        self.assertIn("`${selected.displayName || '未命名设备'} · ", self.html)
+        self.assertIn("selectedOnline ? '在线' : '离线'", self.html)
         self.assertNotIn(
             "? `本地执行器 · ${onlineDevices.length} 台在线`",
             self.html,
         )
 
-    def test_online_executor_badge_matches_connected_pill_style(self):
+    def test_runtime_bar_online_executor_badge_is_compact(self):
         match = re.search(
-            r"\.local-executor-entry\.online\s*\{([^}]+)\}", self.html
+            r"\.runtime-status-bar \.local-executor-entry\.online\s*\{([^}]+)\}",
+            self.html,
         )
         self.assertIsNotNone(match)
         style = match.group(1)
         for declaration in (
-            "padding: 8px 11px",
-            "border: 0",
-            "border-radius: 999px",
-            "gap: 7px",
-            "background: var(--green-100)",
-            "color: var(--green)",
-            "font-size: 12px",
-            "font-weight: 800",
+            "min-height: 30px",
+            "padding: 0 9px",
+            "border-radius: 8px",
         ):
             self.assertIn(declaration, style)
         self.assertIn(
-            ".local-executor-entry.online .local-executor-entry-dot "
-            "{ width: 12px; height: 12px; background: var(--green); "
-            "box-shadow: none; }",
+            ".runtime-status-bar .local-executor-entry-dot "
+            "{ width: 7px; height: 7px; box-shadow: none; }",
             self.html,
         )
         self.assertIn(

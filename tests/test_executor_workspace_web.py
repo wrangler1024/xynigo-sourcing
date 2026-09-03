@@ -188,6 +188,31 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         self.assertIn("renderCloudExecutorHubStatus();", cloud_branch)
         self.assertNotIn("hubConnected = connected;", cloud_branch)
 
+    def test_runtime_environment_requires_an_explicit_device_selection(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        for marker in (
+            'id="runtimeStatusBar"',
+            'id="runtimeDrawer"',
+            'id="runtimeDeviceList"',
+            'id="runtimeSelectionNotice"',
+            '记住此浏览器的默认设备',
+            "error.code = 'executor_selection_required'",
+            "$('localExecutorEntry').onclick = openRuntimeDrawer",
+            "localStorage.setItem(RUNTIME_EXECUTOR_STORAGE_KEY, value)",
+        ):
+            self.assertIn(marker, html)
+        renderer = html[
+            html.index("function renderCloudExecutorHubStatus()"):
+            html.index("function setHubStatus(connected)")
+        ]
+        self.assertNotIn("onlineDevices[0]", renderer)
+        selector = html[
+            html.index("async function cloudWorkspaceExecutor()"):
+            html.index("function cloudRunElapsed(run)")
+        ]
+        self.assertNotIn("find(compatible)", selector)
+        self.assertIn("openRuntimeDrawer();", selector)
+
     def test_cloud_logistics_start_failure_is_not_rendered_as_waiting(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")
         snapshot = html[

@@ -12,9 +12,9 @@ from urllib.parse import quote
 from . import __version__
 
 
-RELEASE_VERSION = "0.13.13"
+RELEASE_VERSION = "0.13.14"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-02T11:58:36Z"
+RELEASE_PUBLISHED_AT = "2026-09-03T03:37:10Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -29,8 +29,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.13.13-f20ee7b2c4a4",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.13.exe",
+        "runtimeId": "0.13.14-pending",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.14.exe",
         "sha256": "6d575b6c5d07d88f021d743bf325da9f3b9944e6ce8045eadf7fb9f89c80879e",
         "size": 15_168_440,
         "installMode": "standard_per_user",
@@ -48,8 +48,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.13.13-f20ee7b2c4a4",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.13.pkg",
+        "runtimeId": "0.13.14-pending",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.14.pkg",
         "sha256": "ac3b5d50888f5213b3d54c7ba9064ce7ff507dbef8fb75dd4a9213e879dcaaad",
         "size": 11_445_823,
         "installMode": "standard_system_application",
@@ -234,10 +234,12 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "已配置的飞书数据源链接和工作表支持脱敏回显，完整标识不返回浏览器。",
-            "HubStudio API Key 与飞书 App Secret 显示固定掩码和末四位识别摘要。",
-            "飞书 App ID 与代理链接提供不可复用的安全识别摘要。",
-            "所有覆盖输入框继续保持空值，只有输入新值才会替换现有配置。",
+            "顶部空间优先展示业务功能页签，运行状态统一移到底部状态栏。",
+            "运行环境使用右侧覆盖式面板，展开时不再挤压主功能区。",
+            "多设备账号必须明确选择本次任务执行器，未选择时禁止启动本机任务。",
+            "所选设备离线或 HubStudio 未连接时不会自动切换其他在线设备。",
+            "新电脑首次登录不会把账号下其他在线设备误认为当前电脑。",
+            "小犀助手采购协作导入功能与系统管理入口保持不变。",
             "Windows 与 macOS 从同一 Git 基线同步构建并发布。",
             "稳定通道强制平台签名门槛；内部未签名包仅允许 test 通道。",
         ],

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Xynigo Sourcing v0.13.13</title>
+<title>Xynigo Sourcing v0.13.14</title>
 <link rel="icon" type="image/png" sizes="260x260" href="/xynigo-x.png?v=6">
 <link rel="icon" type="image/x-icon" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256" href="/favicon.ico?v=6">
 <link rel="shortcut icon" href="/favicon.ico?v=6">
@@ -158,7 +158,7 @@
     -webkit-font-smoothing: antialiased;
   }
   button, input, textarea, select { font: inherit; }
-  .app-shell { min-height: 100vh; display: grid; grid-template-columns: 220px minmax(0,1fr); transition: grid-template-columns .24s ease; }
+  .app-shell { min-height: 100vh; height: 100vh; overflow: hidden; display: grid; grid-template-columns: 220px minmax(0,1fr); transition: grid-template-columns .24s ease; }
   .sidebar {
     position: sticky; top: 0; height: 100vh; padding: 18px 14px; z-index: 30;
     display: flex; flex-direction: column; background: var(--surface); border-right: 1px solid var(--line);
@@ -206,12 +206,10 @@
   .nav-text b { font-size: 13px; }
   .nav-text small { color: #8ca0b0; font-size: 10px; font-weight: 600; }
   .nav-spacer { min-height: 12px; }
-  .side-help { padding: 13px; border: 1px solid #f4dc9f; border-radius: 14px; background: var(--parcel-100); color: #77551d; font-size: 12px; line-height: 1.55; }
-  .side-help strong { display: block; margin-bottom: 3px; color: #5d4218; }
   .side-footer { display: flex; justify-content: space-between; margin-top: 12px; padding: 0 5px; color: #8da0b0; font-size: 11px; }
-  .workspace { min-width: 0; }
+  .workspace { position: relative; min-width: 0; min-height: 0; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
   .topbar {
-    position: sticky; top: 0; z-index: 20; height: 70px; padding: 0 28px;
+    position: relative; z-index: 20; height: 70px; flex: 0 0 70px; padding: 0 28px;
     display: flex; align-items: center; justify-content: space-between; gap: 16px;
     background: rgba(255,255,255,.94); border-bottom: 1px solid var(--line); backdrop-filter: blur(12px);
   }
@@ -287,6 +285,60 @@
   .workspace-tab-menu-action:hover:not(:disabled) { border-color: #bcd1dc; color: var(--navy-950); }
   .workspace-tab-menu-action:disabled { cursor: default; opacity: .45; }
   .topbar-right { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; }
+  .runtime-status-bar {
+    height: 44px; flex: 0 0 44px; padding: 0 18px; overflow-x: auto;
+    display: flex; align-items: center; gap: 4px; border-top: 1px solid #d7e3ea;
+    background: #fff; box-shadow: 0 -2px 8px rgba(8,37,72,.035); scrollbar-width: none;
+  }
+  .runtime-status-bar::-webkit-scrollbar { display: none; }
+  .runtime-status-entry {
+    min-height: 30px; padding: 0 9px; border: 0; border-radius: 8px;
+    display: inline-flex; align-items: center; gap: 7px; background: transparent;
+    color: var(--navy-700); font-size: 10px; font-weight: 850; white-space: nowrap; cursor: pointer;
+  }
+  .runtime-status-entry:hover { background: #edf6f5; }
+  .runtime-status-entry strong { color: var(--navy-950); }
+  .runtime-status-dot { width: 7px; height: 7px; border-radius: 50%; background: #9fb0bc; }
+  .runtime-status-dot.ok { background: var(--green-500); box-shadow: 0 0 0 3px rgba(52,183,131,.12); }
+  .runtime-status-dot.warn { background: var(--parcel-500); box-shadow: 0 0 0 3px rgba(242,183,71,.14); }
+  .runtime-status-spacer { flex: 1 1 auto; }
+  .runtime-status-bar .pill, .runtime-status-bar .local-executor-entry {
+    min-height: 30px; padding: 0 9px; border: 0; border-radius: 8px; background: transparent;
+    font-size: 10px; box-shadow: none;
+  }
+  .runtime-status-bar .pill:hover, .runtime-status-bar .local-executor-entry:hover { background: #edf6f5; }
+  .runtime-status-bar .local-executor-entry.online { min-height: 30px; padding: 0 9px; border-radius: 8px; }
+  .runtime-status-bar .local-executor-entry-dot { width: 7px; height: 7px; box-shadow: none; }
+  .runtime-drawer {
+    position: absolute; z-index: 70; top: 70px; right: 0; bottom: 44px; width: 372px;
+    overflow-y: auto; border-left: 1px solid #d6e3ea; background: #fff;
+    box-shadow: -18px 0 42px rgba(8,37,72,.14); animation: runtime-drawer-in .2s ease-out;
+  }
+  @keyframes runtime-drawer-in { from { transform: translateX(100%); opacity: .65; } to { transform: translateX(0); opacity: 1; } }
+  .runtime-drawer-inner { min-height: 100%; padding: 22px; display: flex; flex-direction: column; }
+  .runtime-drawer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+  .runtime-drawer-head h2 { margin: 0; color: var(--navy-950); font-size: 18px; }
+  .runtime-drawer-head p { margin: 5px 0 0; color: var(--navy-500); font-size: 10px; }
+  .runtime-drawer-close { width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--navy-500); font-size: 21px; cursor: pointer; }
+  .runtime-drawer-close:hover { background: #eef4f6; color: var(--navy-950); }
+  .runtime-cloud-card { margin-top: 19px; padding: 14px; border: 1px solid #cbe4e0; border-radius: 12px; display: flex; align-items: center; justify-content: space-between; background: #f5fbfa; }
+  .runtime-cloud-card b { color: var(--navy-950); font-size: 11px; }.runtime-cloud-card span { display: flex; align-items: center; gap: 6px; color: var(--green); font-size: 9px; font-weight: 900; }
+  .runtime-device-head { margin: 20px 0 9px; display: flex; align-items: center; justify-content: space-between; }
+  .runtime-device-head h3 { margin: 0; color: var(--navy-950); font-size: 12px; }.runtime-device-head span { padding: 5px 8px; border-radius: 999px; background: var(--green-100); color: var(--green); font-size: 8px; font-weight: 900; }
+  .runtime-device-list { display: grid; gap: 8px; }
+  .runtime-device-card { width: 100%; padding: 12px; border: 1px solid #dce6ed; border-radius: 12px; display: grid; grid-template-columns: 17px 32px minmax(0,1fr); gap: 10px; align-items: center; background: #fff; color: inherit; text-align: left; cursor: pointer; }
+  .runtime-device-card:hover { border-color: #a9dadd; background: #f8fcfc; }.runtime-device-card.pending { border-color: var(--rhino-500); background: var(--rhino-100); box-shadow: 0 0 0 3px rgba(32,174,179,.08); }
+  .runtime-device-radio { width: 15px; height: 15px; border: 1.5px solid #7f98aa; border-radius: 50%; display: grid; place-items: center; }.runtime-device-card.pending .runtime-device-radio::after { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--rhino-600); }
+  .runtime-device-icon { width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; background: #edf4f7; color: var(--navy-900); font-size: 15px; }
+  .runtime-device-copy { min-width: 0; display: flex; flex-direction: column; }.runtime-device-copy b { overflow: hidden; color: var(--navy-950); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }.runtime-device-copy small { margin-top: 3px; color: var(--navy-500); font-size: 8px; }.runtime-device-copy em { margin-top: 5px; color: var(--green); font-size: 8px; font-style: normal; font-weight: 800; }
+  .runtime-device-copy em.offline { color: var(--amber); }
+  .runtime-current-card { margin-top: 12px; padding: 13px; border: 1px solid #efd28f; border-radius: 12px; background: var(--parcel-100); }
+  .runtime-current-card b { display: block; color: #73500f; font-size: 10px; }.runtime-current-card p { margin: 4px 0 10px; color: #8b6a2b; font-size: 8px; line-height: 1.55; }.runtime-current-card .btn { width: 100%; }
+  .runtime-drawer-spacer { min-height: 18px; flex: 1 1 auto; }
+  .runtime-remember { padding: 14px 0; display: flex; align-items: center; gap: 8px; color: var(--navy-500); font-size: 9px; }
+  .runtime-drawer-actions { display: grid; grid-template-columns: 1fr 1.35fr; gap: 8px; }.runtime-drawer-actions .btn { padding-inline: 10px; }
+  .runtime-selection-notice { padding: 12px 14px; border: 1px solid #efd28f; border-radius: 12px; display: flex; align-items: center; gap: 11px; background: var(--parcel-100); color: #78530f; }
+  .runtime-selection-notice-copy { min-width: 0; flex: 1; }.runtime-selection-notice-copy b { display: block; font-size: 11px; }.runtime-selection-notice-copy span { display: block; margin-top: 3px; font-size: 8px; line-height: 1.5; }
   .pill { display: inline-flex; align-items: center; gap: 7px; padding: 8px 11px; font-size: 12px; font-weight: 800; }
   .pill.ok { background: var(--green-100); }
   #hubStatus.pill.ok::before { content: ""; flex: 0 0 auto; width: 12px; height: 12px; border-radius: 50%; background: var(--green); }
@@ -412,7 +464,7 @@
   .local-executor-config-state.pending { border: 1px solid #f1d28b; background: var(--parcel-100); color: #815510; }
   .local-executor-config-state.bad { border: 1px solid #f4c2b7; background: var(--coral-100); color: var(--coral-500); }
   .icon-button { width: 38px; height: 38px; padding: 0; border: 1px solid var(--line); border-radius: 11px; display: grid; place-items: center; background: #fff; color: var(--navy-700); cursor: pointer; }
-  main { max-width: 1500px; margin: 0 auto; padding: 24px 28px 36px; gap: 16px; }
+  main { width: 100%; max-width: 1500px; min-height: 0; flex: 1 1 auto; overflow-y: auto; margin: 0 auto; padding: 24px 28px 36px; gap: 16px; }
   .hero {
     position: relative; min-height: 148px; padding: 25px 28px; overflow: hidden;
     display: grid; grid-template-columns: minmax(0,1fr) minmax(250px,330px); align-items: center; gap: 24px; border-radius: 22px;
@@ -1182,10 +1234,10 @@
     }
     .sidebar-toggle, .brand-card, .nav-label, .nav-text, .nav-spacer, .side-help, .side-footer { display: none !important; }
     .module-tabs, body.sidebar-collapsed .module-tabs {
-      width: 100%; height: 54px; margin: 0; display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: 2px;
+      width: 100%; height: 54px; margin: 0; display: flex; gap: 2px; overflow-x: auto; overflow-y: hidden;
     }
     .module-tab, body.sidebar-collapsed .module-tab {
-      width: 100%; min-height: 52px; padding: 4px; justify-content: center; border-radius: 11px;
+      width: 58px; flex: 0 0 58px; min-height: 52px; padding: 4px; justify-content: center; border-radius: 11px;
     }
     .nav-icon, body.sidebar-collapsed .nav-icon { width: 34px; height: 34px; }
     .workspace { padding-bottom: 66px; }
@@ -1196,7 +1248,10 @@
       background: rgba(255,255,255,.97); box-shadow: 0 7px 20px rgba(8,37,72,.09); scrollbar-width: thin;
     }
     .secondary-tab { width: auto; flex: 0 0 auto; min-height: 36px; padding: 7px 10px; gap: 7px; }
-    .workspace { padding-bottom: 122px; }
+    .workspace { padding-bottom: 164px; }
+    .runtime-status-bar { position: fixed; left: 0; right: 0; bottom: 66px; z-index: 58; }
+    .runtime-drawer { top: 70px; bottom: 110px; width: min(372px,100vw); }
+    .secondary-tabs, body.sidebar-collapsed .secondary-tabs { bottom: 116px; }
   }
 
   /* ===== 云端登录与当前成员 ===== */
@@ -1397,7 +1452,6 @@
       </button>
     </nav>
     <div class="nav-spacer"></div>
-    <div class="side-help" id="sideHelp"><strong>小犀提示</strong>批量任务开始前，请确认 HubStudio 已登录并保持网络代理正常。</div>
     <div class="side-footer"><span>Xynigo Sourcing</span><span id="sideRuntime">本地运行</span></div>
   </aside>
 
@@ -1428,11 +1482,6 @@
         </div>
       </div>
       <div class="topbar-right">
-        <button class="local-executor-entry" id="localExecutorEntry" type="button" title="下载、安装或连接本地执行器" hidden>
-          <span class="local-executor-entry-dot" aria-hidden="true"></span><span id="localExecutorEntryText">本地执行器 · 待连接</span>
-        </button>
-        <span class="pill" id="taskStatus" title="本机后台任务状态">后台空闲</span>
-        <span class="pill checking" id="hubStatus" title="点击重新检测连接">⏳ 正在检测 HubStudio…</span>
         <div class="auth-user" id="authUser" hidden>
           <button class="auth-user-toggle" id="authUserToggle" type="button" aria-haspopup="menu" aria-expanded="false" title="当前账号">
             <span class="auth-avatar" id="authAvatar">XY</span>
@@ -1447,13 +1496,26 @@
       </div>
     </header>
 
+    <aside class="runtime-drawer" id="runtimeDrawer" aria-label="运行环境" hidden>
+      <div class="runtime-drawer-inner">
+        <div class="runtime-drawer-head"><div><h2>运行环境</h2><p>选择本次任务实际执行的电脑</p></div><button class="runtime-drawer-close" id="runtimeDrawerClose" type="button" aria-label="关闭运行环境">×</button></div>
+        <section class="runtime-cloud-card"><b>☁ 云端工作台</b><span><i class="runtime-status-dot ok"></i>已连接</span></section>
+        <div class="runtime-device-head"><h3>执行设备</h3><span id="runtimeDeviceCount">读取中</span></div>
+        <div class="runtime-device-list" id="runtimeDeviceList"><div class="local-executor-empty">正在读取账号下的执行设备…</div></div>
+        <section class="runtime-current-card"><b>在当前电脑安装或配对执行器</b><p>若当前电脑尚未安装，请进入设备管理页下载安装并完成一次性配对；账号下其他在线设备不会被误认为当前电脑。</p><button class="btn" id="runtimeDownloadEntry" type="button">管理与下载执行器</button></section>
+        <div class="runtime-drawer-spacer"></div>
+        <label class="runtime-remember"><input id="runtimeRememberDevice" type="checkbox">记住此浏览器的默认设备</label>
+        <div class="runtime-drawer-actions"><button class="btn" id="runtimeManageDevices" type="button">设备管理</button><button class="btn primary" id="runtimeConfirmDevice" type="button" disabled>确认选择</button></div>
+      </div>
+    </aside>
+
     <main>
       <section class="hero">
         <div class="hero-copy">
           <div class="hero-kicker">XYNIGO SOURCING WORKSPACE</div>
           <h1>让小犀帮你把每一单稳稳带回来，<span class="hero-call">Xyni, GO!</span></h1>
           <p id="moduleSummary">批量查询订单与物流状态，异常任务集中处理，结果一键导出。</p>
-          <div class="hero-meta"><span class="hero-chip">累计修复测试 v0.13.13</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
+          <div class="hero-meta"><span class="hero-chip">累计修复测试 v0.13.14</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
         </div>
         <div class="hero-lockup" role="img" aria-label="小犀与 Xynigo 完整品牌一体图形">
           <img src="xynigo-logo.png" alt="">
@@ -1711,6 +1773,11 @@
   </div>
 
   <div class="module-panel" id="queryPanel">
+  <section class="runtime-selection-notice" id="runtimeSelectionNotice" hidden>
+    <span class="runtime-status-dot warn" aria-hidden="true"></span>
+    <div class="runtime-selection-notice-copy"><b id="runtimeSelectionTitle">开始前请选择执行设备</b><span id="runtimeSelectionDescription">查询和采购任务只会发送到你明确选择的电脑。</span></div>
+    <button class="btn" id="runtimeSelectionButton" type="button">选择设备</button>
+  </section>
   <section class="card">
     <div class="card-title">① 选择查询范围</div>
     <div class="input-row">
@@ -2555,6 +2622,16 @@
     </div>
   </section>
     </main>
+    <footer class="runtime-status-bar" id="runtimeStatusBar" aria-label="运行状态">
+      <button class="runtime-status-entry" id="runtimeEnvironmentEntry" type="button" aria-expanded="false"><strong>运行环境</strong></button>
+      <button class="pill" id="taskStatus" type="button" title="云端与后台任务状态">后台空闲</button>
+      <button class="local-executor-entry" id="localExecutorEntry" type="button" title="选择或管理本地执行器" hidden>
+        <span class="local-executor-entry-dot" aria-hidden="true"></span><span id="localExecutorEntryText">未选择执行器</span>
+      </button>
+      <button class="pill checking" id="hubStatus" type="button" title="点击刷新运行环境">HubStudio 等待设备</button>
+      <span class="runtime-status-spacer"></span>
+      <button class="runtime-status-entry" id="runtimeHelpEntry" type="button">帮助与反馈</button>
+    </footer>
   </section>
 </div>
 
@@ -3119,6 +3196,7 @@ let localExecutorGreenDownloadAsset = null;
 let localExecutorUsingGreenFallback = false;
 let localExecutorDevices = [];
 let localExecutorSelectedDeviceId = '';
+let runtimePendingExecutorId = '';
 let localExecutorDeviceLoading = false;
 let localExecutorDeviceTimer = null;
 let localExecutorPairingExpiresAt = 0;
@@ -3211,6 +3289,8 @@ const CLOUD_WEB_MODE = location.protocol !== 'file:' && (
   new URLSearchParams(location.search).get('runtime') === 'cloud'
   || !['127.0.0.1', 'localhost', '::1'].includes(location.hostname)
 );
+const RUNTIME_EXECUTOR_STORAGE_KEY = 'xynigo.runtime-executor-id.v1';
+document.body.classList.toggle('cloud-web-mode', CLOUD_WEB_MODE);
 const CLOUD_SESSION_KEEPALIVE_MS = 15 * 60 * 1000;
 const CLOUD_EXECUTOR_OFFLINE_MESSAGE = 'Xynigo 本机执行器未启动；云端工作台仍可使用，HubStudio/CDP 等本机能力暂不可执行。';
 function procurementImportResourcePath(path) {
@@ -3240,6 +3320,7 @@ function cloudApiError(payload, status) {
     environment_plan_limit:'短时解析计划过多，请稍后重试',
     purchase_claim_conflict:'采购任务已被其他成员处理，请刷新后重试',
     purchase_order_not_found:'采购单不存在或不属于当前组织',
+    executor_selection_required:'请先选择本次任务使用的本地执行器',
     executor_not_found:'本地执行器设备不存在或不属于当前组织',
     executor_offline:'所选本地执行器当前离线，请先启动执行器',
     executor_revoked:'本地执行器设备已被撤销，请重新配对',
@@ -3269,7 +3350,7 @@ async function cloudFetchJson(path, opts={}) {
   const headers = new Headers(opts.headers || {});
   headers.set('Accept', 'application/json');
   headers.set('X-Xynigo-Source', 'cloud_web_workspace');
-  headers.set('X-Xynigo-Client-Version', '0.13.13-cloud-web');
+  headers.set('X-Xynigo-Client-Version', '0.13.14-cloud-web');
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     headers.set('X-Xynigo-Web-CSRF', 'same-origin');
   }
@@ -3407,17 +3488,23 @@ async function cloudWorkspaceExecutor() {
   if (!compatible(selected)) {
     const payload = await cloudFetchJson('/v1/executors');
     localExecutorDevices = Array.isArray(payload.items) ? payload.items : [];
-    selected = localExecutorDevices.find(compatible) || null;
-    if (selected) localExecutorSelectedDeviceId = selected.id;
+    selected = localExecutorSelectedDevice();
     renderLocalExecutorDevices();
   }
   if (!selected) {
+    const error = new Error('请先从底部“运行环境”选择本次任务的执行设备');
+    error.code = 'executor_selection_required';
+    openRuntimeDrawer();
+    throw error;
+  }
+  if (!compatible(selected)) {
     const anyOnline = localExecutorDevices.some(item =>
       item.status !== 'revoked' && item.connectivity === 'online');
-    const error = new Error(anyOnline
-      ? '在线执行器版本过旧，请先安装云端提供的最新 Windows 执行器'
-      : '本地执行器当前离线，请先启动最新版本 Xynigo');
-    error.code = anyOnline ? 'executor_capability_missing' : 'executor_offline';
+    const error = new Error(selected.connectivity === 'online' && anyOnline
+      ? '所选执行器版本过旧，请先安装云端提供的最新执行器'
+      : '所选本地执行器当前离线，请先启动该设备');
+    error.code = selected.connectivity === 'online'
+      ? 'executor_capability_missing' : 'executor_offline';
     throw error;
   }
   return selected;
@@ -3437,9 +3524,15 @@ async function cloudFormalExecutor(capability, preferredId='') {
     localExecutorDevices = Array.isArray(payload.items) ? payload.items : [];
     selected = preferredId
       ? localExecutorDevices.find(item => item.id === preferredId) || null
-      : localExecutorDevices.find(compatible) || null;
-    if (compatible(selected)) localExecutorSelectedDeviceId = selected.id;
+      : localExecutorSelectedDevice();
+    if (preferredId && compatible(selected)) localExecutorSelectedDeviceId = selected.id;
     renderLocalExecutorDevices();
+  }
+  if (!selected) {
+    const error = new Error('请先从底部“运行环境”选择本次任务的执行设备');
+    error.code = 'executor_selection_required';
+    openRuntimeDrawer();
+    throw error;
   }
   if (!compatible(selected)) {
     const error = new Error(selected && selected.connectivity === 'online'
@@ -4199,7 +4292,6 @@ async function initializeAuth() {
   if (CLOUD_WEB_MODE) {
     $('authFootnote').textContent = '登录会话保存在同域 Secure、HttpOnly Cookie 中；页面脚本不会接触会话令牌。';
     $('sideRuntime').textContent = '云端运行';
-    $('sideHelp').innerHTML = '<strong>小犀提示</strong>云端工作台可独立使用；HubStudio/CDP 操作需要按需启动本机执行器。';
   }
   setAuthGate('checking', CLOUD_WEB_MODE ? '正在检查云端登录状态…' : '正在检查本机登录状态…');
   try {
@@ -4299,27 +4391,38 @@ function renderCloudExecutorHubStatus() {
   const pill = $('hubStatus');
   const onlineDevices = localExecutorDevices.filter(item =>
     item.status !== 'revoked' && item.connectivity === 'online');
-  if (!onlineDevices.length) {
+  const selected = localExecutorSelectedDevice();
+  if (!selected) {
     hubConnected = false;
-    pill.className = 'pill bad';
-    pill.textContent = '☁ 本地执行器均离线';
-    pill.title = CLOUD_EXECUTOR_OFFLINE_MESSAGE;
+    pill.className = 'pill checking';
+    pill.textContent = 'HubStudio 等待设备';
+    pill.title = onlineDevices.length
+      ? `账号下有 ${onlineDevices.length} 台执行器在线；请选择本次任务设备。`
+      : '请先选择并启动本次任务使用的执行器。';
+    updateRuntimeSelectionNotice();
     return;
   }
-  const selected = localExecutorSelectedDevice();
-  const device = selected && selected.connectivity === 'online'
-    ? selected : onlineDevices[0];
-  if (device.hubStatus === 'ready') {
+  if (selected.connectivity !== 'online') {
+    hubConnected = false;
+    pill.className = 'pill bad';
+    pill.textContent = 'HubStudio 等待设备';
+    pill.title = `所选设备“${selected.displayName || '未命名设备'}”当前离线；不会自动切换到其他设备。`;
+    updateRuntimeSelectionNotice();
+    return;
+  }
+  if (selected.hubStatus === 'ready') {
     hubConnected = true;
     pill.className = 'pill ok';
     pill.textContent = 'HubStudio 已连接';
-    pill.title = `${device.displayName || '本地执行器'}在线，HubStudio Local API 正常。`;
+    pill.title = `${selected.displayName || '本地执行器'}在线，HubStudio Local API 正常。`;
+    updateRuntimeSelectionNotice();
     return;
   }
   hubConnected = false;
   pill.className = 'pill checking';
-  pill.textContent = '🟠 执行器在线 · HubStudio 未连接';
-  pill.title = `${device.displayName || '本地执行器'}已在线，但尚未报告 HubStudio 可用。`;
+  pill.textContent = 'HubStudio 未连接';
+  pill.title = `${selected.displayName || '本地执行器'}已在线，但尚未报告 HubStudio 可用。`;
+  updateRuntimeSelectionNotice();
 }
 
 function setHubStatus(connected) {
@@ -6373,7 +6476,8 @@ function render(snap) {
     $('progressText').textContent = `${current} / ${total}`;
     $('bar').style.width = (total ? current / total * 100 : 0) + '%';
   }
-  $('btnStart').disabled = querySubmitting || isRunning;
+  $('btnStart').disabled = querySubmitting || isRunning
+    || (CLOUD_WEB_MODE && !runtimeExecutorReady());
   $('btnStop').disabled = !isRunning;
   const retryable = lastRows.filter(r => ['fail', 'inuse', 'pending', 'stopped'].includes(r.state)).length;
   $('btnRetryFail').disabled = isRunning || !retryable;
@@ -7132,7 +7236,12 @@ function parseSerials() {
 
 $('btnStart').onclick = async () => {
   if (querySubmitting || isRunning) return;
-  if (!hubConnected) { toast('未检测到 HubStudio：请先启动 HubStudio 客户端并登录，然后点右上角状态标签重新检测'); return; }
+  if (CLOUD_WEB_MODE && !localExecutorSelectedDevice()) {
+    openRuntimeDrawer();
+    toast('请先选择本次查询使用的执行设备');
+    return;
+  }
+  if (!hubConnected) { toast('未检测到 HubStudio：请在对应电脑启动并登录 HubStudio，然后从底部运行状态栏刷新'); return; }
   const serials = parseSerials();
   if (!serials) return;
   const site = $('querySite').value;
@@ -7176,7 +7285,7 @@ $('btnStart').onclick = async () => {
     toast(e.message);
   } finally {
     querySubmitting = false;
-    $('btnStart').disabled = isRunning;
+    $('btnStart').disabled = isRunning || (CLOUD_WEB_MODE && !runtimeExecutorReady());
   }
 };
 
@@ -7882,6 +7991,94 @@ function localExecutorSelectedDevice() {
   return localExecutorDevices.find(item => item.id === localExecutorSelectedDeviceId) || null;
 }
 
+function rememberedRuntimeExecutorId() {
+  try { return String(localStorage.getItem(RUNTIME_EXECUTOR_STORAGE_KEY) || ''); }
+  catch (_) { return ''; }
+}
+
+function saveRememberedRuntimeExecutorId(value) {
+  try {
+    if (value) localStorage.setItem(RUNTIME_EXECUTOR_STORAGE_KEY, value);
+    else localStorage.removeItem(RUNTIME_EXECUTOR_STORAGE_KEY);
+  } catch (_) {}
+}
+
+function runtimeExecutorReady() {
+  if (!CLOUD_WEB_MODE) return !!hubConnected;
+  const selected = localExecutorSelectedDevice();
+  return !!(selected && selected.status !== 'revoked'
+    && selected.connectivity === 'online' && selected.hubStatus === 'ready');
+}
+
+function updateRuntimeSelectionNotice() {
+  const notice = $('runtimeSelectionNotice');
+  if (!notice) return;
+  if (!CLOUD_WEB_MODE) {
+    notice.hidden = true;
+    return;
+  }
+  const selected = localExecutorSelectedDevice();
+  const ready = runtimeExecutorReady();
+  notice.hidden = ready;
+  if (!ready) {
+    if (!selected) {
+      $('runtimeSelectionTitle').textContent = '开始前请选择执行设备';
+      $('runtimeSelectionDescription').textContent = '查询和采购任务只会发送到你明确选择的电脑。';
+      $('runtimeSelectionButton').textContent = '选择设备';
+    } else if (selected.connectivity !== 'online') {
+      $('runtimeSelectionTitle').textContent = `所选设备“${selected.displayName || '未命名设备'}”当前离线`;
+      $('runtimeSelectionDescription').textContent = '任务不会自动切换到账号下的其他在线设备。';
+      $('runtimeSelectionButton').textContent = '检查设备';
+    } else {
+      $('runtimeSelectionTitle').textContent = '所选设备的 HubStudio 尚未连接';
+      $('runtimeSelectionDescription').textContent = '请在对应电脑启动并登录 HubStudio，然后刷新状态。';
+      $('runtimeSelectionButton').textContent = '刷新状态';
+    }
+  }
+  $('btnStart').disabled = querySubmitting || isRunning || !ready;
+}
+
+function renderRuntimeDeviceDrawer() {
+  const list = $('runtimeDeviceList');
+  if (!list) return;
+  const active = localExecutorDevices.filter(item => item.status !== 'revoked');
+  const online = active.filter(item => item.connectivity === 'online');
+  $('runtimeDeviceCount').textContent = `${online.length} 台在线`;
+  if (!active.length) {
+    list.innerHTML = '<div class="local-executor-empty">尚未绑定设备。请进入设备管理页下载安装并完成一次性配对。</div>';
+  } else {
+    list.innerHTML = active.map(item => {
+      const pending = item.id === runtimePendingExecutorId;
+      const platform = item.platform === 'macos' ? 'macOS' : 'Windows';
+      const onlineState = item.connectivity === 'online';
+      const hub = onlineState && item.hubStatus === 'ready' ? ' · HubStudio 已连接' : '';
+      return `<button class="runtime-device-card${pending ? ' pending' : ''}" type="button" data-runtime-device="${esc(item.id)}"><span class="runtime-device-radio" aria-hidden="true"></span><span class="runtime-device-icon" aria-hidden="true">${item.platform === 'macos' ? '⌘' : '▣'}</span><span class="runtime-device-copy"><b>${esc(item.displayName || '未命名设备')}</b><small>${esc(platform)} · ${esc(item.architecture || '')} · v${esc(item.clientVersion || '未知')}</small><em class="${onlineState ? '' : 'offline'}">${onlineState ? '在线' : '离线'}${hub}</em></span></button>`;
+    }).join('');
+  }
+  const remembered = rememberedRuntimeExecutorId();
+  $('runtimeRememberDevice').checked = !!runtimePendingExecutorId
+    && remembered === runtimePendingExecutorId;
+  $('runtimeConfirmDevice').disabled = !runtimePendingExecutorId
+    || !active.some(item => item.id === runtimePendingExecutorId);
+}
+
+function openRuntimeDrawer() {
+  if (!CLOUD_WEB_MODE) {
+    if (hasFeatureAccess('localsettings')) openFeatureTab('localsettings');
+    return;
+  }
+  runtimePendingExecutorId = localExecutorSelectedDeviceId;
+  renderRuntimeDeviceDrawer();
+  $('runtimeDrawer').hidden = false;
+  $('runtimeEnvironmentEntry').setAttribute('aria-expanded', 'true');
+  if (!localExecutorDeviceLoading) loadLocalExecutorDevices(false);
+}
+
+function closeRuntimeDrawer() {
+  $('runtimeDrawer').hidden = true;
+  $('runtimeEnvironmentEntry').setAttribute('aria-expanded', 'false');
+}
+
 function localExecutorTime(value) {
   if (!value) return '从未在线';
   const date = new Date(value);
@@ -7973,16 +8170,13 @@ async function loadLocalExecutorConfigSummary({notify=false} = {}) {
 function updateLocalExecutorSummary() {
   const activeDevices = localExecutorDevices.filter(item => item.status !== 'revoked');
   const onlineDevices = activeDevices.filter(item => item.connectivity === 'online');
-  const selected = localExecutorSelectedDevice()
-    || onlineDevices[0] || activeDevices[0] || localExecutorDevices[0] || null;
-  if (selected && selected.id !== localExecutorSelectedDeviceId) {
-    localExecutorSelectedDeviceId = selected.id;
-  }
+  const selected = localExecutorSelectedDevice();
   const statusNode = $('localExecutorStatus');
   const entry = $('localExecutorEntry');
   const online = onlineDevices.length > 0;
+  const selectedOnline = !!(selected && selected.connectivity === 'online');
   statusNode.classList.toggle('ok', online);
-  entry.classList.toggle('online', online);
+  entry.classList.toggle('online', selectedOnline);
   $('localExecutorStatusIcon').textContent = online ? '✓' : '!';
   $('localExecutorStatusTitle').textContent = online
     ? `${onlineDevices.length} 台本地执行器在线`
@@ -7993,21 +8187,21 @@ function updateLocalExecutorSummary() {
       ? '请确认所选电脑上的执行器窗口保持运行；离线时摘要可能过期，云端不会排队配置写入。'
       : '下载安装后生成一次性配对码，在执行器目录完成设备绑定。');
   $('localExecutorStatusDevice').textContent = selected
-    ? `设备：${selected.displayName}` : '设备：未绑定';
+    ? `设备：${selected.displayName}` : (activeDevices.length ? '设备：未选择' : '设备：未绑定');
   $('localExecutorStatusVersion').textContent = selected
     ? `版本：v${selected.clientVersion || '未知'}` : '版本：待检测';
   $('localExecutorStatusConnectivity').textContent = selected
     ? `状态：${selected.connectivity === 'online' ? '在线' : selected.connectivity === 'revoked' ? '已撤销' : '离线'}`
     : '状态：未连接';
-  $('localExecutorEntryText').textContent = online
-    ? '本地执行器在线'
-    : (activeDevices.length ? '本地执行器离线' : '本地执行器待连接');
-  entry.title = online
-    ? '本地执行器在线，点击查看设备状态'
-    : (activeDevices.length
-      ? '已绑定的本地执行器当前离线，点击查看'
-      : '下载、安装或连接本地执行器');
+  $('localExecutorEntryText').textContent = !selected
+    ? '未选择执行器'
+    : `${selected.displayName || '未命名设备'} · ${selectedOnline ? '在线' : '离线'}`;
+  entry.title = !selected
+    ? '选择本次任务实际使用的电脑'
+    : `${selected.displayName || '所选设备'}${selectedOnline ? '在线' : '离线'}，点击切换或检查`;
   if (CLOUD_WEB_MODE) renderCloudExecutorHubStatus();
+  renderRuntimeDeviceDrawer();
+  updateRuntimeSelectionNotice();
   const step = online ? 'pair' : (activeDevices.length ? 'start' : 'download');
   $('localExecutorStepDownload').classList.toggle('current', step === 'download');
   $('localExecutorStepStart').classList.toggle('current', step === 'start');
@@ -8091,9 +8285,17 @@ async function loadLocalExecutorDevices(force=false) {
     const payload = await api('/api/local-executor/devices');
     localExecutorDevices = Array.isArray(payload.items) ? payload.items : [];
     if (localExecutorSelectedDeviceId
-        && !localExecutorDevices.some(item => item.id === localExecutorSelectedDeviceId)) {
+        && !localExecutorDevices.some(item =>
+          item.id === localExecutorSelectedDeviceId && item.status !== 'revoked')) {
       localExecutorSelectedDeviceId = '';
+      saveRememberedRuntimeExecutorId('');
       resetLocalExecutorConfig();
+    }
+    if (!localExecutorSelectedDeviceId) {
+      const remembered = rememberedRuntimeExecutorId();
+      const rememberedDevice = localExecutorDevices.find(item =>
+        item.id === remembered && item.status !== 'revoked');
+      if (rememberedDevice) localExecutorSelectedDeviceId = rememberedDevice.id;
     }
     renderLocalExecutorDevices();
     if (localExecutorSelectedDeviceId) {
@@ -8374,7 +8576,36 @@ $('btnLocalExecutorCopySha').onclick = async () => {
     toast('浏览器未允许复制，请手动选择 SHA-256 文本');
   }
 };
-$('localExecutorEntry').onclick = () => openFeatureTab('localexecutor');
+$('runtimeEnvironmentEntry').onclick = openRuntimeDrawer;
+$('localExecutorEntry').onclick = openRuntimeDrawer;
+$('runtimeSelectionButton').onclick = openRuntimeDrawer;
+$('runtimeDrawerClose').onclick = closeRuntimeDrawer;
+$('runtimeDeviceList').onclick = event => {
+  const button = event.target.closest('[data-runtime-device]');
+  if (!button) return;
+  runtimePendingExecutorId = button.dataset.runtimeDevice || '';
+  renderRuntimeDeviceDrawer();
+};
+$('runtimeConfirmDevice').onclick = async () => {
+  const selected = localExecutorDevices.find(item =>
+    item.id === runtimePendingExecutorId && item.status !== 'revoked');
+  if (!selected) return;
+  localExecutorSelectedDeviceId = selected.id;
+  if ($('runtimeRememberDevice').checked) saveRememberedRuntimeExecutorId(selected.id);
+  else saveRememberedRuntimeExecutorId('');
+  resetLocalExecutorConfig();
+  renderLocalExecutorDevices();
+  closeRuntimeDrawer();
+  if (selected.connectivity === 'online') await loadLocalExecutorConfigSummary();
+  toast(`本次任务设备已选择：${selected.displayName || '未命名设备'}`);
+};
+const openLocalExecutorManagement = () => {
+  closeRuntimeDrawer();
+  openFeatureTab('localexecutor');
+};
+$('runtimeManageDevices').onclick = openLocalExecutorManagement;
+$('runtimeDownloadEntry').onclick = openLocalExecutorManagement;
+$('runtimeHelpEntry').onclick = () => toast('请先检查底部运行状态；设备安装、配对和配置摘要可在“系统管理 → 本地执行器”查看。');
 
 function setFeaturePanel(module) {
   const info = FEATURE_MODULES[module];
@@ -8691,6 +8922,7 @@ document.addEventListener('keydown', event => {
   if (event.key === 'Escape') {
     setWorkspaceTabMenuOpen(false);
     setAuthUserMenuOpen(false);
+    closeRuntimeDrawer();
   }
 });
 document.addEventListener('click', () => setAuthUserMenuOpen(false));
@@ -9717,6 +9949,7 @@ $('btnGroupAll').onclick = async () => {
 
 $('hubStatus').onclick = async () => {
   if (CLOUD_WEB_MODE) {
+    openRuntimeDrawer();
     await loadLocalExecutorDevices(true);
     const online = localExecutorDevices.filter(item =>
       item.status !== 'revoked' && item.connectivity === 'online');
@@ -9739,6 +9972,9 @@ $('hubStatus').onclick = async () => {
       toast('HubStudio 连接正常');
     }
   } catch (e) { setHubStatus(false); toast(e.message); }
+};
+$('taskStatus').onclick = () => {
+  if (CLOUD_WEB_MODE) openRuntimeDrawer();
 };
 
 /* ---------- 分组与设置 ---------- */
