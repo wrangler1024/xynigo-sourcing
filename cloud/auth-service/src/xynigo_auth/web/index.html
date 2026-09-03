@@ -1437,12 +1437,11 @@
         <button class="secondary-tab" data-parent="analytics" data-planned="资源健康" disabled hidden>资源健康<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="system" data-module="localexecutor" data-cloud-only="1" hidden>本地执行器<span class="secondary-status">新增</span></button>
         <button class="secondary-tab" data-parent="system" data-module="localsettings" data-local-only="1" hidden>本机设置<span class="secondary-status">本机兼容</span></button>
-        <button class="secondary-tab" data-parent="system" data-module="larkconnection" data-local-only="1" data-required-role="super_admin" hidden>飞书连接<span class="secondary-status restricted">本机超管</span></button>
+        <button class="secondary-tab" data-parent="system" data-module="larkconnection" data-cloud-only="1" data-required-role="super_admin" hidden>云端服务配置<span class="secondary-status restricted">超管</span></button>
         <button class="secondary-tab" data-parent="system" data-module="organizationaccess" hidden>组织与权限<span class="secondary-status">云端</span></button>
         <button class="secondary-tab" data-parent="system" data-module="sessionmanagement" hidden>登录会话<span class="secondary-status">云端</span></button>
         <button class="secondary-tab" data-parent="system" data-module="businesslogs" hidden>业务操作日志<span class="secondary-status">云端</span></button>
         <button class="secondary-tab" data-parent="system" data-module="systemlogs" hidden>系统运行日志<span class="secondary-status">云端</span></button>
-        <button class="secondary-tab" data-parent="system" data-planned="云端服务配置" disabled hidden>云端服务配置<span class="secondary-status restricted">超管</span></button>
         <button class="secondary-tab" data-parent="system" data-planned="版本管理" disabled hidden>版本管理<span class="secondary-status planned">规划</span></button>
       </div>
       <button class="module-tab" data-primary="operations" title="运营中心">
@@ -2457,12 +2456,12 @@
     </section>
 
     <section class="card settings-view" data-settings-view="larkconnection" hidden>
-      <div class="card-title">飞书连接 <span class="legend">集中维护各业务模块的飞书数据连接</span></div>
-      <div class="credential-note">权限要求：仅超级管理员可查看和修改飞书连接。成员与角色后端接入后，其他用户不显示此入口，直接调用配置接口也会被拒绝。</div>
-      <div class="card-title" style="margin-top:18px">企业应用连接 <span class="legend">统一使用“小犀代采”企业自建应用，无需安装 lark-cli</span></div>
+      <div class="card-title">云端服务配置 <span class="legend">组织级集成由超级管理员统一维护</span></div>
+      <div class="credential-note">飞书企业应用凭证按组织保存于云端并加密落库。普通管理员和员工不显示此入口，也无法通过接口读取配置状态；App Secret 永不回显或下发到本地执行器。</div>
+      <div class="card-title" style="margin-top:18px">飞书企业应用 <span class="legend">全组织只配置一次</span></div>
       <div class="settings-status">
         <span class="pill checking" id="larkConfigStatus">正在读取配置…</span>
-        <span class="hint" id="larkConfigDetail">应用凭证保存在当前电脑的 macOS 钥匙串或 Windows 当前用户 DPAPI；访问令牌只驻留进程内存。</span>
+        <span class="hint" id="larkConfigDetail">正在读取组织级配置状态；页面不会获取已保存的 Secret。</span>
       </div>
       <div class="settings-grid">
         <div class="settings-field">
@@ -2472,30 +2471,17 @@
         </div>
         <div class="settings-field">
           <label>App Secret</label>
-          <input type="password" id="cfgLarkAppSecret" autocomplete="new-password" placeholder="正在读取配置状态…">
+          <input type="password" id="cfgLarkAppSecret" autocomplete="new-password" placeholder="输入新的 App Secret">
           <div class="config-field-state checking" id="cfgLarkAppSecretState">正在读取配置状态…</div>
         </div>
         <div class="settings-field full">
-          <label>旧买家号台账迁移源（兼容配置）</label>
-          <input type="password" id="cfgLarkLedgerUrl" autocomplete="off" placeholder="正在读取配置状态…">
-          <div class="config-field-state checking" id="cfgLarkLedgerUrlState">正在读取配置状态…</div>
-          <div class="config-field-state checking" id="cfgLarkConnectedTarget">当前连接：正在读取…</div>
-          <div class="hint">仅供一次性安全元数据迁移和人工排障；测试版买家号列表、查重、下单和建环境结果均不读取或直写此表。系统只保存解析后的目标标识，不回显完整链接。</div>
-          <div style="margin-top:8px"><a class="btn-mini" href="/api/lark/template" style="text-decoration:none;display:inline-block;padding:6px 12px">📥 下载旧台账兼容模板</a></div>
-        </div>
-        <div class="settings-field full">
-          <div class="query-col-checks">
-            <label><input type="checkbox" id="cfgLarkClearCredential"> 清除当前电脑上的应用凭证</label>
-            <label><input type="checkbox" id="cfgLarkClearTarget"> 清除旧台账迁移源</label>
-          </div>
-          <div class="hint">页面/API 永不回显 App Secret、完整链接、Base Token 或 Table ID；公开代码中也不包含这些值。后续采购、运营、财务等模块在本页面增加独立数据连接，共用企业应用凭证并分别授权。</div>
+          <div class="hint">更新时必须同时输入 App ID 与 App Secret，并经过飞书只读验证后原子替换。执行器只通过云端授权代理读取所需数据，不保存或接收企业应用 Secret。</div>
         </div>
       </div>
       <div class="settings-actions">
-        <button class="btn primary" id="btnLarkSave" type="button">保存飞书配置</button>
-        <button class="btn" id="btnLarkPreflight" type="button">只读验证旧迁移源</button>
+        <button class="btn primary" id="btnLarkSave" type="button">验证并保存组织配置</button>
         <span class="config-field-state checking" id="larkSaveFeedback" aria-live="polite">等待保存</span>
-        <span class="hint">只有点击此按钮才会读取旧表字段；进入页面不会自动查询旧表，也不会创建、修改或删除记录。</span>
+        <span class="hint">验证只申请 tenant_access_token，不会读取、创建、修改或删除飞书业务数据。</span>
       </div>
     </section>
 
@@ -2943,7 +2929,7 @@ const PRIMARY_MODULES = {
   },
   system: {
     label: '系统管理', hint: '权限 · 设置 · 安全', defaultModule: 'localsettings',
-    summary: '规划成员角色与模块权限，并分别管理本机设置、飞书连接、安全和审计能力。'
+    summary: '规划成员角色与模块权限，并分别管理本机设置、云端服务配置、安全和审计能力。'
   }
 };
 const FEATURE_MODULES = {
@@ -3012,9 +2998,9 @@ const FEATURE_MODULES = {
     summary: '管理当前电脑的 HubStudio 连接、查询展示和环境创建偏好。'
   },
   larkconnection: {
-    label: '飞书连接', primary: 'system', localOnly: true, requiredRole: 'super_admin',
+    label: '云端服务配置', primary: 'system', cloudOnly: true, requiredRole: 'super_admin',
     requiredPermission: 'system.lark_connection.manage',
-    summary: '由超级管理员集中维护企业应用凭证及各业务模块的飞书数据连接。'
+    summary: '由超级管理员集中维护组织级企业应用凭证；Secret 加密保存且不下发本地执行器。'
   },
   organizationaccess: {
     label: '组织与权限', primary: 'system',
@@ -3150,7 +3136,7 @@ const PERMISSION_MENU_GROUPS = [
   {
     id: 'system', label: '系统管理', secondary: [
       {
-        id: 'larkconnection', label: '飞书连接', badge: '仅超管',
+        id: 'larkconnection', label: '飞书企业应用', badge: '仅超管',
         note: '页面仍要求超级管理员角色，不因普通角色勾选而放宽。',
         codes: ['system.lark_connection.manage']
       },
@@ -3363,6 +3349,12 @@ function cloudApiError(payload, status) {
   const known = {
     authentication_required:'请先使用飞书登录', session_invalid:'登录会话已失效，请重新登录',
     permission_denied:'当前角色没有执行此操作的权限', web_csrf_required:'页面安全校验失败，请刷新后重试',
+    tenant_feishu_not_configured:'组织尚未配置飞书企业应用',
+    tenant_feishu_verification_failed:'飞书企业应用验证失败，请检查 App ID、App Secret 和应用状态',
+    tenant_feishu_revision_conflict:'组织飞书配置已被其他窗口更新，请刷新后重试',
+    tenant_feishu_credential_encrypt_failed:'组织飞书凭证暂时无法安全保存',
+    tenant_feishu_credential_unavailable:'组织飞书企业应用凭证暂不可用',
+    tenant_feishu_credential_invalid:'组织飞书企业应用凭证无效',
     procurement_import_cloud_disabled:'云端采购协作导入尚未启用',
     procurement_import_plan_expired:'解析计划已过期，请重新选择 xlsx',
     environment_plan_cloud_disabled:'云端买家号解析加密能力尚未启用',
@@ -4135,6 +4127,13 @@ async function cloudWebApi(path, opts={}) {
       : {authenticated:!!status.authenticated, identity:status.identity || null, loginPending:false};
   }
   if (path === '/api/auth/logout') return cloudFetchJson('/v1/auth/logout', opts);
+  if (path === '/api/lark/config') {
+    const method = String(opts.method || 'GET').toUpperCase();
+    return cloudFetchJson('/v1/admin/integrations/feishu', {
+      ...opts,
+      method: method === 'POST' ? 'PUT' : method
+    });
+  }
   if (path === '/api/local-executor/releases/latest') {
     return cloudFetchJson('/v1/local-executor/releases/latest', opts);
   }
@@ -10546,7 +10545,7 @@ function inferQuerySite(groupName) {
 }
 
 function applyLarkRuntimeStatus(state) {
-  larkReady = !!(state && state.ready);
+  larkReady = !!(state && (state.ready || state.configured));
   larkTargetConfigured = !!(state && state.ledgerTargetConfigured);
   larkTargetBaseName = String(state && state.targetBaseName || '').trim();
   larkTargetTableName = String(state && state.targetTableName || '').trim();
@@ -10558,7 +10557,7 @@ function applyLarkRuntimeStatus(state) {
   if (!larkReady) $('regWriteLedger').checked = false;
   $('envLedgerState').textContent = larkReady
     ? `${larkTargetDisplayName()}已就绪；回写开关默认关闭，勾选后执行时会独立确认。`
-    : '飞书 OpenAPI 未就绪；请联系超级管理员到“系统管理 → 飞书连接”配置应用凭证和模块数据连接。';
+    : '飞书 OpenAPI 未就绪；请联系超级管理员到“系统管理 → 云端服务配置”配置企业应用。';
 }
 
 async function loadLarkRuntimeStatus() {
@@ -10576,55 +10575,28 @@ function renderLarkConfigStatus(state) {
   applyLarkRuntimeStatus(state);
   const pill = $('larkConfigStatus');
   pill.className = 'pill ' + (larkReady ? 'ok' : 'bad');
-  pill.textContent = larkReady ? '✓ 飞书 OpenAPI 已就绪' : '⚠ 飞书 OpenAPI 未就绪';
-  const parts = [];
-  if (state && state.credentialConfigured) parts.push(`应用 ${state.appIdMasked || '已配置'}`);
-  else parts.push('应用凭证未配置');
-  const targetBaseName = String(state && state.targetBaseName || '').trim();
-  const targetTableName = String(state && state.targetTableName || '').trim();
-  larkTargetBaseName = targetBaseName;
-  larkTargetTableName = targetTableName;
-  renderLarkWriteTargetText();
-  const targetDisplay = targetBaseName && targetTableName
-    ? `${targetBaseName} / ${targetTableName}` : '';
-  parts.push(state && state.ledgerTargetConfigured
-    ? (targetDisplay ? `旧迁移源 ${targetDisplay}` : '旧台账迁移源已配置，名称待手工验证')
-    : '旧台账迁移源未配置');
-  $('larkConfigDetail').textContent = parts.join(' · ') + '。买家号运行时只查询数据库；页面和 API 不回显凭证或台账标识。';
-  const credentialConfigured = !!(state && state.credentialConfigured);
+  pill.textContent = larkReady ? '✓ 组织飞书应用已配置' : '⚠ 组织飞书应用未配置';
+  const credentialConfigured = !!(state && state.configured);
   const appState = $('cfgLarkAppIdState');
   const secretState = $('cfgLarkAppSecretState');
-  const ledgerState = $('cfgLarkLedgerUrlState');
-  const connectedTarget = $('cfgLarkConnectedTarget');
   if (!state) {
-    for (const element of [appState, secretState, ledgerState]) {
+    for (const element of [appState, secretState]) {
       element.className = 'config-field-state bad';
       element.textContent = '⚠ 配置状态读取失败';
     }
-    $('cfgLarkAppId').placeholder = '状态读取失败；可输入新 App ID 覆盖';
-    $('cfgLarkAppSecret').placeholder = '状态读取失败；可输入新 Secret 覆盖';
-    $('cfgLarkLedgerUrl').placeholder = '状态读取失败；可粘贴新链接覆盖';
-    connectedTarget.className = 'config-field-state bad';
-    connectedTarget.textContent = '当前连接：状态读取失败';
+    $('larkConfigDetail').textContent = '组织级配置状态读取失败。';
   } else {
     appState.className = 'config-field-state ' + (credentialConfigured ? 'ok' : 'bad');
     appState.textContent = credentialConfigured
       ? `✓ 已配置：${state.appIdMasked || '企业自建应用'}` : '○ 未配置 App ID';
     secretState.className = 'config-field-state ' + (credentialConfigured ? 'ok' : 'bad');
-    secretState.textContent = credentialConfigured ? '✓ 已安全保存 App Secret' : '○ 未配置 App Secret';
-    ledgerState.className = 'config-field-state ' + (larkTargetConfigured ? 'ok' : 'bad');
-    ledgerState.textContent = larkTargetConfigured ? '✓ 旧台账迁移源已配置' : '○ 未配置旧台账迁移源';
-    connectedTarget.className = 'config-field-state ' + (state.targetVerified ? 'ok' : (larkTargetConfigured ? 'checking' : 'bad'));
-    renderLarkConnectedTarget(
-      connectedTarget, targetDisplay, !!state.targetVerified,
-      larkTargetConfigured);
+    secretState.textContent = credentialConfigured ? '✓ Secret 已在云端加密保存，页面不会回显' : '○ 未配置 App Secret';
     $('cfgLarkAppId').placeholder = credentialConfigured
-      ? `已配置 ${state.appIdMasked || '应用'}；留空保持不变` : '请输入企业自建应用 App ID';
+      ? `当前 ${state.appIdMasked || '已配置'}；更新时重新输入完整 App ID` : '请输入企业自建应用 App ID';
     $('cfgLarkAppSecret').placeholder = credentialConfigured
-      ? '已安全保存；留空保持不变' : '请输入 App Secret';
-    $('cfgLarkLedgerUrl').placeholder = larkTargetConfigured
-      ? '旧迁移源已配置；留空保持不变，粘贴新链接可替换'
-      : '粘贴包含 table=tbl... 的飞书 /base/ 或 /wiki/ 完整链接';
+      ? '更新时输入新的 App Secret' : '请输入 App Secret';
+    const verifiedText = state.verifiedAt ? ` · 最近验证 ${new Date(state.verifiedAt).toLocaleString()}` : '';
+    $('larkConfigDetail').textContent = `配置来源：${state.source === 'organization' ? '组织级加密配置' : '部署兼容配置'} · 修订 ${Number(state.revision || 0)}${verifiedText}。Secret 永不回显或下发执行器。`;
   }
   $('envWriteLedger').disabled = true;
   $('envWriteLedger').checked = false;
@@ -10636,7 +10608,7 @@ function renderLarkConfigStatus(state) {
 async function loadLarkConfigStatus({refreshPending=false} = {}) {
   try {
     let state = await api('/api/lark/config');
-    larkConfigRevision = String(state.configRevision || '');
+    larkConfigRevision = Number(state.revision || 0);
     renderLarkConfigStatus(state);
     void refreshPending;
     return state;
@@ -10969,7 +10941,7 @@ $('localEnvironmentBindingList').onclick = event => {
 async function loadLarkConnectionPage() {
   const state = await loadLarkConfigStatus();
   if (state) return true;
-  toast('飞书连接读取失败，请检查超级管理员权限或本机服务状态');
+  toast('云端服务配置读取失败，请检查超级管理员权限或云端服务状态');
   return false;
 }
 
@@ -11037,76 +11009,39 @@ function setLarkSaveFeedback(kind, message) {
 async function saveLarkConfig() {
   const button = $('btnLarkSave');
   if (button.disabled) return;
-  let ledgerUrl = '';
   try {
     const appId = $('cfgLarkAppId').value.trim();
     const appSecret = $('cfgLarkAppSecret').value.trim();
-    ledgerUrl = $('cfgLarkLedgerUrl').value.trim();
-    const clearCredential = $('cfgLarkClearCredential').checked;
-    const clearLedgerTarget = $('cfgLarkClearTarget').checked;
-    if ((appId && !appSecret) || (!appId && appSecret)) throw new Error('App ID 与 App Secret 必须同时填写');
-    if (clearCredential && (appId || appSecret)) throw new Error('清除凭证与填写新凭证不能同时选择');
-    if (clearCredential && ledgerUrl) throw new Error('清除应用凭证时不能同时解析新台账链接');
-    if (clearLedgerTarget && ledgerUrl) throw new Error('清除台账目标与填写新链接不能同时选择');
-    if (ledgerUrl && larkTargetConfigured && !confirm('保存新链接后将替换当前旧台账迁移源。\n\n该配置仅用于超级管理员显式发起的一次性迁移，不会成为买家号日常查询或写入源。\n\n确认替换迁移源？')) return;
+    if (!appId || !appSecret) throw new Error('更新组织配置时，App ID 与 App Secret 必须同时填写');
     button.disabled = true;
-    button.textContent = '保存中…';
-    setLarkSaveFeedback('checking', '正在安全保存应用凭证并解析台账链接…');
+    button.textContent = '验证并保存中…';
+    setLarkSaveFeedback('checking', '正在向飞书验证凭证；通过后将加密保存到组织配置…');
     const state = await api('/api/lark/config', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({appId, appSecret, ledgerUrl, clearCredential, clearLedgerTarget, expectedRevision:larkConfigRevision})
+      body:JSON.stringify({appId, appSecret, expectedRevision:Number(larkConfigRevision || 0)})
     });
-    larkConfigRevision = String(state.configRevision || larkConfigRevision);
-    for (const id of ['cfgLarkAppId','cfgLarkAppSecret','cfgLarkLedgerUrl']) $(id).value = '';
-    $('cfgLarkClearCredential').checked = false;
-    $('cfgLarkClearTarget').checked = false;
+    larkConfigRevision = Number(state.revision || larkConfigRevision);
+    for (const id of ['cfgLarkAppId','cfgLarkAppSecret']) $(id).value = '';
     renderLarkConfigStatus(state);
-    const validationError = String(state && state.targetValidationError || '').trim();
-    const message = validationError
-      ? `⚠ 配置已保存，但连接名称获取失败：${validationError}。请检查多维表格高级权限后重新验证。`
-      : (ledgerUrl ? '✓ 飞书链接已解析并完成连接验证' : '✓ 飞书 OpenAPI 配置保存成功');
-    setLarkSaveFeedback(validationError ? 'bad' : 'ok', message);
+    const message = '✓ 组织飞书应用已验证并加密保存';
+    setLarkSaveFeedback('ok', message);
     toast(message.replace(/^✓\s*/, ''));
   } catch (err) {
-    if (err.code === 'config_revision_conflict') {
+    if (err.code === 'tenant_feishu_revision_conflict') {
       await loadLarkConfigStatus();
-      setLarkSaveFeedback('bad', '⚠ 本机配置已在其他窗口变化，已刷新最新状态，请重新确认后保存');
-      toast('本机配置已刷新，请重新确认飞书设置');
+      setLarkSaveFeedback('bad', '⚠ 组织配置已在其他窗口变化，已刷新最新状态，请重新确认后保存');
+      toast('组织配置已刷新，请重新确认飞书设置');
       return;
     }
     setLarkSaveFeedback('bad', '⚠ 保存失败：' + err.message);
     toast('飞书配置保存失败：' + err.message);
   } finally {
     button.disabled = false;
-    button.textContent = '保存飞书配置';
+    button.textContent = '验证并保存组织配置';
   }
 }
 
 $('btnLarkSave').onclick = saveLarkConfig;
-
-$('btnLarkPreflight').onclick = async () => {
-  if (!larkReady) { toast('请先保存完整的飞书应用与统一台账配置'); return; }
-  const button = $('btnLarkPreflight');
-  button.disabled = true;
-  button.textContent = '正在验证…';
-  setLarkSaveFeedback('checking', '正在获取旧迁移源名称并只读检查字段…');
-  try {
-    const result = await api('/api/lark/preflight', {
-      method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'
-    });
-    renderLarkConfigStatus(result);
-    const message = result.message || '飞书统一台账只读检查通过';
-    setLarkSaveFeedback('ok', '✓ ' + message);
-    toast(message);
-  } catch (err) {
-    await loadLarkConfigStatus();
-    setLarkSaveFeedback('bad', '⚠ 重新验证失败：' + err.message);
-    toast(err.message);
-  } finally {
-    button.disabled = false;
-    button.textContent = '重新验证连接与字段';
-  }
-};
 
 /* ---------- 云端成员、角色与会话管理 ---------- */
 

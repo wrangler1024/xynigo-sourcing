@@ -515,7 +515,9 @@ class ConfigRouteTests(unittest.TestCase):
         self.assertNotIn('private-hub-key-1234', config_text)
         self.assertRegex(
             json.loads(config_text)['configRevision'], r'^[0-9a-f]{64}$')
-        self.assertTrue(json.loads(lark_config_text)['ready'])
+        self.assertTrue(json.loads(lark_config_text)['managedInCloud'])
+        self.assertTrue(json.loads(lark_config_text)['legacyCredentialPresent'])
+        self.assertNotIn('appIdMasked', lark_config_text)
         self.assertNotIn('bascnPublicSafeExample', lark_config_text)
         self.assertNotIn('tblPublicSafeExample', lark_config_text)
         self.assertNotIn('sanitized-secret-value', lark_config_text)
@@ -612,40 +614,7 @@ class ConfigRouteTests(unittest.TestCase):
         finally:
             connection.close()
 
-    def test_post_lark_config_saves_secret_outside_config_and_never_echoes_it(self):
-        fake_client = SimpleNamespace(get_target_metadata=lambda: {
-            'base_name': '公开脱敏测试 Base',
-            'table_name': '买家号统一台账（测试）',
-        })
-        with tempfile.TemporaryDirectory() as tmp:
-            config_path = str(Path(tmp) / 'config.json')
-            with patch.object(main_module, 'CONFIG_PATH', config_path), \
-                    patch('purchase_tool.main.build_buyer_ledger_service') as build:
-                build.return_value.client = fake_client
-                response = self._post_json('/api/lark/config', {
-                    'appId': 'cli_public_safe_example',
-                    'appSecret': 'sanitized-secret-value',
-                    'ledgerUrl': ('https://public-safe.feishu.cn/base/'
-                                  'bascnPublicSafeExample'
-                                  '?table=tblPublicSafeExample'),
-                })
-                persisted = Path(config_path).read_text('utf-8')
-        rendered = json.dumps(response)
-        self.assertTrue(response['ready'])
-        self.assertNotIn('sanitized-secret-value', rendered)
-        self.assertNotIn('bascnPublicSafeExample', rendered)
-        self.assertNotIn('tblPublicSafeExample', rendered)
-        self.assertNotIn('sanitized-secret-value', persisted)
-        self.assertNotIn('https://public-safe.feishu.cn', persisted)
-        self.assertIn('bascnPublicSafeExample', persisted)
-        self.assertIn('tblPublicSafeExample', persisted)
-        self.assertTrue(response['targetVerified'])
-        self.assertEqual(response['targetBaseName'], '公开脱敏测试 Base')
-        self.assertEqual(
-            response['targetTableName'], '买家号统一台账（测试）')
-        self.assertRegex(response['configRevision'], r'^[0-9a-f]{64}$')
-
-    def test_lark_credential_rolls_back_when_config_commit_fails(self):
+    def test_post_lark_config_is_cloud_managed_and_never_mutates_local_secret(self):
         old_credentials = main_module.STATE.lark_credentials.load()
         with tempfile.TemporaryDirectory() as tmp:
             config_path = str(Path(tmp) / 'config.json')
@@ -653,66 +622,18 @@ class ConfigRouteTests(unittest.TestCase):
             with patch.object(main_module, 'CONFIG_PATH', config_path):
                 save_config(initial)
                 main_module.STATE.cfg = initial
-                revision = json.loads(
-                    self._get_json('/api/lark/config'))['configRevision']
-                with patch(
-                        'purchase_tool.local_config_service.'
-                        'LocalConfigService.commit',
-                        side_effect=OSError('simulated config commit failure')):
-                    with self.assertRaises(urllib.error.HTTPError) as caught:
-                        self._post_json('/api/lark/config', {
-                            'appId': 'cli_replacement_example',
-                            'appSecret': 'replacement-secret-value',
-                            'expectedRevision': revision,
-                        })
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    self._post_json('/api/lark/config', {
+                        'appId': 'cli_replacement_example',
+                        'appSecret': 'replacement-secret-value',
+                    })
                 error_body = caught.exception.read().decode('utf-8')
                 persisted = load_config()
         restored = main_module.STATE.lark_credentials.load()
-        self.assertEqual(caught.exception.code, 500)
+        self.assertEqual(caught.exception.code, 410)
         self.assertEqual(restored, old_credentials)
         self.assertEqual(persisted, initial)
         self.assertNotIn('replacement-secret-value', error_body)
-
-    def test_lark_revision_conflict_happens_before_credential_mutation(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config_path = str(Path(tmp) / 'config.json')
-            initial = default_config()
-            with patch.object(main_module, 'CONFIG_PATH', config_path):
-                save_config(initial)
-                main_module.STATE.cfg = initial
-                stale_revision = json.loads(
-                    self._get_json('/api/lark/config'))['configRevision']
-                changed = dict(initial, concurrency=3)
-                main_module.STATE.cfg = save_config(changed)
-                with patch.object(
-                        main_module.STATE.lark_credentials, 'save',
-                        wraps=main_module.STATE.lark_credentials.save) as save:
-                    with self.assertRaises(urllib.error.HTTPError) as caught:
-                        self._post_json('/api/lark/config', {
-                            'appId': 'cli_replacement_example',
-                            'appSecret': 'replacement-secret-value',
-                            'expectedRevision': stale_revision,
-                        })
-                conflict = json.loads(caught.exception.read().decode('utf-8'))
-        self.assertEqual(caught.exception.code, 409)
-        self.assertEqual(conflict['code'], 'config_revision_conflict')
-        save.assert_not_called()
-
-    def test_post_lark_config_reports_target_name_validation_failure(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config_path = str(Path(tmp) / 'config.json')
-            with patch.object(main_module, 'CONFIG_PATH', config_path), \
-                    patch('purchase_tool.main.build_buyer_ledger_service',
-                          side_effect=RuntimeError('模拟高级权限未授权')):
-                response = self._post_json('/api/lark/config', {
-                    'ledgerUrl': ('https://public-safe.feishu.cn/base/'
-                                  'bascnPublicSafeExample'
-                                  '?table=tblPublicSafeExample'),
-                })
-        self.assertTrue(response['saved'])
-        self.assertFalse(response['targetVerified'])
-        self.assertEqual(
-            response['targetValidationError'], '模拟高级权限未授权')
 
     def test_preflight_persists_target_names_before_schema_validation(self):
         fake_client = SimpleNamespace(
@@ -730,11 +651,11 @@ class ConfigRouteTests(unittest.TestCase):
                 build.return_value.client = fake_client
                 with self.assertRaises(urllib.error.HTTPError):
                     self._post_json('/api/lark/preflight', {})
-                state = json.loads(self._get_json('/api/lark/config'))
-        self.assertTrue(state['targetVerified'])
-        self.assertEqual(state['targetBaseName'], '公开脱敏测试 Base')
+                state = load_config()
+        self.assertTrue(state['larkBuyerTargetVerified'])
+        self.assertEqual(state['larkBuyerBaseName'], '公开脱敏测试 Base')
         self.assertEqual(
-            state['targetTableName'], '买家号统一台账（测试）')
+            state['larkBuyerTableName'], '买家号统一台账（测试）')
 
     def test_target_metadata_route_refreshes_names_without_field_read(self):
         fake_client = SimpleNamespace(

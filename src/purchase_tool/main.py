@@ -54,6 +54,7 @@ from .buyer_library import BuyerLibraryJob, DatabaseBuyerLibraryService
 from .buyer_ledger_sync import validate_unified_schema
 from .buyer_register import BuyerRegistrationTask, RegistrationOrchestrator
 from .cloud_auth import DEFAULT_AUTH_BASE_URL, LocalAuthError, LocalAuthService
+from .cloud_feishu_transport import CloudFeishuTransport
 from .data_source_registry import (
     DataSourceMappingRequired, DataSourceRegistry, DataSourceRegistryError,
     runtime_config_for_source)
@@ -1047,7 +1048,12 @@ class AppState(object):
         self._config_summary_secure_lock = threading.RLock()
         self._config_summary_secure_cache = {}
         self.purchase_assistant = PurchaseAssistantService.from_runtime_config(
-            cfg, self.lark_credentials.load)
+            cfg,
+            transport_factory=lambda: CloudFeishuTransport(
+                self.auth.feishu_read_request,
+                'assistant.access',
+                legacy_clearer=self.lark_credentials.clear,
+            ))
         self.hub_runtime_gate = HubRuntimeGate(max_requests=4)
         self.tasks = LocalTaskCoordinator(
             lambda: bool(self.cfg.get('safeParallelTasks')))
@@ -1078,7 +1084,13 @@ class AppState(object):
             group_getter=self.hub_groups)
         self.backup_job = BackupEnvJob(lambda: self.hub, lambda: self.cfg)
         self.resources = ResourceCenterService(
-            lambda: self.hub, self.lark_credentials.load)
+            lambda: self.hub,
+            lambda: None,
+            transport_factory=lambda permission: CloudFeishuTransport(
+                self.auth.feishu_read_request,
+                permission,
+                legacy_clearer=self.lark_credentials.clear,
+            ))
         self.procurement_import = ProcurementImportService()
         install_mode = str(
             os.environ.get('XYNIGO_INSTALL_MODE') or 'green'
@@ -3898,14 +3910,21 @@ class Handler(BaseHTTPRequestHandler):
                     'count': len(environments),
                 })
             elif path == '/api/lark/status':
-                self._json(public_lark_runtime_status(
-                    STATE.cfg, STATE.lark_credentials))
+                self._json({
+                    'ready': False,
+                    'managedInCloud': True,
+                    'ledgerTargetConfigured': False,
+                })
             elif path == '/api/lark/config':
-                response = public_lark_config(
-                    STATE.cfg, STATE.lark_credentials)
-                response['configRevision'] = \
-                    state_local_config_service().revision(STATE.cfg)
-                self._json(response)
+                try:
+                    legacy_present = STATE.lark_credentials.load() is not None
+                except Exception:
+                    legacy_present = False
+                self._json({
+                    'managedInCloud': True,
+                    'legacyCredentialPresent': legacy_present,
+                    'message': '企业应用凭证已迁移为云端组织级配置',
+                })
             elif path == '/api/lark/open-target':
                 self._redirect(lark_target_link(STATE.cfg))
             elif path == '/api/lark/target-url':
@@ -4671,64 +4690,11 @@ class Handler(BaseHTTPRequestHandler):
                         request_identity['user']['id'], include_all=True),
                 })
             elif path == '/api/lark/config':
-                lock = getattr(STATE, 'config_lock', None)
-                with lock if lock is not None else nullcontext():
-                    service = state_local_config_service()
-                    submitted = dict(body)
-                    expected_revision = submitted.pop(
-                        'expectedRevision', None)
-                    current = service.load()
-                    service.assert_revision(expected_revision, current)
-                    credentials = submitted_lark_credentials(submitted)
-                    resolved_target = resolve_submitted_lark_target(
-                        submitted, STATE.lark_credentials)
-                    cfg = updated_lark_config(
-                        current, submitted, resolved_target)
-                    target_validation_error = ''
-                    transaction = SecureStoreTransaction(
-                        STATE.lark_credentials.load,
-                        lambda snapshot: restore_lark_credentials(
-                            STATE.lark_credentials, snapshot),
-                        '飞书应用凭证',
-                    )
-                    with transaction:
-                        if submitted.get('clearCredential'):
-                            transaction.mutate(
-                                STATE.lark_credentials.clear)
-                        elif credentials:
-                            transaction.mutate(
-                                lambda: STATE.lark_credentials.save(
-                                    credentials.app_id,
-                                    credentials.app_secret))
-                        if (str(cfg.get('larkBuyerBaseToken') or '').strip()
-                                and str(cfg.get('larkBuyerTableId') or '').strip()
-                                and not submitted.get('clearCredential')):
-                            try:
-                                cfg = refreshed_lark_target_labels(
-                                    cfg, STATE.lark_credentials)
-                            except Exception as exc:
-                                cfg['larkBuyerTargetVerified'] = False
-                                target_validation_error = public_error(exc)
-                        committed = service.commit(
-                            cfg,
-                            expected_revision=expected_revision,
-                            source='desktop_lark_config')
-                        cfg = committed['config']
-                        STATE.cfg = cfg
-                        transaction.commit()
-                invalidate_summary = getattr(
-                    STATE, 'invalidate_config_summary_secure_status', None)
-                if callable(invalidate_summary):
-                    invalidate_summary()
-                response = {
-                    'saved': True,
-                    'configRevision': committed['configRevision'],
-                    **public_lark_config(cfg, STATE.lark_credentials),
-                }
-                if target_validation_error:
-                    response['targetValidationError'] = \
-                        target_validation_error
-                self._json(response)
+                raise LocalAuthError(
+                    'cloud_managed',
+                    '企业应用凭证只能由超级管理员在云端统一配置',
+                    status=410,
+                )
             elif path == '/api/lark/target-metadata':
                 cfg = refreshed_lark_target_labels(
                     STATE.cfg, STATE.lark_credentials)

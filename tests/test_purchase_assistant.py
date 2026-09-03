@@ -11,6 +11,7 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 import purchase_tool.main as main_module
+from purchase_tool.cloud_feishu_transport import CloudFeishuTransport
 from purchase_tool.data_source_registry import (
     DataSourceMappingRequired, DataSourceRegistry)
 from purchase_tool.main import Handler
@@ -141,6 +142,61 @@ class FakeTransport(object):
 
 
 class PurchaseAssistantUnitTests(unittest.TestCase):
+    def test_cloud_managed_provider_never_reads_local_secret_and_clears_legacy_after_success(self):
+        calls = []
+        cleared = []
+
+        def cloud_request(path, query, permission):
+            calls.append((path, dict(query), permission))
+            row = sample_row()
+            headers_row = [key for key in row if key != '__row_number']
+            return {
+                'code': 0,
+                'data': {'valueRange': {'values': [
+                    headers_row, [row[key] for key in headers_row],
+                ]}},
+            }
+
+        provider = PurchaseAssistantSheetProvider(
+            PurchaseAssistantConfig(
+                spreadsheet_token='spreadsheet-test',
+                sheet_id='sheet-test',
+            ),
+            lambda: self.fail('cloud-managed provider requested local credentials'),
+            transport=CloudFeishuTransport(
+                cloud_request, 'assistant.access',
+                legacy_clearer=lambda: cleared.append(True),
+            ),
+        )
+
+        tasks = provider.list_tasks()
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(calls[0][2], 'assistant.access')
+        self.assertTrue(calls[0][0].startswith('/open-apis/sheets/v2/'))
+        self.assertNotIn('secret', json.dumps(calls))
+        self.assertEqual(cleared, [True])
+
+    def test_cloud_managed_provider_keeps_legacy_credential_when_proxy_fails(self):
+        cleared = []
+
+        def cloud_request(_path, _query, _permission):
+            raise RuntimeError('cloud unavailable')
+
+        provider = PurchaseAssistantSheetProvider(
+            PurchaseAssistantConfig(
+                spreadsheet_token='spreadsheet-test',
+                sheet_id='sheet-test',
+            ),
+            None,
+            transport=CloudFeishuTransport(
+                cloud_request, 'assistant.access',
+                legacy_clearer=lambda: cleared.append(True),
+            ),
+        )
+        with self.assertRaisesRegex(PurchaseAssistantError, 'cloud unavailable'):
+            provider.list_tasks()
+        self.assertEqual(cleared, [])
+
     def test_task_search_excludes_recipient_and_requires_query(self):
         tasks = rows_to_tasks([sample_row()])
         self.assertEqual(search_tasks(tasks, ''), ([], 0))

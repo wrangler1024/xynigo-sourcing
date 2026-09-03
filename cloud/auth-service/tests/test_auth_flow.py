@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
+import httpx
 from sqlalchemy import select
 
 from xynigo_auth.config import Settings
@@ -20,6 +21,7 @@ from xynigo_auth.models import (
     Role,
     SessionRecord,
     User,
+    TenantFeishuIntegration,
 )
 from xynigo_auth.security import hash_token, pkce_challenge
 
@@ -54,6 +56,7 @@ def build_test_app(
     session_ttl_seconds: int = 8 * 60 * 60,
     session_absolute_ttl_seconds: int = 7 * 24 * 60 * 60,
     session_refresh_threshold_seconds: int = 4 * 60 * 60,
+    feishu_integration_transport: httpx.BaseTransport | None = None,
 ):
     database = Database(f"sqlite+pysqlite:///{tmp_path / 'identity.sqlite3'}")
     Base.metadata.create_all(database.engine)
@@ -94,6 +97,7 @@ def build_test_app(
         oauth_client=oauth,
         database=database,
         procurement_import_gateway=procurement_import_gateway,
+        feishu_integration_transport=feishu_integration_transport,
     )
     return app, database, oauth
 
@@ -514,3 +518,86 @@ def test_health_and_readiness(tmp_path) -> None:
         assert client.get("/healthz").json() == {"status": "ok"}
         assert client.get("/readyz").json() == {"status": "ready"}
         assert client.get("/v1/auth/me").status_code == 401
+
+
+def test_super_admin_manages_tenant_feishu_credential_and_proxy_hides_secret(
+    tmp_path,
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/tenant_access_token/internal"):
+            return httpx.Response(
+                200,
+                json={"code": 0, "tenant_access_token": "tenant-token", "expire": 7200},
+            )
+        return httpx.Response(
+            200,
+            json={"code": 0, "data": {"valueRange": {"values": [["销售订单号"]]}}},
+        )
+
+    app, database, _oauth = build_test_app(
+        tmp_path,
+        feishu_integration_transport=httpx.MockTransport(handler),
+    )
+    with TestClient(app) as client:
+        state, _challenge = start_login(client)
+        assert client.get(
+            "/v1/auth/feishu/callback",
+            params={"code": "authorization-code", "state": state},
+            follow_redirects=False,
+        ).status_code == 303
+        initial = client.get("/v1/admin/integrations/feishu")
+        assert initial.status_code == 200
+        assert initial.json()["source"] == "deployment"
+        assert "appSecret" not in initial.text
+
+        secret = "organization-secret-value"
+        saved = client.put(
+            "/v1/admin/integrations/feishu",
+            json={
+                "expectedRevision": 0,
+                "appId": "cli_organization123",
+                "appSecret": secret,
+            },
+            headers={"X-Xynigo-Web-CSRF": "same-origin"},
+        )
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["source"] == "organization"
+        assert saved.json()["revision"] == 1
+        assert secret not in saved.text
+        assert "appSecret" not in saved.text
+
+        proxied = client.post(
+            "/v1/integrations/feishu/read",
+            json={
+                "permission": "assistant.access",
+                "path": "/open-apis/sheets/v2/spreadsheets/shtcnSynthetic01/values/sheet1%21A1%3AAQ",
+                "query": {},
+            },
+            headers={"X-Xynigo-Web-CSRF": "same-origin"},
+        )
+        assert proxied.status_code == 200, proxied.text
+        assert proxied.json()["data"]["code"] == 0
+        denied_path = client.post(
+            "/v1/integrations/feishu/read",
+            json={
+                "permission": "assistant.access",
+                "path": "/open-apis/contact/v3/users",
+                "query": {},
+            },
+            headers={"X-Xynigo-Web-CSRF": "same-origin"},
+        )
+        assert denied_path.status_code == 403
+
+    with database.session_factory() as session:
+        record = session.scalar(select(TenantFeishuIntegration))
+        assert record is not None
+        assert record.app_id == "cli_organization123"
+        assert secret not in record.credential_ciphertext
+    assert any(
+        request.headers.get("authorization") == "Bearer tenant-token"
+        for request in requests
+        if not request.url.path.endswith("/tenant_access_token/internal")
+    )

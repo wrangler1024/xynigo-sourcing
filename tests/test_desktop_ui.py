@@ -32,7 +32,7 @@ class DesktopUIContractTests(unittest.TestCase):
         for path in (
                 '/executor-status.json', '/api/auth/status',
                 '/api/auth/start', '/api/auth/poll', '/api/auth/logout',
-                '/api/config', '/api/lark/config',
+                '/api/config',
                 '/api/local-config/data-sources'):
             self.assertIn(path, self.javascript)
         rendered = self.html + self.css + self.javascript
@@ -74,11 +74,18 @@ class DesktopUIContractTests(unittest.TestCase):
     def test_configured_secrets_render_only_masked_recognition_hints(self):
         for marker in (
                 'targetMasked', 'worksheetMasked', 'hubApiKeyMasked',
-                'appSecretMasked', '当前已配置', '仅显示不可逆掩码'):
+                '当前已配置', '仅显示不可逆掩码'):
             self.assertIn(marker, self.javascript)
         self.assertIn('.masked-config', self.css)
         self.assertNotIn("field('source-url','飞书普通电子表格链接','https://",
                          self.javascript)
+
+    def test_enterprise_feishu_secret_is_never_rendered_or_configured_locally(self):
+        self.assertNotIn('cfg-lark-id', self.javascript)
+        self.assertNotIn('cfg-lark-secret', self.javascript)
+        self.assertNotIn("post('/api/lark/config'", self.javascript)
+        self.assertIn('本机不保存 App ID 或 App Secret', self.javascript)
+        self.assertIn('cloudIntegrationVisible', self.javascript)
 
     def test_update_panel_renders_live_cross_platform_progress(self):
         for marker in (

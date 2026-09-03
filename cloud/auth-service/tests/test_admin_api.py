@@ -534,6 +534,15 @@ def test_role_permissions_and_member_roles_use_server_catalog(tmp_path) -> None:
             "/v1/admin/roles",
             headers={"Authorization": f"Bearer {MEMBER_TOKEN}"},
         ).status_code == 200
+        denied_feishu_status = client.get(
+            "/v1/admin/integrations/feishu",
+            headers={"Authorization": f"Bearer {MEMBER_TOKEN}"},
+        )
+        assert denied_feishu_status.status_code == 403
+        assert (
+            denied_feishu_status.json()["detail"]["code"]
+            == "permission_denied"
+        )
 
         exceeds_actor = client.put(
             f"/v1/admin/roles/{member_role['id']}/permissions",

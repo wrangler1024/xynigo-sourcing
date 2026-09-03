@@ -1499,6 +1499,33 @@ class WorkspaceViewPreference(Base):
     )
 
 
+class TenantFeishuIntegration(Base):
+    """One encrypted Feishu enterprise-app credential per tenant."""
+
+    __tablename__ = "tenant_feishu_integrations"
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), primary_key=True
+    )
+    app_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    credential_ciphertext: Mapped[str] = mapped_column(Text, nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    configured_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    verified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("revision >= 1", name="ck_tenant_feishu_integration_revision"),
+    )
+
+
 class EnvironmentAccountPlanRequest(Base):
     """Exact idempotency replay for cloud environment-plan parse requests."""
 

@@ -118,6 +118,10 @@ class LarkOpenApiClient(object):
             code=numeric_code, retryable=retryable)
 
     def _fetch_token_locked(self):
+        if getattr(self.transport, 'cloud_managed', False):
+            self._token = 'cloud-managed'
+            self._token_expires_at = self.clock() + 3600
+            return self._token
         app_id, app_secret = self._credentials()
         body = json.dumps({
             'app_id': app_id, 'app_secret': app_secret,

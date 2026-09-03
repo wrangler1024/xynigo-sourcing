@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 from urllib.parse import quote
 
+import httpx
 from fastapi import (
     Cookie,
     Depends,
@@ -101,6 +102,7 @@ from .local_executor_release import (
     resolve_local_executor_release_asset,
 )
 from .logistics_export import build_logistics_workbook
+from .integration_contract import FeishuIntegrationWriteBody, FeishuReadProxyBody
 from .models import (
     EnvironmentWorkspacePreference,
     LocalExecutor,
@@ -111,6 +113,7 @@ from .models import (
     RolePermission,
     SessionRecord,
     Tenant,
+    TenantFeishuIntegration,
     User,
     UserRole,
     WorkspaceViewPreference,
@@ -151,6 +154,11 @@ from .system_log import (
     SystemLogService,
     normalize_route,
     should_capture_http,
+)
+from .tenant_feishu import TenantFeishuError, TenantFeishuService
+from .tenant_integration_crypto import (
+    TenantIntegrationCipher,
+    TenantIntegrationCipherError,
 )
 
 logger = logging.getLogger(__name__)
@@ -381,6 +389,7 @@ def create_app(
     directory_client: DirectoryClient | None = None,
     database: Database | None = None,
     procurement_import_gateway: FeishuSheetsGateway | None = None,
+    feishu_integration_transport: httpx.BaseTransport | None = None,
 ) -> FastAPI:
     settings = settings or Settings()  # type: ignore[call-arg]
     database = database or Database(settings.database_url.get_secret_value())
@@ -400,6 +409,12 @@ def create_app(
     )
     executor_payload_cipher = (
         ExecutorPayloadCipher(buyer_credential_key) if buyer_credential_key else None
+    )
+    tenant_feishu_service = TenantFeishuService(
+        cipher=TenantIntegrationCipher(buyer_credential_key),
+        fallback_app_id=settings.feishu_app_id,
+        fallback_app_secret=settings.feishu_app_secret.get_secret_value(),
+        transport=feishu_integration_transport,
     )
     environment_plan_service = (
         CloudEnvironmentPlanService(
@@ -1947,6 +1962,154 @@ def create_app(
                 "MX": str(record.purchase_tags.get("MX") or ""),
             },
         }
+
+    @app.get("/v1/admin/integrations/feishu")
+    def get_tenant_feishu_integration(
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="system.lark_connection.manage",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="system.integration.feishu.read",
+        )
+        try:
+            return tenant_feishu_service.public_status(
+                session, actor.tenant.id, admin=True
+            )
+        except TenantFeishuError as exc:
+            raise HTTPException(
+                status_code=exc.status_code, detail={"code": exc.code}
+            ) from exc
+
+    @app.put("/v1/admin/integrations/feishu")
+    def put_tenant_feishu_integration(
+        body: FeishuIntegrationWriteBody,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "system.integration.feishu.write"
+        actor = authorize_request(
+            request,
+            session,
+            permission="system.lark_connection.manage",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        record = session.get(TenantFeishuIntegration, actor.tenant.id)
+        current_revision = record.revision if record else 0
+        if body.expectedRevision != current_revision:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "tenant_feishu_revision_conflict"},
+            )
+        app_secret = body.appSecret.get_secret_value()
+        try:
+            tenant_feishu_service.verify(actor.tenant.id, body.appId, app_secret)
+            ciphertext = tenant_feishu_service.cipher.encrypt({
+                "appId": body.appId,
+                "appSecret": app_secret,
+            })
+        except (TenantFeishuError, TenantIntegrationCipherError) as exc:
+            failure_code = (
+                exc.code
+                if isinstance(exc, TenantFeishuError)
+                else "tenant_feishu_credential_encrypt_failed"
+            )
+            _add_audit(
+                session,
+                request_id=request.state.request_id,
+                action=action,
+                result="failure",
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                business_object_type="tenant_feishu_integration",
+                business_object_id=str(actor.tenant.id),
+                failure_reason=failure_code,
+                details={"stage": "credential_verification"},
+                **_request_log_context(request),
+            )
+            session.commit()
+            raise HTTPException(
+                status_code=exc.status_code if isinstance(exc, TenantFeishuError) else 503,
+                detail={"code": failure_code},
+            ) from exc
+        finally:
+            app_secret = ""
+        now = utcnow()
+        if record is None:
+            record = TenantFeishuIntegration(
+                tenant_id=actor.tenant.id,
+                app_id=body.appId,
+                credential_ciphertext=ciphertext,
+                revision=1,
+                configured_by_user_id=actor.user.id,
+                verified_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(record)
+        else:
+            record.app_id = body.appId
+            record.credential_ciphertext = ciphertext
+            record.revision += 1
+            record.configured_by_user_id = actor.user.id
+            record.verified_at = now
+            record.updated_at = now
+        _add_audit(
+            session,
+            request_id=request.state.request_id,
+            action=action,
+            result="success",
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            business_object_type="tenant_feishu_integration",
+            business_object_id=str(actor.tenant.id),
+            change_summary={"revision": record.revision, "configured": True},
+            details={"source": "organization"},
+            **_request_log_context(request),
+        )
+        session.commit()
+        return tenant_feishu_service.public_status(
+            session, actor.tenant.id, admin=True
+        )
+
+    @app.post("/v1/integrations/feishu/read")
+    def proxy_tenant_feishu_read(
+        body: FeishuReadProxyBody,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission=body.permission,
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="integration.feishu.read",
+        )
+        try:
+            payload = tenant_feishu_service.proxy_get(
+                session=session,
+                tenant_id=actor.tenant.id,
+                path=body.path,
+                query=body.query,
+            )
+        except TenantFeishuError as exc:
+            raise HTTPException(
+                status_code=exc.status_code, detail={"code": exc.code}
+            ) from exc
+        return {"ok": True, "data": payload}
 
     def normalized_view_key(view_key: str) -> str:
         normalized = str(view_key or "").strip().lower()

@@ -331,19 +331,18 @@
   }
   function renderSettings() {
     var cfg = currentConfig();
-    var lark = state.lark || {};
     var locked = !canConfigure();
+    var cloudIntegrationVisible = roleInfo().superAdmin && hasPermission('system.lark_connection.manage');
     var secureStore = platform === 'mac' ? 'Keychain' : 'CurrentUser DPAPI';
     var actions = '<span class="pill" style="border:1px solid #e2e8f0;background:#fff;color:#475569">' + (locked ? '采购员 · 只读' : '配置 rev · ' + safeId(cfg.configRevision)) + '</span>' + button('保存更改','save-settings','check','primary',locked);
-    var readOnly = locked ? '<section class="notice-strip span-2">' + icon('lock') + '<div><b>普通采购员仅可查看设备级设置</b><p>运行参数、HubStudio Key 和企业应用凭证需要超级管理员修改。你仍可在“采购助手数据源”配置自己的个人速填表。</p></div></section>' : '';
+    var readOnly = locked ? '<section class="notice-strip span-2">' + icon('lock') + '<div><b>普通采购员仅可查看设备级设置</b><p>运行参数和 HubStudio Key 需要超级管理员修改。你仍可在“采购助手数据源”配置自己的个人速填表。</p></div></section>' : '';
+    var cloudIntegrationCard = cloudIntegrationVisible ?
+      '<section class="card section-card span-2">' + sectionTitle('key','飞书企业应用连接','组织级配置由云端工作台统一管理','云端加密') + '<div class="section-body stack"><div class="connection-box"><span class="connection-check">' + icon('shield') + '</span><div><b>本机不保存 App ID 或 App Secret</b><span>企业应用凭证仅由超级管理员在云端配置一次；执行器通过授权代理读取所需数据，Secret 永不下发。</span></div>' + button('打开云端服务配置','open-cloud','arrow','primary') + '</div></div></section>' : '';
     return header('settings',actions) + '<div class="content two-column">' + readOnly +
       '<section class="card section-card">' + sectionTitle('gauge','运行参数','控制本机执行器并发、抽检与安全模式','仅保存在本机') + '<div class="section-body field-grid">' +
       field('cfg-hub-port','HubStudio Local API 端口',cfg.hubPort || 6873,'范围 1–65535','number',locked) + field('cfg-concurrency','订单查询并发',cfg.concurrency || 2,'组织策略上限：5','number',locked) + field('cfg-env-workers','建环境并发',cfg.envCreateWorkers || 5,'当前有效值受安全并行策略封顶','number',locked) + field('cfg-verify','新建完成抽检数',cfg.verifySampleCount == null ? 1 : cfg.verifySampleCount,'0 表示不执行抽检','number',locked) +
       '<label class="toggle-row"><div><b>安全并行</b><p>允许物流查询与一种环境创建任务并行，同一环境仍禁止双开。</p></div><input id="cfg-safe" class="switch" type="checkbox"' + (cfg.safeParallelTasks !== false ? ' checked' : '') + (locked ? ' disabled' : '') + '></label></div></section>' +
-      '<section class="card section-card">' + sectionTitle('monitor','HubStudio 连接','连接本机 Local API，仅回显不可复用的掩码摘要',secureStore) + '<div class="section-body stack"><div class="connection-box"><span class="connection-check">' + icon(cfg.hubApiKeyConfigured ? 'check' : 'alert') + '</span><div><b>' + (cfg.hubApiKeyConfigured ? 'API Key 已安全保存' : 'API Key 尚未配置') + '</b><span>' + (cfg.hubApiKeyConfigured ? ('当前值 ' + esc(cfg.hubApiKeyMasked || '••••')) : '输入后保存到系统安全存储') + ' · ' + ((state.status && state.status.hubStudio && state.status.hubStudio.connected) ? 'Local API v1 认证成功' : '等待本机 Local API 连接') + '</span></div>' + button('测试连接','test-hub','play','small',locked) + '</div>' + field('cfg-hub-key','覆盖 HubStudio Local API Key','','留空保持现状；保存到 ' + secureStore + '。','password',locked,cfg.hubApiKeyConfigured ? ('当前 ' + (cfg.hubApiKeyMasked || '••••') + '；输入新 Key 后覆盖') : '输入 HubStudio Local API Key') + '</div></section>' +
-      '<section class="card section-card span-2">' + sectionTitle('key','飞书企业应用连接','采购助手数据源共用同一份企业应用凭证',secureStore) + '<div class="section-body credential-grid">' +
-      field('cfg-lark-id','企业自建应用 App ID','',lark.credentialConfigured ? ('当前 ' + (lark.appIdMasked || '已配置')) : '尚未配置','text',locked,lark.credentialConfigured ? ('当前 ' + (lark.appIdMasked || '已配置') + '；输入新 App ID 后覆盖') : '输入企业自建应用 App ID') + field('cfg-lark-secret','App Secret','',lark.credentialConfigured ? ('当前 ' + (lark.appSecretMasked || '••••') + '；完整值不会回显') : '尚未配置','password',locked,lark.credentialConfigured ? ('当前 ' + (lark.appSecretMasked || '••••') + '；输入新 Secret 后覆盖') : '输入 App Secret') + '<div style="display:flex;align-items:flex-end">' + button('只读验证连接','test-lark','shield','',locked) + '</div>' +
-      '<div class="compat-row"><span>' + icon('lock') + '</span><div><b>旧买家号台账迁移源</b><p>' + (lark.ledgerTargetConfigured ? '兼容目标已配置，仅用于一次性迁移和排障；日常采购助手不读取或写入旧台账。' : '尚未配置旧迁移源；不影响新的采购助手数据源注册表。') + '</p></div>' + button('查看兼容设置','open-legacy-settings','','ghost small',locked) + '</div></div></section></div>';
+      '<section class="card section-card">' + sectionTitle('monitor','HubStudio 连接','连接本机 Local API，仅回显不可复用的掩码摘要',secureStore) + '<div class="section-body stack"><div class="connection-box"><span class="connection-check">' + icon(cfg.hubApiKeyConfigured ? 'check' : 'alert') + '</span><div><b>' + (cfg.hubApiKeyConfigured ? 'API Key 已安全保存' : 'API Key 尚未配置') + '</b><span>' + (cfg.hubApiKeyConfigured ? ('当前值 ' + esc(cfg.hubApiKeyMasked || '••••')) : '输入后保存到系统安全存储') + ' · ' + ((state.status && state.status.hubStudio && state.status.hubStudio.connected) ? 'Local API v1 认证成功' : '等待本机 Local API 连接') + '</span></div>' + button('测试连接','test-hub','play','small',locked) + '</div>' + field('cfg-hub-key','覆盖 HubStudio Local API Key','','留空保持现状；保存到 ' + secureStore + '。','password',locked,cfg.hubApiKeyConfigured ? ('当前 ' + (cfg.hubApiKeyMasked || '••••') + '；输入新 Key 后覆盖') : '输入 HubStudio Local API Key') + '</div></section>' + cloudIntegrationCard + '</div>';
   }
 
   function sourceCounts() {
@@ -466,10 +465,10 @@
     var actions = button('运行完整诊断','run-diagnostics','play','primary');
     return header('diagnostics',actions) + '<div class="content diagnostic-layout"><section class="card section-card">' + sectionTitle('shield','连接与配置检查','只读检测，不会修改配置或启动 HubStudio 环境',nowTime() + ' 检查') +
       diagnosticRow('monitor','本机配置文件','schema v2 · revision ' + safeId(state.config && state.config.configRevision) + ' · 文件权限正常',!!state.config) +
-      diagnosticRow('lock','安全凭证存储','HubStudio Key、飞书凭证、设备凭证均由系统安全存储托管',true) +
+      diagnosticRow('lock','安全凭证存储','HubStudio Key 与设备凭证由系统安全存储托管；企业集成凭证不下发本机',true) +
       diagnosticRow('cloud','云端出站通道',(s.cloudChannel && s.cloudChannel.status === 'online' ? 'TLS 正常 · ' : '正在重连 · ') + relativeTime(s.cloudChannel && s.cloudChannel.lastPollAt),s.cloudChannel && s.cloudChannel.status === 'online') +
       diagnosticRow('gauge','HubStudio Local API',(s.hubStudio && s.hubStudio.connected ? '客户端运行中 · v1 已认证' : '当前未连接') + ' · 端口 ' + ((state.config && state.config.hubPort) || '6873'),s.hubStudio && s.hubStudio.connected) +
-      diagnosticRow('database','飞书只读访问',sourceCount + ' 个数据源已登记 · ' + (state.lark && state.lark.ready ? '企业应用连接正常' : '等待连接验证'),!!(state.lark && state.lark.ready)) +
+      diagnosticRow('database','飞书只读访问',sourceCount + ' 个数据源已登记 · 由云端授权代理执行',!!(s.cloudChannel && s.cloudChannel.status === 'online')) +
       diagnosticRow('route','环境映射完整性',bindingCount + ' 个已映射 · 0 个冲突',true) + coreRepairPanel(coreRepair, activeCount, roleInfo().admin) + '</section>' +
       '<div class="side-stack"><section class="card section-card">' + sectionTitle('download','软件更新','下载安装、校验、安装与重启状态实时同步','') + '<div class="section-body update-section">' + updatePanel(update,s.tasks && s.tasks.activeCount) + '</div></section>' +
       '<section class="card section-card">' + sectionTitle('terminal','日志与维护','敏感字段在写入日志前完成脱敏','') + '<div class="section-body maintenance-buttons">' + button('打开日志目录','open-logs','folder') + button('导出脱敏诊断包','export-diagnostics','download') + button('备份当前配置','backup-config','refresh') + '<p class="path-note">' + (platform === 'mac' ? '~/Library/Application Support/XynigoSourcing/' : '%LOCALAPPDATA%\\Programs\\Xynigo\\') + '</p></div></section></div></div>';
@@ -508,7 +507,7 @@
   function loadWorkspaceData() {
     if (previewRole) {
       state.config = sampleConfig;
-      state.lark = {ready:true,credentialConfigured:true,appIdMasked:'cli_aaf…9be2',ledgerTargetConfigured:true};
+      state.lark = {managedInCloud:true};
       state.sources = sampleSources;
       state.members = sampleMembers;
       state.environments = sampleEnvironments;
@@ -518,14 +517,13 @@
     var role = roleInfo();
     var jobs = [
       api('/api/config').then(function (x) { state.config = x; }),
-      api('/api/lark/status').then(function (x) { state.lark = x; }),
       api('/api/local-config/data-sources').then(function (x) { state.sources = x; })
     ];
     if (role.admin) {
       jobs.push(api('/api/admin/members?status=active').then(function (x) { state.members = x.members || []; }).catch(function () {}));
       jobs.push(api('/api/local-config/data-sources/environment-options?limit=200').then(function (x) { state.environments = x.environments || []; }).catch(function () {}));
     }
-    if (canConfigure()) jobs.push(api('/api/lark/config').then(function (x) { state.lark = x; }).catch(function () {}));
+    state.lark = {managedInCloud:true};
     return Promise.allSettled(jobs).then(function () { renderWorkspace(); });
   }
   function authenticated(identity) {
@@ -711,13 +709,6 @@
     if (!value) return showToast('现有 HubStudio API Key 保持不变');
     post('/api/hub-api-key',{apiKey:value,clear:false}).then(function (result) { input.value=''; state.config = Object.assign({}, state.config || {}, {hubApiKeyConfigured:!!result.configured,hubApiKeyMasked:result.masked || '••••'}); renderWorkspace(); showToast('HubStudio API Key 已保存到系统安全存储'); loadStatus(); }).catch(showError);
   }
-  function saveLarkCredentials() {
-    var appId = document.getElementById('cfg-lark-id').value.trim();
-    var appSecret = document.getElementById('cfg-lark-secret').value.trim();
-    if (!appId && !appSecret) return api('/api/lark/config').then(function (x) { state.lark=x; renderWorkspace(); showToast('飞书企业应用连接状态已刷新'); }).catch(showError);
-    if (!appId || !appSecret) return showError(new Error('App ID 与 App Secret 必须同时填写'));
-    post('/api/lark/config',{appId:appId,appSecret:appSecret,ledgerUrl:'',clearCredential:false,clearLedgerTarget:false,expectedRevision:state.lark && state.lark.configRevision || ''}).then(function (x) { state.lark=x; renderWorkspace(); showToast('飞书企业应用凭证已保存并完成只读验证'); }).catch(showError);
-  }
   function saveEnvironmentRow(row) {
     var memberId = row.querySelector('.binding-member').value;
     var sourceId = row.querySelector('.binding-source').value;
@@ -772,7 +763,6 @@
     }
     else if (action === 'save-settings') saveSettings();
     else if (action === 'test-hub') saveHubKey();
-    else if (action === 'test-lark') saveLarkCredentials();
     else if (action === 'add-source') openSourceModal();
     else if (action.indexOf('source-details:') === 0) openSourceDetails(action.split(':')[1]);
     else if (action.indexOf('source-reconfigure:') === 0) openSourceModal(action.split(':')[1]);

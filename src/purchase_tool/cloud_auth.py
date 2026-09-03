@@ -35,6 +35,7 @@ KEYCHAIN_SERVICE = 'io.xynigo.sourcing.auth'
 KEYCHAIN_ACCOUNT = 'xynigo-cloud-session'
 TOKEN_PATTERN = re.compile(r'^[A-Za-z0-9_-]{32,256}$')
 MAX_RESPONSE_BYTES = 1024 * 1024
+MAX_FEISHU_PROXY_RESPONSE_BYTES = 5 * 1024 * 1024
 MAX_PROCUREMENT_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_BUYER_ACCOUNT_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_OPERATION_RESULT_RESPONSE_BYTES = 4 * 1024 * 1024
@@ -69,6 +70,17 @@ ERROR_MESSAGES = {
     'cannot_remove_own_super_admin': '不能移除自己的超级管理员角色',
     'super_admin_required': '此操作仅允许超级管理员执行',
     'super_admin_only_permission': '云端服务配置仅允许超级管理员访问',
+    'tenant_feishu_not_configured': '组织尚未配置飞书企业应用，请联系超级管理员',
+    'tenant_feishu_credential_unavailable': '组织飞书企业应用凭证暂不可用，请联系超级管理员',
+    'tenant_feishu_credential_invalid': '组织飞书企业应用凭证无效，请联系超级管理员',
+    'tenant_feishu_verification_failed': '飞书企业应用验证失败，请检查 App ID、App Secret 和应用状态',
+    'tenant_feishu_response_invalid': '飞书开放平台返回了无效响应，请稍后重试',
+    'tenant_feishu_response_too_large': '飞书只读响应超过安全限制',
+    'tenant_feishu_proxy_path_denied': '该飞书接口不在执行器只读授权范围内',
+    'tenant_feishu_proxy_query_invalid': '飞书只读请求参数无效',
+    'tenant_feishu_revision_conflict': '组织飞书配置已被其他窗口更新，请刷新后重试',
+    'tenant_feishu_credential_encrypt_failed': '组织飞书凭证暂时无法安全保存',
+    'cloud_managed': '该配置已迁移到云端，由超级管理员统一维护',
     'system_role_immutable': '系统角色及系统权限由后端维护，不能修改',
     'role_name_invalid': '角色名称不能为空',
     'role_name_conflict': '当前组织已存在同名角色',
@@ -510,6 +522,24 @@ class CloudAuthClient(object):
             token=session_token,
             max_response_bytes=MAX_OPERATION_RESULT_RESPONSE_BYTES,
             source='local_executor',
+        )
+
+    def feishu_read_request(
+            self, session_token, path, query, permission):
+        return self._request(
+            '/v1/integrations/feishu/read',
+            method='POST',
+            payload={
+                'permission': str(permission or ''),
+                'path': str(path or ''),
+                'query': {
+                    str(key): str(value)
+                    for key, value in dict(query or {}).items()
+                },
+            },
+            token=session_token,
+            max_response_bytes=MAX_FEISHU_PROXY_RESPONSE_BYTES,
+            source='local_executor_feishu_proxy',
         )
 
     def business_log_request(self, path, session_token):
@@ -1107,6 +1137,25 @@ class LocalAuthService(object):
                 raise LocalAuthError(
                     'cloud_response_invalid', '云端业务结果数据无效', 502)
             return result
+
+    def feishu_read_request(self, path, query, permission):
+        with self.lock:
+            self.require(permission)
+            if not self.session_token:
+                raise LocalAuthError('authentication_required', status=401)
+            result = self.client.feishu_read_request(
+                self.session_token, path, query, permission
+            )
+            if not isinstance(result, dict) or result.get('ok') is not True:
+                raise LocalAuthError(
+                    'cloud_response_invalid', '云端飞书代理响应无效', 502
+                )
+            data = result.get('data')
+            if not isinstance(data, dict):
+                raise LocalAuthError(
+                    'cloud_response_invalid', '云端飞书代理数据无效', 502
+                )
+            return data
 
     def business_log_request(self, path):
         with self.lock:

@@ -323,6 +323,8 @@ class PurchaseAssistantSheetProvider(object):
         self._token_expires_at = 0.0
 
     def _get_token(self):
+        if getattr(self.transport, 'cloud_managed', False):
+            return 'cloud-managed'
         now = time.monotonic()
         if self._token and now < self._token_expires_at:
             return self._token
@@ -477,10 +479,12 @@ class PurchaseAssistantService(object):
         self._validated_targets = {}
 
     @classmethod
-    def from_runtime_config(cls, mapping, credential_getter):
+    def from_runtime_config(cls, mapping, credential_getter=None,
+                            transport_factory=None):
         service = cls(
             credential_getter=credential_getter,
             source_config=mapping,
+            transport_factory=transport_factory,
         )
         service.reconfigure(mapping)
         return service

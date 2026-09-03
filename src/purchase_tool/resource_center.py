@@ -284,19 +284,25 @@ class ProxyEndpoint:
 class FeishuResourceReader(object):
     """Read only the columns needed by Resource Center."""
 
-    def __init__(self, credential_provider, config=None, client_factory=LarkOpenApiClient):
+    def __init__(self, credential_provider, config=None,
+                 client_factory=LarkOpenApiClient, transport_factory=None):
         self.credential_provider = credential_provider
         self.config = config or ResourceSourceConfig.from_environment()
         self.client_factory = client_factory
+        self.transport_factory = transport_factory
 
-    def _client(self, base_token='', table_id=''):
-        return self.client_factory(
+    def _client(self, base_token='', table_id='', permission='resource.ip.read'):
+        kwargs = dict(
             credential_provider=self.credential_provider,
             base_token=base_token, table_id=table_id)
+        if callable(self.transport_factory):
+            kwargs['transport'] = self.transport_factory(permission)
+        return self.client_factory(**kwargs)
 
     def list_shops(self):
         client = self._client(
-            self.config.store_base_token, self.config.store_table_id)
+            self.config.store_base_token, self.config.store_table_id,
+            permission='resource.store.read')
         records = client.list_records(field_names=SHOP_SAFE_FIELDS)
         result = []
         for record in records:
@@ -367,7 +373,8 @@ class FeishuResourceReader(object):
     def list_proxy_metadata(self):
         client = self._client(
             self.config.proxy_asset_base_token,
-            self.config.proxy_asset_table_id)
+            self.config.proxy_asset_table_id,
+            permission='resource.ip.read')
         records = client.list_records(field_names=PROXY_METADATA_FIELDS)
         result = {}
         for record in records:
@@ -740,9 +747,11 @@ class ProxyCheckJob(object):
 
 class ResourceCenterService(object):
     def __init__(self, hub_getter, credential_provider, reader=None,
-                 checker=None, cache_ttl=20.0, clock=time.time):
+                 checker=None, cache_ttl=20.0, clock=time.time,
+                 transport_factory=None):
         self.hub_getter = hub_getter
-        self.reader = reader or FeishuResourceReader(credential_provider)
+        self.reader = reader or FeishuResourceReader(
+            credential_provider, transport_factory=transport_factory)
         self.cache_ttl = float(cache_ttl)
         self.clock = clock
         self.lock = threading.Lock()
