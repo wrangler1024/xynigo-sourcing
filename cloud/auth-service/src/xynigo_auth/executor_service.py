@@ -448,8 +448,12 @@ class ExecutorChannelService:
                 raise ExecutorServiceError(
                     "local_config_desktop_only", status_code=410
                 )
-        if not self._online(executor, now=now) and task_type not in BUSINESS_TASK_TYPES:
+        if not self._online(executor, now=now):
             raise ExecutorServiceError("executor_offline", status_code=409)
+        if task_type in BUSINESS_TASK_TYPES and executor.hub_status != "ready":
+            raise ExecutorServiceError(
+                "executor_hub_unavailable", status_code=409
+            )
         if task_type not in set(executor.capabilities or []):
             raise ExecutorServiceError("executor_capability_missing", status_code=409)
         if task_type in ENCRYPTED_TASK_TYPES and self.payload_cipher is None:

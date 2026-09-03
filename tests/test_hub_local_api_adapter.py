@@ -126,6 +126,15 @@ class HubStudioLocalApiAdapterTests(unittest.TestCase):
         self.assertEqual(context.exception.api_code, '-10007')
         self.assertEqual(len(opener.calls), 1)
 
+        capability = adapter.capability_snapshot()
+        self.assertFalse(capability['available'])
+        self.assertTrue(capability['clientRunning'])
+        self.assertEqual(
+            capability['reasonCode'], 'hubstudio_browser_core_missing')
+        # The stronger runtime failure must override a superficially healthy
+        # group/list heartbeat without another Local API request.
+        self.assertEqual(len(opener.calls), 1)
+
     def test_healthy_api_requires_running_client_process(self):
         process_checks = []
         adapter = HubStudioLocalApiAdapter(

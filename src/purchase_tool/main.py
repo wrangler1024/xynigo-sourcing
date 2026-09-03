@@ -1415,7 +1415,11 @@ class AppState(object):
         safe_tasks = [{
             'kind': str(item.get('kind') or ''),
             'label': str(item.get('label') or '后台任务'),
+            'state': 'running',
+            'startedAt': str(item.get('startedAt') or ''),
             'elapsedSec': int(item.get('elapsedSec') or 0),
+            'resourceCount': max(
+                0, int(item.get('resourceCount') or 0)),
         } for item in (tasks.get('tasks') or [])]
         update = self.updates.snapshot()
         return {
@@ -4010,11 +4014,13 @@ class Handler(BaseHTTPRequestHandler):
                         key=lambda x: int(x) if x.isdigit() else 0)
                 if not serials:
                     return self._json({'error': '未提供环境序号'}, 400)
-                selected_envs = [env_index[str(serial)] for serial in serials
+                selected_serials = [str(serial) for serial in serials]
+                STATE.orch.preflight_batch(
+                    selected_serials, env_index, site=site)
+                selected_envs = [env_index[str(serial)] for serial in selected_serials
                                  if str(serial) in env_index]
                 task_id = STATE.tasks.begin(
                     'query', environment_resources(selected_envs))
-                selected_serials = [str(serial) for serial in serials]
                 operation_run_key = self._operation_run_key(body, task_id)
 
                 def finish_query():
@@ -4707,10 +4713,15 @@ class Handler(BaseHTTPRequestHandler):
         except DataSourceRegistryError as e:
             self._json({'error': str(e), 'code': e.code}, 409)
         except PurchaseAssistantError as e:
+                self._json({
+                    'error': str(e),
+                    'code': 'source_invalid',
+                }, 422)
+        except HubApiError as e:
             self._json({
                 'error': str(e),
-                'code': 'source_invalid',
-            }, 422)
+                'code': e.reason_code,
+            }, 503)
         except RuntimeError as e:
             self._json({'error': str(e)}, 409)
         except ValueError as e:

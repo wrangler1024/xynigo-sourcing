@@ -4,6 +4,7 @@ import time
 import unittest
 from unittest.mock import patch
 
+from purchase_tool.hub_api import HubApiError
 from purchase_tool.shein_query import (
     QueryOrchestrator, friendly_carrier, normalize_site, parse_detail_page,
     parse_list_page)
@@ -244,6 +245,118 @@ class TrackingScreenshotTests(unittest.TestCase):
         job = QueryOrchestrator(hub)
         self.assertEqual(job._start_browser('container-1'), {'browser': 'ok'})
         self.assertEqual(hub.calls, [('container-1', True)])
+
+    def test_preflight_rejects_missing_browser_core_before_batch_start(self):
+        class MissingCoreHub(object):
+            def __init__(self):
+                self.marked = []
+
+            def open_container_codes(self):
+                return set()
+
+            def browser_start(self, _code, headless=False):
+                self.assert_headless = headless
+                raise HubApiError(
+                    'HubStudio 浏览器内核不存在',
+                    'hubstudio_browser_core_missing', api_code=-10007)
+
+            def mark_runtime_failure(self, code, message):
+                self.marked.append((code, message))
+
+        hub = MissingCoreHub()
+        job = QueryOrchestrator(hub, settle_seconds=0, env_interval=0)
+        env_index = {'1001': {
+            'serialNumber': 1001,
+            'containerCode': 'container-1',
+            'containerName': 'XG-MX-0903-001',
+        }}
+
+        with self.assertRaises(HubApiError) as caught:
+            job.preflight_batch(['1001'], env_index, site='MX')
+
+        self.assertEqual(
+            caught.exception.reason_code, 'hubstudio_browser_core_missing')
+        self.assertTrue(hub.assert_headless)
+        self.assertEqual(hub.marked[0][0], 'hubstudio_browser_core_missing')
+        self.assertFalse(job.running)
+
+    def test_preflight_starts_and_stops_one_eligible_environment(self):
+        class ReadyHub(object):
+            def __init__(self):
+                self.calls = []
+
+            def open_container_codes(self):
+                return set()
+
+            def browser_start(self, code, headless=False):
+                self.calls.append(('start', code, headless))
+                return {'debuggingPort': '9222'}
+
+            def browser_stop(self, code):
+                self.calls.append(('stop', code))
+
+        hub = ReadyHub()
+        job = QueryOrchestrator(hub, settle_seconds=0, env_interval=0)
+        result = job.preflight_batch(['1001'], {'1001': {
+            'serialNumber': 1001,
+            'containerCode': 'container-1',
+            'containerName': 'XG-MX-0903-001',
+        }}, site='MX')
+
+        self.assertEqual(result, {'checked': True, 'debuggingPort': 9222})
+        self.assertEqual(hub.calls, [
+            ('start', 'container-1', True),
+            ('stop', 'container-1'),
+        ])
+
+    def test_systemic_browser_failure_stops_the_whole_parallel_batch(self):
+        class MissingCoreHub(object):
+            def __init__(self):
+                self.start_calls = 0
+                self.marked = []
+
+            def open_container_codes(self):
+                return set()
+
+            def browser_start(self, _code, headless=False):
+                self.start_calls += 1
+                raise HubApiError(
+                    'HubStudio 浏览器内核不存在',
+                    'hubstudio_browser_core_missing', api_code=-10007)
+
+            def mark_runtime_failure(self, code, message):
+                self.marked.append((code, message))
+
+        hub = MissingCoreHub()
+        job = QueryOrchestrator(
+            hub, settle_seconds=0, env_interval=0, concurrency=5)
+        serials = [str(value) for value in range(1001, 1011)]
+        env_index = {
+            serial: {
+                'serialNumber': int(serial),
+                'containerCode': 'container-' + serial,
+                'containerName': 'XG-MX-0903-' + serial,
+            }
+            for serial in serials
+        }
+        try:
+            job.start_batch(serials, env_index, site='MX')
+            deadline = time.time() + 2
+            while job.snapshot()['running'] and time.time() < deadline:
+                time.sleep(0.01)
+            snapshot = job.snapshot()
+        finally:
+            job.close()
+
+        self.assertFalse(snapshot['running'])
+        self.assertEqual(hub.start_calls, 1)
+        self.assertEqual(
+            snapshot['fatalErrorCode'], 'hubstudio_browser_core_missing')
+        self.assertTrue(all(row['state'] == 'fail'
+                            for row in snapshot['rows']))
+        self.assertTrue(all('批次已终止' in row['error']
+                            or '内核不存在' in row['error']
+                            for row in snapshot['rows']))
 
 
 if __name__ == '__main__':

@@ -331,6 +331,34 @@ def test_logistics_task_reports_incremental_terminal_result():
     assert completed['screenshotStatus'] == 'ok'
 
 
+def test_logistics_system_failure_preserves_reason_code_and_fails_run():
+    rpc = FakeRpc('/api/progress', [{
+        'running': False,
+        'fatalErrorCode': 'hubstudio_browser_core_missing',
+        'fatalError': 'HubStudio 浏览器内核不存在',
+        'rows': [{
+            'serial': '101', 'envName': 'XG-MX-001',
+            'state': 'fail',
+            'error': '批次已终止：HubStudio 浏览器内核不存在',
+        }],
+    }])
+    executor = LocalOperationExecutor(
+        rpc, poll_interval=0.05, sleep_fn=lambda _seconds: None)
+
+    outcome, code, summary = executor.execute(
+        'logistics.query.v1', {
+            'runKey': 'logistics-runtime-failure-0001',
+            'queryMode': 'initial',
+            'site': 'MX',
+            'environmentSerials': ['101'],
+        }, lambda **_event: None)
+
+    assert outcome == 'failed'
+    assert code == 'hubstudio_browser_core_missing'
+    assert summary['runStatus'] == 'failed'
+    assert summary['errorSummary'] == 'HubStudio 浏览器内核不存在'
+
+
 def test_environment_single_retry_filters_parent_rows_into_child_run():
     common_success = {
         'accountId': 'a' * 64,

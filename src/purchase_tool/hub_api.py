@@ -17,6 +17,7 @@ import re
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -26,6 +27,7 @@ from .task_runtime import HubRuntimeGate
 DEFAULT_PORT = 6873
 KNOWN_FALLBACK_PORTS = (6873, 6874, 6875)
 RATE_LIMIT_CODE = 'E010205'
+RUNTIME_FAILURE_TTL_SECONDS = 120.0
 
 # 强制直连不走系统代理：同事电脑开着 Clash 类系统代理时，urllib 默认会把
 # 127.0.0.1 的请求也送进代理导致"连接失败"（PowerShell/浏览器则默认绕过本地）
@@ -156,12 +158,58 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
         self.client_running_getter = (
             client_running_getter or _default_client_running)
         self.headers = {'Content-Type': 'application/json'}
+        self._runtime_failure_lock = threading.Lock()
+        self._runtime_failure = None
         if api_key:
             self.headers['local-api-key'] = api_key
 
     @staticmethod
     def _base_for_port(port):
         return 'http://127.0.0.1:%s/api/v1' % int(port)
+
+    def mark_runtime_failure(self, reason_code, message):
+        """Temporarily downgrade a superficially healthy Local API.
+
+        ``group/list`` can remain available after HubStudio loses its browser
+        core.  A real browser launch is therefore a stronger runtime signal
+        than the read-only heartbeat probe and must win for a short window.
+        """
+        reason = str(reason_code or '')
+        if reason not in {
+                'hubstudio_browser_core_missing',
+                'hubstudio_browser_launch_invalid'}:
+            return False
+        with self._runtime_failure_lock:
+            self._runtime_failure = {
+                'reasonCode': reason,
+                'message': _safe_api_message(message),
+                'expiresAt': time.monotonic() + RUNTIME_FAILURE_TTL_SECONDS,
+            }
+        return True
+
+    def clear_runtime_failure(self):
+        with self._runtime_failure_lock:
+            self._runtime_failure = None
+
+    def _runtime_failure_snapshot(self):
+        with self._runtime_failure_lock:
+            failure = dict(self._runtime_failure or {})
+            if failure and time.monotonic() >= float(
+                    failure.get('expiresAt') or 0):
+                self._runtime_failure = None
+                failure = {}
+        if not failure:
+            return None
+        return {
+            'available': False,
+            'clientRunning': True,
+            'localApiEnabled': True,
+            'authenticated': True,
+            'apiVersion': 'v1',
+            'endpoint': self.base,
+            'reasonCode': failure['reasonCode'],
+            'message': failure['message'],
+        }
 
     def _post(self, path, body, retries=None, timeout=None):
         """POST JSON；普通异常短退避，限流则触发跨线程共享冷却。"""
@@ -284,6 +332,7 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
         except Exception:
             client_running = False
         if not client_running:
+            self.clear_runtime_failure()
             self.port = self.configured_port
             self.base = self._base_for_port(self.port)
             return {
@@ -296,6 +345,9 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
                 'reasonCode': 'hubstudio_client_not_running',
                 'message': '未检测到 HubStudio 客户端主窗口',
             }
+        runtime_failure = self._runtime_failure_snapshot()
+        if runtime_failure is not None:
+            return runtime_failure
         failures = []
         probe_ports = [self.port]
         probe_ports.extend(
@@ -538,8 +590,14 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
             })
         # 只串行提交 start/stop 控制 RPC，不持有整个浏览器会话；不同环境
         # 仍可同时运行，避免 HubStudio 同时收到 start 时返回 -10005。
-        with self.runtime_gate.browser():
-            return self._post('/browser/start', body) or {}
+        try:
+            with self.runtime_gate.browser():
+                result = self._post('/browser/start', body) or {}
+        except HubApiError as exc:
+            self.mark_runtime_failure(exc.reason_code, str(exc))
+            raise
+        self.clear_runtime_failure()
+        return result
 
     def browser_stop(self, container_code):
         with self.runtime_gate.browser():

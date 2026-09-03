@@ -297,7 +297,7 @@ class LocalOperationExecutor(object):
             if not bool(snapshot.get('running')):
                 break
             self.sleep(self.poll_interval)
-        summary = self._logistics_summary(total, rows)
+        summary = self._logistics_summary(total, rows, snapshot)
         return self._terminal_result('logistics', summary)
 
     def _request(self, method, path, body=None):
@@ -591,12 +591,17 @@ class LocalOperationExecutor(object):
         }
 
     @staticmethod
-    def _logistics_summary(total, rows):
+    def _logistics_summary(total, rows, snapshot=None):
+        snapshot = snapshot or {}
         success = sum(row['status'] == 'ok' for row in rows)
         stopped = sum(row['status'] == 'stopped' for row in rows)
         failed = sum(
             row['status'] in ('fail', 'login', 'inuse') for row in rows)
-        if stopped:
+        fatal_code = scrub_text(snapshot.get('fatalErrorCode') or '')[:128]
+        fatal_error = scrub_text(snapshot.get('fatalError') or '')[:300]
+        if fatal_code or fatal_error:
+            run_status = 'failed'
+        elif stopped:
             run_status = 'cancelled'
         elif failed and success:
             run_status = 'partial_failure'
@@ -613,11 +618,14 @@ class LocalOperationExecutor(object):
             'successCount': success,
             'failedCount': failed,
             'stoppedCount': stopped,
+            'errorCode': fatal_code,
+            'errorSummary': fatal_error,
         }
 
     @staticmethod
     def _terminal_result(kind, summary):
         run_status = summary['runStatus']
         outcome = 'failed' if run_status == 'failed' else 'succeeded'
-        code = '%s_%s' % (kind, run_status)
+        code = str(summary.get('errorCode') or '') or \
+            '%s_%s' % (kind, run_status)
         return outcome, code, summary

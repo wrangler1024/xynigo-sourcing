@@ -116,11 +116,12 @@ def heartbeat(
     revision: str | None = None,
     capabilities: list[str] | None = None,
     config_summary: dict[str, object] | None = None,
+    hub_status: str = "ready",
 ) -> dict[str, object]:
     body = {
         "waitSeconds": 0,
         "configRevision": revision,
-        "hubStatus": "ready",
+        "hubStatus": hub_status,
         "clientVersion": "0.12.5",
         "protocolVersion": 1,
         "capabilities": capabilities
@@ -1568,6 +1569,58 @@ def test_workspace_rpc_short_reads_queue_while_config_tasks_remain_exclusive(
         )
         assert config_read.status_code == 409
         assert config_read.json()["detail"]["code"] == "executor_task_busy"
+
+
+def test_formal_logistics_run_requires_online_executor_and_ready_hubstudio(
+    tmp_path,
+) -> None:
+    app, _database, _oauth = build_test_app(tmp_path)
+    capabilities = ["logistics.query.v1"]
+
+    with TestClient(app) as web_client, TestClient(app) as device_client:
+        login(web_client)
+        paired = pair(
+            device_client,
+            create_pairing_code(web_client),
+            capabilities=capabilities,
+        )
+        executor_id = str(paired["executorId"])
+        credential = str(paired["deviceCredential"])
+        base_payload = {
+            "executorId": executor_id,
+            "queryMode": "initial",
+            "site": "MX",
+            "environmentSerials": ["5564"],
+        }
+
+        offline = web_client.post(
+            "/v1/operation-runs/logistics-query",
+            json={
+                **base_payload,
+                "idempotencyKey": "logistics-offline-blocked-0001",
+            },
+            headers=CSRF,
+        )
+        assert offline.status_code == 409, offline.text
+        assert offline.json()["detail"]["code"] == "executor_offline"
+
+        heartbeat(
+            device_client,
+            credential,
+            capabilities=capabilities,
+            hub_status="limited",
+        )
+        unavailable = web_client.post(
+            "/v1/operation-runs/logistics-query",
+            json={
+                **base_payload,
+                "idempotencyKey": "logistics-hub-blocked-0001",
+            },
+            headers=CSRF,
+        )
+        assert unavailable.status_code == 409, unavailable.text
+        assert unavailable.json()["detail"]["code"] == \
+            "executor_hub_unavailable"
 
 
 def test_formal_logistics_run_queues_ahead_of_background_workspace_read(

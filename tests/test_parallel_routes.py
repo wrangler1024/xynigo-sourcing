@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import purchase_tool.main as main_module
+from purchase_tool.hub_api import HubApiError
 from purchase_tool.main import Handler
 from purchase_tool.task_runtime import LocalTaskCoordinator
 
@@ -34,10 +35,20 @@ class FakeOrchestrator(object):
     def __init__(self):
         self.running = False
         self.callback = None
+        self.preflight_error = None
+        self.preflight_calls = []
+        self.start_calls = []
 
-    def start_batch(self, _serials, _index, site='MX', on_finished=None):
+    def preflight_batch(self, serials, index, site='MX'):
+        self.preflight_calls.append((list(serials), dict(index), site))
+        if self.preflight_error is not None:
+            raise self.preflight_error
+        return {'checked': True}
+
+    def start_batch(self, serials, index, site='MX', on_finished=None):
         self.running = True
         self.callback = on_finished
+        self.start_calls.append((list(serials), dict(index), site))
 
     def snapshot(self):
         return {'rows': [], 'running': self.running}
@@ -137,6 +148,20 @@ class ParallelRouteTests(unittest.TestCase):
         self.assertEqual(len(self.state.tasks.snapshot()['tasks']), 2)
         self.orch.callback()
         self.env_job.callback()
+        self.assertFalse(self.state.tasks.running())
+
+    def test_query_rejects_missing_browser_core_before_task_is_created(self):
+        self.orch.preflight_error = HubApiError(
+            'HubStudio 浏览器内核不存在',
+            'hubstudio_browser_core_missing', api_code=-10007)
+
+        status, body = self.post_error('/api/query', {
+            'serials': ['1001'], 'site': 'MX'})
+
+        self.assertEqual(status, 503)
+        self.assertEqual(body['code'], 'hubstudio_browser_core_missing')
+        self.assertIn('内核不存在', body['error'])
+        self.assertEqual(self.orch.start_calls, [])
         self.assertFalse(self.state.tasks.running())
 
     def test_environment_stop_routes_request_cooperative_stop(self):

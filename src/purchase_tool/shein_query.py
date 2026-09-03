@@ -27,6 +27,17 @@ from .hub_api import HubApiError
 
 SUPPORTED_SITES = ('MX', 'US')
 SITE_LABELS = {'MX': '墨西哥站', 'US': '美国站'}
+SYSTEMIC_HUB_FAILURE_CODES = {
+    'hubstudio_client_not_running',
+    'hubstudio_local_api_unreachable',
+    'hubstudio_local_api_timeout',
+    'hubstudio_local_api_disabled',
+    'hubstudio_local_api_authentication_required',
+    'hubstudio_local_api_authentication_failed',
+    'hubstudio_local_api_incompatible',
+    'hubstudio_browser_core_missing',
+    'hubstudio_browser_launch_invalid',
+}
 SITE_PROFILES = {
     'MX': {
         'baseUrl': 'https://www.shein.com.mx',
@@ -309,6 +320,8 @@ class QueryOrchestrator(object):
         self._inflight = set()    # 正在查询中的环境序号
         self.started_at = None
         self.finished_at = None
+        self.fatal_error = ''
+        self.fatal_error_code = ''
         self._screenshot_temp = None
         self._screenshots = {}
         self.log_dir = log_dir
@@ -349,6 +362,8 @@ class QueryOrchestrator(object):
                 'elapsedSec': elapsed,
                 'site': self.site,
                 'siteName': SITE_LABELS[self.site],
+                'fatalError': self.fatal_error,
+                'fatalErrorCode': self.fatal_error_code,
                 'rows': [dict(r) for r in self.rows],
             }
 
@@ -465,6 +480,68 @@ class QueryOrchestrator(object):
 
     # ---- 查询入口 ----
 
+    def preflight_batch(self, serials, env_index=None, site='MX'):
+        """Prove one eligible environment can launch before accepting a batch.
+
+        A healthy ``group/list`` response does not prove that HubStudio has a
+        usable browser core.  This reversible start/stop probe keeps a broken
+        installation from creating a formal run and then failing every row.
+        """
+        site = normalize_site(site)
+        serials = [str(serial) for serial in serials]
+        with self.lock:
+            if self.running:
+                raise RuntimeError('已有查询在进行中')
+        index = env_index or {
+            str(env.get('serialNumber')): env for env in self.hub.env_list()
+            if env.get('serialNumber') is not None
+        }
+        try:
+            open_codes = self.hub.open_container_codes()
+        except HubApiError as exc:
+            self._record_systemic_hub_failure(exc, fail_rows=False)
+            raise
+        target_code = ''
+        for serial in serials:
+            env = index.get(serial)
+            if not env:
+                continue
+            env_name = str(env.get('containerName') or '')
+            env_site = re.search(r'-(MX|US)-', env_name, re.I)
+            if env_site and env_site.group(1).upper() != site:
+                continue
+            code = str(env.get('containerCode') or '').strip()
+            if code and code not in open_codes:
+                target_code = code
+                break
+        if not target_code:
+            return {'checked': False}
+
+        started = False
+        try:
+            with self._start_lock:
+                data = self.hub.browser_start(target_code, headless=True)
+            started = True
+            try:
+                debugging_port = int((data or {}).get('debuggingPort'))
+            except (TypeError, ValueError):
+                debugging_port = 0
+            if debugging_port < 1:
+                raise HubApiError(
+                    'HubStudio 启动环境后未返回调试端口',
+                    'hubstudio_browser_launch_invalid')
+            return {'checked': True, 'debuggingPort': debugging_port}
+        except HubApiError as exc:
+            self._record_systemic_hub_failure(exc, fail_rows=False)
+            raise
+        finally:
+            if started:
+                try:
+                    self.hub.browser_stop(target_code)
+                except HubApiError as exc:
+                    self._record_systemic_hub_failure(exc, fail_rows=False)
+                    raise
+
     def start_batch(self, serials, env_index=None, site='MX',
                     on_finished=None):
         """启动批量查询线程。env_index: {serialNumber(str): env dict}。"""
@@ -486,6 +563,8 @@ class QueryOrchestrator(object):
             self.running = True
             self.started_at = time.time()
             self.finished_at = None
+            self.fatal_error = ''
+            self.fatal_error_code = ''
             self._inflight = set()
             if fresh:
                 self._reset_screenshots()
@@ -613,6 +692,26 @@ class QueryOrchestrator(object):
                                  r.get('site') or self.site,
                                  r.get('utcOffsetMinutes')))
 
+    def _record_systemic_hub_failure(self, exc, fail_rows=True):
+        code = str(getattr(exc, 'reason_code', '') or '')
+        if code not in SYSTEMIC_HUB_FAILURE_CODES:
+            return False
+        message = str(exc)[:180]
+        marker = getattr(self.hub, 'mark_runtime_failure', None)
+        if callable(marker):
+            try:
+                marker(code, message)
+            except Exception:
+                pass
+        with self.lock:
+            if not self.fatal_error_code:
+                self.fatal_error_code = code
+                self.fatal_error = message
+        self.stop_event.set()
+        if fail_rows:
+            self._fail_all('批次已终止：%s' % message)
+        return True
+
     def _read_text_stable(self, page, ready_re=None, cf_wait=30, step=3):
         """读页面文本。
 
@@ -645,6 +744,10 @@ class QueryOrchestrator(object):
         """
         deadline = time.time() + 90
         with self._start_lock:
+            if self.stop_event.is_set() and self.fatal_error_code:
+                raise HubApiError(
+                    self.fatal_error or 'HubStudio 系统状态不可用',
+                    self.fatal_error_code)
             while True:
                 try:
                     return self.hub.browser_start(code, headless=True)
@@ -652,6 +755,7 @@ class QueryOrchestrator(object):
                     if '-10005' in str(e) and time.time() < deadline:
                         time.sleep(5)
                         continue
+                    self._record_systemic_hub_failure(e)
                     raise
 
     def _query_one(self, row, serial, env_index, open_codes, site='MX'):
@@ -813,6 +917,10 @@ class QueryOrchestrator(object):
             updates.update(screenshot)
             self._update(row, state='ok', error='', **updates)
             page.close()
+        except HubApiError as e:
+            self._update(row, state='fail',
+                         error='查询异常：%s' % str(e)[:120])
+            self._record_systemic_hub_failure(e)
         except Exception as e:
             self._update(row, state='fail',
                          error='查询异常：%s' % str(e)[:120])

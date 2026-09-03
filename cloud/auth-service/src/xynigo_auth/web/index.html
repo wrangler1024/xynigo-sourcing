@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Xynigo Sourcing v0.13.17</title>
+<title>Xynigo Sourcing v0.13.18</title>
 <link rel="icon" type="image/png" sizes="260x260" href="/xynigo-x.png?v=6">
 <link rel="icon" type="image/x-icon" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256" href="/favicon.ico?v=6">
 <link rel="shortcut icon" href="/favicon.ico?v=6">
@@ -1515,7 +1515,7 @@
           <div class="hero-kicker">XYNIGO SOURCING WORKSPACE</div>
           <h1>让小犀帮你把每一单稳稳带回来，<span class="hero-call">Xyni, GO!</span></h1>
           <p id="moduleSummary">批量查询订单与物流状态，异常任务集中处理，结果一键导出。</p>
-          <div class="hero-meta"><span class="hero-chip">累计修复测试 v0.13.17</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
+          <div class="hero-meta"><span class="hero-chip">累计修复测试 v0.13.18</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
         </div>
         <div class="hero-lockup" role="img" aria-label="小犀与 Xynigo 完整品牌一体图形">
           <img src="xynigo-logo.png" alt="">
@@ -3351,7 +3351,7 @@ async function cloudFetchJson(path, opts={}) {
   const headers = new Headers(opts.headers || {});
   headers.set('Accept', 'application/json');
   headers.set('X-Xynigo-Source', 'cloud_web_workspace');
-  headers.set('X-Xynigo-Client-Version', '0.13.17-cloud-web');
+  headers.set('X-Xynigo-Client-Version', '0.13.18-cloud-web');
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     headers.set('X-Xynigo-Web-CSRF', 'same-origin');
   }
@@ -3604,6 +3604,13 @@ function cloudLogisticsLegacySnapshot(run) {
 
 function logisticsRunFailureText(code) {
   return ({
+    executor_offline:'所选本地执行器已离线，请启动执行器并重新选择设备',
+    executor_hub_unavailable:'所选执行器尚未确认 HubStudio 可用，请先启动并检查 HubStudio',
+    hubstudio_client_not_running:'所选电脑未检测到 HubStudio，请启动 HubStudio 后重试',
+    hubstudio_local_api_unreachable:'无法连接所选电脑的 HubStudio Local API，请检查 HubStudio 本地 API 设置',
+    hubstudio_local_api_timeout:'所选电脑的 HubStudio Local API 响应超时，请重启 HubStudio 后重试',
+    hubstudio_browser_core_missing:'HubStudio 浏览器内核不可用，请打开 HubStudio 安装或切换可用内核后重试',
+    hubstudio_browser_launch_invalid:'HubStudio 未返回可用调试端口，请重启 HubStudio 后重试',
     operation_local_request_failed:'本地执行器未能启动查询；可能仍有上一批本机查询在收尾，请打开执行器状态中心核对',
     config_task_failed:'本地执行器启动查询时发生异常，请打开执行器日志目录查看原因',
     operation_task_failed:'本地执行器查询任务异常结束',
@@ -6496,18 +6503,26 @@ function render(snap) {
     : '↻ 重查异常行';
   const terminalStartFailure = !isRunning && snap.terminal
     && !lastRows.length && snap.errorCode;
+  const terminalSystemFailure = !isRunning && snap.terminal
+    && !!snap.errorCode && [
+      'executor_offline', 'executor_hub_unavailable',
+      'hubstudio_client_not_running', 'hubstudio_local_api_unreachable',
+      'hubstudio_local_api_timeout', 'hubstudio_browser_core_missing',
+      'hubstudio_browser_launch_invalid'
+    ].includes(String(snap.errorCode));
   $('currentEnv').textContent = isRunning
     ? ((snap.current ? '正在查询：' + snap.current : '执行器正在预检和准备') + ' …')
     : (snap.cancelled
       ? `查询已停止：已完成 ${Number(snap.progressCompleted || 0)} / ${Number(snap.progressTotal || lastRows.length || 0)}`
-      : terminalStartFailure
+      : (terminalStartFailure || terminalSystemFailure)
       ? logisticsRunFailureText(snap.errorCode)
       : (snap.rows && snap.rows.length ? '查询结束' : '待开始'));
   paintContinuousElapsed('elapsed', queryElapsedBase);
-  if (wasRunning && terminalStartFailure) {
+  if (wasRunning && (terminalStartFailure || terminalSystemFailure)) {
     toast(logisticsRunFailureText(snap.errorCode));
   }
-  if (wasRunning && !isRunning && snap.rows && snap.rows.length) {
+  if (wasRunning && !isRunning && !terminalSystemFailure
+      && snap.rows && snap.rows.length) {
     const ok = snap.rows.filter(r => r.state === 'ok' && !r.riskOrder).length;
     const risk = snap.rows.filter(r => r.state === 'ok' && r.riskOrder).length;
     const riskText = risk ? `，风险订单 ${risk}` : '';

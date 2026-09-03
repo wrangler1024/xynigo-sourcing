@@ -234,8 +234,10 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             html.index("/* ---------- 轮询 ---------- */")
         ]
         self.assertIn("terminalStartFailure", renderer)
+        self.assertIn("terminalSystemFailure", renderer)
         self.assertIn("执行器正在预检和准备", renderer)
         self.assertIn("logisticsRunFailureText(snap.errorCode)", renderer)
+        self.assertIn("hubstudio_browser_core_missing", html)
 
     def test_cloud_workspace_renews_sessions_and_idempotently_submits_writes(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")
