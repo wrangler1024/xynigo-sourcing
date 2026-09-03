@@ -1,0 +1,9 @@
+{
+  "notesZh": [
+    "Windows HubStudio 检测要求至少一个进程拥有有效主窗口。",
+    "忽略退出主界面后残留的无窗口 Hubstudio 后台子进程。",
+    "本机检测使用隐藏 PowerShell，不弹出控制台窗口。",
+    "保留执行设备刷新记忆和 HubStudio 三态展示。",
+    "Windows 与 macOS 从同一 Git 基线同步构建和发布。"
+  ]
+}

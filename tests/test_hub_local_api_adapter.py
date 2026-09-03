@@ -175,7 +175,8 @@ class HubStudioLocalApiAdapterTests(unittest.TestCase):
                 self.dwFlags = 0
                 self.wShowWindow = 1
 
-        with mock.patch.object(hub_api.os, 'name', 'nt'), \
+        with mock.patch.object(hub_api.sys, 'platform', 'win32'), \
+                mock.patch.object(hub_api.os, 'name', 'nt'), \
                 mock.patch.object(
                     hub_api.subprocess, 'CREATE_NO_WINDOW', 0x08000000,
                     create=True), \
@@ -192,6 +193,27 @@ class HubStudioLocalApiAdapterTests(unittest.TestCase):
         self.assertEqual(kwargs['creationflags'], 0x08000000)
         self.assertEqual(kwargs['startupinfo'].dwFlags, 0x00000001)
         self.assertEqual(kwargs['startupinfo'].wShowWindow, 0)
+
+    def test_windows_ignores_background_hubstudio_processes_without_window(self):
+        completed = mock.Mock(returncode=1)
+        with mock.patch.object(hub_api.sys, 'platform', 'win32'), \
+                mock.patch.object(hub_api.os, 'name', 'nt'), \
+                mock.patch.object(hub_api.subprocess, 'run',
+                                  return_value=completed) as run:
+            self.assertFalse(hub_api._default_client_running())
+
+        command = run.call_args.args[0]
+        self.assertEqual(command[0], 'powershell.exe')
+        self.assertIn('MainWindowHandle -ne 0', command[-1])
+        self.assertNotIn('tasklist', command)
+
+    def test_windows_accepts_hubstudio_process_with_main_window(self):
+        completed = mock.Mock(returncode=0)
+        with mock.patch.object(hub_api.sys, 'platform', 'win32'), \
+                mock.patch.object(hub_api.os, 'name', 'nt'), \
+                mock.patch.object(hub_api.subprocess, 'run',
+                                  return_value=completed):
+            self.assertTrue(hub_api._default_client_running())
 
     def test_available_adapter_lists_locates_opens_and_closes_mock_environment(self):
         opener = FakeLocalApiOpener()

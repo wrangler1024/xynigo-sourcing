@@ -12,9 +12,9 @@ from urllib.parse import quote
 from . import __version__
 
 
-RELEASE_VERSION = "0.13.16"
+RELEASE_VERSION = "0.13.17"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-03T05:51:16Z"
+RELEASE_PUBLISHED_AT = "2026-09-03T06:16:00Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -29,8 +29,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.13.16-9b66e8e32257",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.16.exe",
+        "runtimeId": "0.13.17-b0757e41bfb9",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.17.exe",
         "sha256": "d5b0f3e645a5ab193c6e98eb45463eff1719cd4397ede157fe6c224f31bbfffa",
         "size": 15_175_320,
         "installMode": "standard_per_user",
@@ -48,8 +48,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.13.16-9b66e8e32257",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.16.pkg",
+        "runtimeId": "0.13.17-b0757e41bfb9",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.17.pkg",
         "sha256": "a2b0f4bb5e288107c0d5addab8d369657c71d4c363532ba70c0bf3799f524613",
         "size": 11_450_021,
         "installMode": "standard_system_application",
@@ -234,11 +234,10 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "本次执行设备在当前浏览器会话内自动保留，刷新页面无需重新选择。",
-            "勾选记住默认设备后继续跨浏览器会话恢复，临时选择不会覆盖长期默认。",
-            "HubStudio 状态改为执行器本机进程优先探测，每次心跳强制刷新。",
-            "没有执行器上报时显示状态未知，不再推断或误报 HubStudio 在线。",
-            "区分 HubStudio 未启动、已启动但 Local API 未就绪、已启动且可用。",
+            "Windows HubStudio 检测要求至少一个进程拥有有效主窗口。",
+            "忽略退出主界面后残留的无窗口 Hubstudio 后台子进程。",
+            "进程检查使用隐藏的本机 PowerShell，不会弹出控制台窗口。",
+            "继续保留执行设备刷新记忆与 HubStudio 三态展示。",
             "Windows 与 macOS 从同一 Git 基线同步构建并发布。",
             "稳定通道强制平台签名门槛；内部未签名包仅允许 test 通道。",
         ],

@@ -65,7 +65,7 @@ def _windows_hidden_process_kwargs():
 
 
 def _default_client_running():
-    """Best-effort process check; never reads command arguments or secrets."""
+    """Best-effort interactive-client check without reading arguments/secrets."""
     try:
         if sys.platform == 'darwin':
             commands = (
@@ -77,11 +77,25 @@ def _default_client_running():
                 check=False, timeout=2).returncode == 0
                 for command in commands)
         if os.name == 'nt':
+            # HubStudio may leave several same-named helper processes behind
+            # after its desktop window closes.  Process-name-only tasklist
+            # detection therefore reports a false online state. PowerShell's
+            # MainWindowHandle uses the same signal exposed by Task Manager:
+            # at least one HubStudio process must own a real desktop window.
+            script = (
+                "$window = Get-Process -Name Hubstudio "
+                "-ErrorAction SilentlyContinue | "
+                "Where-Object { $_.MainWindowHandle -ne 0 } | "
+                "Select-Object -First 1; "
+                "if ($null -ne $window) { exit 0 }; exit 1"
+            )
             result = subprocess.run(
-                ['tasklist', '/FI', 'IMAGENAME eq HubStudio.exe', '/NH'],
-                capture_output=True, text=True, check=False, timeout=3,
+                ['powershell.exe', '-NoProfile', '-NonInteractive',
+                 '-Command', script],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                check=False, timeout=5,
                 **_windows_hidden_process_kwargs())
-            return 'hubstudio.exe' in (result.stdout or '').casefold()
+            return result.returncode == 0
         result = subprocess.run(
             ['pgrep', '-x', 'Hubstudio'], stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL, check=False, timeout=2)
@@ -261,10 +275,10 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
 
     def capability_snapshot(self):
         """Return a non-sensitive, reason-coded Local API capability view."""
-        # The desktop process is the authoritative liveness signal. HubStudio
-        # can leave a loopback listener alive briefly after its window/process
-        # exits; accepting that listener first makes the cloud show a stale
-        # green state. Keep this cheap OS-local check ahead of every API probe.
+        # The interactive desktop client is the authoritative liveness signal.
+        # HubStudio can leave helper processes and a loopback listener behind
+        # after its main window exits; accepting those first makes the cloud
+        # show a stale green state. Keep the OS-local check ahead of API probes.
         try:
             client_running = bool(self.client_running_getter())
         except Exception:
@@ -280,7 +294,7 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
                 'apiVersion': '',
                 'endpoint': self.base,
                 'reasonCode': 'hubstudio_client_not_running',
-                'message': '未检测到 HubStudio 客户端运行',
+                'message': '未检测到 HubStudio 客户端主窗口',
             }
         failures = []
         probe_ports = [self.port]
