@@ -128,6 +128,7 @@ BUSINESS_RESULT_KEYS = frozenset(
         "ipOkCount",
         "ipTotalCount",
         "errorCode",
+        "errorSummary",
     }
 )
 BUSINESS_RUN_STATUSES = frozenset(
@@ -1136,7 +1137,14 @@ class ExecutorChannelService:
             )
         ):
             raise ExecutorServiceError("executor_result_invalid", status_code=422)
-        count_keys = BUSINESS_RESULT_KEYS - {"runStatus", "phase", "errorCode"}
+        error_summary = summary.get("errorSummary")
+        if error_summary is not None and (
+            not isinstance(error_summary, str) or len(error_summary) > 300
+        ):
+            raise ExecutorServiceError("executor_result_invalid", status_code=422)
+        count_keys = BUSINESS_RESULT_KEYS - {
+            "runStatus", "phase", "errorCode", "errorSummary"
+        }
         for key in count_keys:
             if key not in summary:
                 continue
