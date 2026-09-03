@@ -994,6 +994,8 @@ class EnvironmentCreationRun(Base):
     failed_count: Mapped[int] = mapped_column(Integer, nullable=False)
     ip_ok_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     ip_total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_code: Mapped[str | None] = mapped_column(String(128))
+    error_summary: Mapped[str | None] = mapped_column(String(300))
     request_summary: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -1101,6 +1103,89 @@ class EnvironmentCreationResult(Base):
         ),
         Index("ix_environment_result_tenant_created", "tenant_id", "created_at"),
         Index("ix_environment_result_environment_ref", "tenant_id", "environment_ref"),
+    )
+
+
+class HubEnvironmentInventory(Base):
+    """Tenant-wide durable HubStudio environment identity and reservation."""
+
+    __tablename__ = "hub_environment_inventory"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    account_ref: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_order_ref: Mapped[str | None] = mapped_column(String(128))
+    environment_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    environment_ref: Mapped[str | None] = mapped_column(String(128))
+    environment_serial: Mapped[str | None] = mapped_column(String(64))
+    site: Mapped[str] = mapped_column(String(20), nullable=False)
+    environment_group: Mapped[str] = mapped_column(String(255), nullable=False)
+    purchaser_label: Mapped[str] = mapped_column(String(100), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False, default="reserved")
+    source_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("environment_creation_runs.id", ondelete="SET NULL")
+    )
+    last_observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "account_ref", name="uq_hub_inventory_tenant_account"
+        ),
+        UniqueConstraint(
+            "tenant_id", "source_order_ref", name="uq_hub_inventory_tenant_order"
+        ),
+        UniqueConstraint(
+            "tenant_id", "environment_name", name="uq_hub_inventory_tenant_name"
+        ),
+        CheckConstraint("site IN ('US', 'MX')", name="ck_hub_inventory_site"),
+        CheckConstraint(
+            "state IN ('reserved', 'active', 'uncertain', 'deleted')",
+            name="ck_hub_inventory_state",
+        ),
+        Index(
+            "ix_hub_inventory_tenant_group_state",
+            "tenant_id", "environment_group", "state", "updated_at",
+        ),
+        Index("ix_hub_inventory_source_run", "source_run_id", "state"),
+    )
+
+
+class EnvironmentNameSequence(Base):
+    """Cloud-owned monotonic suffix per tenant/site/date/purchaser."""
+
+    __tablename__ = "environment_name_sequences"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    site: Mapped[str] = mapped_column(String(20), nullable=False)
+    purchase_date: Mapped[str] = mapped_column(String(8), nullable=False)
+    purchaser_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    last_value: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "site", "purchase_date", "purchaser_code",
+            name="uq_environment_name_sequence_scope",
+        ),
+        CheckConstraint("site IN ('US', 'MX')", name="ck_environment_name_sequence_site"),
+        CheckConstraint("last_value >= 0", name="ck_environment_name_sequence_value"),
+        Index("ix_environment_name_sequence_tenant", "tenant_id", "updated_at"),
     )
 
 

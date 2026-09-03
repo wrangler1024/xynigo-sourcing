@@ -350,6 +350,42 @@ class EnvBatchTests(unittest.TestCase):
         self.assertEqual(us_plan[0].env_name, 'XG-US-0819-007')
         self.assertEqual(us_plan[1].env_name, 'ZH-US-0819-001')
 
+    def test_cloud_reserved_names_override_local_suffix_scan(self):
+        accounts = parse_vendor_workbook(BytesIO(workbook_bytes(demo_rows())))
+        planned = {
+            accounts[0].account_id: 'XG-MX-0819-101',
+            accounts[1].account_id: 'ZH-MX-0819-205',
+        }
+        plan = build_batch_plan(
+            accounts, '1:新刚,1:志恒',
+            existing_envs=[{'containerName': 'XG-MX-0819-999'}],
+            purchase_date='20260819', planned_env_names=planned)
+        self.assertEqual(
+            [row.env_name for row in plan],
+            ['XG-MX-0819-101', 'ZH-MX-0819-205'])
+        with self.assertRaisesRegex(EnvBatchError, '不一致'):
+            build_batch_plan(
+                accounts, '1:新刚,1:志恒', purchase_date='20260819',
+                planned_env_names={
+                    accounts[0].account_id: 'ZH-MX-0819-101',
+                    accounts[1].account_id: 'ZH-MX-0819-205',
+                })
+
+    def test_cloud_reserved_plan_skips_growing_global_environment_scan(self):
+        hub = FakeHub()
+        accounts = parse_vendor_workbook(
+            BytesIO(workbook_bytes(demo_rows()[:1])))
+        runner = BatchEnvOrchestrator(
+            hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY,
+            purchase_date='20260819', sleep_fn=lambda _seconds: None)
+        rows = runner.prepare(
+            accounts, '1:新刚',
+            planned_env_names={
+                accounts[0].account_id: 'XG-MX-0819-321',
+            })
+        self.assertEqual(rows[0].env_name, 'XG-MX-0819-321')
+        self.assertEqual(hub.env_list_calls, 1)
+
     def test_assignment_roster_validation_and_code_normalization(self):
         self.assertEqual(parse_assignment('2:XG,1:志恒', 3),
                          [(2, '新刚'), (1, '志恒')])

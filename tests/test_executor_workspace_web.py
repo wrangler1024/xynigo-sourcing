@@ -84,6 +84,7 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         html = LOCAL_HTML.read_text(encoding="utf-8")
         for marker in (
             "environment.cloud-plan.v1",
+            "environment.cloud-inventory.v1",
             "async function cloudEnvironmentPlanParse",
             "async function restoreLatestCloudEnvironmentPlan",
             "'/v1/environment-plans/parse'",

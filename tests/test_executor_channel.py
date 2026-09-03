@@ -202,7 +202,7 @@ class ExecutorChannelStateTests(unittest.TestCase):
 
 
 class ExecutorTaskApplicationTests(unittest.TestCase):
-    def build_worker(self, config):
+    def build_worker(self, config, operation_task_executor=None):
         client = FakeExecutorClient()
         state_store = ExecutorChannelStateStore(
             os.path.join(self.tempdir.name, 'state.json'))
@@ -235,6 +235,7 @@ class ExecutorTaskApplicationTests(unittest.TestCase):
                 'contentType': 'application/json',
                 'body': {'echo': payload},
             },
+            operation_task_executor=operation_task_executor,
         )
         return worker, client, holder, coordinator
 
@@ -359,6 +360,30 @@ class ExecutorTaskApplicationTests(unittest.TestCase):
             client.finishes[0]['resultSummary']['body']['echo']['path'],
             '/api/progress')
         self.assertFalse(coordinator.running())
+
+    def test_unexpected_operation_failure_is_not_mislabeled_as_config(self):
+        def fail_operation(_task_type, _payload, _report,
+                           cancellation_event=None):
+            del cancellation_event
+            raise RuntimeError('synthetic operation failure')
+
+        worker, client, _holder, _coordinator = self.build_worker(
+            {'concurrency': 2, 'safeParallelTasks': True},
+            operation_task_executor=fail_operation)
+        worker._execute_task(DEVICE_CREDENTIAL, {
+            'id': 'task-operation-failure',
+            'type': 'environment.create-bound.v1',
+            'leaseToken': LEASE_TOKEN,
+            'payload': {},
+        })
+        finish = client.finishes[0]
+        self.assertEqual(finish['outcome'], 'failed')
+        self.assertEqual(finish['resultCode'], 'operation_task_failed')
+        self.assertEqual(
+            finish['resultSummary']['errorCode'], 'operation_task_failed')
+        self.assertIn(
+            'synthetic operation failure',
+            finish['resultSummary']['errorSummary'])
 
     def test_formal_operation_task_streams_snapshot_and_finishes(self):
         worker, client, _holder, coordinator = self.build_worker({

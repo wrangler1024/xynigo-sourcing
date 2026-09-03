@@ -18,8 +18,10 @@ from xynigo_auth.models import (
     EnvironmentAccountPlan,
     EnvironmentAccountRunGuard,
     EnvironmentCreationRun,
+    EnvironmentNameSequence,
     ExecutorPairingCode,
     ExecutorTask,
+    HubEnvironmentInventory,
     LogisticsQueryRun,
     LocalExecutor,
     Tenant,
@@ -496,6 +498,7 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
         "workspace.snapshot.v1",
         "environment.parse.v1",
         "environment.cloud-plan.v1",
+        "environment.cloud-inventory.v1",
         "environment.create-bound.v1",
         "environment.create-backup.v1",
         "environment.retry-row.v1",
@@ -732,6 +735,12 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
             guards = list(session.scalars(select(EnvironmentAccountRunGuard)))
             assert len(guards) == 2
             assert {guard.state for guard in guards} == {"active"}
+            inventory = list(session.scalars(select(HubEnvironmentInventory)))
+            assert len(inventory) == 2
+            assert {row.state for row in inventory} == {"reserved"}
+            assert len({row.environment_name for row in inventory}) == 2
+            sequence = session.scalar(select(EnvironmentNameSequence))
+            assert sequence is not None and sequence.last_value == 2
             serialized = json.dumps(task.payload_envelope)
             assert cloud_plan_id not in serialized
             assert "MX采购测试" not in serialized
@@ -745,6 +754,7 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
         assert "planRef" not in leased["payload"]
         assert len(leased["payload"]["planAccounts"]) == 2
         assert leased["payload"]["cleanupBlockedAccountRefs"] == []
+        assert len(leased["payload"]["plannedEnvironmentNames"]) == 2
         lease_token = leased["leaseToken"]
         leased_snapshot = web_client.get(
             f"/v1/operation-runs/environment-creation/{snapshot['runId']}"

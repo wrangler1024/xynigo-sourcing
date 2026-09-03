@@ -10364,7 +10364,10 @@ $('btnEnvStart').onclick = async () => {
     let result;
     if (CLOUD_WEB_MODE) {
       const executor = await cloudFormalExecutor(
-        'environment.cloud-plan.v1');
+        'environment.cloud-inventory.v1');
+      if (!new Set(executor.capabilities || []).has('environment.cloud-plan.v1')) {
+        throw new Error('本地执行器版本过旧，请升级后再提交建环境任务');
+      }
       const assignments = envActiveBuyers().map(buyer => ({
         purchaserLabel:buyer.name, count:Number(envBuyerCounts[buyer.name] || 0),
       })).filter(item => item.count > 0);

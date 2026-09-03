@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -18,11 +19,14 @@ from .models import (
     EnvironmentAccountRunGuard,
     EnvironmentCreationResult,
     EnvironmentCreationRun,
+    EnvironmentNameSequence,
     ExecutorTask,
+    HubEnvironmentInventory,
     LogisticsQueryResult,
     LogisticsQueryRun,
     LocalExecutor,
     OperationalSyncOutbox,
+    Tenant,
 )
 from .operation_contract import (
     EnvironmentCreationRunBody,
@@ -313,6 +317,314 @@ class OperationRunService:
         self.session.add(run)
         self.session.flush()
         return run, False
+
+    _PURCHASER_CODES = {
+        "新刚": "XG",
+        "志恒": "ZH",
+        "康德": "KD",
+        "宇航": "YH",
+    }
+
+    @classmethod
+    def _purchaser_code(cls, label: str) -> str:
+        known = cls._PURCHASER_CODES.get(label)
+        if known:
+            return known
+        # Legacy/test tenants may still carry a custom purchaser label. Keep
+        # allocation deterministic even though the current desktop UI only
+        # offers the managed roster.
+        return "U" + hashlib.sha256(label.encode("utf-8")).hexdigest()[:5].upper()
+
+    @staticmethod
+    def _account_ref(account: dict[str, Any]) -> str:
+        return hashlib.sha256(
+            str(account.get("email") or "").strip().casefold().encode("utf-8")
+        ).hexdigest()
+
+    @staticmethod
+    def _source_order_ref(account: dict[str, Any]) -> str:
+        value = str(account.get("orderNo") or "").strip().casefold()
+        return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+    def reserve_environment_names(
+        self,
+        *,
+        run: EnvironmentCreationRun,
+        plan_accounts: list[dict[str, Any]],
+        assignments: list[dict[str, Any]],
+    ) -> list[dict[str, str]]:
+        """Reserve monotonic names and permanent account/order identities.
+
+        Locking the tenant row serializes first-time sequence creation as well
+        as updates, so two different executors cannot both allocate the same
+        suffix before either sequence row exists.
+        """
+        self.session.scalar(
+            select(Tenant.id)
+            .where(Tenant.id == run.tenant_id)
+            .with_for_update()
+        )
+        buyers: list[str] = []
+        for assignment in assignments:
+            label = str(assignment.get("purchaserLabel") or "").strip()
+            try:
+                count = int(assignment.get("count") or 0)
+            except (TypeError, ValueError):
+                count = 0
+            if not label or count < 1:
+                raise PurchaseServiceError(
+                    "environment_assignment_invalid", "采购员分配无效", 422
+                )
+            buyers.extend([label] * count)
+        if len(buyers) != len(plan_accounts):
+            raise PurchaseServiceError(
+                "environment_assignment_invalid", "采购员分配数量无效", 422
+            )
+
+        account_refs = [self._account_ref(item) for item in plan_accounts]
+        order_refs = [self._source_order_ref(item) for item in plan_accounts]
+        if (
+            len(account_refs) != len(set(account_refs))
+            or len(order_refs) != len(set(order_refs))
+        ):
+            raise PurchaseServiceError(
+                "environment_plan_duplicate", "买家号或号商单号在本批次重复", 409
+            )
+        existing = list(
+            self.session.scalars(
+                select(HubEnvironmentInventory)
+                .where(
+                    HubEnvironmentInventory.tenant_id == run.tenant_id,
+                    or_(
+                        HubEnvironmentInventory.account_ref.in_(account_refs),
+                        HubEnvironmentInventory.source_order_ref.in_(order_refs),
+                    ),
+                )
+                .with_for_update()
+            )
+        )
+        blocking = [
+            row for row in existing
+            if row.source_run_id != run.id and row.state != "deleted"
+        ]
+        if blocking:
+            raise PurchaseServiceError(
+                "environment_account_already_bound",
+                "买家号或号商单号已存在 HubStudio 环境，请勿跨设备重复创建",
+                409,
+            )
+        reusable = {
+            row.account_ref: row for row in existing
+            if row.account_ref in account_refs and row.state == "deleted"
+        }
+
+        now = utcnow()
+        offsets: dict[str, int] = {}
+        for buyer in buyers:
+            code = self._purchaser_code(buyer)
+            if code in offsets:
+                continue
+            sequence = self.session.scalar(
+                select(EnvironmentNameSequence)
+                .where(
+                    EnvironmentNameSequence.tenant_id == run.tenant_id,
+                    EnvironmentNameSequence.site == run.site,
+                    EnvironmentNameSequence.purchase_date == run.purchase_date,
+                    EnvironmentNameSequence.purchaser_code == code,
+                )
+                .with_for_update()
+            )
+            prefix = f"{code}-{run.site}-{run.purchase_date[-4:]}-"
+            known_names = list(
+                self.session.scalars(
+                    select(HubEnvironmentInventory.environment_name).where(
+                        HubEnvironmentInventory.tenant_id == run.tenant_id,
+                        HubEnvironmentInventory.environment_name.like(prefix + "%"),
+                    )
+                )
+            )
+            known_max = max(
+                [
+                    int(match.group(1))
+                    for value in known_names
+                    if (
+                        match := re.fullmatch(
+                            re.escape(prefix) + r"(\d{3,})", value
+                        )
+                    )
+                ] or [0]
+            )
+            if sequence is None:
+                sequence = EnvironmentNameSequence(
+                    id=uuid.uuid4(),
+                    tenant_id=run.tenant_id,
+                    site=run.site,
+                    purchase_date=run.purchase_date,
+                    purchaser_code=code,
+                    last_value=known_max,
+                    created_at=now,
+                    updated_at=now,
+                )
+                self.session.add(sequence)
+                self.session.flush()
+            elif sequence.last_value < known_max:
+                sequence.last_value = known_max
+            offsets[code] = sequence.last_value
+
+        planned: list[dict[str, str]] = []
+        sequences: dict[str, EnvironmentNameSequence] = {
+            row.purchaser_code: row
+            for row in self.session.scalars(
+                select(EnvironmentNameSequence).where(
+                    EnvironmentNameSequence.tenant_id == run.tenant_id,
+                    EnvironmentNameSequence.site == run.site,
+                    EnvironmentNameSequence.purchase_date == run.purchase_date,
+                    EnvironmentNameSequence.purchaser_code.in_(offsets),
+                )
+            )
+        }
+        for account_ref, order_ref, buyer in zip(
+            account_refs, order_refs, buyers
+        ):
+            code = self._purchaser_code(buyer)
+            offsets[code] += 1
+            if offsets[code] > 999:
+                raise PurchaseServiceError(
+                    "environment_daily_sequence_exhausted",
+                    "该采购员当日环境序号已超过 999，请调整购买日期后重试",
+                    409,
+                )
+            env_name = (
+                f"{code}-{run.site}-{run.purchase_date[-4:]}-{offsets[code]:03d}"
+            )
+            sequence = sequences[code]
+            sequence.last_value = offsets[code]
+            sequence.updated_at = now
+            inventory = reusable.get(account_ref)
+            if inventory is None:
+                inventory = HubEnvironmentInventory(
+                    id=uuid.uuid4(), tenant_id=run.tenant_id,
+                    account_ref=account_ref, source_order_ref=order_ref,
+                    environment_name=env_name, site=run.site,
+                    environment_group=run.environment_group,
+                    purchaser_label=buyer, state="reserved",
+                    source_run_id=run.id, created_at=now, updated_at=now,
+                )
+                self.session.add(inventory)
+            else:
+                inventory.source_order_ref = order_ref
+                inventory.environment_name = env_name
+                inventory.environment_ref = None
+                inventory.environment_serial = None
+                inventory.site = run.site
+                inventory.environment_group = run.environment_group
+                inventory.purchaser_label = buyer
+                inventory.state = "reserved"
+                inventory.source_run_id = run.id
+                inventory.last_observed_at = None
+                inventory.updated_at = now
+            planned.append({
+                "accountRef": account_ref,
+                "environmentName": env_name,
+            })
+        summary = dict(run.request_summary or {})
+        summary["plannedEnvironmentNames"] = planned
+        run.request_summary = summary
+        run.updated_at = now
+        self.session.flush()
+        return planned
+
+    def finalize_environment_inventory(
+        self,
+        *,
+        run: EnvironmentCreationRun,
+        status: str,
+        now: datetime | None = None,
+    ) -> None:
+        now = now or utcnow()
+        reservations = list(
+            self.session.scalars(
+                select(HubEnvironmentInventory)
+                .where(HubEnvironmentInventory.source_run_id == run.id)
+                .with_for_update()
+            )
+        )
+        results = {
+            row.account_ref: row
+            for row in self.session.scalars(
+                select(EnvironmentCreationResult).where(
+                    EnvironmentCreationResult.run_id == run.id
+                )
+            )
+        }
+        uncertain_run = status == "uncertain" or (
+            status == "failed"
+            and str(run.error_code or "") in {
+                "operation_task_failed",
+                "environment_task_failed",
+                "executor_lease_renew_failed",
+                "lease_expired_after_start",
+            }
+        )
+        for result in results.values():
+            if result.status != "success":
+                continue
+            inventory = next(
+                (row for row in reservations
+                 if row.account_ref == result.account_ref),
+                None,
+            )
+            if inventory is None:
+                inventory = self.session.scalar(
+                    select(HubEnvironmentInventory)
+                    .where(
+                        HubEnvironmentInventory.tenant_id == run.tenant_id,
+                        HubEnvironmentInventory.account_ref == result.account_ref,
+                    )
+                    .with_for_update()
+                )
+            if inventory is None:
+                inventory = HubEnvironmentInventory(
+                    id=uuid.uuid4(), tenant_id=run.tenant_id,
+                    account_ref=result.account_ref,
+                    environment_name=result.environment_name,
+                    site=run.site,
+                    environment_group=run.environment_group,
+                    purchaser_label=result.purchaser_label,
+                    state="active", source_run_id=run.id,
+                    created_at=now, updated_at=now,
+                )
+                self.session.add(inventory)
+            inventory.environment_name = result.environment_name
+            inventory.environment_ref = result.environment_ref
+            inventory.environment_serial = result.environment_serial
+            if inventory.source_order_ref is None:
+                buyer_account = self.session.scalar(
+                    select(BuyerAccount).where(
+                        BuyerAccount.tenant_id == run.tenant_id,
+                        BuyerAccount.account_ref == result.account_ref,
+                    )
+                )
+                if buyer_account is not None:
+                    inventory.source_order_ref = buyer_account.source_order_ref
+            inventory.site = run.site
+            inventory.environment_group = run.environment_group
+            inventory.purchaser_label = result.purchaser_label
+            inventory.state = "active"
+            inventory.source_run_id = run.id
+            inventory.last_observed_at = now
+            inventory.updated_at = now
+        for inventory in reservations:
+            result = results.get(inventory.account_ref)
+            if result is not None and result.status == "success":
+                continue
+            uncertain = uncertain_run or bool(
+                result is not None
+                and result.created_in_run
+                and result.cleanup_status not in {"deleted", "not_required"}
+            )
+            inventory.state = "uncertain" if uncertain else "deleted"
+            inventory.updated_at = now
 
     def acquire_environment_account_guards(
         self,
@@ -863,6 +1175,8 @@ class OperationRunService:
             "failedCount": run.failed_count,
             "ipOkCount": run.ip_ok_count,
             "ipTotalCount": run.ip_total_count,
+            "errorCode": run.error_code,
+            "errorSummary": run.error_summary,
             "createdCount": created_count,
             "recoveredCount": recovered_count,
             "cleanupTotal": cleanup_total,
@@ -1238,6 +1552,8 @@ class OperationResultService:
         run.failed_count = failed_count
         run.ip_ok_count = sum(item.ok for item in body.ipChecks)
         run.ip_total_count = len(body.ipChecks)
+        run.error_code = None
+        run.error_summary = None
         run.started_at = run.started_at or body.startedAt
         run.completed_at = body.completedAt
         run.last_heartbeat_at = body.completedAt
@@ -1374,6 +1690,11 @@ class OperationResultService:
                     item.cleanupStatus == "failed" for item in body.results
                 ),
             },
+            now=now,
+        )
+        OperationRunService(self.session).finalize_environment_inventory(
+            run=run,
+            status=run.status,
             now=now,
         )
         self.session.flush()

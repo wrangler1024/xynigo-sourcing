@@ -201,6 +201,66 @@ class FakeLedgerService(object):
 
 
 class EnvWebJobTests(unittest.TestCase):
+    def test_formal_start_acknowledges_before_slow_hub_preflight(self):
+        class BlockingListHub(FakeHub):
+            def __init__(self):
+                super().__init__()
+                self.list_started = threading.Event()
+                self.release_list = threading.Event()
+
+            def env_list(self, tag=None):
+                self.list_started.set()
+                if not self.release_list.wait(2):
+                    raise RuntimeError('test timed out waiting for env list')
+                return super().env_list(tag)
+
+        hub = BlockingListHub()
+        job = EnvBatchJob(lambda: hub, runtime_config)
+        parsed = job.parse(
+            'vendor.xlsx', base64.b64encode(source_bytes()).decode('ascii'))
+
+        started_at = time.monotonic()
+        count = job.start(
+            parsed['planId'], '1:新刚', '20260819',
+            verify_sample_count=0, confirm_write=True,
+            defer_preflight=True)
+        elapsed = time.monotonic() - started_at
+
+        self.assertEqual(count, 1)
+        self.assertLess(elapsed, 0.5)
+        self.assertTrue(job.snapshot()['running'])
+        self.assertTrue(hub.list_started.wait(1))
+        hub.release_list.set()
+        deadline = time.time() + 5
+        while job.snapshot()['running'] and time.time() < deadline:
+            time.sleep(0.05)
+        self.assertEqual(job.snapshot()['phase'], 'completed')
+        self.assertEqual(
+            [call for call in hub.calls if call[0] == 'list'],
+            [('list', TEST_TAG), ('list', None)])
+
+    def test_deferred_preflight_failure_has_stable_reason_code(self):
+        hub = FakeHub()
+        hub.groups = []
+        job = EnvBatchJob(lambda: hub, runtime_config)
+        parsed = job.parse(
+            'vendor.xlsx', base64.b64encode(source_bytes()).decode('ascii'))
+
+        self.assertEqual(job.start(
+            parsed['planId'], '1:新刚', '20260819',
+            verify_sample_count=0, confirm_write=True,
+            defer_preflight=True), 1)
+        deadline = time.time() + 5
+        while job.snapshot()['running'] and time.time() < deadline:
+            time.sleep(0.05)
+
+        snapshot = job.snapshot()
+        self.assertEqual(snapshot['phase'], 'failed')
+        self.assertEqual(
+            snapshot['fatalErrorCode'], 'environment_preflight_failed')
+        self.assertIn('采购分组', snapshot['fatalError'])
+        self.assertFalse(any(call[0] == 'create' for call in hub.calls))
+
     def test_cloud_plan_id_converts_to_a_distinct_local_memory_plan_id(self):
         job = EnvBatchJob(lambda: FakeHub(), runtime_config)
         accounts = parse_vendor_workbook(BytesIO(source_bytes()))

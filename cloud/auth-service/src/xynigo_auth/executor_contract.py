@@ -28,6 +28,7 @@ EXECUTOR_CAPABILITIES = Literal[
     "workspace.snapshot.v1",
     "environment.parse.v1",
     "environment.cloud-plan.v1",
+    "environment.cloud-inventory.v1",
     "logistics.query.v1",
     "environment.create-bound.v1",
     "environment.create-backup.v1",

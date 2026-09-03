@@ -63,6 +63,7 @@ from .env_batch import (BACKUP_MAX_COUNT, BACKUP_REMARK, BUYER_CODES,
                         BUYER_ROSTER, BatchEnvOrchestrator,
                         BackupEnvOrchestrator, DEFAULT_PROXY_LINK,
                         DEFAULT_SPLIT_BUYERS,
+                        EnvBatchError,
                         ResumeStateStore, backup_env_names,
                         backup_result_tsv_bytes,
                         batch_fingerprint, build_batch_plan,
@@ -108,7 +109,7 @@ from .resource_center import ResourceCenterService
 from .secure_store_transaction import SecureStoreTransaction
 from .shein_query import (
     QueryOrchestrator, normalize_browser_mode, normalize_site)
-from .task_runtime import (HubRuntimeGate, LocalTaskCoordinator,
+from .task_runtime import (HubRuntimeGate, LocalTaskCoordinator, TaskConflict,
                            environment_resources)
 from .updater import StandardInstallerUpdateClient, UpdateCoordinator
 from .workspace_rpc import WorkspaceRpcClient
@@ -1983,6 +1984,7 @@ class EnvBatchJob(object):
         self.phase = 'idle'
         self.ip_check_total = 0
         self.fatal_error = ''
+        self.fatal_error_code = ''
         self.mapping_data = None
         self.mapping_name = ''
         self.tsv_data = None
@@ -2168,6 +2170,18 @@ class EnvBatchJob(object):
             self.ip_checks = [dict(item) for item in checks]
 
     @staticmethod
+    def _fatal_reason(exc):
+        if isinstance(exc, HubApiError):
+            return exc.reason_code or 'hubstudio_local_api_error'
+        if isinstance(exc, TaskConflict):
+            return 'environment_resource_conflict'
+        if isinstance(exc, EnvBatchError):
+            return 'environment_preflight_failed'
+        if isinstance(exc, ValueError):
+            return 'environment_request_rejected'
+        return 'environment_task_failed'
+
+    @staticmethod
     def _wipe_runner_credentials(runner):
         if runner:
             for row in runner.rows:
@@ -2254,7 +2268,8 @@ class EnvBatchJob(object):
               environment_group=None,
               write_lark_ledger=False, confirm_lark_write=False,
               reserve_resources=None, on_finished=None,
-              cleanup_blocked_account_refs=None):
+              cleanup_blocked_account_refs=None, defer_preflight=False,
+              planned_environment_names=None):
         if not confirm_write:
             raise ValueError('正式执行必须二次确认 HubStudio 写入')
         if write_lark_ledger and not confirm_lark_write:
@@ -2275,37 +2290,60 @@ class EnvBatchJob(object):
             account_count = len(pending['accounts'])
             verify_sample_count = min(verify_sample_count, account_count)
         parse_assignment(assignment, account_count)
+        if planned_environment_names is not None:
+            if not isinstance(planned_environment_names, list):
+                raise ValueError('云端预占环境名格式无效')
+            planned_name_map = {}
+            for item in planned_environment_names:
+                if not isinstance(item, dict) or set(item) != {
+                        'accountRef', 'environmentName'}:
+                    raise ValueError('云端预占环境名格式无效')
+                account_ref = str(item.get('accountRef') or '').strip()
+                environment_name = str(
+                    item.get('environmentName') or '').strip()
+                if not account_ref or not environment_name:
+                    raise ValueError('云端预占环境名格式无效')
+                planned_name_map[account_ref] = environment_name
+            if len(planned_name_map) != account_count:
+                raise ValueError('云端预占环境名数量无效')
+        else:
+            planned_name_map = None
         runtime = self._runtime_config(site, environment_group)
         # 正式执行同步复核：允许混合登录态，纯错站仍在消费计划前拒收。
         validate_accounts_site(
             pending['accounts'], runtime['site'], allow_mixed=True)
         hub = self.hub_getter()
-        # Must finish every read-only prerequisite before consuming planId or
-        # launching a worker that can issue HubStudio writes.
-        require_envbatch_ready(
-            hub, runtime['purchaseTag'], runtime['proxyLink'],
-            site=runtime['site'])
-        # 全 HubStudio 严格查重必须在消费 planId 和启动写线程前完成。
-        # 目标分组列表用于同组幂等恢复；无过滤列表用于发现其他分组。
-        selected_existing = hub.env_list(runtime['purchaseTag'])
-        all_existing = hub.env_list()
-        checked_plan = build_batch_plan(
-            pending['accounts'], assignment,
-            existing_envs=selected_existing,
-            site=runtime['site'], purchase_date=purchase_date,
-            all_existing_envs=all_existing,
-            reject_existing_account_refs=cleanup_blocked_account_refs)
-        if reserve_resources:
-            reserve_resources(environment_resources(checked_plan))
+        selected_existing = None
+        all_existing = None
+        checked_plan = None
         ledger_service = None
-        if write_lark_ledger:
-            ledger_service = self.ledger_sync_factory()
-            ledger_preflight = ledger_service.preflight_plan(
-                checked_plan, runtime['site'], runtime['purchaseTag'])
-            if ledger_preflight.get('conflicts'):
-                raise ValueError(
-                    '飞书统一台账发现 %d 条双键或站点冲突，已阻止建环境' %
-                    ledger_preflight['conflicts'])
+        if not defer_preflight:
+            # Direct desktop requests keep their fail-fast behaviour. Formal
+            # cloud tasks defer these potentially slow HubStudio reads to the
+            # worker so the loopback acceptance request cannot time out while
+            # work continues invisibly in the background.
+            require_envbatch_ready(
+                hub, runtime['purchaseTag'], runtime['proxyLink'],
+                site=runtime['site'])
+            selected_existing = hub.env_list(runtime['purchaseTag'])
+            all_existing = hub.env_list()
+            checked_plan = build_batch_plan(
+                pending['accounts'], assignment,
+                existing_envs=selected_existing,
+                site=runtime['site'], purchase_date=purchase_date,
+                all_existing_envs=all_existing,
+                reject_existing_account_refs=cleanup_blocked_account_refs,
+                planned_env_names=planned_name_map)
+            if reserve_resources:
+                reserve_resources(environment_resources(checked_plan))
+            if write_lark_ledger:
+                ledger_service = self.ledger_sync_factory()
+                ledger_preflight = ledger_service.preflight_plan(
+                    checked_plan, runtime['site'], runtime['purchaseTag'])
+                if ledger_preflight.get('conflicts'):
+                    raise ValueError(
+                        '飞书统一台账发现 %d 条双键或站点冲突，已阻止建环境' %
+                        ledger_preflight['conflicts'])
         with self.lock:
             if self.running:
                 raise RuntimeError('已有模块三任务在进行')
@@ -2326,6 +2364,7 @@ class EnvBatchJob(object):
             self.phase = 'preparing'
             self.ip_check_total = 0
             self.fatal_error = ''
+            self.fatal_error_code = ''
             self.mapping_data = None
             self._cancel_sensitive_cleanup_locked()
             self._wipe_runner_credentials(self.runner)
@@ -2353,7 +2392,12 @@ class EnvBatchJob(object):
 
         def worker():
             runner = None
+            active_ledger_service = ledger_service
             try:
+                if defer_preflight:
+                    require_envbatch_ready(
+                        hub, runtime['purchaseTag'], runtime['proxyLink'],
+                        site=runtime['site'])
                 runner = BatchEnvOrchestrator(
                     hub, purchase_tag=runtime['purchaseTag'],
                     proxy_link=runtime['proxyLink'], site=runtime['site'],
@@ -2365,11 +2409,23 @@ class EnvBatchJob(object):
                     reject_existing_account_refs=cleanup_blocked_account_refs)
                 with self.lock:
                     self.runner = runner
-                runner.prepare(accounts, assignment)
-                if reserve_resources:
-                    # prepare 会再次读取 HubStudio；若外部进程在预检后改变了
-                    # 续排结果，必须在任何写入前补充预占并再次查冲突。
+                runner.prepare(
+                    accounts, assignment,
+                    existing_envs=selected_existing,
+                    all_existing_envs=all_existing,
+                    planned_env_names=planned_name_map)
+                if reserve_resources and defer_preflight:
                     reserve_resources(environment_resources(runner.rows))
+                if write_lark_ledger and defer_preflight:
+                    active_ledger_service = self.ledger_sync_factory()
+                    ledger_preflight = active_ledger_service.preflight_plan(
+                        runner.rows, runtime['site'], runtime['purchaseTag'])
+                    if ledger_preflight.get('conflicts'):
+                        raise ValueError(
+                            '飞书统一台账发现 %d 条双键或站点冲突，已阻止建环境' %
+                            ledger_preflight['conflicts'])
+                    with self.lock:
+                        self._ledger_service = active_ledger_service
                 with self.lock:
                     self.phase = 'creating'
                 result_rows = runner.run()
@@ -2406,7 +2462,7 @@ class EnvBatchJob(object):
                     row.cleanup_status == 'failed' for row in result_rows)
                 if write_lark_ledger:
                     self._sync_ledger_rows(
-                        ledger_service, result_rows,
+                        active_ledger_service, result_rows,
                         runtime['site'], purchase_date,
                         runtime['purchaseTag'])
                 with self.lock:
@@ -2437,6 +2493,7 @@ class EnvBatchJob(object):
                             '{region}', runtime['site']))
                     self.fatal_error = self._safe_error(
                         exc, accounts, proxy_secrets)
+                    self.fatal_error_code = self._fatal_reason(exc)
             finally:
                 if self.fatal_error:
                     self._clear_sensitive(runner=runner)
@@ -2494,6 +2551,7 @@ class EnvBatchJob(object):
             self.finished_at = None
             self.phase = 'creating'
             self.fatal_error = ''
+            self.fatal_error_code = ''
 
         def worker():
             try:
@@ -2523,6 +2581,7 @@ class EnvBatchJob(object):
                 accounts = [row.account for row in self.runner.rows]
                 with self.lock:
                     self.fatal_error = self._safe_error(exc, accounts)
+                    self.fatal_error_code = self._fatal_reason(exc)
             finally:
                 with self.lock:
                     self.finished_at = time.time()
@@ -2563,6 +2622,7 @@ class EnvBatchJob(object):
             self.started_at = time.time()
             self.finished_at = None
             self.fatal_error = ''
+            self.fatal_error_code = ''
             self.phase = 'creating'
 
         def worker():
@@ -2594,6 +2654,7 @@ class EnvBatchJob(object):
                 accounts = [row.account for row in self.runner.rows]
                 with self.lock:
                     self.fatal_error = self._safe_error(exc, accounts)
+                    self.fatal_error_code = self._fatal_reason(exc)
             finally:
                 with self.lock:
                     self.finished_at = time.time()
@@ -2758,6 +2819,7 @@ class EnvBatchJob(object):
                 'phase': self.phase,
                 'ipCheckDone': len(self.ip_checks),
                 'ipCheckTotal': self.ip_check_total,
+                'fatalErrorCode': self.fatal_error_code,
                 'fatalError': self.fatal_error,
                 'mappingReady': self.mapping_data is not None,
                 'tsvReady': self.tsv_data is not None,
@@ -4382,7 +4444,11 @@ class Handler(BaseHTTPRequestHandler):
                             STATE.tasks.reserve(task_id, resources),
                         on_finished=finish_environment_batch,
                         cleanup_blocked_account_refs=body.get(
-                            'cleanupBlockedAccountRefs'))
+                            'cleanupBlockedAccountRefs'),
+                        defer_preflight=bool(str(
+                            body.get('operationRunKey') or '').strip()),
+                        planned_environment_names=body.get(
+                            'plannedEnvironmentNames'))
                 except Exception:
                     STATE.tasks.finish(task_id)
                     raise

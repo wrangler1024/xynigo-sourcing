@@ -1437,6 +1437,10 @@ class ExecutorChannelService:
         if failed_count is not None:
             run.failed_count = min(failed_count, run.total_count)
         if isinstance(run, EnvironmentCreationRun):
+            error_code = str(summary.get("errorCode") or "").strip()
+            error_summary = str(summary.get("errorSummary") or "").strip()
+            run.error_code = error_code[:128] or None
+            run.error_summary = error_summary[:300] or None
             ip_ok = _safe_nonnegative_int(summary.get("ipOkCount"))
             ip_total = _safe_nonnegative_int(summary.get("ipTotalCount"))
             if ip_ok is not None:
@@ -1458,6 +1462,11 @@ class ExecutorChannelService:
                     run=run,
                     status=status,
                     summary=summary,
+                    now=heartbeat_at,
+                )
+                guard_service.finalize_environment_inventory(
+                    run=run,
+                    status=status,
                     now=heartbeat_at,
                 )
         elif progress_snapshot is not None:

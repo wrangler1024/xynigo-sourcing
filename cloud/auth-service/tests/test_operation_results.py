@@ -15,6 +15,8 @@ from xynigo_auth.models import (
     EnvironmentAccountRunGuard,
     EnvironmentCreationResult,
     EnvironmentCreationRun,
+    EnvironmentNameSequence,
+    HubEnvironmentInventory,
     LogisticsQueryResult,
     LogisticsQueryRun,
     OperationalSyncOutbox,
@@ -69,6 +71,115 @@ def environment_payload() -> dict[str, object]:
             }
         ],
     }
+
+
+def test_cloud_inventory_allocates_monotonic_names_and_blocks_cross_device_duplicates(
+    tmp_path,
+) -> None:
+    client, database, _headers = authenticated_client(tmp_path)
+    with database.session_factory() as session:
+        previous = session.scalar(select(EnvironmentCreationRun))
+        if previous is None:
+            from xynigo_auth.models import Tenant, User
+            tenant = session.scalar(select(Tenant))
+            user = session.scalar(select(User))
+            assert tenant is not None and user is not None
+            tenant_id, user_id = tenant.id, user.id
+        else:
+            tenant_id, user_id = previous.tenant_id, previous.actor_user_id
+
+        def make_run(key: str) -> EnvironmentCreationRun:
+            run = EnvironmentCreationRun(
+                id=uuid.uuid4(), tenant_id=tenant_id, actor_user_id=user_id,
+                source_run_key=key, payload_hash=hashlib.sha256(
+                    key.encode("utf-8")
+                ).hexdigest(), run_mode="bound", site="MX",
+                purchase_date="20260903", environment_group="MX采购",
+                status="created", phase="created", progress_completed=0,
+                progress_total=2, total_count=2, success_count=0,
+                failed_count=0, ip_ok_count=0, ip_total_count=0,
+                request_summary={}, source="cloud_web",
+            )
+            session.add(run)
+            session.flush()
+            return run
+
+        accounts = [{
+            "email": "inventory1@example.test", "orderNo": "a0000001",
+        }, {
+            "email": "inventory2@example.test", "orderNo": "a0000002",
+        }]
+        service = OperationRunService(session)
+        first = make_run("inventory-run-0001")
+        planned = service.reserve_environment_names(
+            run=first,
+            plan_accounts=accounts,
+            assignments=[{"purchaserLabel": "新刚", "count": 2}],
+        )
+        assert [row["environmentName"] for row in planned] == [
+            "XG-MX-0903-001", "XG-MX-0903-002",
+        ]
+        inventory = list(session.scalars(select(HubEnvironmentInventory)))
+        assert len(inventory) == 2
+        assert {row.state for row in inventory} == {"reserved"}
+
+        account_ref = planned[0]["accountRef"]
+        session.add(EnvironmentCreationResult(
+            id=uuid.uuid4(), run_id=first.id, tenant_id=tenant_id,
+            account_ref=account_ref, account_label="in***01@example.test",
+            purchaser_label="新刚", environment_name="XG-MX-0903-001",
+            environment_ref="hub-0001", environment_serial="9001",
+            status="success", completed_steps=["done"],
+            recovered_existing=False, created_in_run=True,
+            cleanup_status="not_required", feishu_sync_status="pending",
+        ))
+        session.flush()
+        service.finalize_environment_inventory(
+            run=first, status="partial_failure"
+        )
+        states = {
+            row.account_ref: row.state
+            for row in session.scalars(select(HubEnvironmentInventory))
+        }
+        assert states[account_ref] == "active"
+        assert set(states.values()) == {"active", "deleted"}
+
+        second = make_run("inventory-run-0002")
+        with pytest.raises(PurchaseServiceError) as duplicate:
+            service.reserve_environment_names(
+                run=second,
+                plan_accounts=[accounts[0], {
+                    "email": "inventory3@example.test", "orderNo": "a0000003",
+                }],
+                assignments=[{"purchaserLabel": "新刚", "count": 2}],
+            )
+        assert duplicate.value.code == "environment_account_already_bound"
+
+        third = make_run("inventory-run-0003")
+        next_names = service.reserve_environment_names(
+            run=third,
+            plan_accounts=[{
+                "email": "inventory3@example.test", "orderNo": "a0000003",
+            }, {
+                "email": "inventory4@example.test", "orderNo": "a0000004",
+            }],
+            assignments=[{"purchaserLabel": "新刚", "count": 2}],
+        )
+        assert [row["environmentName"] for row in next_names] == [
+            "XG-MX-0903-003", "XG-MX-0903-004",
+        ]
+        sequence = session.scalar(select(EnvironmentNameSequence))
+        assert sequence is not None and sequence.last_value == 4
+        third.error_code = "operation_task_failed"
+        service.finalize_environment_inventory(run=third, status="failed")
+        uncertain = list(session.scalars(
+            select(HubEnvironmentInventory).where(
+                HubEnvironmentInventory.source_run_id == third.id
+            )
+        ))
+        assert len(uncertain) == 2
+        assert {row.state for row in uncertain} == {"uncertain"}
+    client.close()
 
 
 def logistics_payload() -> dict[str, object]:

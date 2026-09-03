@@ -135,6 +135,34 @@ class LocalOperationExecutor(object):
                     or len(cleanup_blocked_refs) > total):
                 raise OperationExecutionError(
                     'operation_payload_invalid', '待清理账号引用数量无效')
+            planned_names = payload.get('plannedEnvironmentNames')
+            if (planned_names is not None
+                    and (not isinstance(planned_names, list)
+                         or len(planned_names) != total)):
+                raise OperationExecutionError(
+                    'operation_payload_invalid', '云端预占环境名数量无效')
+            planned_refs = set()
+            planned_values = set()
+            for item in planned_names or []:
+                if not isinstance(item, dict) or set(item) != {
+                        'accountRef', 'environmentName'}:
+                    raise OperationExecutionError(
+                        'operation_payload_invalid', '云端预占环境名格式无效')
+                account_ref = str(item.get('accountRef') or '').strip()
+                environment_name = str(
+                    item.get('environmentName') or '').strip()
+                if (not 8 <= len(account_ref) <= 128
+                        or not environment_name
+                        or len(environment_name) > 255):
+                    raise OperationExecutionError(
+                        'operation_payload_invalid', '云端预占环境名无效')
+                planned_refs.add(account_ref)
+                planned_values.add(environment_name)
+            if (planned_names is not None
+                    and (len(planned_refs) != total
+                         or len(planned_values) != total)):
+                raise OperationExecutionError(
+                    'operation_payload_invalid', '云端预占环境名重复')
             local_plan_id = ''
             plan_accounts = payload.get('planAccounts')
             if plan_accounts is not None:
@@ -169,6 +197,7 @@ class LocalOperationExecutor(object):
                 'site': site,
                 'environmentGroup': group,
                 'cleanupBlockedAccountRefs': cleanup_blocked_refs,
+                'plannedEnvironmentNames': planned_names,
                 'operationRunKey': run_key,
             }
             backup = False
@@ -620,8 +649,9 @@ class LocalOperationExecutor(object):
         raw = snapshot.get('summary') or {}
         ip_ok = int(raw.get('ipOk') or 0)
         ip_total = int(raw.get('ipTotal') or 0)
+        fatal_code = scrub_text(snapshot.get('fatalErrorCode') or '')[:128]
         fatal = scrub_text(snapshot.get('fatalError') or '')[:300]
-        if fatal:
+        if fatal_code or fatal:
             run_status = 'failed'
         elif stopped:
             run_status = 'cancelled'
@@ -645,6 +675,8 @@ class LocalOperationExecutor(object):
             'cleanupFailed': int(raw.get('cleanupFailed') or 0),
             'ipOkCount': ip_ok,
             'ipTotalCount': ip_total,
+            'errorCode': fatal_code,
+            'errorSummary': fatal,
         }
 
     @staticmethod

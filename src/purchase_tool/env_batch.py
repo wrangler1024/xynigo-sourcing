@@ -925,7 +925,8 @@ def validate_global_order_dedup(accounts, selected_envs, all_envs,
 def build_batch_plan(accounts, assignment_spec, existing_envs=None,
                      site='MX', purchase_date=None, resume_state=None,
                      all_existing_envs=None, environment_index=None,
-                     reject_existing_account_refs=None):
+                     reject_existing_account_refs=None,
+                     planned_env_names=None):
     site = normalize_env_site(site)
     purchase_date = purchase_date or date.today().strftime('%Y%m%d')
     if not re.fullmatch(r'20\d{6}', purchase_date):
@@ -958,6 +959,17 @@ def build_batch_plan(accounts, assignment_spec, existing_envs=None,
         for value in (reject_existing_account_refs or ())
         if str(value or '').strip()
     }
+    planned_env_names = {
+        str(key or '').strip(): str(value or '').strip()
+        for key, value in (planned_env_names or {}).items()
+        if str(key or '').strip()
+    }
+    if planned_env_names:
+        account_refs = {account.account_id for account in accounts}
+        if set(planned_env_names) != account_refs:
+            raise EnvBatchError('云端预占环境名与买家号计划不一致')
+        if len(set(planned_env_names.values())) != len(planned_env_names):
+            raise EnvBatchError('云端预占环境名重复')
     mmdd = purchase_date[-4:]
     max_suffix = {buyer: 0 for _count, buyer in assignments}
     for buyer in max_suffix:
@@ -1018,10 +1030,18 @@ def build_batch_plan(accounts, assignment_spec, existing_envs=None,
             if not item.env_name:
                 raise EnvBatchError('续跑状态缺少环境名，拒绝恢复')
         else:
-            max_suffix[account.buyer] += 1
-            env_name = '%s-%s-%s-%03d' % (
-                BUYER_CODES[account.buyer], site, mmdd,
-                max_suffix[account.buyer])
+            env_name = planned_env_names.get(account.account_id, '')
+            if env_name:
+                pattern = re.compile(ENV_NAME_RE.format(
+                    code=re.escape(BUYER_CODES[account.buyer]),
+                    site=re.escape(site), mmdd=mmdd))
+                if not pattern.fullmatch(env_name):
+                    raise EnvBatchError('云端预占环境名与站点、日期或采购员不一致')
+            else:
+                max_suffix[account.buyer] += 1
+                env_name = '%s-%s-%s-%03d' % (
+                    BUYER_CODES[account.buyer], site, mmdd,
+                    max_suffix[account.buyer])
             item = BatchPlanItem(account=account, env_name=env_name)
         plan.append(item)
     return plan
@@ -1264,9 +1284,14 @@ class BatchEnvOrchestrator(_EnvironmentLookupMixin):
         }
         self.rows = []
 
-    def prepare(self, accounts, assignment_spec):
-        existing = self.hub.env_list(self.purchase_tag)
-        all_existing = self.hub.env_list()
+    def prepare(self, accounts, assignment_spec, existing_envs=None,
+                all_existing_envs=None, planned_env_names=None):
+        existing = (
+            self.hub.env_list(self.purchase_tag)
+            if existing_envs is None else list(existing_envs))
+        all_existing = (
+            (list(existing) if planned_env_names else self.hub.env_list())
+            if all_existing_envs is None else list(all_existing_envs))
         environment_index = self._set_environment_snapshot(
             existing, all_existing)
         saved = self.state_store.load() if self.state_store else None
@@ -1275,7 +1300,8 @@ class BatchEnvOrchestrator(_EnvironmentLookupMixin):
             site=self.site, purchase_date=self.purchase_date,
             resume_state=saved, all_existing_envs=all_existing,
             environment_index=environment_index,
-            reject_existing_account_refs=self.reject_existing_account_refs)
+            reject_existing_account_refs=self.reject_existing_account_refs,
+            planned_env_names=planned_env_names)
         self._persist()
         return self.rows
 

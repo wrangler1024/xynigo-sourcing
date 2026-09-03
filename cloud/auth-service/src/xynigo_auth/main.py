@@ -3206,7 +3206,13 @@ def create_app(
                     user_id=actor.user.id,
                     executor_id=body.executorId,
                 )
-                if "environment.cloud-plan.v1" not in set(executor.capabilities or []):
+                required_environment_capabilities = {
+                    "environment.cloud-plan.v1",
+                    "environment.cloud-inventory.v1",
+                }
+                if not required_environment_capabilities.issubset(
+                    set(executor.capabilities or [])
+                ):
                     raise HTTPException(
                         status_code=409,
                         detail={
@@ -3259,6 +3265,25 @@ def create_app(
                         exc,
                         business_object_id=body.idempotencyKey,
                     )
+                try:
+                    planned_environment_names = runs.reserve_environment_names(
+                        run=run,
+                        plan_accounts=plan_accounts or [],
+                        assignments=[
+                            item.model_dump(mode="json")
+                            for item in body.assignments
+                        ],
+                    )
+                except PurchaseServiceError as exc:
+                    session.rollback()
+                    purchase_error(
+                        request,
+                        session,
+                        actor,
+                        action,
+                        exc,
+                        business_object_id=body.idempotencyKey,
+                    )
             task_type = (
                 "environment.create-bound.v1"
                 if body.mode == "bound"
@@ -3282,6 +3307,7 @@ def create_app(
             if plan_accounts is not None:
                 task_payload["planAccounts"] = plan_accounts
                 task_payload["cleanupBlockedAccountRefs"] = cleanup_blocked_refs
+                task_payload["plannedEnvironmentNames"] = planned_environment_names
             task = channel.create_config_task(
                 tenant_id=actor.tenant.id,
                 user_id=actor.user.id,

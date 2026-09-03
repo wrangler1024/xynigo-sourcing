@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import base64
+import hashlib
 import threading
 
 from purchase_tool.operation_executor import LocalOperationExecutor
@@ -146,6 +147,8 @@ def test_bound_environment_task_hydrates_encrypted_cloud_plan_before_start():
         'cookie': '[{"name":"session","value":"sensitive"}]',
         'orderNo': '00000001',
     }
+    account_ref = hashlib.sha256(
+        account['email'].strip().casefold().encode('utf-8')).hexdigest()
 
     outcome, code, _summary = executor.execute(
         'environment.create-bound.v1', {
@@ -158,6 +161,10 @@ def test_bound_environment_task_hydrates_encrypted_cloud_plan_before_start():
             'totalCount': 1,
             'verifySampleCount': 0,
             'assignments': [{'purchaserLabel': '新刚', 'count': 1}],
+            'plannedEnvironmentNames': [{
+                'accountRef': account_ref,
+                'environmentName': 'XG-MX-0901-101',
+            }],
         }, lambda **_event: None)
 
     assert outcome == 'succeeded'
@@ -167,6 +174,10 @@ def test_bound_environment_task_hydrates_encrypted_cloud_plan_before_start():
     assert rpc.calls[0]['body']['accounts'] == [account]
     assert rpc.calls[1]['path'] == '/api/envbatch/start'
     assert rpc.calls[1]['body']['planId'] == 'local-hydrated-plan-0001'
+    assert rpc.calls[1]['body']['plannedEnvironmentNames'] == [{
+        'accountRef': account_ref,
+        'environmentName': 'XG-MX-0901-101',
+    }]
 
 
 def test_backup_environment_task_honors_cooperative_cancellation():
@@ -358,6 +369,36 @@ def test_logistics_system_failure_preserves_reason_code_and_fails_run():
     assert code == 'hubstudio_browser_core_missing'
     assert summary['runStatus'] == 'failed'
     assert summary['errorSummary'] == 'HubStudio 浏览器内核不存在'
+
+
+def test_environment_preflight_failure_preserves_reason_code_and_summary():
+    rpc = FakeRpc('/api/envbatch/progress', [{
+        'running': False,
+        'phase': 'failed',
+        'fatalErrorCode': 'environment_preflight_failed',
+        'fatalError': 'HubStudio 采购分组不存在',
+        'rows': [],
+        'summary': {},
+    }])
+    executor = LocalOperationExecutor(
+        rpc, poll_interval=0.05, sleep_fn=lambda _seconds: None)
+
+    outcome, code, summary = executor.execute(
+        'environment.create-bound.v1', {
+            'runKey': 'environment-preflight-failure-0001',
+            'site': 'MX',
+            'purchaseDate': '20260901',
+            'environmentGroup': 'MX采购',
+            'planRef': 'plan-local-0001',
+            'totalCount': 1,
+            'verifySampleCount': 0,
+            'assignments': [{'purchaserLabel': '新刚', 'count': 1}],
+        }, lambda **_event: None)
+
+    assert outcome == 'failed'
+    assert code == 'environment_preflight_failed'
+    assert summary['runStatus'] == 'failed'
+    assert summary['errorSummary'] == 'HubStudio 采购分组不存在'
 
 
 def test_logistics_task_uploads_each_available_screenshot_with_progress():

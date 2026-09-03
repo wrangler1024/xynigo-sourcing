@@ -33,6 +33,7 @@ from .cloud_auth import (
 from .operation_executor import (
     BUSINESS_TASK_TYPES, OperationExecutionError,
 )
+from .redaction import scrub_text
 
 
 EXECUTOR_KEYCHAIN_SERVICE = 'io.xynigo.sourcing.executor'
@@ -44,6 +45,7 @@ SUPPORTED_CAPABILITIES = (
     'workspace.snapshot.v1',
     'environment.parse.v1',
     'environment.cloud-plan.v1',
+    'environment.cloud-inventory.v1',
     'logistics.query.v1',
     'environment.create-bound.v1',
     'environment.create-backup.v1',
@@ -628,11 +630,15 @@ class ExecutorChannelWorker(object):
                 result_code = exc.code
             elif isinstance(exc, ValueError):
                 result_code = (
-                    'config_write_rejected' if task_kind
+                    'config_write_rejected' if task_kind == 'config'
+                    else 'operation_request_rejected'
+                    if task_kind == 'operation'
                     else 'workspace_rpc_rejected')
             else:
                 result_code = (
-                    'config_task_failed' if task_kind
+                    'config_task_failed' if task_kind == 'config'
+                    else 'operation_task_failed'
+                    if task_kind == 'operation'
                     else 'workspace_rpc_failed')
             result_summary = (
                 {'configRevision': config_revision(self.config_getter())}
@@ -640,6 +646,7 @@ class ExecutorChannelWorker(object):
                     'runStatus': 'failed',
                     'phase': phase_prefix + '.failed',
                     'errorCode': result_code,
+                    'errorSummary': scrub_text(exc)[:300],
                 } if task_kind == 'operation' else {})
         finally:
             if local_task_id:
