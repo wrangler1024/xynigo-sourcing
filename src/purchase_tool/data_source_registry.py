@@ -823,8 +823,10 @@ class DataSourceRegistry(object):
             raise DataSourceMappingRequired()
         return copy.deepcopy(source)
 
-    def resolve(self, member_id, container_code=None,
-                allow_team_default=False, allowed_data_source_ids=None):
+    def resolve_with_context(self, member_id, container_code=None,
+                             allow_team_default=False,
+                             allowed_data_source_ids=None):
+        """Resolve one source and report which explicit policy selected it."""
         member = _member_id(member_id)
         container = (_container_code(container_code)
                      if container_code not in (None, '') else '')
@@ -833,22 +835,25 @@ class DataSourceRegistry(object):
                    if item['enabled'] and item['migrationState'] == 'ready'}
         allowed = (None if allowed_data_source_ids is None else
                    {_source_id(item) for item in allowed_data_source_ids})
-
         wanted = ''
+        resolution = ''
         if container:
             binding = next((item for item in registry['environmentBindings']
                             if item['containerCode'] == container
                             and item['memberId'] == member), None)
             if binding:
                 wanted = binding['dataSourceId']
+                resolution = 'environment_binding'
         if not wanted:
             profile = next((item for item in registry['buyerProfiles']
                             if item['memberId'] == member), None)
             if profile:
                 wanted = profile['defaultDataSourceId']
+                resolution = 'member_default'
         if (not wanted and allow_team_default
                 and registry['teamDefaultDataSourceId']):
             wanted = registry['teamDefaultDataSourceId']
+            resolution = 'team_default'
 
         source = sources.get(wanted)
         if (source is None or (allowed is not None and wanted not in allowed)):
@@ -856,4 +861,14 @@ class DataSourceRegistry(object):
         if (source['scope'] == 'personal'
                 and source['ownerMemberId'] != member):
             raise DataSourceMappingRequired()
-        return copy.deepcopy(source)
+        return copy.deepcopy(source), resolution
+
+    def resolve(self, member_id, container_code=None,
+                allow_team_default=False, allowed_data_source_ids=None):
+        source, _resolution = self.resolve_with_context(
+            member_id,
+            container_code=container_code,
+            allow_team_default=allow_team_default,
+            allowed_data_source_ids=allowed_data_source_ids,
+        )
+        return source

@@ -375,6 +375,7 @@ class PurchaseAssistantHttpTests(unittest.TestCase):
                 'dataSourceId': 'ds_' + '1' * 24,
                 'scope': 'team',
                 'label': '脱敏团队数据源',
+                'resolution': 'team_default',
             })
             return scoped, status
         main_module.STATE.purchase_assistant_for_member = service_for_member
@@ -459,11 +460,15 @@ class PurchaseAssistantHttpTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(health['configured'])
         self.assertEqual(health['service'], 'xynigo-sourcing')
-        self.assertEqual(health['apiVersion'], 3)
+        self.assertEqual(health['apiVersion'], 4)
         self.assertTrue(health['features']['taskSearch'])
         self.assertTrue(health['features']['recipientRead'])
-        self.assertTrue(health['features']['sourceConfiguration'])
+        self.assertFalse(health['features']['sourceConfiguration'])
+        self.assertTrue(health['features']['desktopManagedDataSources'])
+        self.assertTrue(health['features']['memberScopedDataSources'])
+        self.assertFalse(health['features']['environmentScopedDataSources'])
         self.assertTrue(health['features']['hubStudioAutomation'])
+        self.assertEqual(health['settingsUrl'], 'xynigo://settings')
         self.assertNotIn('recipient', health)
         self._pair()
 
@@ -541,6 +546,9 @@ class PurchaseAssistantHttpTests(unittest.TestCase):
 
         self.assertEqual(status, 200)
         self.assertEqual(payload['tasks'][0]['salesOrderNo'], 'ORDER-MEMBER-B')
+        self.assertEqual(payload['source']['management'], 'desktop')
+        self.assertEqual(payload['source']['member']['name'], '脱敏测试成员')
+        self.assertFalse(payload['source']['containerContextApplied'])
         self.assertIn((MEMBER_B, 'container-member-b'),
                       self.member_service_calls)
 
@@ -587,7 +595,7 @@ class PurchaseAssistantHttpTests(unittest.TestCase):
         self.assertEqual(recipient_status, 200)
         self.assertEqual(recipient['recipient']['postalCode'], '36000')
 
-    def test_data_source_status_and_save_do_not_depend_on_hubstudio(self):
+    def test_data_source_status_is_read_only_and_does_not_depend_on_hubstudio(self):
         self.hub_capability.update({
             'available': False,
             'reasonCode': 'hubstudio_local_api_disabled',
@@ -603,12 +611,16 @@ class PurchaseAssistantHttpTests(unittest.TestCase):
             '/api/purchase-assistant/v1/data-source', headers)
         self.assertEqual(status, 200)
         self.assertEqual(payload['source']['mode'], 'team')
+        self.assertEqual(payload['source']['management'], 'desktop')
+        self.assertEqual(payload['source']['resolution'], 'team_default')
+        self.assertEqual(payload['source']['settingsUrl'], 'xynigo://settings')
         self.assertNotIn('spreadsheetToken', json.dumps(payload))
         status, _response_headers, payload = self._post(
             '/api/purchase-assistant/v1/data-source/save',
             {'mode': 'team'}, headers)
-        self.assertEqual(status, 200)
-        self.assertTrue(payload['ok'])
+        self.assertEqual(status, 410)
+        self.assertEqual(payload['code'], 'local_config_desktop_only')
+        self.assertEqual(payload['settingsUrl'], 'xynigo://settings')
 
     def test_mock_environment_open_close_and_batch_use_restricted_bridge(self):
         token = self._pair()

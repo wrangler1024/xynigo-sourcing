@@ -155,6 +155,27 @@ def editable_data_source(identity, source_id, *, allow_unclaimed=False):
         raise LocalAuthError('permission_denied', status=403)
     return source
 
+
+def public_purchase_assistant_source_context(identity, source_status,
+                                             container_code=''):
+    """Attach only safe desktop-management and resolution context."""
+    payload = copy.deepcopy(source_status if isinstance(
+        source_status, dict) else {})
+    resolution = str(payload.get('resolution') or '')
+    payload.update({
+        'management': 'desktop',
+        'settingsUrl': 'xynigo://settings',
+        'member': {
+            'name': str(((identity or {}).get('user') or {}).get(
+                'name') or '')[:255],
+        },
+        'containerContextApplied': bool(
+            str(container_code or '').strip()
+            and resolution == 'environment_binding'),
+    })
+    return payload
+
+
 CONFIG_FIELDS = frozenset({
     'hubPort', 'serverPort', 'concurrency', 'importBuyerPlan',
     'verifySampleCount', 'hiddenQueryColumns', 'purchaseSite',
@@ -1211,7 +1232,7 @@ class AppState(object):
         """Resolve one member/environment source into an isolated provider."""
         if self.data_source_registry_error:
             raise DataSourceMappingRequired()
-        source = self.data_sources.resolve(
+        source, resolution = self.data_sources.resolve_with_context(
             member_id,
             container_code=container_code,
             allow_team_default=True,
@@ -1223,11 +1244,13 @@ class AppState(object):
             'dataSourceId': source['id'],
             'scope': source['scope'],
             'label': source['label'],
+            'resolution': resolution,
         })
         status['active'].update({
             'dataSourceId': source['id'],
             'scope': source['scope'],
             'label': source['label'],
+            'resolution': resolution,
         })
         return service, status
 
@@ -3049,19 +3072,32 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path
         bridge = STATE.purchase_assistant
         if path == PURCHASE_ASSISTANT_API_PREFIX + '/health':
+            configured = bool(bridge.configured)
+            try:
+                registry = STATE.data_sources.snapshot()['registry']
+                configured = any(
+                    item.get('enabled')
+                    and item.get('migrationState') == 'ready'
+                    for item in registry.get('dataSources') or [])
+            except Exception:
+                pass
             return self._purchase_assistant_json({
                 'ok': True,
                 'service': 'xynigo-sourcing',
-                'apiVersion': 3,
+                'apiVersion': 4,
                 'features': {
                     'taskSearch': True,
                     'recipientRead': True,
-                    'sourceConfiguration': True,
+                    'sourceConfiguration': False,
+                    'desktopManagedDataSources': True,
+                    'memberScopedDataSources': True,
+                    'environmentScopedDataSources': False,
                     'hubStudioAutomation': True,
                     'hubStudioEnvironmentControl': True,
                 },
                 'version': __version__,
-                'configured': bool(bridge.configured),
+                'configured': configured,
+                'settingsUrl': 'xynigo://settings',
             })
         if path == PURCHASE_ASSISTANT_API_PREFIX + '/session':
             if not self._purchase_assistant_pair_allowed():
@@ -3103,7 +3139,8 @@ class Handler(BaseHTTPRequestHandler):
                         member_id, container_code=container_code)
                 return self._purchase_assistant_json({
                     'ok': True,
-                    'source': source_status,
+                    'source': public_purchase_assistant_source_context(
+                        identity, source_status, container_code),
                 })
             if path == PURCHASE_ASSISTANT_API_PREFIX + '/tasks':
                 query = parse_qs(parsed.query, keep_blank_values=True)
@@ -3129,6 +3166,8 @@ class Handler(BaseHTTPRequestHandler):
                     'total': total,
                     'queryRequired': False,
                     'truncated': total > len(matched),
+                    'source': public_purchase_assistant_source_context(
+                        identity, _source_status, container_code),
                 })
             prefix = PURCHASE_ASSISTANT_API_PREFIX + '/tasks/'
             suffix = '/recipient'
@@ -3146,6 +3185,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._purchase_assistant_json({
                     'ok': True,
                     'recipient': service.recipient(key),
+                    'source': public_purchase_assistant_source_context(
+                        identity, _source_status, container_code),
                 })
             if path == PURCHASE_ASSISTANT_API_PREFIX + '/hub/environments':
                 query = parse_qs(parsed.query, keep_blank_values=True)
@@ -3238,40 +3279,15 @@ class Handler(BaseHTTPRequestHandler):
                 'error': '请求数据格式无效',
             }, 400)
         try:
-            identity = STATE.auth.require()
-            member_id = identity['user']['id']
+            STATE.auth.require()
             if path.startswith(
                     PURCHASE_ASSISTANT_API_PREFIX + '/data-source/'):
-                if path == (PURCHASE_ASSISTANT_API_PREFIX
-                            + '/data-source/inspect'):
-                    return self._purchase_assistant_json({
-                        'ok': True,
-                        **bridge.inspect_source(
-                            body.get('spreadsheetUrl'), owner_key=member_id),
-                    })
-                if path == (PURCHASE_ASSISTANT_API_PREFIX
-                            + '/data-source/validate'):
-                    return self._purchase_assistant_json({
-                        'ok': True,
-                        **bridge.validate_source(
-                            body.get('inspectionId'),
-                            body.get('selectionId'), owner_key=member_id),
-                    })
-                if path == (PURCHASE_ASSISTANT_API_PREFIX
-                            + '/data-source/save'):
-                    source = STATE.apply_purchase_assistant_source(
-                        member_id, body.get('mode'),
-                        body.get('validationId'),
-                        expected_revision=body.get('expectedRevision'))
-                    return self._purchase_assistant_json({
-                        'ok': True,
-                        'source': source,
-                    })
                 return self._purchase_assistant_json({
                     'ok': False,
-                    'code': 'not_found',
-                    'error': '接口不存在',
-                }, 404)
+                    'code': 'local_config_desktop_only',
+                    'error': '收件信息数据源只能在 Xynigo 桌面客户端配置',
+                    'settingsUrl': 'xynigo://settings',
+                }, 410)
             capability = STATE.hub_capabilities(force=True)
             if not capability.get('available'):
                 return self._purchase_assistant_json({

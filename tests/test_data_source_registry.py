@@ -206,6 +206,16 @@ class DataSourceRegistryTests(unittest.TestCase):
         self.assertNotEqual(
             bound['configRevision'], claimed['configRevision'])
 
+        default_with_context, default_resolution = \
+            self.registry.resolve_with_context(MEMBER_A)
+        exact_with_context, exact_resolution = \
+            self.registry.resolve_with_context(
+                MEMBER_A, container_code='container-001')
+        self.assertEqual(default_with_context['id'], personal_id)
+        self.assertEqual(default_resolution, 'member_default')
+        self.assertEqual(exact_with_context['id'], team_id)
+        self.assertEqual(exact_resolution, 'environment_binding')
+
     def test_team_default_requires_policy_and_allowed_source(self):
         snapshot = self.registry.migrate_legacy(legacy_config())
         team_id = next(
@@ -220,6 +230,11 @@ class DataSourceRegistryTests(unittest.TestCase):
             MEMBER_B, allow_team_default=True,
             allowed_data_source_ids=[team_id])
         self.assertEqual(resolved['id'], team_id)
+        resolved_with_context, resolution = self.registry.resolve_with_context(
+            MEMBER_B, allow_team_default=True,
+            allowed_data_source_ids=[team_id])
+        self.assertEqual(resolved_with_context['id'], team_id)
+        self.assertEqual(resolution, 'team_default')
         with self.assertRaises(DataSourceMappingRequired):
             self.registry.resolve(
                 MEMBER_B, allow_team_default=True,
