@@ -12,9 +12,9 @@ from urllib.parse import quote
 from . import __version__
 
 
-RELEASE_VERSION = "0.13.20"
+RELEASE_VERSION = "0.13.21"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-03T09:19:02Z"
+RELEASE_PUBLISHED_AT = "2026-09-03T13:36:03Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -29,8 +29,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.13.20-54a0627457f7",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.20.exe",
+        "runtimeId": "0.13.21-0dfdc9246a16",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.21.exe",
         "sha256": "c1ce19c340a7e521113df2e1217f04110286212be5e5dcd02597a20691abff30",
         "size": 15_186_471,
         "installMode": "standard_per_user",
@@ -48,8 +48,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.13.20-54a0627457f7",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.20.pkg",
+        "runtimeId": "0.13.21-0dfdc9246a16",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.21.pkg",
         "sha256": "abd5f00743e402cd3545d2cbb1dc61ed7ece8ceff8eaf310a8483187e4e3b5fd",
         "size": 11_467_916,
         "installMode": "standard_system_application",
@@ -234,11 +234,12 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "物流单条与异常重查保留原批次结果和输入顺序。",
-            "查询中轨迹截图进入短期云端缓存，完成后可直接预览并合并导出。",
-            "物流结果新增发货效率统计、明显预检状态和账号级字段显示偏好。",
-            "采购助手插件改由桌面客户端统一管理成员数据源配置。",
-            "执行器按本机实时探测 HubStudio，并支持浏览器内核检查与审计修复。",
+            "买家号建环境正式任务改为快速受理并由执行器异步执行，避免大批量任务误报超时。",
+            "云端新增租户级 Hub 环境缓存、跨设备全局查重和并发安全续号。",
+            "干跑预览改为真实调用所选执行器，并只返回脱敏账号和环境名。",
+            "环境建成后的出口 IP 抽检严格覆盖配置数量，小批次可验证全部环境。",
+            "物流查询历史、截图预览、字段偏好和分级导出链路完成收口。",
+            "飞书企业应用凭证统一由超级管理员在云端配置，员工执行器不接收 Secret。",
             "Windows 与 macOS 从同一 Git 基线同步构建并发布。",
             "稳定通道强制平台签名门槛；内部未签名包仅允许 test 通道。",
         ],

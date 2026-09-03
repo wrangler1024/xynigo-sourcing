@@ -126,7 +126,7 @@ def test_cloud_workspace_shell_and_assets_are_public_but_api_stays_protected(
     with TestClient(app) as client:
         workspace = client.get("/")
         assert workspace.status_code == 200
-        assert "<title>Xynigo Sourcing v0.13.20</title>" in workspace.text
+        assert "<title>Xynigo Sourcing v0.13.21</title>" in workspace.text
         assert 'src="xynigo-logo.png?v=6"' in workspace.text
         assert 'href="/favicon.ico?v=6"' in workspace.text
         assert "const CLOUD_WEB_MODE" in workspace.text
@@ -172,7 +172,7 @@ def test_authenticated_member_can_read_immutable_local_executor_release(
         assert response.headers["x-content-type-options"] == "nosniff"
         payload = response.json()
         assert payload["schemaVersion"] == 1
-        assert payload["version"] == "0.13.20"
+        assert payload["version"] == "0.13.21"
         assert payload["channel"] == "test"
         assert payload["releaseUrl"] == ""
         assert payload["manifestUrl"] == ""
@@ -186,7 +186,7 @@ def test_authenticated_member_can_read_immutable_local_executor_release(
                 f"/v1/local-executor/releases/{platform}/primary/download"
             )
             if platform == "windows-x86_64":
-                assert info["runtimeId"].startswith("0.13.20-")
+                assert info["runtimeId"].startswith("0.13.21-")
             assert "github.com" not in info["downloadUrl"]
             assert "greenFallback" not in info
 
@@ -558,7 +558,7 @@ def test_super_admin_manages_tenant_feishu_credential_and_proxy_hides_secret(
             "/v1/admin/integrations/feishu",
             json={
                 "expectedRevision": 0,
-                "appId": "cli_organization123",
+                "appId": "cli_test01",
                 "appSecret": secret,
             },
             headers={"X-Xynigo-Web-CSRF": "same-origin"},
@@ -594,7 +594,7 @@ def test_super_admin_manages_tenant_feishu_credential_and_proxy_hides_secret(
     with database.session_factory() as session:
         record = session.scalar(select(TenantFeishuIntegration))
         assert record is not None
-        assert record.app_id == "cli_organization123"
+        assert record.app_id == "cli_test01"
         assert secret not in record.credential_ciphertext
     assert any(
         request.headers.get("authorization") == "Bearer tenant-token"
