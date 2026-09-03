@@ -1799,6 +1799,33 @@ def test_formal_logistics_progress_preserves_complete_headless_row(tmp_path) -> 
         assert row["queriedAt"] == "2026-09-01T10:21:31"
         assert row["screenshotStatus"] == "ok"
 
+        finished = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/finish",
+            json={
+                "leaseToken": lease_token,
+                "outcome": "succeeded",
+                "resultCode": "logistics_completed",
+                "resultSummary": {
+                    "runStatus": "completed",
+                    "phase": "logistics.completed",
+                    "progressCompleted": 1,
+                    "progressTotal": 1,
+                    "totalCount": 1,
+                    "successCount": 1,
+                    "failedCount": 0,
+                    "stoppedCount": 0,
+                    "errorCode": "",
+                    "errorSummary": "",
+                },
+            },
+            headers=device_headers(credential),
+        )
+        assert finished.status_code == 200, finished.text
+        terminal = web_client.get(
+            f"/v1/operation-runs/logistics-query/{run['runId']}"
+        ).json()["data"]
+        assert terminal["status"] == "completed"
+
 
 def test_busy_executor_config_read_returns_last_safe_snapshot(tmp_path) -> None:
     app, database, _oauth = build_test_app(tmp_path)
