@@ -246,6 +246,22 @@ class TrackingScreenshotTests(unittest.TestCase):
         self.assertEqual(job._start_browser('container-1'), {'browser': 'ok'})
         self.assertEqual(hub.calls, [('container-1', True)])
 
+    def test_query_browser_visible_mode_disables_headless_start(self):
+        class RecordingHub(object):
+            def __init__(self):
+                self.calls = []
+
+            def browser_start(self, code, headless=False):
+                self.calls.append((code, headless))
+                return {'browser': 'ok'}
+
+        hub = RecordingHub()
+        job = QueryOrchestrator(hub, concurrency=5)
+        job.browser_mode = 'visible'
+        self.assertEqual(job._start_browser('container-1'), {'browser': 'ok'})
+        self.assertEqual(hub.calls, [('container-1', False)])
+        self.assertEqual(job.snapshot()['browserMode'], 'visible')
+
     def test_preflight_rejects_missing_browser_core_before_batch_start(self):
         class MissingCoreHub(object):
             def __init__(self):

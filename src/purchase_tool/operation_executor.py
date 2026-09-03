@@ -273,6 +273,8 @@ class LocalOperationExecutor(object):
         else:
             raise OperationExecutionError(
                 'operation_payload_invalid', '物流查询模式或环境数量无效')
+        if 'browserMode' in payload:
+            start_body['browserMode'] = payload['browserMode']
         self._request('POST', start_path, start_body)
         total = len(serials)
         stop_sent = False

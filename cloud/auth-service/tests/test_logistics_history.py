@@ -248,6 +248,75 @@ def test_logistics_history_is_user_scoped_and_merges_retry_in_input_order(
         assert hidden_screenshot.status_code == 404
 
 
+def test_active_retry_reports_logical_batch_progress(tmp_path) -> None:
+    app, database, _oauth = build_test_app(tmp_path)
+    now = datetime.now(UTC)
+
+    with TestClient(app) as client:
+        login(client)
+        with database.session_factory() as session:
+            tenant = session.scalar(
+                select(Tenant).where(Tenant.feishu_tenant_key == "tenant_allowed")
+            )
+            user = session.scalar(
+                select(User).where(
+                    User.tenant_id == tenant.id,
+                    User.feishu_open_id == "ou_admin",
+                )
+            )
+            root = _run(
+                tenant_id=tenant.id,
+                user_id=user.id,
+                created_at=now - timedelta(minutes=10),
+                serials=["10", "20", "30"],
+                status="partial_failure",
+            )
+            session.add(root)
+            session.flush()
+            session.add_all(
+                [
+                    _result(root, "10", status="ok", order_no="ORDER-10"),
+                    _result(root, "20", status="fail"),
+                    _result(root, "30", status="ok", order_no="ORDER-30"),
+                ]
+            )
+            retry = _run(
+                tenant_id=tenant.id,
+                user_id=user.id,
+                created_at=now,
+                serials=["20"],
+                status="running",
+                parent=root,
+            )
+            retry.progress_completed = 0
+            retry.progress_total = 1
+            retry.total_count = 1
+            retry.completed_at = None
+            session.add(retry)
+            session.commit()
+            retry_id = str(retry.id)
+
+        response = client.get(
+            f"/v1/operation-runs/logistics-query/{retry_id}"
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()["data"]
+        assert payload["progressCompleted"] == 2
+        assert payload["progressTotal"] == 3
+        assert payload["retryProgressCompleted"] == 0
+        assert payload["retryProgressTotal"] == 1
+        assert [row["environmentSerial"] for row in payload["rows"]] == [
+            "10",
+            "20",
+            "30",
+        ]
+        assert [row["status"] for row in payload["rows"]] == [
+            "ok",
+            "pending",
+            "ok",
+        ]
+
+
 def test_logistics_history_paginates_newest_first_and_filters_latest_status(
     tmp_path,
 ) -> None:

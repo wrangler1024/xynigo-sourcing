@@ -294,6 +294,7 @@ class WorkspaceRuntimeConfig(BaseModel):
     envCreateWorkers: int = Field(ge=1, le=10)
     verifySampleCount: int = Field(ge=0, le=10)
     safeParallelTasks: bool
+    queryBrowserMode: Literal["headless", "visible"] = "headless"
 
 
 class ExecutorWorkspaceSnapshotResult(BaseModel):
@@ -342,6 +343,7 @@ class LogisticsQueryRunCreateBody(BaseModel):
     idempotencyKey: str = Field(min_length=8, max_length=128, pattern=SAFE_KEY_RE)
     executorId: uuid.UUID
     queryMode: Literal["initial", "single_retry", "failed_retry"] = "initial"
+    browserMode: Literal["default", "headless", "visible"] = "default"
     parentRunId: uuid.UUID | None = None
     force: bool = False
     site: Literal["US", "MX"]

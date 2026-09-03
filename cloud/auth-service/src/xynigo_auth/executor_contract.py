@@ -91,6 +91,7 @@ class ExecutorRuntimeConfigSummary(StrictBody):
     envCreateWorkers: int = Field(ge=1, le=10)
     verifySampleCount: int = Field(ge=0, le=10)
     safeParallelTasks: bool
+    queryBrowserMode: Literal["headless", "visible"] = "headless"
 
 
 class ExecutorConfiguredSummary(StrictBody):
@@ -215,6 +216,7 @@ class ExecutorConfigWriteBody(StrictBody):
             "verifySampleCount",
             "envCreateWorkers",
             "safeParallelTasks",
+            "queryBrowserMode",
         }
         if set(value) - allowed:
             raise ValueError("config contains unsupported or sensitive fields")
@@ -236,6 +238,11 @@ class ExecutorConfigWriteBody(StrictBody):
             value["safeParallelTasks"], bool
         ):
             raise ValueError("safeParallelTasks must be a boolean")
+        if "queryBrowserMode" in value and value["queryBrowserMode"] not in {
+            "headless",
+            "visible",
+        }:
+            raise ValueError("queryBrowserMode is invalid")
         # Keep the task envelope bounded before it reaches the durable queue.
         if len(str(value)) > 32_000:
             raise ValueError("config payload is too large")

@@ -200,6 +200,7 @@ class ConfigTests(unittest.TestCase):
             'envCreateWorkers',
             'verifySampleCount',
             'safeParallelTasks',
+            'queryBrowserMode',
         })
         rendered = json.dumps(projected, ensure_ascii=False)
         for legacy_value in ('purchaseSite', 'purchaseTags',

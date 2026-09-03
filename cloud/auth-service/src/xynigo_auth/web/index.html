@@ -115,6 +115,22 @@
   .business-stat.shipped { background:#f0f7ff; }
   .business-stat.packing { background:#fff8e8; }
   .business-stat.review { background:#fff2ee; }
+  .carrier-summary { margin:0 19px 14px; padding:11px 13px; border:1px solid var(--line); border-radius:12px; background:#fbfcfd; }
+  .carrier-summary-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:9px; }
+  .carrier-summary-head b { color:var(--navy-950); font-size:11px; }
+  .carrier-summary-head span { color:var(--navy-500); font-size:9px; }
+  .carrier-distribution { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; }
+  .carrier-item { min-width:0; }
+  .carrier-item-copy { display:flex; justify-content:space-between; gap:8px; color:var(--navy-700); font-size:9px; }
+  .carrier-item-copy b { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .carrier-bar { height:5px; margin-top:5px; overflow:hidden; border-radius:999px; background:#e8eff3; }
+  .carrier-bar span { display:block; height:100%; border-radius:inherit; background:var(--action-gradient); }
+  .carrier-empty { color:var(--navy-500); font-size:9px; }
+  .query-advanced { width:220px; border:1px solid var(--line); border-radius:10px; background:#fbfcfd; }
+  .query-advanced summary { padding:9px 11px; color:var(--navy-700); font-size:12px; font-weight:750; cursor:pointer; }
+  .query-advanced[open] summary { border-bottom:1px solid var(--line); }
+  .query-advanced .field { padding:10px; }
+  .query-advanced select { width:100%; }
   .query-field-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; max-height:420px; overflow:auto; }
   .query-field-list label { display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid var(--line); border-radius:9px; font-size:12px; }
   .export-split { position:relative; display:inline-flex; }
@@ -1842,6 +1858,18 @@
           <label>HubStudio 分组</label>
           <select id="groupSelect"><option>加载中…</option></select>
         </div>
+        <details class="query-advanced">
+          <summary>高级设置</summary>
+          <div class="field">
+            <label>浏览器执行模式</label>
+            <select id="queryBrowserMode">
+              <option value="default">使用执行器默认设置</option>
+              <option value="headless">无头模式</option>
+              <option value="visible">可见调试模式</option>
+            </select>
+            <div class="hint">可见模式会弹出 HubStudio 环境窗口，并自动限制为单并发。</div>
+          </div>
+        </details>
         <button class="btn" id="btnGroupAll">查全部分组</button>
         <div class="hint">分组列表由本机 HubStudio<br>实时读取；序号可在 HubStudio<br>环境列表中查看。</div>
       </div>
@@ -1891,6 +1919,10 @@
       <div class="business-stat"><b id="bizUnshipped">0 · 0%</b><span>未发货</span></div>
       <div class="business-stat packing"><b id="bizPacking">0 · 0%</b><span>其中打包中（未发货子集）</span></div>
       <div class="business-stat review"><b id="bizReview">0</b><span>待核对 / 查询异常</span></div>
+    </div>
+    <div class="carrier-summary" id="carrierSummary">
+      <div class="carrier-summary-head"><b>已发货物流商分布</b><span id="carrierSummaryMeta">按已发货及已送达订单统计</span></div>
+      <div class="carrier-distribution" id="carrierDistribution"><span class="carrier-empty">暂无已发货订单</span></div>
     </div>
     <div class="table-wrap">
       <table id="queryTable" class="hide-env-name hide-ip">
@@ -2343,6 +2375,11 @@
         <div class="settings-field">
           <label>并发查询数（1-5）</label>
           <input type="text" id="cfgConcurrency" value="2" inputmode="numeric">
+        </div>
+        <div class="settings-field">
+          <label>物流查询默认模式</label>
+          <select id="cfgQueryBrowserMode"><option value="headless">无头模式（推荐）</option><option value="visible">可见调试模式</option></select>
+          <div class="hint">可见模式仅用于排障，查询时并发自动限制为 1。</div>
         </div>
         <div class="settings-field full">
           <label>跨模块任务模式</label>
@@ -2827,6 +2864,7 @@ const tbody = $('tbody');
 let hubConnected = null;
 let isRunning = false;
 let stopRequested = false;
+let queryBackgroundRestoreNotified = false;
 let lastRows = [];
 let queryElapsedBase = 0;
 let queryElapsedObservedAt = Date.now();
@@ -3721,6 +3759,7 @@ function cloudLogisticsLegacySnapshot(run) {
     errorCode:String(run.resultCode || ''),
     phase:String(run.phase || ''),
     retryMode:String(run.queryMode || 'initial'), parentRunId:String(run.parentRunId || ''),
+    browserMode:String(run.browserMode || 'default'),
     site:run.site, hubConnected:cloudRunHubConnected(run),
   };
 }
@@ -6698,6 +6737,38 @@ function renderStats(rows) {
   $('bizUnshipped').textContent = `${unshipped} · ${ratio(unshipped)}%`;
   $('bizPacking').textContent = `${packing} · ${ratio(packing)}%`;
   $('bizReview').textContent = Math.max(0, rows.length - eligibleRows.length);
+  const shippedRows = eligibleRows.filter(row => shippedStatus.test(normalizedStatus(row)));
+  const canonicalCarrier = value => {
+    const raw = String(value || '').trim();
+    if (!raw) return '待识别';
+    const names = raw.split(/[,，;；\/|、]+/).map(item => item.trim()).filter(Boolean);
+    const normalized = [...new Set(names.map(name => {
+      const key = name.toUpperCase().replace(/[\s._-]+/g, '');
+      if (key === 'IMILE') return 'iMile';
+      if (['JT','J&T','J&TEXPRESS','JNT','JNTEXPRESS'].includes(key)) return 'J&T Express';
+      if (['SPEEDX','SPX'].includes(key)) return 'SpeedX';
+      return name;
+    }))];
+    return normalized.length > 1 ? '多物流商' : (normalized[0] || '待识别');
+  };
+  const carrierCounts = new Map();
+  shippedRows.forEach(row => {
+    const name = canonicalCarrier(row.carrier);
+    carrierCounts.set(name, (carrierCounts.get(name) || 0) + 1);
+  });
+  const rankedCarriers = [...carrierCounts.entries()].sort((left, right) =>
+    right[1] - left[1] || left[0].localeCompare(right[0], 'zh-CN'));
+  const visibleCarriers = rankedCarriers.slice(0, 5);
+  const remainingCarrierCount = rankedCarriers.slice(5).reduce((sum, item) => sum + item[1], 0);
+  if (remainingCarrierCount) visibleCarriers.push(['其他', remainingCarrierCount]);
+  $('carrierSummaryMeta').textContent = shippedRows.length
+    ? `共 ${shippedRows.length} 个已发货订单` : '按已发货及已送达订单统计';
+  $('carrierDistribution').innerHTML = visibleCarriers.length
+    ? visibleCarriers.map(([name,count]) => {
+        const percent = Math.round(count / shippedRows.length * 100);
+        return `<div class="carrier-item"><div class="carrier-item-copy"><b title="${esc(name)}">${esc(name)}</b><span>${count} · ${percent}%</span></div><div class="carrier-bar"><span style="width:${percent}%"></span></div></div>`;
+      }).join('')
+    : '<span class="carrier-empty">暂无已发货订单</span>';
   const done = rows.filter(r => !['pending', 'running'].includes(r.state)).length;
   $('progressText').textContent = `${done} / ${rows.length}`;
   $('bar').style.width = (rows.length ? done / rows.length * 100 : 0) + '%';
@@ -6716,7 +6787,10 @@ function render(snap) {
       && Number(snap.progressTotal || 0) > 0) {
     const current = Number(snap.progressCompleted || 0);
     const total = Number(snap.progressTotal || 0);
-    $('progressText').textContent = `${current} / ${total}`;
+    const retryTotal = Number(snap.retryProgressTotal || 0);
+    const retryCurrent = Number(snap.retryProgressCompleted || 0);
+    $('progressText').textContent = `${current} / ${total}`
+      + (retryTotal ? ` · 本次重查 ${retryCurrent} / ${retryTotal}` : '');
     $('bar').style.width = (total ? current / total * 100 : 0) + '%';
   }
   $('btnStart').disabled = querySubmitting || isRunning
@@ -6724,6 +6798,7 @@ function render(snap) {
   $('btnStop').disabled = !isRunning;
   $('btnExport').disabled = isRunning || logisticsExporting;
   $('btnExportMenuToggle').disabled = isRunning || logisticsExporting;
+  $('queryBrowserMode').disabled = isRunning;
   const retryable = lastRows.filter(r => ['fail', 'inuse', 'pending', 'stopped'].includes(r.state)).length;
   $('btnRetryFail').disabled = isRunning || !retryable;
   const stopped = lastRows.filter(r => r.state === 'stopped').length;
@@ -6747,9 +6822,10 @@ function render(snap) {
   $('queryPhaseTitle').textContent = preflightPhase
     ? (queryElapsedBase >= 30 ? '预检耗时较长，仍在等待本机响应' : '正在预检并准备执行环境')
     : '查询正在执行';
+  const activeBrowserMode = snap.browserMode === 'visible' ? '可见调试模式' : '无头模式';
   $('queryPhaseDescription').textContent = preflightPhase
-    ? '正在确认执行器、HubStudio、Local API 与浏览器内核；未通过不会开始处理订单。'
-    : (snap.current ? `当前环境：${snap.current}` : '已通过预检，正在按输入顺序处理环境。');
+    ? '正在确认执行器、HubStudio、Local API 与浏览器内核；任务已在后台托管，关闭或刷新页面不会停止。'
+    : (snap.current ? `当前环境：${snap.current}；${activeBrowserMode}，可关闭页面，任务会继续在后台执行。` : `已通过预检，正在以${activeBrowserMode}后台处理环境。`);
   $('btnStart').textContent = isRunning
     ? (preflightPhase ? '预检中…' : '查询中…') : '▶ 开始查询';
   $('currentEnv').textContent = isRunning
@@ -6782,10 +6858,15 @@ async function poll() {
   queryPollInFlight = true;
   try {
     if (CLOUD_WEB_MODE) {
+      const restoringLatest = !cloudLogisticsRunId;
       const run = await cloudOperationSnapshot('logistics', cloudLogisticsRunId);
       if (run) {
         cloudLogisticsRunId = String(run.runId || '');
         cloudLogisticsTaskId = String(run.executorTaskId || '');
+        if (restoringLatest && !run.terminal && !queryBackgroundRestoreNotified) {
+          queryBackgroundRestoreNotified = true;
+          toast(`已恢复后台物流查询：${Number(run.progressCompleted || 0)} / ${Number(run.progressTotal || run.totalCount || 0)}`);
+        }
       }
       render(cloudLogisticsLegacySnapshot(run));
     } else {
@@ -6802,6 +6883,11 @@ async function poll() {
   finally { queryPollInFlight = false; }
 }
 setInterval(poll, 1500);
+window.addEventListener('beforeunload', event => {
+  if (!CLOUD_WEB_MODE || !isRunning) return;
+  event.preventDefault();
+  event.returnValue = '';
+});
 
 async function pollRegister() {
   if (!authReady || !hasFeatureAccess('register') || activeModule !== 'register') return;
@@ -7511,7 +7597,8 @@ $('btnStart').onclick = async () => {
   const serials = parseSerials();
   if (!serials) return;
   const site = $('querySite').value;
-  const payload = {serials, site};
+  const browserMode = $('queryBrowserMode').value;
+  const payload = {serials, site, browserMode};
   const idempotencyKey = workspaceMutationKey('query-start', payload);
   querySubmitting = true;
   queryPollGraceUntil = Date.now() + 2 * 60 * 1000;
@@ -7524,7 +7611,7 @@ $('btnStart').onclick = async () => {
         method:'POST', headers:{'Content-Type':'application/json'},
         body:JSON.stringify({
           idempotencyKey, executorId:executor.id, queryMode:'initial', site,
-          environmentSerials:serials,
+          environmentSerials:serials, browserMode,
         })
       });
       j = created.data;
@@ -7578,7 +7665,7 @@ tbody.addEventListener('click', async e => {
   try {
     if (CLOUD_WEB_MODE) {
       const serial = String(btn.dataset.req || '');
-      const payload = {serial, force, site:$('querySite').value};
+      const payload = {serial, force, site:$('querySite').value, browserMode:$('queryBrowserMode').value};
       const idempotencyKey = workspaceMutationKey('query-single-retry', payload);
       const executor = await cloudFormalExecutor('logistics.query.v1');
       const created = await cloudFetchJson('/v1/operation-runs/logistics-query', {
@@ -7586,7 +7673,7 @@ tbody.addEventListener('click', async e => {
         body:JSON.stringify({
           idempotencyKey, executorId:executor.id, queryMode:'single_retry',
           force, site:payload.site, environmentSerials:[serial],
-          parentRunId:cloudLogisticsRunId,
+          parentRunId:cloudLogisticsRunId, browserMode:payload.browserMode,
         })
       });
       clearWorkspaceMutationKey('query-single-retry', idempotencyKey);
@@ -7596,7 +7683,7 @@ tbody.addEventListener('click', async e => {
     } else {
       await api('/api/requery', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ serial: btn.dataset.req, force })
+        body: JSON.stringify({ serial: btn.dataset.req, force, browserMode:$('queryBrowserMode').value })
       });
     }
     stopRequested = false;
@@ -7968,7 +8055,7 @@ $('btnRetryFail').onclick = async () => {
     ).map(row => String(row.serial || '')).filter(Boolean);
     let j;
     if (CLOUD_WEB_MODE) {
-      const payload = {serials:retrySerials, site:$('querySite').value};
+      const payload = {serials:retrySerials, site:$('querySite').value, browserMode:$('queryBrowserMode').value};
       const idempotencyKey = workspaceMutationKey('query-failed-retry', payload);
       const executor = await cloudFormalExecutor('logistics.query.v1');
       const created = await cloudFetchJson('/v1/operation-runs/logistics-query', {
@@ -7976,7 +8063,7 @@ $('btnRetryFail').onclick = async () => {
         body:JSON.stringify({
           idempotencyKey, executorId:executor.id, queryMode:'failed_retry',
           site:payload.site, environmentSerials:retrySerials,
-          parentRunId:cloudLogisticsRunId,
+          parentRunId:cloudLogisticsRunId, browserMode:payload.browserMode,
         })
       });
       clearWorkspaceMutationKey('query-failed-retry', idempotencyKey);
@@ -7990,7 +8077,7 @@ $('btnRetryFail').onclick = async () => {
     } else {
       j = await api('/api/requery-failed', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: '{}'
+        body: JSON.stringify({browserMode:$('queryBrowserMode').value})
       });
     }
     stopRequested = false;
@@ -11084,6 +11171,7 @@ async function loadLocalSettingsPage() {
     localSettingsConfigRevision = String(cfg.configRevision || '');
     $('cfgPort').value = cfg.hubPort || 6873;
     $('cfgConcurrency').value = cfg.concurrency || 2;
+    $('cfgQueryBrowserMode').value = cfg.queryBrowserMode === 'visible' ? 'visible' : 'headless';
     safeParallelTasks = cfg.safeParallelTasks !== false;
     $('cfgSafeParallel').checked = safeParallelTasks;
     setHiddenQueryColumns(cfg.hiddenQueryColumns || []);
@@ -11104,7 +11192,7 @@ async function loadLocalSettingsPage() {
     const canWriteDeviceConfig = hasRole('super_admin')
       && hasPermission('system.integration.manage');
     [
-      'cfgPort', 'cfgConcurrency', 'cfgSafeParallel', 'cfgHideEnvName',
+      'cfgPort', 'cfgConcurrency', 'cfgQueryBrowserMode', 'cfgSafeParallel', 'cfgHideEnvName',
       'cfgHideIp', 'cfgEnvVerify', 'cfgEnvWorkers', 'cfgPurchaseTagMX',
       'cfgPurchaseTagUS', 'cfgProxyLink', 'cfgProxyClear', 'cfgEnvAssign'
     ].forEach(id => { $(id).disabled = !canWriteDeviceConfig; });
@@ -11270,7 +11358,7 @@ $('btnCfgSave').onclick = async () => {
     if ($('cfgHideIp').checked) hiddenQueryColumns.push('ip');
     const j = await api('/api/config', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ expectedRevision:localSettingsConfigRevision, hubPort: port, concurrency: conc, safeParallelTasks:$('cfgSafeParallel').checked, verifySampleCount: verifyCount, envCreateWorkers: envWorkers, importBuyerPlan, hiddenQueryColumns, purchaseSite:$('envSite').value, purchaseTags, proxyLink, proxyClear })
+      body: JSON.stringify({ expectedRevision:localSettingsConfigRevision, hubPort: port, concurrency: conc, queryBrowserMode:$('cfgQueryBrowserMode').value, safeParallelTasks:$('cfgSafeParallel').checked, verifySampleCount: verifyCount, envCreateWorkers: envWorkers, importBuyerPlan, hiddenQueryColumns, purchaseSite:$('envSite').value, purchaseTags, proxyLink, proxyClear })
     });
     localSettingsConfigRevision = String(j.configRevision || localSettingsConfigRevision);
     setHiddenQueryColumns(hiddenQueryColumns);

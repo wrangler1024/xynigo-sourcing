@@ -547,6 +547,9 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         for marker in (
             'id="queryPhaseBanner"',
             'id="businessSummary"',
+            'id="carrierDistribution"',
+            'id="queryBrowserMode"',
+            'id="cfgQueryBrowserMode"',
             'id="btnQueryFields"',
             "QUERY_VIEW_KEY = 'fulfillment.logistics.results'",
             "/v1/workspace/view-preferences/",
@@ -554,6 +557,11 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             "/screenshots/' + encodeURIComponent(serial)",
             "+ '/export?includeScreenshots='",
             "screenshotSizeKb:Number(row.screenshotSizeKb || 0)",
+            "本次重查 ${retryCurrent} / ${retryTotal}",
+            "queryBackgroundRestoreNotified",
+            "window.addEventListener('beforeunload'",
+            "browserMode:$('queryBrowserMode').value",
+            "共 ${shippedRows.length} 个已发货订单",
         ):
             self.assertIn(marker, html)
 

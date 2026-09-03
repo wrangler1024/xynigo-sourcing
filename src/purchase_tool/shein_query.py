@@ -26,6 +26,7 @@ from .cdp import CdpClient
 from .hub_api import HubApiError
 
 SUPPORTED_SITES = ('MX', 'US')
+SUPPORTED_BROWSER_MODES = ('headless', 'visible')
 SITE_LABELS = {'MX': '墨西哥站', 'US': '美国站'}
 SYSTEMIC_HUB_FAILURE_CODES = {
     'hubstudio_client_not_running',
@@ -146,6 +147,13 @@ def normalize_site(site):
     value = str(site or 'MX').strip().upper()
     if value not in SUPPORTED_SITES:
         raise ValueError('查询站点仅支持 MX（墨西哥）或 US（美国）')
+    return value
+
+
+def normalize_browser_mode(mode):
+    value = str(mode or 'headless').strip().casefold()
+    if value not in SUPPORTED_BROWSER_MODES:
+        raise ValueError('物流查询浏览器模式仅支持 headless 或 visible')
     return value
 
 
@@ -329,6 +337,7 @@ class QueryOrchestrator(object):
         self.env_interval = env_interval
         self.concurrency = max(1, min(5, int(concurrency or 1)))
         self.site = 'MX'
+        self.browser_mode = 'headless'
         # 并发 worker 的 browser/start 阶段全局串行：HubStudio 对同一/多个
         # 同时到达的 start 处理有先后，串行启动可避免 -10005 冲突
         self._start_lock = threading.Lock()
@@ -362,6 +371,7 @@ class QueryOrchestrator(object):
                 'elapsedSec': elapsed,
                 'site': self.site,
                 'siteName': SITE_LABELS[self.site],
+                'browserMode': self.browser_mode,
                 'fatalError': self.fatal_error,
                 'fatalErrorCode': self.fatal_error_code,
                 'rows': [dict(r) for r in self.rows],
@@ -480,7 +490,8 @@ class QueryOrchestrator(object):
 
     # ---- 查询入口 ----
 
-    def preflight_batch(self, serials, env_index=None, site='MX'):
+    def preflight_batch(self, serials, env_index=None, site='MX',
+                        browser_mode='headless'):
         """Prove one eligible environment can launch before accepting a batch.
 
         A healthy ``group/list`` response does not prove that HubStudio has a
@@ -488,6 +499,7 @@ class QueryOrchestrator(object):
         installation from creating a formal run and then failing every row.
         """
         site = normalize_site(site)
+        browser_mode = normalize_browser_mode(browser_mode)
         serials = [str(serial) for serial in serials]
         with self.lock:
             if self.running:
@@ -525,7 +537,8 @@ class QueryOrchestrator(object):
         started = False
         try:
             with self._start_lock:
-                data = self.hub.browser_start(target_code, headless=True)
+                data = self.hub.browser_start(
+                    target_code, headless=browser_mode == 'headless')
             started = True
             try:
                 debugging_port = int((data or {}).get('debuggingPort'))
@@ -556,23 +569,26 @@ class QueryOrchestrator(object):
                     raise
 
     def start_batch(self, serials, env_index=None, site='MX',
-                    on_finished=None):
+                    on_finished=None, browser_mode='headless'):
         """启动批量查询线程。env_index: {serialNumber(str): env dict}。"""
         site = normalize_site(site)
         serials = list(serials)
-        self._prepare_run(serials, site, fresh=True)
+        self._prepare_run(
+            serials, site, fresh=True, browser_mode=browser_mode)
         threading.Thread(
             target=self._run,
             args=(serials, env_index or {}, False, site, on_finished, True),
             daemon=True).start()
 
-    def _prepare_run(self, serials, site, fresh):
+    def _prepare_run(self, serials, site, fresh, browser_mode=None):
         """Publish running state before background I/O can block or finish."""
         with self.lock:
             if self.running:
                 raise RuntimeError('已有查询在进行中')
             self.stop_event = threading.Event()
             self.site = site
+            if browser_mode is not None:
+                self.browser_mode = normalize_browser_mode(browser_mode)
             self.running = True
             self.started_at = time.time()
             self.finished_at = None
@@ -584,7 +600,7 @@ class QueryOrchestrator(object):
                 self.rows = [self._blank_row(s, site) for s in serials]
 
     def requery(self, serial, env_index=None, force=False, on_finished=None,
-                site=None, allow_missing=False):
+                site=None, allow_missing=False, browser_mode=None):
         """单行重新查询（复用同一套流程，不新增行）。
 
         force=True：环境浏览器处于打开状态时先关闭再查——用于清理上次
@@ -600,19 +616,22 @@ class QueryOrchestrator(object):
             if not allow_missing:
                 raise ValueError('该序号不在当前结果中，请重新发起批量查询')
             site = normalize_site(site or self.site)
-            self._prepare_run([serial], site, fresh=True)
+            self._prepare_run(
+                [serial], site, fresh=True, browser_mode=browser_mode)
         else:
             site = row.get('site') or self.site
         if force:
             self._force_stops.add(serial)
         if row is not None:
-            self._prepare_run([serial], site, fresh=False)
+            self._prepare_run(
+                [serial], site, fresh=False, browser_mode=browser_mode)
         threading.Thread(
             target=self._run,
             args=([serial], env_index or {}, False, site, on_finished, True),
             daemon=True).start()
 
-    def requery_failed(self, env_index=None, on_finished=None):
+    def requery_failed(self, env_index=None, on_finished=None,
+                       browser_mode=None):
         """批量重查异常行（失败/使用中/未查询/已停止）。
 
         登录失效行不含在内——需先在 HubStudio 手动登录，否则重查结果不变。
@@ -629,7 +648,8 @@ class QueryOrchestrator(object):
         with self.lock:
             site = next((r.get('site') for r in self.rows
                          if r['serial'] in serials), self.site)
-        self._prepare_run(serials, site, fresh=False)
+        self._prepare_run(
+            serials, site, fresh=False, browser_mode=browser_mode)
         threading.Thread(
             target=self._run,
             args=(serials, env_index or {}, False, site, on_finished, True),
@@ -685,7 +705,9 @@ class QueryOrchestrator(object):
                     if self.env_interval:
                         time.sleep(self.env_interval)
 
-            n_workers = max(1, min(self.concurrency, len(serials)))
+            effective_concurrency = (
+                1 if self.browser_mode == 'visible' else self.concurrency)
+            n_workers = max(1, min(effective_concurrency, len(serials)))
             threads = [threading.Thread(target=worker, daemon=True)
                        for _ in range(n_workers)]
             for t in threads:
@@ -769,7 +791,8 @@ class QueryOrchestrator(object):
                     self.fatal_error_code)
             while True:
                 try:
-                    return self.hub.browser_start(code, headless=True)
+                    return self.hub.browser_start(
+                        code, headless=self.browser_mode == 'headless')
                 except HubApiError as e:
                     if '-10005' in str(e) and time.time() < deadline:
                         time.sleep(5)

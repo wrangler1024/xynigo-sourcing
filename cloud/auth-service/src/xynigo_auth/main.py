@@ -3598,7 +3598,28 @@ def create_app(
                 business_object_id=body.idempotencyKey,
             )
         if not unchanged:
-            task = executor_channel(session).create_config_task(
+            executor_tasks = executor_channel(session)
+            browser_mode = body.browserMode
+            if browser_mode == "default":
+                cached_config = executor_tasks.cached_config_payload(
+                    tenant_id=actor.tenant.id,
+                    user_id=actor.user.id,
+                    executor_id=body.executorId,
+                )
+                configured_mode = (
+                    ((cached_config or {}).get("config") or {}).get(
+                        "queryBrowserMode"
+                    )
+                )
+                browser_mode = (
+                    configured_mode
+                    if configured_mode in {"headless", "visible"}
+                    else "headless"
+                )
+            request_summary = dict(run.request_summary or {})
+            request_summary["browserMode"] = browser_mode
+            run.request_summary = request_summary
+            task = executor_tasks.create_config_task(
                 tenant_id=actor.tenant.id,
                 user_id=actor.user.id,
                 executor_id=body.executorId,
@@ -3607,6 +3628,7 @@ def create_app(
                     "runId": str(run.id),
                     "runKey": run.source_run_key,
                     "queryMode": body.queryMode,
+                    "browserMode": browser_mode,
                     "force": body.force,
                     "site": body.site,
                     "environmentSerials": list(body.environmentSerials),

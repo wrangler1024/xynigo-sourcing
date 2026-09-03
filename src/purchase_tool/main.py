@@ -106,7 +106,8 @@ from .purchase_assistant import (
 from .redaction import scrub_text
 from .resource_center import ResourceCenterService
 from .secure_store_transaction import SecureStoreTransaction
-from .shein_query import QueryOrchestrator, normalize_site
+from .shein_query import (
+    QueryOrchestrator, normalize_browser_mode, normalize_site)
 from .task_runtime import (HubRuntimeGate, LocalTaskCoordinator,
                            environment_resources)
 from .updater import StandardInstallerUpdateClient, UpdateCoordinator
@@ -181,7 +182,7 @@ CONFIG_FIELDS = frozenset({
     'hubPort', 'serverPort', 'concurrency', 'importBuyerPlan',
     'verifySampleCount', 'hiddenQueryColumns', 'purchaseSite',
     'purchaseTag', 'purchaseTags', 'proxyLink', 'envCreateWorkers',
-    'safeParallelTasks',
+    'safeParallelTasks', 'queryBrowserMode',
     'larkBuyerBaseToken', 'larkBuyerTableId',
     'larkBuyerTargetHost',
     'larkBuyerBaseName', 'larkBuyerTableName',
@@ -226,6 +227,7 @@ EXECUTOR_RUNTIME_CONFIG_FIELDS = (
     'envCreateWorkers',
     'verifySampleCount',
     'safeParallelTasks',
+    'queryBrowserMode',
 )
 
 _LOCAL_CONFIG_SERVICES = {}
@@ -356,6 +358,7 @@ def default_config():
         'proxyLink': os.environ.get('XYNIGO_PROXY_LINK', ''),
         'envCreateWorkers': 5,
         'safeParallelTasks': True,
+        'queryBrowserMode': 'headless',
         # Base/table identifiers are local routing configuration.  The App
         # Secret lives in Keychain/DPAPI and is never written to config.json.
         'larkBuyerBaseToken': os.environ.get('XYNIGO_LARK_BASE_TOKEN', ''),
@@ -653,6 +656,12 @@ def updated_config(old_cfg, body):
         if not isinstance(body.get('safeParallelTasks'), bool):
             raise ValueError('安全并行模式必须是布尔值')
         cfg['safeParallelTasks'] = body['safeParallelTasks']
+    query_browser_mode = str(
+        body.get('queryBrowserMode', cfg.get('queryBrowserMode') or 'headless')
+    ).strip().casefold()
+    if query_browser_mode not in ('headless', 'visible'):
+        raise ValueError('物流查询浏览器模式必须是 headless 或 visible')
+    cfg['queryBrowserMode'] = query_browser_mode
     if 'importBuyerPlan' in body:
         cfg['importBuyerPlan'] = validate_assignment_template(
             body.get('importBuyerPlan'))
@@ -738,6 +747,14 @@ def updated_executor_config(old_cfg, body):
             raise ValueError('安全并行模式必须是布尔值')
         parallel = bool(defaults['safeParallelTasks'])
     cfg['safeParallelTasks'] = parallel
+    query_browser_mode = str(body.get(
+        'queryBrowserMode', cfg.get('queryBrowserMode') or 'headless'
+    )).strip().casefold()
+    if query_browser_mode not in ('headless', 'visible'):
+        if 'queryBrowserMode' in body:
+            raise ValueError('物流查询浏览器模式无效')
+        query_browser_mode = 'headless'
+    cfg['queryBrowserMode'] = query_browser_mode
     return cfg
 
 
@@ -4094,6 +4111,12 @@ class Handler(BaseHTTPRequestHandler):
                 serials = body.get('serials')
                 group = body.get('group')
                 site = normalize_site(body.get('site') or 'MX')
+                requested_browser_mode = str(
+                    body.get('browserMode') or 'default').strip().casefold()
+                browser_mode = normalize_browser_mode(
+                    STATE.cfg.get('queryBrowserMode')
+                    if requested_browser_mode == 'default'
+                    else requested_browser_mode)
                 envs = STATE.hub.env_list(group or None)
                 env_index = {str(e.get('serialNumber')): e for e in envs
                              if e.get('serialNumber') is not None}
@@ -4109,7 +4132,8 @@ class Handler(BaseHTTPRequestHandler):
                 if query_mode not in ('initial', 'failed_retry'):
                     return self._json({'error': '查询模式无效'}, 400)
                 STATE.orch.preflight_batch(
-                    selected_serials, env_index, site=site)
+                    selected_serials, env_index, site=site,
+                    browser_mode=browser_mode)
                 selected_envs = [env_index[str(serial)] for serial in selected_serials
                                  if str(serial) in env_index]
                 task_id = STATE.tasks.begin(
@@ -4131,12 +4155,14 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     STATE.orch.start_batch(
                         serials, env_index, site=site,
-                        on_finished=finish_query)
+                        on_finished=finish_query,
+                        browser_mode=browser_mode)
                 except Exception:
                     STATE.tasks.finish(task_id)
                     raise
                 self._json({'started': True, 'total': len(serials),
-                            'site': site, 'taskId': task_id})
+                            'site': site, 'taskId': task_id,
+                            'browserMode': browser_mode})
             elif path == '/api/stop':
                 STATE.orch.request_stop()
                 self._json({'stopped': True})
@@ -4149,6 +4175,12 @@ class Handler(BaseHTTPRequestHandler):
                 task_id = STATE.tasks.begin(
                     'query', environment_resources([env] if env else []))
                 operation_run_key = self._operation_run_key(body, task_id)
+                requested_browser_mode = str(
+                    body.get('browserMode') or 'default').strip().casefold()
+                browser_mode = normalize_browser_mode(
+                    STATE.cfg.get('queryBrowserMode')
+                    if requested_browser_mode == 'default'
+                    else requested_browser_mode)
 
                 def finish_requery():
                     try:
@@ -4168,7 +4200,8 @@ class Handler(BaseHTTPRequestHandler):
                         force=bool(body.get('force')),
                         on_finished=finish_requery,
                         site=body.get('site'),
-                        allow_missing=bool(body.get('operationRunKey')))
+                        allow_missing=bool(body.get('operationRunKey')),
+                        browser_mode=browser_mode)
                 except Exception:
                     STATE.tasks.finish(task_id)
                     raise
@@ -4186,6 +4219,12 @@ class Handler(BaseHTTPRequestHandler):
                 task_id = STATE.tasks.begin(
                     'query', environment_resources(selected))
                 operation_run_key = self._operation_run_key(body, task_id)
+                requested_browser_mode = str(
+                    body.get('browserMode') or 'default').strip().casefold()
+                browser_mode = normalize_browser_mode(
+                    STATE.cfg.get('queryBrowserMode')
+                    if requested_browser_mode == 'default'
+                    else requested_browser_mode)
 
                 def finish_failed_requery():
                     try:
@@ -4202,7 +4241,8 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     count = STATE.orch.requery_failed(
                         env_index=env_index,
-                        on_finished=finish_failed_requery)
+                        on_finished=finish_failed_requery,
+                        browser_mode=browser_mode)
                 except Exception:
                     STATE.tasks.finish(task_id)
                     raise
@@ -4487,7 +4527,7 @@ class Handler(BaseHTTPRequestHandler):
                             '云端配置请求正在处理，不能同时修改本机配置')
                     runtime_fields = {
                         'hubPort', 'concurrency', 'envCreateWorkers',
-                        'safeParallelTasks',
+                        'safeParallelTasks', 'queryBrowserMode',
                     }
                     if (STATE.tasks.running()
                             and any(cfg.get(name) != old_cfg.get(name)

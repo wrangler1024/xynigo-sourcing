@@ -39,16 +39,20 @@ class FakeOrchestrator(object):
         self.preflight_calls = []
         self.start_calls = []
 
-    def preflight_batch(self, serials, index, site='MX'):
-        self.preflight_calls.append((list(serials), dict(index), site))
+    def preflight_batch(self, serials, index, site='MX',
+                        browser_mode='headless'):
+        self.preflight_calls.append(
+            (list(serials), dict(index), site, browser_mode))
         if self.preflight_error is not None:
             raise self.preflight_error
         return {'checked': True}
 
-    def start_batch(self, serials, index, site='MX', on_finished=None):
+    def start_batch(self, serials, index, site='MX', on_finished=None,
+                    browser_mode='headless'):
         self.running = True
         self.callback = on_finished
-        self.start_calls.append((list(serials), dict(index), site))
+        self.start_calls.append(
+            (list(serials), dict(index), site, browser_mode))
 
     def snapshot(self):
         return {'rows': [], 'running': self.running}
@@ -114,7 +118,7 @@ class ParallelRouteTests(unittest.TestCase):
         self.orch = FakeOrchestrator()
         self.env_job = FakeEnvJob()
         self.state = SimpleNamespace(
-            cfg={'safeParallelTasks': True},
+            cfg={'safeParallelTasks': True, 'queryBrowserMode': 'headless'},
             auth=SimpleNamespace(
                 require=lambda permission=None, role=None: {
                     'authenticated': True,

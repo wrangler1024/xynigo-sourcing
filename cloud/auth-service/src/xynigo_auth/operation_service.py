@@ -230,6 +230,7 @@ class OperationRunService:
             request_summary={
                 "environmentSerials": list(body.environmentSerials),
                 "force": body.force,
+                "browserMode": body.browserMode,
                 "parentRunId": str(parent.id) if parent is not None else None,
             },
             source="cloud_web",
@@ -908,6 +909,65 @@ class OperationRunService:
         self, run: LogisticsQueryRun, *, unchanged: bool = False
     ) -> dict[str, object]:
         rows = self._effective_logistics_rows(run)
+        progress_completed = run.progress_completed
+        progress_total = run.progress_total
+        retry_progress_completed: int | None = None
+        retry_progress_total: int | None = None
+        if run.parent_run_id is not None:
+            original_serials = self._original_logistics_serials(
+                self._logistics_lineage(run)[0]
+            )
+            retry_serials = [
+                str(value)
+                for value in (
+                    (run.request_summary or {}).get("environmentSerials") or []
+                )
+                if str(value)
+            ]
+            retry_progress_total = len(retry_serials)
+            retry_progress_completed = min(
+                retry_progress_total, max(0, run.progress_completed)
+            )
+            progress_total = len(original_serials)
+            progress_completed = min(
+                progress_total,
+                max(0, progress_total - retry_progress_total)
+                + retry_progress_completed,
+            )
+
+            # Until a retried row is reported for the new attempt, the merged
+            # lineage still contains its terminal result from the parent run.
+            # Present that row as pending so the logical batch starts at
+            # (original total - retry total) instead of looking 100% complete.
+            if run.status not in self.TERMINAL_STATUSES:
+                reported_serials = set(
+                    self.session.scalars(
+                        select(LogisticsQueryResult.environment_serial).where(
+                            LogisticsQueryResult.run_id == run.id
+                        )
+                    )
+                )
+                by_serial = {
+                    str(row.get("environmentSerial") or ""): row for row in rows
+                }
+                for serial in retry_serials:
+                    if serial in reported_serials:
+                        continue
+                    previous = dict(by_serial.get(serial) or {})
+                    previous.update(
+                        {
+                            "environmentSerial": serial,
+                            "status": "pending",
+                            "currentStep": "retry_pending",
+                            "errorSummary": None,
+                        }
+                    )
+                    by_serial[serial] = previous
+                rows = [
+                    by_serial[serial]
+                    for serial in original_serials
+                    if serial in by_serial
+                ]
         task_result_code = (
             self.session.scalar(
                 select(ExecutorTask.result_code).where(
@@ -928,12 +988,17 @@ class OperationRunService:
             "executorId": str(run.executor_id) if run.executor_id else None,
             "executorTaskId": str(run.executor_task_id) if run.executor_task_id else None,
             "queryMode": run.query_mode,
+            "browserMode": str(
+                (run.request_summary or {}).get("browserMode") or "default"
+            ),
             "site": run.site,
             "status": run.status,
             "phase": run.phase,
             "attempt": run.attempt,
-            "progressCompleted": run.progress_completed,
-            "progressTotal": run.progress_total,
+            "progressCompleted": progress_completed,
+            "progressTotal": progress_total,
+            "retryProgressCompleted": retry_progress_completed,
+            "retryProgressTotal": retry_progress_total,
             "stopRequested": run.stop_requested,
             "totalCount": run.total_count,
             "successCount": run.success_count,

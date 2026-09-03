@@ -1050,6 +1050,7 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
                 "idempotencyKey": "logistics-run-create-0001",
                 "executorId": executor_id,
                 "queryMode": "initial",
+                "browserMode": "visible",
                 "site": "MX",
                 "environmentSerials": ["9001", "9002"],
             },
@@ -1680,6 +1681,7 @@ def test_formal_logistics_run_queues_ahead_of_background_workspace_read(
                 "idempotencyKey": "logistics-priority-over-read-0001",
                 "executorId": executor_id,
                 "queryMode": "initial",
+                "browserMode": "visible",
                 "site": "MX",
                 "environmentSerials": ["5564"],
             },
@@ -1693,6 +1695,7 @@ def test_formal_logistics_run_queues_ahead_of_background_workspace_read(
             capabilities=capabilities,
         )["task"]
         assert leased["type"] == "logistics.query.v1"
+        assert leased["payload"]["browserMode"] == "visible"
 
         with database.session_factory() as session:
             tasks = list(
@@ -1888,6 +1891,7 @@ def test_busy_executor_config_read_returns_last_safe_snapshot(tmp_path) -> None:
             "envCreateWorkers": 5,
             "verifySampleCount": 3,
             "safeParallelTasks": True,
+            "queryBrowserMode": "headless",
         }
         assert payload["cachedResult"]["capturedAt"]
 

@@ -107,6 +107,7 @@ PUBLIC_CONFIG_RESULT_KEYS = frozenset(
         "purchaseTags",
         "envCreateWorkers",
         "safeParallelTasks",
+        "queryBrowserMode",
         "proxyConfigured",
         "proxySource",
         "buyers",
@@ -1328,12 +1329,13 @@ class ExecutorChannelService:
             "envCreateWorkers",
             "verifySampleCount",
             "safeParallelTasks",
+            "queryBrowserMode",
         }
         try:
             validated = WorkspaceRuntimeConfig.model_validate(
-                {key: runtime[key] for key in runtime_keys}
+                {key: runtime[key] for key in runtime_keys if key in runtime}
             )
-        except (KeyError, ValidationError):
+        except ValidationError:
             return None
         validated_payload = validated.model_dump(mode="json")
         revision = validated_payload.pop("configRevision")
