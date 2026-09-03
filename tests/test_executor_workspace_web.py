@@ -176,7 +176,12 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             html.index("function setHubStatus(connected)")
         ]
         self.assertIn("hubConnected = true;", renderer)
-        self.assertGreaterEqual(renderer.count("hubConnected = false;"), 2)
+        self.assertGreaterEqual(renderer.count("hubConnected = null;"), 2)
+        self.assertIn("hubConnected = false;", renderer)
+        self.assertIn("HubStudio 状态未知", renderer)
+        self.assertIn("HubStudio 已启动", renderer)
+        self.assertIn("HubStudio 未启动", renderer)
+        self.assertIn("HubStudio 已启动 · API 未就绪", renderer)
         setter = html[
             html.index("function setHubStatus(connected)"):
             html.index("function setHiddenQueryColumns(columns)")
@@ -199,6 +204,9 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             "error.code = 'executor_selection_required'",
             "$('localExecutorEntry').onclick = openRuntimeDrawer",
             "localStorage.setItem(RUNTIME_EXECUTOR_STORAGE_KEY, value)",
+            "sessionStorage.setItem(RUNTIME_EXECUTOR_SESSION_STORAGE_KEY, value)",
+            "const values = [sessionRuntimeExecutorId(), rememberedRuntimeExecutorId()]",
+            "saveSessionRuntimeExecutorId(selected.id);",
         ):
             self.assertIn(marker, html)
         renderer = html[

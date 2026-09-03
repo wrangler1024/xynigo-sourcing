@@ -644,6 +644,45 @@ class ExecutorChannelLifecycleTests(unittest.TestCase):
             self.assertFalse(worker.thread.is_alive())
             self.assertEqual(client.poll_summaries, [summary])
 
+    def test_each_heartbeat_forces_a_fresh_local_hubstudio_probe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_store = ExecutorChannelStateStore(
+                os.path.join(directory, 'executor-channel.json'))
+            client = FakeExecutorClient()
+            force_arguments = []
+            worker = self.build_worker(
+                MemoryAuthSessionStore(DEVICE_CREDENTIAL), state_store, client)
+            worker.hub_status_getter = lambda force=False: (
+                force_arguments.append(force) or False, '')
+            client.poll_callback = worker.stop_event.set
+
+            self.assertTrue(worker.start())
+            worker.thread.join(timeout=2)
+
+            self.assertFalse(worker.thread.is_alive())
+            self.assertEqual(force_arguments, [True])
+            self.assertEqual(client.poll_calls[0][2], 'offline')
+
+    def test_running_hubstudio_with_unready_api_reports_limited(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_store = ExecutorChannelStateStore(
+                os.path.join(directory, 'executor-channel.json'))
+            client = FakeExecutorClient()
+            worker = self.build_worker(
+                MemoryAuthSessionStore(DEVICE_CREDENTIAL), state_store, client)
+            worker.hub_status_getter = lambda _force=False: {
+                'available': False,
+                'clientRunning': True,
+                'reasonCode': 'hubstudio_local_api_disabled',
+            }
+            client.poll_callback = worker.stop_event.set
+
+            self.assertTrue(worker.start())
+            worker.thread.join(timeout=2)
+
+            self.assertFalse(worker.thread.is_alive())
+            self.assertEqual(client.poll_calls[0][2], 'limited')
+
     def test_worker_reuses_loaded_credential_between_polls(self):
         class CountingCredentialStore(MemoryAuthSessionStore):
             def __init__(self):

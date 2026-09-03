@@ -462,7 +462,20 @@ class ExecutorChannelWorker(object):
                 config_summary = (
                     self.config_summary_getter()
                     if callable(self.config_summary_getter) else None)
-                hub_ok, _hub_message = self.hub_status_getter(False)
+                # Each outbound heartbeat must reflect the local machine now.
+                # A cached API success cannot keep HubStudio online after its
+                # desktop process has exited.
+                hub_result = self.hub_status_getter(True)
+                if isinstance(hub_result, dict):
+                    hub_ok = bool(hub_result.get('available'))
+                    hub_client_running = bool(
+                        hub_result.get('clientRunning'))
+                    hub_wire_status = (
+                        'ready' if hub_ok else
+                        'limited' if hub_client_running else 'offline')
+                else:
+                    hub_ok, _hub_message = hub_result
+                    hub_wire_status = 'ready' if hub_ok else 'offline'
                 if handshake_required:
                     self.state_store.update(
                         status=('reconnecting' if consecutive_failures
@@ -472,7 +485,7 @@ class ExecutorChannelWorker(object):
                         nextRetryAt=None)
                 response = self.client.poll(
                     credential, revision,
-                    'ready' if hub_ok else 'offline',
+                    hub_wire_status,
                     # A zero-wait poll confirms the secure channel within one
                     # network round trip.  Only an already-confirmed channel
                     # may enter the 25-second task long poll.

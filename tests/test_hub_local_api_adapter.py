@@ -126,17 +126,32 @@ class HubStudioLocalApiAdapterTests(unittest.TestCase):
         self.assertEqual(context.exception.api_code, '-10007')
         self.assertEqual(len(opener.calls), 1)
 
-    def test_healthy_api_does_not_spawn_client_process_diagnostic(self):
+    def test_healthy_api_requires_running_client_process(self):
         process_checks = []
         adapter = HubStudioLocalApiAdapter(
             opener=FakeLocalApiOpener(),
-            client_running_getter=lambda: process_checks.append(True),
+            client_running_getter=lambda: process_checks.append(True) or True,
             retries=1, timeout=1)
 
         capability = adapter.capability_snapshot()
 
         self.assertTrue(capability['available'])
-        self.assertEqual(process_checks, [])
+        self.assertEqual(process_checks, [True])
+
+    def test_stale_local_api_listener_cannot_override_stopped_client(self):
+        opener = FakeLocalApiOpener()
+        adapter = HubStudioLocalApiAdapter(
+            opener=opener,
+            client_running_getter=lambda: False,
+            retries=1, timeout=1)
+
+        capability = adapter.capability_snapshot()
+
+        self.assertFalse(capability['available'])
+        self.assertFalse(capability['clientRunning'])
+        self.assertEqual(
+            capability['reasonCode'], 'hubstudio_client_not_running')
+        self.assertEqual(opener.calls, [])
 
     def test_unreachable_api_checks_client_process_once(self):
         process_checks = []

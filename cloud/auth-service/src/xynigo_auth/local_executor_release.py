@@ -12,9 +12,9 @@ from urllib.parse import quote
 from . import __version__
 
 
-RELEASE_VERSION = "0.13.15"
+RELEASE_VERSION = "0.13.16"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-03T04:07:48Z"
+RELEASE_PUBLISHED_AT = "2026-09-03T05:51:16Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -29,8 +29,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.13.15-504203600ea2",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.15.exe",
+        "runtimeId": "0.13.16-aae680d1bfb9",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.16.exe",
         "sha256": "7da8a05a4086d6395d1c9eeeaa5b32fb04c00c4f7e930cf35679abcdd6888e00",
         "size": 15_174_611,
         "installMode": "standard_per_user",
@@ -48,8 +48,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.13.15-504203600ea2",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.15.pkg",
+        "runtimeId": "0.13.16-aae680d1bfb9",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.16.pkg",
         "sha256": "7f13de809e5ac3e3cf29dc0478a3f3c83fde0a8a36463b815f23512f510daa51",
         "size": 11_448_392,
         "installMode": "standard_system_application",
@@ -234,9 +234,11 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "修复 macOS 点击检查或安装更新后原生客户端意外退出的问题。",
-            "WebView 通知改用类型安全的 JSON 编码，不再把顶层字符串交给 Objective-C JSON 序列化器。",
-            "更新请求成功、失败和进度状态均继续在诊断页实时显示。",
+            "本次执行设备在当前浏览器会话内自动保留，刷新页面无需重新选择。",
+            "勾选记住默认设备后继续跨浏览器会话恢复，临时选择不会覆盖长期默认。",
+            "HubStudio 状态改为执行器本机进程优先探测，每次心跳强制刷新。",
+            "没有执行器上报时显示状态未知，不再推断或误报 HubStudio 在线。",
+            "区分 HubStudio 未启动、已启动但 Local API 未就绪、已启动且可用。",
             "Windows 与 macOS 从同一 Git 基线同步构建并发布。",
             "稳定通道强制平台签名门槛；内部未签名包仅允许 test 通道。",
         ],

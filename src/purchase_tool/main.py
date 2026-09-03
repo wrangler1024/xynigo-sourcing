@@ -1070,7 +1070,7 @@ class AppState(object):
             public_config_getter=public_executor_config,
             config_writer=self.apply_cloud_config,
             task_coordinator=self.tasks,
-            hub_status_getter=self.hub_status,
+            hub_status_getter=self.hub_capabilities,
             config_summary_getter=self.config_summary_v2,
             # Device identity keeps the background channel alive.  A desktop
             # user session must come from interactive Feishu OAuth and must
