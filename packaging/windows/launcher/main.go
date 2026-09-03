@@ -158,23 +158,24 @@ type launcherApp struct {
 	trayStartStop  *walk.Action
 	trayUpdate     *walk.Action
 
-	mu              sync.Mutex
-	child           *exec.Cmd
-	childDone       chan error
-	launcherToken   string
-	statusURL       string
-	desktopURL      string
-	desktopTarget   string
-	desktopStarted  time.Time
-	desktopAttempts int
-	desktopReady    bool
-	desktopRecovery bool
-	lastStatus      *localStatus
-	lastStatusAt    time.Time
-	statusFailures  int
-	pairInFlight    bool
-	updateInFlight  bool
-	exiting         bool
+	mu                   sync.Mutex
+	child                *exec.Cmd
+	childDone            chan error
+	launcherToken        string
+	statusURL            string
+	desktopURL           string
+	desktopTarget        string
+	desktopStarted       time.Time
+	desktopAttempts      int
+	desktopReady         bool
+	desktopRecovery      bool
+	desktopShowRequested bool
+	lastStatus           *localStatus
+	lastStatusAt         time.Time
+	statusFailures       int
+	pairInFlight         bool
+	updateInFlight       bool
+	exiting              bool
 }
 
 func main() {
@@ -219,16 +220,18 @@ func main() {
 			return
 		}
 		*canceled = true
+		app.mu.Lock()
+		app.desktopShowRequested = false
+		app.mu.Unlock()
 		app.mw.SetVisible(false)
 		_ = app.notify.ShowInfo("Xynigo 继续运行", "本地执行器已最小化到系统托盘。")
 	})
 
 	showAtStart := command != "background"
-	if showAtStart {
-		app.showStatusCenter()
-	} else {
-		app.mw.SetVisible(false)
-	}
+	app.mu.Lock()
+	app.desktopShowRequested = showAtStart
+	app.mu.Unlock()
+	app.mw.SetVisible(false)
 	go app.ensureExecutor()
 	appendStatusCenterLog(root, "launcher_executor_start_dispatched")
 	go app.statusLoop()
@@ -315,6 +318,7 @@ func (app *launcherApp) buildWindow() error {
 		AssignTo:   &app.mw,
 		Title:      "Xynigo 本地执行器",
 		Icon:       "xynigo-x.ico",
+		Visible:    false,
 		Size:       Size{Width: 1360, Height: 790},
 		MinSize:    Size{Width: 1080, Height: 650},
 		Background: SolidColorBrush{Color: walk.RGB(255, 255, 255)},
@@ -652,16 +656,32 @@ func newTrayAction(text string, handler func()) *walk.Action {
 
 func (app *launcherApp) showStatusCenter() {
 	app.mw.Synchronize(func() {
+		app.mu.Lock()
+		app.desktopShowRequested = true
+		ready := app.desktopReady
+		recovery := app.desktopRecovery
+		app.mu.Unlock()
+		if !ready && !recovery {
+			app.mw.SetVisible(false)
+			appendStatusCenterLog(app.root, "desktop_show_deferred_until_ready")
+			return
+		}
 		app.mw.SetVisible(true)
 		_ = app.mw.BringToTop()
 		_ = app.mw.Activate()
-		app.mu.Lock()
-		recovery := app.desktopRecovery
-		app.mu.Unlock()
 		if app.browser != nil && !recovery {
 			app.browser.Focus()
 		}
 	})
+}
+
+func (app *launcherApp) revealStatusCenterIfRequested() {
+	app.mu.Lock()
+	requested := app.desktopShowRequested
+	app.mu.Unlock()
+	if requested {
+		app.showStatusCenter()
+	}
 }
 
 func (app *launcherApp) showPairing() {
@@ -833,8 +853,10 @@ func (app *launcherApp) retryDesktopNavigation() {
 	app.desktopAttempts = 0
 	app.desktopReady = false
 	app.desktopRecovery = false
+	app.desktopShowRequested = true
 	app.mu.Unlock()
 	appendStatusCenterLog(app.root, "desktop_navigation_manual_retry")
+	app.mw.SetVisible(false)
 	_ = app.browser.Hide()
 	app.webHost.SetVisible(false)
 	app.pairPanel.SetVisible(true)
@@ -855,6 +877,7 @@ func (app *launcherApp) showDesktopRecovery() {
 	}
 	app.pairPanel.SetVisible(true)
 	app.mw.SetTitle("Xynigo 本地执行器 · 原生兼容模式")
+	go app.revealStatusCenterIfRequested()
 }
 
 func (app *launcherApp) handleWebMessage(raw string) {
@@ -890,6 +913,7 @@ func (app *launcherApp) handleWebMessage(raw string) {
 		}
 		app.mw.SetTitle("Xynigo 本地执行器")
 		appendStatusCenterLog(app.root, fmt.Sprintf("desktop_ready attempts=%d", attempts))
+		go app.revealStatusCenterIfRequested()
 	case "retry-desktop":
 		app.retryDesktopNavigation()
 	case "open-desktop-browser":

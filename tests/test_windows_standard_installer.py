@@ -189,7 +189,7 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
     def test_pairing_is_single_flight_and_python_output_is_utf8(self):
         for source in (
             'pairButton     *walk.PushButton',
-            'pairInFlight    bool',
+            'pairInFlight',
             'AssignTo: &app.pairButton',
             'case "pair-device":',
             'app.startPair(code)',
@@ -220,6 +220,10 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
             'desktop_watchdog_native_fallback',
             'app.browser.Hide()',
             'app.pairPanel.SetVisible(true)',
+            'desktopShowRequested bool',
+            'app.desktopShowRequested = showAtStart',
+            'desktop_show_deferred_until_ready',
+            'revealStatusCenterIfRequested',
             '在浏览器中打开完整界面',
             'open-desktop-browser',
             'retry-desktop',
@@ -235,6 +239,11 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
             '打开桌面客户端',
         ):
             self.assertIn(source, self.gui_launcher)
+        self.assertIn('Visible:    false,', self.gui_launcher)
+        self.assertNotIn(
+            'if showAtStart {\n\t\tapp.showStatusCenter()',
+            self.gui_launcher,
+        )
         self.assertIn('grid-template-columns:repeat(4', (
             ROOT / 'src/purchase_tool/web/desktop.css'
         ).read_text(encoding='utf-8'))

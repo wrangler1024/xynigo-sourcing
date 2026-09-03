@@ -29,6 +29,8 @@ class DesktopClientParityTests(unittest.TestCase):
         self.assertIn('Xynigo', self.desktop)
         self.assertIn('Local Executor', self.desktop)
         self.assertIn('showAtStart := command != "background"', self.windows)
+        self.assertIn('app.desktopShowRequested = showAtStart', self.windows)
+        self.assertIn('desktop_show_deferred_until_ready', self.windows)
         self.assertIn('showDesktopClient()', self.macos)
         self.assertIn('application.setActivationPolicy(.regular)', self.macos)
         self.assertNotIn('application.setActivationPolicy(.accessory)',
