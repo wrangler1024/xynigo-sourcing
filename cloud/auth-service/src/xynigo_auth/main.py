@@ -101,8 +101,8 @@ from .local_executor_release import (
     latest_local_executor_release,
     resolve_local_executor_release_asset,
 )
-from .logistics_export import build_logistics_workbook
 from .integration_contract import FeishuIntegrationWriteBody, FeishuReadProxyBody
+from .logistics_export import build_logistics_workbook_export
 from .models import (
     EnvironmentWorkspacePreference,
     LocalExecutor,
@@ -3660,6 +3660,89 @@ def create_app(
         )
         return {"ok": True, "data": service.logistics_snapshot(run) if run else None}
 
+    @app.get("/v1/operation-runs/logistics-query/history")
+    def list_logistics_operation_history(
+        request: Request,
+        session: SessionDep,
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+        cursor: Annotated[uuid.UUID | None, Query()] = None,
+        site: Annotated[Literal["US", "MX"] | None, Query()] = None,
+        run_status: Annotated[
+            Literal[
+                "created",
+                "queued",
+                "leased",
+                "running",
+                "completed",
+                "partial_failure",
+                "failed",
+                "cancelled",
+                "uncertain",
+            ]
+            | None,
+            Query(alias="status"),
+        ] = None,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "fulfillment.logistics.history.list"
+        actor = authorize_request(
+            request,
+            session,
+            permission="fulfillment.order.read",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        service = OperationRunService(session)
+        try:
+            data = service.logistics_history(
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                limit=limit,
+                cursor=cursor,
+                site=site,
+                status=run_status,
+            )
+        except PurchaseServiceError as exc:
+            purchase_error(request, session, actor, action, exc)
+        return {"ok": True, "data": data}
+
+    @app.get("/v1/operation-runs/logistics-query/history/{root_run_id}")
+    def get_logistics_operation_history(
+        root_run_id: uuid.UUID,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "fulfillment.logistics.history.read"
+        actor = authorize_request(
+            request,
+            session,
+            permission="fulfillment.order.read",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        service = OperationRunService(session)
+        try:
+            data = service.logistics_history_snapshot(
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                root_run_id=root_run_id,
+            )
+        except PurchaseServiceError as exc:
+            purchase_error(
+                request,
+                session,
+                actor,
+                action,
+                exc,
+                business_object_id=str(root_run_id),
+            )
+        return {"ok": True, "data": data}
+
     @app.get("/v1/operation-runs/logistics-query/{run_id}")
     def get_logistics_operation_run(
         run_id: uuid.UUID,
@@ -3709,7 +3792,18 @@ def create_app(
         if not serial or len(serial) > 64:
             raise HTTPException(status_code=422, detail={"code": "environment_serial_invalid"})
         service = OperationRunService(session)
-        run = service.get_logistics_run(tenant_id=actor.tenant.id, run_id=run_id)
+        try:
+            _root_run, run = service.resolve_latest_logistics_history_run(
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                root_run_id=run_id,
+            )
+        except PurchaseServiceError as exc:
+            purchase_error(
+                request, session, actor,
+                "fulfillment.logistics.screenshot.read", exc,
+                business_object_id=str(run_id),
+            )
         row = service.logistics_screenshot_row(
             run=run, environment_serial=serial
         )
@@ -3738,6 +3832,9 @@ def create_app(
         run_id: uuid.UUID,
         request: Request,
         session: SessionDep,
+        include_screenshots: Annotated[
+            bool, Query(alias="includeScreenshots")
+        ] = True,
         session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
         authorization: Annotated[str | None, Header()] = None,
     ) -> Response:
@@ -3750,7 +3847,17 @@ def create_app(
             audit_action="fulfillment.logistics.export",
         )
         service = OperationRunService(session)
-        run = service.get_logistics_run(tenant_id=actor.tenant.id, run_id=run_id)
+        try:
+            root_run, run = service.resolve_latest_logistics_history_run(
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                root_run_id=run_id,
+            )
+        except PurchaseServiceError as exc:
+            purchase_error(
+                request, session, actor, "fulfillment.logistics.export", exc,
+                business_object_id=str(run_id),
+            )
         if run.status not in service.TERMINAL_STATUSES:
             raise HTTPException(
                 status_code=409, detail={"code": "operation_run_active"}
@@ -3770,16 +3877,47 @@ def create_app(
                 return None
             return bytes(row.screenshot_content)
 
-        content = build_logistics_workbook(snapshot["rows"], screenshot_reader)
+        exported = build_logistics_workbook_export(
+            snapshot["rows"],
+            screenshot_reader if include_screenshots else None,
+            include_screenshots=include_screenshots,
+        )
+        _add_audit(
+            session,
+            request_id=request.state.request_id,
+            action="fulfillment.logistics.export",
+            result="success",
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            business_object_type="logistics_query_run",
+            business_object_id=str(root_run.id),
+            change_summary={
+                "includeScreenshots": include_screenshots,
+                "includedScreenshotCount": exported.included_screenshot_count,
+                "missingScreenshotCount": exported.missing_screenshot_count,
+            },
+            details={"latestRunId": str(run.id)},
+            **_request_log_context(request),
+        )
         session.commit()
-        filename = quote("物流单号查询结果.xlsx")
+        filename = quote(
+            "物流单号查询结果_%s.xlsx" % (
+                "含截图" if include_screenshots else "无截图"
+            )
+        )
         return Response(
-            content=content,
+            content=exported.content,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={
                 "Cache-Control": "private, no-store",
                 "Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
                 "X-Content-Type-Options": "nosniff",
+                "X-Xynigo-Screenshot-Included": str(
+                    exported.included_screenshot_count
+                ),
+                "X-Xynigo-Screenshot-Missing": str(
+                    exported.missing_screenshot_count
+                ),
             },
         )
 

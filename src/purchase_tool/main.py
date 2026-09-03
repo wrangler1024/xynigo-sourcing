@@ -3862,11 +3862,15 @@ class Handler(BaseHTTPRequestHandler):
                                'text/tab-separated-values; charset=utf-8')
             elif path == '/api/export':
                 fmt = (query.get('format') or ['xlsx'])[0]
+                include_screenshots = str(
+                    (query.get('includeScreenshots') or ['true'])[0]
+                ).strip().casefold() not in ('0', 'false', 'no')
                 rows = STATE.orch.snapshot()['rows']
                 if not rows:
                     return self._json({'error': '还没有查询结果'}, 400)
                 data, name, mime = export_bytes(
-                    rows, fmt, STATE.orch.screenshot_bytes)
+                    rows, fmt, STATE.orch.screenshot_bytes,
+                    include_screenshots=include_screenshots)
                 self.send_response(200)
                 self.send_header('Content-Type', mime)
                 self.send_header(

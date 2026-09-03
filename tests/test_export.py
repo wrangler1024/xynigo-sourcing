@@ -197,6 +197,25 @@ class ExportTests(unittest.TestCase):
         self.assertIn('物流轨迹截图', text)
         self.assertIn('查看截图', text)
 
+    def test_quick_xlsx_export_skips_screenshot_reader(self):
+        calls = []
+
+        def reader(serial):
+            calls.append(serial)
+            raise AssertionError('快速导出不应读取截图')
+
+        data, name, _mime = export_bytes(
+            [result_row()], 'xlsx', reader, include_screenshots=False)
+        self.assertEqual(calls, [])
+        self.assertIn('无截图', name)
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            self.assertFalse(any(
+                item.startswith('xl/media/') for item in archive.namelist()))
+        from openpyxl import load_workbook
+        workbook = load_workbook(io.BytesIO(data), read_only=True)
+        self.assertEqual(workbook.active['J2'].value, '已生成（未导出）')
+        workbook.close()
+
     def test_risk_order_export_is_not_reported_as_success(self):
         data, _name, _mime = export_bytes([
             result_row(

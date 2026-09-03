@@ -275,7 +275,7 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
 
     def test_binary_results_no_longer_navigate_to_cloud_local_api_paths(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")
-        self.assertIn("'/api/export?format=xlsx', '物流单号查询结果.xlsx'", html)
+        self.assertIn("'/api/export?format=xlsx&includeScreenshots='", html)
         self.assertIn("workspaceImageUrl(path)", html)
         self.assertNotIn("location.href = '/api/export?format=xlsx'", html)
         self.assertNotIn("image.src = '/api/screenshot?serial='", html)
@@ -283,23 +283,23 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
     def test_logistics_export_reports_progress_and_blocks_duplicate_clicks(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")
         handler = html[
-            html.index("$('btnExport').onclick = async () => {"):
+            html.index("async function downloadLogisticsExport"):
             html.index("$('btnRetryFail').onclick")
         ]
         for marker in (
-            "if (button.disabled) return;",
-            "button.disabled = true;",
-            "button.textContent = '正在生成 Excel…';",
-            "已生成 ${filename}，请查看浏览器下载记录",
-            "button.disabled = false;",
-            "button.textContent = originalLabel;",
+            "if (logisticsExporting) return;",
+            "logisticsExporting = true;",
+            "正在快速导出…",
+            "已生成 ${filename}${screenshotNote}，请查看浏览器下载记录",
+            "logisticsExporting = false;",
+            "$('btnExport').textContent = mainLabel;",
         ):
             self.assertIn(marker, handler)
 
     def test_stopped_logistics_rows_are_not_rendered_as_success(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")
         renderer = html[
-            html.index("function renderRows(rows)"):
+            html.index("function queryRowsHtml(rows, options={})"):
             html.index("function renderStats(rows)")
         ]
         self.assertIn("if (s === 'stopped')", renderer)
@@ -552,8 +552,64 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             "/v1/workspace/view-preferences/",
             "parentRunId:cloudLogisticsRunId",
             "/screenshots/' + encodeURIComponent(serial)",
-            "+ '/export'",
+            "+ '/export?includeScreenshots='",
             "screenshotSizeKb:Number(row.screenshotSizeKb || 0)",
+        ):
+            self.assertIn(marker, html)
+
+    def test_logistics_history_ui_is_cloud_scoped_and_keeps_live_results_isolated(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        self.assertEqual(html, CLOUD_HTML.read_text(encoding="utf-8"))
+        for marker in (
+            'id="btnQueryHistory"',
+            'id="queryHistoryMask"',
+            'id="queryHistoryListView"',
+            'id="queryHistoryDetailView"',
+            'id="queryHistoryResultBody"',
+            "/v1/operation-runs/logistics-query/history?",
+            "/v1/operation-runs/logistics-query/history/",
+            "queryRowsHtml(rows, {history:true",
+            "activeQueryHistoryDetail",
+        ):
+            self.assertIn(marker, html)
+        detail = html[
+            html.index("async function openQueryHistoryDetail"):
+            html.index("function closeQueryHistory")
+        ]
+        self.assertNotIn("cloudLogisticsRunId =", detail)
+        self.assertNotIn("lastRows =", detail)
+
+    def test_logistics_history_rerun_requires_new_executor_confirmation(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        handler = html[
+            html.index("$('btnHistoryRerun').onclick"):
+            html.index("function closeQueryExportMenu")
+        ]
+        for marker in (
+            "originalEnvironmentSerials",
+            "$('serialsInput').value = serials.join('\\n');",
+            "localExecutorSelectedDeviceId = '';",
+            "saveSessionRuntimeExecutorId('');",
+            "saveRememberedRuntimeExecutorId('');",
+            "openRuntimeDrawer();",
+            "不会自动开始查询",
+        ):
+            self.assertIn(marker, handler)
+        self.assertNotIn("$('btnStart').click", handler)
+
+    def test_logistics_export_supports_fast_full_and_missing_screenshot_feedback(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        for marker in (
+            'id="queryExportSplit"',
+            'id="btnExportQuick"',
+            'id="btnExportFull"',
+            'data-export-screenshots="false"',
+            'data-export-screenshots="true"',
+            "includeScreenshots=' + String(includeScreenshots)",
+            "X-Xynigo-Screenshot-Included",
+            "X-Xynigo-Screenshot-Missing",
+            "张已过期或缺失",
+            "logisticsHistoryRunId(activeQueryHistoryDetail)",
         ):
             self.assertIn(marker, html)
 

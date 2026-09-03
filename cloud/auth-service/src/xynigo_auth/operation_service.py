@@ -8,9 +8,9 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from .buyer_account_sync import enqueue_buyer_account_mirror
 from .models import (
@@ -21,6 +21,7 @@ from .models import (
     ExecutorTask,
     LogisticsQueryResult,
     LogisticsQueryRun,
+    LocalExecutor,
     OperationalSyncOutbox,
 )
 from .operation_contract import (
@@ -204,13 +205,19 @@ class OperationRunService:
                     409,
                 )
         now = utcnow()
+        run_id = uuid.uuid4()
+        root_run_id = (
+            (parent.root_run_id or parent.id) if parent is not None else run_id
+        )
         run = LogisticsQueryRun(
-            id=uuid.uuid4(),
+            id=run_id,
             tenant_id=tenant_id,
             actor_user_id=actor_user_id,
             source_run_key=body.idempotencyKey,
             payload_hash=digest,
             executor_id=body.executorId,
+            parent_run_id=parent.id if parent is not None else None,
+            root_run_id=root_run_id,
             query_mode=body.queryMode,
             site=body.site,
             status="created",
@@ -558,6 +565,256 @@ class OperationRunService:
             .limit(1)
         )
 
+    def resolve_latest_logistics_history_run(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        root_run_id: uuid.UUID,
+    ) -> tuple[LogisticsQueryRun, LogisticsQueryRun]:
+        """Resolve a user-owned logical batch and its newest retry descendant."""
+
+        requested = self.session.scalar(
+            select(LogisticsQueryRun).where(
+                LogisticsQueryRun.id == root_run_id,
+                LogisticsQueryRun.tenant_id == tenant_id,
+                LogisticsQueryRun.actor_user_id == actor_user_id,
+            )
+        )
+        if requested is None:
+            raise PurchaseServiceError(
+                "operation_run_not_found", "物流查询历史不存在", 404
+            )
+        resolved_root_id = requested.root_run_id
+        if resolved_root_id is None:
+            lineage = self._logistics_lineage(requested)
+            resolved_root_id = lineage[0].id
+        root = self.session.scalar(
+            select(LogisticsQueryRun).where(
+                LogisticsQueryRun.id == resolved_root_id,
+                LogisticsQueryRun.tenant_id == tenant_id,
+                LogisticsQueryRun.actor_user_id == actor_user_id,
+            )
+        )
+        if root is None:
+            raise PurchaseServiceError(
+                "operation_run_not_found", "物流查询历史不存在", 404
+            )
+        latest = self.session.scalar(
+            select(LogisticsQueryRun)
+            .where(
+                LogisticsQueryRun.tenant_id == tenant_id,
+                LogisticsQueryRun.actor_user_id == actor_user_id,
+                or_(
+                    LogisticsQueryRun.id == root.id,
+                    LogisticsQueryRun.root_run_id == root.id,
+                ),
+            )
+            .order_by(
+                LogisticsQueryRun.created_at.desc(),
+                LogisticsQueryRun.id.desc(),
+            )
+            .limit(1)
+        )
+        return root, latest or root
+
+    def logistics_history(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        limit: int,
+        cursor: uuid.UUID | None = None,
+        site: str | None = None,
+        status: str | None = None,
+    ) -> dict[str, object]:
+        """Return one page of logical root batches for the current user."""
+
+        root_run = aliased(LogisticsQueryRun)
+        latest_run = aliased(LogisticsQueryRun)
+        descendant = aliased(LogisticsQueryRun)
+        latest_id = (
+            select(latest_run.id)
+            .where(
+                latest_run.tenant_id == tenant_id,
+                latest_run.actor_user_id == actor_user_id,
+                or_(
+                    latest_run.id == root_run.id,
+                    latest_run.root_run_id == root_run.id,
+                ),
+            )
+            .order_by(latest_run.created_at.desc(), latest_run.id.desc())
+            .limit(1)
+            .correlate(root_run)
+            .scalar_subquery()
+        )
+        retry_count = (
+            select(func.count(descendant.id))
+            .where(
+                descendant.tenant_id == tenant_id,
+                descendant.actor_user_id == actor_user_id,
+                descendant.root_run_id == root_run.id,
+                descendant.id != root_run.id,
+            )
+            .correlate(root_run)
+            .scalar_subquery()
+        )
+        statement = (
+            select(root_run, latest_run, retry_count.label("retry_count"))
+            .join(latest_run, latest_run.id == latest_id)
+            .where(
+                root_run.tenant_id == tenant_id,
+                root_run.actor_user_id == actor_user_id,
+                root_run.parent_run_id.is_(None),
+            )
+        )
+        if site is not None:
+            statement = statement.where(root_run.site == site)
+        if status is not None:
+            statement = statement.where(latest_run.status == status)
+        if cursor is not None:
+            cursor_run = self.session.scalar(
+                select(LogisticsQueryRun).where(
+                    LogisticsQueryRun.id == cursor,
+                    LogisticsQueryRun.tenant_id == tenant_id,
+                    LogisticsQueryRun.actor_user_id == actor_user_id,
+                    LogisticsQueryRun.parent_run_id.is_(None),
+                )
+            )
+            if cursor_run is None:
+                raise PurchaseServiceError(
+                    "logistics_history_cursor_invalid", "查询历史游标无效", 422
+                )
+            statement = statement.where(
+                or_(
+                    root_run.created_at < cursor_run.created_at,
+                    and_(
+                        root_run.created_at == cursor_run.created_at,
+                        root_run.id < cursor_run.id,
+                    ),
+                )
+            )
+        result_rows = list(
+            self.session.execute(
+                statement.order_by(root_run.created_at.desc(), root_run.id.desc())
+                .limit(limit + 1)
+            )
+        )
+        has_more = len(result_rows) > limit
+        page = result_rows[:limit]
+        items = [
+            self._logistics_history_item(root, latest, int(retries or 0))
+            for root, latest, retries in page
+        ]
+        return {
+            "items": items,
+            "nextCursor": str(page[-1][0].id) if has_more and page else None,
+            "hasMore": has_more,
+        }
+
+    def logistics_history_snapshot(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        root_run_id: uuid.UUID,
+    ) -> dict[str, object]:
+        root, latest = self.resolve_latest_logistics_history_run(
+            tenant_id=tenant_id,
+            actor_user_id=actor_user_id,
+            root_run_id=root_run_id,
+        )
+        retry_count = int(
+            self.session.scalar(
+                select(func.count(LogisticsQueryRun.id)).where(
+                    LogisticsQueryRun.tenant_id == tenant_id,
+                    LogisticsQueryRun.actor_user_id == actor_user_id,
+                    LogisticsQueryRun.root_run_id == root.id,
+                    LogisticsQueryRun.id != root.id,
+                )
+            )
+            or 0
+        )
+        snapshot = self.logistics_snapshot(latest)
+        snapshot.update(
+            {
+                "rootRunId": str(root.id),
+                "latestRunId": str(latest.id),
+                "retryCount": retry_count,
+                "originalEnvironmentSerials": self._original_logistics_serials(root),
+                "logicalCreatedAt": _iso(root.created_at),
+            }
+        )
+        snapshot.update(self._effective_logistics_counts(latest))
+        return snapshot
+
+    def _original_logistics_serials(self, root: LogisticsQueryRun) -> list[str]:
+        serials = [
+            str(item)
+            for item in ((root.request_summary or {}).get("environmentSerials") or [])
+            if str(item)
+        ]
+        if serials:
+            return serials
+        return [
+            row["environmentSerial"] for row in self._effective_logistics_rows(root)
+        ]
+
+    def _effective_logistics_counts(self, run: LogisticsQueryRun) -> dict[str, int]:
+        rows = self._effective_logistics_rows(run)
+        success_count = sum(row.get("status") == "ok" for row in rows)
+        pending_count = sum(row.get("status") in {"pending", "running"} for row in rows)
+        return {
+            "totalCount": len(rows),
+            "successCount": success_count,
+            "failedCount": len(rows) - success_count - pending_count,
+            "pendingCount": pending_count,
+        }
+
+    def _logistics_history_item(
+        self,
+        root: LogisticsQueryRun,
+        latest: LogisticsQueryRun,
+        retry_count: int,
+    ) -> dict[str, object]:
+        counts = self._effective_logistics_counts(latest)
+        executor = (
+            self.session.get(LocalExecutor, latest.executor_id)
+            if latest.executor_id is not None else None
+        )
+        duration_seconds = 0
+        for item in self._logistics_lineage(latest):
+            if item.started_at is None:
+                continue
+            finished_at = item.completed_at or (
+                item.updated_at if item.status in self.TERMINAL_STATUSES else utcnow()
+            )
+            started_at = item.started_at
+            if started_at.tzinfo is None and finished_at.tzinfo is not None:
+                finished_at = finished_at.replace(tzinfo=None)
+            elif started_at.tzinfo is not None and finished_at.tzinfo is None:
+                finished_at = finished_at.replace(tzinfo=started_at.tzinfo)
+            duration_seconds += max(
+                0, int((finished_at - started_at).total_seconds())
+            )
+        return {
+            "rootRunId": str(root.id),
+            "latestRunId": str(latest.id),
+            "site": root.site,
+            "status": latest.status,
+            "phase": latest.phase,
+            "terminal": latest.status in self.TERMINAL_STATUSES,
+            "retryCount": retry_count,
+            "originalEnvironmentSerials": self._original_logistics_serials(root),
+            "executorDisplayName": executor.display_name if executor else None,
+            "durationSec": duration_seconds,
+            **counts,
+            "startedAt": _iso(root.started_at),
+            "completedAt": _iso(latest.completed_at),
+            "createdAt": _iso(root.created_at),
+            "updatedAt": _iso(latest.updated_at),
+        }
+
     def environment_snapshot(
         self, run: EnvironmentCreationRun, *, unchanged: bool = False
     ) -> dict[str, object]:
@@ -661,8 +918,13 @@ class OperationRunService:
         )
         return {
             "runId": str(run.id),
+            "rootRunId": str(run.root_run_id or run.id),
             "runKey": run.source_run_key,
-            "parentRunId": (run.request_summary or {}).get("parentRunId"),
+            "parentRunId": (
+                str(run.parent_run_id)
+                if run.parent_run_id
+                else (run.request_summary or {}).get("parentRunId")
+            ),
             "executorId": str(run.executor_id) if run.executor_id else None,
             "executorTaskId": str(run.executor_task_id) if run.executor_task_id else None,
             "queryMode": run.query_mode,
@@ -689,11 +951,41 @@ class OperationRunService:
         }
 
     def _logistics_lineage(self, run: LogisticsQueryRun) -> list[LogisticsQueryRun]:
+        if run.root_run_id is not None:
+            # A retry can be launched from any historical descendant.  Fold every
+            # earlier retry in the logical root batch so a later branch never
+            # discards a successful sibling retry.
+            return list(
+                self.session.scalars(
+                    select(LogisticsQueryRun)
+                    .where(
+                        LogisticsQueryRun.tenant_id == run.tenant_id,
+                        LogisticsQueryRun.actor_user_id == run.actor_user_id,
+                        or_(
+                            LogisticsQueryRun.id == run.root_run_id,
+                            LogisticsQueryRun.root_run_id == run.root_run_id,
+                        ),
+                        or_(
+                            LogisticsQueryRun.created_at < run.created_at,
+                            and_(
+                                LogisticsQueryRun.created_at == run.created_at,
+                                LogisticsQueryRun.id <= run.id,
+                            ),
+                        ),
+                    )
+                    .order_by(
+                        LogisticsQueryRun.created_at.asc(),
+                        LogisticsQueryRun.id.asc(),
+                    )
+                )
+            )
         lineage = [run]
         visited = {run.id}
         current = run
         for _ in range(20):
-            raw_parent = (current.request_summary or {}).get("parentRunId")
+            raw_parent = current.parent_run_id or (
+                current.request_summary or {}
+            ).get("parentRunId")
             if not raw_parent:
                 break
             try:
@@ -1120,13 +1412,16 @@ class OperationResultService:
 
         now = utcnow()
         success_count = sum(item.status == "ok" for item in body.results)
+        new_run_id = uuid.uuid4()
         run = existing or LogisticsQueryRun(
-            id=uuid.uuid4(),
+            id=new_run_id,
             tenant_id=tenant_id,
             actor_user_id=actor_user_id,
             source_run_key=body.runKey,
             payload_hash=digest,
             result_payload_hash=digest,
+            parent_run_id=None,
+            root_run_id=new_run_id,
             query_mode=body.queryMode,
             site=body.site,
             status="created",
@@ -1136,7 +1431,11 @@ class OperationResultService:
             total_count=len(body.results),
             success_count=0,
             failed_count=0,
-            request_summary={},
+            request_summary={
+                "environmentSerials": [
+                    item.environmentSerial for item in body.results
+                ]
+            },
             source=body.source,
             client_version=client_version,
             created_at=now,

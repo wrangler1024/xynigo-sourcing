@@ -1159,6 +1159,12 @@ class LogisticsQueryRun(Base):
     executor_task_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("executor_tasks.id", ondelete="SET NULL")
     )
+    parent_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("logistics_query_runs.id", ondelete="SET NULL")
+    )
+    root_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("logistics_query_runs.id", ondelete="SET NULL")
+    )
     query_mode: Mapped[str] = mapped_column(String(32), nullable=False)
     site: Mapped[str] = mapped_column(String(20), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -1205,6 +1211,22 @@ class LogisticsQueryRun(Base):
         ),
         Index("ix_logistics_run_tenant_completed", "tenant_id", "completed_at"),
         Index("ix_logistics_run_tenant_status", "tenant_id", "status", "updated_at"),
+        Index(
+            "ix_logistics_run_history_root",
+            "tenant_id",
+            "actor_user_id",
+            "parent_run_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_logistics_run_history_descendant",
+            "tenant_id",
+            "actor_user_id",
+            "root_run_id",
+            "created_at",
+            "id",
+        ),
         Index("ix_logistics_run_executor_task", "executor_task_id", unique=True),
     )
 

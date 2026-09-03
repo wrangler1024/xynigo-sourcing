@@ -14,10 +14,10 @@ STATE_CN = {'ok': '成功', 'login': '登录失效', 'inuse': '环境使用中�
             'stopped': '已停止'}
 
 
-def _screenshot_text(row):
+def _screenshot_text(row, include_screenshots=True):
     state = row.get('screenshotState')
     if state == 'ok':
-        return '查看截图'
+        return '查看截图' if include_screenshots else '已生成（未导出）'
     if state == 'fail':
         return '截图失败：%s' % (row.get('screenshotError') or '未知原因')
     if row.get('tracks'):
@@ -27,7 +27,7 @@ def _screenshot_text(row):
     return '—（暂无物流）'
 
 
-def export_bytes(rows, fmt, screenshot_reader=None):
+def export_bytes(rows, fmt, screenshot_reader=None, include_screenshots=True):
     """生成导出文件，返回 (bytes, filename, mime)。"""
     stamp = time.strftime('%Y%m%d_%H%M')
     lines = []
@@ -47,7 +47,8 @@ def export_bytes(rows, fmt, screenshot_reader=None):
             '; '.join(r['tracks']) or (
                 '—（风险订单待验证，无物流）' if r.get('riskOrder') else
                 ('—（砍单退款，无物流）' if r['kanDan'] else '')),
-            '; '.join(r['pkgs']), r['carrier'], _screenshot_text(r),
+            '; '.join(r['pkgs']), r['carrier'],
+            _screenshot_text(r, include_screenshots),
             r['ip'], result, r['error'], r['time']])
     if fmt == 'xlsx':
         try:
@@ -68,7 +69,8 @@ def export_bytes(rows, fmt, screenshot_reader=None):
             for row_index, (row, source) in enumerate(
                     zip(lines, rows), start=2):
                 ws.append(row)
-                if (source.get('screenshotState') == 'ok'
+                if (include_screenshots
+                        and source.get('screenshotState') == 'ok'
                         and screenshot_reader is not None):
                     image_data = screenshot_reader(source['serial'])
                     if image_data:
@@ -115,7 +117,8 @@ def export_bytes(rows, fmt, screenshot_reader=None):
             wb.save(buf)
             xlsx_data = embed_cell_images(buf.getvalue(), cell_images)
             return (xlsx_data,
-                    '物流单号查询结果_%s.xlsx' % stamp,
+                    '物流单号查询结果_%s_%s.xlsx' % (
+                        '含截图' if include_screenshots else '无截图', stamp),
                     'application/vnd.openxmlformats-officedocument'
                     '.spreadsheetml.sheet')
         except ImportError:
@@ -127,4 +130,5 @@ def export_bytes(rows, fmt, screenshot_reader=None):
             else str(c) for c in row))
     data = ('\ufeff' + '\r\n'.join(
         [','.join(EXPORT_HEAD)] + buf)).encode('utf-8')
-    return data, '物流单号查询结果_%s.csv' % stamp, 'text/csv'
+    return (data, '物流单号查询结果_%s_%s.csv' % (
+        '含截图' if include_screenshots else '无截图', stamp), 'text/csv')
