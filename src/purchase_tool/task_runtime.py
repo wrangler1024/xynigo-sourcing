@@ -123,6 +123,10 @@ class LocalTaskCoordinator(object):
                     'taskId': item['taskId'],
                     'kind': item['kind'],
                     'label': self._label(item['kind']),
+                    'state': 'running',
+                    'startedAt': time.strftime(
+                        '%Y-%m-%dT%H:%M:%SZ',
+                        time.gmtime(item['startedAt'])),
                     'elapsedSec': int(max(0, now - item['startedAt'])),
                     'resourceCount': len(item['resources']),
                 } for item in self.tasks.values()],

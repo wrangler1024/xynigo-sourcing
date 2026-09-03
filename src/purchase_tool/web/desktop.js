@@ -24,6 +24,7 @@
     members: [],
     environments: [],
     sourceDraft: null,
+    taskDetailsOpen: false,
     notice: ''
   };
 
@@ -34,7 +35,11 @@
     executor: {running:true, paired:true, displayName:'采购电脑 · 上海办公室 03', platform:platform, architecture:platform === 'mac' ? 'arm64' : 'amd64'},
     cloudChannel: {status:'online', lastPollAt:new Date(Date.now() - 18000).toISOString(), phase:'polling'},
     hubStudio: {connected:true, status:'ready'},
-    tasks: {activeCount:0, safeParallel:true, items:[]},
+    tasks: {activeCount:1, safeParallel:true, items:[{
+      kind:'query', label:'订单物流查询', state:'running',
+      startedAt:new Date(Date.now() - 84000).toISOString(),
+      elapsedSec:84, resourceCount:3
+    }]},
     update: {enabled:true, state:'current', installMode:'standard', currentVersion:'0.13.18', latestVersion:'0.13.18', message:'已是推荐版本'}
   };
   var sampleConfig = {hubPort:6873, concurrency:2, envCreateWorkers:5, verifySampleCount:3, safeParallelTasks:true, configRevision:'e5a931'};
@@ -256,8 +261,24 @@
     if (seconds < 3600) return Math.floor(seconds / 60) + ' 分钟前心跳';
     return Math.floor(seconds / 3600) + ' 小时前心跳';
   }
-  function statusCard(title, value, detail, iconName, tone, ok) {
-    return '<article class="card status-card"><div class="status-card-head"><span class="status-icon ' + (tone || '') + '">' + icon(iconName) + '</span><span class="normal" style="' + (ok ? '' : 'color:#b45309') + '"><i style="' + (ok ? '' : 'background:#f59e0b') + '"></i>' + (ok ? '正常' : '注意') + '</span></div><p class="label">' + esc(title) + '</p><p class="value">' + esc(value) + '</p><p class="detail">' + esc(detail) + '</p></article>';
+  function taskElapsed(value) {
+    var seconds = Math.max(0, Number(value || 0));
+    if (seconds < 60) return Math.floor(seconds) + ' 秒';
+    if (seconds < 3600) return Math.floor(seconds / 60) + ' 分 ' + Math.floor(seconds % 60) + ' 秒';
+    return Math.floor(seconds / 3600) + ' 小时 ' + Math.floor((seconds % 3600) / 60) + ' 分';
+  }
+  function taskStartedTime(value) {
+    var timestamp = Date.parse(value || '');
+    if (!timestamp) return '时间待同步';
+    return new Date(timestamp).toLocaleString('zh-CN', {hour12:false});
+  }
+  function taskKindLabel(value) {
+    return ({query:'订单物流查询',register:'买家号注册',env_batch:'买家号建环境',backup_env:'备用/测试环境创建',config:'本地配置更新'})[value] || value || '本机后台任务';
+  }
+  function statusCard(title, value, detail, iconName, tone, ok, action) {
+    var tag = action ? 'button' : 'article';
+    var actionAttr = action ? ' type="button" data-action="' + esc(action) + '" aria-label="' + esc(title + '：' + value + '，查看明细') + '"' : '';
+    return '<' + tag + ' class="card status-card' + (action ? ' interactive' : '') + '"' + actionAttr + '><div class="status-card-head"><span class="status-icon ' + (tone || '') + '">' + icon(iconName) + '</span><span class="normal" style="' + (ok ? '' : 'color:#b45309') + '"><i style="' + (ok ? '' : 'background:#f59e0b') + '"></i>' + (ok ? '正常' : '注意') + '</span></div><p class="label">' + esc(title) + '</p><p class="value">' + esc(value) + '</p><p class="detail">' + esc(detail) + '</p></' + tag + '>';
   }
   function cloudPresentation(channel, paired) {
     channel = channel || {};
@@ -297,7 +318,7 @@
     var pair = paired ? '' : '<section class="pair-strip">' + icon('alert') + '<div><b>这台电脑尚未配对</b><div style="font-size:10px;color:#92400e;margin-top:3px">在云端生成 8 位一次性配对码后完成绑定。</div></div><input id="pair-code" class="input" placeholder="ABCD-EFGH" maxlength="9"><button class="button primary" data-action="pair-device">配对这台电脑</button></section>';
     return header('overview',actions) + '<div class="content stack">' + pair +
       '<section class="health-banner"><span class="health-check">' + icon(healthy ? 'check' : 'alert') + '</span><div class="health-copy"><h2>' + (healthy ? '本地执行器运行正常' : '本地执行器需要处理') + '</h2><p>' + (healthy ? '云端任务通道和 HubStudio Local API 均已就绪，当前没有需要处理的异常。' : '请根据下方状态卡完成配对或检查本机连接。') + '</p></div><span class="pill">最近检查 ' + nowTime() + '</span></section>' +
-      '<section class="status-grid">' + statusCard('云端通道',cloudValue,cloudDetail,'cloud','',cloudOnline) + statusCard('HubStudio',hubReady ? 'Local API 正常' : 'Local API 未连接','v1 · 端口 ' + esc((state.config && state.config.hubPort) || '6873') + (hubReady ? ' · 已认证' : ' · 请检查'),'gauge','blue',hubReady) + statusCard('本机任务',activeCount ? activeCount + ' 个运行中' : '当前空闲',s.tasks && s.tasks.safeParallel ? '安全并行已开启' : '安全并行未开启','activity','green',true) + statusCard('执行器版本','v' + esc(s.version || update.currentVersion || '—'),esc(update.message || '当前运行时已加载'),'shield','amber',update.state !== 'failed') + '</section>' +
+      '<section class="status-grid">' + statusCard('云端通道',cloudValue,cloudDetail,'cloud','',cloudOnline) + statusCard('HubStudio',hubReady ? 'Local API 正常' : 'Local API 未连接','v1 · 端口 ' + esc((state.config && state.config.hubPort) || '6873') + (hubReady ? ' · 已认证' : ' · 请检查'),'gauge','blue',hubReady) + statusCard('本机任务',activeCount ? activeCount + ' 个运行中' : '当前空闲',(s.tasks && s.tasks.safeParallel ? '安全并行已开启' : '安全并行未开启') + ' · 点击查看明细','activity','green',true,'task-details') + statusCard('执行器版本','v' + esc(s.version || update.currentVersion || '—'),esc(update.message || '当前运行时已加载'),'shield','amber',update.state !== 'failed') + '</section>' +
       '<section class="overview-bottom"><article class="card device-card"><div class="device-head"><div><p class="eyebrow">Paired Device</p><h2>' + esc((s.executor && s.executor.displayName) || '这台采购电脑') + '</h2><p class="device-copy">' + (platform === 'mac' ? 'macOS · ' + esc((s.executor && s.executor.architecture) || 'Apple Silicon') + ' · 登录钥匙串' : 'Windows · ' + esc((s.executor && s.executor.architecture) || 'x86_64') + ' · 当前用户 DPAPI') + '</p></div><span class="device-icon">' + icon('monitor') + '</span></div><div class="device-meta"><div><span>设备状态</span><b>' + (paired ? '已配对' : '待配对') + '</b></div><div><span>本地端口</span><b>' + esc(s.localPort || '—') + '</b></div><div><span>配置版本</span><b>rev · ' + safeId((state.config && state.config.configRevision) || '读取中') + '</b></div></div></article>' +
       '<article class="card quick-card"><div class="quick-title">✦ 快捷操作</div><div class="quick-grid">' + button('本机设置','go-settings','sliders','dark') + button('日志目录','open-logs','folder','dark') + button('重启执行器','restart-executor','power','dark') + button('检查更新','go-diagnostics','refresh','dark') + '</div></article></section></div>';
   }
@@ -445,11 +466,13 @@
     if (previewRole) {
       state.status = sampleStatus;
       if (render !== false && state.identity && state.view === 'overview') renderWorkspace();
+      if (state.taskDetailsOpen) renderTaskDetailsModal();
       return Promise.resolve(sampleStatus);
     }
     return api('/executor-status.json').then(function (value) {
       state.status = value;
       if (render !== false && state.identity && (state.view === 'overview' || state.view === 'diagnostics')) renderWorkspace();
+      if (state.taskDetailsOpen) renderTaskDetailsModal();
       return value;
     }).catch(function (error) {
       if (render !== false && !updateBusy(currentStatus().update)) showError(error);
@@ -514,6 +537,20 @@
     if (role === 'purchaser') return {user:{id:'member-xg',name:'新刚',initials:'XG'},roles:['purchaser'],permissions:['operations.access']};
     return {user:{id:'member-admin',name:'胡康凯',initials:'HK'},roles:['super_admin'],permissions:['system.integration.manage','system.lark_connection.manage','system.member.manage','system.role.manage']};
   }
+  function renderTaskDetailsModal() {
+    if (!state.taskDetailsOpen) return;
+    var tasks = currentStatus().tasks || {activeCount:0,safeParallel:false,items:[]};
+    var items = Array.isArray(tasks.items) ? tasks.items : [];
+    var content = items.length ? '<div class="task-detail-list">' + items.map(function (item) {
+      var resources = Math.max(0, Number(item.resourceCount || 0));
+      return '<article class="task-detail-card"><div class="task-detail-head"><span class="status-icon green">' + icon('activity') + '</span><div><b>' + esc(item.label || taskKindLabel(item.kind)) + '</b><span>' + esc(taskKindLabel(item.kind)) + '</span></div><span class="pill pill-ok">执行中</span></div><div class="task-detail-grid"><div><span>当前状态</span><b>' + (item.state === 'running' ? '运行中' : '状态同步中') + '</b></div><div><span>开始时间</span><b>' + esc(taskStartedTime(item.startedAt)) + '</b></div><div><span>已运行</span><b>' + esc(taskElapsed(item.elapsedSec)) + '</b></div><div><span>占用环境</span><b>' + (resources ? resources + ' 个' : '无环境占用') + '</b></div></div></article>';
+    }).join('') + '</div>' : '<div class="task-detail-empty">' + icon('check') + '<b>当前没有运行中的本机任务</b><span>新任务启动后会在这里显示脱敏运行明细。</span></div>';
+    modalRoot.innerHTML = '<div class="modal-backdrop"><section class="modal task-modal" role="dialog" aria-modal="true" aria-label="本机任务明细"><div class="task-modal-title"><div><h2>本机任务明细</h2><p>实时展示当前执行器内正在运行的任务。</p></div><span class="pill ' + (items.length ? 'pill-blue' : 'pill-ok') + '">' + items.length + ' 个运行中</span></div><div class="task-mode-strip">' + icon('shield') + '<span><b>' + (tasks.safeParallel ? '安全并行已开启' : '当前使用串行模式') + '</b><small>任务明细仅包含类型、时间、状态和资源数量，不包含订单号、账号或凭证。</small></span></div>' + content + '<div class="modal-footer"><button class="button" data-action="refresh-task-details">' + icon('refresh') + '刷新明细</button><button class="button primary" data-action="modal-close">关闭</button></div></section></div>';
+  }
+  function openTaskDetails() {
+    state.taskDetailsOpen = true;
+    renderTaskDetailsModal();
+  }
   function beginAuth() {
     if (previewRole) {
       state.authMode = 'authorizing'; renderAuth(); return;
@@ -558,7 +595,7 @@
     state.sourceDraft = {sourceId:sourceId,scope:source.scope};
     modalRoot.innerHTML = '<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true"><h2>数据源详情</h2><p>敏感表格标识只保存在本机注册表，详情页仅回显不可复用的掩码摘要。</p><div class="modal-body"><div class="source-details"><div><span>类型</span><b>' + (source.scope === 'team' ? '团队协作表' : '个人速填表') + '</b></div><div><span>归属</span><b>' + esc(owner) + '</b></div><div><span>数据源编号</span><b>' + esc(safeId(source.id)) + '</b></div><div><span>工作表</span><b>' + esc(source.sheetName || '名称未记录') + '</b></div><div><span>读取范围</span><b>' + esc(source.cellRange || '—') + '</b></div><div><span>关联环境</span><b>' + Number(source.environmentCount || 0) + ' 个</b></div></div>' + field('source-label','显示名称',source.label,'1–120 个字符；仅修改本机显示名称','text',!editable) + '<label class="toggle-row"><div><b>启用此数据源</b><p>停用后不会用于采购员默认值或环境解析，现有映射仍保留。</p></div><input id="source-enabled" class="switch" type="checkbox"' + (source.enabled !== false ? ' checked' : '') + (editable ? '' : ' disabled') + '></label><div class="masked-config"><span>' + icon('lock') + '</span><div><b>飞书目标已安全保存</b><p>' + esc(source.targetMasked || 'https://*.feishu.cn/sheets/••••') + ' · 工作表 ' + esc(source.worksheetMasked || '••••') + '</p></div></div></div><div class="modal-footer"><button class="button" data-action="modal-close">关闭</button>' + (pending ? '<button class="button primary" data-action="claim-source:' + esc(source.id) + '">认领为我的个人表</button>' : '') + policyButton + (editable ? '<button class="button" data-action="source-reconfigure:' + esc(source.id) + '">更换表格/工作表</button><button class="button primary" data-action="save-source-metadata">保存修改</button>' : '') + '</div></section></div>';
   }
-  function closeModal() { modalRoot.innerHTML = ''; state.sourceDraft = null; }
+  function closeModal() { modalRoot.innerHTML = ''; state.sourceDraft = null; state.taskDetailsOpen = false; }
   function inspectSource() {
     var url = document.getElementById('source-url').value.trim();
     if (!url) return showError(new Error('请粘贴飞书普通电子表格链接'));
@@ -685,6 +722,8 @@
     else if (action === 'open-cloud') nativeAction('open-external',{url:'https://xynigo.samforo.icu'});
     else if (action === 'go-settings') { state.view='settings'; renderWorkspace(); }
     else if (action === 'go-diagnostics') { state.view='diagnostics'; renderWorkspace(); }
+    else if (action === 'task-details') openTaskDetails();
+    else if (action === 'refresh-task-details') loadStatus(false).then(function () { showToast('本机任务明细已刷新'); });
     else if (action === 'open-logs') nativeAction('open-logs');
     else if (action === 'restart-executor') nativeAction('restart-executor');
     else if (action === 'check-update') { nativeAction('check-update'); scheduleStatusRefresh(250); }

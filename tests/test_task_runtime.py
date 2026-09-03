@@ -26,6 +26,9 @@ class TaskCoordinatorTests(unittest.TestCase):
         snap = coordinator.snapshot()
         self.assertEqual(len(snap['tasks']), 2)
         self.assertTrue(snap['safeParallel'])
+        self.assertEqual(snap['tasks'][0]['state'], 'running')
+        self.assertTrue(snap['tasks'][0]['startedAt'].endswith('Z'))
+        self.assertIn('resourceCount', snap['tasks'][0])
         with self.assertRaisesRegex(TaskConflict, '买家号建环境正在进行'):
             coordinator.begin('backup_env', {'name:backup'})
         coordinator.finish(query_id)

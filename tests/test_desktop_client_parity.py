@@ -48,8 +48,9 @@ class DesktopClientParityTests(unittest.TestCase):
             self.assertIn(action, self.windows)
             self.assertIn(action, self.macos)
         for action in ('状态总览', '采购助手数据源', '诊断与维护',
-                       '使用飞书授权登录'):
+                       '使用飞书授权登录', '本机任务明细'):
             self.assertIn(action, self.desktop)
+        self.assertIn('task-details', self.desktop)
 
     def test_both_platforms_manage_the_executor_and_discover_ports(self):
         for source in (self.windows, self.macos):

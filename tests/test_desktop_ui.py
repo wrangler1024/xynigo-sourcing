@@ -93,6 +93,17 @@ class DesktopUIContractTests(unittest.TestCase):
             self.javascript,
         )
 
+    def test_local_task_card_opens_redacted_live_details(self):
+        rendered = self.javascript + self.css
+        for marker in (
+                'task-details', 'renderTaskDetailsModal',
+                'task-detail-grid', 'startedAt', 'resourceCount',
+                '任务明细仅包含类型、时间、状态和资源数量',
+                '不包含订单号、账号或凭证'):
+            self.assertIn(marker, rendered)
+        self.assertIn('aria-label="', self.javascript)
+        self.assertIn("state.taskDetailsOpen = false", self.javascript)
+
     def test_windows_launcher_receives_desktop_ready_handshake(self):
         self.assertIn(
             "nativeAction('desktop-ready',{platform:platform,"

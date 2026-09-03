@@ -361,6 +361,8 @@ class LocalExecutorStatusContractTests(unittest.TestCase):
                 'taskId': 'query-sensitive-id',
                 'kind': 'query',
                 'label': '订单物流查询',
+                'state': 'running',
+                'startedAt': '2026-09-03T06:30:00Z',
                 'elapsedSec': 12,
                 'resourceCount': 3,
             }],
@@ -401,6 +403,12 @@ class LocalExecutorStatusContractTests(unittest.TestCase):
         self.assertTrue(payload['executor']['paired'])
         self.assertTrue(payload['hubStudio']['connected'])
         self.assertEqual(payload['tasks']['activeCount'], 1)
+        task = payload['tasks']['items'][0]
+        self.assertEqual(task['label'], '订单物流查询')
+        self.assertEqual(task['state'], 'running')
+        self.assertEqual(task['startedAt'], '2026-09-03T06:30:00Z')
+        self.assertEqual(task['elapsedSec'], 12)
+        self.assertEqual(task['resourceCount'], 3)
         self.assertEqual(payload['update']['state'], 'available')
         self.assertEqual(payload['update']['latestVersion'], '0.12.10')
         self.assertEqual(payload['update']['stage'], 'downloading')
