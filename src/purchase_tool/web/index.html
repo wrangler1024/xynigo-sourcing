@@ -3324,6 +3324,8 @@ function cloudApiError(payload, status) {
     executor_selection_required:'请先选择本次任务使用的本地执行器',
     executor_not_found:'本地执行器设备不存在或不属于当前组织',
     executor_offline:'所选本地执行器当前离线，请先启动执行器',
+    executor_upgrade_required:'所选执行器版本过旧，请先在线更新到 v0.13.18 或更高版本',
+    executor_hub_unavailable:'所选执行器尚未确认 HubStudio 可用，请先启动并检查 HubStudio',
     executor_revoked:'本地执行器设备已被撤销，请重新配对',
     executor_task_busy:'所选执行器已有云端任务正在处理，请稍后重试',
     executor_task_not_found:'本地执行器请求不存在',
