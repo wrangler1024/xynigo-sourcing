@@ -499,6 +499,7 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
         "environment.parse.v1",
         "environment.cloud-plan.v1",
         "environment.cloud-inventory.v1",
+        "environment.preview-bound.v1",
         "environment.create-bound.v1",
         "environment.create-backup.v1",
         "environment.retry-row.v1",
@@ -651,6 +652,97 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
         assert heartbeat(
             device_client, credential, capabilities=capabilities
         )["task"] is None
+        preview_created = web_client.post(
+            f"/v1/environment-plans/{cloud_plan_id}/preview",
+            json={
+                "idempotencyKey": "environment-preview-0001",
+                "executorId": executor_id,
+                "site": "MX",
+                "purchaseDate": "20260901",
+                "environmentGroup": "MX采购测试",
+                "totalCount": 2,
+                "assignments": [
+                    {"purchaserLabel": "合成采购员", "count": 2}
+                ],
+            },
+            headers=CSRF,
+        )
+        assert preview_created.status_code == 202, preview_created.text
+        preview_task_id = preview_created.json()["task"]["id"]
+        with database.session_factory() as session:
+            preview_task = session.get(
+                ExecutorTask, uuid.UUID(preview_task_id)
+            )
+            assert preview_task is not None
+            assert preview_task.task_type == "environment.preview-bound.v1"
+            serialized = json.dumps(preview_task.payload_envelope)
+            assert cloud_plan_id not in serialized
+            assert "synthetic-password" not in serialized
+        preview_lease = heartbeat(
+            device_client, credential, capabilities=capabilities
+        )["task"]
+        assert preview_lease["type"] == "environment.preview-bound.v1"
+        assert preview_lease["payload"]["cloudPlanId"] == cloud_plan_id
+        assert len(preview_lease["payload"]["planAccounts"]) == 2
+        preview_lease_token = preview_lease["leaseToken"]
+        assert device_client.post(
+            f"/v1/executor-channel/tasks/{preview_task_id}/start",
+            json={"leaseToken": preview_lease_token},
+            headers=device_headers(credential),
+        ).status_code == 200
+        preview_unsafe = device_client.post(
+            f"/v1/executor-channel/tasks/{preview_task_id}/finish",
+            json={
+                "leaseToken": preview_lease_token,
+                "outcome": "succeeded",
+                "resultCode": "environment_preview_completed",
+                "resultSummary": {
+                    "valid": True, "count": 1,
+                    "rows": [{
+                        "emailMasked": "plain@example.test",
+                        "purchaserLabel": "合成采购员",
+                        "environmentName": "SYN-MX-0901-001",
+                    }],
+                },
+            },
+            headers=device_headers(credential),
+        )
+        assert preview_unsafe.status_code == 422
+        preview_finished = device_client.post(
+            f"/v1/executor-channel/tasks/{preview_task_id}/finish",
+            json={
+                "leaseToken": preview_lease_token,
+                "outcome": "succeeded",
+                "resultCode": "environment_preview_completed",
+                "resultSummary": {
+                    "valid": True,
+                    "count": 2,
+                    "rows": [{
+                        "emailMasked": "bu***01@example.test",
+                        "purchaserLabel": "合成采购员",
+                        "environmentName": "SYN-MX-0901-001",
+                        "recoveredExisting": False,
+                    }, {
+                        "emailMasked": "bu***02@example.test",
+                        "purchaserLabel": "合成采购员",
+                        "environmentName": "SYN-MX-0901-002",
+                        "recoveredExisting": True,
+                    }],
+                },
+            },
+            headers=device_headers(credential),
+        )
+        assert preview_finished.status_code == 200, preview_finished.text
+        visible_preview = web_client.get(
+            f"/v1/executor-tasks/{preview_task_id}"
+        ).json()["task"]
+        assert visible_preview["resultSummary"]["count"] == 2
+        with database.session_factory() as session:
+            preview_task = session.get(
+                ExecutorTask, uuid.UUID(preview_task_id)
+            )
+            assert preview_task is not None
+            assert "encryptedPayload" not in preview_task.payload_envelope
         create_body = {
             "idempotencyKey": "environment-run-create-0001",
             "executorId": executor_id,

@@ -117,6 +117,18 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         self.assertIn("$('envSiteGroup').value", parse_handler)
         self.assertIn("envCloudPlanPreview", parse_handler)
 
+    def test_cloud_environment_preview_uses_selected_local_executor(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        handler = html[
+            html.index("$('btnEnvPreview').onclick"):
+            html.index("$('btnEnvStart').onclick")
+        ]
+        self.assertIn("environment.preview-bound.v1", handler)
+        self.assertIn("/v1/environment-plans/${encodeURIComponent(envCloudPlanId)}/preview", handler)
+        self.assertIn("taskId, 300000, null", handler)
+        self.assertIn("真实干跑通过", handler)
+        self.assertNotIn("未调用本地执行器", handler)
+
     def test_field_feedback_fixes_use_one_selected_state_source(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")
         preflight = html[

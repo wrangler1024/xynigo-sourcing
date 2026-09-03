@@ -205,6 +205,33 @@ class EnvironmentPlanParseResult(BaseModel):
         return self
 
 
+class EnvironmentPlanDryRunBody(BaseModel):
+    """Schedule an encrypted, read-only preview on one local executor."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    idempotencyKey: str = Field(min_length=8, max_length=128, pattern=SAFE_KEY_RE)
+    executorId: uuid.UUID
+    site: Literal["US", "MX"]
+    purchaseDate: str = Field(pattern=r"^20\d{6}$")
+    environmentGroup: str = Field(min_length=1, max_length=12)
+    totalCount: int = Field(ge=1, le=2000)
+    assignments: list[PurchaserAllocationSummary] = Field(
+        min_length=1, max_length=100
+    )
+
+    @field_validator("environmentGroup")
+    @classmethod
+    def normalize_group(cls, value: str) -> str:
+        return _single_line(value)
+
+    @model_validator(mode="after")
+    def validate_assignment_total(self) -> "EnvironmentPlanDryRunBody":
+        if sum(item.count for item in self.assignments) != self.totalCount:
+            raise ValueError("assignment count must equal totalCount")
+        return self
+
+
 class EnvironmentWorkspacePreferenceBody(BaseModel):
     """Cloud-owned last selection; partial site-tag updates are allowed."""
 

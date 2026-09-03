@@ -20,6 +20,9 @@ SLOW_MUTATION_PATHS = frozenset({
     '/api/buyer-library/import/parse',
     '/api/buyer-library/import/commit',
 })
+LONG_READ_PATHS = frozenset({
+    '/api/envbatch/preview',
+})
 
 
 class WorkspaceRpcClient(object):
@@ -82,6 +85,8 @@ class WorkspaceRpcClient(object):
             raise RuntimeError('执行器内部业务接口不可用') from exc
 
     def _request_timeout(self, method, path):
+        if method == 'POST' and path in LONG_READ_PATHS:
+            return max(self.timeout, 300.0)
         if method == 'POST' and path in SLOW_MUTATION_PATHS:
             return max(self.timeout, 120.0)
         return self.timeout

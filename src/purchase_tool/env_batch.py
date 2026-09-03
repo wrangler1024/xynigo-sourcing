@@ -1488,20 +1488,34 @@ class BatchEnvOrchestrator(_EnvironmentLookupMixin):
         done = [row for row in rows if row.state == 'done' and row.container_code]
         if count <= 0 or not done:
             return []
+        target = min(max(0, int(count)), len(done))
         chosen = []
+        chosen_ids = set()
+
+        def add(candidate):
+            identity = id(candidate)
+            if identity in chosen_ids or len(chosen) >= target:
+                return
+            chosen.append(candidate)
+            chosen_ids.add(identity)
+
+        # First cover every participating purchaser, then spread the remaining
+        # checks across the input order. Finally fill any gaps so requesting N
+        # checks always performs exactly N checks; N == total verifies all.
         for buyer in dict.fromkeys(row.account.buyer for row in done):
             candidate = next(row for row in done if row.account.buyer == buyer)
-            if candidate not in chosen:
-                chosen.append(candidate)
-            if len(chosen) >= count:
+            add(candidate)
+            if len(chosen) >= target:
                 return chosen
-        for index in (0, len(done) // 2, len(done) - 1):
-            candidate = done[index]
-            if candidate not in chosen:
-                chosen.append(candidate)
-            if len(chosen) >= count:
+        if target > 1:
+            for slot in range(target):
+                index = round(slot * (len(done) - 1) / (target - 1))
+                add(done[index])
+        for candidate in done:
+            add(candidate)
+            if len(chosen) >= target:
                 break
-        return chosen[:count]
+        return chosen
 
     def verify_ips(self, count=3, geo_lookup=None, on_progress=None):
         geo_lookup = geo_lookup or lookup_ip_country

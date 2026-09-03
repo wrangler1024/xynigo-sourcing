@@ -83,6 +83,10 @@ class WorkspaceRpcClientTests(unittest.TestCase):
             120.0,
         )
         self.assertEqual(
+            self.client._request_timeout('POST', '/api/envbatch/preview'),
+            300.0,
+        )
+        self.assertEqual(
             self.client._request_timeout('GET', '/api/progress'),
             30.0,
         )

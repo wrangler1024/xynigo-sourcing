@@ -121,6 +121,7 @@ from .models import (
 from .operation_contract import (
     EnvironmentCreationRunBody,
     EnvironmentCreationRunCreateBody,
+    EnvironmentPlanDryRunBody,
     EnvironmentPlanParseBody,
     EnvironmentRetryRunCreateBody,
     EnvironmentWorkspacePreferenceBody,
@@ -2321,6 +2322,84 @@ def create_app(
         )
         session.commit()
         return result
+
+    @app.post(
+        "/v1/environment-plans/{cloud_plan_id}/preview",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def preview_environment_plan(
+        cloud_plan_id: str,
+        body: EnvironmentPlanDryRunBody,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "resource.environment.plan.preview"
+        actor = authorize_request(
+            request,
+            session,
+            permission="resource.environment.create",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        if environment_plan_service is None:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "environment_plan_cloud_disabled"},
+            )
+        try:
+            _record, plan_accounts = environment_plan_service.load_for_execution(
+                session,
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                cloud_plan_id=cloud_plan_id,
+                site=body.site,
+                environment_group=body.environmentGroup,
+                total_count=body.totalCount,
+            )
+        except CloudEnvironmentPlanError as exc:
+            session.rollback()
+            raise HTTPException(
+                status_code=exc.status,
+                detail={"code": exc.code, "message": str(exc)},
+            ) from exc
+        task = executor_channel(session).create_config_task(
+            tenant_id=actor.tenant.id,
+            user_id=actor.user.id,
+            executor_id=body.executorId,
+            task_type="environment.preview-bound.v1",
+            payload={
+                "cloudPlanId": cloud_plan_id,
+                "planAccounts": plan_accounts,
+                "site": body.site,
+                "purchaseDate": body.purchaseDate,
+                "environmentGroup": body.environmentGroup,
+                "totalCount": body.totalCount,
+                "assignments": [
+                    item.model_dump(mode="json") for item in body.assignments
+                ],
+            },
+            idempotency_key=f"preview:{body.idempotencyKey}",
+            commit=False,
+        )
+        append_executor_audit(
+            request,
+            session,
+            actor,
+            action=action,
+            object_id=body.executorId,
+            summary={
+                "taskId": str(task.id),
+                "site": body.site,
+                "totalCount": body.totalCount,
+            },
+        )
+        session.commit()
+        return {"ok": True, "task": executor_channel(session).task_payload(task)}
 
     @app.get("/v1/executor-tasks/{task_id}")
     def get_executor_task(
@@ -6551,6 +6630,10 @@ def _validation_log_target(method: str, path: str) -> tuple[str | None, str | No
         return "fulfillment.logistics.run.create", None
     if method == "POST" and path == "/v1/environment-plans/parse":
         return "resource.environment.plan.parse", None
+    if method == "POST" and re.fullmatch(
+        r"/v1/environment-plans/[A-Za-z0-9._:-]{8,128}/preview", path
+    ):
+        return "resource.environment.plan.preview", None
     retry_run_match = re.fullmatch(
         r"/v1/operation-runs/environment-creation/([0-9a-fA-F-]{36})/retry",
         path,

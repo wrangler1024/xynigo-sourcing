@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .executor_contract import (
+    ExecutorEnvironmentPreviewResult,
     ExecutorPairBody,
     ExecutorPollBody,
     ExecutorTaskFinishBody,
@@ -72,9 +73,14 @@ ENCRYPTED_TASK_TYPES = frozenset(
         "workspace.rpc.v1",
         "workspace.snapshot.v1",
         "environment.parse.v1",
+        "environment.preview-bound.v1",
         *BUSINESS_TASK_TYPES,
     }
 )
+HUB_TASK_TYPES = frozenset({
+    "environment.preview-bound.v1",
+    *BUSINESS_TASK_TYPES,
+})
 
 
 def _client_version_tuple(value: object) -> tuple[int, int, int]:
@@ -469,7 +475,7 @@ class ExecutorChannelService:
                 )
         if not self._online(executor, now=now):
             raise ExecutorServiceError("executor_offline", status_code=409)
-        if task_type in BUSINESS_TASK_TYPES and executor.hub_status != "ready":
+        if task_type in HUB_TASK_TYPES and executor.hub_status != "ready":
             raise ExecutorServiceError(
                 "executor_hub_unavailable", status_code=409
             )
@@ -829,6 +835,7 @@ class ExecutorChannelService:
         self._validate_config_result(task, body)
         self._validate_business_result(task, body)
         self._validate_environment_parse_result(task, body)
+        self._validate_environment_preview_result(task, body)
         workspace_snapshot = self._validated_workspace_snapshot(task, body)
         self._sync_workspace_preferences(
             executor=executor,
@@ -1072,7 +1079,10 @@ class ExecutorChannelService:
     @staticmethod
     def _purge_sensitive_request(task: ExecutorTask, *, now: datetime) -> None:
         """Erase buyer credentials once a bound environment task is terminal."""
-        if task.task_type != "environment.create-bound.v1":
+        if task.task_type not in {
+            "environment.create-bound.v1",
+            "environment.preview-bound.v1",
+        }:
             return
         envelope = dict(task.payload_envelope or {})
         if "encryptedPayload" not in envelope:
@@ -1174,6 +1184,28 @@ class ExecutorChannelService:
             EnvironmentPlanParseResult.model_validate(body.resultSummary)
         except ValidationError as exc:
             raise ExecutorServiceError("executor_result_invalid", status_code=422) from exc
+
+    @staticmethod
+    def _validate_environment_preview_result(
+        task: ExecutorTask, body: ExecutorTaskFinishBody
+    ) -> None:
+        if task.task_type != "environment.preview-bound.v1":
+            return
+        if body.outcome != "succeeded":
+            summary = body.resultSummary
+            if set(summary) - {
+                "runStatus", "phase", "errorCode", "errorSummary"
+            }:
+                raise ExecutorServiceError(
+                    "executor_result_invalid", status_code=422
+                )
+            return
+        try:
+            ExecutorEnvironmentPreviewResult.model_validate(body.resultSummary)
+        except ValidationError as exc:
+            raise ExecutorServiceError(
+                "executor_result_invalid", status_code=422
+            ) from exc
 
     @staticmethod
     def _validated_workspace_snapshot(

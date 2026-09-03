@@ -18,7 +18,8 @@ os.environ.setdefault(
     'XYNIGO_PROXY_LINK', 'https://proxy.example.test/{region}')
 
 from purchase_tool.env_batch import (
-    BUYER_ROSTER, BatchEnvOrchestrator, BackupEnvOrchestrator,
+    BUYER_ROSTER, BatchEnvOrchestrator, BatchPlanItem,
+    BackupEnvOrchestrator, BuyerAccount,
     EnvironmentSnapshotIndex, EnvBatchError, RES_POOL, ResumeStateStore,
     VENDOR_TEMPLATE_HEADERS,
     backup_env_names, backup_result_tsv_bytes,
@@ -385,6 +386,35 @@ class EnvBatchTests(unittest.TestCase):
             })
         self.assertEqual(rows[0].env_name, 'XG-MX-0819-321')
         self.assertEqual(hub.env_list_calls, 1)
+
+    def test_ip_verification_sample_honors_requested_count_and_all_mode(self):
+        buyers = ['新刚', '志恒', '康德', '宇航']
+        rows = []
+        for index in range(200):
+            account = BuyerAccount(
+                row_number=index + 1,
+                email='verify%d@example.com' % index,
+                password='password',
+                key_url='https://codes.example.test/get?orderNo=%08x' % (
+                    index + 1),
+                cookie_text='[{"name":"sid","value":"cookie"}]',
+                order_no='%08x' % (index + 1),
+                buyer=buyers[index % len(buyers)],
+            )
+            rows.append(BatchPlanItem(
+                account=account,
+                env_name='XG-MX-0903-%03d' % (index + 1),
+                container_code=str(10000 + index),
+                state='done',
+            ))
+
+        sampled = BatchEnvOrchestrator._verification_sample(rows, 17)
+        self.assertEqual(len(sampled), 17)
+        self.assertEqual(
+            {row.account.buyer for row in sampled}, set(buyers))
+        self.assertEqual(len({id(row) for row in sampled}), 17)
+        self.assertEqual(
+            BatchEnvOrchestrator._verification_sample(rows, 200), rows)
 
     def test_assignment_roster_validation_and_code_normalization(self):
         self.assertEqual(parse_assignment('2:XG,1:志恒', 3),

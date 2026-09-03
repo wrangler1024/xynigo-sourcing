@@ -29,6 +29,7 @@ EXECUTOR_CAPABILITIES = Literal[
     "environment.parse.v1",
     "environment.cloud-plan.v1",
     "environment.cloud-inventory.v1",
+    "environment.preview-bound.v1",
     "logistics.query.v1",
     "environment.create-bound.v1",
     "environment.create-backup.v1",
@@ -281,6 +282,47 @@ class ExecutorWorkspaceSnapshotRefreshBody(StrictBody):
 
 class ExecutorTaskStartBody(StrictBody):
     leaseToken: str = Field(min_length=32, max_length=256)
+
+
+class ExecutorEnvironmentPreviewRow(StrictBody):
+    emailMasked: str = Field(min_length=1, max_length=255)
+    purchaserLabel: str = Field(min_length=1, max_length=100)
+    environmentName: str = Field(min_length=1, max_length=255)
+    recoveredExisting: bool = False
+
+    @field_validator("emailMasked", "purchaserLabel", "environmentName")
+    @classmethod
+    def normalize_text(cls, value: str) -> str:
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("preview text must not be blank")
+        return normalized
+
+    @field_validator("emailMasked")
+    @classmethod
+    def require_masked_email(cls, value: str) -> str:
+        if "@" in value and not any(
+            marker in value for marker in ("*", "•", "…")
+        ):
+            raise ValueError("preview email must be masked")
+        return value
+
+
+class ExecutorEnvironmentPreviewResult(StrictBody):
+    valid: Literal[True]
+    count: int = Field(ge=1, le=2000)
+    rows: list[ExecutorEnvironmentPreviewRow] = Field(
+        min_length=1, max_length=2000
+    )
+
+    @model_validator(mode="after")
+    def validate_rows(self) -> "ExecutorEnvironmentPreviewResult":
+        if self.count != len(self.rows):
+            raise ValueError("preview count must match rows")
+        names = [row.environmentName for row in self.rows]
+        if len(names) != len(set(names)):
+            raise ValueError("preview environment names must be unique")
+        return self
 
 
 class ExecutorTaskLeaseBody(ExecutorTaskStartBody):

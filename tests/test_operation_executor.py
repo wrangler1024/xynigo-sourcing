@@ -44,6 +44,74 @@ class CloudPlanRpc(FakeRpc):
         return response({'started': True})
 
 
+class EnvironmentPreviewRpc(object):
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, payload):
+        self.calls.append(payload)
+        if payload['path'] == '/api/envbatch/cloud-plan':
+            return response({
+                'cloudPlanId': payload['body']['cloudPlanId'],
+                'planId': 'local-preview-plan-0001',
+                'count': 2,
+            })
+        if payload['path'] == '/api/envbatch/preview':
+            return response({
+                'valid': True,
+                'count': 2,
+                'rows': [{
+                    'emailMasked': 'bu***01@example.test',
+                    'buyer': '新刚',
+                    'envName': 'XG-MX-0903-001',
+                    'recoveredExisting': False,
+                }, {
+                    'emailMasked': 'bu***02@example.test',
+                    'buyer': '志恒',
+                    'envName': 'ZH-MX-0903-001',
+                    'recoveredExisting': True,
+                }],
+            })
+        raise AssertionError('unexpected preview RPC path: ' + payload['path'])
+
+
+def test_bound_environment_preview_runs_on_local_hub_and_returns_safe_rows():
+    rpc = EnvironmentPreviewRpc()
+    executor = LocalOperationExecutor(rpc)
+    accounts = [{
+        'rowNumber': 1, 'email': 'buyer1@example.test',
+        'password': 'secret-one', 'keyUrl': 'https://vendor.test/1',
+        'cookie': '[{"name":"sid","value":"secret-cookie-one"}]',
+        'orderNo': '00000001',
+    }, {
+        'rowNumber': 2, 'email': 'buyer2@example.test',
+        'password': 'secret-two', 'keyUrl': 'https://vendor.test/2',
+        'cookie': '[{"name":"sid","value":"secret-cookie-two"}]',
+        'orderNo': '00000002',
+    }]
+
+    outcome, code, summary = executor.execute(
+        'environment.preview-bound.v1', {
+            'cloudPlanId': 'cloud-preview-plan-0001',
+            'planAccounts': accounts,
+            'site': 'MX', 'purchaseDate': '20260903',
+            'environmentGroup': 'MX采购', 'totalCount': 2,
+            'assignments': [
+                {'purchaserLabel': '新刚', 'count': 1},
+                {'purchaserLabel': '志恒', 'count': 1},
+            ],
+        }, lambda **_event: None)
+
+    assert outcome == 'succeeded'
+    assert code == 'environment_preview_completed'
+    assert summary['rows'][1]['recoveredExisting'] is True
+    assert rpc.calls[1]['path'] == '/api/envbatch/preview'
+    assert rpc.calls[1]['body']['assignment'] == '1:新刚,1:志恒'
+    rendered = str(summary)
+    for secret in ('buyer1@example.test', 'secret-one', 'secret-cookie-one'):
+        assert secret not in rendered
+
+
 def test_bound_environment_task_reports_rows_and_uses_explicit_group():
     rpc = FakeRpc('/api/envbatch/progress', [
         {

@@ -19,6 +19,7 @@ from .redaction import scrub_text
 
 
 BUSINESS_TASK_TYPES = frozenset({
+    'environment.preview-bound.v1',
     'logistics.query.v1',
     'environment.create-bound.v1',
     'environment.create-backup.v1',
@@ -69,8 +70,64 @@ class LocalOperationExecutor(object):
         if task_type == 'logistics.query.v1':
             return self._execute_logistics(
                 payload, report, cancellation_event)
+        if task_type == 'environment.preview-bound.v1':
+            return self._execute_environment_preview(payload)
         return self._execute_environment(
             task_type, payload, report, cancellation_event)
+
+    def _execute_environment_preview(self, payload):
+        site = self._site(payload)
+        total = self._positive_int(payload, 'totalCount')
+        group = self._required_text(payload, 'environmentGroup')
+        purchase_date = self._required_text(payload, 'purchaseDate')
+        cloud_plan_id = self._required_text(payload, 'cloudPlanId')
+        accounts = payload.get('planAccounts')
+        if not isinstance(accounts, list) or len(accounts) != total:
+            raise OperationExecutionError(
+                'operation_payload_invalid', '云端预览计划账号数量无效')
+        assignment = self._assignment_text(
+            payload.get('assignments'), total)
+        imported = self._request('POST', '/api/envbatch/cloud-plan', {
+            'cloudPlanId': cloud_plan_id,
+            'site': site,
+            'accounts': accounts,
+            'filename': '云端加密解析计划.xlsx',
+        })
+        if str(imported.get('cloudPlanId') or '').strip() != cloud_plan_id:
+            raise OperationExecutionError(
+                'operation_payload_invalid', '本地导入的云端预览计划不一致')
+        local_plan_id = self._required_text(imported, 'planId')
+        result = self._request('POST', '/api/envbatch/preview', {
+            'planId': local_plan_id,
+            'assignment': assignment,
+            'purchaseDate': purchase_date,
+            'site': site,
+            'environmentGroup': group,
+        })
+        rows = result.get('rows')
+        if (result.get('valid') is not True
+                or not isinstance(rows, list)
+                or int(result.get('count') or -1) != total
+                or len(rows) != total):
+            raise OperationExecutionError(
+                'environment_preview_response_invalid', '建环境干跑预览响应无效')
+        safe_rows = []
+        for row in rows:
+            if not isinstance(row, dict):
+                raise OperationExecutionError(
+                    'environment_preview_response_invalid', '建环境干跑预览行无效')
+            safe_rows.append({
+                'emailMasked': scrub_text(
+                    row.get('emailMasked') or '')[:255],
+                'purchaserLabel': scrub_text(
+                    row.get('buyer') or '')[:100],
+                'environmentName': scrub_text(
+                    row.get('envName') or '')[:255],
+                'recoveredExisting': bool(row.get('recoveredExisting')),
+            })
+        return (
+            'succeeded', 'environment_preview_completed',
+            {'valid': True, 'count': total, 'rows': safe_rows})
 
     def _execute_environment(self, task_type, payload, report,
                              cancellation_event):

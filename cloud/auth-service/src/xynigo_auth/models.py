@@ -1869,6 +1869,7 @@ class ExecutorTask(Base):
             "task_type IN ('config.read.v1', 'config.write.v1', "
             "'workspace.rpc.v1', 'workspace.snapshot.v1', "
             "'environment.parse.v1', 'logistics.query.v1', "
+            "'environment.preview-bound.v1', "
             "'environment.create-bound.v1', 'environment.create-backup.v1', "
             "'environment.retry-row.v1', 'environment.retry-failed.v1')",
             name="ck_executor_task_type",
