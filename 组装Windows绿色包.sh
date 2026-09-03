@@ -230,7 +230,7 @@ if found:
 PY
 
 echo "[7/8] Create Windows ZIP ..."
-rm -f "$ZIP" "$MANIFEST" "$SHA_FILE"
+rm -f "$ZIP"
 STAGE="$STAGE" ROOT_ZIP="$ROOT/$ZIP" python3 - <<'PY'
 import os
 import zipfile

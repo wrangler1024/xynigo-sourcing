@@ -32,6 +32,8 @@ class ReleaseV01310Tests(unittest.TestCase):
         self.assertTrue((root / 'release' / 'v0.13.14.zh-CN.md').is_file())
         script = (root / '组装Windows绿色包.sh').read_text(encoding='utf-8')
         self.assertIn('v${VERSION}${BUILD_SUFFIX}.zip', script)
+        self.assertIn('rm -f "$ZIP"', script)
+        self.assertNotIn('rm -f "$ZIP" "$MANIFEST" "$SHA_FILE"', script)
         self.assertIn('XYNIGO_BUILD_LABEL', script)
         self.assertIn('XYNIGO_RELEASE_CHANNEL:-stable', script)
         self.assertIn('--channel "$CHANNEL"', script)
