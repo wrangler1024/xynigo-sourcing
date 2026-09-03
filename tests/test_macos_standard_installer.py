@@ -241,6 +241,17 @@ class MacOSStandardInstallerContractTests(unittest.TestCase):
             self.builder)
         self.assertIn("'updateAutoRelaunch': True", self.builder)
 
+    def test_web_notification_encodes_scalar_without_objective_c_exception(self):
+        notify_web = self.launcher[
+            self.launcher.index('private func notifyWeb('):
+            self.launcher.index('private func publishUpdateState(')
+        ]
+        self.assertIn('JSONEncoder().encode(message)', notify_web)
+        self.assertNotIn(
+            'JSONSerialization.data(withJSONObject: message)',
+            notify_web,
+        )
+
     def test_standard_scripts_pin_data_root_and_disable_green_updater(self):
         for script in (self.start_script, self.protocol_script,
                        self.migration_script):
@@ -275,7 +286,7 @@ class MacOSStandardInstallerContractTests(unittest.TestCase):
 
 class MacOSStandardInstallerArtifactTests(unittest.TestCase):
     def test_local_compiled_artifact_metadata_when_present(self):
-        metadata = ROOT / 'dist/Xynigo_Sourcing_macOS_Standard_v0.13.14.json'
+        metadata = ROOT / 'dist/Xynigo_Sourcing_macOS_Standard_v0.13.15.json'
         if not metadata.is_file():
             self.skipTest('macOS standard installer is built in packaging CI')
         payload = json.loads(metadata.read_text(encoding='utf-8'))

@@ -271,7 +271,11 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
     }
 
     private func notifyWeb(_ message: String) {
-        guard let data = try? JSONSerialization.data(withJSONObject: message),
+        // JSONSerialization aborts with an Objective-C exception when a scalar
+        // is passed without fragmentsAllowed.  A notification is deliberately
+        // a JSON string, so use the type-safe Swift encoder instead of letting
+        // a successful control response crash the native launcher.
+        guard let data = try? JSONEncoder().encode(message),
               let encoded = String(data: data, encoding: .utf8) else { return }
         webView?.evaluateJavaScript(
             "window.xynigoDesktop && window.xynigoDesktop.notify(\(encoded))"

@@ -12,9 +12,9 @@ from urllib.parse import quote
 from . import __version__
 
 
-RELEASE_VERSION = "0.13.14"
+RELEASE_VERSION = "0.13.15"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-03T03:46:06Z"
+RELEASE_PUBLISHED_AT = "2026-09-03T04:07:48Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -29,8 +29,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.13.14-e4026580f056",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.14.exe",
+        "runtimeId": "0.13.15-edbfc79d892",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.15.exe",
         "sha256": "5c13d9058ea5d9582cf450254e6e9c786889002521e57515d27054ec1f57484b",
         "size": 15_175_073,
         "installMode": "standard_per_user",
@@ -48,8 +48,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.13.14-e4026580f056",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.14.pkg",
+        "runtimeId": "0.13.15-edbfc79d892",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.15.pkg",
         "sha256": "79661d13301bd07e28132030f8ac5fe624f2b3df120b23cd8e76d991c91c7190",
         "size": 11_449_829,
         "installMode": "standard_system_application",
@@ -234,12 +234,9 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "顶部空间优先展示业务功能页签，运行状态统一移到底部状态栏。",
-            "运行环境使用右侧覆盖式面板，展开时不再挤压主功能区。",
-            "多设备账号必须明确选择本次任务执行器，未选择时禁止启动本机任务。",
-            "所选设备离线或 HubStudio 未连接时不会自动切换其他在线设备。",
-            "新电脑首次登录不会把账号下其他在线设备误认为当前电脑。",
-            "小犀助手采购协作导入功能与系统管理入口保持不变。",
+            "修复 macOS 点击检查或安装更新后原生客户端意外退出的问题。",
+            "WebView 通知改用类型安全的 JSON 编码，不再把顶层字符串交给 Objective-C JSON 序列化器。",
+            "更新请求成功、失败和进度状态均继续在诊断页实时显示。",
             "Windows 与 macOS 从同一 Git 基线同步构建并发布。",
             "稳定通道强制平台签名门槛；内部未签名包仅允许 test 通道。",
         ],
