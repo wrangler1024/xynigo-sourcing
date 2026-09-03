@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "xynigo-sourcing"
-version = "0.13.19"
+version = "0.13.20"
 description = "Open-source sourcing orchestration for cross-border ecommerce teams"
 readme = "README.md"
 requires-python = ">=3.9"

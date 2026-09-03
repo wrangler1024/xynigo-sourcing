@@ -12,9 +12,9 @@ from urllib.parse import quote
 from . import __version__
 
 
-RELEASE_VERSION = "0.13.19"
+RELEASE_VERSION = "0.13.20"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-03T07:11:43Z"
+RELEASE_PUBLISHED_AT = "2026-09-03T09:19:02Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -29,8 +29,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.13.19-78a9ac37758f",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.19.exe",
+        "runtimeId": "0.13.20-78a9ac37758f",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.20.exe",
         "sha256": "c490461ecc4d3de5bdbf0518af3d98beef3929108e5a4d521614c49ba1891e8a",
         "size": 15_176_661,
         "installMode": "standard_per_user",
@@ -48,8 +48,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.13.19-78a9ac37758f",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.19.pkg",
+        "runtimeId": "0.13.20-78a9ac37758f",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.20.pkg",
         "sha256": "4bf81d231e85e77250916e88f7a782e3e57fd1346e40a5ba095b2d895a5a5d0d",
         "size": 11_454_494,
         "installMode": "standard_system_application",
@@ -234,10 +234,11 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "Windows 主窗口仅在新版桌面页面完成就绪握手后显示。",
-            "正常启动与 WebView2 重试期间不再闪现原生兼容状态页。",
-            "WebView2 连续加载失败后仍会安全切换到原生兼容页。",
-            "云端物流任务继续要求执行器版本不低于 v0.13.18。",
+            "物流单条与异常重查保留原批次结果和输入顺序。",
+            "查询中轨迹截图进入短期云端缓存，完成后可直接预览并合并导出。",
+            "物流结果新增发货效率统计、明显预检状态和账号级字段显示偏好。",
+            "采购助手插件改由桌面客户端统一管理成员数据源配置。",
+            "执行器按本机实时探测 HubStudio，并支持浏览器内核检查与审计修复。",
             "Windows 与 macOS 从同一 Git 基线同步构建并发布。",
             "稳定通道强制平台签名门槛；内部未签名包仅允许 test 通道。",
         ],
