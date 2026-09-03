@@ -541,6 +541,22 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         ):
             self.assertIn(marker, html)
 
+    def test_logistics_workspace_keeps_batch_context_and_cloud_preferences(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        self.assertEqual(html, CLOUD_HTML.read_text(encoding="utf-8"))
+        for marker in (
+            'id="queryPhaseBanner"',
+            'id="businessSummary"',
+            'id="btnQueryFields"',
+            "QUERY_VIEW_KEY = 'fulfillment.logistics.results'",
+            "/v1/workspace/view-preferences/",
+            "parentRunId:cloudLogisticsRunId",
+            "/screenshots/' + encodeURIComponent(serial)",
+            "+ '/export'",
+            "screenshotSizeKb:Number(row.screenshotSizeKb || 0)",
+        ):
+            self.assertIn(marker, html)
+
 
 if __name__ == "__main__":
     unittest.main()

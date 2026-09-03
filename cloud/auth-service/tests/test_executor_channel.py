@@ -3,12 +3,14 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 import base64
+import hashlib
 from io import BytesIO
 import json
 import uuid
 
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
+from openpyxl import load_workbook
 from sqlalchemy import func, select
 
 from test_auth_flow import build_test_app, start_login
@@ -1929,3 +1931,166 @@ def test_started_config_write_becomes_uncertain_after_lease_expiry(tmp_path) -> 
         task_payload = status_response.json()["task"]
         assert task_payload["status"] == "uncertain"
         assert task_payload["resultCode"] == "lease_expired_after_start"
+
+
+def test_logistics_retry_keeps_parent_order_and_serves_uploaded_screenshot(tmp_path) -> None:
+    app, _database, _oauth = build_test_app(tmp_path)
+    capabilities = ["workspace.rpc.v1", "logistics.query.v1"]
+    with TestClient(app) as web_client, TestClient(app) as device_client:
+        login(web_client)
+        paired = pair(
+            device_client,
+            create_pairing_code(web_client),
+            capabilities=capabilities,
+        )
+        executor_id = str(paired["executorId"])
+        credential = str(paired["deviceCredential"])
+        heartbeat(
+            device_client, credential, revision=REVISION_A,
+            capabilities=capabilities, client_version="0.13.19",
+        )
+        created = web_client.post(
+            "/v1/operation-runs/logistics-query",
+            json={
+                "idempotencyKey": "logistics-parent-merge-0001",
+                "executorId": executor_id,
+                "queryMode": "initial",
+                "site": "MX",
+                "environmentSerials": ["20", "10"],
+            },
+            headers=CSRF,
+        )
+        assert created.status_code == 202, created.text
+        root = created.json()["data"]
+        task = heartbeat(
+            device_client, credential, revision=REVISION_A,
+            capabilities=capabilities, client_version="0.13.19",
+        )["task"]
+        lease_token = task["leaseToken"]
+        task_id = task["id"]
+        assert device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/start",
+            json={"leaseToken": lease_token},
+            headers=device_headers(credential),
+        ).status_code == 200
+        screenshot = b"\xff\xd8synthetic-jpeg-content\xff\xd9"
+        rows = [
+            {
+                "environmentSerial": serial,
+                "environmentName": f"ENV-{serial}",
+                "status": "ok" if serial == "20" else "fail",
+                "currentStep": "ok" if serial == "20" else "fail",
+                "completedSteps": ["query_completed"],
+                "platformOrderNo": "ORDER-20" if serial == "20" else "",
+                "platformStatus": "Enviado" if serial == "20" else "",
+                "statusLabel": "已发货" if serial == "20" else "",
+                "screenshotStatus": "ok" if serial == "20" else "",
+                "screenshotSizeKb": 1 if serial == "20" else 0,
+                "errorSummary": "" if serial == "20" else "synthetic failure",
+            }
+            for serial in ["20", "10"]
+        ]
+        progress = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/progress",
+            json={
+                "leaseToken": lease_token,
+                "phase": "logistics.running",
+                "current": 2,
+                "total": 2,
+                "snapshot": {
+                    "rows": rows,
+                    "screenshots": [{
+                        "environmentSerial": "20",
+                        "contentType": "image/jpeg",
+                        "contentBase64": base64.b64encode(screenshot).decode("ascii"),
+                        "sha256": hashlib.sha256(screenshot).hexdigest(),
+                        "size": len(screenshot),
+                    }],
+                },
+            },
+            headers=device_headers(credential),
+        )
+        assert progress.status_code == 200, progress.text
+        finished = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/finish",
+            json={
+                "leaseToken": lease_token,
+                "outcome": "succeeded",
+                "resultCode": "logistics_partial_failure",
+                "resultSummary": {
+                    "runStatus": "partial_failure",
+                    "phase": "logistics.completed",
+                    "progressCompleted": 2,
+                    "progressTotal": 2,
+                    "totalCount": 2,
+                    "successCount": 1,
+                    "failedCount": 1,
+                    "stoppedCount": 0,
+                    "errorCode": "logistics.partial_failure",
+                    "errorSummary": "synthetic partial failure",
+                },
+            },
+            headers=device_headers(credential),
+        )
+        assert finished.status_code == 200, finished.text
+        exported = web_client.get(
+            f"/v1/operation-runs/logistics-query/{root['runId']}/export"
+        )
+        assert exported.status_code == 200, exported.text
+        workbook = load_workbook(BytesIO(exported.content), read_only=True)
+        assert [
+            str(workbook.active.cell(row=index, column=1).value)
+            for index in (2, 3)
+        ] == ["20", "10"]
+        workbook.close()
+
+        retry = web_client.post(
+            "/v1/operation-runs/logistics-query",
+            json={
+                "idempotencyKey": "logistics-child-merge-0001",
+                "executorId": executor_id,
+                "queryMode": "single_retry",
+                "parentRunId": root["runId"],
+                "force": False,
+                "site": "MX",
+                "environmentSerials": ["10"],
+            },
+            headers=CSRF,
+        )
+        assert retry.status_code == 202, retry.text
+        child = retry.json()["data"]
+        assert child["parentRunId"] == root["runId"]
+        assert [row["environmentSerial"] for row in child["rows"]] == ["20", "10"]
+        shot = web_client.get(
+            f"/v1/operation-runs/logistics-query/{child['runId']}/screenshots/20"
+        )
+        assert shot.status_code == 200
+        assert shot.content == screenshot
+        assert "no-store" in shot.headers["cache-control"]
+
+
+def test_workspace_view_preferences_round_trip(tmp_path) -> None:
+    app, _database, _oauth = build_test_app(tmp_path)
+    with TestClient(app) as client:
+        login(client)
+        missing = client.get(
+            "/v1/workspace/view-preferences/fulfillment.logistics.results"
+        )
+        assert missing.status_code == 200
+        assert missing.json()["settings"] is None
+        saved = client.put(
+            "/v1/workspace/view-preferences/fulfillment.logistics.results",
+            json={
+                "schemaVersion": 1,
+                "visibleFields": ["serial", "status", "result", "action"],
+                "fieldOrder": ["serial", "status", "result", "action"],
+            },
+            headers=CSRF,
+        )
+        assert saved.status_code == 200, saved.text
+        restored = client.get(
+            "/v1/workspace/view-preferences/fulfillment.logistics.results"
+        ).json()
+        assert restored["settings"]["visibleFields"] == [
+            "serial", "status", "result", "action"
+        ]

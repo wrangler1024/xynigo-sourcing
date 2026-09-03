@@ -99,7 +99,25 @@
   .modal .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
   .query-col-checks { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 8px; }
   .query-col-checks label { display: flex; align-items: center; gap: 6px; font-weight: 400; }
-  #queryTable.hide-env-name .col-envName, #queryTable.hide-ip .col-ip { display: none; }
+  #queryTable [data-query-col].query-col-hidden,
+  #queryTable.hide-env-name [data-query-col="envName"],
+  #queryTable.hide-ip [data-query-col="ip"] { display: none; }
+  .query-phase-banner { display:flex; align-items:center; gap:12px; margin-bottom:14px; padding:12px 14px; border:1px solid #b8e1e2; border-radius:12px; background:#f1fbfb; color:var(--navy-700); }
+  .query-phase-banner[hidden] { display:none; }
+  .query-phase-banner.warning { border-color:#f1d28f; background:#fff8e8; color:#8a5a08; }
+  .query-phase-copy { display:flex; flex-direction:column; gap:3px; }
+  .query-phase-copy b { font-size:13px; }
+  .query-phase-copy span { font-size:11px; opacity:.82; }
+  .business-summary { display:grid; grid-template-columns:repeat(5,minmax(112px,1fr)); gap:9px; padding:0 19px 14px; }
+  .business-stat { border:1px solid var(--line); border-radius:12px; padding:10px 12px; background:#fbfcfd; }
+  .business-stat b { display:block; color:var(--navy-950); font-size:18px; }
+  .business-stat span { color:var(--navy-500); font-size:10px; }
+  .business-stat.shipped { background:#f0f7ff; }
+  .business-stat.packing { background:#fff8e8; }
+  .business-stat.review { background:#fff2ee; }
+  .query-field-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; max-height:420px; overflow:auto; }
+  .query-field-list label { display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid var(--line); border-radius:9px; font-size:12px; }
+  @media (max-width: 900px) { .business-summary { grid-template-columns:repeat(2,minmax(120px,1fr)); } }
   .image-modal { width: min(1100px, calc(100vw - 40px)); padding: 16px; }
   .image-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
   .image-modal-head h3 { margin: 0; }
@@ -1805,6 +1823,10 @@
   </section>
 
   <section class="card">
+    <div class="query-phase-banner" id="queryPhaseBanner" hidden>
+      <span class="spinner" aria-hidden="true"></span>
+      <div class="query-phase-copy"><b id="queryPhaseTitle">正在预检执行环境</b><span id="queryPhaseDescription">正在确认执行器、HubStudio 与浏览器内核可用。</span></div>
+    </div>
     <div class="action-row">
       <button class="btn primary" id="btnStart">▶ 开始查询</button>
       <button class="btn danger" id="btnStop" disabled>⏹ 停止</button>
@@ -1824,16 +1846,24 @@
         <span class="legend">Shipped / Enviado=已发货 · Processing / Procesando=备货中 · Delivered / Entregado=已送达 · Refunding / Reembolsando=退款中</span>
       </div>
       <div class="table-actions">
+        <button class="btn" id="btnQueryFields" type="button">字段设置</button>
         <button class="btn retry" id="btnRetryFail" title="对所有失败 / 使用中 / 未查询的行重新查询；登录失效行需先手动登录后单独重查">↻ 重查异常行</button>
         <button class="btn primary" id="btnExport">导出 Excel（含轨迹截图）</button>
       </div>
+    </div>
+    <div class="business-summary" id="businessSummary">
+      <div class="business-stat"><b id="bizEligible">0</b><span>有效订单（比例分母）</span></div>
+      <div class="business-stat shipped"><b id="bizShipped">0 · 0%</b><span>已发货（含已送达）</span></div>
+      <div class="business-stat"><b id="bizUnshipped">0 · 0%</b><span>未发货</span></div>
+      <div class="business-stat packing"><b id="bizPacking">0 · 0%</b><span>其中打包中（未发货子集）</span></div>
+      <div class="business-stat review"><b id="bizReview">0</b><span>待核对 / 查询异常</span></div>
     </div>
     <div class="table-wrap">
       <table id="queryTable" class="hide-env-name hide-ip">
         <thead>
           <tr>
-            <th>序号</th><th class="col-envName">环境名</th><th>订单号</th><th>下单时间</th><th>金额</th><th>状态</th>
-            <th>物流单号</th><th>承运商</th><th>物流轨迹截图</th><th class="col-ip">出口IP</th><th>结果</th><th>查询时间（站点）</th><th>操作</th>
+            <th data-query-col="serial">序号</th><th data-query-col="envName">环境名</th><th data-query-col="orderNo">订单号</th><th data-query-col="orderTime">下单时间</th><th data-query-col="amount">金额</th><th data-query-col="status">状态</th>
+            <th data-query-col="tracking">物流单号</th><th data-query-col="carrier">承运商</th><th data-query-col="screenshot">物流轨迹截图</th><th data-query-col="ip">出口IP</th><th data-query-col="result">结果</th><th data-query-col="queryTime">查询时间（站点）</th><th data-query-col="action">操作</th>
           </tr>
         </thead>
         <tbody id="tbody">
@@ -2649,6 +2679,15 @@
   </div>
 </div>
 
+<div class="modal-mask" id="queryFieldsMask" aria-hidden="true">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="queryFieldsTitle">
+    <h3 id="queryFieldsTitle">查询结果字段设置</h3>
+    <p class="hint">选择当前页面要展示的字段。设置保存在云端账号中，并同步到其他电脑。</p>
+    <div class="query-field-list" id="queryFieldList"></div>
+    <div class="actions"><button class="btn" id="btnQueryFieldsReset" type="button">恢复默认</button><button class="btn" id="btnQueryFieldsCancel" type="button">取消</button><button class="btn primary" id="btnQueryFieldsSave" type="button">保存设置</button></div>
+  </div>
+</div>
+
 <div class="modal-mask" id="resourceDetailMask" aria-hidden="true">
   <div class="modal resource-detail-modal" role="dialog" aria-modal="true" aria-labelledby="resourceDetailTitle">
     <h3 id="resourceDetailTitle">资源详情</h3>
@@ -3189,6 +3228,17 @@ const permissionPolicyDirtyRoleIds = new Set();
 const expandedPermissionPrimaryIds = new Set();
 let memberInviteCandidateState = null;
 let hiddenQueryColumns = new Set(['envName', 'ip']);
+const QUERY_VIEW_KEY = 'fulfillment.logistics.results';
+const QUERY_FIELD_DEFS = [
+  ['serial','序号'],['envName','环境名'],['orderNo','订单号'],['orderTime','下单时间'],
+  ['amount','金额'],['status','状态'],['tracking','物流单号'],['carrier','承运商'],
+  ['screenshot','物流轨迹截图'],['ip','出口 IP'],['result','结果'],
+  ['queryTime','查询时间（站点）'],['action','操作']
+];
+const QUERY_REQUIRED_FIELDS = new Set(['serial','result','action']);
+const QUERY_DEFAULT_VISIBLE_FIELDS = QUERY_FIELD_DEFS.map(item => item[0])
+  .filter(key => !['envName','ip'].includes(key));
+let visibleQueryFields = new Set(QUERY_DEFAULT_VISIBLE_FIELDS);
 let localExecutorRelease = null;
 let localExecutorReleaseLoaded = false;
 let localExecutorSelectedPlatform = '';
@@ -3340,7 +3390,12 @@ function cloudApiError(payload, status) {
     pairing_code_invalid:'配对码无效，请重新生成',
     pairing_code_expired:'配对码已过期，请重新生成',
     pairing_code_consumed:'配对码已经使用，请重新生成',
-    pairing_request_not_found:'配对请求不存在或已不可访问，请重新生成'
+    pairing_request_not_found:'配对请求不存在或已不可访问，请重新生成',
+    logistics_screenshot_expired:'轨迹截图已过期，请重新查询该环境后查看',
+    operation_parent_run_not_found:'原物流查询批次不存在，请刷新后重试',
+    operation_retry_context_changed:'执行设备或站点已变化，请重新发起整批查询',
+    operation_parent_run_active:'原物流查询仍在执行，请稍后重试',
+    operation_run_active:'查询仍在执行，完成后才能导出'
   };
   const error = new Error(known[code] || payload && payload.error
     || detail && detail.message || `请求失败 HTTP ${status}`);
@@ -3590,7 +3645,9 @@ function cloudLogisticsLegacySnapshot(run) {
     time:cloudSiteTime(row.queriedAt, row.utcOffsetMinutes),
     timeZone:String(row.timeZone || ''), utcOffsetMinutes:row.utcOffsetMinutes,
     error:String(row.errorSummary || ''),
-    screenshotState:String(row.screenshotStatus || 'pending'),
+    screenshotState:row.screenshotAvailable === false && row.screenshotStatus === 'ok'
+      ? 'expired' : String(row.screenshotStatus || 'pending'),
+    screenshotSizeKb:Number(row.screenshotSizeKb || 0),
   }));
   return {
     running:!run.terminal,
@@ -3601,6 +3658,8 @@ function cloudLogisticsLegacySnapshot(run) {
     progressCompleted:Number(run.progressCompleted || 0),
     progressTotal:Number(run.progressTotal || run.totalCount || 0),
     errorCode:String(run.resultCode || ''),
+    phase:String(run.phase || ''),
+    retryMode:String(run.queryMode || 'initial'), parentRunId:String(run.parentRunId || ''),
     site:run.site, hubConnected:cloudRunHubConnected(run),
   };
 }
@@ -4008,6 +4067,31 @@ async function downloadWorkspaceResource(path, fallbackName) {
   const blob = base64ToBlob(result.bodyBase64, result.contentType);
   const url = URL.createObjectURL(blob);
   const filename = workspaceDownloadName(result.contentDisposition, fallbackName);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return filename;
+}
+
+async function downloadCloudResource(path, fallbackName) {
+  const response = await fetch(path, {
+    credentials:'same-origin',
+    headers:{'Accept':'application/octet-stream','X-Xynigo-Source':'cloud_web_workspace'}
+  });
+  if (!response.ok) {
+    let payload = {};
+    try { payload = await response.json(); } catch (_) {}
+    throw cloudApiError(payload, response.status);
+  }
+  const blob = await response.blob();
+  const filename = workspaceDownloadName(
+    response.headers.get('Content-Disposition'), fallbackName
+  );
+  const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
   link.download = filename;
@@ -4466,14 +4550,44 @@ function setHubStatus(connected) {
 }
 
 function setHiddenQueryColumns(columns) {
-  hiddenQueryColumns = new Set(Array.isArray(columns) ? columns : []);
-  const table = $('queryTable');
-  table.classList.toggle('hide-env-name', hiddenQueryColumns.has('envName'));
-  table.classList.toggle('hide-ip', hiddenQueryColumns.has('ip'));
+  const allowed = new Set(QUERY_FIELD_DEFS.map(item => item[0]));
+  hiddenQueryColumns = new Set(
+    (Array.isArray(columns) ? columns : []).filter(key => allowed.has(key))
+  );
+  visibleQueryFields = new Set(
+    QUERY_FIELD_DEFS.map(item => item[0]).filter(key => !hiddenQueryColumns.has(key))
+  );
+  QUERY_REQUIRED_FIELDS.forEach(key => visibleQueryFields.add(key));
+  applyQueryColumnVisibility();
+}
+
+function setVisibleQueryFields(fields) {
+  const allowed = new Set(QUERY_FIELD_DEFS.map(item => item[0]));
+  const next = new Set((Array.isArray(fields) ? fields : []).filter(key => allowed.has(key)));
+  QUERY_REQUIRED_FIELDS.forEach(key => next.add(key));
+  if (!next.size) QUERY_DEFAULT_VISIBLE_FIELDS.forEach(key => next.add(key));
+  visibleQueryFields = next;
+  hiddenQueryColumns = new Set([...allowed].filter(key => !next.has(key)));
+  applyQueryColumnVisibility();
+}
+
+function applyQueryColumnVisibility() {
+  $('queryTable').classList.remove('hide-env-name', 'hide-ip');
+  document.querySelectorAll('#queryTable [data-query-col]').forEach(element => {
+    element.classList.toggle(
+      'query-col-hidden', !visibleQueryFields.has(element.dataset.queryCol)
+    );
+  });
 }
 
 async function loadQueryDisplayConfig() {
   try {
+    if (CLOUD_WEB_MODE) {
+      const payload = await cloudFetchJson('/v1/workspace/view-preferences/' + QUERY_VIEW_KEY);
+      const fields = payload && payload.settings && payload.settings.visibleFields;
+      setVisibleQueryFields(Array.isArray(fields) ? fields : QUERY_DEFAULT_VISIBLE_FIELDS);
+      return;
+    }
     const cfg = await api('/api/config');
     setHiddenQueryColumns(cfg.hiddenQueryColumns || []);
   } catch (e) {}
@@ -6420,24 +6534,31 @@ function renderRows(rows) {
     tbody.innerHTML = '<tr><td colspan="13" class="empty-tip">粘贴环境序号后点「开始查询」，结果将逐行显示在这里</td></tr>';
     return;
   }
+  const cell = (key, content, className='') =>
+    `<td data-query-col="${key}" class="${className}">${content}</td>`;
   tbody.innerHTML = rows.map(r => {
     const s = r.state;
     const serial = esc(r.serial), name = esc(r.envName);
+    const action = s === 'inuse'
+      ? `<button class="btn-mini" data-req="${serial}" data-force="1" title="该环境浏览器处于打开状态。确认是查询残留窗口才可关闭重查；若有人正在使用该环境请勿点击">🔌 关闭并重查</button>`
+      : `<button class="btn-mini" data-req="${serial}" title="重新查询该环境">🔄 重新查询</button>`;
+    const emptyCells = result => [
+      cell('serial', serial, 'mono'), cell('envName', name),
+      cell('orderNo', '—'), cell('orderTime', '—'), cell('amount', '—'),
+      cell('status', '—'), cell('tracking', '—'), cell('carrier', '—'),
+      cell('screenshot', '—'), cell('ip', esc(r.ip) || '—', 'mono'),
+      cell('result', result), cell('queryTime', r.time || '—', 'mono'),
+      cell('action', action)
+    ].join('');
     if (s === 'pending') {
       const label = (!isRunning && stopRequested) ? '已停止' : '未查询';
-      return `<tr class="row-pending"><td class="mono">${serial}</td><td class="col-envName">${name}</td><td colspan="11">${label}</td></tr>`;
+      return `<tr class="row-pending">${emptyCells(label)}</tr>`;
     }
-    if (s === 'running') return `<tr class="row-running"><td class="mono">${serial}</td><td class="col-envName">${name}</td><td colspan="11"><span class="spinner"></span>正在查询并生成轨迹截图…</td></tr>`;
-    const tip = s === 'login' ? '（先在 HubStudio 中手动登录该买家号，再来点此重查）' : '';
-    const inuseBtn = s === 'inuse'
-      ? `<button class="btn-mini" data-req="${serial}" data-force="1" title="该环境浏览器处于打开状态。确认是查询残留窗口才可关闭重查；若有人正在使用该环境请勿点击">🔌 关闭并重查</button>`
-      : `<button class="btn-mini" data-req="${serial}" title="重新查询该环境${tip}">🔄 重新查询</button>`;
-    const act = inuseBtn;
-    const finish = () => `<td class="mono">${r.time || '—'}</td><td>${act}</td>`;
-    if (s === 'login') return `<tr class="row-login"><td class="mono">${serial}</td><td class="col-envName">${name}</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="mono col-ip">${esc(r.ip) || '—'}</td><td><span class="badge login">🔴 登录失效</span></td>${finish()}</tr>`;
-    if (s === 'inuse') return `<tr class="row-inuse"><td class="mono">${serial}</td><td class="col-envName">${name}</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="col-ip">—</td><td><span class="badge inuse">🟡 环境使用中，已跳过</span></td>${finish()}</tr>`;
-    if (s === 'fail') return `<tr class="row-fail"><td class="mono">${serial}</td><td class="col-envName">${name}</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="mono col-ip">${esc(r.ip) || '—'}</td><td><span class="badge fail">⚠ ${esc(r.error) || '失败'}</span></td>${finish()}</tr>`;
-    if (s === 'stopped') return `<tr class="row-inuse"><td class="mono">${serial}</td><td class="col-envName">${name}</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="col-ip">—</td><td><span class="badge inuse">⏹ 已停止，未完成查询</span></td>${finish()}</tr>`;
+    if (s === 'running') return `<tr class="row-running">${emptyCells('<span class="spinner"></span>正在查询并生成轨迹截图…')}</tr>`;
+    if (s === 'login') return `<tr class="row-login">${emptyCells('<span class="badge login">🔴 登录失效</span>')}</tr>`;
+    if (s === 'inuse') return `<tr class="row-inuse">${emptyCells('<span class="badge inuse">🟡 环境使用中，已跳过</span>')}</tr>`;
+    if (s === 'fail') return `<tr class="row-fail">${emptyCells(`<span class="badge fail">⚠ ${esc(r.error) || '失败'}</span>`)}</tr>`;
+    if (s === 'stopped') return `<tr class="row-inuse">${emptyCells('<span class="badge inuse">⏹ 已停止，未完成查询</span>')}</tr>`;
     // ok
     const st = (r.status || '') + (r.statusCn ? ' ' + r.statusCn : '');
     const stBadge = r.status ? `<span class="badge ${ST_CLS[r.status] || 'st-procesando'}">${esc(st)}</span>` : '—';
@@ -6452,12 +6573,22 @@ function renderRows(rows) {
       ? `<button class="btn-mini" type="button" data-shot="${serial}" data-shot-order="${esc(r.orderNo)}">${screenshotLabel}</button>`
       : (r.screenshotState === 'fail'
         ? `<span title="${esc(r.screenshotError)}">⚠ 截图失败</span>`
-        : '—（暂无物流）');
+        : (r.screenshotState === 'expired' ? '—（截图已过期）' : '—（暂无物流）'));
     const resultBadge = r.riskOrder
       ? '<span class="badge fail">⚠ 风险订单，待验证</span>'
       : '<span class="badge ok">✔ 成功</span>';
-    return `<tr class="row-success"><td class="mono">${serial}</td><td class="col-envName">${name}</td><td class="mono">${esc(r.orderNo)}</td><td class="mono">${esc(r.orderTime) || '—'}</td><td>${esc(r.amount)}</td><td>${stBadge}</td><td>${tracks}</td><td>${esc(r.carrier) || '—'}</td><td>${shot}</td><td class="mono col-ip">${esc(r.ip)}</td><td>${resultBadge}</td>${finish()}</tr>`;
+    return `<tr class="row-success">${[
+      cell('serial', serial, 'mono'), cell('envName', name),
+      cell('orderNo', esc(r.orderNo), 'mono'),
+      cell('orderTime', esc(r.orderTime) || '—', 'mono'),
+      cell('amount', esc(r.amount)), cell('status', stBadge),
+      cell('tracking', tracks), cell('carrier', esc(r.carrier) || '—'),
+      cell('screenshot', shot), cell('ip', esc(r.ip), 'mono'),
+      cell('result', resultBadge), cell('queryTime', r.time || '—', 'mono'),
+      cell('action', action)
+    ].join('')}</tr>`;
   }).join('');
+  applyQueryColumnVisibility();
 }
 
 function renderStats(rows) {
@@ -6476,6 +6607,22 @@ function renderStats(rows) {
   $('cntLogin').textContent = cnt.login; $('cntInuse').textContent = cnt.inuse;
   $('cntFail').textContent = cnt.fail; $('cntStopped').textContent = cnt.stopped;
   $('cntPending').textContent = cnt.pending;
+  const normalizedStatus = row => `${row.status || ''} ${row.statusCn || ''}`.toLowerCase();
+  const excluded = /refund|reembols|cancel|取消|退款|unpaid|未支付|risk|风险/;
+  const shippedStatus = /shipped|enviado|delivered|entregado|已发货|已送达/;
+  const packingStatus = /packing|empacando|打包/;
+  const eligibleRows = rows.filter(row => row.state === 'ok' && row.orderNo
+    && !row.kanDan && !row.riskOrder && !excluded.test(normalizedStatus(row)));
+  const shipped = eligibleRows.filter(row => shippedStatus.test(normalizedStatus(row))).length;
+  const packing = eligibleRows.filter(row => packingStatus.test(normalizedStatus(row))).length;
+  const unshipped = Math.max(0, eligibleRows.length - shipped);
+  const ratio = value => eligibleRows.length
+    ? Math.round(value / eligibleRows.length * 100) : 0;
+  $('bizEligible').textContent = eligibleRows.length;
+  $('bizShipped').textContent = `${shipped} · ${ratio(shipped)}%`;
+  $('bizUnshipped').textContent = `${unshipped} · ${ratio(unshipped)}%`;
+  $('bizPacking').textContent = `${packing} · ${ratio(packing)}%`;
+  $('bizReview').textContent = Math.max(0, rows.length - eligibleRows.length);
   const done = rows.filter(r => !['pending', 'running'].includes(r.state)).length;
   $('progressText').textContent = `${done} / ${rows.length}`;
   $('bar').style.width = (rows.length ? done / rows.length * 100 : 0) + '%';
@@ -6490,7 +6637,8 @@ function render(snap) {
   setHubStatus(snap.hubConnected);
   renderRows(lastRows);
   renderStats(lastRows);
-  if ((snap.cancelled || !lastRows.length) && Number(snap.progressTotal || 0) > 0) {
+  if ((snap.cancelled || !lastRows.length || snap.parentRunId)
+      && Number(snap.progressTotal || 0) > 0) {
     const current = Number(snap.progressCompleted || 0);
     const total = Number(snap.progressTotal || 0);
     $('progressText').textContent = `${current} / ${total}`;
@@ -6499,6 +6647,7 @@ function render(snap) {
   $('btnStart').disabled = querySubmitting || isRunning
     || (CLOUD_WEB_MODE && !runtimeExecutorReady());
   $('btnStop').disabled = !isRunning;
+  $('btnExport').disabled = isRunning;
   const retryable = lastRows.filter(r => ['fail', 'inuse', 'pending', 'stopped'].includes(r.state)).length;
   $('btnRetryFail').disabled = isRunning || !retryable;
   const stopped = lastRows.filter(r => r.state === 'stopped').length;
@@ -6514,6 +6663,19 @@ function render(snap) {
       'hubstudio_local_api_timeout', 'hubstudio_browser_core_missing',
       'hubstudio_browser_launch_invalid'
     ].includes(String(snap.errorCode));
+  const preflightPhase = isRunning && !snap.current
+    && ['created','queued','leased','starting','preparing',''].includes(String(snap.phase || ''));
+  const phaseBanner = $('queryPhaseBanner');
+  phaseBanner.hidden = !isRunning;
+  phaseBanner.classList.toggle('warning', preflightPhase && queryElapsedBase >= 30);
+  $('queryPhaseTitle').textContent = preflightPhase
+    ? (queryElapsedBase >= 30 ? '预检耗时较长，仍在等待本机响应' : '正在预检并准备执行环境')
+    : '查询正在执行';
+  $('queryPhaseDescription').textContent = preflightPhase
+    ? '正在确认执行器、HubStudio、Local API 与浏览器内核；未通过不会开始处理订单。'
+    : (snap.current ? `当前环境：${snap.current}` : '已通过预检，正在按输入顺序处理环境。');
+  $('btnStart').textContent = isRunning
+    ? (preflightPhase ? '预检中…' : '查询中…') : '▶ 开始查询';
   $('currentEnv').textContent = isRunning
     ? ((snap.current ? '正在查询：' + snap.current : '执行器正在预检和准备') + ' …')
     : (snap.cancelled
@@ -7348,6 +7510,7 @@ tbody.addEventListener('click', async e => {
         body:JSON.stringify({
           idempotencyKey, executorId:executor.id, queryMode:'single_retry',
           force, site:payload.site, environmentSerials:[serial],
+          parentRunId:cloudLogisticsRunId,
         })
       });
       clearWorkspaceMutationKey('query-single-retry', idempotencyKey);
@@ -7386,8 +7549,24 @@ async function openScreenshot(serial, orderNo) {
   mask.classList.add('show');
   mask.setAttribute('aria-hidden', 'false');
   try {
-    const path = '/api/screenshot?serial=' + encodeURIComponent(serial) + '&t=' + Date.now();
-    const url = await workspaceImageUrl(path);
+    let url;
+    if (CLOUD_WEB_MODE) {
+      if (!cloudLogisticsRunId) throw new Error('当前查询批次不可用，请刷新页面后重试');
+      const response = await fetch(
+        '/v1/operation-runs/logistics-query/' + encodeURIComponent(cloudLogisticsRunId)
+          + '/screenshots/' + encodeURIComponent(serial) + '?t=' + Date.now(),
+        {credentials:'same-origin', headers:{'X-Xynigo-Source':'cloud_web_workspace'}}
+      );
+      if (!response.ok) {
+        let payload = {};
+        try { payload = await response.json(); } catch (_) {}
+        throw cloudApiError(payload, response.status);
+      }
+      url = URL.createObjectURL(await response.blob());
+    } else {
+      const path = '/api/screenshot?serial=' + encodeURIComponent(serial) + '&t=' + Date.now();
+      url = await workspaceImageUrl(path);
+    }
     if (image.dataset.objectUrl) URL.revokeObjectURL(image.dataset.objectUrl);
     image.dataset.objectUrl = CLOUD_WEB_MODE ? url : '';
     image.src = url;
@@ -7419,6 +7598,49 @@ document.addEventListener('keydown', e => {
   }
 });
 
+function paintQueryFieldPicker(fields=visibleQueryFields) {
+  const selected = new Set(fields);
+  $('queryFieldList').innerHTML = QUERY_FIELD_DEFS.map(([key,label]) => {
+    const required = QUERY_REQUIRED_FIELDS.has(key);
+    return `<label><input type="checkbox" value="${key}" ${selected.has(key) ? 'checked' : ''} ${required ? 'checked disabled' : ''}><span>${label}${required ? '（固定）' : ''}</span></label>`;
+  }).join('');
+}
+
+function closeQueryFieldPicker() {
+  $('queryFieldsMask').classList.remove('show');
+  $('queryFieldsMask').setAttribute('aria-hidden', 'true');
+}
+
+$('btnQueryFields').onclick = () => {
+  paintQueryFieldPicker();
+  $('queryFieldsMask').classList.add('show');
+  $('queryFieldsMask').setAttribute('aria-hidden', 'false');
+};
+$('btnQueryFieldsCancel').onclick = closeQueryFieldPicker;
+$('queryFieldsMask').onclick = event => {
+  if (event.target === event.currentTarget) closeQueryFieldPicker();
+};
+$('btnQueryFieldsReset').onclick = () => paintQueryFieldPicker(QUERY_DEFAULT_VISIBLE_FIELDS);
+$('btnQueryFieldsSave').onclick = async () => {
+  const fields = [...$('queryFieldList').querySelectorAll('input:checked')].map(item => item.value);
+  QUERY_REQUIRED_FIELDS.forEach(key => { if (!fields.includes(key)) fields.push(key); });
+  setVisibleQueryFields(fields);
+  $('btnQueryFieldsSave').disabled = true;
+  try {
+    if (CLOUD_WEB_MODE) {
+      await cloudFetchJson('/v1/workspace/view-preferences/' + QUERY_VIEW_KEY, {
+        method:'PUT', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({schemaVersion:1, visibleFields:fields, fieldOrder:fields})
+      });
+    } else {
+      localStorage.setItem('xynigo.query.visibleFields', JSON.stringify(fields));
+    }
+    closeQueryFieldPicker();
+    toast('查询结果字段设置已保存');
+  } catch (error) { toast(error.message); }
+  finally { $('btnQueryFieldsSave').disabled = false; }
+};
+
 $('btnExport').onclick = async () => {
   const button = $('btnExport');
   if (button.disabled) return;
@@ -7426,13 +7648,19 @@ $('btnExport').onclick = async () => {
   button.disabled = true;
   button.textContent = '正在生成 Excel…';
   try {
-    const filename = await downloadWorkspaceResource(
-      '/api/export?format=xlsx', '物流单号查询结果.xlsx');
+    const filename = CLOUD_WEB_MODE
+      ? await downloadCloudResource(
+          '/v1/operation-runs/logistics-query/' + encodeURIComponent(cloudLogisticsRunId)
+            + '/export',
+          '物流单号查询结果.xlsx')
+      : await downloadWorkspaceResource(
+          '/api/export?format=xlsx', '物流单号查询结果.xlsx');
     toast(`已生成 ${filename}，请查看浏览器下载记录`);
   } catch (error) {
     toast(error.message);
   } finally {
     button.disabled = false;
+    if (isRunning) button.disabled = true;
     button.textContent = originalLabel;
   }
 };
@@ -7453,6 +7681,7 @@ $('btnRetryFail').onclick = async () => {
         body:JSON.stringify({
           idempotencyKey, executorId:executor.id, queryMode:'failed_retry',
           site:payload.site, environmentSerials:retrySerials,
+          parentRunId:cloudLogisticsRunId,
         })
       });
       clearWorkspaceMutationKey('query-failed-retry', idempotencyKey);

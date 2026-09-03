@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import secrets
 import hashlib
 import json
@@ -40,6 +42,7 @@ from .operation_contract import (
     EnvironmentRunProgressItem,
     ExecutorWorkspaceSnapshotResult,
     LogisticsRunProgressItem,
+    LogisticsScreenshotProgressItem,
     WorkspaceEnvironmentPreferences,
     WorkspaceRuntimeConfig,
 )
@@ -1528,14 +1531,37 @@ class ExecutorChannelService:
         snapshot: dict[str, Any],
         now: datetime,
     ) -> None:
-        if set(snapshot) != {"rows"} or not isinstance(snapshot.get("rows"), list):
+        for stale in self.session.scalars(
+            select(LogisticsQueryResult).where(
+                LogisticsQueryResult.tenant_id == run.tenant_id,
+                LogisticsQueryResult.screenshot_expires_at <= now,
+                LogisticsQueryResult.screenshot_content.is_not(None),
+            ).limit(100)
+        ):
+            stale.screenshot_content = None
+            stale.screenshot_content_type = None
+            stale.screenshot_sha256 = None
+            stale.screenshot_size = None
+        if not set(snapshot).issubset({"rows", "screenshots"}) \
+                or "rows" not in snapshot \
+                or not isinstance(snapshot.get("rows"), list) \
+                or not isinstance(snapshot.get("screenshots", []), list):
             raise ExecutorServiceError("executor_progress_snapshot_invalid", status_code=422)
         try:
             rows = [LogisticsRunProgressItem.model_validate(item) for item in snapshot["rows"]]
+            screenshots = [
+                LogisticsScreenshotProgressItem.model_validate(item)
+                for item in snapshot.get("screenshots", [])
+            ]
         except ValidationError as exc:
             raise ExecutorServiceError("executor_progress_snapshot_invalid", status_code=422) from exc
         serials = [row.environmentSerial for row in rows]
-        if len(serials) != len(set(serials)) or len(rows) > run.total_count:
+        screenshot_serials = [item.environmentSerial for item in screenshots]
+        if (
+            len(serials) != len(set(serials)) or len(rows) > run.total_count
+            or len(screenshot_serials) != len(set(screenshot_serials))
+            or not set(screenshot_serials).issubset(set(serials))
+        ):
             raise ExecutorServiceError("executor_progress_snapshot_invalid", status_code=422)
         existing = {
             row.environment_serial: row
@@ -1562,6 +1588,7 @@ class ExecutorChannelService:
                     updated_at=now,
                 )
                 self.session.add(row)
+                existing[item.environmentSerial] = row
             row.environment_name = item.environmentName or None
             row.status = item.status
             row.current_step = item.currentStep or None
@@ -1584,6 +1611,32 @@ class ExecutorChannelService:
             row.queried_at = item.queriedAt
             row.error_summary = item.errorSummary or None
             row.screenshot_status = item.screenshotStatus or None
+            row.updated_at = now
+        for item in screenshots:
+            try:
+                content = base64.b64decode(item.contentBase64, validate=True)
+            except (ValueError, binascii.Error) as exc:
+                raise ExecutorServiceError(
+                    "executor_progress_snapshot_invalid", status_code=422
+                ) from exc
+            if len(content) != item.size \
+                    or hashlib.sha256(content).hexdigest() != item.sha256 \
+                    or not content.startswith(b"\xff\xd8") \
+                    or not content.endswith(b"\xff\xd9"):
+                raise ExecutorServiceError(
+                    "executor_progress_snapshot_invalid", status_code=422
+                )
+            row = existing.get(item.environmentSerial)
+            if row is None:
+                raise ExecutorServiceError(
+                    "executor_progress_snapshot_invalid", status_code=422
+                )
+            row.screenshot_content = content
+            row.screenshot_content_type = item.contentType
+            row.screenshot_sha256 = item.sha256
+            row.screenshot_size = item.size
+            row.screenshot_expires_at = now + timedelta(hours=24)
+            row.screenshot_status = "ok"
             row.updated_at = now
 
     @staticmethod

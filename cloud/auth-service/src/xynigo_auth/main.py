@@ -100,6 +100,7 @@ from .local_executor_release import (
     latest_local_executor_release,
     resolve_local_executor_release_asset,
 )
+from .logistics_export import build_logistics_workbook
 from .models import (
     EnvironmentWorkspacePreference,
     LocalExecutor,
@@ -112,6 +113,7 @@ from .models import (
     Tenant,
     User,
     UserRole,
+    WorkspaceViewPreference,
 )
 from .operation_contract import (
     EnvironmentCreationRunBody,
@@ -121,6 +123,7 @@ from .operation_contract import (
     EnvironmentWorkspacePreferenceBody,
     LogisticsQueryRunBody,
     LogisticsQueryRunCreateBody,
+    WorkspaceViewPreferenceBody,
 )
 from .operation_service import OperationResultService, OperationRunService
 from .procurement_import_contract import (
@@ -1945,6 +1948,96 @@ def create_app(
             },
         }
 
+    def normalized_view_key(view_key: str) -> str:
+        normalized = str(view_key or "").strip().lower()
+        if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{1,63}", normalized):
+            raise HTTPException(
+                status_code=422, detail={"code": "workspace_view_key_invalid"}
+            )
+        return normalized
+
+    @app.get("/v1/workspace/view-preferences/{view_key}")
+    def get_workspace_view_preference(
+        view_key: str,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="fulfillment.order.read",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="workspace.view_preference.read",
+        )
+        key = normalized_view_key(view_key)
+        record = session.get(
+            WorkspaceViewPreference, (actor.tenant.id, actor.user.id, key)
+        )
+        return {
+            "viewKey": key,
+            "schemaVersion": record.schema_version if record else 1,
+            "settings": dict(record.settings or {}) if record else None,
+        }
+
+    @app.put("/v1/workspace/view-preferences/{view_key}")
+    def put_workspace_view_preference(
+        view_key: str,
+        body: WorkspaceViewPreferenceBody,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "workspace.view_preference.write"
+        actor = authorize_request(
+            request,
+            session,
+            permission="fulfillment.order.read",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        key = normalized_view_key(view_key)
+        identity = (actor.tenant.id, actor.user.id, key)
+        record = session.get(WorkspaceViewPreference, identity)
+        if record is None:
+            record = WorkspaceViewPreference(
+                tenant_id=actor.tenant.id,
+                user_id=actor.user.id,
+                view_key=key,
+                schema_version=body.schemaVersion,
+                settings={},
+            )
+            session.add(record)
+        record.schema_version = body.schemaVersion
+        record.settings = {
+            "visibleFields": list(body.visibleFields),
+            "fieldOrder": list(body.fieldOrder or body.visibleFields),
+        }
+        record.updated_at = utcnow()
+        _add_audit(
+            session,
+            request_id=request.state.request_id,
+            action=action,
+            result="success",
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            business_object_type="workspace_view_preference",
+            business_object_id=key,
+            change_summary={"visibleFieldCount": len(body.visibleFields)},
+            details={"viewKey": key},
+            **_request_log_context(request),
+        )
+        session.commit()
+        return {
+            "viewKey": key,
+            "schemaVersion": record.schema_version,
+            "settings": dict(record.settings),
+        }
+
     @app.get("/v1/environment-plans/latest")
     def latest_environment_plan(
         request: Request,
@@ -3429,6 +3522,103 @@ def create_app(
                 request, session, actor, action, exc, business_object_id=str(run_id)
             )
         return {"ok": True, "data": service.logistics_snapshot(run)}
+
+    @app.get(
+        "/v1/operation-runs/logistics-query/{run_id}/screenshots/{environment_serial}"
+    )
+    def get_logistics_operation_screenshot(
+        run_id: uuid.UUID,
+        environment_serial: str,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> Response:
+        actor = authorize_request(
+            request,
+            session,
+            permission="fulfillment.order.read",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="fulfillment.logistics.screenshot.read",
+        )
+        serial = str(environment_serial or "").strip()
+        if not serial or len(serial) > 64:
+            raise HTTPException(status_code=422, detail={"code": "environment_serial_invalid"})
+        service = OperationRunService(session)
+        run = service.get_logistics_run(tenant_id=actor.tenant.id, run_id=run_id)
+        row = service.logistics_screenshot_row(
+            run=run, environment_serial=serial
+        )
+        expires_at = row.screenshot_expires_at if row is not None else None
+        if expires_at is not None and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        if row is None or not row.screenshot_content \
+                or (expires_at is not None and expires_at <= utcnow()):
+            raise HTTPException(
+                status_code=404, detail={"code": "logistics_screenshot_expired"}
+            )
+        content = bytes(row.screenshot_content)
+        content_type = row.screenshot_content_type or "image/jpeg"
+        session.commit()
+        return Response(
+            content=content,
+            media_type=content_type,
+            headers={
+                "Cache-Control": "private, no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    @app.get("/v1/operation-runs/logistics-query/{run_id}/export")
+    def export_logistics_operation_run(
+        run_id: uuid.UUID,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> Response:
+        actor = authorize_request(
+            request,
+            session,
+            permission="fulfillment.order.read",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="fulfillment.logistics.export",
+        )
+        service = OperationRunService(session)
+        run = service.get_logistics_run(tenant_id=actor.tenant.id, run_id=run_id)
+        if run.status not in service.TERMINAL_STATUSES:
+            raise HTTPException(
+                status_code=409, detail={"code": "operation_run_active"}
+            )
+        snapshot = service.logistics_snapshot(run)
+
+        def screenshot_reader(serial: str) -> bytes | None:
+            row = service.logistics_screenshot_row(
+                run=run, environment_serial=serial
+            )
+            if row is None or not row.screenshot_content:
+                return None
+            expires_at = row.screenshot_expires_at
+            if expires_at is not None and expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=UTC)
+            if expires_at is not None and expires_at <= utcnow():
+                return None
+            return bytes(row.screenshot_content)
+
+        content = build_logistics_workbook(snapshot["rows"], screenshot_reader)
+        session.commit()
+        filename = quote("物流单号查询结果.xlsx")
+        return Response(
+            content=content,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Cache-Control": "private, no-store",
+                "Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
 
     @app.post("/v1/operation-runs/logistics-query/{run_id}/cancel")
     def cancel_logistics_operation_run(

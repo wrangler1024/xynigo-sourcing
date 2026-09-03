@@ -7,11 +7,13 @@ cookies, proxy links and HubStudio credentials remain inside the local process.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 
 from .redaction import scrub_text
 
@@ -247,6 +249,7 @@ class LocalOperationExecutor(object):
             start_body = {
                 'serials': serials,
                 'site': site,
+                'queryMode': 'initial',
                 'operationRunKey': run_key,
             }
         elif query_mode == 'single_retry' and len(serials) == 1:
@@ -254,11 +257,19 @@ class LocalOperationExecutor(object):
             start_body = {
                 'serial': serials[0],
                 'force': bool(payload.get('force')),
+                'site': site,
                 'operationRunKey': run_key,
             }
         elif query_mode == 'failed_retry':
-            start_path = '/api/requery-failed'
-            start_body = {'operationRunKey': run_key}
+            # Formal cloud retries carry their exact serial list.  Start a
+            # fresh local batch so retries remain valid after an app restart.
+            start_path = '/api/query'
+            start_body = {
+                'serials': serials,
+                'site': site,
+                'queryMode': 'failed_retry',
+                'operationRunKey': run_key,
+            }
         else:
             raise OperationExecutionError(
                 'operation_payload_invalid', '物流查询模式或环境数量无效')
@@ -266,6 +277,7 @@ class LocalOperationExecutor(object):
         total = len(serials)
         stop_sent = False
         previous = None
+        reported_screenshots = set()
         snapshot = {'running': True, 'rows': []}
         rows = []
         while True:
@@ -294,6 +306,21 @@ class LocalOperationExecutor(object):
             if serialized != previous:
                 self._safe_report(report, **event)
                 previous = serialized
+            for row in rows:
+                serial = str(row.get('environmentSerial') or '')
+                if (not serial or serial in reported_screenshots
+                        or row.get('screenshotStatus') != 'ok'):
+                    continue
+                attachment = self._logistics_screenshot_attachment(serial)
+                if attachment is None:
+                    continue
+                attachment_event = dict(event)
+                attachment_event['snapshot'] = {
+                    'rows': rows,
+                    'screenshots': [attachment],
+                }
+                if self._safe_report(report, **attachment_event):
+                    reported_screenshots.add(serial)
             if not bool(snapshot.get('running')):
                 break
             self.sleep(self.poll_interval)
@@ -325,14 +352,40 @@ class LocalOperationExecutor(object):
                 message[:300])
         return response
 
+    def _logistics_screenshot_attachment(self, serial):
+        result = self.rpc_executor({
+            'method': 'GET',
+            'path': '/api/screenshot?serial=' + quote(str(serial), safe=''),
+            'body': None,
+        })
+        if not isinstance(result, dict) or int(result.get('httpStatus') or 0) != 200:
+            return None
+        if result.get('responseType') != 'base64':
+            return None
+        encoded = str(result.get('bodyBase64') or '')
+        try:
+            content = base64.b64decode(encoded, validate=True)
+        except Exception:
+            return None
+        if not content or len(content) > 350 * 1024:
+            return None
+        return {
+            'environmentSerial': str(serial)[:64],
+            'contentType': 'image/jpeg',
+            'contentBase64': encoded,
+            'sha256': hashlib.sha256(content).hexdigest(),
+            'size': len(content),
+        }
+
     @staticmethod
     def _safe_report(report, **event):
         try:
             report(**event)
+            return True
         except Exception:
             # A transient progress upload failure must not abandon a local
             # HubStudio write midway. Lease renewal/final finish still retry.
-            pass
+            return False
 
     @staticmethod
     def _required_text(payload, key):
@@ -530,6 +583,8 @@ class LocalOperationExecutor(object):
                 'errorSummary': scrub_text(source.get('error') or '')[:300],
                 'screenshotStatus': str(
                     source.get('screenshotState') or '')[:32],
+                'screenshotSizeKb': max(
+                    0, min(1024, int(source.get('screenshotSizeKb') or 0))),
             })
         return result
 

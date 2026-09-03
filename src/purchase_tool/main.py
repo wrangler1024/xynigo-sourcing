@@ -4066,6 +4066,9 @@ class Handler(BaseHTTPRequestHandler):
                 if not serials:
                     return self._json({'error': '未提供环境序号'}, 400)
                 selected_serials = [str(serial) for serial in serials]
+                query_mode = str(body.get('queryMode') or 'initial')
+                if query_mode not in ('initial', 'failed_retry'):
+                    return self._json({'error': '查询模式无效'}, 400)
                 STATE.orch.preflight_batch(
                     selected_serials, env_index, site=site)
                 selected_envs = [env_index[str(serial)] for serial in selected_serials
@@ -4077,7 +4080,7 @@ class Handler(BaseHTTPRequestHandler):
                 def finish_query():
                     try:
                         payload = STATE.logistics_result_payload(
-                            operation_run_key, 'initial', selected_serials)
+                            operation_run_key, query_mode, selected_serials)
                         STATE.enqueue_operation_result(
                             '/v1/operations/logistics-query-runs',
                             'fulfillment.order.read', payload)
@@ -4124,7 +4127,9 @@ class Handler(BaseHTTPRequestHandler):
                     STATE.orch.requery(
                         serial, env_index=env_index,
                         force=bool(body.get('force')),
-                        on_finished=finish_requery)
+                        on_finished=finish_requery,
+                        site=body.get('site'),
+                        allow_missing=bool(body.get('operationRunKey')))
                 except Exception:
                     STATE.tasks.finish(task_id)
                     raise

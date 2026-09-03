@@ -170,6 +170,39 @@ class OperationRunService:
                     409,
                 )
             return existing, True
+        parent: LogisticsQueryRun | None = None
+        if body.parentRunId is not None:
+            parent = self.session.scalar(
+                select(LogisticsQueryRun).where(
+                    LogisticsQueryRun.id == body.parentRunId,
+                    LogisticsQueryRun.tenant_id == tenant_id,
+                    LogisticsQueryRun.actor_user_id == actor_user_id,
+                )
+            )
+            if parent is None:
+                raise PurchaseServiceError(
+                    "operation_parent_run_not_found", "原物流查询批次不存在", 404
+                )
+            if parent.executor_id != body.executorId or parent.site != body.site:
+                raise PurchaseServiceError(
+                    "operation_retry_context_changed",
+                    "执行设备或查询站点已变化，请重新发起整批查询",
+                    409,
+                )
+            if parent.status not in self.TERMINAL_STATUSES:
+                raise PurchaseServiceError(
+                    "operation_parent_run_active", "原物流查询仍在执行", 409
+                )
+            effective_serials = {
+                row["environmentSerial"]
+                for row in self._effective_logistics_rows(parent)
+            }
+            if not set(body.environmentSerials).issubset(effective_serials):
+                raise PurchaseServiceError(
+                    "operation_retry_rows_changed",
+                    "待重查环境已变化，请刷新后重试",
+                    409,
+                )
         now = utcnow()
         run = LogisticsQueryRun(
             id=uuid.uuid4(),
@@ -190,6 +223,7 @@ class OperationRunService:
             request_summary={
                 "environmentSerials": list(body.environmentSerials),
                 "force": body.force,
+                "parentRunId": str(parent.id) if parent is not None else None,
             },
             source="cloud_web",
             created_at=now,
@@ -616,13 +650,7 @@ class OperationRunService:
     def logistics_snapshot(
         self, run: LogisticsQueryRun, *, unchanged: bool = False
     ) -> dict[str, object]:
-        rows = list(
-            self.session.scalars(
-                select(LogisticsQueryResult)
-                .where(LogisticsQueryResult.run_id == run.id)
-                .order_by(LogisticsQueryResult.created_at, LogisticsQueryResult.id)
-            )
-        )
+        rows = self._effective_logistics_rows(run)
         task_result_code = (
             self.session.scalar(
                 select(ExecutorTask.result_code).where(
@@ -634,6 +662,7 @@ class OperationRunService:
         return {
             "runId": str(run.id),
             "runKey": run.source_run_key,
+            "parentRunId": (run.request_summary or {}).get("parentRunId"),
             "executorId": str(run.executor_id) if run.executor_id else None,
             "executorTaskId": str(run.executor_task_id) if run.executor_task_id else None,
             "queryMode": run.query_mode,
@@ -655,8 +684,65 @@ class OperationRunService:
             "terminal": run.status in self.TERMINAL_STATUSES,
             "resultCode": task_result_code,
             "unchanged": unchanged,
-            "rows": [
-                {
+            "displayTotalCount": len(rows),
+            "rows": rows,
+        }
+
+    def _logistics_lineage(self, run: LogisticsQueryRun) -> list[LogisticsQueryRun]:
+        lineage = [run]
+        visited = {run.id}
+        current = run
+        for _ in range(20):
+            raw_parent = (current.request_summary or {}).get("parentRunId")
+            if not raw_parent:
+                break
+            try:
+                parent_id = uuid.UUID(str(raw_parent))
+            except (TypeError, ValueError):
+                break
+            parent = self.session.scalar(
+                select(LogisticsQueryRun).where(
+                    LogisticsQueryRun.id == parent_id,
+                    LogisticsQueryRun.tenant_id == run.tenant_id,
+                    LogisticsQueryRun.actor_user_id == run.actor_user_id,
+                )
+            )
+            if parent is None or parent.id in visited:
+                break
+            lineage.append(parent)
+            visited.add(parent.id)
+            current = parent
+        lineage.reverse()
+        return lineage
+
+    def _effective_logistics_rows(self, run: LogisticsQueryRun) -> list[dict[str, Any]]:
+        lineage = self._logistics_lineage(run)
+        order: list[str] = []
+        by_serial: dict[str, dict[str, Any]] = {}
+        for ancestor in lineage:
+            requested = list((ancestor.request_summary or {}).get("environmentSerials") or [])
+            for serial in requested:
+                serial = str(serial)
+                if serial not in order:
+                    order.append(serial)
+            stored = list(
+                self.session.scalars(
+                    select(LogisticsQueryResult).where(
+                        LogisticsQueryResult.run_id == ancestor.id
+                    )
+                )
+            )
+            for row in stored:
+                expires_at = row.screenshot_expires_at
+                if expires_at is not None and expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+                screenshot_available = bool(
+                    row.screenshot_content
+                    and (expires_at is None or expires_at > utcnow())
+                )
+                if row.environment_serial not in order:
+                    order.append(row.environment_serial)
+                by_serial[row.environment_serial] = {
                     "environmentSerial": row.environment_serial,
                     "environmentName": row.environment_name,
                     "status": row.status,
@@ -680,11 +766,28 @@ class OperationRunService:
                     "queriedAt": _iso(row.queried_at),
                     "errorSummary": row.error_summary,
                     "screenshotStatus": row.screenshot_status,
+                    "screenshotAvailable": screenshot_available,
+                    "screenshotSizeKb": (
+                        int(round((row.screenshot_size or 0) / 1024))
+                        if screenshot_available else 0
+                    ),
                     "updatedAt": _iso(row.updated_at),
                 }
-                for row in rows
-            ],
-        }
+        return [by_serial[serial] for serial in order if serial in by_serial]
+
+    def logistics_screenshot_row(
+        self, *, run: LogisticsQueryRun, environment_serial: str
+    ) -> LogisticsQueryResult | None:
+        for ancestor in reversed(self._logistics_lineage(run)):
+            row = self.session.scalar(
+                select(LogisticsQueryResult).where(
+                    LogisticsQueryResult.run_id == ancestor.id,
+                    LogisticsQueryResult.environment_serial == environment_serial,
+                )
+            )
+            if row is not None and row.screenshot_content:
+                return row
+        return None
 
 
 class OperationResultService:

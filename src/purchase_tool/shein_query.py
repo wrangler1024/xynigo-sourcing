@@ -583,7 +583,8 @@ class QueryOrchestrator(object):
                 self._reset_screenshots()
                 self.rows = [self._blank_row(s, site) for s in serials]
 
-    def requery(self, serial, env_index=None, force=False, on_finished=None):
+    def requery(self, serial, env_index=None, force=False, on_finished=None,
+                site=None, allow_missing=False):
         """单行重新查询（复用同一套流程，不新增行）。
 
         force=True：环境浏览器处于打开状态时先关闭再查——用于清理上次
@@ -596,11 +597,16 @@ class QueryOrchestrator(object):
             row = next((r for r in self.rows if r['serial'] == serial),
                        None)
         if row is None:
-            raise ValueError('该序号不在当前结果中，请重新发起批量查询')
+            if not allow_missing:
+                raise ValueError('该序号不在当前结果中，请重新发起批量查询')
+            site = normalize_site(site or self.site)
+            self._prepare_run([serial], site, fresh=True)
+        else:
+            site = row.get('site') or self.site
         if force:
             self._force_stops.add(serial)
-        site = row.get('site') or self.site
-        self._prepare_run([serial], site, fresh=False)
+        if row is not None:
+            self._prepare_run([serial], site, fresh=False)
         threading.Thread(
             target=self._run,
             args=([serial], env_index or {}, False, site, on_finished, True),

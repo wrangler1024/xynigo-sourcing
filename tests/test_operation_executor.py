@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import base64
 import threading
 
 from purchase_tool.operation_executor import LocalOperationExecutor
@@ -357,6 +358,47 @@ def test_logistics_system_failure_preserves_reason_code_and_fails_run():
     assert code == 'hubstudio_browser_core_missing'
     assert summary['runStatus'] == 'failed'
     assert summary['errorSummary'] == 'HubStudio 浏览器内核不存在'
+
+
+def test_logistics_task_uploads_each_available_screenshot_with_progress():
+    jpeg = b'\xff\xd8synthetic\xff\xd9'
+
+    class ScreenshotRpc(FakeRpc):
+        def __call__(self, payload):
+            self.calls.append(payload)
+            if payload['method'] == 'GET' and payload['path'].startswith('/api/screenshot'):
+                return {
+                    'httpStatus': 200,
+                    'responseType': 'base64',
+                    'contentType': 'image/jpeg',
+                    'bodyBase64': base64.b64encode(jpeg).decode('ascii'),
+                }
+            if payload['method'] == 'GET' and payload['path'] == self.progress_path:
+                return response(self.snapshots.pop(0))
+            return response({'started': True})
+
+    rpc = ScreenshotRpc('/api/progress', [{
+        'running': False,
+        'rows': [{
+            'serial': '101', 'envName': 'XG-MX-001', 'state': 'ok',
+            'orderNo': 'order-001', 'status': 'Enviado', 'statusCn': '已发货',
+            'screenshotState': 'ok', 'screenshotSizeKb': 1,
+        }],
+    }])
+    events = []
+    outcome, _code, _summary = LocalOperationExecutor(
+        rpc, poll_interval=0.05, sleep_fn=lambda _seconds: None
+    ).execute(
+        'logistics.query.v1', {
+            'runKey': 'logistics-screenshot-0001', 'queryMode': 'initial',
+            'site': 'MX', 'environmentSerials': ['101'],
+        },
+        lambda **event: events.append(event),
+    )
+    assert outcome == 'succeeded'
+    assert events[-1]['snapshot']['screenshots'][0]['environmentSerial'] == '101'
+    assert events[-1]['snapshot']['screenshots'][0]['size'] == len(jpeg)
+    assert events[-1]['snapshot']['rows'][0]['screenshotSizeKb'] == 1
 
 
 def test_environment_single_retry_filters_parent_rows_into_child_run():

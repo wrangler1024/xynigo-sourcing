@@ -11,6 +11,8 @@ build/
 dist/
 .cache/
 .codex_tmp/
+.zcode/
+node_modules/
 
 # Local runtime state and sensitive operational outputs
 config.json

@@ -1244,6 +1244,13 @@ class LogisticsQueryResult(Base):
     queried_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_summary: Mapped[str | None] = mapped_column(String(300))
     screenshot_status: Mapped[str | None] = mapped_column(String(32))
+    screenshot_content: Mapped[bytes | None] = mapped_column(LargeBinary)
+    screenshot_content_type: Mapped[str | None] = mapped_column(String(64))
+    screenshot_sha256: Mapped[str | None] = mapped_column(String(64))
+    screenshot_size: Mapped[int | None] = mapped_column(Integer)
+    screenshot_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     feishu_sync_status: Mapped[str] = mapped_column(
         String(32), nullable=False, default="pending"
     )
@@ -1460,6 +1467,34 @@ class EnvironmentWorkspacePreference(Base):
         CheckConstraint(
             "purchase_site IN ('US', 'MX')",
             name="ck_environment_workspace_preference_site",
+        ),
+    )
+
+
+class WorkspaceViewPreference(Base):
+    """Reusable per-user presentation preferences for one workspace view."""
+
+    __tablename__ = "workspace_view_preferences"
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    view_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    settings: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "schema_version >= 1", name="ck_workspace_view_preference_schema"
         ),
     )
 

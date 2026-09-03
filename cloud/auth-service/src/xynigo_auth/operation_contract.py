@@ -342,6 +342,7 @@ class LogisticsQueryRunCreateBody(BaseModel):
     idempotencyKey: str = Field(min_length=8, max_length=128, pattern=SAFE_KEY_RE)
     executorId: uuid.UUID
     queryMode: Literal["initial", "single_retry", "failed_retry"] = "initial"
+    parentRunId: uuid.UUID | None = None
     force: bool = False
     site: Literal["US", "MX"]
     environmentSerials: list[str] = Field(min_length=1, max_length=2000)
@@ -362,6 +363,40 @@ class LogisticsQueryRunCreateBody(BaseModel):
             raise ValueError("single_retry requires exactly one environment")
         if self.queryMode != "single_retry" and self.force:
             raise ValueError("force is only supported for single_retry")
+        if self.queryMode == "initial" and self.parentRunId is not None:
+            raise ValueError("initial query cannot have a parent run")
+        if self.queryMode != "initial" and self.parentRunId is None:
+            raise ValueError("retry query requires a parent run")
+        return self
+
+
+class WorkspaceViewPreferenceBody(BaseModel):
+    """Generic table/view presentation settings, scoped to one signed-in user."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schemaVersion: int = Field(default=1, ge=1, le=20)
+    visibleFields: list[str] = Field(min_length=1, max_length=64)
+    fieldOrder: list[str] = Field(default_factory=list, max_length=64)
+
+    @field_validator("visibleFields", "fieldOrder")
+    @classmethod
+    def validate_field_keys(cls, value: list[str]) -> list[str]:
+        normalized = [_single_line(item) for item in value]
+        if any(
+            not item or len(item) > 64
+            or not all(character.isalnum() or character in "._-" for character in item)
+            for item in normalized
+        ):
+            raise ValueError("view field key is invalid")
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("view field keys must be unique")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_field_order(self) -> "WorkspaceViewPreferenceBody":
+        if self.fieldOrder and set(self.fieldOrder) != set(self.visibleFields):
+            raise ValueError("fieldOrder must contain the visible fields")
         return self
 
 
@@ -640,6 +675,7 @@ class LogisticsRunProgressItem(BaseModel):
     queriedAt: datetime | None = None
     errorSummary: str = Field(default="", max_length=300)
     screenshotStatus: str = Field(default="", max_length=32)
+    screenshotSizeKb: int = Field(default=0, ge=0, le=1024)
 
     @field_validator(
         "environmentSerial",
@@ -676,6 +712,18 @@ class LogisticsRunProgressItem(BaseModel):
     @classmethod
     def validate_progress_query_timezone(cls, value: datetime | None) -> datetime | None:
         return _timezone_required(value)
+
+
+class LogisticsScreenshotProgressItem(BaseModel):
+    """Short-lived screenshot attachment uploaded with logistics progress."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    environmentSerial: str = Field(min_length=1, max_length=64)
+    contentType: Literal["image/jpeg"] = "image/jpeg"
+    contentBase64: str = Field(min_length=4, max_length=460_000)
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    size: int = Field(ge=1, le=350 * 1024)
 
 
 class LogisticsQueryRunBody(BaseModel):
