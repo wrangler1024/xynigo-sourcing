@@ -221,6 +221,23 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         self.assertNotIn("find(compatible)", selector)
         self.assertIn("openRuntimeDrawer();", selector)
 
+    def test_runtime_device_cards_always_show_executor_and_hub_status(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        renderer = html[
+            html.index("function runtimeDeviceStatusPresentation(item)"):
+            html.index("function openRuntimeDrawer()")
+        ]
+        for marker in (
+            "执行器在线 · ${hubText}",
+            "执行器离线 · HubStudio 状态不可用",
+            "HubStudio 已启动（API 未就绪）",
+            "HubStudio 未启动",
+            "HubStudio 状态未上报",
+        ):
+            self.assertIn(marker, renderer)
+        self.assertIn("const status = runtimeDeviceStatusPresentation(item)", renderer)
+        self.assertNotIn("const hub = !onlineState ? ''", renderer)
+
     def test_cloud_logistics_start_failure_is_not_rendered_as_waiting(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")
         snapshot = html[
