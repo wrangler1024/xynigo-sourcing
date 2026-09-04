@@ -291,6 +291,14 @@ def test_real_operation_results_are_idempotent_durable_and_feishu_queued(
     )
     assert logistics.status_code == 200
     assert logistics.json()["data"]["status"] == "partial_failure"
+    history = client.get(
+        "/v1/operation-runs/logistics-query/history",
+        headers=headers,
+    )
+    assert history.status_code == 200
+    history_item = history.json()["data"]["items"][0]
+    assert history_item["executorDisplayName"] == "旧版本地任务（未记录设备）"
+    assert history_item["executorAttribution"] == "legacy_unattributed"
 
     with database.session_factory() as session:
         assert session.scalar(select(func.count()).select_from(EnvironmentCreationRun)) == 1

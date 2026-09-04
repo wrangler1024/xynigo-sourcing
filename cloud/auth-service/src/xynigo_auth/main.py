@@ -3612,6 +3612,9 @@ def create_app(
         request: Request,
         body: LogisticsQueryRunBody,
         session: SessionDep,
+        executor_credential: Annotated[
+            str | None, Header(alias="X-Xynigo-Executor-Credential")
+        ] = None,
         session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
         authorization: Annotated[str | None, Header()] = None,
     ) -> dict[str, object]:
@@ -3624,12 +3627,27 @@ def create_app(
             authorization=authorization,
             audit_action=action,
         )
+        verified_executor = None
+        if executor_credential:
+            verified_executor = executor_channel(session).authenticate(
+                executor_credential
+            )
+            if (
+                verified_executor.tenant_id != actor.tenant.id
+                or verified_executor.owner_user_id != actor.user.id
+            ):
+                raise ExecutorServiceError(
+                    "executor_identity_mismatch", status_code=403
+                )
         try:
             result = OperationResultService(session).ingest_logistics_run(
                 tenant_id=actor.tenant.id,
                 actor_user_id=actor.user.id,
                 client_version=getattr(request.state, "client_version", None) or None,
                 body=body,
+                executor_id=(
+                    verified_executor.id if verified_executor is not None else None
+                ),
             )
         except PurchaseServiceError as exc:
             purchase_error(
@@ -3660,6 +3678,7 @@ def create_app(
                 "totalCount": result["totalCount"],
                 "successCount": result["successCount"],
                 "failedCount": result["failedCount"],
+                "executorAttributed": verified_executor is not None,
             },
             **_request_log_context(request),
         )

@@ -1039,7 +1039,8 @@ class AppState(object):
     """进程级共享状态：配置 + HubStudio 连接 + 编排器。"""
 
     def __init__(self, credential_store=None, auth_service=None,
-                 extension_bridge=None, hub_api_key_store=None):
+                 extension_bridge=None, hub_api_key_store=None,
+                 executor_credential_store=None):
         self.local_config = local_config_service()
         self.config_lock = self.local_config.lock
         cfg = self.local_config.load()
@@ -1054,11 +1055,11 @@ class AppState(object):
             self.data_source_registry_error = \
                 'data_source_registry_migration_failed'
         self.auth = auth_service or LocalAuthService()
+        self.executor_credential_store = (
+            executor_credential_store or system_executor_credential_store())
         self.operation_sync_error = ''
         self.operation_sync = OperationResultSyncQueue(
-            lambda endpoint, payload, permission:
-                self.auth.operation_result_request(
-                    endpoint, payload, permission))
+            self._send_operation_result)
         self.extension_bridge = extension_bridge or ExtensionBridge()
         self.lark_credentials = credential_store or system_credential_store()
         self.hub_api_key_store = (
@@ -1125,7 +1126,7 @@ class AppState(object):
         )
         self.executor_channel = ExecutorChannelWorker(
             client=CloudExecutorClient(),
-            credential_store=system_executor_credential_store(),
+            credential_store=self.executor_credential_store,
             state_store=ExecutorChannelStateStore(),
             config_getter=lambda: dict(self.cfg),
             public_config_getter=public_executor_config,
@@ -1138,6 +1139,15 @@ class AppState(object):
             # never be reinstalled automatically after logout/switch-user.
             user_session_installer=None,
         )
+
+    def _send_operation_result(self, endpoint, payload, permission):
+        """Attach native device proof without persisting it in the outbox."""
+        executor_credential = None
+        if endpoint == '/v1/operations/logistics-query-runs':
+            executor_credential = self.executor_credential_store.load()
+        return self.auth.operation_result_request(
+            endpoint, payload, permission,
+            executor_credential=executor_credential)
 
     def config_summary_v2(self):
         """Return the strict, non-sensitive device summary sent to cloud."""

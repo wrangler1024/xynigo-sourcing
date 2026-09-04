@@ -144,6 +144,7 @@ ERROR_MESSAGES = {
     'pairing_code_consumed': '配对码已经使用，请在云端重新生成',
     'executor_authentication_required': '本地执行器尚未完成设备配对',
     'executor_credential_invalid': '本地执行器设备凭证无效，请重新配对',
+    'executor_identity_mismatch': '当前登录用户与本地执行器配对用户不一致',
     'executor_revoked': '本地执行器设备已被撤销，请重新配对',
     'executor_lease_invalid': '本地执行器任务租约无效',
     'executor_lease_expired': '本地执行器任务租约已过期',
@@ -185,6 +186,7 @@ class CloudAuthClient(object):
         self.opener = opener
 
     def _request(self, path, method='GET', payload=None, token=None,
+                 executor_credential=None,
                  max_response_bytes=MAX_RESPONSE_BYTES,
                  source='local_executor'):
         data = None
@@ -202,6 +204,9 @@ class CloudAuthClient(object):
             headers['Content-Type'] = 'application/json'
         if token:
             headers['Authorization'] = 'Bearer ' + _validated_token(token)
+        if executor_credential:
+            headers['X-Xynigo-Executor-Credential'] = _validated_token(
+                executor_credential)
         request = Request(
             urljoin(self.base_url + '/', path.lstrip('/')),
             data=data,
@@ -502,7 +507,8 @@ class CloudAuthClient(object):
         )
 
     def operation_result_request(
-            self, path, session_token, method='PUT', payload=None):
+            self, path, session_token, method='PUT', payload=None,
+            executor_credential=None):
         parsed = urlparse(str(path or ''))
         allowed = parsed.path in {
             '/v1/operations/environment-creation-runs',
@@ -520,6 +526,7 @@ class CloudAuthClient(object):
             method='PUT',
             payload=payload,
             token=session_token,
+            executor_credential=executor_credential,
             max_response_bytes=MAX_OPERATION_RESULT_RESPONSE_BYTES,
             source='local_executor',
         )
@@ -1107,7 +1114,8 @@ class LocalAuthService(object):
                     'cloud_response_invalid', '云端买家号接口数据无效', 502)
             return result
 
-    def operation_result_request(self, path, payload, permission):
+    def operation_result_request(
+            self, path, payload, permission, executor_credential=None):
         with self.lock:
             self.require(permission)
             if not self.session_token:
@@ -1118,9 +1126,17 @@ class LocalAuthService(object):
                     self.session_token,
                     method='PUT',
                     payload=payload,
+                    executor_credential=executor_credential,
                 )
             except LocalAuthError as exc:
-                if exc.status == 401:
+                if (
+                    exc.status == 401
+                    and exc.code not in {
+                        'executor_authentication_required',
+                        'executor_credential_invalid',
+                        'executor_revoked',
+                    }
+                ):
                     try:
                         self.store.clear()
                     except Exception:

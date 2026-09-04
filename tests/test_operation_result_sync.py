@@ -3,12 +3,46 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
-from purchase_tool.cloud_auth import LocalAuthError
+from purchase_tool import main as main_module
+from purchase_tool.cloud_auth import (
+    LocalAuthError, MemoryAuthSessionStore,
+)
 from purchase_tool.operation_result_sync import OperationResultSyncQueue
 
 
 class OperationResultSyncQueueTests(unittest.TestCase):
+    def test_app_state_loads_device_proof_only_when_sending_logistics(self):
+        calls = []
+        state = main_module.AppState.__new__(main_module.AppState)
+        state.executor_credential_store = MemoryAuthSessionStore(
+            'device-credential-' + ('x' * 40))
+        state.auth = SimpleNamespace(
+            operation_result_request=lambda *args, **kwargs:
+                calls.append((args, kwargs)) or {'ok': True, 'data': {}})
+        payload = {
+            'runKey': 'query-synthetic-device-proof-0001',
+            'results': [],
+        }
+
+        state._send_operation_result(
+            '/v1/operations/logistics-query-runs',
+            payload,
+            'fulfillment.order.read',
+        )
+
+        self.assertEqual(calls[0][0], (
+            '/v1/operations/logistics-query-runs',
+            payload,
+            'fulfillment.order.read',
+        ))
+        self.assertEqual(
+            calls[0][1]['executor_credential'],
+            'device-credential-' + ('x' * 40),
+        )
+        self.assertNotIn('deviceCredential', payload)
+
     def test_failed_upload_is_persisted_and_retried_idempotently(self):
         now = [1000.0]
         calls = []

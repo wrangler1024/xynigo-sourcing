@@ -27,6 +27,7 @@ from purchase_tool.main import Handler, admin_cloud_write_target
 
 POLL_TOKEN = 'p' * 64
 SESSION_TOKEN = 's' * 64
+DEVICE_CREDENTIAL = 'd' * 64
 IDENTITY = {
     'user': {
         'id': 'user-public-id',
@@ -60,6 +61,7 @@ class FakeCloudClient(object):
         self.purchase_requests = []
         self.procurement_workspace_requests = []
         self.buyer_account_requests = []
+        self.operation_result_requests = []
         self.business_log_requests = []
         self.system_log_requests = []
         self.release_catalog_tokens = []
@@ -117,6 +119,13 @@ class FakeCloudClient(object):
             'ok': True,
             'data': {'page': 1, 'pageSize': 100, 'total': 0, 'rows': []},
         }
+
+    def operation_result_request(
+            self, path, token, method='PUT', payload=None,
+            executor_credential=None):
+        self.operation_result_requests.append(
+            (path, token, method, payload, executor_credential))
+        return {'ok': True, 'data': {'runId': 'synthetic-run'}}
 
     def business_log_request(self, path, token):
         self.business_log_requests.append((path, token))
@@ -388,6 +397,95 @@ class CloudAuthTests(unittest.TestCase):
             ('/v1/resources/buyer-accounts/snapshot',
              SESSION_TOKEN, 'PUT', snapshot),
         ])
+
+    def test_operation_result_upload_attaches_native_device_proof(self):
+        client = FakeCloudClient()
+        service = LocalAuthService(
+            client=client,
+            store=MemoryAuthSessionStore(SESSION_TOKEN),
+        )
+        payload = {
+            'source': 'local_executor',
+            'runKey': 'query-synthetic-device-proof-0001',
+            'results': [],
+        }
+        service.operation_result_request(
+            '/v1/operations/logistics-query-runs',
+            payload,
+            'fulfillment.order.read',
+            executor_credential=DEVICE_CREDENTIAL,
+        )
+        self.assertEqual(client.operation_result_requests, [(
+            '/v1/operations/logistics-query-runs',
+            SESSION_TOKEN,
+            'PUT',
+            payload,
+            DEVICE_CREDENTIAL,
+        )])
+        self.assertNotIn(DEVICE_CREDENTIAL, json.dumps(payload))
+
+    def test_invalid_device_proof_does_not_clear_user_session(self):
+        client = FakeCloudClient()
+
+        def reject_device(*_args, **_kwargs):
+            raise LocalAuthError('executor_credential_invalid', status=401)
+
+        client.operation_result_request = reject_device
+        store = MemoryAuthSessionStore(SESSION_TOKEN)
+        service = LocalAuthService(client=client, store=store)
+        with self.assertRaises(LocalAuthError) as caught:
+            service.operation_result_request(
+                '/v1/operations/logistics-query-runs',
+                {
+                    'source': 'local_executor',
+                    'runKey': 'query-synthetic-device-proof-0003',
+                    'results': [],
+                },
+                'fulfillment.order.read',
+                executor_credential=DEVICE_CREDENTIAL,
+            )
+        self.assertEqual(caught.exception.code, 'executor_credential_invalid')
+        self.assertEqual(store.load(), SESSION_TOKEN)
+        self.assertEqual(service.session_token, SESSION_TOKEN)
+
+    def test_cloud_client_sends_device_proof_in_header_not_json(self):
+        requests = []
+
+        class Response(object):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, _size):
+                return b'{"ok":true,"data":{"runId":"synthetic-run"}}'
+
+        def opener(request, timeout=0):
+            requests.append((request, timeout))
+            return Response()
+
+        client = CloudAuthClient(
+            'https://xynigo.example.test', opener=opener)
+        payload = {
+            'source': 'local_executor',
+            'runKey': 'query-synthetic-device-proof-0002',
+            'results': [],
+        }
+        client.operation_result_request(
+            '/v1/operations/logistics-query-runs',
+            SESSION_TOKEN,
+            payload=payload,
+            executor_credential=DEVICE_CREDENTIAL,
+        )
+        request = requests[0][0]
+        self.assertEqual(
+            request.get_header('Authorization'), 'Bearer ' + SESSION_TOKEN)
+        self.assertEqual(
+            request.get_header('X-xynigo-executor-credential'),
+            DEVICE_CREDENTIAL)
+        self.assertNotIn(
+            DEVICE_CREDENTIAL, request.data.decode('utf-8'))
 
     def test_cloud_buyer_account_client_allows_only_fixed_paths(self):
         client = CloudAuthClient('https://xynigo.example.test')

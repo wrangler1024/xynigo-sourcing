@@ -310,6 +310,80 @@ def test_paired_executor_can_issue_its_owners_local_user_session(tmp_path) -> No
         ).json()["user"]["id"]
 
 
+def test_local_logistics_upload_records_verified_executor_identity(tmp_path) -> None:
+    app, database, _oauth = build_test_app(tmp_path)
+
+    with TestClient(app) as web_client, TestClient(app) as device_client:
+        login(web_client)
+        paired = pair(device_client, create_pairing_code(web_client))
+        executor_id = str(paired["executorId"])
+        credential = str(paired["deviceCredential"])
+        uploaded = web_client.put(
+            "/v1/operations/logistics-query-runs",
+            json={
+                "source": "local_executor",
+                "runKey": "query-device-attribution-0001",
+                "queryMode": "initial",
+                "site": "MX",
+                "startedAt": "2026-09-04T10:00:00+08:00",
+                "completedAt": "2026-09-04T10:01:00+08:00",
+                "results": [{
+                    "environmentSerial": "7273",
+                    "environmentName": "XG-MX-0903-001",
+                    "status": "ok",
+                    "platformOrderNo": "GSH1SYNTHETIC001",
+                    "queriedAt": "2026-09-04T10:01:00+08:00",
+                }],
+            },
+            headers={
+                **CSRF,
+                "X-Xynigo-Executor-Credential": credential,
+                "X-Xynigo-Client-Version": "0.13.22",
+            },
+        )
+        assert uploaded.status_code == 200, uploaded.text
+
+        history = web_client.get(
+            "/v1/operation-runs/logistics-query/history"
+        )
+        assert history.status_code == 200, history.text
+        item = history.json()["data"]["items"][0]
+        assert item["executorDisplayName"] == "采购电脑 A"
+        assert item["executorAttribution"] == "verified"
+
+        with database.session_factory() as session:
+            run = session.scalar(select(LogisticsQueryRun))
+            assert run is not None
+            assert str(run.executor_id) == executor_id
+
+
+def test_local_logistics_upload_rejects_unpaired_device_proof(tmp_path) -> None:
+    app, _database, _oauth = build_test_app(tmp_path)
+
+    with TestClient(app) as web_client:
+        login(web_client)
+        rejected = web_client.put(
+            "/v1/operations/logistics-query-runs",
+            json={
+                "source": "local_executor",
+                "runKey": "query-device-attribution-0002",
+                "queryMode": "initial",
+                "site": "MX",
+                "completedAt": "2026-09-04T10:01:00+08:00",
+                "results": [{
+                    "environmentSerial": "7273",
+                    "status": "ok",
+                }],
+            },
+            headers={
+                **CSRF,
+                "X-Xynigo-Executor-Credential": "x" * 64,
+            },
+        )
+        assert rejected.status_code == 401
+        assert rejected.json()["detail"]["code"] == "executor_credential_invalid"
+
+
 def test_expired_pairing_code_and_device_cookie_are_rejected(tmp_path) -> None:
     app, database, _oauth = build_test_app(tmp_path)
 

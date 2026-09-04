@@ -1144,6 +1144,15 @@ class OperationRunService:
             self.session.get(LocalExecutor, latest.executor_id)
             if latest.executor_id is not None else None
         )
+        if executor is not None:
+            executor_display_name = executor.display_name
+            executor_attribution = "verified"
+        elif root.source == "local_executor" or latest.source == "local_executor":
+            executor_display_name = "旧版本地任务（未记录设备）"
+            executor_attribution = "legacy_unattributed"
+        else:
+            executor_display_name = "原执行器已移除"
+            executor_attribution = "removed"
         actor = self.session.get(User, root.actor_user_id)
         duration_seconds = 0
         for item in self._logistics_lineage(latest):
@@ -1169,7 +1178,8 @@ class OperationRunService:
             "terminal": latest.status in self.TERMINAL_STATUSES,
             "retryCount": retry_count,
             "originalEnvironmentSerials": self._original_logistics_serials(root),
-            "executorDisplayName": executor.display_name if executor else None,
+            "executorDisplayName": executor_display_name,
+            "executorAttribution": executor_attribution,
             "actorUserId": str(root.actor_user_id),
             "actorDisplayName": actor.display_name if actor else "未知用户",
             "actorStatus": actor.status if actor else "unknown",
@@ -1826,6 +1836,7 @@ class OperationResultService:
         actor_user_id: uuid.UUID,
         client_version: str | None,
         body: LogisticsQueryRunBody,
+        executor_id: uuid.UUID | None = None,
     ) -> dict[str, object]:
         digest = _payload_hash(body)
         existing = self.session.scalar(
@@ -1835,6 +1846,23 @@ class OperationResultService:
             )
         )
         if existing is not None:
+            if executor_id is not None:
+                if existing.actor_user_id != actor_user_id:
+                    raise PurchaseServiceError(
+                        "operation_run_executor_conflict",
+                        "物流结果所属用户与执行器配对用户不一致",
+                        409,
+                    )
+                if (
+                    existing.executor_id is not None
+                    and existing.executor_id != executor_id
+                ):
+                    raise PurchaseServiceError(
+                        "operation_run_executor_conflict",
+                        "物流任务已绑定其他执行器",
+                        409,
+                    )
+                existing.executor_id = executor_id
             accepted_hash = existing.result_payload_hash or (
                 existing.payload_hash if existing.source != "cloud_web" else None
             )
@@ -1863,6 +1891,7 @@ class OperationResultService:
             source_run_key=body.runKey,
             payload_hash=digest,
             result_payload_hash=digest,
+            executor_id=executor_id,
             parent_run_id=None,
             root_run_id=new_run_id,
             query_mode=body.queryMode,
