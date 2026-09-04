@@ -14,9 +14,9 @@ from urllib.parse import quote
 
 from . import __version__
 
-RELEASE_VERSION = "0.15.0"
+RELEASE_VERSION = "0.16.0"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-04T09:35:54Z"
+RELEASE_PUBLISHED_AT = "2026-09-04T11:35:37Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,8 +31,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.15.0-7c640bee13f4",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.15.0.exe",
+        "runtimeId": "0.16.0-00524889fb3c",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.16.0.exe",
         "sha256": "3e0ed0497406645d2b8d613ad92cb3247e460738d9bc5173018e6a6e21ee1c4b",
         "size": 15_201_768,
         "installMode": "standard_per_user",
@@ -50,8 +50,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.15.0-7c640bee13f4",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.15.0.pkg",
+        "runtimeId": "0.16.0-00524889fb3c",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.16.0.pkg",
         "sha256": "82c453521449113712d4bf7763ca21aa816693157a9c84b33314237bfe0ba1bc",
         "size": 11_499_298,
         "installMode": "standard_system_application",
@@ -320,12 +320,13 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "HubStudio Local API 使用全局限流、断路退避、端口重发现和安全重试，降低批量任务中断率。",
-            "物流查询识别墨西哥站砍单、支付待验证等真实订单状态，并支持只读连接已打开环境。",
-            "环境干跑预览提供分阶段进度，缓存有效时直接使用云端环境库存。",
-            "管理员可把失败的买家号建环境任务安全接管到另一台在线执行器。",
-            "云端保存完整环境快照和单号哈希，持续做全局查重与环境名续排，不上传备注或凭证。",
-            "多台电脑可并发下载客户端更新，服务端复用已校验安装包摘要。",
+            "物流查询对 HubStudio Local API 超时、资源不足和环境关闭延迟进行分级恢复，避免单次异常终止整批。",
+            "浏览器启动超时会先核对真实环境状态，再进行一次安全恢复，不重复打开同一环境。",
+            "物流查询复用六小时完整环境库存缓存；缺失或过期时自动回退实时全量读取。",
+            "查询页面修复布局漂移，等待关闭与正常进度交替展示，超长错误收纳为摘要和详情。",
+            "物流高级设置完整迁移到桌面客户端，网页只展示所选执行器的只读策略摘要。",
+            "浏览器模式和只读连接已打开环境策略由执行器本机统一管理，旧客户端默认采用安全关闭策略。",
+            "项目内插件名称统一为店小秘提单助手。",
             "Windows 与 macOS 从同一 Git 基线同步构建并发布。",
             "稳定通道强制平台签名门槛；内部未签名包仅允许 test 通道。",
         ],

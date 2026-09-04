@@ -30,7 +30,7 @@
 
   var sampleStatus = {
     schemaVersion: 1,
-    version: '0.15.0',
+    version: '0.16.0',
     localPort: 8765,
     executor: {running:true, paired:true, displayName:'采购电脑 · 上海办公室 03', platform:platform, architecture:platform === 'mac' ? 'arm64' : 'amd64'},
     cloudChannel: {status:'online', lastPollAt:new Date(Date.now() - 18000).toISOString(), phase:'polling'},
@@ -40,7 +40,7 @@
       startedAt:new Date(Date.now() - 84000).toISOString(),
       elapsedSec:84, resourceCount:3
     }]},
-    update: {enabled:true, state:'current', installMode:'standard', currentVersion:'0.15.0', latestVersion:'0.15.0', message:'已是推荐版本'}
+    update: {enabled:true, state:'current', installMode:'standard', currentVersion:'0.16.0', latestVersion:'0.16.0', message:'已是推荐版本'}
   };
   var sampleConfig = {hubPort:6873, concurrency:2, envCreateWorkers:5, verifySampleCount:3, safeParallelTasks:true, queryBrowserMode:'headless', queryAllowOpenEnvironment:false, configRevision:'e5a931'};
   var sampleSources = {

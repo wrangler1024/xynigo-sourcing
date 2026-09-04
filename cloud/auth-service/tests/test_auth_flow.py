@@ -130,7 +130,7 @@ def test_cloud_workspace_shell_and_assets_are_public_but_api_stays_protected(
     with TestClient(app) as client:
         workspace = client.get("/")
         assert workspace.status_code == 200
-        assert "<title>Xynigo Sourcing v0.15.0</title>" in workspace.text
+        assert "<title>Xynigo Sourcing v0.16.0</title>" in workspace.text
         assert 'src="xynigo-logo.png?v=6"' in workspace.text
         assert 'href="/favicon.ico?v=6"' in workspace.text
         assert "const CLOUD_WEB_MODE" in workspace.text
@@ -176,7 +176,7 @@ def test_authenticated_member_can_read_immutable_local_executor_release(
         assert response.headers["x-content-type-options"] == "nosniff"
         payload = response.json()
         assert payload["schemaVersion"] == 1
-        assert payload["version"] == "0.15.0"
+        assert payload["version"] == "0.16.0"
         assert payload["channel"] == "test"
         assert payload["releaseUrl"] == ""
         assert payload["manifestUrl"] == ""
@@ -190,7 +190,7 @@ def test_authenticated_member_can_read_immutable_local_executor_release(
                 f"/v1/local-executor/releases/{platform}/primary/download"
             )
             if platform == "windows-x86_64":
-                assert info["runtimeId"].startswith("0.15.0-")
+                assert info["runtimeId"].startswith("0.16.0-")
             assert "github.com" not in info["downloadUrl"]
             assert "greenFallback" not in info
 
