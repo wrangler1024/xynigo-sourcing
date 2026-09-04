@@ -90,14 +90,56 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
 
+_LOGISTICS_INCOMPLETE_STATUSES = frozenset({"pending", "running"})
+_TERMINAL_OPERATION_STATUSES = frozenset(
+    {"completed", "partial_failure", "failed", "cancelled", "uncertain"}
+)
+_LOGISTICS_TERMINAL_ERROR_SUMMARIES = {
+    "operation_task_failed": "本地执行器查询任务异常结束；该环境未返回完整结果，可重新查询",
+    "lease_expired_after_start": "执行器连接中断且任务租约已过期；该环境结果未完成，可重新查询",
+    "executor_revoked_during_execution": "执行器在查询期间被移除；该环境结果未完成，可重新查询",
+}
+
+
+def _terminal_logistics_row_values(
+    *,
+    run_status: str,
+    row_status: str,
+    current_step: str | None,
+    error_summary: str | None,
+    result_code: str | None,
+) -> tuple[str, str | None, str | None]:
+    """Render an incomplete row as settled once its owning run is terminal."""
+
+    if (
+        run_status not in _TERMINAL_OPERATION_STATUSES
+        or row_status not in _LOGISTICS_INCOMPLETE_STATUSES
+    ):
+        return row_status, current_step, error_summary
+    if run_status == "cancelled":
+        return (
+            "stopped",
+            "stopped",
+            error_summary or "查询任务已停止；该环境未完成查询，可重新查询",
+        )
+    stable_code = str(result_code or "logistics_terminal_incomplete").strip()
+    return (
+        "fail",
+        stable_code[:64] or "logistics_terminal_incomplete",
+        error_summary
+        or _LOGISTICS_TERMINAL_ERROR_SUMMARIES.get(
+            stable_code,
+            "查询批次已结束，但该环境未返回完整结果，可重新查询",
+        ),
+    )
+
+
 class OperationRunService:
     """Cloud-owned lifecycle and read model for local business operations."""
 
     ENVIRONMENT_CACHE_MAX_AGE = timedelta(hours=6)
 
-    TERMINAL_STATUSES = frozenset(
-        {"completed", "partial_failure", "failed", "cancelled", "uncertain"}
-    )
+    TERMINAL_STATUSES = _TERMINAL_OPERATION_STATUSES
 
     def __init__(self, session: Session) -> None:
         self.session = session
@@ -338,9 +380,10 @@ class OperationRunService:
                 raise PurchaseServiceError(
                     "operation_parent_run_active", "原物流查询仍在执行", 409
                 )
+            effective_rows = self._effective_logistics_rows(parent)
             effective_serials = {
                 row["environmentSerial"]
-                for row in self._effective_logistics_rows(parent)
+                for row in effective_rows
             }
             if not set(body.environmentSerials).issubset(effective_serials):
                 raise PurchaseServiceError(
@@ -348,6 +391,20 @@ class OperationRunService:
                     "待重查环境已变化，请刷新后重试",
                     409,
                 )
+            if body.queryMode == "failed_retry":
+                retryable_serials = {
+                    row["environmentSerial"]
+                    for row in effective_rows
+                    if row.get("status") in {
+                        "fail", "inuse", "pending", "running", "stopped"
+                    }
+                }
+                if not set(body.environmentSerials).issubset(retryable_serials):
+                    raise PurchaseServiceError(
+                        "operation_retry_rows_changed",
+                        "待重查环境已变化，请刷新后重试",
+                        409,
+                    )
         now = utcnow()
         run_id = uuid.uuid4()
         root_run_id = (
@@ -1462,6 +1519,82 @@ class OperationRunService:
         if run is None:
             raise PurchaseServiceError("operation_run_not_found", "物流任务不存在", 404)
         return run
+
+    def finalize_logistics_terminal_rows(
+        self,
+        *,
+        run: LogisticsQueryRun,
+        result_code: str | None,
+        now: datetime,
+    ) -> int:
+        """Settle every missing/incomplete row when a logistics run terminates."""
+
+        if run.status not in self.TERMINAL_STATUSES:
+            return 0
+        # Some ingestion paths batch newly constructed rows with autoflush
+        # disabled. Persist that safe write set before deciding which requested
+        # serials are genuinely missing, otherwise a duplicate fallback row can
+        # be created in the same transaction.
+        self.session.flush()
+        requested: list[str] = []
+        for value in (run.request_summary or {}).get("environmentSerials") or []:
+            serial = str(value).strip()
+            if serial and serial not in requested:
+                requested.append(serial)
+        stored = list(self.session.scalars(
+            select(LogisticsQueryResult).where(LogisticsQueryResult.run_id == run.id)
+        ))
+        by_serial = {row.environment_serial: row for row in stored}
+        for row in stored:
+            if row.environment_serial not in requested:
+                requested.append(row.environment_serial)
+
+        normalized = 0
+        for serial in requested:
+            row = by_serial.get(serial)
+            if row is None:
+                row = LogisticsQueryResult(
+                    id=uuid.uuid4(),
+                    run_id=run.id,
+                    tenant_id=run.tenant_id,
+                    environment_serial=serial,
+                    status="pending",
+                    completed_steps=[],
+                    tracking_numbers=[],
+                    package_numbers=[],
+                    cancelled=False,
+                    risk_order=False,
+                    execution_attempted=False,
+                    execution_duration_ms=0,
+                    feishu_sync_status="pending",
+                    created_at=now,
+                    updated_at=now,
+                )
+                self.session.add(row)
+                by_serial[serial] = row
+            next_status, next_step, next_error = _terminal_logistics_row_values(
+                run_status=run.status,
+                row_status=row.status,
+                current_step=row.current_step,
+                error_summary=row.error_summary,
+                result_code=result_code,
+            )
+            if next_status == row.status:
+                continue
+            row.status = next_status
+            row.current_step = next_step
+            row.error_summary = next_error
+            row.updated_at = now
+            normalized += 1
+
+        if normalized:
+            success_count = sum(row.status == "ok" for row in by_serial.values())
+            run.success_count = min(success_count, run.total_count)
+            run.failed_count = max(0, run.total_count - run.success_count)
+            if run.status == "completed":
+                run.status = "partial_failure" if run.success_count else "failed"
+                run.phase = run.status
+        return normalized
 
     def latest_environment_run(
         self, *, tenant_id: uuid.UUID, actor_user_id: uuid.UUID
@@ -2579,12 +2712,30 @@ class OperationRunService:
 
     def _effective_logistics_rows(self, run: LogisticsQueryRun) -> list[dict[str, Any]]:
         lineage = self._logistics_lineage(run)
+        task_ids = [
+            item.executor_task_id
+            for item in lineage
+            if item.executor_task_id is not None
+        ]
+        task_result_codes = {
+            task_id: result_code
+            for task_id, result_code in self.session.execute(
+                select(ExecutorTask.id, ExecutorTask.result_code).where(
+                    ExecutorTask.id.in_(task_ids)
+                )
+            )
+        } if task_ids else {}
         order: list[str] = []
         by_serial: dict[str, dict[str, Any]] = {}
         for ancestor in lineage:
-            requested = list((ancestor.request_summary or {}).get("environmentSerials") or [])
+            requested = [
+                str(value).strip()
+                for value in (
+                    (ancestor.request_summary or {}).get("environmentSerials") or []
+                )
+                if str(value).strip()
+            ]
             for serial in requested:
-                serial = str(serial)
                 if serial not in order:
                     order.append(serial)
             stored = list(
@@ -2604,11 +2755,22 @@ class OperationRunService:
                 )
                 if row.environment_serial not in order:
                     order.append(row.environment_serial)
+                status, current_step, error_summary = (
+                    _terminal_logistics_row_values(
+                        run_status=ancestor.status,
+                        row_status=row.status,
+                        current_step=row.current_step,
+                        error_summary=row.error_summary,
+                        result_code=task_result_codes.get(
+                            ancestor.executor_task_id
+                        ),
+                    )
+                )
                 by_serial[row.environment_serial] = {
                     "environmentSerial": row.environment_serial,
                     "environmentName": row.environment_name,
-                    "status": row.status,
-                    "currentStep": row.current_step,
+                    "status": status,
+                    "currentStep": current_step,
                     "completedSteps": list(row.completed_steps or []),
                     "platformOrderNo": row.platform_order_no,
                     "orderTime": row.order_time_text,
@@ -2632,7 +2794,7 @@ class OperationRunService:
                     "queriedAt": _iso(row.queried_at),
                     "executionAttempted": row.execution_attempted,
                     "executionDurationMs": row.execution_duration_ms,
-                    "errorSummary": row.error_summary,
+                    "errorSummary": error_summary,
                     "screenshotStatus": row.screenshot_status,
                     "screenshotAvailable": screenshot_available,
                     "screenshotSizeKb": (
@@ -2641,6 +2803,60 @@ class OperationRunService:
                     ),
                     "updatedAt": _iso(row.updated_at),
                 }
+            if ancestor.status in self.TERMINAL_STATUSES:
+                stored_serials = {row.environment_serial for row in stored}
+                for serial in requested:
+                    if serial in stored_serials:
+                        continue
+                    status, current_step, error_summary = (
+                        _terminal_logistics_row_values(
+                            run_status=ancestor.status,
+                            row_status="pending",
+                            current_step=None,
+                            error_summary=None,
+                            result_code=task_result_codes.get(
+                                ancestor.executor_task_id
+                            ),
+                        )
+                    )
+                    by_serial[serial] = {
+                        "environmentSerial": serial,
+                        "environmentName": None,
+                        "status": status,
+                        "currentStep": current_step,
+                        "completedSteps": [],
+                        "platformOrderNo": None,
+                        "orderTime": None,
+                        "amount": None,
+                        "platformStatus": None,
+                        "statusLabel": None,
+                        "fulfillmentStage": None,
+                        "trackingNumbers": [],
+                        "packageNumbers": [],
+                        "carrier": None,
+                        "firstTrackingAt": None,
+                        "firstTrackingTime": None,
+                        "firstTrackingSummary": None,
+                        "firstTrackingLeadMinutes": None,
+                        "cancelled": False,
+                        "riskOrder": False,
+                        "riskSummary": None,
+                        "ipAddress": None,
+                        "timeZone": None,
+                        "utcOffsetMinutes": None,
+                        "queriedAt": None,
+                        "executionAttempted": False,
+                        "executionDurationMs": 0,
+                        "errorSummary": error_summary,
+                        "screenshotStatus": None,
+                        "screenshotAvailable": False,
+                        "screenshotSizeKb": 0,
+                        "updatedAt": _iso(
+                            ancestor.completed_at
+                            or ancestor.last_heartbeat_at
+                            or ancestor.updated_at
+                        ),
+                    }
         return [by_serial[serial] for serial in order if serial in by_serial]
 
     def logistics_screenshot_row(
@@ -3080,6 +3296,19 @@ class OperationResultService:
             "pending": "待处理",
         }
         for item in body.results:
+            normalized_status, normalized_step, normalized_error = (
+                _terminal_logistics_row_values(
+                    run_status=run.status,
+                    row_status=item.status,
+                    current_step=("done" if item.status == "ok" else item.status),
+                    error_summary=item.errorSummary or None,
+                    result_code=(
+                        "cancelled_by_user"
+                        if preserve_cancelled
+                        else "operation_result_incomplete"
+                    ),
+                )
+            )
             record = self.session.scalar(
                 select(LogisticsQueryResult).where(
                     LogisticsQueryResult.run_id == run.id,
@@ -3092,7 +3321,7 @@ class OperationResultService:
                     run_id=run.id,
                     tenant_id=tenant_id,
                     environment_serial=item.environmentSerial,
-                    status=item.status,
+                    status=normalized_status,
                     completed_steps=[],
                     tracking_numbers=[],
                     package_numbers=[],
@@ -3104,8 +3333,8 @@ class OperationResultService:
                 )
                 self.session.add(record)
             record.environment_name = item.environmentName or None
-            record.status = item.status
-            record.current_step = "done" if item.status == "ok" else item.status
+            record.status = normalized_status
+            record.current_step = normalized_step
             record.platform_order_no = item.platformOrderNo or None
             record.order_time_text = item.orderTime or None
             record.amount_text = item.amount or None
@@ -3128,7 +3357,7 @@ class OperationResultService:
             record.queried_at = item.queriedAt
             record.execution_attempted = item.executionAttempted
             record.execution_duration_ms = item.executionDurationMs
-            record.error_summary = item.errorSummary or None
+            record.error_summary = normalized_error
             record.screenshot_status = item.screenshotStatus or None
             record.feishu_sync_status = "pending"
             record.updated_at = now
@@ -3139,7 +3368,7 @@ class OperationResultService:
                 "站点": body.site,
                 "环境序号": item.environmentSerial,
                 "环境名称": item.environmentName,
-                "查询状态": status_labels[item.status],
+                "查询状态": status_labels[normalized_status],
                 "平台订单号": item.platformOrderNo,
                 "下单时间": item.orderTime,
                 "订单金额": item.amount,
@@ -3156,7 +3385,7 @@ class OperationResultService:
                 "时区": item.timeZone,
                 "UTC偏移分钟": item.utcOffsetMinutes,
                 "查询时间": _milliseconds(item.queriedAt),
-                "错误摘要": item.errorSummary,
+                "错误摘要": normalized_error,
                 "轨迹截图状态": item.screenshotStatus,
                 "服务端记录ID": str(record.id),
                 "数据库写入时间": _milliseconds(now),
@@ -3181,6 +3410,15 @@ class OperationResultService:
                     attempt_count=0,
                     available_at=now,
                 ))
+        OperationRunService(self.session).finalize_logistics_terminal_rows(
+            run=run,
+            result_code=(
+                "cancelled_by_user"
+                if preserve_cancelled
+                else "operation_result_incomplete"
+            ),
+            now=now,
+        )
         self.session.flush()
         return self._logistics_result(run, unchanged=False)
 

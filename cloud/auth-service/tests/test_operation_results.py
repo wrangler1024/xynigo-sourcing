@@ -266,6 +266,44 @@ def logistics_payload() -> dict[str, object]:
     }
 
 
+def test_ingested_terminal_logistics_pending_row_is_settled(tmp_path) -> None:
+    client, database, headers = authenticated_client(tmp_path)
+    payload = deepcopy(logistics_payload())
+    payload["runKey"] = "query-terminal-pending-synthetic-0001"
+    payload["results"] = [{
+        "environmentSerial": "9100",
+        "environmentName": "SYN-US-0904-001",
+        "status": "pending",
+    }]
+
+    response = client.put(
+        "/v1/operations/logistics-query-runs",
+        json=payload,
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["status"] == "failed"
+    with database.session_factory() as session:
+        row = session.scalar(
+            select(LogisticsQueryResult).where(
+                LogisticsQueryResult.environment_serial == "9100"
+            )
+        )
+        assert row is not None
+        assert row.status == "fail"
+        assert row.current_step == "operation_result_incomplete"
+        assert "可重新查询" in str(row.error_summary)
+        outbox = session.scalar(
+            select(OperationalSyncOutbox).where(
+                OperationalSyncOutbox.aggregate_id == row.id
+            )
+        )
+        assert outbox is not None
+        assert outbox.payload["fields"]["查询状态"] == "失败"
+        assert "可重新查询" in outbox.payload["fields"]["错误摘要"]
+    client.close()
+
+
 class FakeBaseClient:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, dict[str, object]]] = []

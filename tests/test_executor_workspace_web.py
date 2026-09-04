@@ -628,6 +628,24 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         ):
             self.assertIn(marker, html)
 
+    def test_terminal_logistics_rows_never_render_spinner_and_remain_retryable(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        self.assertEqual(html, CLOUD_HTML.read_text(encoding="utf-8"))
+        for marker in (
+            "terminalIncomplete = terminal && ['pending','running'].includes(rawState)",
+            "run.status === 'cancelled' ? 'stopped' : 'fail'",
+            "function logisticsRowRetryable(row, terminal=logisticsTerminal)",
+            "|| (terminal && state === 'running');",
+            "logisticsRowRetryable(row, logisticsTerminal)",
+        ):
+            self.assertIn(marker, html)
+        snapshot_adapter = html[
+            html.index("function cloudLogisticsLegacySnapshot"):
+            html.index("function logisticsRunFailureText")
+        ]
+        self.assertIn("state,", snapshot_adapter)
+        self.assertNotIn("state:String(row.status || 'pending')", snapshot_adapter)
+
     def test_logistics_advanced_settings_are_removed_from_cloud_query_form(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")
         action_row = html[

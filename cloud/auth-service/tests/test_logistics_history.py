@@ -581,3 +581,92 @@ def test_logistics_history_recheck_reuses_public_id_sorts_by_latest_update_and_a
         assert next(
             row for row in data["rows"] if row["environmentSerial"] == "102"
         )["platformOrderNo"] == "RETRY-102"
+
+
+def test_legacy_terminal_incomplete_rows_are_retryable_and_later_success_wins(
+    tmp_path,
+) -> None:
+    app, database, _oauth = build_test_app(tmp_path)
+    now = datetime.now(UTC)
+
+    with TestClient(app) as client:
+        login(client)
+        with database.session_factory() as session:
+            tenant = session.scalar(
+                select(Tenant).where(Tenant.feishu_tenant_key == "tenant_allowed")
+            )
+            user = session.scalar(
+                select(User).where(
+                    User.tenant_id == tenant.id,
+                    User.feishu_open_id == "ou_admin",
+                )
+            )
+            root = _run(
+                tenant_id=tenant.id,
+                user_id=user.id,
+                created_at=now - timedelta(minutes=10),
+                serials=["7401", "7402", "7403", "7404"],
+                status="uncertain",
+            )
+            session.add(root)
+            session.flush()
+            running = _result(root, "7401", status="running")
+            running.current_step = "querying"
+            pending = _result(root, "7402", status="pending")
+            pending.current_step = "pending"
+            refunded = _result(
+                root,
+                "7403",
+                status="ok",
+                order_no="SYNTHETIC-REFUND-7403",
+            )
+            refunded.platform_status = "Refunded"
+            refunded.status_label = "退款已处理"
+            session.add_all([running, pending, refunded])
+            retry = _run(
+                tenant_id=tenant.id,
+                user_id=user.id,
+                created_at=now,
+                serials=["7401"],
+                status="completed",
+                parent=root,
+            )
+            session.add(retry)
+            session.flush()
+            session.add(_result(
+                retry,
+                "7401",
+                status="ok",
+                order_no="SYNTHETIC-SUCCESS-7401",
+            ))
+            session.commit()
+            root_id = str(root.id)
+            retry_id = str(retry.id)
+
+        detail = client.get(
+            f"/v1/operation-runs/logistics-query/history/{root_id}"
+        )
+        assert detail.status_code == 200, detail.text
+        data = detail.json()["data"]
+        assert data["latestRunId"] == retry_id
+        assert [row["environmentSerial"] for row in data["rows"]] == [
+            "7401", "7402", "7403", "7404"
+        ]
+        by_serial = {
+            row["environmentSerial"]: row for row in data["rows"]
+        }
+        assert by_serial["7401"]["status"] == "ok"
+        assert by_serial["7401"]["platformOrderNo"] == "SYNTHETIC-SUCCESS-7401"
+        assert by_serial["7402"]["status"] == "fail"
+        assert by_serial["7404"]["status"] == "fail"
+        assert "可重新查询" in by_serial["7402"]["errorSummary"]
+        assert "可重新查询" in by_serial["7404"]["errorSummary"]
+        assert by_serial["7403"]["status"] == "ok"
+        assert by_serial["7403"]["platformStatus"] == "Refunded"
+        assert by_serial["7403"]["statusLabel"] == "退款已处理"
+        assert data["pendingCount"] == 0
+        assert data["successCount"] == 2
+        assert data["failedCount"] == 2
+        assert not {"pending", "running"} & {
+            row["status"] for row in data["rows"]
+        }

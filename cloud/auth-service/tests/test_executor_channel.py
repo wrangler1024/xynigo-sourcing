@@ -28,6 +28,7 @@ from xynigo_auth.models import (
     HubEnvironmentInventory,
     HubEnvironmentInventorySync,
     HubEnvironmentObservation,
+    LogisticsQueryResult,
     LogisticsQueryRun,
     LocalExecutor,
     Tenant,
@@ -3012,6 +3013,427 @@ def test_logistics_retry_keeps_parent_order_and_serves_uploaded_screenshot(tmp_p
         assert shot.status_code == 200
         assert shot.content == screenshot
         assert "no-store" in shot.headers["cache-control"]
+
+
+def test_failed_logistics_finish_settles_incomplete_rows_and_retry_success_wins(
+    tmp_path,
+) -> None:
+    app, database, _oauth = build_test_app(tmp_path)
+    capabilities = ["workspace.rpc.v1", "logistics.query.v1"]
+    with TestClient(app) as web_client, TestClient(app) as device_client:
+        login(web_client)
+        paired = pair(
+            device_client,
+            create_pairing_code(web_client),
+            capabilities=capabilities,
+        )
+        executor_id = str(paired["executorId"])
+        credential = str(paired["deviceCredential"])
+        heartbeat(
+            device_client,
+            credential,
+            revision=REVISION_A,
+            capabilities=capabilities,
+            client_version="0.17.1",
+        )
+        created = web_client.post(
+            "/v1/operation-runs/logistics-query",
+            json={
+                "idempotencyKey": "logistics-terminal-failed-synthetic-0001",
+                "executorId": executor_id,
+                "queryMode": "initial",
+                "site": "MX",
+                "environmentSerials": ["7101", "7102", "7103"],
+            },
+            headers=CSRF,
+        )
+        assert created.status_code == 202, created.text
+        root = created.json()["data"]
+        leased = heartbeat(
+            device_client,
+            credential,
+            revision=REVISION_A,
+            capabilities=capabilities,
+            client_version="0.17.1",
+        )["task"]
+        task_id = str(leased["id"])
+        lease_token = str(leased["leaseToken"])
+        assert device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/start",
+            json={"leaseToken": lease_token},
+            headers=device_headers(credential),
+        ).status_code == 200
+        progress = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/progress",
+            json={
+                "leaseToken": lease_token,
+                "phase": "logistics.running",
+                "current": 1,
+                "total": 3,
+                "snapshot": {"rows": [
+                    {
+                        "environmentSerial": "7101",
+                        "environmentName": "SYN-MX-7101",
+                        "status": "ok",
+                        "currentStep": "done",
+                        "completedSteps": ["query_completed"],
+                        "platformOrderNo": "SYNTHETIC-REFUND-7101",
+                        "platformStatus": "Refunded",
+                        "statusLabel": "退款已处理",
+                    },
+                    {
+                        "environmentSerial": "7102",
+                        "environmentName": "SYN-MX-7102",
+                        "status": "running",
+                        "currentStep": "querying",
+                        "completedSteps": [],
+                    },
+                    {
+                        "environmentSerial": "7103",
+                        "environmentName": "SYN-MX-7103",
+                        "status": "pending",
+                        "currentStep": "pending",
+                        "completedSteps": [],
+                    },
+                ]},
+            },
+            headers=device_headers(credential),
+        )
+        assert progress.status_code == 200, progress.text
+        failed = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/finish",
+            json={
+                "leaseToken": lease_token,
+                "outcome": "failed",
+                "resultCode": "operation_task_failed",
+                "resultSummary": {
+                    "runStatus": "failed",
+                    "phase": "logistics.failed",
+                    "progressCompleted": 1,
+                    "progressTotal": 3,
+                    "totalCount": 3,
+                    "successCount": 1,
+                    "failedCount": 2,
+                    "stoppedCount": 0,
+                    "errorCode": "operation.task_failed",
+                    "errorSummary": "synthetic interrupted execution",
+                },
+            },
+            headers=device_headers(credential),
+        )
+        assert failed.status_code == 200, failed.text
+        terminal = web_client.get(
+            f"/v1/operation-runs/logistics-query/{root['runId']}"
+        ).json()["data"]
+        assert terminal["status"] == "failed"
+        assert terminal["terminal"] is True
+        assert [row["status"] for row in terminal["rows"]] == [
+            "ok", "fail", "fail"
+        ]
+        assert terminal["rows"][0]["platformStatus"] == "Refunded"
+        assert terminal["rows"][0]["statusLabel"] == "退款已处理"
+        assert all(
+            "可重新查询" in row["errorSummary"]
+            for row in terminal["rows"][1:]
+        )
+        with database.session_factory() as session:
+            persisted_states = set(session.scalars(
+                select(LogisticsQueryResult.status).where(
+                    LogisticsQueryResult.run_id == uuid.UUID(root["runId"])
+                )
+            ))
+            assert persisted_states == {"ok", "fail"}
+
+        refund_retry = web_client.post(
+            "/v1/operation-runs/logistics-query",
+            json={
+                "idempotencyKey": "logistics-terminal-refund-retry-rejected-0001",
+                "executorId": executor_id,
+                "queryMode": "failed_retry",
+                "parentRunId": root["runId"],
+                "site": "MX",
+                "environmentSerials": ["7101"],
+            },
+            headers=CSRF,
+        )
+        assert refund_retry.status_code == 409, refund_retry.text
+
+        retry = web_client.post(
+            "/v1/operation-runs/logistics-query",
+            json={
+                "idempotencyKey": "logistics-terminal-failed-retry-0001",
+                "executorId": executor_id,
+                "queryMode": "failed_retry",
+                "parentRunId": root["runId"],
+                "site": "MX",
+                "environmentSerials": ["7102", "7103"],
+            },
+            headers=CSRF,
+        )
+        assert retry.status_code == 202, retry.text
+        retry_run = retry.json()["data"]
+        assert retry_run["totalCount"] == 2
+        retry_task = heartbeat(
+            device_client,
+            credential,
+            revision=REVISION_A,
+            capabilities=capabilities,
+            client_version="0.17.1",
+        )["task"]
+        retry_task_id = str(retry_task["id"])
+        retry_token = str(retry_task["leaseToken"])
+        assert device_client.post(
+            f"/v1/executor-channel/tasks/{retry_task_id}/start",
+            json={"leaseToken": retry_token},
+            headers=device_headers(credential),
+        ).status_code == 200
+        retry_progress = device_client.post(
+            f"/v1/executor-channel/tasks/{retry_task_id}/progress",
+            json={
+                "leaseToken": retry_token,
+                "phase": "logistics.running",
+                "current": 2,
+                "total": 2,
+                "snapshot": {"rows": [
+                    {
+                        "environmentSerial": serial,
+                        "environmentName": f"SYN-MX-{serial}",
+                        "status": "ok",
+                        "currentStep": "done",
+                        "completedSteps": ["query_completed"],
+                        "platformOrderNo": f"SYNTHETIC-{serial}",
+                    }
+                    for serial in ["7102", "7103"]
+                ]},
+            },
+            headers=device_headers(credential),
+        )
+        assert retry_progress.status_code == 200, retry_progress.text
+        retry_finish = device_client.post(
+            f"/v1/executor-channel/tasks/{retry_task_id}/finish",
+            json={
+                "leaseToken": retry_token,
+                "outcome": "succeeded",
+                "resultCode": "logistics_completed",
+                "resultSummary": {
+                    "runStatus": "completed",
+                    "phase": "logistics.completed",
+                    "progressCompleted": 2,
+                    "progressTotal": 2,
+                    "totalCount": 2,
+                    "successCount": 2,
+                    "failedCount": 0,
+                    "stoppedCount": 0,
+                    "errorCode": "",
+                    "errorSummary": "",
+                },
+            },
+            headers=device_headers(credential),
+        )
+        assert retry_finish.status_code == 200, retry_finish.text
+        history = web_client.get(
+            f"/v1/operation-runs/logistics-query/history/{root['queryId']}"
+        ).json()["data"]
+        assert history["latestRunId"] == retry_run["runId"]
+        assert [row["status"] for row in history["rows"]] == ["ok", "ok", "ok"]
+        refund = next(
+            row for row in history["rows"] if row["environmentSerial"] == "7101"
+        )
+        assert refund["platformStatus"] == "Refunded"
+        assert refund["statusLabel"] == "退款已处理"
+
+
+def test_logistics_lease_expiry_settles_running_and_pending_rows(tmp_path) -> None:
+    app, database, _oauth = build_test_app(tmp_path)
+    capabilities = ["workspace.rpc.v1", "logistics.query.v1"]
+    with TestClient(app) as web_client, TestClient(app) as device_client:
+        login(web_client)
+        paired = pair(
+            device_client,
+            create_pairing_code(web_client),
+            capabilities=capabilities,
+        )
+        executor_id = str(paired["executorId"])
+        credential = str(paired["deviceCredential"])
+        heartbeat(
+            device_client,
+            credential,
+            revision=REVISION_A,
+            capabilities=capabilities,
+            client_version="0.17.1",
+        )
+        created = web_client.post(
+            "/v1/operation-runs/logistics-query",
+            json={
+                "idempotencyKey": "logistics-terminal-lease-synthetic-0001",
+                "executorId": executor_id,
+                "queryMode": "initial",
+                "site": "MX",
+                "environmentSerials": ["7201", "7202"],
+            },
+            headers=CSRF,
+        ).json()["data"]
+        leased = heartbeat(
+            device_client,
+            credential,
+            revision=REVISION_A,
+            capabilities=capabilities,
+            client_version="0.17.1",
+        )["task"]
+        task_id = str(leased["id"])
+        lease_token = str(leased["leaseToken"])
+        assert device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/start",
+            json={"leaseToken": lease_token},
+            headers=device_headers(credential),
+        ).status_code == 200
+        progress = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/progress",
+            json={
+                "leaseToken": lease_token,
+                "phase": "logistics.running",
+                "current": 0,
+                "total": 2,
+                "snapshot": {"rows": [
+                    {
+                        "environmentSerial": "7201",
+                        "status": "running",
+                        "currentStep": "querying",
+                        "completedSteps": [],
+                    },
+                    {
+                        "environmentSerial": "7202",
+                        "status": "pending",
+                        "currentStep": "pending",
+                        "completedSteps": [],
+                    },
+                ]},
+            },
+            headers=device_headers(credential),
+        )
+        assert progress.status_code == 200, progress.text
+        with database.session_factory() as session:
+            task = session.get(ExecutorTask, uuid.UUID(task_id))
+            assert task is not None
+            task.lease_until = datetime.now(UTC) - timedelta(seconds=1)
+            session.commit()
+        assert heartbeat(
+            device_client,
+            credential,
+            revision=REVISION_A,
+            capabilities=capabilities,
+            client_version="0.17.1",
+        )["task"] is None
+        snapshot = web_client.get(
+            f"/v1/operation-runs/logistics-query/{created['runId']}"
+        ).json()["data"]
+        assert snapshot["status"] == "uncertain"
+        assert snapshot["resultCode"] == "lease_expired_after_start"
+        assert [row["status"] for row in snapshot["rows"]] == ["fail", "fail"]
+        assert all("租约已过期" in row["errorSummary"] for row in snapshot["rows"])
+
+
+def test_running_logistics_cancel_settles_all_rows_as_stopped(tmp_path) -> None:
+    app, _database, _oauth = build_test_app(tmp_path)
+    capabilities = ["workspace.rpc.v1", "logistics.query.v1"]
+    with TestClient(app) as web_client, TestClient(app) as device_client:
+        login(web_client)
+        paired = pair(
+            device_client,
+            create_pairing_code(web_client),
+            capabilities=capabilities,
+        )
+        executor_id = str(paired["executorId"])
+        credential = str(paired["deviceCredential"])
+        heartbeat(
+            device_client,
+            credential,
+            revision=REVISION_A,
+            capabilities=capabilities,
+            client_version="0.17.1",
+        )
+        created = web_client.post(
+            "/v1/operation-runs/logistics-query",
+            json={
+                "idempotencyKey": "logistics-terminal-cancel-synthetic-0001",
+                "executorId": executor_id,
+                "queryMode": "initial",
+                "site": "MX",
+                "environmentSerials": ["7301", "7302"],
+            },
+            headers=CSRF,
+        ).json()["data"]
+        leased = heartbeat(
+            device_client,
+            credential,
+            revision=REVISION_A,
+            capabilities=capabilities,
+            client_version="0.17.1",
+        )["task"]
+        task_id = str(leased["id"])
+        lease_token = str(leased["leaseToken"])
+        assert device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/start",
+            json={"leaseToken": lease_token},
+            headers=device_headers(credential),
+        ).status_code == 200
+        assert device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/progress",
+            json={
+                "leaseToken": lease_token,
+                "phase": "logistics.running",
+                "current": 0,
+                "total": 2,
+                "snapshot": {"rows": [
+                    {
+                        "environmentSerial": serial,
+                        "status": state,
+                        "currentStep": state,
+                        "completedSteps": [],
+                    }
+                    for serial, state in [("7301", "running"), ("7302", "pending")]
+                ]},
+            },
+            headers=device_headers(credential),
+        ).status_code == 200
+        cancel = web_client.post(
+            f"/v1/operation-runs/logistics-query/{created['runId']}/cancel",
+            json={"expectedStatus": "running"},
+            headers=CSRF,
+        )
+        assert cancel.status_code == 200, cancel.text
+        assert cancel.json()["data"]["terminal"] is False
+        finished = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/finish",
+            json={
+                "leaseToken": lease_token,
+                "outcome": "succeeded",
+                "resultCode": "logistics_cancelled",
+                "resultSummary": {
+                    "runStatus": "cancelled",
+                    "phase": "logistics.cancelled",
+                    "progressCompleted": 0,
+                    "progressTotal": 2,
+                    "totalCount": 2,
+                    "successCount": 0,
+                    "failedCount": 0,
+                    "stoppedCount": 2,
+                    "errorCode": "",
+                    "errorSummary": "",
+                },
+            },
+            headers=device_headers(credential),
+        )
+        assert finished.status_code == 200, finished.text
+        snapshot = web_client.get(
+            f"/v1/operation-runs/logistics-query/{created['runId']}"
+        ).json()["data"]
+        assert snapshot["status"] == "cancelled"
+        assert snapshot["terminal"] is True
+        assert [row["status"] for row in snapshot["rows"]] == [
+            "stopped", "stopped"
+        ]
+        assert all("已停止" in row["errorSummary"] for row in snapshot["rows"])
 
 
 def test_workspace_view_preferences_round_trip(tmp_path) -> None:

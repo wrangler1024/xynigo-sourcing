@@ -2920,6 +2920,7 @@ let isRunning = false;
 let stopRequested = false;
 let queryBackgroundRestoreNotified = false;
 let lastRows = [];
+let logisticsTerminal = false;
 let queryElapsedBase = 0;
 let queryAttemptElapsedBase = 0;
 let queryElapsedPrefix = '已用';
@@ -3797,10 +3798,21 @@ function cloudLogisticsLegacySnapshot(run) {
   if (!run) return {running:false, rows:[], elapsedSec:0, hubConnected:false};
   const cumulativeDuration = Number(run.durationSec);
   const attemptDuration = Number(run.attemptDurationSec);
-  const rows = (run.rows || []).map(row => ({
+  const terminal = !!run.terminal;
+  const rows = (run.rows || []).map(row => {
+    const rawState = String(row.status || 'pending');
+    const terminalIncomplete = terminal && ['pending','running'].includes(rawState);
+    const state = terminalIncomplete
+      ? (run.status === 'cancelled' ? 'stopped' : 'fail') : rawState;
+    const terminalError = terminalIncomplete
+      ? (run.status === 'cancelled'
+        ? '查询任务已停止；该环境未完成查询，可重新查询'
+        : '查询批次已结束，但该环境未返回完整结果，可重新查询')
+      : '';
+    return {
     serial:String(row.environmentSerial || ''),
     envName:String(row.environmentName || ''),
-    state:String(row.status || 'pending'),
+    state,
     orderNo:String(row.platformOrderNo || ''),
     orderTime:String(row.orderTime || ''), amount:String(row.amount || ''),
     status:String(row.platformStatus || ''), statusCn:String(row.statusLabel || ''),
@@ -3817,11 +3829,11 @@ function cloudLogisticsLegacySnapshot(run) {
     ip:String(row.ipAddress || ''),
     time:cloudSiteTime(row.queriedAt, row.utcOffsetMinutes),
     timeZone:String(row.timeZone || ''), utcOffsetMinutes:row.utcOffsetMinutes,
-    error:String(row.errorSummary || ''),
+    error:String(row.errorSummary || terminalError),
     screenshotState:row.screenshotAvailable === false && row.screenshotStatus === 'ok'
       ? 'expired' : String(row.screenshotStatus || 'pending'),
     screenshotSizeKb:Number(row.screenshotSizeKb || 0),
-  }));
+  }});
   return {
     running:!run.terminal,
     terminal:!!run.terminal,
@@ -6962,6 +6974,12 @@ function renderStats(rows) {
     review:Math.max(0, rows.length - eligibleRows.length)};
 }
 
+function logisticsRowRetryable(row, terminal=logisticsTerminal) {
+  const state = String(row && row.state || '');
+  return ['fail','inuse','pending','stopped'].includes(state)
+    || (terminal && state === 'running');
+}
+
 function paintQueryProgress(snap, stats) {
   const rows = snap.rows || [];
   const total = Math.max(rows.length, Number(snap.progressTotal || 0));
@@ -7001,6 +7019,7 @@ function paintQueryProgress(snap, stats) {
 function render(snap) {
   const wasRunning = isRunning;
   isRunning = snap.running;
+  logisticsTerminal = !!snap.terminal;
   lastRows = snap.rows || [];
   queryElapsedBase = Number(snap.elapsedSec || 0);
   queryAttemptElapsedBase = Number(snap.attemptElapsedSec || 0);
@@ -7019,7 +7038,8 @@ function render(snap) {
   $('btnStop').disabled = !isRunning;
   $('btnExport').disabled = isRunning || logisticsExporting;
   $('btnExportMenuToggle').disabled = isRunning || logisticsExporting;
-  const retryable = lastRows.filter(r => ['fail', 'inuse', 'pending', 'stopped'].includes(r.state)).length;
+  const retryable = lastRows.filter(row =>
+    logisticsRowRetryable(row, logisticsTerminal)).length;
   $('btnRetryFail').disabled = isRunning || !retryable;
   const stopped = lastRows.filter(r => r.state === 'stopped').length;
   $('btnRetryFail').textContent = retryable
@@ -8520,7 +8540,7 @@ $('btnRetryFail').onclick = async () => {
   if (isRunning) { toast('查询进行中，请等本批次结束后再批量重查'); return; }
   try {
     const retrySerials = lastRows.filter(row =>
-      ['fail','inuse','pending','stopped'].includes(row.state)
+      logisticsRowRetryable(row, logisticsTerminal)
     ).map(row => String(row.serial || '')).filter(Boolean);
     let j;
     if (CLOUD_WEB_MODE) {

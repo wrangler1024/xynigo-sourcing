@@ -1867,8 +1867,15 @@ class ExecutorChannelService:
                     status=status,
                     now=heartbeat_at,
                 )
-        elif progress_snapshot is not None:
-            self._upsert_logistics_progress(run, progress_snapshot, heartbeat_at)
+        elif isinstance(run, LogisticsQueryRun):
+            if progress_snapshot is not None:
+                self._upsert_logistics_progress(run, progress_snapshot, heartbeat_at)
+            if status in OperationRunService.TERMINAL_STATUSES:
+                OperationRunService(self.session).finalize_logistics_terminal_rows(
+                    run=run,
+                    result_code=task.result_code,
+                    now=heartbeat_at,
+                )
 
     def _upsert_environment_progress(
         self,
