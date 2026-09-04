@@ -1428,6 +1428,10 @@ class OperationRunService:
                     "trackingNumbers": list(row.tracking_numbers or []),
                     "packageNumbers": list(row.package_numbers or []),
                     "carrier": row.carrier,
+                    "firstTrackingAt": _iso(row.first_tracking_at),
+                    "firstTrackingTime": row.first_tracking_time_text,
+                    "firstTrackingSummary": row.first_tracking_summary,
+                    "firstTrackingLeadMinutes": row.first_tracking_lead_minutes,
                     "cancelled": row.cancelled,
                     "riskOrder": row.risk_order,
                     "riskSummary": row.risk_summary,
@@ -1897,6 +1901,10 @@ class OperationResultService:
             record.tracking_numbers = list(item.trackingNumbers)
             record.package_numbers = list(item.packageNumbers)
             record.carrier = item.carrier or None
+            record.first_tracking_at = item.firstTrackingAt
+            record.first_tracking_time_text = item.firstTrackingTime or None
+            record.first_tracking_summary = item.firstTrackingSummary or None
+            record.first_tracking_lead_minutes = item.firstTrackingLeadMinutes
             record.cancelled = item.cancelled
             record.risk_order = item.riskOrder
             record.risk_summary = item.riskSummary or None

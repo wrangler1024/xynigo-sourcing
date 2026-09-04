@@ -108,7 +108,7 @@
   .query-phase-copy { display:flex; flex-direction:column; gap:3px; }
   .query-phase-copy b { font-size:13px; }
   .query-phase-copy span { font-size:11px; opacity:.82; }
-  .business-summary { display:grid; grid-template-columns:repeat(5,minmax(112px,1fr)); gap:9px; padding:0 19px 14px; }
+  .business-summary { display:grid; grid-template-columns:repeat(6,minmax(112px,1fr)); gap:9px; padding:0 19px 14px; }
   .business-stat { border:1px solid var(--line); border-radius:12px; padding:10px 12px; background:#fbfcfd; }
   .business-stat b { display:block; color:var(--navy-950); font-size:18px; }
   .business-stat span { color:var(--navy-500); font-size:10px; }
@@ -131,6 +131,11 @@
   .query-advanced[open] summary { border-bottom:1px solid var(--line); }
   .query-advanced .field { padding:10px; }
   .query-advanced select { width:100%; }
+  .query-action-advanced { position:relative; width:auto; border:0; background:transparent; }
+  .query-action-advanced summary { list-style:none; padding:9px 14px; border:1px solid var(--line); border-radius:11px; background:#fff; white-space:nowrap; }
+  .query-action-advanced summary::-webkit-details-marker { display:none; }
+  .query-action-advanced[open] summary { border-bottom:1px solid var(--line); background:#f5f8fa; }
+  .query-action-advanced-panel { position:absolute; top:calc(100% + 7px); left:0; z-index:40; width:260px; padding:2px; border:1px solid var(--line); border-radius:12px; background:#fff; box-shadow:0 14px 36px rgba(8,37,72,.16); }
   .query-field-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; max-height:420px; overflow:auto; }
   .query-field-list label { display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid var(--line); border-radius:9px; font-size:12px; }
   .export-split { position:relative; display:inline-flex; }
@@ -985,6 +990,10 @@
   .table-title-row { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
   .table-title-copy { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; }
   .table-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+  .query-results-title { display:grid; grid-template-columns:minmax(0,1fr) auto; }
+  .query-table-actions { flex-wrap:nowrap; justify-content:flex-end; }
+  .query-table-actions .btn { white-space:nowrap; }
+  .query-table-actions #btnRetryFail { width:154px; }
   .table-wrap { border-top: 1px solid var(--line); }
   table { font-size: 11px; }
   th { top: 0; padding: 10px 12px; background: #f8fafb; color: #71889a; font-size: 10px; font-weight: 900; }
@@ -1084,6 +1093,8 @@
     .side-col { width: 100%; }
     .side-col select { width: 100%; }
     .table-title-row { flex-direction: column; }
+    .query-results-title { grid-template-columns:1fr; }
+    .query-table-actions { flex-wrap:wrap; justify-content:flex-start; }
     .table-actions { justify-content: flex-start; }
   }
 
@@ -1858,18 +1869,6 @@
           <label>HubStudio 分组</label>
           <select id="groupSelect"><option>加载中…</option></select>
         </div>
-        <details class="query-advanced">
-          <summary>高级设置</summary>
-          <div class="field">
-            <label>浏览器执行模式</label>
-            <select id="queryBrowserMode">
-              <option value="default">使用执行器默认设置</option>
-              <option value="headless">无头模式</option>
-              <option value="visible">可见调试模式</option>
-            </select>
-            <div class="hint">可见模式会弹出 HubStudio 环境窗口，并自动限制为单并发。</div>
-          </div>
-        </details>
         <button class="btn" id="btnGroupAll">查全部分组</button>
         <div class="hint">分组列表由本机 HubStudio<br>实时读取；序号可在 HubStudio<br>环境列表中查看。</div>
       </div>
@@ -1884,6 +1883,20 @@
     <div class="action-row">
       <button class="btn primary" id="btnStart">▶ 开始查询</button>
       <button class="btn danger" id="btnStop" disabled>⏹ 停止</button>
+      <details class="query-advanced query-action-advanced" id="queryAdvancedSettings">
+        <summary>⚙ 高级设置</summary>
+        <div class="query-action-advanced-panel">
+          <div class="field">
+            <label>浏览器执行模式</label>
+            <select id="queryBrowserMode">
+              <option value="default">跟随执行器默认</option>
+              <option value="headless">无头模式</option>
+              <option value="visible">可见调试模式</option>
+            </select>
+            <div class="hint">仅覆盖本次任务。可见模式会打开 HubStudio 环境窗口，并自动限制为单并发。</div>
+          </div>
+        </div>
+      </details>
       <div class="progress-wrap">
         <div class="progress"><div class="bar" id="bar"></div></div>
         <span id="progressText">0 / 0</span>
@@ -1894,12 +1907,12 @@
   </section>
 
   <section class="card table-card">
-    <div class="card-title table-title-row">
+    <div class="card-title table-title-row query-results-title">
       <div class="table-title-copy">
         <span>② 查询结果</span>
         <span class="legend">Shipped / Enviado=已发货 · Processing / Procesando=备货中 · Delivered / Entregado=已送达 · Refunding / Reembolsando=退款中</span>
       </div>
-      <div class="table-actions">
+      <div class="table-actions query-table-actions">
         <button class="btn" id="btnQueryHistory" type="button" hidden>查询历史</button>
         <button class="btn" id="btnQueryFields" type="button">字段设置</button>
         <button class="btn retry" id="btnRetryFail" title="对所有失败 / 使用中 / 未查询的行重新查询；登录失效行需先手动登录后单独重查">↻ 重查异常行</button>
@@ -1918,6 +1931,7 @@
       <div class="business-stat shipped"><b id="bizShipped">0 · 0%</b><span>已发货（含已送达）</span></div>
       <div class="business-stat"><b id="bizUnshipped">0 · 0%</b><span>未发货</span></div>
       <div class="business-stat packing"><b id="bizPacking">0 · 0%</b><span>其中打包中（未发货子集）</span></div>
+      <div class="business-stat shipped"><b id="bizFirstTrackLead">—</b><span id="bizFirstTrackLeadLabel">首轨时效中位数</span></div>
       <div class="business-stat review"><b id="bizReview">0</b><span>待核对 / 查询异常</span></div>
     </div>
     <div class="carrier-summary" id="carrierSummary">
@@ -1929,11 +1943,11 @@
         <thead>
           <tr>
             <th data-query-col="serial">序号</th><th data-query-col="envName">环境名</th><th data-query-col="orderNo">订单号</th><th data-query-col="orderTime">下单时间</th><th data-query-col="amount">金额</th><th data-query-col="status">状态</th>
-            <th data-query-col="tracking">物流单号</th><th data-query-col="carrier">承运商</th><th data-query-col="screenshot">物流轨迹截图</th><th data-query-col="ip">出口IP</th><th data-query-col="result">结果</th><th data-query-col="queryTime">查询时间（站点）</th><th data-query-col="action">操作</th>
+            <th data-query-col="tracking">物流单号</th><th data-query-col="carrier">承运商</th><th data-query-col="firstTrackTime">首条轨迹时间</th><th data-query-col="firstTrackSummary">首条轨迹内容</th><th data-query-col="firstTrackLead">首轨时效</th><th data-query-col="screenshot">物流轨迹截图</th><th data-query-col="ip">出口IP</th><th data-query-col="result">结果</th><th data-query-col="queryTime">查询时间（站点）</th><th data-query-col="action">操作</th>
           </tr>
         </thead>
         <tbody id="tbody">
-          <tr><td colspan="13" class="empty-tip">粘贴环境序号后点「开始查询」，结果将逐行显示在这里</td></tr>
+          <tr><td colspan="16" class="empty-tip">粘贴环境序号后点「开始查询」，结果将逐行显示在这里</td></tr>
         </tbody>
       </table>
     </div>
@@ -2376,11 +2390,6 @@
           <label>并发查询数（1-5）</label>
           <input type="text" id="cfgConcurrency" value="2" inputmode="numeric">
         </div>
-        <div class="settings-field">
-          <label>物流查询默认模式</label>
-          <select id="cfgQueryBrowserMode"><option value="headless">无头模式（推荐）</option><option value="visible">可见调试模式</option></select>
-          <div class="hint">可见模式仅用于排障，查询时并发自动限制为 1。</div>
-        </div>
         <div class="settings-field full">
           <label>跨模块任务模式</label>
           <div class="query-col-checks">
@@ -2767,7 +2776,7 @@
           <div><button class="btn" id="btnQueryHistoryBack" type="button">← 返回历史列表</button><div class="query-history-detail-meta" id="queryHistoryDetailMeta"></div></div>
           <div class="table-actions"><button class="btn" id="btnHistoryRerun" type="button">再次查询</button><button class="btn" id="btnHistoryExportQuick" type="button">快速导出</button><button class="btn primary" id="btnHistoryExportFull" type="button">完整导出（含截图）</button></div>
         </div>
-        <div class="query-history-detail-table"><table id="queryHistoryResultTable"><thead><tr><th>序号</th><th>环境名</th><th>订单号</th><th>下单时间</th><th>金额</th><th>状态</th><th>物流单号</th><th>承运商</th><th>物流轨迹截图</th><th>出口IP</th><th>结果</th><th>查询时间（站点）</th><th>操作</th></tr></thead><tbody id="queryHistoryResultBody"></tbody></table></div>
+        <div class="query-history-detail-table"><table id="queryHistoryResultTable"><thead><tr><th>序号</th><th>环境名</th><th>订单号</th><th>下单时间</th><th>金额</th><th>状态</th><th>物流单号</th><th>承运商</th><th>首条轨迹时间</th><th>首条轨迹内容</th><th>首轨时效</th><th>物流轨迹截图</th><th>出口IP</th><th>结果</th><th>查询时间（站点）</th><th>操作</th></tr></thead><tbody id="queryHistoryResultBody"></tbody></table></div>
       </div>
     </div>
   </div>
@@ -3326,12 +3335,13 @@ const QUERY_VIEW_KEY = 'fulfillment.logistics.results';
 const QUERY_FIELD_DEFS = [
   ['serial','序号'],['envName','环境名'],['orderNo','订单号'],['orderTime','下单时间'],
   ['amount','金额'],['status','状态'],['tracking','物流单号'],['carrier','承运商'],
-  ['screenshot','物流轨迹截图'],['ip','出口 IP'],['result','结果'],
+  ['firstTrackTime','首条轨迹时间'],['firstTrackSummary','首条轨迹内容'],
+  ['firstTrackLead','首轨时效'],['screenshot','物流轨迹截图'],['ip','出口 IP'],['result','结果'],
   ['queryTime','查询时间（站点）'],['action','操作']
 ];
 const QUERY_REQUIRED_FIELDS = new Set(['serial','result','action']);
 const QUERY_DEFAULT_VISIBLE_FIELDS = QUERY_FIELD_DEFS.map(item => item[0])
-  .filter(key => !['envName','ip'].includes(key));
+  .filter(key => !['envName','ip','firstTrackSummary'].includes(key));
 let visibleQueryFields = new Set(QUERY_DEFAULT_VISIBLE_FIELDS);
 let localExecutorRelease = null;
 let localExecutorReleaseLoaded = false;
@@ -3740,6 +3750,11 @@ function cloudLogisticsLegacySnapshot(run) {
     tracks:Array.isArray(row.trackingNumbers) ? row.trackingNumbers : [],
     pkgs:Array.isArray(row.packageNumbers) ? row.packageNumbers : [],
     carrier:String(row.carrier || ''), kanDan:!!row.cancelled,
+    firstTrackingAt:String(row.firstTrackingAt || ''),
+    firstTrackingTime:String(row.firstTrackingTime
+      || cloudSiteTime(row.firstTrackingAt, row.utcOffsetMinutes) || ''),
+    firstTrackingSummary:String(row.firstTrackingSummary || ''),
+    firstTrackingLeadMinutes:row.firstTrackingLeadMinutes,
     riskOrder:!!row.riskOrder, riskMessage:String(row.riskSummary || ''),
     ip:String(row.ipAddress || ''),
     time:cloudSiteTime(row.queriedAt, row.utcOffsetMinutes),
@@ -6645,7 +6660,7 @@ function renderLarkConnectedTarget(element, targetDisplay, targetVerified, targe
 
 function queryRowsHtml(rows, options={}) {
   if (!rows.length) {
-    return `<tr><td colspan="13" class="empty-tip">${options.history ? '该历史查询暂无逐行结果' : '粘贴环境序号后点「开始查询」，结果将逐行显示在这里'}</td></tr>`;
+    return `<tr><td colspan="16" class="empty-tip">${options.history ? '该历史查询暂无逐行结果' : '粘贴环境序号后点「开始查询」，结果将逐行显示在这里'}</td></tr>`;
   }
   const historyRunId = String(options.runId || '');
   const cell = (key, content, className='') =>
@@ -6660,6 +6675,8 @@ function queryRowsHtml(rows, options={}) {
       cell('serial', serial, 'mono'), cell('envName', name),
       cell('orderNo', '—'), cell('orderTime', '—'), cell('amount', '—'),
       cell('status', '—'), cell('tracking', '—'), cell('carrier', '—'),
+      cell('firstTrackTime', '—'), cell('firstTrackSummary', '—'),
+      cell('firstTrackLead', '—'),
       cell('screenshot', '—'), cell('ip', esc(r.ip) || '—', 'mono'),
       cell('result', result), cell('queryTime', r.time || '—', 'mono'),
       cell('action', action)
@@ -6691,12 +6708,18 @@ function queryRowsHtml(rows, options={}) {
     const resultBadge = r.riskOrder
       ? '<span class="badge fail">⚠ 风险订单，待验证</span>'
       : '<span class="badge ok">✔ 成功</span>';
+    const firstTrackTime = esc(r.firstTrackingTime) || '—';
+    const firstTrackSummary = esc(r.firstTrackingSummary) || '—';
+    const firstTrackLead = formatTrackingLead(r.firstTrackingLeadMinutes);
     return `<tr class="row-success">${[
       cell('serial', serial, 'mono'), cell('envName', name),
       cell('orderNo', esc(r.orderNo), 'mono'),
       cell('orderTime', esc(r.orderTime) || '—', 'mono'),
       cell('amount', esc(r.amount)), cell('status', stBadge),
       cell('tracking', tracks), cell('carrier', esc(r.carrier) || '—'),
+      cell('firstTrackTime', firstTrackTime, 'mono'),
+      cell('firstTrackSummary', firstTrackSummary),
+      cell('firstTrackLead', firstTrackLead),
       cell('screenshot', shot), cell('ip', esc(r.ip), 'mono'),
       cell('result', resultBadge), cell('queryTime', r.time || '—', 'mono'),
       cell('action', action)
@@ -6707,6 +6730,17 @@ function queryRowsHtml(rows, options={}) {
 function renderRows(rows) {
   tbody.innerHTML = queryRowsHtml(rows);
   applyQueryColumnVisibility();
+}
+
+function formatTrackingLead(value) {
+  if (value === null || value === undefined || value === '') return '—';
+  const minutes = Number(value);
+  if (!Number.isFinite(minutes) || minutes < 0) return '—';
+  if (minutes < 60) return `${Math.round(minutes)}分钟`;
+  const hours = minutes / 60;
+  if (hours < 48) return `${hours.toFixed(hours < 10 ? 1 : 0)}小时`;
+  const days = hours / 24;
+  return `${days.toFixed(days < 10 ? 1 : 0)}天`;
 }
 
 function renderStats(rows) {
@@ -6740,6 +6774,18 @@ function renderStats(rows) {
   $('bizShipped').textContent = `${shipped} · ${ratio(shipped)}%`;
   $('bizUnshipped').textContent = `${unshipped} · ${ratio(unshipped)}%`;
   $('bizPacking').textContent = `${packing} · ${ratio(packing)}%`;
+  const leadValues = eligibleRows.map(row => row.firstTrackingLeadMinutes)
+    .filter(value => value !== null && value !== undefined && value !== '')
+    .map(value => Number(value))
+    .filter(value => Number.isFinite(value) && value >= 0).sort((a,b) => a - b);
+  const leadMiddle = Math.floor(leadValues.length / 2);
+  const leadMedian = leadValues.length
+    ? (leadValues.length % 2 ? leadValues[leadMiddle]
+      : (leadValues[leadMiddle - 1] + leadValues[leadMiddle]) / 2)
+    : null;
+  $('bizFirstTrackLead').textContent = formatTrackingLead(leadMedian);
+  $('bizFirstTrackLeadLabel').textContent = leadValues.length
+    ? `首轨时效中位数（${leadValues.length}单）` : '首轨时效中位数（暂无数据）';
   $('bizReview').textContent = Math.max(0, rows.length - eligibleRows.length);
   const shippedRows = eligibleRows.filter(row => shippedStatus.test(normalizedStatus(row)));
   const canonicalCarrier = value => {
@@ -7886,7 +7932,7 @@ async function openQueryHistoryDetail(rootRunId) {
   $('queryHistoryListView').hidden = true;
   $('queryHistoryDetailView').hidden = false;
   $('queryHistoryDetailMeta').innerHTML = '<span><span class="spinner"></span>正在读取历史结果…</span>';
-  $('queryHistoryResultBody').innerHTML = '<tr><td colspan="13" class="query-history-empty">正在读取历史结果…</td></tr>';
+  $('queryHistoryResultBody').innerHTML = '<tr><td colspan="16" class="query-history-empty">正在读取历史结果…</td></tr>';
   $('btnHistoryRerun').disabled = true;
   $('btnHistoryExportQuick').disabled = true;
   $('btnHistoryExportFull').disabled = true;
@@ -7907,7 +7953,7 @@ async function openQueryHistoryDetail(rootRunId) {
   } catch (error) {
     activeQueryHistoryDetail = null;
     $('queryHistoryDetailMeta').textContent = '历史结果读取失败';
-    $('queryHistoryResultBody').innerHTML = `<tr><td colspan="13" class="query-history-empty">${esc(error.message)}</td></tr>`;
+    $('queryHistoryResultBody').innerHTML = `<tr><td colspan="16" class="query-history-empty">${esc(error.message)}</td></tr>`;
   }
 }
 
@@ -11227,7 +11273,6 @@ async function loadLocalSettingsPage() {
     localSettingsConfigRevision = String(cfg.configRevision || '');
     $('cfgPort').value = cfg.hubPort || 6873;
     $('cfgConcurrency').value = cfg.concurrency || 2;
-    $('cfgQueryBrowserMode').value = cfg.queryBrowserMode === 'visible' ? 'visible' : 'headless';
     safeParallelTasks = cfg.safeParallelTasks !== false;
     $('cfgSafeParallel').checked = safeParallelTasks;
     setHiddenQueryColumns(cfg.hiddenQueryColumns || []);
@@ -11248,7 +11293,7 @@ async function loadLocalSettingsPage() {
     const canWriteDeviceConfig = hasRole('super_admin')
       && hasPermission('system.integration.manage');
     [
-      'cfgPort', 'cfgConcurrency', 'cfgQueryBrowserMode', 'cfgSafeParallel', 'cfgHideEnvName',
+      'cfgPort', 'cfgConcurrency', 'cfgSafeParallel', 'cfgHideEnvName',
       'cfgHideIp', 'cfgEnvVerify', 'cfgEnvWorkers', 'cfgPurchaseTagMX',
       'cfgPurchaseTagUS', 'cfgProxyLink', 'cfgProxyClear', 'cfgEnvAssign'
     ].forEach(id => { $(id).disabled = !canWriteDeviceConfig; });
@@ -11414,7 +11459,7 @@ $('btnCfgSave').onclick = async () => {
     if ($('cfgHideIp').checked) hiddenQueryColumns.push('ip');
     const j = await api('/api/config', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ expectedRevision:localSettingsConfigRevision, hubPort: port, concurrency: conc, queryBrowserMode:$('cfgQueryBrowserMode').value, safeParallelTasks:$('cfgSafeParallel').checked, verifySampleCount: verifyCount, envCreateWorkers: envWorkers, importBuyerPlan, hiddenQueryColumns, purchaseSite:$('envSite').value, purchaseTags, proxyLink, proxyClear })
+      body: JSON.stringify({ expectedRevision:localSettingsConfigRevision, hubPort: port, concurrency: conc, safeParallelTasks:$('cfgSafeParallel').checked, verifySampleCount: verifyCount, envCreateWorkers: envWorkers, importBuyerPlan, hiddenQueryColumns, purchaseSite:$('envSite').value, purchaseTags, proxyLink, proxyClear })
     });
     localSettingsConfigRevision = String(j.configRevision || localSettingsConfigRevision);
     setHiddenQueryColumns(hiddenQueryColumns);

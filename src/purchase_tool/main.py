@@ -1766,6 +1766,12 @@ class AppState(object):
                 'trackingNumbers': [str(item) for item in row.get('tracks') or []],
                 'packageNumbers': [str(item) for item in row.get('pkgs') or []],
                 'carrier': str(row.get('carrier') or ''),
+                'firstTrackingAt': str(row.get('firstTrackingAt') or '') or None,
+                'firstTrackingTime': str(row.get('firstTrackingTime') or ''),
+                'firstTrackingSummary': str(
+                    row.get('firstTrackingSummary') or '')[:300],
+                'firstTrackingLeadMinutes': row.get(
+                    'firstTrackingLeadMinutes'),
                 'cancelled': bool(row.get('kanDan')),
                 'riskOrder': bool(row.get('riskOrder')),
                 'riskSummary': str(row.get('riskMessage') or ''),

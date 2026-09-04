@@ -562,7 +562,10 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             'id="businessSummary"',
             'id="carrierDistribution"',
             'id="queryBrowserMode"',
-            'id="cfgQueryBrowserMode"',
+            'id="queryAdvancedSettings"',
+            'class="table-actions query-table-actions"',
+            'id="bizFirstTrackLead"',
+            "['firstTrackLead','首轨时效']",
             'id="btnQueryFields"',
             "QUERY_VIEW_KEY = 'fulfillment.logistics.results'",
             "/v1/workspace/view-preferences/",
@@ -575,8 +578,22 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             "window.addEventListener('beforeunload'",
             "browserMode:$('queryBrowserMode').value",
             "共 ${shippedRows.length} 个已发货订单",
+            '首轨时效中位数',
         ):
             self.assertIn(marker, html)
+
+    def test_logistics_advanced_settings_are_outside_site_and_group_column(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        side_column = html[
+            html.index('<div class="side-col">'):
+            html.index('<section class="card">', html.index('<div class="side-col">'))
+        ]
+        self.assertNotIn('id="queryAdvancedSettings"', side_column)
+        action_row = html[
+            html.index('<div class="action-row">', html.index('id="queryPhaseBanner"')):
+            html.index('</section>', html.index('id="queryPhaseBanner"'))
+        ]
+        self.assertIn('id="queryAdvancedSettings"', action_row)
 
     def test_logistics_history_ui_is_cloud_scoped_and_keeps_live_results_isolated(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")

@@ -42,7 +42,7 @@
     }]},
     update: {enabled:true, state:'current', installMode:'standard', currentVersion:'0.13.21', latestVersion:'0.13.21', message:'已是推荐版本'}
   };
-  var sampleConfig = {hubPort:6873, concurrency:2, envCreateWorkers:5, verifySampleCount:3, safeParallelTasks:true, configRevision:'e5a931'};
+  var sampleConfig = {hubPort:6873, concurrency:2, envCreateWorkers:5, verifySampleCount:3, safeParallelTasks:true, queryBrowserMode:'headless', configRevision:'e5a931'};
   var sampleSources = {
     registryRevision:'sample-rev', teamDefaultDataSourceId:'ds-team',
     counts:{dataSourceCount:4,buyerProfileCount:4,environmentBindingCount:31,mappingConflictCount:0},
@@ -79,7 +79,7 @@
   var emptyStatus = {version:'—',localPort:'—',executor:{running:false,paired:false,displayName:'这台采购电脑',architecture:'—'},cloudChannel:{status:'offline'},hubStudio:{connected:false},tasks:{activeCount:0,safeParallel:false,items:[]},update:{enabled:false,state:'disabled',message:'本机执行器尚未就绪'}};
   var emptySources = {registryRevision:'',teamDefaultDataSourceId:'',counts:{dataSourceCount:0,buyerProfileCount:0,environmentBindingCount:0,mappingConflictCount:0},dataSources:[],buyerProfiles:[],environmentBindings:[]};
   function currentStatus() { return state.status || (previewRole ? sampleStatus : emptyStatus); }
-  function currentConfig() { return state.config || (previewRole ? sampleConfig : {hubPort:6873,concurrency:2,envCreateWorkers:5,verifySampleCount:1,safeParallelTasks:true,configRevision:''}); }
+  function currentConfig() { return state.config || (previewRole ? sampleConfig : {hubPort:6873,concurrency:2,envCreateWorkers:5,verifySampleCount:1,safeParallelTasks:true,queryBrowserMode:'headless',configRevision:''}); }
   function currentSources() { return state.sources || (previewRole ? sampleSources : emptySources); }
 
   function icon(name, extra) {
@@ -341,6 +341,7 @@
     return header('settings',actions) + '<div class="content two-column">' + readOnly +
       '<section class="card section-card">' + sectionTitle('gauge','运行参数','控制本机执行器并发、抽检与安全模式','仅保存在本机') + '<div class="section-body field-grid">' +
       field('cfg-hub-port','HubStudio Local API 端口',cfg.hubPort || 6873,'范围 1–65535','number',locked) + field('cfg-concurrency','订单查询并发',cfg.concurrency || 2,'组织策略上限：5','number',locked) + field('cfg-env-workers','建环境并发',cfg.envCreateWorkers || 5,'当前有效值受安全并行策略封顶','number',locked) + field('cfg-verify','新建完成抽检数',cfg.verifySampleCount == null ? 1 : cfg.verifySampleCount,'0 表示不执行抽检','number',locked) +
+      '<div class="field"><label for="cfg-query-browser-mode">物流查询浏览器模式</label><select class="select" id="cfg-query-browser-mode"' + (locked ? ' disabled' : '') + '><option value="headless"' + (cfg.queryBrowserMode !== 'visible' ? ' selected' : '') + '>无头模式（推荐）</option><option value="visible"' + (cfg.queryBrowserMode === 'visible' ? ' selected' : '') + '>可见调试模式</option></select><small>作为本机默认值；云端任务可临时覆盖。可见模式会打开 HubStudio 窗口并限制为单并发。</small></div>' +
       '<label class="toggle-row"><div><b>安全并行</b><p>允许物流查询与一种环境创建任务并行，同一环境仍禁止双开。</p></div><input id="cfg-safe" class="switch" type="checkbox"' + (cfg.safeParallelTasks !== false ? ' checked' : '') + (locked ? ' disabled' : '') + '></label></div></section>' +
       '<section class="card section-card">' + sectionTitle('monitor','HubStudio 连接','连接本机 Local API，仅回显不可复用的掩码摘要',secureStore) + '<div class="section-body stack"><div class="connection-box"><span class="connection-check">' + icon(cfg.hubApiKeyConfigured ? 'check' : 'alert') + '</span><div><b>' + (cfg.hubApiKeyConfigured ? 'API Key 已安全保存' : 'API Key 尚未配置') + '</b><span>' + (cfg.hubApiKeyConfigured ? ('当前值 ' + esc(cfg.hubApiKeyMasked || '••••')) : '输入后保存到系统安全存储') + ' · ' + ((state.status && state.status.hubStudio && state.status.hubStudio.connected) ? 'Local API v1 认证成功' : '等待本机 Local API 连接') + '</span></div>' + button('测试连接','test-hub','play','small',locked) + '</div>' + field('cfg-hub-key','覆盖 HubStudio Local API Key','','留空保持现状；保存到 ' + secureStore + '。','password',locked,cfg.hubApiKeyConfigured ? ('当前 ' + (cfg.hubApiKeyMasked || '••••') + '；输入新 Key 后覆盖') : '输入 HubStudio Local API Key') + '</div></section>' + cloudIntegrationCard + '</div>';
   }
@@ -697,7 +698,8 @@
       concurrency:Number(document.getElementById('cfg-concurrency').value),
       envCreateWorkers:Number(document.getElementById('cfg-env-workers').value),
       verifySampleCount:Number(document.getElementById('cfg-verify').value),
-      safeParallelTasks:document.getElementById('cfg-safe').checked
+      safeParallelTasks:document.getElementById('cfg-safe').checked,
+      queryBrowserMode:document.getElementById('cfg-query-browser-mode').value
     };
     post('/api/config',payload).then(function (result) {
       state.config = Object.assign({}, state.config || {}, payload, result); renderWorkspace(); showToast('本机配置已校验并原子保存；云端仅收到脱敏摘要');

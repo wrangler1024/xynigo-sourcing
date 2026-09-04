@@ -1645,6 +1645,10 @@ class ExecutorChannelService:
             row.tracking_numbers = list(item.trackingNumbers)
             row.package_numbers = list(item.packageNumbers)
             row.carrier = item.carrier or None
+            row.first_tracking_at = item.firstTrackingAt
+            row.first_tracking_time_text = item.firstTrackingTime or None
+            row.first_tracking_summary = item.firstTrackingSummary or None
+            row.first_tracking_lead_minutes = item.firstTrackingLeadMinutes
             row.cancelled = item.cancelled
             row.risk_order = item.riskOrder
             row.risk_summary = item.riskSummary or None

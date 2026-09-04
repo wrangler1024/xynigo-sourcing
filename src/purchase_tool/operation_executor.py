@@ -660,6 +660,14 @@ class LocalOperationExecutor(object):
                 'packageNumbers': [
                     str(item)[:200] for item in source.get('pkgs') or []],
                 'carrier': str(source.get('carrier') or '')[:100],
+                'firstTrackingAt': str(
+                    source.get('firstTrackingAt') or '') or None,
+                'firstTrackingTime': str(
+                    source.get('firstTrackingTime') or '')[:64],
+                'firstTrackingSummary': str(
+                    source.get('firstTrackingSummary') or '')[:300],
+                'firstTrackingLeadMinutes': source.get(
+                    'firstTrackingLeadMinutes'),
                 'cancelled': bool(source.get('kanDan')),
                 'riskOrder': bool(source.get('riskOrder')),
                 'riskSummary': str(source.get('riskMessage') or '')[:300],

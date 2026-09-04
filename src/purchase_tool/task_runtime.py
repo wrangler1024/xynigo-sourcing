@@ -67,6 +67,25 @@ class LocalTaskCoordinator(object):
     def _label(kind):
         return TASK_LABELS.get(kind, kind)
 
+    @staticmethod
+    def _resource_count(resources):
+        """Return environment count instead of the number of alias keys.
+
+        One HubStudio environment is normally reserved with both a stable
+        ``code:`` key and a human-readable ``name:`` key so that conflicts are
+        still detected while an environment is being created or renamed.
+        Counting the raw keys therefore reports two occupied environments for
+        every real environment.  The larger alias family is the best safe
+        cardinality for the current resource contract; non-environment keys
+        remain individually countable.
+        """
+        names = sum(1 for item in resources if str(item).startswith('name:'))
+        codes = sum(1 for item in resources if str(item).startswith('code:'))
+        others = sum(
+            1 for item in resources
+            if not str(item).startswith(('name:', 'code:')))
+        return max(names, codes) + others
+
     def begin(self, kind, resources=()):
         resources = set(resources or ())
         with self.lock:
@@ -129,7 +148,7 @@ class LocalTaskCoordinator(object):
                         '%Y-%m-%dT%H:%M:%SZ',
                         time.gmtime(item['startedAt'])),
                     'elapsedSec': int(max(0, now - item['startedAt'])),
-                    'resourceCount': len(item['resources']),
+                    'resourceCount': self._resource_count(item['resources']),
                 } for item in self.tasks.values()],
             }
 

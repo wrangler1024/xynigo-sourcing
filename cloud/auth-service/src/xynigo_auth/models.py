@@ -1342,6 +1342,12 @@ class LogisticsQueryResult(Base):
     tracking_numbers: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     package_numbers: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     carrier: Mapped[str | None] = mapped_column(String(100))
+    first_tracking_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    first_tracking_time_text: Mapped[str | None] = mapped_column(String(64))
+    first_tracking_summary: Mapped[str | None] = mapped_column(String(300))
+    first_tracking_lead_minutes: Mapped[int | None] = mapped_column(Integer)
     cancelled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     risk_order: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     risk_summary: Mapped[str | None] = mapped_column(String(300))

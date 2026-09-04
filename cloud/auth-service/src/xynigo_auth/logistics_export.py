@@ -16,7 +16,8 @@ from .procurement_import_xlsx import embed_cell_images
 HEADERS = [
     "环境序号", "环境名", "订单号", "下单时间", "金额", "状态",
     "物流单号", "包裹号", "承运商", "物流轨迹截图", "出口IP",
-    "结果", "失败原因", "查询时间（站点）",
+    "结果", "失败原因", "查询时间（站点）", "首条轨迹时间",
+    "首条轨迹内容", "首轨时效（分钟）",
 ]
 
 
@@ -97,6 +98,10 @@ def build_logistics_workbook_export(
             result,
             row.get("errorSummary") or "",
             row.get("queriedAt") or "",
+            row.get("firstTrackingTime") or "",
+            row.get("firstTrackingSummary") or "",
+            (row.get("firstTrackingLeadMinutes")
+             if row.get("firstTrackingLeadMinutes") is not None else ""),
         ])
         if include_screenshots and str(screenshot_status or "").lower() == "ok":
             image: bytes | None = None
@@ -120,7 +125,8 @@ def build_logistics_workbook_export(
         cell.fill = PatternFill("solid", fgColor="123B63")
         cell.alignment = Alignment(horizontal="center", vertical="center")
         cell.border = border
-    widths = [10, 24, 22, 20, 14, 18, 28, 22, 14, 18, 16, 20, 32, 24]
+    widths = [10, 24, 22, 20, 14, 18, 28, 22, 14, 18, 16, 20, 32, 24,
+              20, 34, 18]
     for index, width in enumerate(widths, start=1):
         sheet.column_dimensions[get_column_letter(index)].width = width
     for row in sheet.iter_rows(min_row=2):
@@ -128,7 +134,7 @@ def build_logistics_workbook_export(
             cell.alignment = Alignment(vertical="center", wrap_text=True)
             cell.border = border
     sheet.freeze_panes = "A2"
-    sheet.auto_filter.ref = f"A1:N{max(1, len(rows) + 1)}"
+    sheet.auto_filter.ref = f"A1:Q{max(1, len(rows) + 1)}"
     sheet.sheet_view.showGridLines = False
     output = BytesIO()
     workbook.save(output)

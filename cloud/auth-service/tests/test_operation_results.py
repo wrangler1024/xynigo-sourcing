@@ -204,6 +204,10 @@ def logistics_payload() -> dict[str, object]:
                 "trackingNumbers": ["SYNTHETIC-TRACK-0001"],
                 "packageNumbers": ["SYNTHETIC-PKG-0001"],
                 "carrier": "Synthetic Carrier",
+                "firstTrackingAt": "2026-08-25T22:00:00-05:00",
+                "firstTrackingTime": "2026-08-25 22:00:00",
+                "firstTrackingSummary": "Carrier received package",
+                "firstTrackingLeadMinutes": 120,
                 "cancelled": False,
                 "riskOrder": False,
                 "ipAddress": "192.0.2.10",
@@ -293,6 +297,15 @@ def test_real_operation_results_are_idempotent_durable_and_feishu_queued(
         assert session.scalar(select(func.count()).select_from(EnvironmentCreationResult)) == 2
         assert session.scalar(select(func.count()).select_from(LogisticsQueryRun)) == 1
         assert session.scalar(select(func.count()).select_from(LogisticsQueryResult)) == 2
+        tracked = session.scalar(
+            select(LogisticsQueryResult).where(
+                LogisticsQueryResult.environment_serial == "9001"
+            )
+        )
+        assert tracked is not None
+        assert tracked.first_tracking_time_text == "2026-08-25 22:00:00"
+        assert tracked.first_tracking_summary == "Carrier received package"
+        assert tracked.first_tracking_lead_minutes == 120
         assert session.scalar(select(func.count()).select_from(OperationalSyncOutbox)) == 5
         buyer = session.scalar(select(BuyerAccount))
         assert buyer is not None

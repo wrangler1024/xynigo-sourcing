@@ -374,6 +374,10 @@ def test_logistics_task_reports_incremental_terminal_result():
                 'stage': 'En tránsito.',
                 'tracks': ['track-001'], 'pkgs': ['package-001'],
                 'carrier': 'IMILE', 'kanDan': False,
+                'firstTrackingAt': '2026-09-01T18:20:30-06:00',
+                'firstTrackingTime': '2026-09-01 18:20:30',
+                'firstTrackingSummary': 'Carrier received package',
+                'firstTrackingLeadMinutes': 480,
                 'riskOrder': False, 'riskMessage': '',
                 'ip': '203.0.113.10', 'timeZone': 'America/Mexico_City',
                 'utcOffsetMinutes': -360,
@@ -409,6 +413,9 @@ def test_logistics_task_reports_incremental_terminal_result():
     assert completed['ipAddress'] == '203.0.113.10'
     assert completed['queriedAt'] == '2026-09-01T10:21:31-06:00'
     assert completed['screenshotStatus'] == 'ok'
+    assert completed['firstTrackingAt'] == '2026-09-01T18:20:30-06:00'
+    assert completed['firstTrackingSummary'] == 'Carrier received package'
+    assert completed['firstTrackingLeadMinutes'] == 480
 
 
 def test_logistics_system_failure_preserves_reason_code_and_fails_run():

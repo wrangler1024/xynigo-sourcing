@@ -33,6 +33,9 @@ def _rows() -> list[dict[str, object]]:
             "screenshotStatus": "ok",
             "ipAddress": "192.0.2.20",
             "queriedAt": "2026-09-03T10:01:00+08:00",
+            "firstTrackingTime": "2026-09-03 12:00:00",
+            "firstTrackingSummary": "Carrier received package",
+            "firstTrackingLeadMinutes": 120,
         },
         {
             "environmentSerial": "10",
@@ -132,4 +135,7 @@ def test_workbook_fields_and_legacy_bytes_contract() -> None:
         "成功",
         None,
         "2026-09-03T10:01:00+08:00",
+        "2026-09-03 12:00:00",
+        "Carrier received package",
+        120,
     )

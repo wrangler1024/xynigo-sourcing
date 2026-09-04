@@ -7,7 +7,8 @@ from .xlsx_cell_images import embed_cell_images
 
 EXPORT_HEAD = ['环境序号', '环境名', '订单号', '下单时间', '金额', '状态',
                '物流单号', '包裹号', '承运商', '物流轨迹截图', '出口IP',
-               '结果', '失败原因', '查询时间（站点）']
+               '结果', '失败原因', '查询时间（站点）', '首条轨迹时间',
+               '首条轨迹内容', '首轨时效（分钟）']
 
 STATE_CN = {'ok': '成功', 'login': '登录失效', 'inuse': '环境使用中，已跳过',
             'fail': '失败', 'running': '查询中', 'pending': '未查询',
@@ -49,7 +50,11 @@ def export_bytes(rows, fmt, screenshot_reader=None, include_screenshots=True):
                 ('—（砍单退款，无物流）' if r['kanDan'] else '')),
             '; '.join(r['pkgs']), r['carrier'],
             _screenshot_text(r, include_screenshots),
-            r['ip'], result, r['error'], r['time']])
+            r['ip'], result, r['error'], r['time'],
+            r.get('firstTrackingTime') or '',
+            r.get('firstTrackingSummary') or '',
+            (r.get('firstTrackingLeadMinutes')
+             if r.get('firstTrackingLeadMinutes') is not None else '')])
     if fmt == 'xlsx':
         try:
             from openpyxl import Workbook
@@ -98,11 +103,11 @@ def export_bytes(rows, fmt, screenshot_reader=None, include_screenshots=True):
                     horizontal='center', vertical='center')
                 cell.border = grid_border
             widths = [10, 24, 22, 20, 14, 18, 28, 22, 14, 18,
-                      16, 18, 32, 12]
+                      16, 18, 32, 20, 20, 34, 18]
             for index, width in enumerate(widths, start=1):
                 ws.column_dimensions[chr(64 + index)].width = width
             ws.freeze_panes = 'A2'
-            ws.auto_filter.ref = 'A1:N%s' % max(1, len(lines) + 1)
+            ws.auto_filter.ref = 'A1:Q%s' % max(1, len(lines) + 1)
             ws.sheet_view.showGridLines = False
             for row in ws.iter_rows(min_row=2, max_row=len(lines) + 1):
                 for cell in row:

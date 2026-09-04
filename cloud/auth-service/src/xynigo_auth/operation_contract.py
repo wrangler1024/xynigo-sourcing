@@ -635,6 +635,12 @@ class LogisticsQueryResultItem(BaseModel):
     trackingNumbers: list[str] = Field(default_factory=list, max_length=20)
     packageNumbers: list[str] = Field(default_factory=list, max_length=20)
     carrier: str = Field(default="", max_length=100)
+    firstTrackingAt: datetime | None = None
+    firstTrackingTime: str = Field(default="", max_length=64)
+    firstTrackingSummary: str = Field(default="", max_length=300)
+    firstTrackingLeadMinutes: int | None = Field(
+        default=None, ge=0, le=527040
+    )
     cancelled: bool = False
     riskOrder: bool = False
     riskSummary: str = Field(default="", max_length=300)
@@ -655,6 +661,8 @@ class LogisticsQueryResultItem(BaseModel):
         "statusLabel",
         "fulfillmentStage",
         "carrier",
+        "firstTrackingTime",
+        "firstTrackingSummary",
         "riskSummary",
         "timeZone",
         "errorSummary",
@@ -677,6 +685,11 @@ class LogisticsQueryResultItem(BaseModel):
     def validate_query_timezone(cls, value: datetime | None) -> datetime | None:
         return _timezone_required(value)
 
+    @field_validator("firstTrackingAt")
+    @classmethod
+    def validate_first_tracking_timezone(cls, value: datetime | None) -> datetime | None:
+        return _timezone_required(value)
+
 
 class LogisticsRunProgressItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -695,6 +708,12 @@ class LogisticsRunProgressItem(BaseModel):
     trackingNumbers: list[str] = Field(default_factory=list, max_length=20)
     packageNumbers: list[str] = Field(default_factory=list, max_length=20)
     carrier: str = Field(default="", max_length=100)
+    firstTrackingAt: datetime | None = None
+    firstTrackingTime: str = Field(default="", max_length=64)
+    firstTrackingSummary: str = Field(default="", max_length=300)
+    firstTrackingLeadMinutes: int | None = Field(
+        default=None, ge=0, le=527040
+    )
     cancelled: bool = False
     riskOrder: bool = False
     riskSummary: str = Field(default="", max_length=300)
@@ -717,6 +736,8 @@ class LogisticsRunProgressItem(BaseModel):
         "statusLabel",
         "fulfillmentStage",
         "carrier",
+        "firstTrackingTime",
+        "firstTrackingSummary",
         "riskSummary",
         "ipAddress",
         "timeZone",
@@ -740,6 +761,13 @@ class LogisticsRunProgressItem(BaseModel):
     @field_validator("queriedAt")
     @classmethod
     def validate_progress_query_timezone(cls, value: datetime | None) -> datetime | None:
+        return _timezone_required(value)
+
+    @field_validator("firstTrackingAt")
+    @classmethod
+    def validate_progress_first_tracking_timezone(
+        cls, value: datetime | None
+    ) -> datetime | None:
         return _timezone_required(value)
 
 

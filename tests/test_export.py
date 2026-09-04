@@ -15,6 +15,9 @@ def result_row(**overrides):
         'tracks': ['49350000001206'], 'pkgs': ['PKG1'], 'carrier': 'IMILE',
         'kanDan': False, 'riskOrder': False, 'ip': '127.0.0.1', 'error': '',
         'time': '2026-08-18 21:01:02',
+        'firstTrackingTime': '2026-08-19 09:30:00',
+        'firstTrackingSummary': 'Carrier received package',
+        'firstTrackingLeadMinutes': 1944,
         'screenshotState': 'ok', 'screenshotFile': '环境1975_物流尾号1206.jpg',
         'screenshotError': '', 'screenshotSizeKb': 95,
         'screenshotWidth': 1008, 'screenshotHeight': 535,
@@ -188,7 +191,14 @@ class ExportTests(unittest.TestCase):
             self.assertEqual(rich_values, [['0', '5'], ['1', '5']])
 
     def test_query_time_header_identifies_site_timezone(self):
-        self.assertEqual(EXPORT_HEAD[-1], '查询时间（站点）')
+        self.assertIn('查询时间（站点）', EXPORT_HEAD)
+
+    def test_export_includes_first_tracking_lead_fields(self):
+        data, _name, _mime = export_bytes([result_row()], 'csv')
+        text = data.decode('utf-8-sig')
+        self.assertIn('首条轨迹时间', text)
+        self.assertIn('Carrier received package', text)
+        self.assertIn('1944', text)
 
     def test_csv_includes_screenshot_status_field(self):
         data, name, _mime = export_bytes([result_row()], 'csv')

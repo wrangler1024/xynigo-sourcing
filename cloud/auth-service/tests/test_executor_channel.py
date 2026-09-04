@@ -1881,6 +1881,10 @@ def test_formal_logistics_progress_preserves_complete_headless_row(tmp_path) -> 
                     "trackingNumbers": ["49426326790694"],
                     "packageNumbers": ["PKG-001"],
                     "carrier": "IMILE",
+                    "firstTrackingAt": "2026-09-01T18:20:30-06:00",
+                    "firstTrackingTime": "2026-09-01 18:20:30",
+                    "firstTrackingSummary": "Carrier received package",
+                    "firstTrackingLeadMinutes": 480,
                     "cancelled": False,
                     "riskOrder": False,
                     "riskSummary": "",
@@ -1905,6 +1909,9 @@ def test_formal_logistics_progress_preserves_complete_headless_row(tmp_path) -> 
         assert row["ipAddress"] == "203.0.113.10"
         assert row["queriedAt"] == "2026-09-01T10:21:31"
         assert row["screenshotStatus"] == "ok"
+        assert row["firstTrackingTime"] == "2026-09-01 18:20:30"
+        assert row["firstTrackingSummary"] == "Carrier received package"
+        assert row["firstTrackingLeadMinutes"] == 480
 
         finished = device_client.post(
             f"/v1/executor-channel/tasks/{task_id}/finish",

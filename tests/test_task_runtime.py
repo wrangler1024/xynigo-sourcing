@@ -47,6 +47,21 @@ class TaskCoordinatorTests(unittest.TestCase):
         coordinator.reserve(env_id, {'code:100'})
         coordinator.finish(env_id)
 
+    def test_snapshot_counts_environment_aliases_once(self):
+        coordinator = LocalTaskCoordinator(lambda: True)
+        coordinator.begin('query', {
+            'name:xg-mx-0904-001', 'code:1001',
+            'name:xg-mx-0904-002', 'code:1002',
+        })
+        self.assertEqual(coordinator.snapshot()['tasks'][0]['resourceCount'], 2)
+
+    def test_snapshot_counts_name_only_environment_plans(self):
+        coordinator = LocalTaskCoordinator(lambda: True)
+        coordinator.begin('env_batch', {
+            'name:xg-mx-0904-001', 'name:xg-mx-0904-002',
+        })
+        self.assertEqual(coordinator.snapshot()['tasks'][0]['resourceCount'], 2)
+
     def test_registration_remains_exclusive(self):
         coordinator = LocalTaskCoordinator(lambda: True)
         query_id = coordinator.begin('query')

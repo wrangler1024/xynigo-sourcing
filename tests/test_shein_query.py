@@ -7,10 +7,35 @@ from unittest.mock import patch
 from purchase_tool.hub_api import HubApiError
 from purchase_tool.shein_query import (
     QueryOrchestrator, friendly_carrier, normalize_site, parse_detail_page,
-    parse_list_page)
+    parse_first_tracking_event, parse_list_page)
 
 
 class SheinQueryParserTests(unittest.TestCase):
+    def test_first_tracking_event_uses_chronological_minimum(self):
+        result = parse_first_tracking_event(
+            '2026-09-03 18:45:00 已到达配送中心\n'
+            '2026-09-02 11:30:00 承运商已收到包裹',
+            order_time='2026-09-01 09:30:00', site='MX',
+            utc_offset_minutes=-360)
+        self.assertEqual(result['firstTrackingTime'], '2026-09-02 11:30:00')
+        self.assertEqual(result['firstTrackingLeadMinutes'], 1560)
+        self.assertIn('承运商已收到包裹', result['firstTrackingSummary'])
+        self.assertTrue(result['firstTrackingAt'].endswith('-06:00'))
+
+    def test_first_tracking_event_accepts_mx_and_us_locales(self):
+        mx = parse_first_tracking_event(
+            '3 Septiembre 2026, 08:05 Paquete recibido', site='MX')
+        us = parse_first_tracking_event(
+            'September 3, 2026, 8:05 PM Package received', site='US')
+        self.assertEqual(mx['firstTrackingTime'], '2026-09-03 08:05:00')
+        self.assertEqual(us['firstTrackingTime'], '2026-09-03 20:05:00')
+
+    def test_first_tracking_event_does_not_report_invalid_lead(self):
+        result = parse_first_tracking_event(
+            '2026-09-01 08:00:00 Carrier received package',
+            order_time='2026-09-02 09:30:00', site='US')
+        self.assertIsNone(result['firstTrackingLeadMinutes'])
+
     def test_parse_standard_list_card(self):
         text = (
             'Todos los pedidos No pagado Procesando Enviado\n'
@@ -162,6 +187,11 @@ class TrackingScreenshotTests(unittest.TestCase):
         def outer_html(self):
             return '<script>{"carrier_name":"SpeedX"}</script>'
 
+        def element_inner_text(self, selector):
+            if selector == '.track-steps-content':
+                return '2026-08-19 09:30:00 Carrier received package'
+            return ''
+
     def test_capture_tracking_uses_temp_file_and_public_metadata_only(self):
         job = QueryOrchestrator(hub=None, settle_seconds=0)
         try:
@@ -170,6 +200,8 @@ class TrackingScreenshotTests(unittest.TestCase):
             self.assertEqual(result['screenshotState'], 'ok')
             self.assertEqual(result['screenshotSizeKb'], 1)
             self.assertEqual(result['carrier'], 'SpeedX')
+            self.assertEqual(
+                result['firstTrackingTime'], '2026-08-19 09:30:00')
             self.assertEqual(job.screenshot_bytes('1001'), b'jpeg')
             self.assertNotIn('GSH1TEST', result['screenshotFile'])
             self.assertTrue(result['screenshotFile'].endswith('1206.jpg'))

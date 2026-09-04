@@ -135,6 +135,14 @@ class PageTarget(object):
             'document.body ? document.body.innerText : ""')
         return value or ''
 
+    def element_inner_text(self, selector):
+        """Return rendered text for one element without exposing page HTML."""
+        value = self._evaluate(
+            '(() => { const e=document.querySelector(%s); '
+            'return e ? String(e.innerText || "") : ""; })()'
+            % json.dumps(selector))
+        return value or ''
+
     def outer_html(self):
         value = self._evaluate('document.documentElement.outerHTML')
         return value or ''

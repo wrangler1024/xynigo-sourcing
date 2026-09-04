@@ -20,6 +20,7 @@ import re
 import tempfile
 import threading
 import time
+import unicodedata
 from datetime import datetime, timedelta, timezone
 
 from .cdp import CdpClient
@@ -148,6 +149,36 @@ RE_ERR_PAGE = re.compile(r'(ERR_[A-Z_]+)')
 RE_CF = re.compile(
     r'Verificaci[óo]n de seguridad|Checking your browser'
     r'|Attention Required|Verifica que (eres|no eres)', re.I)
+TRACKING_MONTH_NUMBERS = {
+    'jan': 1, 'january': 1, 'ene': 1, 'enero': 1,
+    'feb': 2, 'february': 2, 'febrero': 2,
+    'mar': 3, 'march': 3, 'marzo': 3,
+    'apr': 4, 'april': 4, 'abr': 4, 'abril': 4,
+    'may': 5, 'mayo': 5,
+    'jun': 6, 'june': 6, 'junio': 6,
+    'jul': 7, 'july': 7, 'julio': 7,
+    'aug': 8, 'august': 8, 'ago': 8, 'agosto': 8,
+    'sep': 9, 'sept': 9, 'september': 9, 'septiembre': 9,
+    'oct': 10, 'october': 10, 'octubre': 10,
+    'nov': 11, 'november': 11, 'noviembre': 11,
+    'dec': 12, 'december': 12, 'dic': 12, 'diciembre': 12,
+}
+_TRACK_TIME = (
+    r'(?P<hour>[01]?\d|2[0-3]):(?P<minute>[0-5]\d)'
+    r'(?::(?P<second>[0-5]\d))?\s*(?P<ampm>AM|PM)?')
+RE_TRACKING_ISO_TIME = re.compile(
+    r'(?P<year>20\d{2})[-/.](?P<month>\d{1,2})[-/.]'
+    r'(?P<day>\d{1,2})[ T,\s]+' + _TRACK_TIME, re.I)
+RE_TRACKING_DAY_MONTH_TIME = re.compile(
+    r'(?P<day>\d{1,2})\s+(?P<monthName>[A-Za-zÁÉÍÓÚÜÑáéíóúüñ.]+)'
+    r'\s+(?P<year>20\d{2})[,\s]+' + _TRACK_TIME, re.I)
+RE_TRACKING_MONTH_DAY_TIME = re.compile(
+    r'(?P<monthName>[A-Za-zÁÉÍÓÚÜÑáéíóúüñ.]+)\s+'
+    r'(?P<day>\d{1,2}),?\s+(?P<year>20\d{2})[,\s]+' + _TRACK_TIME,
+    re.I)
+RE_TRACKING_NUMERIC_TIME = re.compile(
+    r'(?P<first>\d{1,2})[-/.](?P<secondPart>\d{1,2})[-/.]'
+    r'(?P<year>20\d{2})[ T,\s]+' + _TRACK_TIME, re.I)
 
 
 def normalize_site(site):
@@ -229,6 +260,100 @@ def _order_time_from_epoch(raw, site='MX', utc_offset_minutes=None):
                 '%Y-%m-%d %H:%M:%S')
     except (TypeError, ValueError, OverflowError):
         return ''
+
+
+def _tracking_month_number(raw):
+    value = unicodedata.normalize('NFKD', str(raw or ''))
+    value = ''.join(ch for ch in value if not unicodedata.combining(ch))
+    return TRACKING_MONTH_NUMBERS.get(value.strip(' .').casefold())
+
+
+def _tracking_match_datetime(match, site='MX', utc_offset_minutes=None):
+    """Convert one rendered carrier timestamp to the environment timezone."""
+    try:
+        site = normalize_site(site)
+        groups = match.groupdict()
+        month = groups.get('month')
+        if not month and groups.get('monthName'):
+            month = _tracking_month_number(groups['monthName'])
+        if not month and groups.get('first'):
+            if site == 'US':
+                month, day = groups['first'], groups['secondPart']
+            else:
+                day, month = groups['first'], groups['secondPart']
+        else:
+            day = groups.get('day')
+        hour = int(groups.get('hour') or 0)
+        ampm = str(groups.get('ampm') or '').upper()
+        if ampm:
+            hour = hour % 12 + (12 if ampm == 'PM' else 0)
+        offset = SITE_PROFILES[site]['utcOffsetMinutes'] \
+            if utc_offset_minutes is None else int(utc_offset_minutes)
+        return datetime(
+            int(groups['year']), int(month), int(day), hour,
+            int(groups.get('minute') or 0), int(groups.get('second') or 0),
+            tzinfo=timezone(timedelta(minutes=offset)))
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def parse_first_tracking_event(text, order_time='', site='MX',
+                               utc_offset_minutes=None):
+    """Parse the earliest rendered tracking node and its order-to-track lead.
+
+    SHEIN and downstream carriers do not expose one stable JSON contract for
+    the rendered timeline.  We therefore accept the verified MX/US locale
+    date families, inspect short adjacent-line windows, and choose the
+    chronological minimum rather than the first DOM row (the UI is usually
+    newest-first).
+    """
+    empty = {
+        'firstTrackingAt': '', 'firstTrackingTime': '',
+        'firstTrackingSummary': '', 'firstTrackingLeadMinutes': None,
+    }
+    lines = [re.sub(r'\s+', ' ', line).strip()
+             for line in str(text or '').splitlines() if line.strip()]
+    patterns = (
+        RE_TRACKING_ISO_TIME, RE_TRACKING_DAY_MONTH_TIME,
+        RE_TRACKING_MONTH_DAY_TIME, RE_TRACKING_NUMERIC_TIME,
+    )
+    events = {}
+    for index in range(len(lines)):
+        candidate = ' '.join(lines[index:index + 3])
+        for pattern in patterns:
+            for match in pattern.finditer(candidate):
+                observed = _tracking_match_datetime(
+                    match, site, utc_offset_minutes)
+                if observed is None:
+                    continue
+                summary = candidate[match.end():].strip(' -–—|·,;')
+                for next_pattern in patterns:
+                    next_match = next_pattern.search(summary)
+                    if next_match:
+                        summary = summary[:next_match.start()].strip(
+                            ' -–—|·,;')
+                key = observed.isoformat()
+                if key not in events or len(summary) > len(events[key][1]):
+                    events[key] = (observed, summary[:300])
+    if not events:
+        return empty
+    observed, summary = min(events.values(), key=lambda item: item[0])
+    lead_minutes = None
+    try:
+        ordered = datetime.strptime(
+            str(order_time or '').strip(), '%Y-%m-%d %H:%M:%S')
+        ordered = ordered.replace(tzinfo=observed.tzinfo)
+        candidate_lead = int((observed - ordered).total_seconds() // 60)
+        if 0 <= candidate_lead <= 366 * 24 * 60:
+            lead_minutes = candidate_lead
+    except (TypeError, ValueError):
+        pass
+    return {
+        'firstTrackingAt': observed.isoformat(),
+        'firstTrackingTime': observed.strftime('%Y-%m-%d %H:%M:%S'),
+        'firstTrackingSummary': summary,
+        'firstTrackingLeadMinutes': lead_minutes,
+    }
 
 
 def _canonical_status(word):
@@ -362,6 +487,9 @@ class QueryOrchestrator(object):
                 'carrier': '', 'kanDan': False, 'riskOrder': False,
                 'riskMessage': '', 'ip': '', 'time': '',
                 'timeZone': '', 'utcOffsetMinutes': None,
+                'firstTrackingAt': '', 'firstTrackingTime': '',
+                'firstTrackingSummary': '',
+                'firstTrackingLeadMinutes': None,
                 'error': '', 'screenshotState': 'pending',
                 'screenshotFile': '', 'screenshotError': '',
                 'screenshotSizeKb': 0, 'screenshotWidth': 0,
@@ -447,7 +575,8 @@ class QueryOrchestrator(object):
             except Exception:
                 pass
 
-    def _capture_tracking(self, page, serial, order_no, tracks, site='MX'):
+    def _capture_tracking(self, page, serial, order_no, tracks, site='MX',
+                          order_time='', utc_offset_minutes=None):
         """打开 SHEIN 轨迹页并截取无地址/商品的物流区域。"""
         profile = _site_profile(site)
         page.goto(profile['orderTrackUrl'] % order_no,
@@ -457,40 +586,51 @@ class QueryOrchestrator(object):
         if not page.wait_selector('.track-steps-content', timeout=25):
             raise RuntimeError('轨迹页未加载出物流节点')
         track_html = page.outer_html()
+        track_text = page.element_inner_text('.track-steps-content')
+        tracking_result = parse_first_tracking_event(
+            track_text, order_time, site, utc_offset_minutes)
         carrier_match = RE_CARRIER_NAME.search(track_html)
-        data, width, height = page.capture_element_union(
-            ['.logistics-container-wrapper', '.track-content-card__header',
-             '.track-steps-content'],
-            image_format='jpeg', quality=75, padding=8,
-            hide_selectors=[
-                '.shipping-information-new', '.top-address',
-                '.track-goods-new', '.orders-track-page__header'])
-        # 极少数超长轨迹若超过 300KB，以质量 60 重压一次。
-        if len(data) > 300 * 1024:
+        try:
             data, width, height = page.capture_element_union(
-                ['.logistics-container-wrapper',
-                 '.track-content-card__header', '.track-steps-content'],
-                image_format='jpeg', quality=60, padding=8,
+                ['.logistics-container-wrapper', '.track-content-card__header',
+                 '.track-steps-content'],
+                image_format='jpeg', quality=75, padding=8,
                 hide_selectors=[
                     '.shipping-information-new', '.top-address',
                     '.track-goods-new', '.orders-track-page__header'])
-        if self._screenshot_temp is None:
-            self._reset_screenshots()
-        safe_serial = re.sub(r'[^A-Za-z0-9_-]', '_', str(serial))[:40]
-        suffix = re.sub(r'[^A-Za-z0-9]', '', str(tracks[0]))[-4:] \
-            if tracks else 'none'
-        filename = '环境%s_物流尾号%s.jpg' % (safe_serial, suffix)
-        path = os.path.join(self._screenshot_temp.name, filename)
-        with open(path, 'wb') as f:
-            f.write(data)
-        with self.lock:
-            self._screenshots[str(serial)] = path
-        result = {
-            'screenshotState': 'ok', 'screenshotFile': filename,
-            'screenshotError': '',
-            'screenshotSizeKb': max(1, int(round(len(data) / 1024.0))),
-            'screenshotWidth': width, 'screenshotHeight': height,
-        }
+            # 极少数超长轨迹若超过 300KB，以质量 60 重压一次。
+            if len(data) > 300 * 1024:
+                data, width, height = page.capture_element_union(
+                    ['.logistics-container-wrapper',
+                     '.track-content-card__header', '.track-steps-content'],
+                    image_format='jpeg', quality=60, padding=8,
+                    hide_selectors=[
+                        '.shipping-information-new', '.top-address',
+                        '.track-goods-new', '.orders-track-page__header'])
+            if self._screenshot_temp is None:
+                self._reset_screenshots()
+            safe_serial = re.sub(r'[^A-Za-z0-9_-]', '_', str(serial))[:40]
+            suffix = re.sub(r'[^A-Za-z0-9]', '', str(tracks[0]))[-4:] \
+                if tracks else 'none'
+            filename = '环境%s_物流尾号%s.jpg' % (safe_serial, suffix)
+            path = os.path.join(self._screenshot_temp.name, filename)
+            with open(path, 'wb') as f:
+                f.write(data)
+            with self.lock:
+                self._screenshots[str(serial)] = path
+            result = {
+                'screenshotState': 'ok', 'screenshotFile': filename,
+                'screenshotError': '',
+                'screenshotSizeKb': max(1, int(round(len(data) / 1024.0))),
+                'screenshotWidth': width, 'screenshotHeight': height,
+            }
+        except Exception as exc:
+            result = {
+                'screenshotState': 'fail', 'screenshotFile': '',
+                'screenshotError': str(exc)[:100], 'screenshotSizeKb': 0,
+                'screenshotWidth': 0, 'screenshotHeight': 0,
+            }
+        result.update(tracking_result)
         if carrier_match:
             result['carrier'] = carrier_match.group(1)
         return result
@@ -855,7 +995,9 @@ class QueryOrchestrator(object):
         self._update(
             row, screenshotState='pending', screenshotFile='',
             screenshotError='', screenshotSizeKb=0,
-            screenshotWidth=0, screenshotHeight=0)
+            screenshotWidth=0, screenshotHeight=0,
+            firstTrackingAt='', firstTrackingTime='',
+            firstTrackingSummary='', firstTrackingLeadMinutes=None)
         env = env_index.get(serial)
         if env is None:
             self._update(row, state='fail', error='未找到该环境序号')
@@ -986,7 +1128,10 @@ class QueryOrchestrator(object):
             if detail['tracks']:
                 try:
                     screenshot = self._capture_tracking(
-                        page, serial, info['orderNo'], detail['tracks'], site)
+                        page, serial, info['orderNo'], detail['tracks'], site,
+                        order_time=(info.get('orderTime') or
+                                    detail.get('orderTime') or ''),
+                        utc_offset_minutes=utc_offset)
                 except Exception as e:
                     screenshot = {
                         'screenshotState': 'fail', 'screenshotFile': '',
