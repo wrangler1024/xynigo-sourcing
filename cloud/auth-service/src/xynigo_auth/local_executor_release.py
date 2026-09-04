@@ -14,9 +14,9 @@ from urllib.parse import quote
 
 from . import __version__
 
-RELEASE_VERSION = "0.16.0"
+RELEASE_VERSION = "0.17.0"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-04T11:39:00Z"
+RELEASE_PUBLISHED_AT = "2026-09-04T12:50:19Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,8 +31,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.16.0-59cdfad35141",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.16.0.exe",
+        "runtimeId": "0.17.0-75966b7b5ba4",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.0.exe",
         "sha256": "84ac49257274ad3e3880203267bef04dcfd75c04effc326fcbcfd5b1fb223ac6",
         "size": 15_208_800,
         "installMode": "standard_per_user",
@@ -50,8 +50,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.16.0-59cdfad35141",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.16.0.pkg",
+        "runtimeId": "0.17.0-75966b7b5ba4",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.0.pkg",
         "sha256": "e064723bd31a94617f1b2d2558772a68fd931ddd5139a244e63ff9bfd2ec6345",
         "size": 11_506_072,
         "installMode": "standard_system_application",
@@ -320,13 +320,13 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "物流查询对 HubStudio Local API 超时、资源不足和环境关闭延迟进行分级恢复，避免单次异常终止整批。",
-            "浏览器启动超时会先核对真实环境状态，再进行一次安全恢复，不重复打开同一环境。",
-            "物流查询复用六小时完整环境库存缓存；缺失或过期时自动回退实时全量读取。",
-            "查询页面修复布局漂移，等待关闭与正常进度交替展示，超长错误收纳为摘要和详情。",
-            "物流高级设置完整迁移到桌面客户端，网页只展示所选执行器的只读策略摘要。",
-            "浏览器模式和只读连接已打开环境策略由执行器本机统一管理，旧客户端默认采用安全关闭策略。",
-            "项目内插件名称统一为店小秘提单助手。",
+            "新建采购买家号环境采用日期、连续序号和稳定四位短码三层命名，极端重名时继续安全换码。",
+            "云端缓存以 HubStudio 环境 UUID 和 containerCode 为真实身份，名称只作为兼容旧环境的可读标签。",
+            "完整环境快照会安全合并重复旧记录并清理已确认删除的占位记录，避免唯一约束导致任务中断。",
+            "缓存同步异常使用独立保存点隔离，不再污染任务完成回传事务。",
+            "执行器在领取任务前回收过期租约；超时后迟到的有效结果仍可完成原任务，消除幽灵运行状态。",
+            "任务结果回传重试期间保持在线心跳但不领取新任务，桌面状态中心准确显示恢复阶段。",
+            "旧环境名称继续兼容，无需批量重命名已有环境。",
             "Windows 与 macOS 从同一 Git 基线同步构建并发布。",
             "稳定通道强制平台签名门槛；内部未签名包仅允许 test 通道。",
         ],
