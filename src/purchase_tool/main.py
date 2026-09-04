@@ -1823,6 +1823,11 @@ class AppState(object):
                 'utcOffsetMinutes': row.get('utcOffsetMinutes'),
                 'queriedAt': self._iso_local_text(
                     row.get('time'), row.get('utcOffsetMinutes')),
+                'executionAttempted': bool(
+                    row.get('executionAttempted')),
+                'executionDurationMs': max(
+                    0, min(86400000, int(
+                        row.get('executionDurationMs') or 0))),
                 'errorSummary': scrub_text(row.get('error') or '')[:300],
                 'screenshotStatus': str(row.get('screenshotState') or ''),
             } for row in rows],

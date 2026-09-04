@@ -283,7 +283,8 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         ]
         self.assertIn("terminalStartFailure", renderer)
         self.assertIn("terminalSystemFailure", renderer)
-        self.assertIn("执行器正在预检和准备", renderer)
+        self.assertIn("正在预检并准备执行环境", renderer)
+        self.assertNotIn("$('currentEnv')", renderer)
         self.assertIn("logisticsRunFailureText(snap.errorCode)", renderer)
         self.assertIn("hubstudio_browser_core_missing", html)
         self.assertIn("hubstudio_system_resources_insufficient", html)
@@ -361,12 +362,14 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             html.index("function render(snap)")
         ]
         self.assertIn('id="queryProgress"', html)
-        self.assertIn("terminalWithRows && review > 0", progress)
-        self.assertIn(
-            "`有效 ${valid} / ${total} · 待核对 ${review}`", progress)
+        self.assertIn("Number(stats.review || 0) > 0", progress)
+        self.assertIn("已处理 ${processed} / ${total}", progress)
+        self.assertIn("平均 ${average}", progress)
+        self.assertIn("本轮重查 ${retryDuration}", progress)
+        self.assertIn("累计执行", progress)
         self.assertIn("query-outcome-review", progress)
-        self.assertIn("查询已停止：${outcomeCopy}", renderer)
-        self.assertIn("查询异常结束：${outcomeCopy}", renderer)
+        self.assertIn("已停止查询：${outcomeCopy}", renderer)
+        self.assertNotIn("$('currentEnv')", renderer)
         self.assertIn("'查询未完成行'", renderer)
 
     def test_cloud_copy_is_synced_from_single_ui_source(self):
@@ -594,7 +597,8 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             'id="carrierDistribution"',
             'id="queryExecutorSettings"',
             'id="queryExecutorSettingsSummary"',
-            '高级设置由桌面执行器管理',
+            '>⚙ 高级设置<',
+            '网页仅显示桌面执行器设置',
             'function renderQueryExecutorSettings(runtime)',
             'class="table-actions query-table-actions"',
             'id="bizFirstTrackLead"',
@@ -606,11 +610,11 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             "/screenshots/' + encodeURIComponent(serial)",
             "+ '/export?includeScreenshots='",
             "screenshotSizeKb:Number(row.screenshotSizeKb || 0)",
-            "本次重查 ${retryCurrent} / ${retryTotal}",
+            "本轮重查 ${retryDuration}",
+            "averageEnvironmentDurationSec",
             "elapsedSec:Number.isFinite(cumulativeDuration)",
             "attemptElapsedSec:Number.isFinite(attemptDuration)",
-            "queryElapsedPrefix = snap.parentRunId ? '累计' : '已用';",
-            "本次异常重查已用",
+            "累计执行 ${elapsedClock(snap.elapsedSec || 0)}",
             "queryBackgroundRestoreNotified",
             "window.addEventListener('beforeunload'",
             '不连接已打开环境',
@@ -662,6 +666,29 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         ]
         self.assertNotIn("cloudLogisticsRunId =", detail)
         self.assertNotIn("lastRows =", detail)
+
+    def test_operation_ids_environment_history_and_status_help_are_accessible(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        for marker in (
+            'id="queryCurrentId"',
+            'data-copy-id=',
+            'id="btnEnvironmentHistory"',
+            'id="environmentHistoryMask"',
+            '/v1/operation-runs/environment-creation/history?',
+            '/v1/operation-runs/environment-creation/history/',
+            'id="btnQueryTitleHelp"',
+            'aria-describedby="queryTitleHelpPopover"',
+            'role="tooltip"',
+            "if (!event.target.closest('#queryTitleHelp'))",
+        ):
+            self.assertIn(marker, html)
+        query_title = html[
+            html.index('class="card-title table-title-row query-results-title"'):
+            html.index('class="table-actions query-table-actions"')
+        ]
+        self.assertNotIn('class="legend"', query_title)
+        self.assertNotIn('id="currentEnv"', html)
+        self.assertNotIn('id="elapsed"', html)
 
     def test_logistics_dates_stack_without_growing_the_query_row(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")

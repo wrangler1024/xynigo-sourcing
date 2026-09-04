@@ -499,7 +499,7 @@ def create_app(
 
     app = FastAPI(
         title="Xynigo Auth Service",
-        version="0.17.0",
+        version="0.17.1",
         docs_url=None,
         redoc_url=None,
         lifespan=lifespan,
@@ -2374,6 +2374,56 @@ def create_app(
             ) from exc
         runs = OperationRunService(session)
         try:
+            preview_run, unchanged = runs.create_environment_preview_run(
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                cloud_plan_id=cloud_plan_id,
+                body=body,
+            )
+        except PurchaseServiceError as exc:
+            session.rollback()
+            purchase_error(
+                request,
+                session,
+                actor,
+                action,
+                exc,
+                business_object_id=body.idempotencyKey,
+            )
+        if unchanged:
+            if preview_run.executor_task_id is not None:
+                task = channel.get_task(
+                    tenant_id=actor.tenant.id,
+                    user_id=actor.user.id,
+                    task_id=preview_run.executor_task_id,
+                )
+                return {
+                    "ok": True,
+                    "task": channel.task_payload(task),
+                    "run": runs.environment_snapshot(preview_run, unchanged=True),
+                }
+            stored_rows = runs.environment_history_snapshot(
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                root_run_id=preview_run.id,
+            )["rows"]
+            return {
+                "ok": True,
+                "result": {
+                    "valid": preview_run.status == "completed",
+                    "count": preview_run.total_count,
+                    "rows": [{
+                        "emailMasked": row["accountLabel"],
+                        "purchaserLabel": row["purchaserLabel"],
+                        "environmentName": row["environmentName"],
+                        "recoveredExisting": row["recoveredExisting"],
+                    } for row in stored_rows],
+                    "inventorySource": "cloud_cache",
+                },
+                "task": None,
+                "run": runs.environment_snapshot(preview_run, unchanged=True),
+            }
+        try:
             cached_result = runs.preview_environment_names_from_cache(
                 tenant_id=actor.tenant.id,
                 site=body.site,
@@ -2395,6 +2445,10 @@ def create_app(
                 business_object_id=cloud_plan_id,
             )
         if cached_result is not None:
+            runs.complete_environment_preview(
+                run=preview_run,
+                rows=list(cached_result.get("rows") or []),
+            )
             append_executor_audit(
                 request,
                 session,
@@ -2402,19 +2456,27 @@ def create_app(
                 action=action,
                 object_id=body.executorId,
                 summary={
+                    "environmentTaskId": str(preview_run.id),
                     "site": body.site,
                     "totalCount": body.totalCount,
                     "inventorySource": "cloud_cache",
                 },
             )
             session.commit()
-            return {"ok": True, "result": cached_result, "task": None}
+            return {
+                "ok": True,
+                "result": cached_result,
+                "task": None,
+                "run": runs.environment_snapshot(preview_run),
+            }
         task = channel.create_config_task(
             tenant_id=actor.tenant.id,
             user_id=actor.user.id,
             executor_id=body.executorId,
             task_type="environment.preview-bound.v1",
             payload={
+                "runId": str(preview_run.id),
+                "taskId": str(preview_run.root_run_id or preview_run.id),
                 "cloudPlanId": cloud_plan_id,
                 "planAccounts": plan_accounts,
                 "site": body.site,
@@ -2428,6 +2490,10 @@ def create_app(
             idempotency_key=f"preview:{body.idempotencyKey}",
             commit=False,
         )
+        preview_run.executor_task_id = task.id
+        preview_run.status = "queued"
+        preview_run.phase = "queued"
+        preview_run.updated_at = utcnow()
         append_executor_audit(
             request,
             session,
@@ -2436,12 +2502,17 @@ def create_app(
             object_id=body.executorId,
             summary={
                 "taskId": str(task.id),
+                "environmentTaskId": str(preview_run.id),
                 "site": body.site,
                 "totalCount": body.totalCount,
             },
         )
         session.commit()
-        return {"ok": True, "task": channel.task_payload(task)}
+        return {
+            "ok": True,
+            "task": channel.task_payload(task),
+            "run": runs.environment_snapshot(preview_run),
+        }
 
     @app.get("/v1/executor-tasks/{task_id}")
     def get_executor_task(
@@ -3412,6 +3483,8 @@ def create_app(
             )
             task_payload = {
                 "runId": str(run.id),
+                "taskId": str(run.root_run_id or run.id),
+                "rootRunId": str(run.root_run_id or run.id),
                 "runKey": run.source_run_key,
                 "mode": body.mode,
                 "site": body.site,
@@ -3456,13 +3529,17 @@ def create_app(
             tenant_id=actor.tenant.id,
             actor_user_id=actor.user.id,
             business_object_type="environment_creation_run",
-            business_object_id=str(run.id),
+            business_object_id=str(run.root_run_id or run.id),
             change_summary={
                 "status": run.status,
                 "totalCount": run.total_count,
                 "unchanged": unchanged,
             },
-            details={"mode": run.run_mode, "site": run.site},
+            details={
+                "latestRunId": str(run.id),
+                "mode": run.run_mode,
+                "site": run.site,
+            },
             **_request_log_context(request),
         )
         session.commit()
@@ -3488,6 +3565,105 @@ def create_app(
             tenant_id=actor.tenant.id, actor_user_id=actor.user.id
         )
         return {"ok": True, "data": service.environment_snapshot(run) if run else None}
+
+    @app.get("/v1/operation-runs/environment-creation/history")
+    def list_environment_operation_history(
+        request: Request,
+        session: SessionDep,
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+        cursor: Annotated[uuid.UUID | None, Query()] = None,
+        site: Annotated[Literal["US", "MX"] | None, Query()] = None,
+        run_status: Annotated[
+            Literal[
+                "created", "queued", "leased", "running", "completed",
+                "partial_failure", "failed", "cancelled", "uncertain",
+            ] | None,
+            Query(alias="status"),
+        ] = None,
+        history_user_id: Annotated[
+            uuid.UUID | None, Query(alias="userId")
+        ] = None,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "resource.environment.history.list"
+        actor = authorize_request(
+            request,
+            session,
+            permission="resource.environment.create",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        history_admin = (
+            _user_has_role(session, actor.user, ADMIN_ROLE)
+            or _user_has_role(session, actor.user, SUPER_ADMIN_ROLE)
+        )
+        if history_user_id is not None and not history_admin \
+                and history_user_id != actor.user.id:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "environment_history_user_filter_forbidden"},
+            )
+        service = OperationRunService(session)
+        try:
+            data = service.environment_history(
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                limit=limit,
+                cursor=cursor,
+                site=site,
+                status=run_status,
+                include_all_users=history_admin,
+                filter_actor_user_id=history_user_id,
+            )
+        except PurchaseServiceError as exc:
+            purchase_error(request, session, actor, action, exc)
+        return {"ok": True, "data": data}
+
+    @app.get("/v1/operation-runs/environment-creation/history/{root_run_id}")
+    def get_environment_operation_history(
+        root_run_id: uuid.UUID,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "resource.environment.history.read"
+        actor = authorize_request(
+            request,
+            session,
+            permission="resource.environment.create",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        history_admin = (
+            _user_has_role(session, actor.user, ADMIN_ROLE)
+            or _user_has_role(session, actor.user, SUPER_ADMIN_ROLE)
+        )
+        service = OperationRunService(session)
+        try:
+            data = service.environment_history_snapshot(
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                root_run_id=root_run_id,
+                allow_tenant_scope=history_admin,
+            )
+        except PurchaseServiceError as exc:
+            purchase_error(
+                request,
+                session,
+                actor,
+                action,
+                exc,
+                business_object_id=str(root_run_id),
+            )
+        return {"ok": True, "data": data}
 
     @app.get("/v1/operation-runs/environment-creation/{run_id}")
     def get_environment_operation_run(
@@ -3684,6 +3860,8 @@ def create_app(
             )
             task_payload = {
                 "runId": str(run.id),
+                "taskId": str(run.root_run_id or run.id),
+                "rootRunId": str(run.root_run_id or run.id),
                 "runKey": run.source_run_key,
                 "parentRunId": str(parent.id),
                 "retryMode": body.retryMode,
@@ -3730,7 +3908,7 @@ def create_app(
             tenant_id=actor.tenant.id,
             actor_user_id=actor.user.id,
             business_object_type="environment_creation_run",
-            business_object_id=str(run.id),
+            business_object_id=str(run.root_run_id or run.id),
             change_summary={
                 "retryMode": body.retryMode,
                 "takeover": bool(body.takeover),
@@ -3738,6 +3916,8 @@ def create_app(
                 "unchanged": unchanged,
             },
             details={
+                "taskId": str(run.root_run_id or run.id),
+                "latestRunId": str(run.id),
                 "parentRunId": str(parent.id),
                 "takeover": bool(body.takeover),
                 "sourceExecutorId": (
@@ -3902,6 +4082,8 @@ def create_app(
             run.request_summary = request_summary
             task_payload = {
                 "runId": str(run.id),
+                "queryId": str(run.root_run_id or run.id),
+                "rootRunId": str(run.root_run_id or run.id),
                 "runKey": run.source_run_key,
                 "queryMode": body.queryMode,
                 "browserMode": browser_mode,
@@ -3937,13 +4119,17 @@ def create_app(
             tenant_id=actor.tenant.id,
             actor_user_id=actor.user.id,
             business_object_type="logistics_query_run",
-            business_object_id=str(run.id),
+            business_object_id=str(run.root_run_id or run.id),
             change_summary={
                 "status": run.status,
                 "totalCount": run.total_count,
                 "unchanged": unchanged,
             },
-            details={"queryMode": run.query_mode, "site": run.site},
+            details={
+                "latestRunId": str(run.id),
+                "queryMode": run.query_mode,
+                "site": run.site,
+            },
             **_request_log_context(request),
         )
         session.commit()

@@ -664,6 +664,8 @@ class LogisticsQueryResultItem(BaseModel):
     timeZone: str = Field(default="", max_length=100)
     utcOffsetMinutes: int | None = Field(default=None, ge=-840, le=840)
     queriedAt: datetime | None = None
+    executionAttempted: bool = False
+    executionDurationMs: int = Field(default=0, ge=0, le=86_400_000)
     errorSummary: str = Field(default="", max_length=300)
     screenshotStatus: str = Field(default="", max_length=32)
 
@@ -737,6 +739,8 @@ class LogisticsRunProgressItem(BaseModel):
     timeZone: str = Field(default="", max_length=100)
     utcOffsetMinutes: int | None = Field(default=None, ge=-840, le=840)
     queriedAt: datetime | None = None
+    executionAttempted: bool = False
+    executionDurationMs: int = Field(default=0, ge=0, le=86_400_000)
     errorSummary: str = Field(default="", max_length=300)
     screenshotStatus: str = Field(default="", max_length=32)
     screenshotSizeKb: int = Field(default=0, ge=0, le=1024)

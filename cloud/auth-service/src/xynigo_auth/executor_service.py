@@ -1771,7 +1771,8 @@ class ExecutorChannelService:
         result_summary: dict[str, Any] | None = None,
         progress_snapshot: dict[str, Any] | None = None,
     ) -> None:
-        if task.task_type.startswith(("environment.create-", "environment.retry-")):
+        if task.task_type.startswith(("environment.create-", "environment.retry-")) \
+                or task.task_type == "environment.preview-bound.v1":
             run = self.session.scalar(
                 select(EnvironmentCreationRun).where(
                     EnvironmentCreationRun.executor_task_id == task.id
@@ -1799,9 +1800,13 @@ class ExecutorChannelService:
             run.started_at = run.started_at or started_at
         if completed_at is not None:
             run.completed_at = completed_at
-        if progress_total is not None:
+        if progress_total is not None and not (
+            isinstance(run, EnvironmentCreationRun) and run.run_mode == "dry_run"
+        ):
             run.progress_total = max(0, progress_total)
-        if progress_current is not None:
+        if progress_current is not None and not (
+            isinstance(run, EnvironmentCreationRun) and run.run_mode == "dry_run"
+        ):
             run.progress_completed = min(
                 max(0, progress_current), max(0, run.progress_total)
             )
@@ -1823,6 +1828,23 @@ class ExecutorChannelService:
                 run.ip_ok_count = ip_ok
             if ip_total is not None:
                 run.ip_total_count = ip_total
+            if (
+                run.run_mode == "dry_run"
+                and status in OperationRunService.TERMINAL_STATUSES
+            ):
+                preview_rows = summary.get("rows")
+                if status == "completed" and isinstance(preview_rows, list):
+                    OperationRunService(self.session).complete_environment_preview(
+                        run=run,
+                        rows=[dict(item) for item in preview_rows],
+                        completed_at=completed_at or heartbeat_at,
+                    )
+                else:
+                    run.progress_completed = 0
+                    run.progress_total = run.total_count
+                    run.success_count = 0
+                    run.failed_count = run.total_count
+                return
             if progress_snapshot is not None:
                 self._upsert_environment_progress(run, progress_snapshot, heartbeat_at)
             guard_service = OperationRunService(self.session)
@@ -2000,6 +2022,8 @@ class ExecutorChannelService:
             row.time_zone = item.timeZone or None
             row.utc_offset_minutes = item.utcOffsetMinutes
             row.queried_at = item.queriedAt
+            row.execution_attempted = item.executionAttempted
+            row.execution_duration_ms = item.executionDurationMs
             row.error_summary = item.errorSummary or None
             row.screenshot_status = item.screenshotStatus or None
             row.updated_at = now

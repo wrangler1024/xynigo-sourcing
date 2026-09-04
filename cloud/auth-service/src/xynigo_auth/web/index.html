@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Xynigo Sourcing v0.17.0</title>
+<title>Xynigo Sourcing v0.17.1</title>
 <link rel="icon" type="image/png" sizes="260x260" href="/xynigo-x.png?v=6">
 <link rel="icon" type="image/x-icon" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256" href="/favicon.ico?v=6">
 <link rel="shortcut icon" href="/favicon.ico?v=6">
@@ -55,11 +55,9 @@
   .progress.query-outcome-review { background: var(--red-bg); }
   .progress.query-outcome-review .bar { background: linear-gradient(90deg, var(--green), var(--primary)); }
   .progress.query-outcome-complete .bar { background: var(--green); }
-  #progressText { font-size: 13px; color: var(--gray); min-width: 56px; text-align: right; }
+  #progressText { font-size: 11px; color: var(--navy-500); min-width: 420px; text-align: right; white-space: nowrap; }
   #progressText.query-outcome-review { color: var(--red); font-weight: 600; min-width: 205px; }
   #progressText.query-outcome-complete { color: var(--green); font-weight: 600; min-width: 120px; }
-  #currentEnv { font-size: 13px; color: var(--blue); min-width: 170px; }
-  #elapsed { font-size: 13px; color: var(--gray); min-width: 90px; text-align: right; }
   .table-wrap { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th { text-align: left; padding: 9px 10px; background: #f9fafb; color: var(--gray); font-weight: 600; border-bottom: 1px solid var(--border); white-space: nowrap; position: sticky; top: 0; }
@@ -131,9 +129,15 @@
   .carrier-bar { height:5px; margin-top:5px; overflow:hidden; border-radius:999px; background:#e8eff3; }
   .carrier-bar span { display:block; height:100%; border-radius:inherit; background:var(--action-gradient); }
   .carrier-empty { color:var(--navy-500); font-size:9px; }
-  .query-settings-source { max-width:245px; padding:7px 10px; border:1px solid var(--line); border-radius:11px; background:#f8fafb; color:var(--navy-500); font-size:10px; line-height:1.45; }
+  .query-settings-source { max-width:245px; padding:7px 10px; border:1px solid var(--line); border-radius:11px; background:#f8fafb; color:var(--navy-500); font-size:10px; line-height:1.45; text-align:left; cursor:pointer; }
   .query-settings-source b { display:block; color:var(--navy-700); font-size:11px; }
   .query-settings-source span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .query-title-help { position:relative; display:inline-flex; align-items:center; }
+  .query-title-help-button { width:20px; height:20px; padding:0; border:1px solid #cbd8e1; border-radius:50%; background:#fff; color:var(--rhino-600); font:800 11px/18px inherit; cursor:help; }
+  .query-title-help-popover { position:absolute; left:0; top:calc(100% + 8px); z-index:80; width:min(430px,calc(100vw - 48px)); padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:#fff; box-shadow:0 14px 34px rgba(8,37,72,.18); color:var(--navy-700); font-size:11px; font-weight:500; line-height:1.65; opacity:0; visibility:hidden; pointer-events:none; transform:translateY(-3px); transition:opacity .14s,transform .14s,visibility .14s; }
+  .query-title-help:hover .query-title-help-popover, .query-title-help:focus-within .query-title-help-popover, .query-title-help.open .query-title-help-popover { opacity:1; visibility:visible; transform:translateY(0); pointer-events:auto; }
+  .stable-id-button { padding:3px 7px; border:1px solid var(--line); border-radius:7px; background:#f8fafb; color:var(--rhino-600); font:700 10px/1.2 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; cursor:pointer; white-space:nowrap; }
+  .stable-id-button:hover, .stable-id-button:focus-visible { border-color:var(--rhino-500); background:var(--rhino-100); }
   .query-field-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; max-height:420px; overflow:auto; }
   .query-field-list label { display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid var(--line); border-radius:9px; font-size:12px; }
   .export-split { position:relative; display:inline-flex; }
@@ -1602,7 +1606,7 @@
           <div class="hero-kicker">XYNIGO SOURCING WORKSPACE</div>
           <h1>让小犀帮你把每一单稳稳带回来，<span class="hero-call">Xyni, GO!</span></h1>
           <p id="moduleSummary">批量查询订单与物流状态，异常任务集中处理，结果一键导出。</p>
-          <div class="hero-meta"><span class="hero-chip">累计修复测试 v0.17.0</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
+          <div class="hero-meta"><span class="hero-chip">累计修复测试 v0.17.1</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
         </div>
         <div class="hero-lockup" role="img" aria-label="小犀与 Xynigo 完整品牌一体图形">
           <img src="xynigo-logo.png" alt="">
@@ -1900,16 +1904,15 @@
     <div class="action-row">
       <button class="btn primary" id="btnStart">▶ 开始查询</button>
       <button class="btn danger" id="btnStop" disabled>⏹ 停止</button>
-      <div class="query-settings-source" id="queryExecutorSettings" title="请在执行任务电脑的 Xynigo 桌面客户端 → 本机设置中修改">
-        <b>⚙ 高级设置由桌面执行器管理</b>
+      <button class="query-settings-source" id="queryExecutorSettings" type="button" title="网页仅回显；请在执行任务电脑的 Xynigo 桌面客户端 → 本机设置中修改">
+        <b>⚙ 高级设置</b>
         <span id="queryExecutorSettingsSummary">选择执行器后显示当前策略</span>
-      </div>
+      </button>
+      <button class="stable-id-button" id="queryCurrentId" type="button" hidden title="复制完整查询 ID"></button>
       <div class="progress-wrap">
         <div class="progress" id="queryProgress" role="progressbar" aria-label="物流查询进度" aria-valuemin="0" aria-valuenow="0" aria-valuemax="0"><div class="bar" id="bar"></div></div>
-        <span id="progressText">0 / 0</span>
+        <span id="progressText">已处理 0 / 0 ｜ 平均 — ｜ 本轮重查 — ｜ 累计执行 00:00</span>
       </div>
-      <span id="currentEnv">待开始</span>
-      <span id="elapsed">已用 00:00</span>
     </div>
   </section>
 
@@ -1917,7 +1920,7 @@
     <div class="card-title table-title-row query-results-title">
       <div class="table-title-copy">
         <span>② 查询结果</span>
-        <span class="legend">Enviado=已发货 · Esperando para enviarse=待发货 · Procesando=备货中 · Entregado=已送达 · Reembolsando=退款中 · Reembolsado=退款已处理</span>
+        <span class="query-title-help" id="queryTitleHelp"><button class="query-title-help-button" id="btnQueryTitleHelp" type="button" aria-label="查看订单状态说明" aria-expanded="false" aria-describedby="queryTitleHelpPopover">?</button><span class="query-title-help-popover" id="queryTitleHelpPopover" role="tooltip">Enviado = 已发货；Esperando para enviarse = 待发货；Procesando = 备货中；Entregado = 已送达；Reembolsando = 退款中；Reembolsado = 退款已处理。</span></span>
       </div>
       <div class="table-actions query-table-actions">
         <button class="btn" id="btnQueryHistory" type="button" hidden>查询历史</button>
@@ -2177,7 +2180,7 @@
     </section>
 
     <section class="card">
-      <div class="card-title"><span id="envProgressCardTitle">⑤ 批量进度</span> <span class="legend">行数多时表格内部滚动，表头固定</span></div>
+      <div class="card-title table-title-row"><div><span id="envProgressCardTitle">⑤ 批量进度</span> <span class="legend">行数多时表格内部滚动，表头固定</span></div><button class="btn" id="btnEnvironmentHistory" type="button" hidden>创建历史</button></div>
       <div class="table-wrap" id="envTableWrap">
         <table>
           <thead id="envThead"><tr><th>邮箱</th><th>采购员</th><th>环境名</th><th>HUB序号</th><th>五步进度</th><th>当前状态</th><th>留档</th><th>操作</th></tr></thead>
@@ -2776,7 +2779,7 @@
           <div class="field" id="queryHistoryActorField" hidden><label for="queryHistoryActor">查询用户</label><select id="queryHistoryActor"><option value="">全部用户</option></select></div>
           <button class="btn" id="btnQueryHistoryRefresh" type="button">刷新</button>
         </div>
-        <div class="table-wrap"><table class="query-history-table"><thead><tr><th>查询时间</th><th>查询用户</th><th>站点</th><th>环境数</th><th>结果</th><th>执行器</th><th>耗时</th><th>重查</th><th>操作</th></tr></thead><tbody id="queryHistoryBody"><tr><td colspan="9" class="query-history-empty">正在读取查询历史…</td></tr></tbody></table></div>
+        <div class="table-wrap"><table class="query-history-table"><thead><tr><th>查询 ID</th><th>首次查询时间</th><th>查询用户</th><th>站点</th><th>环境数</th><th>结果</th><th>执行器</th><th>累计执行</th><th>重查</th><th>操作</th></tr></thead><tbody id="queryHistoryBody"><tr><td colspan="10" class="query-history-empty">正在读取查询历史…</td></tr></tbody></table></div>
         <div class="query-history-pagination"><span class="hint" id="queryHistoryPageText">第 1 页</span><button class="btn" id="btnQueryHistoryPrev" type="button" disabled>上一页</button><button class="btn" id="btnQueryHistoryNext" type="button" disabled>下一页</button></div>
       </div>
       <div id="queryHistoryDetailView" hidden>
@@ -2785,6 +2788,31 @@
           <div class="table-actions"><button class="btn" id="btnHistoryRerun" type="button">再次查询</button><button class="btn" id="btnHistoryExportQuick" type="button">快速导出</button><button class="btn primary" id="btnHistoryExportFull" type="button">完整导出（含截图）</button></div>
         </div>
         <div class="query-history-detail-table"><table id="queryHistoryResultTable"><thead><tr><th>序号</th><th>环境名</th><th>订单号</th><th>下单时间</th><th>金额</th><th>状态</th><th>物流单号</th><th>承运商</th><th>首条轨迹时间</th><th>首条轨迹内容</th><th>首轨时效</th><th>物流轨迹截图</th><th>出口IP</th><th>结果</th><th>查询时间（站点）</th><th>操作</th></tr></thead><tbody id="queryHistoryResultBody"></tbody></table></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-mask" id="environmentHistoryMask" aria-hidden="true">
+  <div class="modal query-history-modal" role="dialog" aria-modal="true" aria-labelledby="environmentHistoryTitle">
+    <div class="query-history-head">
+      <div><h3 id="environmentHistoryTitle">环境创建历史</h3><p class="hint">干跑预览、正式创建、失败重试与断点续跑均按稳定任务 ID 汇总。</p></div>
+      <button class="image-modal-close" id="btnEnvironmentHistoryClose" type="button" aria-label="关闭环境创建历史">×</button>
+    </div>
+    <div class="query-history-body">
+      <div id="environmentHistoryListView">
+        <div class="query-history-toolbar">
+          <div class="field"><label for="environmentHistorySite">站点</label><select id="environmentHistorySite"><option value="">全部站点</option><option value="MX">墨西哥站</option><option value="US">美国站</option></select></div>
+          <div class="field"><label for="environmentHistoryStatus">任务状态</label><select id="environmentHistoryStatus"><option value="">全部状态</option><option value="running">执行中</option><option value="completed">已完成</option><option value="partial_failure">部分失败</option><option value="uncertain">待核对</option><option value="failed">失败</option><option value="cancelled">已停止</option></select></div>
+          <div class="field" id="environmentHistoryActorField" hidden><label for="environmentHistoryActor">创建人</label><select id="environmentHistoryActor"><option value="">全部用户</option></select></div>
+          <button class="btn" id="btnEnvironmentHistoryRefresh" type="button">刷新</button>
+        </div>
+        <div class="table-wrap"><table class="query-history-table" style="min-width:1420px"><thead><tr><th>任务 ID</th><th>首次创建</th><th>创建人</th><th>执行器</th><th>站点</th><th>HubStudio 分组</th><th>任务类型</th><th>计划</th><th>成功</th><th>恢复已有</th><th>失败</th><th>状态</th><th>实际执行</th><th>最近更新</th><th>操作</th></tr></thead><tbody id="environmentHistoryBody"><tr><td colspan="15" class="query-history-empty">正在读取环境创建历史…</td></tr></tbody></table></div>
+        <div class="query-history-pagination"><span class="hint" id="environmentHistoryPageText">第 1 页</span><button class="btn" id="btnEnvironmentHistoryPrev" type="button" disabled>上一页</button><button class="btn" id="btnEnvironmentHistoryNext" type="button" disabled>下一页</button></div>
+      </div>
+      <div id="environmentHistoryDetailView" hidden>
+        <div class="query-history-detail-head"><div><button class="btn" id="btnEnvironmentHistoryBack" type="button">← 返回历史列表</button><div class="query-history-detail-meta" id="environmentHistoryDetailMeta"></div></div></div>
+        <div class="query-history-detail-table"><table style="min-width:1050px"><thead><tr><th>买家号（脱敏）</th><th>采购员</th><th>环境名</th><th>Hub 序号</th><th>状态</th><th>恢复已有</th><th>当前步骤</th><th>异常摘要</th><th>更新时间</th></tr></thead><tbody id="environmentHistoryResultBody"></tbody></table></div>
       </div>
     </div>
   </div>
@@ -3322,6 +3350,11 @@ let queryHistoryNextCursor = '';
 let queryHistoryCursorStack = [];
 let activeQueryHistoryDetail = null;
 let logisticsExporting = false;
+let environmentHistoryLoading = false;
+let environmentHistoryPage = 1;
+let environmentHistoryCursor = '';
+let environmentHistoryNextCursor = '';
+let environmentHistoryCursorStack = [];
 let groupLoadInFlight = null;
 const MAX_OPEN_FEATURE_TABS = 10;
 let openFeatureTabs = ['query'];
@@ -3542,7 +3575,7 @@ async function cloudFetchJson(path, opts={}) {
   const headers = new Headers(opts.headers || {});
   headers.set('Accept', 'application/json');
   headers.set('X-Xynigo-Source', 'cloud_web_workspace');
-  headers.set('X-Xynigo-Client-Version', '0.17.0-cloud-web');
+  headers.set('X-Xynigo-Client-Version', '0.17.1-cloud-web');
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     headers.set('X-Xynigo-Web-CSRF', 'same-origin');
   }
@@ -3798,6 +3831,9 @@ function cloudLogisticsLegacySnapshot(run) {
       ? Math.max(0, cumulativeDuration) : cloudRunElapsed(run),
     attemptElapsedSec:Number.isFinite(attemptDuration)
       ? Math.max(0, attemptDuration) : cloudRunElapsed(run),
+    averageEnvironmentDurationSec:run.averageEnvironmentDurationSec,
+    executedAttemptCount:Number(run.executedAttemptCount || 0),
+    queryId:String(run.queryId || run.rootRunId || run.runId || ''),
     rows,
     progressCompleted:Number(run.progressCompleted || 0),
     progressTotal:Number(run.progressTotal || run.totalCount || 0),
@@ -4455,6 +4491,8 @@ function applyPermissionVisibility() {
       || (modules.length > 0 && !modules.some(hasFeatureAccess));
   });
   $('btnQueryHistory').hidden = !CLOUD_WEB_MODE || !hasPermission('fulfillment.order.read');
+  $('btnEnvironmentHistory').hidden = !CLOUD_WEB_MODE
+    || !hasPermission('resource.environment.create');
   $('queryExportSplit').hidden = !hasPermission('fulfillment.order.export');
   $('btnHistoryExportQuick').hidden = !hasPermission('fulfillment.order.export');
   $('btnHistoryExportFull').hidden = !hasPermission('fulfillment.order.export');
@@ -4757,6 +4795,15 @@ function renderQueryExecutorSettings(runtime) {
     ? '允许只读连接已打开环境' : '不连接已打开环境';
   summary.textContent = `${browserMode} · ${openMode}`;
 }
+
+$('queryExecutorSettings').onclick = () => {
+  if (CLOUD_WEB_MODE) {
+    openRuntimeDrawer();
+    toast('网页仅显示桌面执行器设置；修改请在 Xynigo 桌面客户端完成');
+  } else {
+    toast('请在 Xynigo 桌面客户端 → 本机设置中修改高级设置');
+  }
+};
 
 async function loadQueryDisplayConfig() {
   try {
@@ -6922,36 +6969,31 @@ function paintQueryProgress(snap, stats) {
   const processed = Math.max(0, Math.min(total,
     Number.isFinite(backendProcessed) && (snap.running || snap.parentRunId || snap.cancelled)
       ? backendProcessed : Number(stats.processed || 0)));
-  const terminalWithRows = !snap.running && rows.length > 0;
-  const valid = Math.max(0, Math.min(total, Number(stats.eligible || 0)));
-  const review = terminalWithRows
-    ? Math.max(Number(stats.review || 0), total - valid)
-    : Math.max(0, Number(stats.review || 0));
-  const retryTotal = Number(snap.retryProgressTotal || 0);
-  const retryCurrent = Number(snap.retryProgressCompleted || 0);
   const progress = $('queryProgress');
   const text = $('progressText');
   progress.classList.remove('query-outcome-review', 'query-outcome-complete');
   text.classList.remove('query-outcome-review', 'query-outcome-complete');
-  let value = processed;
-  let label = total ? `已处理 ${processed} / ${total}` : '0 / 0';
-  if (snap.running && retryTotal) {
-    label += ` · 本次重查 ${retryCurrent} / ${retryTotal}`;
-  } else if (terminalWithRows && review > 0) {
-    value = valid;
-    label = `有效 ${valid} / ${total} · 待核对 ${review}`;
+  const averageRaw = Number(snap.averageEnvironmentDurationSec);
+  const average = Number.isFinite(averageRaw) && averageRaw > 0
+    ? (averageRaw >= 60
+      ? `${Math.floor(averageRaw / 60)}分${Math.round(averageRaw % 60)}秒/环境`
+      : `${Math.round(averageRaw)}秒/环境`)
+    : '—';
+  const retryDuration = snap.parentRunId
+    ? elapsedClock(snap.attemptElapsedSec || 0) : '—';
+  const label = `已处理 ${processed} / ${total} ｜ 平均 ${average}`
+    + ` ｜ 本轮重查 ${retryDuration} ｜ 累计执行 ${elapsedClock(snap.elapsedSec || 0)}`;
+  if (!snap.running && rows.length && Number(stats.review || 0) > 0) {
     progress.classList.add('query-outcome-review');
     text.classList.add('query-outcome-review');
-  } else if (terminalWithRows) {
-    value = total;
-    label = `完成 ${total} / ${total}`;
+  } else if (!snap.running && rows.length) {
     progress.classList.add('query-outcome-complete');
     text.classList.add('query-outcome-complete');
   }
-  const percent = total ? Math.round(value / total * 100) : 0;
+  const percent = total ? Math.round(processed / total * 100) : 0;
   $('bar').style.width = `${percent}%`;
   text.textContent = label;
-  progress.setAttribute('aria-valuenow', String(value));
+  progress.setAttribute('aria-valuenow', String(processed));
   progress.setAttribute('aria-valuemax', String(total));
   progress.setAttribute('aria-valuetext', label);
 }
@@ -6968,6 +7010,10 @@ function render(snap) {
   renderRows(lastRows);
   const queryStats = renderStats(lastRows);
   paintQueryProgress(snap, queryStats);
+  const queryId = String(snap.queryId || '');
+  $('queryCurrentId').hidden = !queryId;
+  $('queryCurrentId').textContent = queryId ? `查询 ID ${queryId.slice(0,8)}` : '';
+  $('queryCurrentId').dataset.copyId = queryId;
   $('btnStart').disabled = querySubmitting || isRunning
     || (CLOUD_WEB_MODE && !runtimeExecutorReady());
   $('btnStop').disabled = !isRunning;
@@ -7040,24 +7086,6 @@ function render(snap) {
     Number(queryStats.review || 0), outcomeTotal - outcomeValid);
   const outcomeCopy = `有效 ${outcomeValid}/${outcomeTotal}`
     + (outcomeReview ? `，待核对 ${outcomeReview}` : '');
-  $('currentEnv').textContent = isRunning
-    ? (showRecoveryFrame
-      ? (runtimePhase === 'recovering_resources' ? '等待 HubStudio 释放资源 …'
-        : runtimePhase === 'reconnecting_hub' ? '正在重连 HubStudio Local API …'
-        : '等待环境关闭确认 …')
-      : ((snap.current ? '正在查询：' + snap.current : '执行器正在预检和准备') + ' …'))
-    : (snap.cancelled
-      ? `查询已停止：${outcomeCopy}`
-      : terminalStartFailure
-      ? logisticsRunFailureText(snap.errorCode)
-      : terminalSystemFailure
-      ? `查询异常结束：${outcomeCopy}；${logisticsRunFailureText(snap.errorCode)}`
-      : (snap.rows && snap.rows.length
-        ? (outcomeReview ? `查询结束：${outcomeCopy}` : `查询完成：${outcomeCopy}`)
-        : '待开始'));
-  paintContinuousElapsed('elapsed', queryElapsedBase, queryElapsedPrefix);
-  $('elapsed').title = snap.parentRunId
-    ? `本次异常重查已用 ${elapsedClock(queryAttemptElapsedBase)}` : '';
   if (wasRunning && (terminalStartFailure || terminalSystemFailure)) {
     toast(logisticsRunFailureText(snap.errorCode));
   }
@@ -7155,15 +7183,6 @@ function paintContinuousElapsed(elementId, seconds, prefix='已用') {
 }
 
 setInterval(() => {
-  if (isRunning) {
-    const liveDelta = Math.floor((Date.now() - queryElapsedObservedAt) / 1000);
-    paintContinuousElapsed(
-      'elapsed', queryElapsedBase + liveDelta, queryElapsedPrefix);
-    if (queryElapsedPrefix === '累计') {
-      $('elapsed').title = '本次异常重查已用 '
-        + elapsedClock(queryAttemptElapsedBase + liveDelta);
-    }
-  }
   if (envRunning || backupRunning) {
     paintContinuousElapsed('envElapsed', envElapsedBase
       + Math.floor((Date.now() - envElapsedObservedAt) / 1000));
@@ -7995,12 +8014,18 @@ $('screenshotMask').onclick = e => {
   if (e.target === e.currentTarget) closeScreenshot();
 };
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && $('screenshotMask').classList.contains('show')) {
+  if (e.key === 'Escape' && $('queryTitleHelp').classList.contains('open')) {
+    $('queryTitleHelp').classList.remove('open');
+    $('btnQueryTitleHelp').setAttribute('aria-expanded', 'false');
+    $('btnQueryTitleHelp').focus();
+  } else if (e.key === 'Escape' && $('screenshotMask').classList.contains('show')) {
     closeScreenshot();
   } else if (e.key === 'Escape' && $('queryErrorMask').classList.contains('show')) {
     closeQueryErrorDetail();
   } else if (e.key === 'Escape' && $('queryHistoryMask').classList.contains('show')) {
     closeQueryHistory();
+  } else if (e.key === 'Escape' && $('environmentHistoryMask').classList.contains('show')) {
+    closeEnvironmentHistory();
   } else if (e.key === 'Escape' && !$('runtimeDrawer').hidden) {
     closeRuntimeDrawer();
   }
@@ -8077,20 +8102,140 @@ function dateTimeStack(value) {
   return `<span class="date-time-stack"><span>${esc(match[1])}</span><span>${esc(match[2])}</span></span>`;
 }
 
+async function copyStableId(value) {
+  const id = String(value || '').trim();
+  if (!id) return;
+  try {
+    await navigator.clipboard.writeText(id);
+  } catch (_) {
+    const input = document.createElement('textarea');
+    input.value = id;
+    input.style.position = 'fixed'; input.style.opacity = '0';
+    document.body.appendChild(input); input.select();
+    document.execCommand('copy'); input.remove();
+  }
+  toast(`已复制完整 ID：${id}`);
+}
+
+const ENVIRONMENT_HISTORY_TYPE = {
+  dry_run:'干跑预览', bound:'正式创建', backup:'备用环境', test:'测试创建',
+  retry_row:'单行失败重试', retry_failed:'失败续跑'
+};
+
+function environmentHistoryType(item) {
+  const root = ENVIRONMENT_HISTORY_TYPE[String(item.taskType || '')]
+    || String(item.taskType || '未知');
+  const latest = ENVIRONMENT_HISTORY_TYPE[String(item.latestTaskType || '')]
+    || String(item.latestTaskType || '');
+  return latest && latest !== root ? `${latest}（原${root}）` : root;
+}
+
+function renderEnvironmentHistoryItems(items) {
+  if (!items.length) {
+    $('environmentHistoryBody').innerHTML = '<tr><td colspan="15" class="query-history-empty">暂无符合条件的环境创建历史</td></tr>';
+    return;
+  }
+  $('environmentHistoryBody').innerHTML = items.map(item => {
+    const status = QUERY_HISTORY_STATUS[String(item.status || '')]
+      || [String(item.status || '未知'), ''];
+    const taskId = esc(item.taskId || item.rootRunId || '');
+    return `<tr><td><button class="stable-id-button" type="button" data-copy-id="${taskId}" title="复制完整任务 ID">${esc(String(item.taskId || item.rootRunId || '').slice(0,8))}</button></td>`
+      + `<td>${dateTimeStack(formatQueryHistoryTime(item.createdAt))}</td><td>${esc(item.actorDisplayName || '未知用户')}</td><td>${esc(item.executorDisplayName || '—')}</td><td>${esc(item.site || '—')}</td><td>${esc(item.environmentGroup || '—')}</td><td>${esc(environmentHistoryType(item))}</td>`
+      + `<td>${Number(item.plannedCount || 0)}</td><td>${Number(item.successCount || 0)}</td><td>${Number(item.recoveredCount || 0)}</td><td>${Number(item.failedCount || 0)}</td>`
+      + `<td><span class="query-history-status ${status[1]}">${esc(status[0])}</span></td><td>${esc(formatQueryHistoryDuration(item.durationSec))}</td><td>${dateTimeStack(formatQueryHistoryTime(item.updatedAt))}</td>`
+      + `<td><button class="btn-mini" type="button" data-environment-history-view="${taskId}">查看明细</button></td></tr>`;
+  }).join('');
+}
+
+async function loadEnvironmentHistory({reset=false}={}) {
+  if (!CLOUD_WEB_MODE || environmentHistoryLoading) return;
+  if (reset) {
+    environmentHistoryPage = 1; environmentHistoryCursor = '';
+    environmentHistoryNextCursor = ''; environmentHistoryCursorStack = [];
+  }
+  environmentHistoryLoading = true;
+  $('btnEnvironmentHistoryRefresh').disabled = true;
+  $('environmentHistoryBody').innerHTML = '<tr><td colspan="15" class="query-history-empty"><span class="spinner"></span>正在读取环境创建历史…</td></tr>';
+  try {
+    const query = new URLSearchParams({limit:'20'});
+    if (environmentHistoryCursor) query.set('cursor', environmentHistoryCursor);
+    if ($('environmentHistorySite').value) query.set('site', $('environmentHistorySite').value);
+    if ($('environmentHistoryStatus').value) query.set('status', $('environmentHistoryStatus').value);
+    if ($('environmentHistoryActor').value) query.set('userId', $('environmentHistoryActor').value);
+    const payload = await cloudFetchJson('/v1/operation-runs/environment-creation/history?' + query.toString());
+    const data = payload.data || {};
+    const actors = Array.isArray(data.actors) ? data.actors : [];
+    const selectedActor = $('environmentHistoryActor').value;
+    $('environmentHistoryActorField').hidden = !hasRole('admin') && !hasRole('super_admin');
+    $('environmentHistoryActor').innerHTML = '<option value="">全部用户</option>' + actors.map(actor =>
+      `<option value="${esc(actor.userId)}">${esc(actor.displayName || '未知用户')}${actor.status === 'disabled' ? '（已停用）' : ''}</option>`).join('');
+    $('environmentHistoryActor').value = actors.some(actor => actor.userId === selectedActor) ? selectedActor : '';
+    renderEnvironmentHistoryItems(Array.isArray(data.items) ? data.items : []);
+    environmentHistoryNextCursor = String(data.nextCursor || '');
+    $('environmentHistoryPageText').textContent = `第 ${environmentHistoryPage} 页`;
+    $('btnEnvironmentHistoryPrev').disabled = environmentHistoryPage <= 1;
+    $('btnEnvironmentHistoryNext').disabled = !environmentHistoryNextCursor;
+  } catch (error) {
+    $('environmentHistoryBody').innerHTML = `<tr><td colspan="15" class="query-history-empty">历史记录读取失败：${esc(error.message)}</td></tr>`;
+    $('btnEnvironmentHistoryNext').disabled = true;
+  } finally {
+    environmentHistoryLoading = false;
+    $('btnEnvironmentHistoryRefresh').disabled = false;
+  }
+}
+
+async function openEnvironmentHistoryDetail(taskId) {
+  $('environmentHistoryListView').hidden = true;
+  $('environmentHistoryDetailView').hidden = false;
+  $('environmentHistoryDetailMeta').innerHTML = '<span><span class="spinner"></span>正在读取执行明细…</span>';
+  $('environmentHistoryResultBody').innerHTML = '<tr><td colspan="9" class="query-history-empty">正在读取执行明细…</td></tr>';
+  try {
+    const payload = await cloudFetchJson('/v1/operation-runs/environment-creation/history/' + encodeURIComponent(taskId));
+    const detail = payload.data || {};
+    const status = QUERY_HISTORY_STATUS[String(detail.status || '')]
+      || [String(detail.status || '未知'), ''];
+    $('environmentHistoryDetailMeta').innerHTML = `<span>任务 ID <button class="stable-id-button" type="button" data-copy-id="${esc(detail.taskId || taskId)}">${esc(String(detail.taskId || taskId).slice(0,8))}</button></span><span>${esc(detail.actorDisplayName || '未知用户')}</span><span>${esc(detail.executorDisplayName || '—')}</span><span>${esc(detail.site || '—')} 站</span><span>${esc(detail.environmentGroup || '—')}</span><span>${esc(environmentHistoryType(detail))}</span><span>${esc(status[0])}</span><span>累计执行 ${esc(formatQueryHistoryDuration(detail.durationSec))}</span>`;
+    const rows = Array.isArray(detail.rows) ? detail.rows : [];
+    $('environmentHistoryResultBody').innerHTML = rows.length ? rows.map(row => {
+      const rowStatus = {success:'成功',failed:'失败',stopped:'已停止',running:'执行中',queued:'待执行'}[row.status] || row.status || '—';
+      return `<tr><td>${esc(row.accountLabel || '—')}</td><td>${esc(row.purchaserLabel || '—')}</td><td>${esc(row.environmentName || '—')}</td><td>${esc(row.environmentSerial || '—')}</td><td>${esc(rowStatus)}</td><td>${row.recoveredExisting ? '是' : '否'}</td><td>${esc(row.currentStep || '—')}</td><td>${esc(row.errorSummary || '—')}</td><td>${dateTimeStack(formatQueryHistoryTime(row.updatedAt))}</td></tr>`;
+    }).join('') : '<tr><td colspan="9" class="query-history-empty">该任务暂无逐买家号执行明细</td></tr>';
+  } catch (error) {
+    $('environmentHistoryDetailMeta').textContent = '执行明细读取失败';
+    $('environmentHistoryResultBody').innerHTML = `<tr><td colspan="9" class="query-history-empty">${esc(error.message)}</td></tr>`;
+  }
+}
+
+function closeEnvironmentHistory() {
+  $('environmentHistoryMask').classList.remove('show');
+  $('environmentHistoryMask').setAttribute('aria-hidden', 'true');
+  $('environmentHistoryListView').hidden = false;
+  $('environmentHistoryDetailView').hidden = true;
+}
+
+function openEnvironmentHistory() {
+  if (!CLOUD_WEB_MODE) { toast('创建历史请在 Xynigo 云端工作台查看'); return; }
+  $('environmentHistoryMask').classList.add('show');
+  $('environmentHistoryMask').setAttribute('aria-hidden', 'false');
+  $('environmentHistoryListView').hidden = false;
+  $('environmentHistoryDetailView').hidden = true;
+  loadEnvironmentHistory({reset:true});
+}
+
 function logisticsHistoryRunId(detail) {
-  return String(detail && detail.latestRun && detail.latestRun.runId
-    || detail && detail.rootRunId || '');
+  return String(detail && detail.rootRunId
+    || detail && detail.latestRun && detail.latestRun.runId || '');
 }
 
 function renderQueryHistoryItems(items) {
   if (!items.length) {
-    $('queryHistoryBody').innerHTML = '<tr><td colspan="9" class="query-history-empty">暂无符合条件的物流查询历史</td></tr>';
+    $('queryHistoryBody').innerHTML = '<tr><td colspan="10" class="query-history-empty">暂无符合条件的物流查询历史</td></tr>';
     return;
   }
   $('queryHistoryBody').innerHTML = items.map(item => {
     const status = QUERY_HISTORY_STATUS[String(item.status || '')] || [String(item.status || '未知'), ''];
     const rootRunId = esc(item.rootRunId);
-    return `<tr><td>${dateTimeStack(formatQueryHistoryTime(item.createdAt))}</td><td>${esc(item.actorDisplayName || '未知用户')}</td><td>${esc(item.site || '—')}</td>`
+    return `<tr><td><button class="stable-id-button" type="button" data-copy-id="${rootRunId}" title="复制完整查询 ID">${esc(String(item.rootRunId || '').slice(0,8))}</button></td><td>${dateTimeStack(formatQueryHistoryTime(item.createdAt))}</td><td>${esc(item.actorDisplayName || '未知用户')}</td><td>${esc(item.site || '—')}</td>`
       + `<td>${Number(item.totalCount || 0)}</td><td><span class="query-history-status ${status[1]}">${esc(status[0])}</span><div class="hint">成功 ${Number(item.successCount || 0)} · 异常 ${Number(item.failedCount || 0)}</div></td>`
       + `<td>${esc(item.executorDisplayName || '—')}</td><td>${esc(formatQueryHistoryDuration(item.durationSec))}</td>`
       + `<td>${Number(item.retryCount || 0)} 次</td><td><button class="btn-mini" type="button" data-history-view="${rootRunId}">查看结果</button></td></tr>`;
@@ -8107,7 +8252,7 @@ async function loadQueryHistory({reset=false}={}) {
   }
   queryHistoryLoading = true;
   $('btnQueryHistoryRefresh').disabled = true;
-  $('queryHistoryBody').innerHTML = '<tr><td colspan="9" class="query-history-empty"><span class="spinner"></span>正在读取查询历史…</td></tr>';
+  $('queryHistoryBody').innerHTML = '<tr><td colspan="10" class="query-history-empty"><span class="spinner"></span>正在读取查询历史…</td></tr>';
   try {
     const query = new URLSearchParams({limit:'20'});
     if (queryHistoryCursor) query.set('cursor', queryHistoryCursor);
@@ -8128,7 +8273,7 @@ async function loadQueryHistory({reset=false}={}) {
     $('btnQueryHistoryPrev').disabled = queryHistoryPage <= 1;
     $('btnQueryHistoryNext').disabled = !queryHistoryNextCursor;
   } catch (error) {
-    $('queryHistoryBody').innerHTML = `<tr><td colspan="9" class="query-history-empty">历史记录读取失败：${esc(error.message)}</td></tr>`;
+    $('queryHistoryBody').innerHTML = `<tr><td colspan="10" class="query-history-empty">历史记录读取失败：${esc(error.message)}</td></tr>`;
     $('btnQueryHistoryNext').disabled = true;
   } finally {
     queryHistoryLoading = false;
@@ -8152,7 +8297,7 @@ async function openQueryHistoryDetail(rootRunId) {
     const rows = cloudLogisticsLegacySnapshot(run).rows;
     activeQueryHistoryDetail = {...detail, rootRunId:String(detail.rootRunId || rootRunId), latestRun:run};
     const status = QUERY_HISTORY_STATUS[String(run.status || '')] || [String(run.status || '未知'), ''];
-    $('queryHistoryDetailMeta').innerHTML = `<span>${esc(detail.actorDisplayName || '未知用户')}</span><span>${esc(formatQueryHistoryTime(run.createdAt))}</span><span>${esc(run.site || '—')} 站</span><span>${rows.length} 个环境</span><span>${esc(status[0])}</span><span>重查 ${Number(detail.retryCount || 0)} 次</span>`;
+    $('queryHistoryDetailMeta').innerHTML = `<span>查询 ID <button class="stable-id-button" type="button" data-copy-id="${esc(detail.rootRunId || rootRunId)}" title="复制完整查询 ID">${esc(String(detail.rootRunId || rootRunId).slice(0,8))}</button></span><span>${esc(detail.actorDisplayName || '未知用户')}</span><span>${esc(formatQueryHistoryTime(detail.logicalCreatedAt || run.createdAt))}</span><span>${esc(run.site || '—')} 站</span><span>${rows.length} 个环境</span><span>${esc(status[0])}</span><span>重查 ${Number(detail.retryCount || 0)} 次</span>`;
     $('queryHistoryResultBody').innerHTML = queryRowsHtml(rows, {history:true, runId:logisticsHistoryRunId(activeQueryHistoryDetail)});
     const terminal = run.terminal !== false && !['created','queued','leased','running','cancel_requested'].includes(String(run.status || ''));
     const currentUserId = String(authIdentity && authIdentity.user && authIdentity.user.id || '');
@@ -8262,8 +8407,50 @@ $('btnQueryHistoryBack').onclick = () => {
   $('queryHistoryListView').hidden = false;
 };
 $('queryHistoryBody').onclick = event => {
+  const copyButton = event.target.closest('[data-copy-id]');
+  if (copyButton) { copyStableId(copyButton.dataset.copyId); return; }
   const button = event.target.closest('[data-history-view]');
   if (button) openQueryHistoryDetail(button.dataset.historyView);
+};
+$('queryHistoryDetailMeta').onclick = event => {
+  const button = event.target.closest('[data-copy-id]');
+  if (button) copyStableId(button.dataset.copyId);
+};
+$('btnEnvironmentHistory').onclick = openEnvironmentHistory;
+$('btnEnvironmentHistoryClose').onclick = closeEnvironmentHistory;
+$('environmentHistoryMask').onclick = event => {
+  if (event.target === event.currentTarget) closeEnvironmentHistory();
+};
+$('btnEnvironmentHistoryRefresh').onclick = () => loadEnvironmentHistory({reset:true});
+$('environmentHistorySite').onchange = () => loadEnvironmentHistory({reset:true});
+$('environmentHistoryStatus').onchange = () => loadEnvironmentHistory({reset:true});
+$('environmentHistoryActor').onchange = () => loadEnvironmentHistory({reset:true});
+$('btnEnvironmentHistoryPrev').onclick = () => {
+  if (environmentHistoryPage <= 1 || environmentHistoryLoading) return;
+  environmentHistoryCursor = environmentHistoryCursorStack.pop() || '';
+  environmentHistoryPage -= 1;
+  loadEnvironmentHistory();
+};
+$('btnEnvironmentHistoryNext').onclick = () => {
+  if (!environmentHistoryNextCursor || environmentHistoryLoading) return;
+  environmentHistoryCursorStack.push(environmentHistoryCursor);
+  environmentHistoryCursor = environmentHistoryNextCursor;
+  environmentHistoryPage += 1;
+  loadEnvironmentHistory();
+};
+$('btnEnvironmentHistoryBack').onclick = () => {
+  $('environmentHistoryDetailView').hidden = true;
+  $('environmentHistoryListView').hidden = false;
+};
+$('environmentHistoryBody').onclick = event => {
+  const copyButton = event.target.closest('[data-copy-id]');
+  if (copyButton) { copyStableId(copyButton.dataset.copyId); return; }
+  const button = event.target.closest('[data-environment-history-view]');
+  if (button) openEnvironmentHistoryDetail(button.dataset.environmentHistoryView);
+};
+$('environmentHistoryDetailMeta').onclick = event => {
+  const button = event.target.closest('[data-copy-id]');
+  if (button) copyStableId(button.dataset.copyId);
 };
 $('queryHistoryResultBody').onclick = event => {
   const errorButton = event.target.closest('[data-query-error]');
@@ -8313,6 +8500,21 @@ $('btnExportQuick').onclick = () => { closeQueryExportMenu(); downloadLogisticsE
 $('btnExportFull').onclick = () => { closeQueryExportMenu(); downloadLogisticsExport(cloudLogisticsRunId, true); };
 $('btnHistoryExportQuick').onclick = () => downloadLogisticsExport(logisticsHistoryRunId(activeQueryHistoryDetail), false, true);
 $('btnHistoryExportFull').onclick = () => downloadLogisticsExport(logisticsHistoryRunId(activeQueryHistoryDetail), true, true);
+
+$('btnQueryTitleHelp').onclick = event => {
+  event.stopPropagation();
+  const wrapper = $('queryTitleHelp');
+  const open = !wrapper.classList.contains('open');
+  wrapper.classList.toggle('open', open);
+  $('btnQueryTitleHelp').setAttribute('aria-expanded', String(open));
+};
+$('queryCurrentId').onclick = () => copyStableId($('queryCurrentId').dataset.copyId);
+document.addEventListener('click', event => {
+  if (!event.target.closest('#queryTitleHelp')) {
+    $('queryTitleHelp').classList.remove('open');
+    $('btnQueryTitleHelp').setAttribute('aria-expanded', 'false');
+  }
+});
 
 $('btnRetryFail').onclick = async () => {
   if (isRunning) { toast('查询进行中，请等本批次结束后再批量重查'); return; }

@@ -40,6 +40,7 @@ from .models import (
 from .operation_contract import (
     EnvironmentCreationRunBody,
     EnvironmentCreationRunCreateBody,
+    EnvironmentPlanDryRunBody,
     EnvironmentRetryRunCreateBody,
     LogisticsQueryRunBody,
     LogisticsQueryRunCreateBody,
@@ -124,13 +125,15 @@ class OperationRunService:
                 )
             return existing, True
         now = utcnow()
+        run_id = uuid.uuid4()
         run = EnvironmentCreationRun(
-            id=uuid.uuid4(),
+            id=run_id,
             tenant_id=tenant_id,
             actor_user_id=actor_user_id,
             source_run_key=body.idempotencyKey,
             payload_hash=digest,
             executor_id=body.executorId,
+            root_run_id=run_id,
             run_mode=body.mode,
             site=body.site,
             purchase_date=body.purchaseDate,
@@ -160,6 +163,132 @@ class OperationRunService:
         self.session.add(run)
         self.session.flush()
         return run, False
+
+    def create_environment_preview_run(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        cloud_plan_id: str,
+        body: EnvironmentPlanDryRunBody,
+    ) -> tuple[EnvironmentCreationRun, bool]:
+        canonical = {
+            "cloudPlanId": cloud_plan_id,
+            **body.model_dump(mode="json"),
+        }
+        digest = hashlib.sha256(json.dumps(
+            canonical,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")).hexdigest()
+        existing = self.session.scalar(
+            select(EnvironmentCreationRun).where(
+                EnvironmentCreationRun.tenant_id == tenant_id,
+                EnvironmentCreationRun.source_run_key == body.idempotencyKey,
+            )
+        )
+        if existing is not None:
+            if existing.payload_hash != digest or existing.run_mode != "dry_run":
+                raise PurchaseServiceError(
+                    "operation_run_idempotency_conflict",
+                    "同一干跑预览任务标识已提交不同请求",
+                    409,
+                )
+            return existing, True
+        now = utcnow()
+        run_id = uuid.uuid4()
+        run = EnvironmentCreationRun(
+            id=run_id,
+            tenant_id=tenant_id,
+            actor_user_id=actor_user_id,
+            source_run_key=body.idempotencyKey,
+            payload_hash=digest,
+            executor_id=body.executorId,
+            root_run_id=run_id,
+            run_mode="dry_run",
+            site=body.site,
+            purchase_date=body.purchaseDate,
+            environment_group=body.environmentGroup,
+            status="created",
+            phase="environment.preview.created",
+            progress_completed=0,
+            progress_total=body.totalCount,
+            total_count=body.totalCount,
+            success_count=0,
+            failed_count=0,
+            ip_ok_count=0,
+            ip_total_count=0,
+            request_summary={
+                "cloudPlanId": cloud_plan_id,
+                "assignments": [
+                    item.model_dump(mode="json") for item in body.assignments
+                ],
+            },
+            source="cloud_web",
+            created_at=now,
+            updated_at=now,
+        )
+        self.session.add(run)
+        self.session.flush()
+        return run, False
+
+    def complete_environment_preview(
+        self,
+        *,
+        run: EnvironmentCreationRun,
+        rows: list[dict[str, Any]],
+        completed_at: datetime | None = None,
+    ) -> None:
+        now = completed_at or utcnow()
+        for index, item in enumerate(rows):
+            account_label = str(item.get("emailMasked") or "").strip()
+            account_ref = hashlib.sha256(
+                f"preview:{run.id}:{index}:{account_label}".encode("utf-8")
+            ).hexdigest()
+            row = self.session.scalar(
+                select(EnvironmentCreationResult).where(
+                    EnvironmentCreationResult.run_id == run.id,
+                    EnvironmentCreationResult.account_ref == account_ref,
+                )
+            )
+            if row is None:
+                row = EnvironmentCreationResult(
+                    id=uuid.uuid4(),
+                    run_id=run.id,
+                    tenant_id=run.tenant_id,
+                    account_ref=account_ref,
+                    account_label=account_label,
+                    purchaser_label=str(item.get("purchaserLabel") or "")[:100],
+                    environment_name=str(item.get("environmentName") or "")[:255],
+                    status="success",
+                    completed_steps=["preview_completed"],
+                    recovered_existing=bool(item.get("recoveredExisting")),
+                    created_in_run=False,
+                    feishu_sync_status="pending",
+                    created_at=now,
+                    updated_at=now,
+                )
+                self.session.add(row)
+            else:
+                row.account_label = account_label
+                row.purchaser_label = str(item.get("purchaserLabel") or "")[:100]
+                row.environment_name = str(item.get("environmentName") or "")[:255]
+                row.status = "success"
+                row.completed_steps = ["preview_completed"]
+                row.recovered_existing = bool(item.get("recoveredExisting"))
+                row.updated_at = now
+        run.status = "completed"
+        run.phase = "environment.preview.completed"
+        run.progress_completed = run.total_count
+        run.progress_total = run.total_count
+        run.success_count = len(rows)
+        run.failed_count = max(0, run.total_count - len(rows))
+        run.started_at = run.started_at or run.created_at
+        run.completed_at = now
+        run.last_heartbeat_at = now
+        run.updated_at = now
+        self.session.flush()
 
     def create_logistics_run(
         self,
@@ -306,11 +435,12 @@ class OperationRunService:
         run = EnvironmentCreationRun(
             id=uuid.uuid4(),
             tenant_id=tenant_id,
-            actor_user_id=actor_user_id,
+            actor_user_id=parent.actor_user_id,
             source_run_key=body.idempotencyKey,
             payload_hash=digest,
             executor_id=body.executorId if body.takeover else parent.executor_id,
             parent_run_id=parent.id,
+            root_run_id=parent.root_run_id or parent.id,
             run_mode=(
                 "retry_row" if body.retryMode == "single" else "retry_failed"
             ),
@@ -1341,6 +1471,7 @@ class OperationRunService:
             .where(
                 EnvironmentCreationRun.tenant_id == tenant_id,
                 EnvironmentCreationRun.actor_user_id == actor_user_id,
+                EnvironmentCreationRun.run_mode != "dry_run",
             )
             .order_by(EnvironmentCreationRun.updated_at.desc())
             .limit(1)
@@ -1358,6 +1489,422 @@ class OperationRunService:
             .order_by(LogisticsQueryRun.updated_at.desc())
             .limit(1)
         )
+
+    def resolve_latest_environment_history_run(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        root_run_id: uuid.UUID,
+        allow_tenant_scope: bool = False,
+    ) -> tuple[EnvironmentCreationRun, EnvironmentCreationRun]:
+        requested_query = select(EnvironmentCreationRun).where(
+            EnvironmentCreationRun.id == root_run_id,
+            EnvironmentCreationRun.tenant_id == tenant_id,
+        )
+        if not allow_tenant_scope:
+            requested_query = requested_query.where(
+                EnvironmentCreationRun.actor_user_id == actor_user_id
+            )
+        requested = self.session.scalar(requested_query)
+        if requested is None:
+            raise PurchaseServiceError(
+                "operation_run_not_found", "环境创建历史不存在", 404
+            )
+        resolved_root_id = requested.root_run_id
+        if resolved_root_id is None:
+            resolved_root_id = self._environment_lineage(requested)[0].id
+        history_actor_user_id = requested.actor_user_id
+        root = self.session.scalar(select(EnvironmentCreationRun).where(
+            EnvironmentCreationRun.id == resolved_root_id,
+            EnvironmentCreationRun.tenant_id == tenant_id,
+            EnvironmentCreationRun.actor_user_id == history_actor_user_id,
+        ))
+        if root is None:
+            raise PurchaseServiceError(
+                "operation_run_not_found", "环境创建历史不存在", 404
+            )
+        latest = self.session.scalar(
+            select(EnvironmentCreationRun)
+            .where(
+                EnvironmentCreationRun.tenant_id == tenant_id,
+                EnvironmentCreationRun.actor_user_id == history_actor_user_id,
+                or_(
+                    EnvironmentCreationRun.id == root.id,
+                    EnvironmentCreationRun.root_run_id == root.id,
+                ),
+            )
+            .order_by(
+                EnvironmentCreationRun.created_at.desc(),
+                EnvironmentCreationRun.id.desc(),
+            )
+            .limit(1)
+        )
+        return root, latest or root
+
+    def environment_history(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        limit: int,
+        cursor: uuid.UUID | None = None,
+        site: str | None = None,
+        status: str | None = None,
+        include_all_users: bool = False,
+        filter_actor_user_id: uuid.UUID | None = None,
+    ) -> dict[str, object]:
+        root_run = aliased(EnvironmentCreationRun)
+        latest_run = aliased(EnvironmentCreationRun)
+        descendant = aliased(EnvironmentCreationRun)
+        latest_id = (
+            select(latest_run.id)
+            .where(
+                latest_run.tenant_id == tenant_id,
+                latest_run.actor_user_id == root_run.actor_user_id,
+                or_(
+                    latest_run.id == root_run.id,
+                    latest_run.root_run_id == root_run.id,
+                ),
+            )
+            .order_by(latest_run.created_at.desc(), latest_run.id.desc())
+            .limit(1)
+            .correlate(root_run)
+            .scalar_subquery()
+        )
+        retry_count = (
+            select(func.count(descendant.id))
+            .where(
+                descendant.tenant_id == tenant_id,
+                descendant.actor_user_id == root_run.actor_user_id,
+                descendant.root_run_id == root_run.id,
+                descendant.id != root_run.id,
+            )
+            .correlate(root_run)
+            .scalar_subquery()
+        )
+        statement = (
+            select(root_run, latest_run, retry_count.label("retry_count"))
+            .join(latest_run, latest_run.id == latest_id)
+            .where(
+                root_run.tenant_id == tenant_id,
+                root_run.parent_run_id.is_(None),
+            )
+        )
+        if include_all_users:
+            if filter_actor_user_id is not None:
+                statement = statement.where(
+                    root_run.actor_user_id == filter_actor_user_id
+                )
+        else:
+            statement = statement.where(root_run.actor_user_id == actor_user_id)
+        if site is not None:
+            statement = statement.where(root_run.site == site)
+        if status is not None:
+            statement = statement.where(latest_run.status == status)
+        if cursor is not None:
+            cursor_query = select(EnvironmentCreationRun).where(
+                EnvironmentCreationRun.id == cursor,
+                EnvironmentCreationRun.tenant_id == tenant_id,
+                EnvironmentCreationRun.parent_run_id.is_(None),
+            )
+            if not include_all_users:
+                cursor_query = cursor_query.where(
+                    EnvironmentCreationRun.actor_user_id == actor_user_id
+                )
+            elif filter_actor_user_id is not None:
+                cursor_query = cursor_query.where(
+                    EnvironmentCreationRun.actor_user_id == filter_actor_user_id
+                )
+            cursor_run = self.session.scalar(cursor_query)
+            if cursor_run is None:
+                raise PurchaseServiceError(
+                    "environment_history_cursor_invalid", "创建历史游标无效", 422
+                )
+            _cursor_root, cursor_latest = (
+                self.resolve_latest_environment_history_run(
+                    tenant_id=tenant_id,
+                    actor_user_id=actor_user_id,
+                    root_run_id=cursor_run.id,
+                    allow_tenant_scope=include_all_users,
+                )
+            )
+            statement = statement.where(or_(
+                latest_run.updated_at < cursor_latest.updated_at,
+                and_(
+                    latest_run.updated_at == cursor_latest.updated_at,
+                    root_run.id < cursor_run.id,
+                ),
+            ))
+        result_rows = list(self.session.execute(
+            statement.order_by(latest_run.updated_at.desc(), root_run.id.desc())
+            .limit(limit + 1)
+        ))
+        has_more = len(result_rows) > limit
+        page = result_rows[:limit]
+        actors = []
+        if include_all_users:
+            actors = [{
+                "userId": str(user_id),
+                "displayName": display_name,
+                "status": user_status,
+            } for user_id, display_name, user_status in self.session.execute(
+                select(User.id, User.display_name, User.status)
+                .join(
+                    EnvironmentCreationRun,
+                    EnvironmentCreationRun.actor_user_id == User.id,
+                )
+                .where(
+                    User.tenant_id == tenant_id,
+                    EnvironmentCreationRun.tenant_id == tenant_id,
+                    EnvironmentCreationRun.parent_run_id.is_(None),
+                )
+                .distinct()
+                .order_by(User.display_name, User.id)
+            )]
+        return {
+            "items": [
+                self._environment_history_item(root, latest, int(retries or 0))
+                for root, latest, retries in page
+            ],
+            "nextCursor": str(page[-1][0].id) if has_more and page else None,
+            "hasMore": has_more,
+            "actors": actors,
+        }
+
+    def environment_history_snapshot(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        root_run_id: uuid.UUID,
+        allow_tenant_scope: bool = False,
+    ) -> dict[str, object]:
+        root, latest = self.resolve_latest_environment_history_run(
+            tenant_id=tenant_id,
+            actor_user_id=actor_user_id,
+            root_run_id=root_run_id,
+            allow_tenant_scope=allow_tenant_scope,
+        )
+        item = self._environment_history_item(
+            root,
+            latest,
+            max(0, len(self._environment_lineage(latest)) - 1),
+        )
+        item.update({
+            "latestRunId": str(latest.id),
+            "rows": self._effective_environment_rows(latest),
+            "logicalCreatedAt": _iso(root.created_at),
+        })
+        return item
+
+    def _environment_history_item(
+        self,
+        root: EnvironmentCreationRun,
+        latest: EnvironmentCreationRun,
+        retry_count: int,
+    ) -> dict[str, object]:
+        rows = self._effective_environment_rows(latest)
+        pending_count = sum(
+            row["status"] in {"queued", "running"} for row in rows
+        )
+        success_count = sum(row["status"] == "success" for row in rows)
+        recovered_count = sum(
+            row["status"] == "success" and row["recoveredExisting"]
+            for row in rows
+        )
+        planned_count = max(root.total_count, len(rows))
+        if latest.status not in self.TERMINAL_STATUSES:
+            pending_count += max(0, planned_count - len(rows))
+        failed_count = sum(
+            row["status"] not in {"success", "queued", "running"}
+            for row in rows
+        )
+        if latest.status == "failed":
+            failed_count += max(0, planned_count - len(rows))
+        executor = (
+            self.session.get(LocalExecutor, latest.executor_id)
+            if latest.executor_id is not None else None
+        )
+        if executor is not None:
+            executor_display_name = executor.display_name
+            executor_attribution = "verified"
+        elif root.source == "local_executor" or latest.source == "local_executor":
+            executor_display_name = "旧版本地任务（未记录设备）"
+            executor_attribution = "legacy_unattributed"
+        else:
+            executor_display_name = "原执行器已移除"
+            executor_attribution = "removed"
+        actor = self.session.get(User, root.actor_user_id)
+        return {
+            "taskId": str(root.id),
+            "rootRunId": str(root.id),
+            "latestRunId": str(latest.id),
+            "actorUserId": str(root.actor_user_id),
+            "actorDisplayName": actor.display_name if actor else "未知用户",
+            "actorStatus": actor.status if actor else "unknown",
+            "executorDisplayName": executor_display_name,
+            "executorAttribution": executor_attribution,
+            "site": root.site,
+            "environmentGroup": root.environment_group,
+            "taskType": root.run_mode,
+            "latestTaskType": latest.run_mode,
+            "plannedCount": planned_count,
+            "successCount": success_count,
+            "recoveredCount": recovered_count,
+            "failedCount": failed_count,
+            "pendingCount": pending_count,
+            "status": latest.status,
+            "phase": latest.phase,
+            "terminal": latest.status in self.TERMINAL_STATUSES,
+            "retryCount": retry_count,
+            "durationSec": self._environment_duration_seconds(latest),
+            "startedAt": _iso(root.started_at),
+            "completedAt": _iso(latest.completed_at),
+            "createdAt": _iso(root.created_at),
+            "updatedAt": _iso(latest.updated_at),
+        }
+
+    def _environment_attempt_duration_seconds(
+        self, run: EnvironmentCreationRun, *, now: datetime | None = None
+    ) -> int:
+        if run.started_at is None:
+            return 0
+        if run.status in self.TERMINAL_STATUSES:
+            finished_at = run.completed_at or run.last_heartbeat_at
+            if finished_at is None:
+                return 0
+        else:
+            finished_at = now or utcnow()
+        started_at = run.started_at
+        if started_at.tzinfo is None and finished_at.tzinfo is not None:
+            finished_at = finished_at.replace(tzinfo=None)
+        elif started_at.tzinfo is not None and finished_at.tzinfo is None:
+            finished_at = finished_at.replace(tzinfo=started_at.tzinfo)
+        return max(0, int((finished_at - started_at).total_seconds()))
+
+    def _environment_duration_seconds(self, run: EnvironmentCreationRun) -> int:
+        now = utcnow()
+        return sum(
+            self._environment_attempt_duration_seconds(item, now=now)
+            for item in self._environment_lineage(run)
+        )
+
+    def _environment_lineage(
+        self, run: EnvironmentCreationRun
+    ) -> list[EnvironmentCreationRun]:
+        if run.root_run_id is not None:
+            return list(self.session.scalars(
+                select(EnvironmentCreationRun)
+                .where(
+                    EnvironmentCreationRun.tenant_id == run.tenant_id,
+                    EnvironmentCreationRun.actor_user_id == run.actor_user_id,
+                    or_(
+                        EnvironmentCreationRun.id == run.root_run_id,
+                        EnvironmentCreationRun.root_run_id == run.root_run_id,
+                    ),
+                    or_(
+                        EnvironmentCreationRun.created_at < run.created_at,
+                        and_(
+                            EnvironmentCreationRun.created_at == run.created_at,
+                            EnvironmentCreationRun.id <= run.id,
+                        ),
+                    ),
+                )
+                .order_by(
+                    EnvironmentCreationRun.created_at,
+                    EnvironmentCreationRun.id,
+                )
+            ))
+        lineage = [run]
+        visited = {run.id}
+        current = run
+        for _ in range(20):
+            if current.parent_run_id is None:
+                break
+            parent = self.session.get(EnvironmentCreationRun, current.parent_run_id)
+            if (
+                parent is None or parent.id in visited
+                or parent.tenant_id != run.tenant_id
+                or parent.actor_user_id != run.actor_user_id
+            ):
+                break
+            lineage.append(parent)
+            visited.add(parent.id)
+            current = parent
+        lineage.reverse()
+        return lineage
+
+    def _effective_environment_rows(
+        self, run: EnvironmentCreationRun
+    ) -> list[dict[str, Any]]:
+        lineage = self._environment_lineage(run)
+        order: list[str] = []
+        by_ref: dict[str, dict[str, Any]] = {}
+        for ancestor in lineage:
+            stored = list(self.session.scalars(
+                select(EnvironmentCreationResult)
+                .where(EnvironmentCreationResult.run_id == ancestor.id)
+                .order_by(
+                    EnvironmentCreationResult.created_at,
+                    EnvironmentCreationResult.id,
+                )
+            ))
+            for row in stored:
+                if row.account_ref not in order:
+                    order.append(row.account_ref)
+                by_ref[row.account_ref] = {
+                    "accountRef": row.account_ref,
+                    "accountLabel": row.account_label,
+                    "purchaserLabel": row.purchaser_label,
+                    "environmentName": row.environment_name,
+                    "environmentRef": row.environment_ref,
+                    "environmentSerial": row.environment_serial,
+                    "status": row.status,
+                    "currentStep": row.current_step,
+                    "completedSteps": list(row.completed_steps or []),
+                    "errorStep": row.error_step,
+                    "errorSummary": row.error_summary,
+                    "recoveredExisting": row.recovered_existing,
+                    "createdInRun": row.created_in_run,
+                    "cleanupStatus": row.cleanup_status,
+                    "cleanupErrorCode": row.cleanup_error_code,
+                    "cleanupErrorSummary": row.cleanup_error_summary,
+                    "ipAddress": row.ip_address,
+                    "ipCountry": row.ip_country,
+                    "ipVerified": row.ip_verified,
+                    "ipErrorCode": row.ip_error_code,
+                    "ipErrorSummary": row.ip_error_summary,
+                    "updatedAt": _iso(row.updated_at),
+                }
+        if run.parent_run_id is not None and run.status not in self.TERMINAL_STATUSES:
+            requested = [
+                str(value) for value in (
+                    (run.request_summary or {}).get("accountRefs") or []
+                ) if str(value)
+            ]
+            reported = {
+                row.account_ref for row in self.session.scalars(
+                    select(EnvironmentCreationResult).where(
+                        EnvironmentCreationResult.run_id == run.id
+                    )
+                )
+            }
+            for account_ref in requested:
+                if account_ref in reported:
+                    continue
+                previous = dict(by_ref.get(account_ref) or {})
+                previous.update({
+                    "accountRef": account_ref,
+                    "status": "queued",
+                    "currentStep": "retry_pending",
+                    "errorStep": None,
+                    "errorSummary": None,
+                })
+                by_ref[account_ref] = previous
+                if account_ref not in order:
+                    order.append(account_ref)
+        return [by_ref[account_ref] for account_ref in order if account_ref in by_ref]
 
     def resolve_latest_logistics_history_run(
         self,
@@ -1500,18 +2047,24 @@ class OperationRunService:
                 raise PurchaseServiceError(
                     "logistics_history_cursor_invalid", "查询历史游标无效", 422
                 )
+            _cursor_root, cursor_latest = self.resolve_latest_logistics_history_run(
+                tenant_id=tenant_id,
+                actor_user_id=actor_user_id,
+                root_run_id=cursor_run.id,
+                allow_tenant_scope=include_all_users,
+            )
             statement = statement.where(
                 or_(
-                    root_run.created_at < cursor_run.created_at,
+                    latest_run.updated_at < cursor_latest.updated_at,
                     and_(
-                        root_run.created_at == cursor_run.created_at,
+                        latest_run.updated_at == cursor_latest.updated_at,
                         root_run.id < cursor_run.id,
                     ),
                 )
             )
         result_rows = list(
             self.session.execute(
-                statement.order_by(root_run.created_at.desc(), root_run.id.desc())
+                statement.order_by(latest_run.updated_at.desc(), root_run.id.desc())
                 .limit(limit + 1)
             )
         )
@@ -1604,12 +2157,37 @@ class OperationRunService:
 
     def _effective_logistics_counts(self, run: LogisticsQueryRun) -> dict[str, int]:
         rows = self._effective_logistics_rows(run)
+        if run.parent_run_id is not None and run.status not in self.TERMINAL_STATUSES:
+            retry_serials = {
+                str(value) for value in (
+                    (run.request_summary or {}).get("environmentSerials") or []
+                ) if str(value)
+            }
+            reported = set(self.session.scalars(
+                select(LogisticsQueryResult.environment_serial).where(
+                    LogisticsQueryResult.run_id == run.id
+                )
+            ))
+            for row in rows:
+                if row.get("environmentSerial") in retry_serials - reported:
+                    row["status"] = "pending"
+        root = self._logistics_lineage(run)[0]
+        planned_count = len(self._original_logistics_serials(root))
+        total_count = max(planned_count, len(rows))
         success_count = sum(row.get("status") == "ok" for row in rows)
         pending_count = sum(row.get("status") in {"pending", "running"} for row in rows)
+        if run.status not in self.TERMINAL_STATUSES:
+            pending_count += max(0, total_count - len(rows))
+        failed_count = sum(
+            row.get("status") not in {"ok", "pending", "running"}
+            for row in rows
+        )
+        if run.status == "failed":
+            failed_count += max(0, total_count - len(rows))
         return {
-            "totalCount": len(rows),
+            "totalCount": total_count,
             "successCount": success_count,
-            "failedCount": len(rows) - success_count - pending_count,
+            "failedCount": failed_count,
             "pendingCount": pending_count,
         }
 
@@ -1635,7 +2213,9 @@ class OperationRunService:
             executor_attribution = "removed"
         actor = self.session.get(User, root.actor_user_id)
         duration_seconds = self._logistics_duration_seconds(latest)
+        metrics = self._logistics_execution_metrics(latest)
         return {
+            "queryId": str(root.id),
             "rootRunId": str(root.id),
             "latestRunId": str(latest.id),
             "site": root.site,
@@ -1650,6 +2230,11 @@ class OperationRunService:
             "actorDisplayName": actor.display_name if actor else "未知用户",
             "actorStatus": actor.status if actor else "unknown",
             "durationSec": duration_seconds,
+            "retryDurationSec": (
+                self._logistics_attempt_duration_seconds(latest)
+                if latest.query_mode != "initial" else None
+            ),
+            **metrics,
             **counts,
             "startedAt": _iso(root.started_at),
             "completedAt": _iso(latest.completed_at),
@@ -1671,17 +2256,40 @@ class OperationRunService:
     ) -> int:
         if run.started_at is None:
             return 0
-        finished_at = run.completed_at or (
-            run.updated_at
-            if run.status in self.TERMINAL_STATUSES
-            else (now or utcnow())
-        )
+        if run.status in self.TERMINAL_STATUSES:
+            finished_at = run.completed_at or run.last_heartbeat_at
+            if finished_at is None:
+                return 0
+        else:
+            finished_at = now or utcnow()
         started_at = run.started_at
         if started_at.tzinfo is None and finished_at.tzinfo is not None:
             finished_at = finished_at.replace(tzinfo=None)
         elif started_at.tzinfo is not None and finished_at.tzinfo is None:
             finished_at = finished_at.replace(tzinfo=started_at.tzinfo)
         return max(0, int((finished_at - started_at).total_seconds()))
+
+    def _logistics_execution_metrics(
+        self, run: LogisticsQueryRun
+    ) -> dict[str, int | float | None]:
+        run_ids = [item.id for item in self._logistics_lineage(run)]
+        rows = list(self.session.scalars(
+            select(LogisticsQueryResult).where(
+                LogisticsQueryResult.run_id.in_(run_ids),
+                LogisticsQueryResult.execution_attempted.is_(True),
+                LogisticsQueryResult.status.in_({"ok", "fail", "login"}),
+                LogisticsQueryResult.execution_duration_ms > 0,
+            )
+        ))
+        total_ms = sum(row.execution_duration_ms for row in rows)
+        attempts = len(rows)
+        return {
+            "executedAttemptCount": attempts,
+            "executedDurationMs": total_ms,
+            "averageEnvironmentDurationSec": (
+                round(total_ms / attempts / 1000, 1) if attempts else None
+            ),
+        }
 
     def environment_snapshot(
         self, run: EnvironmentCreationRun, *, unchanged: bool = False
@@ -1709,8 +2317,11 @@ class OperationRunService:
         )
         cleanup_done = sum(row.cleanup_status == "deleted" for row in rows)
         cleanup_failed = sum(row.cleanup_status == "failed" for row in rows)
+        duration_seconds = self._environment_duration_seconds(run)
         return {
             "runId": str(run.id),
+            "taskId": str(run.root_run_id or run.id),
+            "rootRunId": str(run.root_run_id or run.id),
             "runKey": run.source_run_key,
             "executorId": str(run.executor_id) if run.executor_id else None,
             "executorTaskId": str(run.executor_task_id) if run.executor_task_id else None,
@@ -1737,6 +2348,8 @@ class OperationRunService:
             "cleanupTotal": cleanup_total,
             "cleanupDone": cleanup_done,
             "cleanupFailed": cleanup_failed,
+            "durationSec": duration_seconds,
+            "attemptDurationSec": self._environment_attempt_duration_seconds(run),
             "startedAt": _iso(run.started_at),
             "completedAt": _iso(run.completed_at),
             "lastHeartbeatAt": _iso(run.last_heartbeat_at),
@@ -1780,6 +2393,7 @@ class OperationRunService:
         rows = self._effective_logistics_rows(run)
         duration_seconds = self._logistics_duration_seconds(run)
         attempt_duration_seconds = self._logistics_attempt_duration_seconds(run)
+        execution_metrics = self._logistics_execution_metrics(run)
         progress_completed = run.progress_completed
         progress_total = run.progress_total
         retry_progress_completed: int | None = None
@@ -1849,6 +2463,7 @@ class OperationRunService:
         )
         return {
             "runId": str(run.id),
+            "queryId": str(run.root_run_id or run.id),
             "rootRunId": str(run.root_run_id or run.id),
             "runKey": run.source_run_key,
             "parentRunId": (
@@ -1889,6 +2504,10 @@ class OperationRunService:
             "failedCount": run.failed_count,
             "durationSec": duration_seconds,
             "attemptDurationSec": attempt_duration_seconds,
+            "retryDurationSec": (
+                attempt_duration_seconds if run.query_mode != "initial" else None
+            ),
+            **execution_metrics,
             "startedAt": _iso(run.started_at),
             "completedAt": _iso(run.completed_at),
             "lastHeartbeatAt": _iso(run.last_heartbeat_at),
@@ -2011,6 +2630,8 @@ class OperationRunService:
                     "timeZone": row.time_zone,
                     "utcOffsetMinutes": row.utc_offset_minutes,
                     "queriedAt": _iso(row.queried_at),
+                    "executionAttempted": row.execution_attempted,
+                    "executionDurationMs": row.execution_duration_ms,
                     "errorSummary": row.error_summary,
                     "screenshotStatus": row.screenshot_status,
                     "screenshotAvailable": screenshot_available,
@@ -2083,13 +2704,15 @@ class OperationResultService:
         success_count = sum(item.status == "success" for item in body.results)
         failed_count = sum(item.status == "failed" for item in body.results)
         stopped_count = sum(item.status == "stopped" for item in body.results)
+        new_run_id = uuid.uuid4()
         run = existing or EnvironmentCreationRun(
-            id=uuid.uuid4(),
+            id=new_run_id,
             tenant_id=tenant_id,
             actor_user_id=actor_user_id,
             source_run_key=body.runKey,
             payload_hash=digest,
             result_payload_hash=digest,
+            root_run_id=new_run_id,
             run_mode="bound",
             site=body.site,
             purchase_date=body.purchaseDate,
@@ -2195,7 +2818,7 @@ class OperationResultService:
             record.updated_at = now
             fields = _nonempty({
                 "同步键": f"environment:{tenant_id}:{record.id}",
-                "建环境任务ID": body.runKey,
+                "建环境任务ID": str(run.root_run_id or run.id),
                 "站点": body.site,
                 "购买日期": body.purchaseDate,
                 "环境分组": body.environmentGroup,
@@ -2503,13 +3126,15 @@ class OperationResultService:
             record.time_zone = item.timeZone or None
             record.utc_offset_minutes = item.utcOffsetMinutes
             record.queried_at = item.queriedAt
+            record.execution_attempted = item.executionAttempted
+            record.execution_duration_ms = item.executionDurationMs
             record.error_summary = item.errorSummary or None
             record.screenshot_status = item.screenshotStatus or None
             record.feishu_sync_status = "pending"
             record.updated_at = now
             fields = _nonempty({
                 "同步键": f"logistics:{tenant_id}:{record.id}",
-                "查询任务ID": body.runKey,
+                "查询任务ID": str(run.root_run_id or run.id),
                 "查询模式": mode_label,
                 "站点": body.site,
                 "环境序号": item.environmentSerial,

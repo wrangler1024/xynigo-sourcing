@@ -587,6 +587,7 @@ class QueryOrchestrator(object):
                 'carrier': '', 'kanDan': False, 'riskOrder': False,
                 'riskMessage': '', 'ip': '', 'time': '',
                 'timeZone': '', 'utcOffsetMinutes': None,
+                'executionAttempted': False, 'executionDurationMs': 0,
                 'firstTrackingAt': '', 'firstTrackingTime': '',
                 'firstTrackingSummary': '',
                 'firstTrackingLeadMinutes': None,
@@ -600,10 +601,24 @@ class QueryOrchestrator(object):
             end_at = time.time() if self.running else self.finished_at
             elapsed = int(max(0, end_at - self.started_at)) \
                 if self.started_at and end_at else 0
+            executed_rows = [
+                row for row in self.rows
+                if row.get('executionAttempted')
+                and row.get('state') in ('ok', 'fail', 'login')
+                and int(row.get('executionDurationMs') or 0) > 0
+            ]
+            executed_ms = sum(
+                int(row.get('executionDurationMs') or 0)
+                for row in executed_rows)
             return {
                 'running': self.running,
                 'current': ', '.join(sorted(self._inflight)),
                 'elapsedSec': elapsed,
+                'executedAttemptCount': len(executed_rows),
+                'executedDurationMs': executed_ms,
+                'averageEnvironmentDurationSec': (
+                    round(executed_ms / len(executed_rows) / 1000.0, 1)
+                    if executed_rows else None),
                 'site': self.site,
                 'siteName': SITE_LABELS[self.site],
                 'browserMode': self.browser_mode,
@@ -1252,6 +1267,16 @@ class QueryOrchestrator(object):
                 t.join()
         finally:
             with self.lock:
+                if self.stop_event.is_set():
+                    for row in self.rows:
+                        if row.get('state') == 'pending':
+                            row.update(
+                                state='stopped',
+                                error='已停止，当前环境未进入执行',
+                                time=_query_timestamp(
+                                    row.get('site') or self.site,
+                                    row.get('utcOffsetMinutes')),
+                            )
                 self.finished_at = time.time()
                 self.running = False
             if on_finished:
@@ -1578,6 +1603,16 @@ class QueryOrchestrator(object):
         self._update(row, envName=env_name,
                      state='running')
         data = None
+        if (code in open_codes and serial not in self._force_stops
+                and not self.allow_open_environment):
+            # A safety skip never entered the environment execution lifecycle.
+            self._update(row, state='inuse', error=(
+                '环境浏览器处于打开状态：可在桌面执行器本机设置启用'
+                '「允许连接已打开环境」只读查询；'
+                '若为上次查询中断的残留窗口也可用「关闭并重查」'))
+            return
+        attempt_started_at = time.monotonic()
+        self._update(row, executionAttempted=True, executionDurationMs=0)
         if code in open_codes:
             if serial in self._force_stops:
                 # 孤儿窗口清理：上次查询中断残留的打开状态，关闭后重查
@@ -1588,6 +1623,7 @@ class QueryOrchestrator(object):
                 except Exception as e:
                     self._update(row, state='fail',
                                  error='关闭残留窗口失败：%s' % str(e)[:80])
+                    self._finish_execution_attempt(row, attempt_started_at)
                     return
             elif self.allow_open_environment:
                 try:
@@ -1596,14 +1632,8 @@ class QueryOrchestrator(object):
                     self._update(
                         row, state='fail',
                         error='连接已打开环境失败：%s' % str(e)[:100])
+                    self._finish_execution_attempt(row, attempt_started_at)
                     return
-            else:
-                # 正在使用（采购同事开着或未归档）——跳过防登录态覆盖
-                self._update(row, state='inuse', error=(
-                    '环境浏览器处于打开状态：可在桌面执行器本机设置启用'
-                    '「允许连接已打开环境」只读查询；'
-                    '若为上次查询中断的残留窗口也可用「关闭并重查」'))
-                return
         started = False
         page = None
         try:
@@ -1740,3 +1770,9 @@ class QueryOrchestrator(object):
                                     '后续任务会继续清理')
                 except Exception:
                     self._mark_browser_stopped(code)
+            self._finish_execution_attempt(row, attempt_started_at)
+
+    def _finish_execution_attempt(self, row, started_at):
+        duration_ms = max(
+            1, int(max(0.0, time.monotonic() - started_at) * 1000))
+        self._update(row, executionDurationMs=duration_ms)

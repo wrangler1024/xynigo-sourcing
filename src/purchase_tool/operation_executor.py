@@ -765,6 +765,11 @@ class LocalOperationExecutor(object):
                 'utcOffsetMinutes': utc_offset,
                 'queriedAt': LocalOperationExecutor._local_timestamp(
                     source.get('time'), utc_offset),
+                'executionAttempted': bool(
+                    source.get('executionAttempted')),
+                'executionDurationMs': max(
+                    0, min(86400000, int(
+                        source.get('executionDurationMs') or 0))),
                 'errorSummary': scrub_text(source.get('error') or '')[:300],
                 'screenshotStatus': str(
                     source.get('screenshotState') or '')[:32],

@@ -76,6 +76,8 @@ def _result(
     *,
     status: str,
     order_no: str = "",
+    execution_attempted: bool = False,
+    execution_duration_ms: int = 0,
 ) -> LogisticsQueryResult:
     return LogisticsQueryResult(
         id=uuid.uuid4(),
@@ -91,6 +93,8 @@ def _result(
         package_numbers=[],
         cancelled=False,
         risk_order=False,
+        execution_attempted=execution_attempted,
+        execution_duration_ms=execution_duration_ms,
         feishu_sync_status="pending",
         created_at=run.created_at,
         updated_at=run.updated_at,
@@ -368,6 +372,7 @@ def test_active_retry_reports_logical_batch_progress(tmp_path) -> None:
             session.add(retry)
             session.commit()
             retry_id = str(retry.id)
+            root_id = str(root.id)
 
         response = client.get(
             f"/v1/operation-runs/logistics-query/{retry_id}"
@@ -388,6 +393,12 @@ def test_active_retry_reports_logical_batch_progress(tmp_path) -> None:
             "pending",
             "ok",
         ]
+        history = client.get(
+            f"/v1/operation-runs/logistics-query/history/{root_id}"
+        ).json()["data"]
+        assert history["successCount"] == 2
+        assert history["pendingCount"] == 1
+        assert history["failedCount"] == 0
 
 
 def test_logistics_history_paginates_newest_first_and_filters_latest_status(
@@ -473,3 +484,100 @@ def test_logistics_history_paginates_newest_first_and_filters_latest_status(
         assert [item["rootRunId"] for item in filtered.json()["data"]["items"]] == [
             middle_id
         ]
+
+
+def test_logistics_history_recheck_reuses_public_id_sorts_by_latest_update_and_averages_attempts(
+    tmp_path,
+) -> None:
+    app, database, _oauth = build_test_app(tmp_path)
+    now = datetime.now(UTC)
+
+    with TestClient(app) as client:
+        login(client)
+        with database.session_factory() as session:
+            tenant = session.scalar(
+                select(Tenant).where(Tenant.feishu_tenant_key == "tenant_allowed")
+            )
+            user = session.scalar(
+                select(User).where(
+                    User.tenant_id == tenant.id,
+                    User.feishu_open_id == "ou_admin",
+                )
+            )
+            old_root = _run(
+                tenant_id=tenant.id,
+                user_id=user.id,
+                created_at=now - timedelta(days=2),
+                serials=["101", "102", "103", "104"],
+                status="partial_failure",
+            )
+            old_root.started_at = now - timedelta(days=2)
+            old_root.completed_at = old_root.started_at + timedelta(seconds=100)
+            old_root.updated_at = old_root.completed_at
+            session.add(old_root)
+            session.flush()
+            session.add_all([
+                _result(
+                    old_root, "101", status="ok",
+                    execution_attempted=True, execution_duration_ms=40_000,
+                ),
+                _result(
+                    old_root, "102", status="fail",
+                    execution_attempted=True, execution_duration_ms=80_000,
+                ),
+                _result(old_root, "103", status="inuse"),
+                _result(old_root, "104", status="stopped"),
+            ])
+            newer_root = _run(
+                tenant_id=tenant.id,
+                user_id=user.id,
+                created_at=now - timedelta(days=1),
+                serials=["201"],
+            )
+            session.add(newer_root)
+            session.flush()
+            session.add(_result(newer_root, "201", status="ok"))
+            retry = _run(
+                tenant_id=tenant.id,
+                user_id=user.id,
+                created_at=now - timedelta(minutes=2),
+                serials=["102"],
+                parent=old_root,
+            )
+            retry.started_at = now - timedelta(minutes=2)
+            retry.completed_at = retry.started_at + timedelta(seconds=50)
+            retry.updated_at = now
+            session.add(retry)
+            session.flush()
+            session.add(_result(
+                retry, "102", status="ok", order_no="RETRY-102",
+                execution_attempted=True, execution_duration_ms=60_000,
+            ))
+            session.commit()
+            old_root_id = str(old_root.id)
+            retry_id = str(retry.id)
+
+        response = client.get("/v1/operation-runs/logistics-query/history")
+        assert response.status_code == 200, response.text
+        items = response.json()["data"]["items"]
+        assert items[0]["queryId"] == old_root_id
+        assert items[0]["rootRunId"] == old_root_id
+        assert items[0]["latestRunId"] == retry_id
+        assert items[0]["executedAttemptCount"] == 3
+        assert items[0]["executedDurationMs"] == 180_000
+        assert items[0]["averageEnvironmentDurationSec"] == 60.0
+        assert items[0]["durationSec"] == 150
+        assert items[0]["retryDurationSec"] == 50
+
+        detail = client.get(
+            f"/v1/operation-runs/logistics-query/history/{old_root_id}"
+        )
+        assert detail.status_code == 200, detail.text
+        data = detail.json()["data"]
+        assert data["queryId"] == old_root_id
+        assert data["runId"] == retry_id
+        assert data["retryDurationSec"] == 50
+        assert data["averageEnvironmentDurationSec"] == 60.0
+        assert next(
+            row for row in data["rows"] if row["environmentSerial"] == "102"
+        )["platformOrderNo"] == "RETRY-102"

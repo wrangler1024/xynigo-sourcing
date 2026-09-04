@@ -471,6 +471,8 @@ class TrackingScreenshotTests(unittest.TestCase):
         self.assertEqual(hub.start_calls, [])
         self.assertEqual(hub.stop_calls, [])
         self.assertTrue(page.closed)
+        self.assertTrue(row['executionAttempted'])
+        self.assertGreater(row['executionDurationMs'], 0)
 
     def test_open_environment_is_still_skipped_when_readonly_option_is_off(self):
         job = QueryOrchestrator(hub=None, settle_seconds=0, env_interval=0)
@@ -483,6 +485,31 @@ class TrackingScreenshotTests(unittest.TestCase):
 
         self.assertEqual(row['state'], 'inuse')
         self.assertIn('允许连接已打开环境', row['error'])
+        self.assertFalse(row['executionAttempted'])
+        self.assertEqual(row['executionDurationMs'], 0)
+
+    def test_cancelled_batch_marks_pending_rows_stopped_without_execution(self):
+        class IdleHub(object):
+            def open_container_codes(self):
+                return set()
+
+        job = QueryOrchestrator(IdleHub(), settle_seconds=0, env_interval=0)
+        job._prepare_run(['1001', '1002'], 'MX', fresh=True)
+        job.request_stop()
+        job._run(
+            ['1001', '1002'], {
+                '1001': {'containerCode': 'one', 'containerName': 'SYN-ONE'},
+                '1002': {'containerCode': 'two', 'containerName': 'SYN-TWO'},
+            }, prepared=True,
+        )
+        snapshot = job.snapshot()
+        self.assertEqual(
+            [row['state'] for row in snapshot['rows']],
+            ['stopped', 'stopped'],
+        )
+        self.assertTrue(all(
+            not row['executionAttempted'] for row in snapshot['rows']))
+        self.assertEqual(snapshot['executedAttemptCount'], 0)
 
     def test_preflight_rejects_missing_browser_core_before_batch_start(self):
         class MissingCoreHub(object):

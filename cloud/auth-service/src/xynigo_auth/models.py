@@ -979,6 +979,9 @@ class EnvironmentCreationRun(Base):
     parent_run_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("environment_creation_runs.id", ondelete="SET NULL")
     )
+    root_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("environment_creation_runs.id", ondelete="SET NULL")
+    )
     run_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="bound")
     site: Mapped[str] = mapped_column(String(20), nullable=False)
     purchase_date: Mapped[str] = mapped_column(String(8), nullable=False)
@@ -1020,7 +1023,8 @@ class EnvironmentCreationRun(Base):
             name="ck_environment_run_status",
         ),
         CheckConstraint(
-            "run_mode IN ('bound', 'backup', 'test', 'retry_row', 'retry_failed')",
+            "run_mode IN ('bound', 'backup', 'test', 'dry_run', "
+            "'retry_row', 'retry_failed')",
             name="ck_environment_run_mode",
         ),
         CheckConstraint(
@@ -1033,6 +1037,14 @@ class EnvironmentCreationRun(Base):
         Index("ix_environment_run_tenant_status", "tenant_id", "status", "updated_at"),
         Index("ix_environment_run_executor_task", "executor_task_id", unique=True),
         Index("ix_environment_run_parent", "parent_run_id", "created_at"),
+        Index(
+            "ix_environment_run_history_root",
+            "tenant_id",
+            "actor_user_id",
+            "root_run_id",
+            "updated_at",
+            "id",
+        ),
     )
 
 
@@ -1395,6 +1407,14 @@ class LogisticsQueryRun(Base):
             "created_at",
             "id",
         ),
+        Index(
+            "ix_logistics_run_history_updated",
+            "tenant_id",
+            "actor_user_id",
+            "root_run_id",
+            "updated_at",
+            "id",
+        ),
         Index("ix_logistics_run_executor_task", "executor_task_id", unique=True),
     )
 
@@ -1438,6 +1458,12 @@ class LogisticsQueryResult(Base):
     time_zone: Mapped[str | None] = mapped_column(String(100))
     utc_offset_minutes: Mapped[int | None] = mapped_column(Integer)
     queried_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    execution_attempted: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    execution_duration_ms: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
     error_summary: Mapped[str | None] = mapped_column(String(300))
     screenshot_status: Mapped[str | None] = mapped_column(String(32))
     screenshot_content: Mapped[bytes | None] = mapped_column(LargeBinary)
@@ -1468,6 +1494,10 @@ class LogisticsQueryResult(Base):
         CheckConstraint(
             "feishu_sync_status IN ('pending', 'processing', 'completed', 'failed')",
             name="ck_logistics_result_feishu_status",
+        ),
+        CheckConstraint(
+            "execution_duration_ms >= 0",
+            name="ck_logistics_result_execution_duration",
         ),
         Index("ix_logistics_result_tenant_created", "tenant_id", "created_at"),
         Index("ix_logistics_result_order", "tenant_id", "platform_order_no"),

@@ -397,7 +397,7 @@ def test_local_logistics_upload_records_verified_executor_identity(tmp_path) -> 
             headers={
                 **CSRF,
                 "X-Xynigo-Executor-Credential": credential,
-                "X-Xynigo-Client-Version": "0.17.0",
+                "X-Xynigo-Client-Version": "0.17.1",
             },
         )
         assert uploaded.status_code == 200, uploaded.text
@@ -964,6 +964,14 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
         assert cached_preview.json()["task"] is None
         assert cached_preview.json()["result"]["inventorySource"] == "cloud_cache"
         assert len(cached_preview.json()["result"]["rows"]) == 2
+        preview_history = web_client.get(
+            "/v1/operation-runs/environment-creation/history"
+        )
+        assert preview_history.status_code == 200, preview_history.text
+        preview_items = preview_history.json()["data"]["items"]
+        assert len(preview_items) == 2
+        assert {item["taskType"] for item in preview_items} == {"dry_run"}
+        assert {item["successCount"] for item in preview_items} == {2}
         create_body = {
             "idempotencyKey": "environment-run-create-0001",
             "executorId": executor_id,
@@ -1036,7 +1044,11 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
         assert conflict.status_code == 409
 
         with database.session_factory() as session:
-            run = session.scalar(select(EnvironmentCreationRun))
+            run = session.scalar(
+                select(EnvironmentCreationRun).where(
+                    EnvironmentCreationRun.run_mode == "bound"
+                )
+            )
             task = session.scalar(
                 select(ExecutorTask).where(
                     ExecutorTask.task_type == "environment.create-bound.v1"
@@ -1293,11 +1305,13 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
         retry_snapshot = retry_created.json()["data"]
         assert retry_snapshot["mode"] == "retry_row"
         assert retry_snapshot["parentRunId"] == snapshot["runId"]
+        assert retry_snapshot["taskId"] == snapshot["taskId"] == snapshot["runId"]
         assert retry_snapshot["progressTotal"] == 1
         retry_lease = heartbeat(
             device_client, credential, capabilities=capabilities
         )["task"]
         assert retry_lease["type"] == "environment.retry-row.v1"
+        assert retry_lease["payload"]["taskId"] == snapshot["runId"]
         assert retry_lease["payload"]["accountRefs"] == [
             "sha256-progress-account-0002"
         ]
@@ -2908,6 +2922,8 @@ def test_logistics_retry_keeps_parent_order_and_serves_uploaded_screenshot(tmp_p
                 "statusLabel": "已发货" if serial == "20" else "",
                 "screenshotStatus": "ok" if serial == "20" else "",
                 "screenshotSizeKb": 1 if serial == "20" else 0,
+                "executionAttempted": True,
+                "executionDurationMs": 40_000 if serial == "20" else 80_000,
                 "errorSummary": "" if serial == "20" else "synthetic failure",
             }
             for serial in ["20", "10"]
@@ -2955,6 +2971,12 @@ def test_logistics_retry_keeps_parent_order_and_serves_uploaded_screenshot(tmp_p
             headers=device_headers(credential),
         )
         assert finished.status_code == 200, finished.text
+        persisted = web_client.get(
+            f"/v1/operation-runs/logistics-query/{root['runId']}"
+        ).json()["data"]
+        assert persisted["executedAttemptCount"] == 2
+        assert persisted["executedDurationMs"] == 120_000
+        assert persisted["averageEnvironmentDurationSec"] == 60.0
         exported = web_client.get(
             f"/v1/operation-runs/logistics-query/{root['runId']}/export"
         )
@@ -2982,6 +3004,7 @@ def test_logistics_retry_keeps_parent_order_and_serves_uploaded_screenshot(tmp_p
         assert retry.status_code == 202, retry.text
         child = retry.json()["data"]
         assert child["parentRunId"] == root["runId"]
+        assert child["queryId"] == root["queryId"] == root["runId"]
         assert [row["environmentSerial"] for row in child["rows"]] == ["20", "10"]
         shot = web_client.get(
             f"/v1/operation-runs/logistics-query/{child['runId']}/screenshots/20"
