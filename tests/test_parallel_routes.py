@@ -123,7 +123,11 @@ class ParallelRouteTests(unittest.TestCase):
         self.orch = FakeOrchestrator()
         self.env_job = FakeEnvJob()
         self.state = SimpleNamespace(
-            cfg={'safeParallelTasks': True, 'queryBrowserMode': 'headless'},
+            cfg={
+                'safeParallelTasks': True,
+                'queryBrowserMode': 'headless',
+                'queryAllowOpenEnvironment': False,
+            },
             auth=SimpleNamespace(
                 require=lambda permission=None, role=None: {
                     'authenticated': True,
@@ -188,15 +192,20 @@ class ParallelRouteTests(unittest.TestCase):
         self.env_job.callback()
         self.assertFalse(self.state.tasks.running())
 
-    def test_serial_query_ignores_group_filter_and_forwards_readonly_attach(self):
+    def test_serial_query_uses_desktop_advanced_settings(self):
+        self.state.cfg['queryBrowserMode'] = 'visible'
+        self.state.cfg['queryAllowOpenEnvironment'] = True
         status, query = self.post('/api/query', {
             'serials': ['1001'], 'site': 'US',
-            'group': '不相关分组', 'allowOpenEnvironment': True,
+            'group': '不相关分组',
+            'browserMode': 'headless', 'allowOpenEnvironment': False,
         })
 
         self.assertEqual(status, 200)
         self.assertEqual(self.state.hub.env_list_groups, [None])
         self.assertTrue(query['allowOpenEnvironment'])
+        self.assertEqual(query['browserMode'], 'visible')
+        self.assertEqual(self.orch.preflight_calls[0][3], 'visible')
         self.assertEqual(self.orch.preflight_calls[0][-1], True)
         self.assertEqual(self.orch.start_calls[0][-1], True)
         self.orch.callback()

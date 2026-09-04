@@ -335,6 +335,7 @@ class WorkspaceRuntimeConfig(BaseModel):
     verifySampleCount: int = Field(ge=0, le=10)
     safeParallelTasks: bool
     queryBrowserMode: Literal["headless", "visible"] = "headless"
+    queryAllowOpenEnvironment: bool = False
 
 
 class ExecutorWorkspaceSnapshotResult(BaseModel):

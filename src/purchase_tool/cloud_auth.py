@@ -92,7 +92,7 @@ ERROR_MESSAGES = {
     'purchase_submit_invalid': '采购单未满足正式提交要求',
     'purchase_contract_invalid': '采购单数据未通过云端契约校验',
     'purchase_contract_version_unsupported': (
-        '运营采购助手与云端采购契约版本不一致，请先更新云端服务'),
+        '店小秘提单助手与云端采购契约版本不一致，请先更新云端服务'),
     'purchase_claim_selection_required': '请至少选择一张采购单或一条采购明细',
     'purchase_claim_empty': '所选采购单没有可认领的有效明细',
     'purchase_line_not_found': '未找到该采购明细',

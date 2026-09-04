@@ -15,7 +15,7 @@
   function sendToExtension(message) {
     return new Promise((resolve, reject) => {
       if (!globalThis.chrome?.runtime?.sendMessage) {
-        reject(new Error('当前浏览器不支持插件连接，请使用安装了运营采购助手的 Chrome/Comet 打开此页'));
+        reject(new Error('当前浏览器不支持插件连接，请使用安装了店小秘提单助手的 Chrome/Comet 打开此页'));
         return;
       }
       chrome.runtime.sendMessage(clientId, message, (response) => {

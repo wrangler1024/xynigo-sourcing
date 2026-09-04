@@ -184,7 +184,7 @@ CONFIG_FIELDS = frozenset({
     'hubPort', 'serverPort', 'concurrency', 'importBuyerPlan',
     'verifySampleCount', 'hiddenQueryColumns', 'purchaseSite',
     'purchaseTag', 'purchaseTags', 'proxyLink', 'envCreateWorkers',
-    'safeParallelTasks', 'queryBrowserMode',
+    'safeParallelTasks', 'queryBrowserMode', 'queryAllowOpenEnvironment',
     'larkBuyerBaseToken', 'larkBuyerTableId',
     'larkBuyerTargetHost',
     'larkBuyerBaseName', 'larkBuyerTableName',
@@ -230,6 +230,7 @@ EXECUTOR_RUNTIME_CONFIG_FIELDS = (
     'verifySampleCount',
     'safeParallelTasks',
     'queryBrowserMode',
+    'queryAllowOpenEnvironment',
 )
 
 _LOCAL_CONFIG_SERVICES = {}
@@ -361,6 +362,7 @@ def default_config():
         'envCreateWorkers': 5,
         'safeParallelTasks': True,
         'queryBrowserMode': 'headless',
+        'queryAllowOpenEnvironment': False,
         # Base/table identifiers are local routing configuration.  The App
         # Secret lives in Keychain/DPAPI and is never written to config.json.
         'larkBuyerBaseToken': os.environ.get('XYNIGO_LARK_BASE_TOKEN', ''),
@@ -664,6 +666,12 @@ def updated_config(old_cfg, body):
     if query_browser_mode not in ('headless', 'visible'):
         raise ValueError('物流查询浏览器模式必须是 headless 或 visible')
     cfg['queryBrowserMode'] = query_browser_mode
+    query_allow_open = body.get(
+        'queryAllowOpenEnvironment',
+        cfg.get('queryAllowOpenEnvironment', False))
+    if not isinstance(query_allow_open, bool):
+        raise ValueError('允许连接已打开环境必须是布尔值')
+    cfg['queryAllowOpenEnvironment'] = query_allow_open
     if 'importBuyerPlan' in body:
         cfg['importBuyerPlan'] = validate_assignment_template(
             body.get('importBuyerPlan'))
@@ -757,6 +765,14 @@ def updated_executor_config(old_cfg, body):
             raise ValueError('物流查询浏览器模式无效')
         query_browser_mode = 'headless'
     cfg['queryBrowserMode'] = query_browser_mode
+    query_allow_open = body.get(
+        'queryAllowOpenEnvironment',
+        cfg.get('queryAllowOpenEnvironment', False))
+    if not isinstance(query_allow_open, bool):
+        if 'queryAllowOpenEnvironment' in body:
+            raise ValueError('允许连接已打开环境必须是布尔值')
+        query_allow_open = False
+    cfg['queryAllowOpenEnvironment'] = query_allow_open
     return cfg
 
 
@@ -4228,13 +4244,9 @@ class Handler(BaseHTTPRequestHandler):
                 group = body.get('group')
                 site = normalize_site(body.get('site') or 'MX')
                 allow_open_environment = bool(
-                    body.get('allowOpenEnvironment'))
-                requested_browser_mode = str(
-                    body.get('browserMode') or 'default').strip().casefold()
+                    STATE.cfg.get('queryAllowOpenEnvironment'))
                 browser_mode = normalize_browser_mode(
-                    STATE.cfg.get('queryBrowserMode')
-                    if requested_browser_mode == 'default'
-                    else requested_browser_mode)
+                    STATE.cfg.get('queryBrowserMode') or 'headless')
                 provided_index = body.get('environmentIndex')
                 env_index = {}
                 if provided_index is not None:
@@ -4353,14 +4365,10 @@ class Handler(BaseHTTPRequestHandler):
                 task_id = STATE.tasks.begin(
                     'query', environment_resources([env] if env else []))
                 operation_run_key = self._operation_run_key(body, task_id)
-                requested_browser_mode = str(
-                    body.get('browserMode') or 'default').strip().casefold()
                 browser_mode = normalize_browser_mode(
-                    STATE.cfg.get('queryBrowserMode')
-                    if requested_browser_mode == 'default'
-                    else requested_browser_mode)
+                    STATE.cfg.get('queryBrowserMode') or 'headless')
                 allow_open_environment = bool(
-                    body.get('allowOpenEnvironment'))
+                    STATE.cfg.get('queryAllowOpenEnvironment'))
 
                 def finish_requery():
                     try:
@@ -4392,22 +4400,48 @@ class Handler(BaseHTTPRequestHandler):
                 retry_serials = [str(row.get('serial')) for row in rows
                                  if row.get('state') in (
                                      'fail', 'inuse', 'pending', 'stopped')]
-                all_envs = STATE.hub.env_list()
-                env_index = {str(e.get('serialNumber')): e for e in all_envs
-                             if e.get('serialNumber') is not None}
+                provided_index = body.get('environmentIndex')
+                if provided_index is not None:
+                    if not isinstance(provided_index, list):
+                        raise ValueError('物流环境缓存参数无效')
+                    env_index = {
+                        str(item.get('serialNumber') or ''): dict(item)
+                        for item in provided_index
+                        if isinstance(item, dict)
+                        and str(item.get('serialNumber') or '').strip()
+                        and str(item.get('containerCode') or '').strip()
+                        and str(item.get('containerName') or '').strip()
+                    }
+                    if (
+                        len(env_index) != len(provided_index)
+                        or set(env_index) != set(retry_serials)
+                    ):
+                        raise ValueError(
+                            '物流环境缓存与异常重查序号不一致')
+                else:
+                    all_envs = STATE._hub_reads.get(
+                        ('all-envs',), 6 * 60 * 60,
+                        lambda: STATE.hub.env_list())
+                    env_index = {
+                        str(e.get('serialNumber')): e for e in all_envs
+                        if e.get('serialNumber') is not None}
+                    if any(serial not in env_index for serial in retry_serials):
+                        STATE._hub_reads.invalidate(('all-envs',))
+                        all_envs = STATE._hub_reads.get(
+                            ('all-envs',), 6 * 60 * 60,
+                            lambda: STATE.hub.env_list())
+                        env_index = {
+                            str(e.get('serialNumber')): e for e in all_envs
+                            if e.get('serialNumber') is not None}
                 selected = [env_index[serial] for serial in retry_serials
                             if serial in env_index]
                 task_id = STATE.tasks.begin(
                     'query', environment_resources(selected))
                 operation_run_key = self._operation_run_key(body, task_id)
-                requested_browser_mode = str(
-                    body.get('browserMode') or 'default').strip().casefold()
                 browser_mode = normalize_browser_mode(
-                    STATE.cfg.get('queryBrowserMode')
-                    if requested_browser_mode == 'default'
-                    else requested_browser_mode)
+                    STATE.cfg.get('queryBrowserMode') or 'headless')
                 allow_open_environment = bool(
-                    body.get('allowOpenEnvironment'))
+                    STATE.cfg.get('queryAllowOpenEnvironment'))
 
                 def finish_failed_requery():
                     try:
@@ -4731,12 +4765,13 @@ class Handler(BaseHTTPRequestHandler):
                     runtime_fields = {
                         'hubPort', 'concurrency', 'envCreateWorkers',
                         'safeParallelTasks', 'queryBrowserMode',
+                        'queryAllowOpenEnvironment',
                     }
                     if (STATE.tasks.running()
                             and any(cfg.get(name) != old_cfg.get(name)
                                     for name in runtime_fields)):
                         raise RuntimeError(
-                            '后台任务运行中，不能修改端口、并发数或并行模式')
+                            '后台任务运行中，不能修改运行参数或物流高级设置')
                     committed = service.commit(
                         cfg,
                         expected_revision=expected_revision,

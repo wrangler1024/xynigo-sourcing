@@ -3866,26 +3866,28 @@ def create_app(
             )
         if not unchanged:
             executor_tasks = executor_channel(session)
-            browser_mode = body.browserMode
-            if browser_mode == "default":
-                cached_config = executor_tasks.cached_config_payload(
-                    tenant_id=actor.tenant.id,
-                    user_id=actor.user.id,
-                    executor_id=body.executorId,
-                )
-                configured_mode = (
-                    ((cached_config or {}).get("config") or {}).get(
-                        "queryBrowserMode"
-                    )
-                )
-                browser_mode = (
-                    configured_mode
-                    if configured_mode in {"headless", "visible"}
-                    else "headless"
-                )
+            cached_config = executor_tasks.cached_config_payload(
+                tenant_id=actor.tenant.id,
+                user_id=actor.user.id,
+                executor_id=body.executorId,
+            )
+            executor_config = (cached_config or {}).get("config") or {}
+            configured_mode = executor_config.get("queryBrowserMode")
+            browser_mode = (
+                configured_mode
+                if configured_mode in {"headless", "visible"}
+                else "headless"
+            )
+            allow_open_environment = bool(
+                executor_config.get("queryAllowOpenEnvironment", False)
+            )
             request_summary = dict(run.request_summary or {})
             request_summary["browserMode"] = browser_mode
-            request_summary["allowOpenEnvironment"] = body.allowOpenEnvironment
+            request_summary["allowOpenEnvironment"] = allow_open_environment
+            request_summary["querySettingsSource"] = "desktop_executor"
+            request_summary["querySettingsRevision"] = (
+                (cached_config or {}).get("configRevision")
+            )
             cached_inventory = runs.logistics_environment_index_from_cache(
                 tenant_id=actor.tenant.id,
                 environment_serials=list(body.environmentSerials),
@@ -3903,7 +3905,7 @@ def create_app(
                 "runKey": run.source_run_key,
                 "queryMode": body.queryMode,
                 "browserMode": browser_mode,
-                "allowOpenEnvironment": body.allowOpenEnvironment,
+                "allowOpenEnvironment": allow_open_environment,
                 "force": body.force,
                 "site": body.site,
                 "environmentSerials": list(body.environmentSerials),

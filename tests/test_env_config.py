@@ -217,6 +217,7 @@ class ConfigTests(unittest.TestCase):
             'verifySampleCount',
             'safeParallelTasks',
             'queryBrowserMode',
+            'queryAllowOpenEnvironment',
         })
         rendered = json.dumps(projected, ensure_ascii=False)
         for legacy_value in ('purchaseSite', 'purchaseTags',
@@ -238,14 +239,19 @@ class ConfigTests(unittest.TestCase):
         updated = updated_executor_config(old, {
             'concurrency': 3,
             'safeParallelTasks': True,
+            'queryAllowOpenEnvironment': True,
         })
         self.assertEqual(updated['concurrency'], 3)
         self.assertTrue(updated['safeParallelTasks'])
+        self.assertTrue(updated['queryAllowOpenEnvironment'])
         for key in ('purchaseSite', 'purchaseTags', 'importBuyerPlan',
                     'proxyLink'):
             self.assertEqual(updated[key], old[key])
         with self.assertRaisesRegex(ValueError, '不允许'):
             updated_executor_config(old, {'purchaseSite': 'MX'})
+        with self.assertRaisesRegex(ValueError, '布尔值'):
+            updated_executor_config(
+                old, {'queryAllowOpenEnvironment': 'true'})
 
     def test_environment_preferences_only_expose_and_update_site_groups(self):
         old = default_config()

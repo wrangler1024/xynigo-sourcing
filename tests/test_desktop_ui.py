@@ -111,11 +111,14 @@ class DesktopUIContractTests(unittest.TestCase):
         self.assertIn('aria-label="', self.javascript)
         self.assertIn("state.taskDetailsOpen = false", self.javascript)
 
-    def test_logistics_browser_mode_is_configured_on_the_executor(self):
+    def test_logistics_advanced_settings_are_configured_on_the_executor(self):
         self.assertIn('物流查询浏览器模式', self.javascript)
         self.assertIn('id="cfg-query-browser-mode"', self.javascript)
+        self.assertIn('允许连接已打开环境（只读）', self.javascript)
+        self.assertIn('id="cfg-query-allow-open"', self.javascript)
         self.assertIn("queryBrowserMode:document.getElementById('cfg-query-browser-mode').value", self.javascript)
-        self.assertIn('作为本机默认值；云端任务可临时覆盖', self.javascript)
+        self.assertIn("queryAllowOpenEnvironment:document.getElementById('cfg-query-allow-open').checked", self.javascript)
+        self.assertIn('网页不再临时覆盖', self.javascript)
 
     def test_hub_core_repair_requires_confirmation_and_shows_audit_state(self):
         rendered = self.javascript + self.css

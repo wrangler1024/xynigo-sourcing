@@ -157,6 +157,8 @@ def safe_config_summary() -> dict[str, object]:
             "envCreateWorkers": 5,
             "verifySampleCount": 1,
             "safeParallelTasks": True,
+            "queryBrowserMode": "headless",
+            "queryAllowOpenEnvironment": False,
         },
         "configured": {
             "hubApiKey": True,
@@ -1318,8 +1320,6 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
                 "idempotencyKey": "logistics-run-create-0001",
                 "executorId": executor_id,
                 "queryMode": "initial",
-                "browserMode": "visible",
-                "allowOpenEnvironment": True,
                 "site": "MX",
                 "environmentSerials": ["9001", "9002"],
             },
@@ -1329,7 +1329,8 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
         logistics_snapshot = logistics.json()["data"]
         assert logistics_snapshot["status"] == "queued"
         assert logistics_snapshot["progressTotal"] == 2
-        assert logistics_snapshot["allowOpenEnvironment"] is True
+        assert logistics_snapshot["browserMode"] == "headless"
+        assert logistics_snapshot["allowOpenEnvironment"] is False
         cancelled_logistics = web_client.post(
             f"/v1/operation-runs/logistics-query/{logistics_snapshot['runId']}/cancel",
             json={},
@@ -1342,7 +1343,9 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
             logistics_run = session.scalar(select(LogisticsQueryRun))
             assert logistics_run is not None
             assert logistics_run.executor_task_id is not None
-            assert logistics_run.request_summary["allowOpenEnvironment"] is True
+            assert logistics_run.request_summary["allowOpenEnvironment"] is False
+            assert logistics_run.request_summary["querySettingsSource"] == \
+                "desktop_executor"
 
 
 def test_admin_can_take_over_failed_environment_rows_on_another_executor(
@@ -2092,7 +2095,11 @@ def test_formal_logistics_run_queues_ahead_of_background_workspace_read(
     tmp_path,
 ) -> None:
     app, database, _oauth = build_test_app(tmp_path)
-    capabilities = ["workspace.rpc.v1", "logistics.query.v1"]
+    capabilities = [
+        "workspace.rpc.v1",
+        "logistics.query.v1",
+        "config.summary.v2",
+    ]
 
     with TestClient(app) as web_client, TestClient(app) as device_client:
         login(web_client)
@@ -2103,17 +2110,38 @@ def test_formal_logistics_run_queues_ahead_of_background_workspace_read(
         )
         executor_id = str(paired["executorId"])
         credential = str(paired["deviceCredential"])
+        desktop_summary = safe_config_summary()
+        desktop_summary["runtimeConfig"]["queryBrowserMode"] = "visible"
+        desktop_summary["runtimeConfig"][
+            "queryAllowOpenEnvironment"
+        ] = True
         heartbeat(
             device_client,
             credential,
             revision=REVISION_A,
             capabilities=capabilities,
+            config_summary=desktop_summary,
         )
         cache_revision = "9" * 64
         cache_captured_at = datetime.now(UTC)
         with database.session_factory() as session:
             executor = session.get(LocalExecutor, uuid.UUID(executor_id))
             assert executor is not None
+            workspace_snapshot = dict(executor.workspace_snapshot or {})
+            workspace_snapshot["runtimeConfig"] = {
+                "configRevision": REVISION_A,
+                "hubPort": 6873,
+                "concurrency": 2,
+                "envCreateWorkers": 5,
+                "verifySampleCount": 1,
+                "safeParallelTasks": True,
+                "queryBrowserMode": "headless",
+                "queryAllowOpenEnvironment": False,
+            }
+            executor.workspace_snapshot = workspace_snapshot
+            executor.workspace_snapshot_at = (
+                cache_captured_at - timedelta(hours=1)
+            )
             session.add(HubEnvironmentObservation(
                 tenant_id=executor.tenant_id,
                 environment_key="sha256:" + "9" * 64,
@@ -2148,8 +2176,8 @@ def test_formal_logistics_run_queues_ahead_of_background_workspace_read(
                 "idempotencyKey": "logistics-priority-over-read-0001",
                 "executorId": executor_id,
                 "queryMode": "initial",
-                "browserMode": "visible",
-                "allowOpenEnvironment": True,
+                "browserMode": "headless",
+                "allowOpenEnvironment": False,
                 "site": "MX",
                 "environmentSerials": ["5564"],
             },
@@ -2187,6 +2215,10 @@ def test_formal_logistics_run_queues_ahead_of_background_workspace_read(
                 "workspace.rpc.v1",
             ]
             assert [task.priority for task in tasks] == [10, 100]
+            logistics_run = session.scalar(select(LogisticsQueryRun))
+            assert logistics_run is not None
+            assert logistics_run.request_summary["querySettingsRevision"] == \
+                "c" * 64
 
 
 def test_formal_logistics_progress_preserves_complete_headless_row(tmp_path) -> None:
@@ -2378,6 +2410,7 @@ def test_busy_executor_config_read_returns_last_safe_snapshot(tmp_path) -> None:
             "verifySampleCount": 3,
             "safeParallelTasks": True,
             "queryBrowserMode": "headless",
+            "queryAllowOpenEnvironment": False,
         }
         assert payload["cachedResult"]["capturedAt"]
 

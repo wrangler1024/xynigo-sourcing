@@ -131,19 +131,9 @@
   .carrier-bar { height:5px; margin-top:5px; overflow:hidden; border-radius:999px; background:#e8eff3; }
   .carrier-bar span { display:block; height:100%; border-radius:inherit; background:var(--action-gradient); }
   .carrier-empty { color:var(--navy-500); font-size:9px; }
-  .query-advanced { width:220px; border:1px solid var(--line); border-radius:10px; background:#fbfcfd; }
-  .query-advanced summary { padding:9px 11px; color:var(--navy-700); font-size:12px; font-weight:750; cursor:pointer; }
-  .query-advanced[open] summary { border-bottom:1px solid var(--line); }
-  .query-advanced .field { padding:10px; }
-  .query-advanced select { width:100%; }
-  .query-action-advanced { position:relative; width:auto; border:0; background:transparent; }
-  .query-action-advanced summary { list-style:none; padding:9px 14px; border:1px solid var(--line); border-radius:11px; background:#fff; white-space:nowrap; }
-  .query-action-advanced summary::-webkit-details-marker { display:none; }
-  .query-action-advanced[open] summary { border-bottom:1px solid var(--line); background:#f5f8fa; }
-  .query-action-advanced-panel { position:absolute; top:calc(100% + 7px); left:0; z-index:40; width:260px; padding:2px; border:1px solid var(--line); border-radius:12px; background:#fff; box-shadow:0 14px 36px rgba(8,37,72,.16); }
-  .query-open-environment-option { border-top:1px solid var(--line); }
-  .query-open-environment-option label { display:flex; align-items:flex-start; gap:8px; color:var(--navy-800); font-weight:700; line-height:1.45; }
-  .query-open-environment-option input { margin-top:2px; }
+  .query-settings-source { max-width:245px; padding:7px 10px; border:1px solid var(--line); border-radius:11px; background:#f8fafb; color:var(--navy-500); font-size:10px; line-height:1.45; }
+  .query-settings-source b { display:block; color:var(--navy-700); font-size:11px; }
+  .query-settings-source span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .query-field-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; max-height:420px; overflow:auto; }
   .query-field-list label { display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid var(--line); border-radius:9px; font-size:12px; }
   .export-split { position:relative; display:inline-flex; }
@@ -1670,6 +1660,8 @@
           <div class="field"><label>建环境并发</label><span class="local-executor-summary-value" id="executorSummaryEnvWorkers">—</span></div>
           <div class="field"><label>抽检数</label><span class="local-executor-summary-value" id="executorSummaryVerifyCount">—</span></div>
           <div class="field"><label>安全并行</label><span class="local-executor-summary-value" id="executorSummarySafeParallel">—</span></div>
+          <div class="field"><label>物流浏览器</label><span class="local-executor-summary-value" id="executorSummaryQueryMode">—</span></div>
+          <div class="field"><label>已打开环境</label><span class="local-executor-summary-value" id="executorSummaryAllowOpen">—</span></div>
           <div class="field wide"><label>本机集成</label><span class="local-executor-summary-value" id="executorSummaryIntegrations">—</span></div>
           <div class="field wide"><label>采购助手映射</label><span class="local-executor-summary-value" id="executorSummaryDataSources">—</span></div>
           <div class="field"><label>合规状态</label><span class="local-executor-summary-value" id="executorSummaryCompliance">—</span></div>
@@ -1731,7 +1723,7 @@
           <div>重复导入只用于查重和中断续传：已导入订单保持原样，不能在这里修改；采购任务认领前修改属于独立修订流程。</div>
         </div>
       </div>
-      <div class="resource-state" id="procurementImportState">请选择使用最新版运营采购助手写入 XYP2 后导出的 xlsx。</div>
+      <div class="resource-state" id="procurementImportState">请选择使用最新版店小秘提单助手写入 XYP2 后导出的 xlsx。</div>
       <div class="procurement-import-stats" id="procurementImportStats" hidden>
         <div class="procurement-import-stat"><b id="procurementImportSourceRows">0</b><span>导出产品行</span></div>
         <div class="procurement-import-stat"><b id="procurementImportOrders">0</b><span>采购单</span></div>
@@ -1807,7 +1799,7 @@
       </div>
       <div class="table-wrap procurement-table-scroll">
         <table class="procurement-task-table">
-          <thead><tr><th class="procurement-select-cell"><input id="procurementSelectAll" type="checkbox" aria-label="选择当前页全部可认领采购单" disabled></th><th>商品预览</th><th>采购单 / 平台单号</th><th data-procurement-field-group="storeOperator" id="procurementStoreOperatorHeader">店铺 / 运营</th><th>收件人 / 国家</th><th data-procurement-field="salesAmount">销售金额</th><th>采购指导额</th><th data-procurement-field="profit">预估利润 <span class="procurement-field-help" title="来自运营采购助手插件：预估利润 = 包裹总金额 - 预估采购成本；最终利润以后续实际采购金额为准。" aria-label="预估利润说明">?</span></th><th data-procurement-field="profitMargin">利润率 <span class="procurement-field-help" title="来自运营采购助手插件：利润率 = 预估利润 ÷ 包裹总金额 × 100%。" aria-label="利润率说明">?</span></th><th>明细 / 件数</th><th>采购状态</th><th>采购员</th><th>提交人 / 时间</th><th>最近更新</th><th>操作</th></tr></thead>
+          <thead><tr><th class="procurement-select-cell"><input id="procurementSelectAll" type="checkbox" aria-label="选择当前页全部可认领采购单" disabled></th><th>商品预览</th><th>采购单 / 平台单号</th><th data-procurement-field-group="storeOperator" id="procurementStoreOperatorHeader">店铺 / 运营</th><th>收件人 / 国家</th><th data-procurement-field="salesAmount">销售金额</th><th>采购指导额</th><th data-procurement-field="profit">预估利润 <span class="procurement-field-help" title="来自店小秘提单助手插件：预估利润 = 包裹总金额 - 预估采购成本；最终利润以后续实际采购金额为准。" aria-label="预估利润说明">?</span></th><th data-procurement-field="profitMargin">利润率 <span class="procurement-field-help" title="来自店小秘提单助手插件：利润率 = 预估利润 ÷ 包裹总金额 × 100%。" aria-label="利润率说明">?</span></th><th>明细 / 件数</th><th>采购状态</th><th>采购员</th><th>提交人 / 时间</th><th>最近更新</th><th>操作</th></tr></thead>
           <tbody id="procurementTbody"><tr><td colspan="15" class="empty-tip">尚未读取采购任务</td></tr></tbody>
         </table>
       </div>
@@ -1908,24 +1900,10 @@
     <div class="action-row">
       <button class="btn primary" id="btnStart">▶ 开始查询</button>
       <button class="btn danger" id="btnStop" disabled>⏹ 停止</button>
-      <details class="query-advanced query-action-advanced" id="queryAdvancedSettings">
-        <summary>⚙ 高级设置</summary>
-        <div class="query-action-advanced-panel">
-          <div class="field">
-            <label>浏览器执行模式</label>
-            <select id="queryBrowserMode">
-              <option value="default">跟随执行器默认</option>
-              <option value="headless">无头模式</option>
-              <option value="visible">可见调试模式</option>
-            </select>
-            <div class="hint">仅覆盖本次任务。可见模式会打开 HubStudio 环境窗口，并自动限制为单并发。</div>
-          </div>
-          <div class="field query-open-environment-option">
-            <label><input id="queryAllowOpenEnvironment" type="checkbox">允许连接已打开环境（只读）</label>
-            <div class="hint">开启后只连接现有调试端口，并使用独立查询标签页；不会启动或关闭该环境，也不会关闭原有标签页。</div>
-          </div>
-        </div>
-      </details>
+      <div class="query-settings-source" id="queryExecutorSettings" title="请在执行任务电脑的 Xynigo 桌面客户端 → 本机设置中修改">
+        <b>⚙ 高级设置由桌面执行器管理</b>
+        <span id="queryExecutorSettingsSummary">选择执行器后显示当前策略</span>
+      </div>
       <div class="progress-wrap">
         <div class="progress" id="queryProgress" role="progressbar" aria-label="物流查询进度" aria-valuemin="0" aria-valuenow="0" aria-valuemax="0"><div class="bar" id="bar"></div></div>
         <span id="progressText">0 / 0</span>
@@ -4763,6 +4741,22 @@ function applyQueryColumnVisibility() {
   });
 }
 
+function renderQueryExecutorSettings(runtime) {
+  const summary = $('queryExecutorSettingsSummary');
+  if (!summary) return;
+  if (!runtime || typeof runtime !== 'object') {
+    summary.textContent = CLOUD_WEB_MODE
+      ? '选择执行器后显示当前策略'
+      : '请在 Xynigo 桌面客户端 → 本机设置中查看';
+    return;
+  }
+  const browserMode = runtime.queryBrowserMode === 'visible'
+    ? '可见调试' : '无头模式';
+  const openMode = runtime.queryAllowOpenEnvironment === true
+    ? '允许只读连接已打开环境' : '不连接已打开环境';
+  summary.textContent = `${browserMode} · ${openMode}`;
+}
+
 async function loadQueryDisplayConfig() {
   try {
     if (CLOUD_WEB_MODE) {
@@ -4773,6 +4767,7 @@ async function loadQueryDisplayConfig() {
     }
     const cfg = await api('/api/config');
     setHiddenQueryColumns(cfg.hiddenQueryColumns || []);
+    renderQueryExecutorSettings(cfg);
   } catch (e) {}
 }
 
@@ -6977,8 +6972,6 @@ function render(snap) {
   $('btnStop').disabled = !isRunning;
   $('btnExport').disabled = isRunning || logisticsExporting;
   $('btnExportMenuToggle').disabled = isRunning || logisticsExporting;
-  $('queryBrowserMode').disabled = isRunning;
-  $('queryAllowOpenEnvironment').disabled = isRunning;
   const retryable = lastRows.filter(r => ['fail', 'inuse', 'pending', 'stopped'].includes(r.state)).length;
   $('btnRetryFail').disabled = isRunning || !retryable;
   const stopped = lastRows.filter(r => r.state === 'stopped').length;
@@ -7834,9 +7827,7 @@ $('btnStart').onclick = async () => {
   const serials = parseSerials();
   if (!serials) return;
   const site = $('querySite').value;
-  const browserMode = $('queryBrowserMode').value;
-  const allowOpenEnvironment = $('queryAllowOpenEnvironment').checked;
-  const payload = {serials, site, browserMode, allowOpenEnvironment};
+  const payload = {serials, site};
   const idempotencyKey = workspaceMutationKey('query-start', payload);
   querySubmitting = true;
   queryPollGraceUntil = Date.now() + 2 * 60 * 1000;
@@ -7849,7 +7840,7 @@ $('btnStart').onclick = async () => {
         method:'POST', headers:{'Content-Type':'application/json'},
         body:JSON.stringify({
           idempotencyKey, executorId:executor.id, queryMode:'initial', site,
-          environmentSerials:serials, browserMode, allowOpenEnvironment,
+          environmentSerials:serials,
         })
       });
       j = created.data;
@@ -7908,7 +7899,7 @@ tbody.addEventListener('click', async e => {
   try {
     if (CLOUD_WEB_MODE) {
       const serial = String(btn.dataset.req || '');
-      const payload = {serial, force, site:$('querySite').value, browserMode:$('queryBrowserMode').value, allowOpenEnvironment:$('queryAllowOpenEnvironment').checked};
+      const payload = {serial, force, site:$('querySite').value};
       const idempotencyKey = workspaceMutationKey('query-single-retry', payload);
       const executor = await cloudFormalExecutor('logistics.query.v1');
       const created = await cloudFetchJson('/v1/operation-runs/logistics-query', {
@@ -7916,8 +7907,7 @@ tbody.addEventListener('click', async e => {
         body:JSON.stringify({
           idempotencyKey, executorId:executor.id, queryMode:'single_retry',
           force, site:payload.site, environmentSerials:[serial],
-          parentRunId:cloudLogisticsRunId, browserMode:payload.browserMode,
-          allowOpenEnvironment:payload.allowOpenEnvironment,
+          parentRunId:cloudLogisticsRunId,
         })
       });
       clearWorkspaceMutationKey('query-single-retry', idempotencyKey);
@@ -7927,7 +7917,7 @@ tbody.addEventListener('click', async e => {
     } else {
       await api('/api/requery', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ serial: btn.dataset.req, force, browserMode:$('queryBrowserMode').value, allowOpenEnvironment:$('queryAllowOpenEnvironment').checked })
+        body: JSON.stringify({ serial: btn.dataset.req, force })
       });
     }
     stopRequested = false;
@@ -8293,8 +8283,6 @@ $('btnHistoryRerun').onclick = () => {
   $('serialsInput').value = serials.join('\n');
   const site = String(detail.latestRun && detail.latestRun.site || detail.site || '');
   if (['MX','US'].includes(site)) $('querySite').value = site;
-  $('queryAllowOpenEnvironment').checked = !!(
-    detail.latestRun && detail.latestRun.allowOpenEnvironment);
   localExecutorSelectedDeviceId = '';
   runtimePendingExecutorId = '';
   saveSessionRuntimeExecutorId('');
@@ -8334,7 +8322,7 @@ $('btnRetryFail').onclick = async () => {
     ).map(row => String(row.serial || '')).filter(Boolean);
     let j;
     if (CLOUD_WEB_MODE) {
-      const payload = {serials:retrySerials, site:$('querySite').value, browserMode:$('queryBrowserMode').value, allowOpenEnvironment:$('queryAllowOpenEnvironment').checked};
+      const payload = {serials:retrySerials, site:$('querySite').value};
       const idempotencyKey = workspaceMutationKey('query-failed-retry', payload);
       const executor = await cloudFormalExecutor('logistics.query.v1');
       const created = await cloudFetchJson('/v1/operation-runs/logistics-query', {
@@ -8342,8 +8330,7 @@ $('btnRetryFail').onclick = async () => {
         body:JSON.stringify({
           idempotencyKey, executorId:executor.id, queryMode:'failed_retry',
           site:payload.site, environmentSerials:retrySerials,
-          parentRunId:cloudLogisticsRunId, browserMode:payload.browserMode,
-          allowOpenEnvironment:payload.allowOpenEnvironment,
+          parentRunId:cloudLogisticsRunId,
         })
       });
       clearWorkspaceMutationKey('query-failed-retry', idempotencyKey);
@@ -8357,7 +8344,7 @@ $('btnRetryFail').onclick = async () => {
     } else {
       j = await api('/api/requery-failed', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({browserMode:$('queryBrowserMode').value, allowOpenEnvironment:$('queryAllowOpenEnvironment').checked})
+        body: '{}'
       });
     }
     stopRequested = false;
@@ -9055,8 +9042,10 @@ function resetLocalExecutorConfig(message='请选择设备后读取只读摘要�
     'executorSummaryHubPort', 'executorSummaryConcurrency',
     'executorSummaryEnvWorkers', 'executorSummaryVerifyCount',
     'executorSummarySafeParallel', 'executorSummaryIntegrations',
+    'executorSummaryQueryMode', 'executorSummaryAllowOpen',
     'executorSummaryDataSources', 'executorSummaryCompliance'
   ].forEach(id => { $(id).textContent = '—'; });
+  renderQueryExecutorSettings(null);
   setLocalExecutorConfigState('', message);
 }
 
@@ -9080,6 +9069,11 @@ function applyLocalExecutorConfigSummary(payload) {
   $('executorSummaryEnvWorkers').textContent = String(runtime.envCreateWorkers ?? '—');
   $('executorSummaryVerifyCount').textContent = String(runtime.verifySampleCount ?? '—');
   $('executorSummarySafeParallel').textContent = runtime.safeParallelTasks ? '已开启' : '已关闭';
+  $('executorSummaryQueryMode').textContent = runtime.queryBrowserMode === 'visible'
+    ? '可见调试' : '无头模式';
+  $('executorSummaryAllowOpen').textContent = runtime.queryAllowOpenEnvironment === true
+    ? '允许只读连接' : '禁止连接';
+  renderQueryExecutorSettings(runtime);
   $('executorSummaryIntegrations').textContent = [
     `Hub Key ${configured.hubApiKey ? '已配置' : '未配置'}`,
     `飞书应用 ${configured.larkAppCredentials ? '已配置' : '未配置'}`,
@@ -11478,7 +11472,7 @@ function renderLocalDataSources() {
       <div class="data-source-card-copy">工作表：${esc(source.sheetName || '名称未记录')} · 范围 ${esc(source.cellRange || '—')}${source.scope === 'personal' && source.ownerMemberId ? `<br>所有者：${esc(localDataSourceMemberLabel(source.ownerMemberId))}` : ''}</div>
       ${actions.length ? `<div class="data-source-card-actions">${actions.join('')}</div>` : ''}
     </div>`;
-  }).join('') : '<div class="data-source-empty">本机尚未登记采购助手数据源。请先在运营采购助手中读取并校验个人飞书表格，或由管理员完成团队源迁移。</div>';
+  }).join('') : '<div class="data-source-empty">本机尚未登记采购助手数据源。请先在店小秘提单助手中读取并校验个人飞书表格，或由管理员完成团队源迁移。</div>';
   const admin = localDataSourceIsAdmin();
   renderLocalDataSourceScope();
   $('localDataSourceAdmin').hidden = !admin;

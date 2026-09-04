@@ -203,10 +203,8 @@ class ReleaseV0150Tests(unittest.TestCase):
         self.assertIn('#envThead th { position: sticky; top: 0;', html)
         self.assertIn('id="querySite"', html)
         self.assertIn('<option value="US">美国站 · us.shein.com</option>', html)
-        self.assertIn(
-            'const payload = {serials, site, browserMode, allowOpenEnvironment};',
-            html,
-        )
+        self.assertIn('const payload = {serials, site};', html)
+        self.assertIn('高级设置由桌面执行器管理', html)
         self.assertIn('body: JSON.stringify(payload)', html)
         self.assertIn("'Shipped': 'st-enviado'", html)
         self.assertIn("'Paid': 'st-procesando'", html)

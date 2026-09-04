@@ -119,6 +119,7 @@ PUBLIC_CONFIG_RESULT_KEYS = frozenset(
         "envCreateWorkers",
         "safeParallelTasks",
         "queryBrowserMode",
+        "queryAllowOpenEnvironment",
         "proxyConfigured",
         "proxySource",
         "buyers",
@@ -1524,22 +1525,56 @@ class ExecutorChannelService:
             .order_by(ExecutorTask.finished_at.desc())
             .limit(1)
         )
+        snapshot = executor.workspace_snapshot or {}
+        snapshot_runtime = snapshot.get("runtimeConfig")
+        config_summary = snapshot.get("configSummary")
+        candidates: list[tuple[datetime, dict[str, Any]]] = []
         latest_summary = (
             latest_config_task.result_summary
             if latest_config_task is not None else None
         )
-        snapshot = executor.workspace_snapshot or {}
-        snapshot_runtime = snapshot.get("runtimeConfig")
-        runtime = (
-            {
-                "configRevision": latest_summary.get("configRevision"),
-                **latest_summary.get("config", {}),
-            }
-            if isinstance(latest_summary, dict)
+        if (
+            latest_config_task is not None
+            and latest_config_task.finished_at is not None
+            and isinstance(latest_summary, dict)
             and isinstance(latest_summary.get("config"), dict)
-            else snapshot_runtime
-        )
-        if not isinstance(runtime, dict):
+        ):
+            candidates.append((
+                as_utc(latest_config_task.finished_at),
+                {
+                    "configRevision": latest_summary.get("configRevision"),
+                    **latest_summary.get("config", {}),
+                },
+            ))
+        if (
+            isinstance(config_summary, dict)
+            and isinstance(config_summary.get("runtimeConfig"), dict)
+        ):
+            try:
+                summary_at = as_utc(datetime.fromisoformat(
+                    str(config_summary.get("capturedAt") or "")
+                ))
+            except (TypeError, ValueError):
+                pass
+            else:
+                candidates.append((
+                    summary_at,
+                    {
+                        "configRevision": config_summary.get(
+                            "configRevision"
+                        ),
+                        **config_summary.get("runtimeConfig", {}),
+                    },
+                ))
+        if (
+            isinstance(snapshot_runtime, dict)
+            and executor.workspace_snapshot_at is not None
+        ):
+            candidates.append((
+                as_utc(executor.workspace_snapshot_at),
+                snapshot_runtime,
+            ))
+        if not candidates:
             return None
         runtime_keys = {
             "configRevision",
@@ -1549,27 +1584,29 @@ class ExecutorChannelService:
             "verifySampleCount",
             "safeParallelTasks",
             "queryBrowserMode",
+            "queryAllowOpenEnvironment",
         }
-        try:
-            validated = WorkspaceRuntimeConfig.model_validate(
-                {key: runtime[key] for key in runtime_keys if key in runtime}
-            )
-        except ValidationError:
-            return None
-        validated_payload = validated.model_dump(mode="json")
-        revision = validated_payload.pop("configRevision")
-        return {
-            "configRevision": revision,
-            "config": validated_payload,
-            "capturedAt": (
-                latest_config_task.finished_at.isoformat()
-                if latest_config_task is not None
-                and latest_config_task.finished_at is not None
-                else executor.workspace_snapshot_at.isoformat()
-                if executor.workspace_snapshot_at is not None
-                else None
-            ),
-        }
+        for captured_at, runtime in sorted(
+            candidates, key=lambda item: item[0], reverse=True
+        ):
+            try:
+                validated = WorkspaceRuntimeConfig.model_validate(
+                    {
+                        key: runtime[key]
+                        for key in runtime_keys
+                        if key in runtime
+                    }
+                )
+            except ValidationError:
+                continue
+            validated_payload = validated.model_dump(mode="json")
+            revision = validated_payload.pop("configRevision")
+            return {
+                "configRevision": revision,
+                "config": validated_payload,
+                "capturedAt": captured_at.isoformat(),
+            }
+        return None
 
     @staticmethod
     def _payload_hash(payload: dict[str, Any]) -> str:

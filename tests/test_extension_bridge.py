@@ -174,7 +174,7 @@ class ExtensionBridgeHttpTests(unittest.TestCase):
         with urlopen(self._url('/extension-connect?clientId=' + CLIENT_ID), timeout=3) as response:
             html = response.read().decode('utf-8')
             self.assertEqual(response.headers['Cache-Control'], 'no-store')
-        self.assertIn('连接运营采购助手', html)
+        self.assertIn('连接店小秘提单助手', html)
         self.assertIn('/extension-connect.js', html)
         self.assertNotIn('bridgeToken', html)
 
