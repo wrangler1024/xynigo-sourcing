@@ -607,6 +607,9 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
             device_client, credential, capabilities=capabilities
         )["task"]
         assert snapshot_lease["type"] == "workspace.snapshot.v1"
+        assert snapshot_lease["payload"] == {
+            "includeInventorySnapshot": True
+        }
         snapshot_credential = snapshot_lease["leaseToken"]
         assert device_client.post(
             f"/v1/executor-channel/tasks/{snapshot_task_id}/start",
@@ -657,6 +660,20 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
                     "message": "预检通过",
                 },
             },
+            "inventorySnapshot": {
+                "snapshotRevision": "d" * 64,
+                "capturedAt": "2026-08-31T18:00:00+08:00",
+                "environmentCount": 1,
+                "rows": [{
+                    "environmentKey": "sha256:" + "d" * 64,
+                    "environmentName": "XG-MX-0904-001",
+                    "environmentRef": "container-7001",
+                    "environmentSerial": "7001",
+                    "environmentGroup": "MX采购",
+                    "site": "MX",
+                    "sourceOrderRef": None,
+                }],
+            },
         }
         unsafe_snapshot = deepcopy(snapshot_result)
         unsafe_snapshot["password"] = "must-not-persist"
@@ -692,6 +709,16 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
             "configRevision"
         ] == REVISION_A
         assert snapshot_visible.json()["snapshotRevision"] == "c" * 64
+        assert "inventorySnapshot" not in snapshot_visible.json()["snapshot"]
+        with database.session_factory() as session:
+            assert session.scalar(
+                select(func.count()).select_from(HubEnvironmentObservation)
+            ) == 1
+            snapshot_marker = session.scalar(
+                select(HubEnvironmentInventorySync)
+            )
+            assert snapshot_marker is not None
+            assert snapshot_marker.snapshot_revision == "d" * 64
         preference_write = web_client.put(
             "/v1/environment-preferences",
             json={
@@ -2082,6 +2109,31 @@ def test_formal_logistics_run_queues_ahead_of_background_workspace_read(
             revision=REVISION_A,
             capabilities=capabilities,
         )
+        cache_revision = "9" * 64
+        cache_captured_at = datetime.now(UTC)
+        with database.session_factory() as session:
+            executor = session.get(LocalExecutor, uuid.UUID(executor_id))
+            assert executor is not None
+            session.add(HubEnvironmentObservation(
+                tenant_id=executor.tenant_id,
+                environment_key="sha256:" + "9" * 64,
+                environment_name="XG-MX-0904-001",
+                environment_ref="container-5564",
+                environment_serial="5564",
+                environment_group="MX采购",
+                site="MX",
+                source_order_ref=None,
+                snapshot_revision=cache_revision,
+                last_observed_at=cache_captured_at,
+            ))
+            session.add(HubEnvironmentInventorySync(
+                tenant_id=executor.tenant_id,
+                executor_id=executor.id,
+                snapshot_revision=cache_revision,
+                environment_count=1,
+                completed_at=cache_captured_at,
+            ))
+            session.commit()
 
         background = web_client.post(
             f"/v1/executors/{executor_id}/workspace-rpc",
@@ -2113,6 +2165,16 @@ def test_formal_logistics_run_queues_ahead_of_background_workspace_read(
         assert leased["type"] == "logistics.query.v1"
         assert leased["payload"]["browserMode"] == "visible"
         assert leased["payload"]["allowOpenEnvironment"] is True
+        assert leased["payload"]["environmentInventoryRevision"] == \
+            cache_revision
+        assert leased["payload"]["environmentIndex"] == [{
+            "serialNumber": "5564",
+            "containerCode": "container-5564",
+            "containerName": "XG-MX-0904-001",
+            "tagName": "MX采购",
+        }]
+        assert formal.json()["data"]["environmentInventorySource"] == \
+            "cloud_cache"
 
         with database.session_factory() as session:
             tasks = list(

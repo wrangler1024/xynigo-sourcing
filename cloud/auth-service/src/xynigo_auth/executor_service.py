@@ -828,9 +828,27 @@ class ExecutorChannelService:
         task = self._device_task(executor=executor, task_id=task_id)
         self._require_lease(task, body.leaseToken, allow_expired=True)
         preview_result = self._validate_environment_preview_result(task, body)
+        workspace_snapshot = self._validated_workspace_snapshot(task, body)
+        workspace_inventory = None
         result_summary = body.resultSummary
         if preview_result is not None:
             result_summary = preview_result.model_dump(
+                mode="json", exclude={"inventorySnapshot"}
+            )
+        if workspace_snapshot is not None:
+            raw_inventory = workspace_snapshot.inventorySnapshot
+            if raw_inventory is not None:
+                try:
+                    workspace_inventory = (
+                        ExecutorHubEnvironmentSnapshot.model_validate(
+                            raw_inventory
+                        )
+                    )
+                except ValidationError as exc:
+                    raise ExecutorServiceError(
+                        "executor_result_invalid", status_code=422
+                    ) from exc
+            result_summary = workspace_snapshot.model_dump(
                 mode="json", exclude={"inventorySnapshot"}
             )
         if task.status in {"succeeded", "failed"}:
@@ -846,7 +864,6 @@ class ExecutorChannelService:
         self._validate_config_result(task, body)
         self._validate_business_result(task, body)
         self._validate_environment_parse_result(task, body)
-        workspace_snapshot = self._validated_workspace_snapshot(task, body)
         self._sync_workspace_preferences(
             executor=executor,
             task=task,
@@ -857,6 +874,12 @@ class ExecutorChannelService:
             self._sync_hub_environment_snapshot(
                 executor=executor,
                 snapshot=preview_result.inventorySnapshot,
+                now=now,
+            )
+        if workspace_inventory is not None:
+            self._sync_hub_environment_snapshot(
+                executor=executor,
+                snapshot=workspace_inventory,
                 now=now,
             )
         task.status = body.outcome
@@ -888,7 +911,9 @@ class ExecutorChannelService:
         if workspace_snapshot is not None:
             previous_summary = (executor.workspace_snapshot or {}).get(
                 "configSummary")
-            next_snapshot = workspace_snapshot.model_dump(mode="json")
+            next_snapshot = workspace_snapshot.model_dump(
+                mode="json", exclude={"inventorySnapshot"}
+            )
             if isinstance(previous_summary, dict):
                 next_snapshot["configSummary"] = previous_summary
             executor.workspace_snapshot = next_snapshot

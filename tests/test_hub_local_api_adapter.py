@@ -507,6 +507,52 @@ class HubStudioLocalApiAdapterTests(unittest.TestCase):
         ))
         self.assertEqual(opener.timeouts[-1], 2.5)
 
+    def test_browser_lifecycle_status_uses_documented_numeric_states(self):
+        opener = FakeLocalApiOpener(open_browsers=[{
+            'containerCode': 'opening', 'status': 1,
+        }, {
+            'containerCode': 'open', 'status': 0,
+        }, {
+            'containerCode': 'closing', 'status': 2,
+        }, {
+            'containerCode': 'closed', 'status': 3,
+        }])
+        adapter = HubStudioLocalApiAdapter(
+            opener=opener, client_running_getter=lambda: True,
+            retries=1, timeout=1)
+
+        self.assertEqual(
+            adapter.browser_lifecycle_status('opening')['state'], 'opening')
+        self.assertEqual(
+            adapter.browser_lifecycle_status('open')['state'], 'open')
+        self.assertEqual(
+            adapter.browser_lifecycle_status('closing')['state'], 'closing')
+        self.assertEqual(
+            adapter.browser_lifecycle_status('closed')['state'], 'closed')
+        self.assertEqual(
+            adapter.browser_lifecycle_status('missing')['state'], 'absent')
+        self.assertEqual(adapter.open_container_codes(), {
+            'opening', 'open', 'closing',
+        })
+
+    def test_start_pending_business_error_is_never_fast_replayed(self):
+        opener = FakeLocalApiOpener(
+            response_code=-10005,
+            response_message='last request for startBrowser is unfinished')
+        adapter = HubStudioLocalApiAdapter(
+            opener=opener, client_running_getter=lambda: True,
+            retries=3, timeout=1)
+
+        with self.assertRaises(HubApiError) as caught:
+            adapter.browser_start('container-test-1', headless=True)
+
+        self.assertEqual(
+            caught.exception.reason_code, 'hubstudio_browser_start_pending')
+        self.assertEqual(caught.exception.api_code, '-10005')
+        start_calls = [
+            call for call in opener.calls if call[1] == '/browser/start']
+        self.assertEqual(len(start_calls), 1)
+
     def test_environment_lookup_uses_single_exact_filtered_page(self):
         opener = FakeLocalApiOpener()
         adapter = HubStudioLocalApiAdapter(

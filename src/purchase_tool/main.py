@@ -1031,9 +1031,12 @@ class HubReadCache(object):
             }
             return copy.deepcopy(value)
 
-    def invalidate(self):
+    def invalidate(self, key=None):
         with self.lock:
-            self.entries = {}
+            if key is None:
+                self.entries = {}
+            else:
+                self.entries.pop(key, None)
 
 
 class AppState(object):
@@ -1400,7 +1403,7 @@ class AppState(object):
         return self._hub_reads.get(
             ('group-envs', normalized_group), 5.0, load)
 
-    def workspace_snapshot(self):
+    def workspace_snapshot(self, include_inventory_snapshot=False):
         """Build one credential-free snapshot for cloud workspace restore."""
         preferences = public_envbatch_preferences(self.cfg)
         runtime_config = public_executor_config(self.cfg)
@@ -1452,11 +1455,19 @@ class AppState(object):
             'groups': groups,
             'preflight': preflight,
         }
+        inventory_snapshot = None
+        if include_inventory_snapshot:
+            environments = self._hub_reads.get(
+                ('all-envs',), 6 * 60 * 60, self.hub.env_list)
+            inventory_snapshot = build_environment_inventory_snapshot(
+                environments)
         return {
             'schemaVersion': 1,
             'snapshotRevision': config_revision(content),
             'capturedAt': captured_at,
             **content,
+            **({'inventorySnapshot': inventory_snapshot}
+               if inventory_snapshot is not None else {}),
         }
 
     def local_executor_status(self):
@@ -3834,7 +3845,11 @@ class Handler(BaseHTTPRequestHandler):
                 groups = loader() if callable(loader) else STATE.hub.group_list()
                 self._json({'groups': groups})
             elif path == '/api/workspace/snapshot':
-                self._json(STATE.workspace_snapshot())
+                include_inventory = (
+                    (query.get('includeInventorySnapshot') or [''])[0]
+                    in {'1', 'true', 'yes'})
+                self._json(STATE.workspace_snapshot(
+                    include_inventory_snapshot=include_inventory))
             elif path == '/api/group-envs':
                 group = (query.get('group') or [''])[0]
                 loader = getattr(STATE, 'hub_group_serials', None)
@@ -4220,12 +4235,39 @@ class Handler(BaseHTTPRequestHandler):
                     STATE.cfg.get('queryBrowserMode')
                     if requested_browser_mode == 'default'
                     else requested_browser_mode)
-                # 手工输入序号时始终在全部 HubStudio 环境中查找；分组只
-                # 服务于“查询整个分组”，不再作为序号查询的资格过滤器。
-                envs = STATE.hub.env_list(
-                    None if serials else (group or None))
-                env_index = {str(e.get('serialNumber')): e for e in envs
-                             if e.get('serialNumber') is not None}
+                provided_index = body.get('environmentIndex')
+                env_index = {}
+                if provided_index is not None:
+                    if not serials or not isinstance(provided_index, list):
+                        raise ValueError('物流环境缓存参数无效')
+                    for item in provided_index:
+                        if not isinstance(item, dict):
+                            raise ValueError('物流环境缓存参数无效')
+                        serial = str(item.get('serialNumber') or '').strip()
+                        code = str(item.get('containerCode') or '').strip()
+                        name = str(item.get('containerName') or '').strip()
+                        if (not serial or not code or not name
+                                or serial in env_index):
+                            raise ValueError('物流环境缓存参数无效')
+                        env_index[serial] = dict(item)
+                    if set(env_index) != {
+                            str(serial).strip() for serial in serials}:
+                        raise ValueError('物流环境缓存与查询序号不一致')
+                    envs = list(env_index.values())
+                else:
+                    # 手工输入序号时始终在全部 HubStudio 环境中查找；
+                    # 云端未命中完整缓存时才回退实时全量读取。
+                    cache_key = (
+                        ('all-envs',) if serials
+                        else ('group-env-details', str(group or '')))
+                    cache_ttl = 6 * 60 * 60 if serials else 5.0
+                    envs = STATE._hub_reads.get(
+                        cache_key, cache_ttl,
+                        lambda: STATE.hub.env_list(
+                            None if serials else (group or None)))
+                    env_index = {
+                        str(e.get('serialNumber')): e for e in envs
+                        if e.get('serialNumber') is not None}
                 if not serials and group:
                     serials = sorted(
                         [str(e.get('serialNumber')) for e in envs
@@ -4234,6 +4276,19 @@ class Handler(BaseHTTPRequestHandler):
                 if not serials:
                     return self._json({'error': '未提供环境序号'}, 400)
                 selected_serials = [str(serial) for serial in serials]
+                if (provided_index is None and serials
+                        and any(serial not in env_index
+                                for serial in selected_serials)):
+                    # A new HubStudio environment may have appeared after the
+                    # six-hour snapshot.  One exact cache miss refresh keeps
+                    # correctness while steady-state queries avoid full scans.
+                    STATE._hub_reads.invalidate(('all-envs',))
+                    envs = STATE._hub_reads.get(
+                        ('all-envs',), 6 * 60 * 60,
+                        lambda: STATE.hub.env_list())
+                    env_index = {
+                        str(e.get('serialNumber')): e for e in envs
+                        if e.get('serialNumber') is not None}
                 query_mode = str(body.get('queryMode') or 'initial')
                 if query_mode not in ('initial', 'failed_retry'):
                     return self._json({'error': '查询模式无效'}, 400)
@@ -4279,7 +4334,21 @@ class Handler(BaseHTTPRequestHandler):
                 serial = str(body.get('serial') or '')
                 if not serial:
                     return self._json({'error': '缺少 serial'}, 400)
-                env = STATE.hub.env_by_serial(serial)
+                provided_index = body.get('environmentIndex')
+                if provided_index is not None:
+                    if (not isinstance(provided_index, list)
+                            or len(provided_index) != 1
+                            or not isinstance(provided_index[0], dict)
+                            or str(provided_index[0].get(
+                                'serialNumber') or '') != serial
+                            or not str(provided_index[0].get(
+                                'containerCode') or '').strip()
+                            or not str(provided_index[0].get(
+                                'containerName') or '').strip()):
+                        raise ValueError('物流环境缓存参数无效')
+                    env = dict(provided_index[0])
+                else:
+                    env = STATE.hub.env_by_serial(serial)
                 env_index = {serial: env} if env else {}
                 task_id = STATE.tasks.begin(
                     'query', environment_resources([env] if env else []))
@@ -4491,6 +4560,7 @@ class Handler(BaseHTTPRequestHandler):
                         if hasattr(STATE, 'operation_sync_error'):
                             STATE.operation_sync_error = scrub_text(exc)[:200]
                     finally:
+                        STATE._hub_reads.invalidate()
                         STATE.tasks.finish(task_id)
                 try:
                     count = STATE.env_job.start(
@@ -4536,6 +4606,7 @@ class Handler(BaseHTTPRequestHandler):
                         if hasattr(STATE, 'operation_sync_error'):
                             STATE.operation_sync_error = scrub_text(exc)[:200]
                     finally:
+                        STATE._hub_reads.invalidate()
                         STATE.tasks.finish(task_id)
                 try:
                     STATE.env_job.retry_row(
@@ -4562,6 +4633,7 @@ class Handler(BaseHTTPRequestHandler):
                         if hasattr(STATE, 'operation_sync_error'):
                             STATE.operation_sync_error = scrub_text(exc)[:200]
                     finally:
+                        STATE._hub_reads.invalidate()
                         STATE.tasks.finish(task_id)
                 try:
                     count = STATE.env_job.retry_failed(
@@ -4601,6 +4673,7 @@ class Handler(BaseHTTPRequestHandler):
                         if hasattr(STATE, 'operation_sync_error'):
                             STATE.operation_sync_error = scrub_text(exc)[:200]
                     finally:
+                        STATE._hub_reads.invalidate()
                         STATE.tasks.finish(task_id)
                 try:
                     count = STATE.backup_job.start(

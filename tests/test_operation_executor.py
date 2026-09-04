@@ -409,6 +409,17 @@ def test_logistics_task_reports_incremental_terminal_result():
             'site': 'MX',
             'allowOpenEnvironment': True,
             'environmentSerials': ['101', '102'],
+            'environmentIndex': [{
+                'serialNumber': '101',
+                'containerCode': 'container-101',
+                'containerName': 'XG-MX-001',
+                'tagName': 'MX采购',
+            }, {
+                'serialNumber': '102',
+                'containerCode': 'container-102',
+                'containerName': 'XG-MX-002',
+                'tagName': 'MX采购',
+            }],
         }, lambda **event: events.append(event))
 
     assert outcome == 'succeeded'
@@ -416,6 +427,12 @@ def test_logistics_task_reports_incremental_terminal_result():
     assert summary['successCount'] == 1
     assert summary['failedCount'] == 1
     assert rpc.calls[0]['body']['allowOpenEnvironment'] is True
+    assert rpc.calls[0]['body']['environmentIndex'][0] == {
+        'serialNumber': '101',
+        'containerCode': 'container-101',
+        'containerName': 'XG-MX-001',
+        'tagName': 'MX采购',
+    }
     assert events[-1]['current'] == 2
     assert events[-1]['snapshot']['rows'][1]['status'] == 'login'
     completed = events[-1]['snapshot']['rows'][0]

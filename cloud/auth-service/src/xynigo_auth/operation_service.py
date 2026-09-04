@@ -495,6 +495,62 @@ class OperationRunService:
             "snapshotRevision": marker.snapshot_revision,
         }
 
+    def logistics_environment_index_from_cache(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        environment_serials: list[str],
+    ) -> dict[str, Any] | None:
+        """Resolve an entire logistics selection from one fresh Hub snapshot.
+
+        Partial cache hits are deliberately rejected.  Falling back to the
+        executor's live HubStudio lookup is slower but prevents a stale or
+        incomplete cloud inventory from silently mapping the wrong browser.
+        """
+        cache = self.environment_inventory_cache_status(tenant_id=tenant_id)
+        if not cache["fresh"]:
+            return None
+        wanted = [str(value) for value in environment_serials]
+        if not wanted or len(wanted) != len(set(wanted)):
+            return None
+        observations = list(self.session.scalars(
+            select(HubEnvironmentObservation).where(
+                HubEnvironmentObservation.tenant_id == tenant_id,
+                HubEnvironmentObservation.snapshot_revision
+                == cache["snapshotRevision"],
+                HubEnvironmentObservation.environment_serial.in_(wanted),
+            )
+        ))
+        by_serial: dict[str, HubEnvironmentObservation] = {}
+        duplicate_serials: set[str] = set()
+        for observation in observations:
+            serial = str(observation.environment_serial or "")
+            if (
+                not serial
+                or not observation.environment_ref
+                or not observation.environment_name
+            ):
+                continue
+            if serial in by_serial:
+                duplicate_serials.add(serial)
+            by_serial[serial] = observation
+        if duplicate_serials or any(serial not in by_serial for serial in wanted):
+            return None
+        return {
+            "source": "cloud_cache",
+            "capturedAt": cache["capturedAt"],
+            "snapshotRevision": cache["snapshotRevision"],
+            "rows": [
+                {
+                    "serialNumber": serial,
+                    "containerCode": str(by_serial[serial].environment_ref),
+                    "containerName": by_serial[serial].environment_name,
+                    "tagName": by_serial[serial].environment_group,
+                }
+                for serial in wanted
+            ],
+        }
+
     def preview_environment_names_from_cache(
         self,
         *,
@@ -1747,6 +1803,16 @@ class OperationRunService:
             ),
             "allowOpenEnvironment": bool(
                 (run.request_summary or {}).get("allowOpenEnvironment")
+            ),
+            "environmentInventorySource": str(
+                (run.request_summary or {}).get(
+                    "environmentInventorySource"
+                ) or "hubstudio_live"
+            ),
+            "environmentInventoryCapturedAt": (
+                (run.request_summary or {}).get(
+                    "environmentInventoryCapturedAt"
+                )
             ),
             "site": run.site,
             "status": run.status,

@@ -8,6 +8,20 @@ CLOUD_HTML = ROOT / "cloud/auth-service/src/xynigo_auth/web/index.html"
 
 
 class ExecutorWorkspaceWebTests(unittest.TestCase):
+    def test_logistics_feedback_layout_and_error_details_are_stable(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        self.assertEqual(html, CLOUD_HTML.read_text(encoding="utf-8"))
+        for marker in (
+            'class="input-row query-scope-grid"',
+            '.query-scope-grid { display:grid;',
+            'id="queryErrorMask"',
+            'function queryErrorShortLabel(error)',
+            'data-query-error=',
+            'const showRecoveryFrame = recoveryPhase',
+            "? '查询任务仍在继续'",
+        ):
+            self.assertIn(marker, html)
+
     def test_member_scoped_data_source_controls_are_local_and_safe(self):
         local_html = LOCAL_HTML.read_text(encoding="utf-8")
         cloud_html = CLOUD_HTML.read_text(encoding="utf-8")

@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import purchase_tool.main as main_module
 from purchase_tool.hub_api import HubApiError
-from purchase_tool.main import Handler
+from purchase_tool.main import Handler, HubReadCache
 from purchase_tool.task_runtime import LocalTaskCoordinator
 
 
@@ -136,6 +136,7 @@ class ParallelRouteTests(unittest.TestCase):
             env_job=self.env_job,
             backup_job=FakeEnvJob('BACKUP-MX-0825-001'),
             reg_job=SimpleNamespace(running=False),
+            _hub_reads=HubReadCache(),
         )
         self.state.tasks = LocalTaskCoordinator(
             lambda: self.safe_parallel)
@@ -198,6 +199,33 @@ class ParallelRouteTests(unittest.TestCase):
         self.assertTrue(query['allowOpenEnvironment'])
         self.assertEqual(self.orch.preflight_calls[0][-1], True)
         self.assertEqual(self.orch.start_calls[0][-1], True)
+        self.orch.callback()
+
+    def test_serial_queries_reuse_full_environment_inventory_cache(self):
+        self.post('/api/query', {'serials': ['1001'], 'site': 'MX'})
+        self.orch.callback()
+        self.post('/api/query', {'serials': ['1001'], 'site': 'MX'})
+
+        self.assertEqual(self.state.hub.env_list_groups, [None])
+        self.orch.callback()
+
+    def test_cloud_environment_index_skips_local_full_inventory_read(self):
+        cached = [{
+            'serialNumber': '1001',
+            'containerCode': 'code-1001',
+            'containerName': 'XG-MX-0824-001',
+            'tagName': 'MX采购',
+        }]
+
+        self.post('/api/query', {
+            'serials': ['1001'], 'site': 'MX',
+            'environmentIndex': cached,
+        })
+
+        self.assertEqual(self.state.hub.env_list_groups, [])
+        self.assertEqual(
+            self.orch.start_calls[0][1]['1001']['containerCode'],
+            'code-1001')
         self.orch.callback()
 
     def test_hub_core_repair_status_and_start_routes(self):

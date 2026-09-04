@@ -702,9 +702,12 @@ class ExecutorChannelWorker(object):
                 raise LocalAuthError(
                     'executor_capability_missing',
                     '工作区快照能力尚未就绪', 409)
+            include_inventory = bool(payload.get('includeInventorySnapshot'))
             result = self.workspace_rpc_executor({
                 'method': 'GET',
-                'path': '/api/workspace/snapshot',
+                'path': ('/api/workspace/snapshot?includeInventorySnapshot=1'
+                         if include_inventory else
+                         '/api/workspace/snapshot'),
                 'body': None,
             })
             if (not isinstance(result, dict)

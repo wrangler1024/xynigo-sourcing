@@ -363,6 +363,8 @@ class LocalOperationExecutor(object):
             raise OperationExecutionError(
                 'operation_payload_invalid', '物流查询任务缺少环境序号')
         serials = [str(item).strip() for item in serials]
+        environment_index = self._logistics_environment_index(
+            payload.get('environmentIndex'), serials)
         query_mode = str(payload.get('queryMode') or 'initial').strip()
         if query_mode == 'initial':
             start_path = '/api/query'
@@ -398,6 +400,8 @@ class LocalOperationExecutor(object):
         if 'allowOpenEnvironment' in payload:
             start_body['allowOpenEnvironment'] = bool(
                 payload['allowOpenEnvironment'])
+        if environment_index is not None:
+            start_body['environmentIndex'] = environment_index
         self._request('POST', start_path, start_body)
         total = len(serials)
         stop_sent = False
@@ -461,6 +465,44 @@ class LocalOperationExecutor(object):
             self.sleep(self.poll_interval)
         summary = self._logistics_summary(total, rows, snapshot)
         return self._terminal_result('logistics', summary)
+
+    @staticmethod
+    def _logistics_environment_index(raw, serials):
+        """Validate a credential-free cloud inventory selection."""
+        if raw is None:
+            return None
+        if not isinstance(raw, list) or len(raw) != len(serials):
+            raise OperationExecutionError(
+                'operation_payload_invalid', '物流环境缓存数量无效')
+        allowed = {
+            'serialNumber', 'containerCode', 'containerName', 'tagName',
+        }
+        by_serial = {}
+        for item in raw:
+            if not isinstance(item, dict) or set(item) - allowed:
+                raise OperationExecutionError(
+                    'operation_payload_invalid', '物流环境缓存格式无效')
+            normalized = {
+                'serialNumber': str(item.get('serialNumber') or '').strip(),
+                'containerCode': str(item.get('containerCode') or '').strip(),
+                'containerName': str(item.get('containerName') or '').strip(),
+                'tagName': str(item.get('tagName') or '').strip(),
+            }
+            if (not normalized['serialNumber']
+                    or not normalized['containerCode']
+                    or not normalized['containerName']
+                    or len(normalized['serialNumber']) > 64
+                    or len(normalized['containerCode']) > 128
+                    or len(normalized['containerName']) > 255
+                    or len(normalized['tagName']) > 255
+                    or normalized['serialNumber'] in by_serial):
+                raise OperationExecutionError(
+                    'operation_payload_invalid', '物流环境缓存内容无效')
+            by_serial[normalized['serialNumber']] = normalized
+        if set(by_serial) != set(serials):
+            raise OperationExecutionError(
+                'operation_payload_invalid', '物流环境缓存与查询序号不一致')
+        return [by_serial[serial] for serial in serials]
 
     def _request(self, method, path, body=None):
         result = self.rpc_executor({

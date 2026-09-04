@@ -557,12 +557,12 @@ class ExecutorTaskApplicationTests(unittest.TestCase):
             'id': 'task-workspace-snapshot',
             'type': 'workspace.snapshot.v1',
             'leaseToken': LEASE_TOKEN,
-            'payload': {},
+            'payload': {'includeInventorySnapshot': True},
         })
 
         self.assertEqual(received, [{
             'method': 'GET',
-            'path': '/api/workspace/snapshot',
+            'path': '/api/workspace/snapshot?includeInventorySnapshot=1',
             'body': None,
         }])
         self.assertEqual(client.finishes[0]['resultCode'],

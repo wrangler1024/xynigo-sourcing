@@ -971,6 +971,9 @@
   .proxy-check-settings input { width: 110px; }
   .resource-detail-modal { width: min(660px,calc(100vw - 40px)); }
   .resource-detail-body { max-height: 62vh; overflow: auto; white-space: pre-wrap; color: var(--navy-700); font-size: 12px; line-height: 1.8; }
+  .query-error-modal { width:min(680px,calc(100vw - 40px)); }
+  .query-error-summary { margin:10px 0; color:var(--coral-500); font-size:13px; font-weight:900; }
+  .query-error-detail { max-height:50vh; overflow:auto; padding:13px 14px; border:1px solid #ffd8cf; border-radius:12px; background:var(--coral-100); color:var(--navy-700); font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:11px; line-height:1.7; white-space:pre-wrap; overflow-wrap:anywhere; }
   .import-grid { display: grid; grid-template-columns: repeat(4,minmax(160px,1fr)); gap: 12px; }
   .import-grid .field input, .import-grid .field select { width: 100%; }
   .credential-note { margin-top: 12px; padding: 11px 13px; border-left: 3px solid var(--rhino-500); border-radius: 0 10px 10px 0; background: var(--rhino-100); color: #416d72; font-size: 11px; line-height: 1.65; }
@@ -1002,6 +1005,10 @@
   .table-title-row { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
   .table-title-copy { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; }
   .table-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+  .query-scope-grid { display:grid; grid-template-columns:minmax(0,1fr) 300px; align-items:start; }
+  .query-scope-grid .field.grow { min-width:0; }
+  .query-scope-grid .side-col { width:300px; min-width:0; }
+  .query-scope-grid .side-col select { width:100%; }
   .query-results-title { display:grid; grid-template-columns:minmax(0,1fr) auto; }
   .query-table-actions { flex-wrap:nowrap; justify-content:flex-end; }
   .query-table-actions .btn { white-space:nowrap; }
@@ -1011,6 +1018,9 @@
   th { top: 0; padding: 10px 12px; background: #f8fafb; color: #71889a; font-size: 10px; font-weight: 900; }
   td { padding: 12px; border-bottom-color: #edf1f4; color: var(--navy-700); }
   .badge { padding: 5px 8px; font-size: 10px; font-weight: 900; }
+  .query-result-error { max-width:min(300px,28vw); border:0; font-family:inherit; cursor:pointer; vertical-align:middle; display:inline-flex; align-items:center; gap:7px; }
+  .query-result-error .query-result-error-label { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .query-result-error .query-result-error-more { flex:none; padding-left:7px; border-left:1px solid rgba(220,38,38,.2); font-style:normal; font-size:9px; }
   .btn-mini { padding: 5px 9px; border-color: var(--line); border-radius: 8px; color: var(--rhino-600); font-size: 10px; font-weight: 800; }
   .footer-card { padding: 13px 19px; border-radius: 0 0 20px 20px; box-shadow: none; }
   #stats { color: var(--navy-500); font-size: 11px; }
@@ -1104,6 +1114,8 @@
     .field.grow { min-width: 100%; }
     .side-col { width: 100%; }
     .side-col select { width: 100%; }
+    .query-scope-grid { grid-template-columns:1fr; }
+    .query-scope-grid .side-col { width:100%; }
     .table-title-row { flex-direction: column; }
     .query-results-title { grid-template-columns:1fr; }
     .query-table-actions { flex-wrap:wrap; justify-content:flex-start; }
@@ -1865,7 +1877,7 @@
   </section>
   <section class="card">
     <div class="card-title">① 选择查询范围</div>
-    <div class="input-row">
+    <div class="input-row query-scope-grid">
       <div class="field grow">
         <label>环境序号（每行一个，也可用逗号 / 空格分隔）</label>
         <textarea id="serialsInput" placeholder="例如：&#10;1001&#10;1002, 1003&#10;1004"></textarea>
@@ -2797,6 +2809,15 @@
         <div class="query-history-detail-table"><table id="queryHistoryResultTable"><thead><tr><th>序号</th><th>环境名</th><th>订单号</th><th>下单时间</th><th>金额</th><th>状态</th><th>物流单号</th><th>承运商</th><th>首条轨迹时间</th><th>首条轨迹内容</th><th>首轨时效</th><th>物流轨迹截图</th><th>出口IP</th><th>结果</th><th>查询时间（站点）</th><th>操作</th></tr></thead><tbody id="queryHistoryResultBody"></tbody></table></div>
       </div>
     </div>
+  </div>
+</div>
+
+<div class="modal-mask" id="queryErrorMask" aria-hidden="true">
+  <div class="modal query-error-modal" role="dialog" aria-modal="true" aria-labelledby="queryErrorTitle">
+    <h3 id="queryErrorTitle">查询异常详情</h3>
+    <div class="query-error-summary" id="queryErrorSummary"></div>
+    <div class="query-error-detail" id="queryErrorDetail"></div>
+    <div class="actions"><button class="btn primary" id="btnQueryErrorClose" type="button">关闭</button></div>
   </div>
 </div>
 
@@ -6724,7 +6745,12 @@ function queryRowsHtml(rows, options={}) {
     if (s === 'running') return `<tr class="row-running">${emptyCells('<span class="spinner"></span>正在查询并生成轨迹截图…')}</tr>`;
     if (s === 'login') return `<tr class="row-login">${emptyCells('<span class="badge login">🔴 登录失效</span>')}</tr>`;
     if (s === 'inuse') return `<tr class="row-inuse">${emptyCells('<span class="badge inuse">🟡 环境使用中，已跳过</span>')}</tr>`;
-    if (s === 'fail') return `<tr class="row-fail">${emptyCells(`<span class="badge fail">⚠ ${esc(r.error) || '失败'}</span>`)}</tr>`;
+    if (s === 'fail') {
+      const rawError = String(r.error || '失败');
+      const encodedError = encodeURIComponent(rawError);
+      const compactError = queryErrorShortLabel(rawError);
+      return `<tr class="row-fail">${emptyCells(`<button type="button" class="badge fail query-result-error" data-query-error="${esc(encodedError)}" data-query-error-serial="${serial}" title="查看完整错误"><span class="query-result-error-label">⚠ ${esc(compactError)}</span><em class="query-result-error-more">详情</em></button>`)}</tr>`;
+    }
     if (s === 'stopped') return `<tr class="row-inuse">${emptyCells('<span class="badge inuse">⏹ 已停止，未完成查询</span>')}</tr>`;
     // ok
     const st = (r.status || '') + (r.statusCn ? ' ' + r.statusCn : '');
@@ -6770,6 +6796,35 @@ function queryRowsHtml(rows, options={}) {
 function renderRows(rows) {
   tbody.innerHTML = queryRowsHtml(rows);
   applyQueryColumnVisibility();
+}
+
+function queryErrorShortLabel(error) {
+  const value = String(error || '').trim();
+  if (!value) return '查询失败';
+  if (/-10005|startBrowser|上次请求.*未执行结束/i.test(value)) return '环境启动尚未完成';
+  if (/-10008|系统资源不足|Insufficient system resources/i.test(value)) return 'HubStudio 资源不足';
+  if (/关闭.*超时|等待.*关闭.*超时/i.test(value)) return '环境关闭确认超时';
+  if (/Local API.*(?:超时|timeout)|请求超时|响应超时/i.test(value)) return 'Local API 请求超时';
+  if (/无法连接.*Local API|Local API.*无法连接/i.test(value)) return 'Local API 无法连接';
+  const clean = value.replace(/^查询异常[：:]\s*/i, '');
+  return clean.length > 24 ? `${clean.slice(0, 24)}…` : clean;
+}
+
+function openQueryErrorDetail(serial, encodedError) {
+  let error = '';
+  try { error = decodeURIComponent(String(encodedError || '')); }
+  catch (_) { error = String(encodedError || ''); }
+  $('queryErrorSummary').textContent = `${serial ? `环境 ${serial} · ` : ''}${queryErrorShortLabel(error)}`;
+  $('queryErrorDetail').textContent = error || '未返回详细错误信息';
+  $('queryErrorMask').classList.add('show');
+  $('queryErrorMask').setAttribute('aria-hidden', 'false');
+}
+
+function closeQueryErrorDetail() {
+  $('queryErrorMask').classList.remove('show');
+  $('queryErrorMask').setAttribute('aria-hidden', 'true');
+  $('queryErrorSummary').textContent = '';
+  $('queryErrorDetail').textContent = '';
 }
 
 function formatTrackingLead(value) {
@@ -6944,34 +6999,42 @@ function render(snap) {
     .replace(/^logistics\./, '');
   const recoveryPhase = ['recovering_resources','reconnecting_hub','waiting_cleanup']
     .includes(runtimePhase);
+  const showRecoveryFrame = recoveryPhase
+    && (!snap.current || Math.floor(Date.now() / 4500) % 2 === 0);
+  const displayRuntimePhase = recoveryPhase && !showRecoveryFrame
+    ? 'active' : runtimePhase;
   const preflightPhase = isRunning && !snap.current
     && ['created','queued','leased','starting','preparing',''].includes(String(snap.phase || ''));
   const phaseBanner = $('queryPhaseBanner');
   phaseBanner.hidden = !isRunning;
-  phaseBanner.classList.toggle('warning', recoveryPhase
+  phaseBanner.classList.toggle('warning', showRecoveryFrame
     || (preflightPhase && queryElapsedBase >= 30));
-  $('queryPhaseTitle').textContent = runtimePhase === 'recovering_resources'
+  $('queryPhaseTitle').textContent = displayRuntimePhase === 'recovering_resources'
     ? 'HubStudio 资源紧张，正在等待恢复'
-    : runtimePhase === 'reconnecting_hub'
+    : displayRuntimePhase === 'reconnecting_hub'
     ? 'HubStudio Local API 暂时无响应，正在重连'
-    : runtimePhase === 'waiting_cleanup'
+    : displayRuntimePhase === 'waiting_cleanup'
     ? '正在等待上一环境完全关闭'
-    : runtimePhase === 'degraded'
+    : displayRuntimePhase === 'degraded'
     ? '查询已恢复，当前批次采用单环境运行'
+    : displayRuntimePhase === 'active'
+    ? '查询任务仍在继续'
     : preflightPhase
     ? (queryElapsedBase >= 30 ? '预检耗时较长，仍在等待本机响应' : '正在预检并准备执行环境')
     : '查询正在执行';
   const activeBrowserMode = snap.browserMode === 'visible' ? '可见调试模式' : '无头模式';
   const openEnvironmentMode = snap.allowOpenEnvironment
     ? '；允许只读连接已打开环境' : '';
-  $('queryPhaseDescription').textContent = runtimePhase === 'recovering_resources'
+  $('queryPhaseDescription').textContent = displayRuntimePhase === 'recovering_resources'
     ? '已暂停启动新环境，等待当前环境关闭和资源释放；恢复后会自动降为单环境继续，不会直接终止剩余订单。'
-    : runtimePhase === 'reconnecting_hub'
+    : displayRuntimePhase === 'reconnecting_hub'
     ? '本地执行器仍在运行并持续重试 Local API；恢复后将从当前订单继续。'
-    : runtimePhase === 'waiting_cleanup'
+    : displayRuntimePhase === 'waiting_cleanup'
     ? '关闭确认完成后才会打开下一个环境，避免浏览器进程和句柄持续堆积。'
-    : runtimePhase === 'degraded'
+    : displayRuntimePhase === 'degraded'
     ? '检测到过资源压力，本批后续只同时运行一个环境，以可靠性优先。'
+    : displayRuntimePhase === 'active'
+    ? `任务没有停止；当前环境：${snap.current}。等待提示与查询进度会交替显示。`
     : preflightPhase
     ? '正在确认执行器、HubStudio、Local API 与浏览器内核；任务已在后台托管，关闭或刷新页面不会停止。'
     : (snap.current ? `当前环境：${snap.current}；${activeBrowserMode}${openEnvironmentMode}，可关闭页面，任务会继续在后台执行。` : `已通过预检，正在以${activeBrowserMode}后台处理环境${openEnvironmentMode}。`);
@@ -6984,7 +7047,7 @@ function render(snap) {
   const outcomeCopy = `有效 ${outcomeValid}/${outcomeTotal}`
     + (outcomeReview ? `，待核对 ${outcomeReview}` : '');
   $('currentEnv').textContent = isRunning
-    ? (recoveryPhase
+    ? (showRecoveryFrame
       ? (runtimePhase === 'recovering_resources' ? '等待 HubStudio 释放资源 …'
         : runtimePhase === 'reconnecting_hub' ? '正在重连 HubStudio Local API …'
         : '等待环境关闭确认 …')
@@ -7827,6 +7890,11 @@ $('btnStop').onclick = async () => {
 };
 
 tbody.addEventListener('click', async e => {
+  const errorBtn = e.target.closest('[data-query-error]');
+  if (errorBtn) {
+    openQueryErrorDetail(errorBtn.dataset.queryErrorSerial, errorBtn.dataset.queryError);
+    return;
+  }
   const shotBtn = e.target.closest('[data-shot]');
   if (shotBtn) {
     openScreenshot(shotBtn.dataset.shot, shotBtn.dataset.shotOrder, shotBtn.dataset.shotRun);
@@ -7929,12 +7997,18 @@ function closeScreenshot() {
 }
 
 $('btnScreenshotClose').onclick = closeScreenshot;
+$('btnQueryErrorClose').onclick = closeQueryErrorDetail;
+$('queryErrorMask').onclick = e => {
+  if (e.target === e.currentTarget) closeQueryErrorDetail();
+};
 $('screenshotMask').onclick = e => {
   if (e.target === e.currentTarget) closeScreenshot();
 };
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && $('screenshotMask').classList.contains('show')) {
     closeScreenshot();
+  } else if (e.key === 'Escape' && $('queryErrorMask').classList.contains('show')) {
+    closeQueryErrorDetail();
   } else if (e.key === 'Escape' && $('queryHistoryMask').classList.contains('show')) {
     closeQueryHistory();
   } else if (e.key === 'Escape' && !$('runtimeDrawer').hidden) {
@@ -8202,6 +8276,11 @@ $('queryHistoryBody').onclick = event => {
   if (button) openQueryHistoryDetail(button.dataset.historyView);
 };
 $('queryHistoryResultBody').onclick = event => {
+  const errorButton = event.target.closest('[data-query-error]');
+  if (errorButton) {
+    openQueryErrorDetail(errorButton.dataset.queryErrorSerial, errorButton.dataset.queryError);
+    return;
+  }
   const button = event.target.closest('[data-shot]');
   if (button) openScreenshot(button.dataset.shot, button.dataset.shotOrder, button.dataset.shotRun);
 };

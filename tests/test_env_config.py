@@ -14,7 +14,7 @@ from unittest.mock import patch
 import purchase_tool.main as main_module
 from purchase_tool.hub_api_key import MemoryHubApiKeyStore
 from purchase_tool.main import (
-    AppState, Handler, default_config, effective_proxy_link, load_config,
+    AppState, Handler, HubReadCache, default_config, effective_proxy_link, load_config,
     lark_target_link, public_config, public_executor_config, public_lark_config,
     public_envbatch_preferences, public_lark_runtime_status, save_config,
     purchase_tag_for_site,
@@ -64,6 +64,22 @@ class ConfigTests(unittest.TestCase):
         rendered = json.dumps(snapshot, ensure_ascii=False)
         self.assertNotIn(TEST_PROXY, rendered)
         self.assertNotIn('proxyLink', rendered)
+
+        state._hub_reads = HubReadCache()
+        state.hub = SimpleNamespace(env_list=lambda: [{
+            'serialNumber': 7001,
+            'containerCode': 'container-7001',
+            'containerName': 'XG-MX-0904-001',
+            'tagName': 'MX采购',
+            'remark': '敏感备注不应进入快照',
+        }])
+        inventory_snapshot = state.workspace_snapshot(
+            include_inventory_snapshot=True)['inventorySnapshot']
+        self.assertEqual(inventory_snapshot['environmentCount'], 1)
+        self.assertEqual(
+            inventory_snapshot['rows'][0]['environmentSerial'], '7001')
+        self.assertNotIn(
+            '敏感备注', json.dumps(inventory_snapshot, ensure_ascii=False))
 
     def test_safe_parallel_mode_is_explicit_boolean_and_defaults_on(self):
         default = default_config()

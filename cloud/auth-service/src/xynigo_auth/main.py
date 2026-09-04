@@ -1833,7 +1833,7 @@ def create_app(
             user_id=actor.user.id,
             executor_id=executor_id,
             task_type="workspace.snapshot.v1",
-            payload={},
+            payload={"includeInventorySnapshot": True},
             idempotency_key=body.idempotencyKey,
         )
         payload = {
@@ -3886,22 +3886,39 @@ def create_app(
             request_summary = dict(run.request_summary or {})
             request_summary["browserMode"] = browser_mode
             request_summary["allowOpenEnvironment"] = body.allowOpenEnvironment
+            cached_inventory = runs.logistics_environment_index_from_cache(
+                tenant_id=actor.tenant.id,
+                environment_serials=list(body.environmentSerials),
+            )
+            request_summary["environmentInventorySource"] = (
+                "cloud_cache" if cached_inventory is not None else "hubstudio_live"
+            )
+            if cached_inventory is not None:
+                request_summary["environmentInventoryCapturedAt"] = (
+                    cached_inventory["capturedAt"].isoformat()
+                )
             run.request_summary = request_summary
+            task_payload = {
+                "runId": str(run.id),
+                "runKey": run.source_run_key,
+                "queryMode": body.queryMode,
+                "browserMode": browser_mode,
+                "allowOpenEnvironment": body.allowOpenEnvironment,
+                "force": body.force,
+                "site": body.site,
+                "environmentSerials": list(body.environmentSerials),
+            }
+            if cached_inventory is not None:
+                task_payload["environmentIndex"] = cached_inventory["rows"]
+                task_payload["environmentInventoryRevision"] = (
+                    cached_inventory["snapshotRevision"]
+                )
             task = executor_tasks.create_config_task(
                 tenant_id=actor.tenant.id,
                 user_id=actor.user.id,
                 executor_id=body.executorId,
                 task_type="logistics.query.v1",
-                payload={
-                    "runId": str(run.id),
-                    "runKey": run.source_run_key,
-                    "queryMode": body.queryMode,
-                    "browserMode": browser_mode,
-                    "allowOpenEnvironment": body.allowOpenEnvironment,
-                    "force": body.force,
-                    "site": body.site,
-                    "environmentSerials": list(body.environmentSerials),
-                },
+                payload=task_payload,
                 idempotency_key=f"operation:{body.idempotencyKey}",
                 commit=False,
             )

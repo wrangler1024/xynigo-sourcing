@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 import uuid
 
 from pydantic import (
@@ -349,6 +349,7 @@ class ExecutorWorkspaceSnapshotResult(BaseModel):
     runtimeConfig: WorkspaceRuntimeConfig | None = None
     groups: list[str] = Field(default_factory=list, max_length=500)
     preflight: dict[Literal["US", "MX"], WorkspacePreflightSnapshot]
+    inventorySnapshot: dict[str, Any] | None = None
 
     @field_validator("capturedAt")
     @classmethod

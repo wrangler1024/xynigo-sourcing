@@ -6,7 +6,8 @@ from unittest.mock import patch
 
 from purchase_tool.hub_api import HubApiError
 from purchase_tool.shein_query import (
-    QueryOrchestrator, friendly_carrier, merge_order_status_signals,
+    RECOVERY_HEALTHY_LIFECYCLES, QueryOrchestrator, friendly_carrier,
+    merge_order_status_signals,
     normalize_site, parse_detail_page, parse_first_tracking_event,
     parse_list_page)
 
@@ -605,6 +606,80 @@ class TrackingScreenshotTests(unittest.TestCase):
         self.assertTrue(job.snapshot()['resourceConstrained'])
         self.assertEqual(job.snapshot()['effectiveConcurrency'], 1)
 
+    def test_timed_out_start_waits_for_official_state_then_restarts_once(self):
+        class TimedOutThenStartedHub(object):
+            def __init__(self):
+                self.start_calls = 0
+                self.stop_calls = 0
+                self.states = iter([
+                    {'state': 'opening', 'data': {
+                        'containerCode': 'container-1', 'status': 1}},
+                    {'state': 'open', 'data': {
+                        'containerCode': 'container-1', 'status': 0}},
+                    {'state': 'closing', 'data': {
+                        'containerCode': 'container-1', 'status': 2}},
+                    {'state': 'closed', 'data': {
+                        'containerCode': 'container-1', 'status': 3}},
+                ])
+
+            def browser_start(self, _code, headless=False):
+                self.start_calls += 1
+                if self.start_calls == 1:
+                    raise HubApiError(
+                        'HubStudio Local API 请求超时',
+                        'hubstudio_local_api_timeout',
+                        operation='/browser/start',
+                        outcome_uncertain=True)
+                return {'debuggingPort': '59591', 'headless': headless}
+
+            def browser_lifecycle_status(self, _code, timeout=None):
+                del timeout
+                return next(self.states)
+
+            def browser_stop(self, _code):
+                self.stop_calls += 1
+
+        hub = TimedOutThenStartedHub()
+        job = QueryOrchestrator(hub, settle_seconds=0, env_interval=0)
+        with patch('purchase_tool.shein_query.time.sleep'):
+            result = job._start_browser('container-1')
+
+        self.assertEqual(result['debuggingPort'], '59591')
+        self.assertEqual(hub.start_calls, 2)
+        self.assertEqual(hub.stop_calls, 1)
+
+    def test_start_pending_waits_for_state_and_does_not_replay(self):
+        class PreviousStartHub(object):
+            def __init__(self):
+                self.start_calls = 0
+                self.states = iter([
+                    {'state': 'opening', 'data': {
+                        'containerCode': 'container-1', 'status': 1}},
+                    {'state': 'open', 'data': {
+                        'containerCode': 'container-1', 'status': 0}},
+                ])
+
+            def browser_start(self, _code, headless=False):
+                del headless
+                self.start_calls += 1
+                raise HubApiError(
+                    'HubStudio Local API 返回 code=-10005',
+                    'hubstudio_browser_start_pending', api_code='-10005')
+
+            def browser_lifecycle_status(self, _code, timeout=None):
+                del timeout
+                return next(self.states)
+
+        hub = PreviousStartHub()
+        job = QueryOrchestrator(hub, settle_seconds=0, env_interval=0)
+        with patch('purchase_tool.shein_query.time.sleep'):
+            with self.assertRaises(HubApiError) as caught:
+                job._start_browser('container-1')
+
+        self.assertEqual(
+            caught.exception.reason_code, 'hubstudio_browser_start_pending')
+        self.assertEqual(hub.start_calls, 1)
+
     def test_timeout_is_row_scoped_and_does_not_terminate_pending_rows(self):
         job = QueryOrchestrator(hub=None, settle_seconds=0, env_interval=0)
         job.rows = [job._blank_row('1001'), job._blank_row('1002')]
@@ -767,6 +842,59 @@ class TrackingScreenshotTests(unittest.TestCase):
         self.assertEqual(hub.stop_calls, ['container-1'])
         self.assertEqual(hub.status_calls, 2)
         sleep.assert_called_once_with(1.0)
+
+    def test_browser_stop_understands_closing_and_closed_states(self):
+        class ClosingHub(object):
+            def __init__(self):
+                self.stop_calls = []
+                self.states = iter([
+                    {'state': 'closing', 'data': {
+                        'containerCode': 'container-1', 'status': 2}},
+                    {'state': 'closed', 'data': {
+                        'containerCode': 'container-1', 'status': 3}},
+                ])
+
+            def browser_stop(self, code):
+                self.stop_calls.append(code)
+
+            def browser_lifecycle_status(self, _code, timeout=None):
+                del timeout
+                return next(self.states)
+
+        hub = ClosingHub()
+        job = QueryOrchestrator(hub, settle_seconds=0, env_interval=0)
+        job._mark_browser_started('container-1')
+        with patch('purchase_tool.shein_query.time.sleep') as sleep:
+            self.assertTrue(job._stop_browser_and_confirm('container-1'))
+
+        self.assertEqual(hub.stop_calls, ['container-1'])
+        sleep.assert_called_once_with(1.0)
+
+    def test_three_healthy_closes_restore_configured_concurrency(self):
+        class ClosedHub(object):
+            def browser_stop(self, _code):
+                return None
+
+            def browser_lifecycle_status(self, code, timeout=None):
+                del timeout
+                return {
+                    'state': 'closed',
+                    'data': {'containerCode': code, 'status': 3},
+                }
+
+        job = QueryOrchestrator(
+            ClosedHub(), settle_seconds=0, env_interval=0, concurrency=3)
+        job._set_runtime_recovery('reconnecting_hub', 'test recovery')
+
+        for value in range(RECOVERY_HEALTHY_LIFECYCLES):
+            code = 'container-%d' % value
+            job._mark_browser_started(code)
+            self.assertTrue(job._stop_browser_and_confirm(code))
+
+        snapshot = job.snapshot()
+        self.assertFalse(snapshot['resourceConstrained'])
+        self.assertEqual(snapshot['effectiveConcurrency'], 3)
+        self.assertIn('已恢复并发查询', snapshot['runtimeMessage'])
 
     def test_authentication_failure_is_not_retried_as_transport_recovery(self):
         class AuthenticationFailureHub(object):

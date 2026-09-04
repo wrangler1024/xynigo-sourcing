@@ -29,8 +29,16 @@ DEFAULT_PORT = 6873
 KNOWN_FALLBACK_PORTS = (6873, 6874, 6875)
 RATE_LIMIT_CODE = 'E010205'
 INSUFFICIENT_RESOURCES_CODE = '-10008'
+START_PENDING_CODE = '-10005'
+ALREADY_RUNNING_CODE = '-10013'
 RUNTIME_FAILURE_TTL_SECONDS = 120.0
 DEFAULT_TRANSPORT_ATTEMPTS = 8
+BROWSER_LIFECYCLE_STATES = {
+    '0': 'open',
+    '1': 'opening',
+    '2': 'closing',
+    '3': 'closed',
+}
 READ_ONLY_PATHS = frozenset({
     '/group/list',
     '/env/list',
@@ -168,6 +176,9 @@ class HubStudioAdapter(object):
         raise NotImplementedError
 
     def browser_status(self, container_code=None, timeout=None):
+        raise NotImplementedError
+
+    def browser_lifecycle_status(self, container_code, timeout=None):
         raise NotImplementedError
 
     def browser_stop(self, container_code):
@@ -490,6 +501,10 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
                      if auth_failed else
                      ('hubstudio_local_api_rate_limited'
                       if api_code == RATE_LIMIT_CODE else
+                      'hubstudio_browser_start_pending'
+                      if api_code == START_PENDING_CODE else
+                      'hubstudio_browser_already_running'
+                      if api_code == ALREADY_RUNNING_CODE else
                       'hubstudio_system_resources_insufficient'
                       if api_code == INSUFFICIENT_RESOURCES_CODE else
                       'hubstudio_local_api_error')),
@@ -503,10 +518,14 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
                     if callable(defer):
                         defer(retry_delay)
                         deferred_by_gate = True
-                elif api_code == INSUFFICIENT_RESOURCES_CODE:
+                elif api_code in {
+                        START_PENDING_CODE,
+                        ALREADY_RUNNING_CODE,
+                        INSUFFICIENT_RESOURCES_CODE}:
                     # Browser capacity requires lifecycle-aware recovery in
-                    # the caller; retrying the same start immediately makes
-                    # process/handle pressure worse.
+                    # the caller.  In particular, -10005 explicitly means a
+                    # previous startBrowser is still running; replaying it as
+                    # a generic business error only grows HubStudio's queue.
                     break
                 elif browser_core_missing:
                     break
@@ -789,12 +808,50 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
             if isinstance(item, dict)
         ]
 
+    @staticmethod
+    def browser_lifecycle_state(item):
+        """Normalize HubStudio's documented 0/1/2/3 browser state.
+
+        The status endpoint normally returns only ``containerCode`` and
+        ``status``.  Older clients/test doubles sometimes omit ``status`` and
+        include a debugging port instead, so keep that narrow compatibility
+        fallback without mistaking an explicit closed state for an open one.
+        """
+        item = item if isinstance(item, dict) else {}
+        raw_status = item.get('status')
+        normalized = BROWSER_LIFECYCLE_STATES.get(str(raw_status))
+        if normalized:
+            return normalized
+        try:
+            debugging_port = int(item.get('debuggingPort') or 0)
+        except (TypeError, ValueError):
+            debugging_port = 0
+        return 'open' if debugging_port > 0 else 'unknown'
+
+    def browser_lifecycle_status(self, container_code, timeout=None):
+        """Return one exact environment's normalized lifecycle status."""
+        wanted = str(container_code)
+        for item in self.browser_status(wanted, timeout=timeout):
+            if str(item.get('containerCode') or '') != wanted:
+                continue
+            return {
+                'containerCode': wanted,
+                'state': self.browser_lifecycle_state(item),
+                'data': dict(item),
+            }
+        return {
+            'containerCode': wanted,
+            'state': 'absent',
+            'data': {},
+        }
+
     def open_container_codes(self):
-        """当前已打开浏览器的 containerCode 集合（字符串）。"""
+        """Return active/opening/closing browser codes, excluding closed."""
         return set(
             str(item.get('containerCode'))
             for item in self.browser_status()
-            if item.get('containerCode') is not None)
+            if (item.get('containerCode') is not None
+                and self.browser_lifecycle_state(item) != 'closed'))
 
     def env_by_serial(self, serial_number, tag_name=None):
         wanted = str(serial_number)
@@ -881,22 +938,19 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
                 # launch.  Reconcile the exact container before any caller is
                 # allowed to submit a duplicate browser/start request.
                 try:
-                    statuses = self.browser_status(
+                    lifecycle = self.browser_lifecycle_status(
                         container_code, timeout=min(5.0, float(self.timeout)))
                 except HubApiError:
-                    statuses = []
+                    lifecycle = {'state': 'unknown', 'data': {}}
                 matched = None
-                for item in statuses:
-                    if str(item.get('containerCode') or '') != \
-                            str(container_code):
-                        continue
+                item = lifecycle.get('data') or {}
+                if lifecycle.get('state') == 'open':
                     try:
                         debugging_port = int(item.get('debuggingPort') or 0)
                     except (TypeError, ValueError):
                         debugging_port = 0
                     if debugging_port > 0:
                         matched = item
-                        break
                 if matched is not None:
                     self.clear_runtime_failure()
                     return matched
