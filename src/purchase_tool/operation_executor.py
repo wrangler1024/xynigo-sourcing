@@ -361,6 +361,9 @@ class LocalOperationExecutor(object):
                 'operation_payload_invalid', '物流查询模式或环境数量无效')
         if 'browserMode' in payload:
             start_body['browserMode'] = payload['browserMode']
+        if 'allowOpenEnvironment' in payload:
+            start_body['allowOpenEnvironment'] = bool(
+                payload['allowOpenEnvironment'])
         self._request('POST', start_path, start_body)
         total = len(serials)
         stop_sent = False
@@ -380,8 +383,18 @@ class LocalOperationExecutor(object):
             completed = sum(
                 row['status'] in LOGISTICS_TERMINAL_STATES for row in rows)
             current = min(total, completed)
-            phase = ('logistics.running' if snapshot.get('running')
-                     else 'logistics.completed')
+            runtime_state = str(
+                snapshot.get('runtimeState') or '').strip().casefold()
+            recoverable_phases = {
+                'recovering_resources', 'reconnecting_hub',
+                'waiting_cleanup', 'degraded',
+            }
+            phase = (
+                'logistics.' + runtime_state
+                if snapshot.get('running')
+                and runtime_state in recoverable_phases
+                else 'logistics.running' if snapshot.get('running')
+                else 'logistics.completed')
             event = {
                 'phase': phase,
                 'current': current,

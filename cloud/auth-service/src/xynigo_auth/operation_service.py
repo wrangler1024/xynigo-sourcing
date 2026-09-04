@@ -236,6 +236,7 @@ class OperationRunService:
                 "environmentSerials": list(body.environmentSerials),
                 "force": body.force,
                 "browserMode": body.browserMode,
+                "allowOpenEnvironment": body.allowOpenEnvironment,
                 "parentRunId": str(parent.id) if parent is not None else None,
             },
             source="cloud_web",
@@ -1154,21 +1155,7 @@ class OperationRunService:
             executor_display_name = "原执行器已移除"
             executor_attribution = "removed"
         actor = self.session.get(User, root.actor_user_id)
-        duration_seconds = 0
-        for item in self._logistics_lineage(latest):
-            if item.started_at is None:
-                continue
-            finished_at = item.completed_at or (
-                item.updated_at if item.status in self.TERMINAL_STATUSES else utcnow()
-            )
-            started_at = item.started_at
-            if started_at.tzinfo is None and finished_at.tzinfo is not None:
-                finished_at = finished_at.replace(tzinfo=None)
-            elif started_at.tzinfo is not None and finished_at.tzinfo is None:
-                finished_at = finished_at.replace(tzinfo=started_at.tzinfo)
-            duration_seconds += max(
-                0, int((finished_at - started_at).total_seconds())
-            )
+        duration_seconds = self._logistics_duration_seconds(latest)
         return {
             "rootRunId": str(root.id),
             "latestRunId": str(latest.id),
@@ -1190,6 +1177,32 @@ class OperationRunService:
             "createdAt": _iso(root.created_at),
             "updatedAt": _iso(latest.updated_at),
         }
+
+    def _logistics_duration_seconds(self, run: LogisticsQueryRun) -> int:
+        """Sum active execution time across the initial run and every retry."""
+
+        now = utcnow()
+        return sum(
+            self._logistics_attempt_duration_seconds(item, now=now)
+            for item in self._logistics_lineage(run)
+        )
+
+    def _logistics_attempt_duration_seconds(
+        self, run: LogisticsQueryRun, *, now: datetime | None = None
+    ) -> int:
+        if run.started_at is None:
+            return 0
+        finished_at = run.completed_at or (
+            run.updated_at
+            if run.status in self.TERMINAL_STATUSES
+            else (now or utcnow())
+        )
+        started_at = run.started_at
+        if started_at.tzinfo is None and finished_at.tzinfo is not None:
+            finished_at = finished_at.replace(tzinfo=None)
+        elif started_at.tzinfo is not None and finished_at.tzinfo is None:
+            finished_at = finished_at.replace(tzinfo=started_at.tzinfo)
+        return max(0, int((finished_at - started_at).total_seconds()))
 
     def environment_snapshot(
         self, run: EnvironmentCreationRun, *, unchanged: bool = False
@@ -1286,6 +1299,8 @@ class OperationRunService:
         self, run: LogisticsQueryRun, *, unchanged: bool = False
     ) -> dict[str, object]:
         rows = self._effective_logistics_rows(run)
+        duration_seconds = self._logistics_duration_seconds(run)
+        attempt_duration_seconds = self._logistics_attempt_duration_seconds(run)
         progress_completed = run.progress_completed
         progress_total = run.progress_total
         retry_progress_completed: int | None = None
@@ -1368,6 +1383,9 @@ class OperationRunService:
             "browserMode": str(
                 (run.request_summary or {}).get("browserMode") or "default"
             ),
+            "allowOpenEnvironment": bool(
+                (run.request_summary or {}).get("allowOpenEnvironment")
+            ),
             "site": run.site,
             "status": run.status,
             "phase": run.phase,
@@ -1380,6 +1398,8 @@ class OperationRunService:
             "totalCount": run.total_count,
             "successCount": run.success_count,
             "failedCount": run.failed_count,
+            "durationSec": duration_seconds,
+            "attemptDurationSec": attempt_duration_seconds,
             "startedAt": _iso(run.started_at),
             "completedAt": _iso(run.completed_at),
             "lastHeartbeatAt": _iso(run.last_heartbeat_at),

@@ -27,6 +27,7 @@ from .task_runtime import HubRuntimeGate
 DEFAULT_PORT = 6873
 KNOWN_FALLBACK_PORTS = (6873, 6874, 6875)
 RATE_LIMIT_CODE = 'E010205'
+INSUFFICIENT_RESOURCES_CODE = '-10008'
 RUNTIME_FAILURE_TTL_SECONDS = 120.0
 CORE_VERSION_RE = re.compile(r'^[1-9][0-9]{1,2}$')
 MISSING_CORE_RE = re.compile(
@@ -140,6 +141,9 @@ class HubStudioAdapter(object):
     def browser_start(self, container_code, headless=False):
         raise NotImplementedError
 
+    def browser_status(self, container_code=None, timeout=None):
+        raise NotImplementedError
+
     def browser_stop(self, container_code):
         raise NotImplementedError
 
@@ -200,7 +204,8 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
         reason = str(reason_code or '')
         if reason not in {
                 'hubstudio_browser_core_missing',
-                'hubstudio_browser_launch_invalid'}:
+                'hubstudio_browser_launch_invalid',
+                'hubstudio_system_resources_insufficient'}:
             return False
         parsed_type, parsed_version = _missing_core_details(message)
         browser_type = str(browser_type or parsed_type or '').casefold()
@@ -334,6 +339,8 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
                      if auth_failed else
                      ('hubstudio_local_api_rate_limited'
                       if api_code == RATE_LIMIT_CODE else
+                      'hubstudio_system_resources_insufficient'
+                      if api_code == INSUFFICIENT_RESOURCES_CODE else
                       'hubstudio_local_api_error')),
                     api_code=api_code,
                     browser_type=core_browser_type,
@@ -348,6 +355,11 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
                     if callable(defer):
                         defer(retry_delay)
                         deferred_by_gate = True
+                elif api_code == INSUFFICIENT_RESOURCES_CODE:
+                    # 资源不足不是普通瞬时业务错误。快速重试只会继续给
+                    # HubStudio 的浏览器进程/句柄回收施压；由上层查询编排
+                    # 负责暂停启动、等待已打开环境退出并降为单环境运行。
+                    break
                 elif browser_core_missing:
                     break
             except urllib.error.HTTPError as exc:
@@ -467,6 +479,8 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
                         message = 'HubStudio Local API 返回 HTTP 错误'
                     elif reason == 'hubstudio_local_api_rate_limited':
                         message = 'HubStudio Local API 请求频率受限'
+                    elif reason == 'hubstudio_system_resources_insufficient':
+                        message = 'HubStudio 浏览器资源不足，正在等待恢复'
                     else:
                         message = 'HubStudio Local API 返回业务错误'
                     return {
@@ -583,12 +597,26 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
                 'hubstudio_environment_ambiguous')
         return next(iter(unique.values()))
 
+    def browser_status(self, container_code=None, timeout=None):
+        """读取本机浏览器状态；可按 containerCode 做启动结果对账。"""
+        body = {}
+        if container_code is not None:
+            body['containerCodes'] = [str(container_code)]
+        data = self._post(
+            '/browser/all-browser-status', body,
+            retries=1 if timeout is not None else None,
+            timeout=timeout) or {}
+        return [
+            dict(item) for item in data.get('containers', [])
+            if isinstance(item, dict)
+        ]
+
     def open_container_codes(self):
         """当前已打开浏览器的 containerCode 集合（字符串）。"""
-        data = self._post('/browser/all-browser-status', {}) or {}
-        return set(str(c.get('containerCode'))
-                   for c in data.get('containers', [])
-                   if c.get('containerCode') is not None)
+        return set(
+            str(item.get('containerCode'))
+            for item in self.browser_status()
+            if item.get('containerCode') is not None)
 
     def env_by_serial(self, serial_number, tag_name=None):
         wanted = str(serial_number)

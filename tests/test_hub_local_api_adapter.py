@@ -29,11 +29,13 @@ class FakeResponse(object):
 
 class FakeLocalApiOpener(object):
     def __init__(self, unavailable_ports=None, response_code=0,
-                 response_message='Success', raw_payload=None):
+                 response_message='Success', raw_payload=None,
+                 open_browsers=None):
         self.unavailable_ports = set(unavailable_ports or [])
         self.response_code = response_code
         self.response_message = response_message
         self.raw_payload = raw_payload
+        self.open_browsers = list(open_browsers or [])
         self.calls = []
         self.timeouts = []
         self.environments = [{
@@ -66,7 +68,14 @@ class FakeLocalApiOpener(object):
         elif path == '/env/list':
             data = {'list': list(self.environments), 'total': 1}
         elif path == '/browser/all-browser-status':
-            data = {'containers': []}
+            wanted = {
+                str(value) for value in body.get('containerCodes') or []}
+            containers = list(self.open_browsers)
+            if wanted:
+                containers = [
+                    item for item in containers
+                    if str(item.get('containerCode') or '') in wanted]
+            data = {'containers': containers}
         elif path in {'/browser/start', '/browser/stop'}:
             data = {'accepted': True}
         elif path == '/env/del':
@@ -141,6 +150,31 @@ class HubStudioLocalApiAdapterTests(unittest.TestCase):
         })
         # The stronger runtime failure must override a superficially healthy
         # group/list heartbeat without another Local API request.
+        self.assertEqual(len(opener.calls), 1)
+
+    def test_insufficient_resources_is_reason_coded_without_fast_retries(self):
+        opener = FakeLocalApiOpener(
+            response_code=-10008,
+            response_message='系统资源不足(Insufficient system resources)')
+        adapter = HubStudioLocalApiAdapter(
+            opener=opener, client_running_getter=lambda: True,
+            retries=3, timeout=1)
+
+        with self.assertRaises(HubApiError) as context:
+            adapter.browser_start('container-test-1', headless=True)
+
+        self.assertEqual(
+            context.exception.reason_code,
+            'hubstudio_system_resources_insufficient')
+        self.assertEqual(context.exception.api_code, '-10008')
+        self.assertEqual(len(opener.calls), 1)
+        capability = adapter.capability_snapshot()
+        self.assertFalse(capability['available'])
+        self.assertTrue(capability['clientRunning'])
+        self.assertTrue(capability['localApiEnabled'])
+        self.assertEqual(
+            capability['reasonCode'],
+            'hubstudio_system_resources_insufficient')
         self.assertEqual(len(opener.calls), 1)
 
     def test_download_core_uses_official_local_api_contract(self):
@@ -276,6 +310,33 @@ class HubStudioLocalApiAdapterTests(unittest.TestCase):
         paths = [path for _port, path, _body, _headers in opener.calls]
         self.assertIn('/browser/start', paths)
         self.assertIn('/browser/stop', paths)
+
+    def test_browser_status_can_reconcile_one_timed_out_start(self):
+        opener = FakeLocalApiOpener(open_browsers=[{
+            'containerCode': 'container-test-1',
+            'debuggingPort': '59591',
+            'ip': '203.0.113.20',
+        }, {
+            'containerCode': 'container-other',
+            'debuggingPort': '59592',
+        }])
+        adapter = HubStudioLocalApiAdapter(
+            opener=opener, client_running_getter=lambda: True,
+            retries=1, timeout=30)
+
+        statuses = adapter.browser_status(
+            'container-test-1', timeout=2.5)
+
+        self.assertEqual(statuses, [{
+            'containerCode': 'container-test-1',
+            'debuggingPort': '59591',
+            'ip': '203.0.113.20',
+        }])
+        self.assertEqual(opener.calls[-1][1:3], (
+            '/browser/all-browser-status',
+            {'containerCodes': ['container-test-1']},
+        ))
+        self.assertEqual(opener.timeouts[-1], 2.5)
 
     def test_environment_lookup_uses_single_exact_filtered_page(self):
         opener = FakeLocalApiOpener()

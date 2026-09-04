@@ -1227,6 +1227,7 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
                 "executorId": executor_id,
                 "queryMode": "initial",
                 "browserMode": "visible",
+                "allowOpenEnvironment": True,
                 "site": "MX",
                 "environmentSerials": ["9001", "9002"],
             },
@@ -1236,6 +1237,7 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
         logistics_snapshot = logistics.json()["data"]
         assert logistics_snapshot["status"] == "queued"
         assert logistics_snapshot["progressTotal"] == 2
+        assert logistics_snapshot["allowOpenEnvironment"] is True
         cancelled_logistics = web_client.post(
             f"/v1/operation-runs/logistics-query/{logistics_snapshot['runId']}/cancel",
             json={},
@@ -1248,6 +1250,7 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
             logistics_run = session.scalar(select(LogisticsQueryRun))
             assert logistics_run is not None
             assert logistics_run.executor_task_id is not None
+            assert logistics_run.request_summary["allowOpenEnvironment"] is True
 
 
 def test_offline_revision_conflict_revoke_and_sensitive_config_are_blocked(tmp_path) -> None:
@@ -1858,6 +1861,7 @@ def test_formal_logistics_run_queues_ahead_of_background_workspace_read(
                 "executorId": executor_id,
                 "queryMode": "initial",
                 "browserMode": "visible",
+                "allowOpenEnvironment": True,
                 "site": "MX",
                 "environmentSerials": ["5564"],
             },
@@ -1872,6 +1876,7 @@ def test_formal_logistics_run_queues_ahead_of_background_workspace_read(
         )["task"]
         assert leased["type"] == "logistics.query.v1"
         assert leased["payload"]["browserMode"] == "visible"
+        assert leased["payload"]["allowOpenEnvironment"] is True
 
         with database.session_factory() as session:
             tasks = list(

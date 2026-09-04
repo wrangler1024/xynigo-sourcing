@@ -258,18 +258,33 @@ class TrackingScreenshotTests(unittest.TestCase):
         updates.update({k: v for k, v in info.items() if v})
         self.assertEqual(updates['orderTime'], '2026-08-18 01:05:40')
 
-    def test_site_mismatch_is_rejected_before_browser_start(self):
-        job = QueryOrchestrator(hub=None)
-        row = job._blank_row('1001', 'US')
-        job._query_one(
-            row, '1001', {
-                '1001': {
-                    'containerCode': 'fake',
-                    'containerName': '采购-甲-MX-0819-001',
-                }
-            }, set(), 'US')
-        self.assertEqual(row['state'], 'fail')
-        self.assertIn('与所选 US 站不一致', row['error'])
+    def test_serial_query_does_not_reject_environment_name_site_marker(self):
+        class ReadyHub(object):
+            def __init__(self):
+                self.calls = []
+
+            def open_container_codes(self):
+                return set()
+
+            def browser_start(self, code, headless=False):
+                self.calls.append(('start', code, headless))
+                return {'debuggingPort': '9222'}
+
+            def browser_stop(self, code):
+                self.calls.append(('stop', code))
+
+        hub = ReadyHub()
+        job = QueryOrchestrator(hub, settle_seconds=0, env_interval=0)
+        result = job.preflight_batch(['1001'], {'1001': {
+            'containerCode': 'container-1',
+            'containerName': '采购-甲-MX-0819-001',
+        }}, site='US')
+
+        self.assertEqual(result, {'checked': True, 'debuggingPort': 9222})
+        self.assertEqual(hub.calls, [
+            ('start', 'container-1', True),
+            ('stop', 'container-1'),
+        ])
 
     def test_batch_is_running_before_background_hub_read_completes(self):
         release = threading.Event()
@@ -324,6 +339,92 @@ class TrackingScreenshotTests(unittest.TestCase):
         self.assertEqual(job._start_browser('container-1'), {'browser': 'ok'})
         self.assertEqual(hub.calls, [('container-1', False)])
         self.assertEqual(job.snapshot()['browserMode'], 'visible')
+
+    def test_readonly_open_environment_is_attached_and_not_stopped(self):
+        class OpenHub(object):
+            def __init__(self):
+                self.status_calls = []
+                self.start_calls = []
+                self.stop_calls = []
+
+            def browser_status(self, code, timeout=None):
+                self.status_calls.append((code, timeout))
+                return [{
+                    'containerCode': code,
+                    'debuggingPort': '59591',
+                    'ip': '203.0.113.20',
+                }]
+
+            def browser_start(self, code, headless=False):
+                self.start_calls.append((code, headless))
+                raise AssertionError('must not start an already-open environment')
+
+            def browser_stop(self, code):
+                self.stop_calls.append(code)
+                raise AssertionError('must not stop an attached environment')
+
+        class Page(object):
+            def __init__(self):
+                self.url = ''
+                self.closed = False
+
+            def goto(self, url, settle_seconds=0):
+                self.url = url
+
+            def _evaluate(self, expression):
+                return ('America/Mexico_City'
+                        if 'resolvedOptions' in expression else 360)
+
+            def outer_html(self):
+                return ''
+
+            def close(self):
+                self.closed = True
+
+        hub = OpenHub()
+        page = Page()
+        job = QueryOrchestrator(hub, settle_seconds=0, env_interval=0)
+        job.allow_open_environment = True
+        row = job._blank_row('1001', 'MX')
+        list_result = {
+            'orderNo': 'GSH1TEST', 'orderTime': '2026-09-04 10:00:00',
+            'amount': '$MXN100.00', 'status': 'Procesando',
+            'statusCn': '备货中', 'stage': '',
+        }
+        detail_result = {
+            'tracks': [], 'pkgs': [], 'carrier': '', 'kanDan': False,
+            'riskOrder': False, 'riskMessage': '', 'orderTime': '',
+        }
+        cdp = type('AttachedCdp', (), {'new_page': lambda self: page})()
+        with patch('purchase_tool.shein_query.CdpClient', return_value=cdp), \
+                patch.object(job, '_read_text_stable', return_value=''), \
+                patch('purchase_tool.shein_query.parse_list_page',
+                      return_value=list_result), \
+                patch('purchase_tool.shein_query.parse_detail_page',
+                      return_value=detail_result):
+            job._query_one(row, '1001', {'1001': {
+                'containerCode': 'container-1',
+                'containerName': '任意分组-MX-环境',
+            }}, {'container-1'}, 'MX')
+
+        self.assertEqual(row['state'], 'ok')
+        self.assertEqual(row['orderNo'], 'GSH1TEST')
+        self.assertEqual(hub.status_calls, [('container-1', 10.0)])
+        self.assertEqual(hub.start_calls, [])
+        self.assertEqual(hub.stop_calls, [])
+        self.assertTrue(page.closed)
+
+    def test_open_environment_is_still_skipped_when_readonly_option_is_off(self):
+        job = QueryOrchestrator(hub=None, settle_seconds=0, env_interval=0)
+        row = job._blank_row('1001', 'MX')
+
+        job._query_one(row, '1001', {'1001': {
+            'containerCode': 'container-1',
+            'containerName': '任意环境',
+        }}, {'container-1'}, 'MX')
+
+        self.assertEqual(row['state'], 'inuse')
+        self.assertIn('允许连接已打开环境', row['error'])
 
     def test_preflight_rejects_missing_browser_core_before_batch_start(self):
         class MissingCoreHub(object):
@@ -413,7 +514,54 @@ class TrackingScreenshotTests(unittest.TestCase):
         self.assertFalse(job.stop_event.is_set())
         self.assertEqual(job.fatal_error_code, '')
 
-    def test_persistent_local_api_disconnect_stops_after_recovery_window(self):
+    def test_timed_out_start_reconciles_status_without_duplicate_start(self):
+        class TimedOutButStartedHub(object):
+            def __init__(self):
+                self.start_calls = 0
+                self.status_calls = []
+
+            def browser_start(self, _code, headless=False):
+                self.start_calls += 1
+                raise HubApiError(
+                    'HubStudio Local API 请求超时',
+                    'hubstudio_local_api_timeout')
+
+            def browser_status(self, code, timeout=None):
+                self.status_calls.append((code, timeout))
+                return [{
+                    'containerCode': code,
+                    'debuggingPort': '59591',
+                    'ip': '203.0.113.20',
+                }]
+
+        hub = TimedOutButStartedHub()
+        job = QueryOrchestrator(hub, settle_seconds=0, env_interval=0)
+        with patch('purchase_tool.shein_query.time.sleep') as sleep:
+            result = job._start_browser('container-1')
+
+        self.assertEqual(result['debuggingPort'], '59591')
+        self.assertEqual(hub.start_calls, 1)
+        self.assertEqual(hub.status_calls, [('container-1', 5.0)])
+        sleep.assert_not_called()
+        self.assertFalse(job.stop_event.is_set())
+        self.assertEqual(job.fatal_error_code, '')
+        self.assertTrue(job.snapshot()['resourceConstrained'])
+        self.assertEqual(job.snapshot()['effectiveConcurrency'], 1)
+
+    def test_timeout_is_row_scoped_and_does_not_terminate_pending_rows(self):
+        job = QueryOrchestrator(hub=None, settle_seconds=0, env_interval=0)
+        job.rows = [job._blank_row('1001'), job._blank_row('1002')]
+
+        systemic = job._record_systemic_hub_failure(HubApiError(
+            'HubStudio Local API 请求超时',
+            'hubstudio_local_api_timeout'))
+
+        self.assertFalse(systemic)
+        self.assertFalse(job.stop_event.is_set())
+        self.assertEqual(job.fatal_error_code, '')
+        self.assertTrue(all(row['state'] == 'pending' for row in job.rows))
+
+    def test_persistent_local_api_disconnect_only_fails_current_row_scope(self):
         class OfflineHub(object):
             def __init__(self):
                 self.start_calls = 0
@@ -432,13 +580,108 @@ class TrackingScreenshotTests(unittest.TestCase):
 
         self.assertEqual(
             caught.exception.reason_code, 'hubstudio_local_api_unreachable')
-        self.assertEqual(hub.start_calls, 6)
+        self.assertEqual(hub.start_calls, 8)
         self.assertEqual(
             [call.args[0] for call in sleep.call_args_list],
-            [2.0, 4.0, 8.0, 8.0, 8.0])
-        self.assertTrue(job.stop_event.is_set())
-        self.assertEqual(
-            job.fatal_error_code, 'hubstudio_local_api_unreachable')
+            [2.0, 4.0, 8.0, 15.0, 30.0, 30.0, 30.0])
+        self.assertFalse(job.stop_event.is_set())
+        self.assertEqual(job.fatal_error_code, '')
+        self.assertTrue(job.snapshot()['resourceConstrained'])
+        self.assertEqual(job.snapshot()['effectiveConcurrency'], 1)
+
+    def test_resource_pressure_waits_and_recovers_in_single_environment_mode(self):
+        class RecoveringHub(object):
+            def __init__(self):
+                self.start_calls = 0
+
+            def browser_start(self, _code, headless=False):
+                self.start_calls += 1
+                if self.start_calls == 1:
+                    raise HubApiError(
+                        'HubStudio Local API 返回 code=-10008: 系统资源不足',
+                        'hubstudio_system_resources_insufficient',
+                        api_code='-10008')
+                return {'debuggingPort': '9222', 'headless': headless}
+
+        hub = RecoveringHub()
+        job = QueryOrchestrator(
+            hub, settle_seconds=0, env_interval=0, concurrency=5)
+        with patch('purchase_tool.shein_query.time.sleep') as sleep:
+            result = job._start_browser('container-1')
+
+        self.assertEqual(result['debuggingPort'], '9222')
+        self.assertEqual(hub.start_calls, 2)
+        sleep.assert_called_once_with(5.0)
+        snapshot = job.snapshot()
+        self.assertFalse(snapshot['fatalErrorCode'])
+        self.assertTrue(snapshot['resourceConstrained'])
+        self.assertEqual(snapshot['effectiveConcurrency'], 1)
+        self.assertEqual(snapshot['runtimeState'], 'degraded')
+
+    def test_resource_pressure_waits_for_active_environment_to_close(self):
+        first_failure = threading.Event()
+        completed = threading.Event()
+        result = {}
+
+        class RecoveringHub(object):
+            def __init__(self):
+                self.start_calls = 0
+
+            def browser_start(self, _code, headless=False):
+                self.start_calls += 1
+                if self.start_calls == 1:
+                    first_failure.set()
+                    raise HubApiError(
+                        'HubStudio Local API 返回 code=-10008: 系统资源不足',
+                        'hubstudio_system_resources_insufficient',
+                        api_code='-10008')
+                return {'debuggingPort': '9222', 'headless': headless}
+
+        hub = RecoveringHub()
+        job = QueryOrchestrator(hub, settle_seconds=0, env_interval=0)
+        job._mark_browser_started('already-running')
+
+        def start():
+            try:
+                result.update(job._start_browser('container-2'))
+            finally:
+                completed.set()
+
+        with patch('purchase_tool.shein_query.time.sleep'):
+            thread = threading.Thread(target=start)
+            thread.start()
+            self.assertTrue(first_failure.wait(1))
+            self.assertFalse(completed.wait(0.05))
+            self.assertEqual(hub.start_calls, 1)
+            job._mark_browser_stopped('already-running')
+            self.assertTrue(completed.wait(1))
+            thread.join(timeout=1)
+
+        self.assertEqual(hub.start_calls, 2)
+        self.assertEqual(result['debuggingPort'], '9222')
+
+    def test_browser_stop_waits_until_environment_disappears(self):
+        class ClosingHub(object):
+            def __init__(self):
+                self.status_calls = 0
+                self.stop_calls = []
+
+            def browser_stop(self, code):
+                self.stop_calls.append(code)
+
+            def open_container_codes(self):
+                self.status_calls += 1
+                return ({'container-1'} if self.status_calls == 1 else set())
+
+        hub = ClosingHub()
+        job = QueryOrchestrator(hub, settle_seconds=0, env_interval=0)
+        job._mark_browser_started('container-1')
+        with patch('purchase_tool.shein_query.time.sleep') as sleep:
+            self.assertTrue(job._stop_browser_and_confirm('container-1'))
+
+        self.assertEqual(hub.stop_calls, ['container-1'])
+        self.assertEqual(hub.status_calls, 2)
+        sleep.assert_called_once_with(1.0)
 
     def test_authentication_failure_is_not_retried_as_transport_recovery(self):
         class AuthenticationFailureHub(object):

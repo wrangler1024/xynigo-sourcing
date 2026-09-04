@@ -3742,6 +3742,7 @@ def create_app(
                 )
             request_summary = dict(run.request_summary or {})
             request_summary["browserMode"] = browser_mode
+            request_summary["allowOpenEnvironment"] = body.allowOpenEnvironment
             run.request_summary = request_summary
             task = executor_tasks.create_config_task(
                 tenant_id=actor.tenant.id,
@@ -3753,6 +3754,7 @@ def create_app(
                     "runKey": run.source_run_key,
                     "queryMode": body.queryMode,
                     "browserMode": browser_mode,
+                    "allowOpenEnvironment": body.allowOpenEnvironment,
                     "force": body.force,
                     "site": body.site,
                     "environmentSerials": list(body.environmentSerials),

@@ -397,6 +397,7 @@ def test_logistics_task_reports_incremental_terminal_result():
             'runKey': 'logistics-run-0001',
             'queryMode': 'initial',
             'site': 'MX',
+            'allowOpenEnvironment': True,
             'environmentSerials': ['101', '102'],
         }, lambda **event: events.append(event))
 
@@ -404,6 +405,7 @@ def test_logistics_task_reports_incremental_terminal_result():
     assert code == 'logistics_partial_failure'
     assert summary['successCount'] == 1
     assert summary['failedCount'] == 1
+    assert rpc.calls[0]['body']['allowOpenEnvironment'] is True
     assert events[-1]['current'] == 2
     assert events[-1]['snapshot']['rows'][1]['status'] == 'login'
     completed = events[-1]['snapshot']['rows'][0]
@@ -444,6 +446,43 @@ def test_logistics_system_failure_preserves_reason_code_and_fails_run():
     assert code == 'hubstudio_browser_core_missing'
     assert summary['runStatus'] == 'failed'
     assert summary['errorSummary'] == 'HubStudio 浏览器内核不存在'
+
+
+def test_logistics_resource_recovery_phase_is_reported_to_cloud():
+    rpc = FakeRpc('/api/progress', [{
+        'running': True,
+        'runtimeState': 'recovering_resources',
+        'resourceConstrained': True,
+        'rows': [{
+            'serial': '101', 'envName': 'XG-MX-001',
+            'state': 'running', 'error': '',
+        }],
+    }, {
+        'running': False,
+        'runtimeState': 'degraded',
+        'resourceConstrained': True,
+        'rows': [{
+            'serial': '101', 'envName': 'XG-MX-001',
+            'state': 'ok', 'error': '',
+        }],
+    }])
+    events = []
+    executor = LocalOperationExecutor(
+        rpc, poll_interval=0.05, sleep_fn=lambda _seconds: None)
+
+    outcome, code, summary = executor.execute(
+        'logistics.query.v1', {
+            'runKey': 'logistics-resource-recovery-0001',
+            'queryMode': 'initial',
+            'site': 'MX',
+            'environmentSerials': ['101'],
+        }, lambda **event: events.append(event))
+
+    assert events[0]['phase'] == 'logistics.recovering_resources'
+    assert events[-1]['phase'] == 'logistics.completed'
+    assert outcome == 'succeeded'
+    assert code == 'logistics_completed'
+    assert summary['successCount'] == 1
 
 
 def test_environment_preflight_failure_preserves_reason_code_and_summary():

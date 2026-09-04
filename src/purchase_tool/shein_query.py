@@ -31,8 +31,6 @@ SUPPORTED_BROWSER_MODES = ('headless', 'visible')
 SITE_LABELS = {'MX': '墨西哥站', 'US': '美国站'}
 SYSTEMIC_HUB_FAILURE_CODES = {
     'hubstudio_client_not_running',
-    'hubstudio_local_api_unreachable',
-    'hubstudio_local_api_timeout',
     'hubstudio_local_api_disabled',
     'hubstudio_local_api_authentication_required',
     'hubstudio_local_api_authentication_failed',
@@ -41,12 +39,18 @@ SYSTEMIC_HUB_FAILURE_CODES = {
     'hubstudio_browser_launch_invalid',
 }
 # HubStudio 的 Local API 在连续启动/关闭大量环境时可能短暂重启监听端口。
-# 对“连接不到端口”给予约 30 秒恢复窗口；超时本身已经消耗了请求超时，
-# 因此只额外确认一次，避免真正卡死时把整批挂起数分钟。
+# 现场批次表明资源不足后约 2-3 分钟仍可能恢复，因此不能再用原先约
+# 30 秒的窗口直接终止整批。恢复等待发生在 browser/start 串行锁内、
+# 控制 RPC 锁外，
+# 让已经运行的环境仍能完成 browser/stop 并释放资源。
 HUB_TRANSPORT_RECOVERY_DELAYS = {
-    'hubstudio_local_api_unreachable': (2.0, 4.0, 8.0, 8.0, 8.0),
-    'hubstudio_local_api_timeout': (2.0,),
+    'hubstudio_local_api_unreachable': (2.0, 4.0, 8.0, 15.0,
+                                         30.0, 30.0, 30.0),
+    'hubstudio_local_api_timeout': (2.0, 4.0, 8.0, 15.0, 30.0),
 }
+HUB_RESOURCE_RECOVERY_DELAYS = (5.0, 10.0, 15.0, 30.0, 30.0, 30.0)
+BROWSER_CLOSE_CONFIRM_SECONDS = 30.0
+BROWSER_CLOSE_POLL_SECONDS = 1.0
 SITE_PROFILES = {
     'MX': {
         'baseUrl': 'https://www.shein.com.mx',
@@ -492,7 +496,8 @@ class QueryOrchestrator(object):
     def __init__(self, hub, log_dir=None, settle_seconds=6.0,
                  env_interval=1.0, concurrency=1):
         self.hub = hub
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
+        self._browser_state = threading.Condition(self.lock)
         self.stop_event = threading.Event()
         self.rows = []            # 每行 dict，见 _blank_row
         self.running = False
@@ -509,9 +514,18 @@ class QueryOrchestrator(object):
         self.concurrency = max(1, min(5, int(concurrency or 1)))
         self.site = 'MX'
         self.browser_mode = 'headless'
+        self.allow_open_environment = False
         # 并发 worker 的 browser/start 阶段全局串行：HubStudio 对同一/多个
         # 同时到达的 start 处理有先后，串行启动可避免 -10005 冲突
         self._start_lock = threading.Lock()
+        self._active_browser_codes = set()
+        self._pending_close_codes = set()
+        self._resource_constrained = False
+        self._runtime_state = 'idle'
+        self._runtime_message = ''
+        self._recovery_attempt = 0
+        self._recovery_count = 0
+        self._preflight_completed = False
         # 需要"先关闭再重查"的环境序号（清理上次查询中断残留的孤儿窗口）
         self._force_stops = set()
 
@@ -546,8 +560,19 @@ class QueryOrchestrator(object):
                 'site': self.site,
                 'siteName': SITE_LABELS[self.site],
                 'browserMode': self.browser_mode,
+                'allowOpenEnvironment': self.allow_open_environment,
                 'fatalError': self.fatal_error,
                 'fatalErrorCode': self.fatal_error_code,
+                'runtimeState': self._runtime_state,
+                'runtimeMessage': self._runtime_message,
+                'resourceConstrained': self._resource_constrained,
+                'effectiveConcurrency': (
+                    1 if (self.browser_mode == 'visible'
+                          or self._resource_constrained)
+                    else self.concurrency),
+                'recoveryAttempt': self._recovery_attempt,
+                'recoveryCount': self._recovery_count,
+                'pendingCloseCount': len(self._pending_close_codes),
                 'rows': [dict(r) for r in self.rows],
             }
 
@@ -677,7 +702,8 @@ class QueryOrchestrator(object):
     # ---- 查询入口 ----
 
     def preflight_batch(self, serials, env_index=None, site='MX',
-                        browser_mode='headless'):
+                        browser_mode='headless',
+                        allow_open_environment=False):
         """Prove one eligible environment can launch before accepting a batch.
 
         A healthy ``group/list`` response does not prove that HubStudio has a
@@ -690,6 +716,20 @@ class QueryOrchestrator(object):
         with self.lock:
             if self.running:
                 raise RuntimeError('已有查询在进行中')
+            # 清除上一批的终止/降级状态；本次预检与正式批次共享同一套
+            # start/stop 资源保护，但不清空历史结果行。
+            self.stop_event = threading.Event()
+            self.fatal_error = ''
+            self.fatal_error_code = ''
+            self._active_browser_codes = set()
+            self._pending_close_codes = set()
+            self._resource_constrained = False
+            self._runtime_state = 'preparing'
+            self._runtime_message = ''
+            self._recovery_attempt = 0
+            self._recovery_count = 0
+            self._preflight_completed = False
+            self.allow_open_environment = bool(allow_open_environment)
         index = env_index or {
             str(env.get('serialNumber')): env for env in self.hub.env_list()
             if env.get('serialNumber') is not None
@@ -706,25 +746,37 @@ class QueryOrchestrator(object):
             env = index.get(serial)
             if not env:
                 continue
-            env_name = str(env.get('containerName') or '')
-            env_site = re.search(r'-(MX|US)-', env_name, re.I)
-            if env_site and env_site.group(1).upper() != site:
-                continue
             code = str(env.get('containerCode') or '').strip()
-            if code and code not in open_codes:
-                target_code = code
-                target_browser_type = str(
-                    env.get('browser') or 'chrome').casefold()
-                target_core_version = str(env.get('coreVersion') or '')
-                break
+            if not code:
+                continue
+            if code in open_codes:
+                if not self.allow_open_environment:
+                    continue
+                try:
+                    attached = self._attach_open_browser(code)
+                except HubApiError:
+                    continue
+                with self.lock:
+                    self._preflight_completed = True
+                return {
+                    'checked': True,
+                    'debuggingPort': int(attached['debuggingPort']),
+                    'attachedExisting': True,
+                }
+            target_code = code
+            target_browser_type = str(
+                env.get('browser') or 'chrome').casefold()
+            target_core_version = str(env.get('coreVersion') or '')
+            break
         if not target_code:
+            with self.lock:
+                self._preflight_completed = True
             return {'checked': False}
 
         started = False
         try:
-            with self._start_lock:
-                data = self.hub.browser_start(
-                    target_code, headless=browser_mode == 'headless')
+            data = self._start_browser(
+                target_code, browser_mode=browser_mode)
             started = True
             try:
                 debugging_port = int((data or {}).get('debuggingPort'))
@@ -734,6 +786,8 @@ class QueryOrchestrator(object):
                 raise HubApiError(
                     'HubStudio 启动环境后未返回调试端口',
                     'hubstudio_browser_launch_invalid')
+            with self.lock:
+                self._preflight_completed = True
             return {'checked': True, 'debuggingPort': debugging_port}
         except HubApiError as exc:
             marker = getattr(self.hub, 'mark_runtime_failure', None)
@@ -748,45 +802,188 @@ class QueryOrchestrator(object):
             raise
         finally:
             if started:
-                try:
-                    self.hub.browser_stop(target_code)
-                except HubApiError as exc:
-                    self._record_systemic_hub_failure(exc, fail_rows=False)
-                    raise
+                if not self._stop_browser_and_confirm(target_code):
+                    with self.lock:
+                        self._preflight_completed = False
+                    raise HubApiError(
+                        '预检环境关闭确认超时，请等待 HubStudio '
+                        '释放资源后重试',
+                        'hubstudio_browser_cleanup_pending')
 
     def start_batch(self, serials, env_index=None, site='MX',
-                    on_finished=None, browser_mode='headless'):
+                    on_finished=None, browser_mode='headless',
+                    allow_open_environment=False):
         """启动批量查询线程。env_index: {serialNumber(str): env dict}。"""
         site = normalize_site(site)
         serials = list(serials)
         self._prepare_run(
-            serials, site, fresh=True, browser_mode=browser_mode)
+            serials, site, fresh=True, browser_mode=browser_mode,
+            allow_open_environment=allow_open_environment)
         threading.Thread(
             target=self._run,
             args=(serials, env_index or {}, False, site, on_finished, True),
             daemon=True).start()
 
-    def _prepare_run(self, serials, site, fresh, browser_mode=None):
+    def _prepare_run(self, serials, site, fresh, browser_mode=None,
+                     allow_open_environment=None):
         """Publish running state before background I/O can block or finish."""
         with self.lock:
             if self.running:
                 raise RuntimeError('已有查询在进行中')
+            preserve_preflight_pressure = bool(self._preflight_completed)
+            constrained = bool(
+                self._resource_constrained and preserve_preflight_pressure)
+            recovery_count = (
+                self._recovery_count if preserve_preflight_pressure else 0)
+            self._preflight_completed = False
             self.stop_event = threading.Event()
             self.site = site
             if browser_mode is not None:
                 self.browser_mode = normalize_browser_mode(browser_mode)
+            if allow_open_environment is not None:
+                self.allow_open_environment = bool(allow_open_environment)
             self.running = True
             self.started_at = time.time()
             self.finished_at = None
             self.fatal_error = ''
             self.fatal_error_code = ''
             self._inflight = set()
+            self._active_browser_codes = set()
+            self._pending_close_codes = set()
+            self._resource_constrained = constrained
+            self._runtime_state = 'degraded' if constrained else 'running'
+            self._runtime_message = (
+                '预检曾检测到 HubStudio 资源压力，本批已自动降为单环境运行'
+                if constrained else '')
+            self._recovery_attempt = 0
+            self._recovery_count = recovery_count
             if fresh:
                 self._reset_screenshots()
                 self.rows = [self._blank_row(s, site) for s in serials]
 
+    def _set_runtime_recovery(self, state, message, attempt=0,
+                              constrain=True):
+        with self._browser_state:
+            if constrain:
+                self._resource_constrained = True
+            self._runtime_state = str(state or 'recovering')[:64]
+            self._runtime_message = str(message or '')[:180]
+            self._recovery_attempt = max(0, int(attempt or 0))
+            self._recovery_count += 1
+            self._browser_state.notify_all()
+
+    def _mark_browser_started(self, code):
+        with self._browser_state:
+            self._active_browser_codes.add(str(code))
+            self._runtime_state = (
+                'degraded' if self._resource_constrained else 'running')
+            self._runtime_message = (
+                'HubStudio 已恢复，后续查询已自动降为单环境运行'
+                if self._resource_constrained else '')
+            self._recovery_attempt = 0
+            self._browser_state.notify_all()
+
+    def _mark_browser_stopped(self, code):
+        with self._browser_state:
+            self._active_browser_codes.discard(str(code))
+            self._browser_state.notify_all()
+
+    def _wait_for_degraded_slot(self, deadline):
+        """资源受限后只允许一个由本批启动的环境同时运行。"""
+        with self._browser_state:
+            while (self._resource_constrained
+                   and self._active_browser_codes
+                   and not self.stop_event.is_set()
+                   and time.time() < deadline):
+                self._runtime_state = 'waiting_cleanup'
+                self._runtime_message = (
+                    '正在等待上一环境完全关闭并释放 HubStudio 资源')
+                self._browser_state.wait(timeout=min(
+                    1.0, max(0.05, deadline - time.time())))
+
+    def _wait_for_pending_closes(self, deadline):
+        """资源受限时，不越过仍被 HubStudio 报告为打开的本批环境。"""
+        checker = getattr(self.hub, 'open_container_codes', None)
+        while time.time() < deadline and not self.stop_event.is_set():
+            with self.lock:
+                pending = set(self._pending_close_codes)
+            if not pending:
+                return True
+            if not callable(checker):
+                return False
+            try:
+                open_codes = set(checker())
+            except HubApiError:
+                self._set_runtime_recovery(
+                    'reconnecting_hub',
+                    '正在恢复 Local API，以确认上一环境已经关闭')
+            else:
+                remaining = pending.intersection(open_codes)
+                with self._browser_state:
+                    self._pending_close_codes.difference_update(
+                        pending - remaining)
+                    if not self._pending_close_codes:
+                        self._browser_state.notify_all()
+                        return True
+                    self._runtime_state = 'waiting_cleanup'
+                    self._runtime_message = (
+                        'HubStudio 仍在关闭上一环境，暂不启动新环境')
+            time.sleep(BROWSER_CLOSE_POLL_SECONDS)
+        return False
+
+    def _stop_browser_and_confirm(self, code):
+        """关闭本批环境，并确认 HubStudio 不再报告为打开状态。"""
+        code = str(code)
+        deadline = time.time() + BROWSER_CLOSE_CONFIRM_SECONDS
+        stop_sent = False
+        confirmed = False
+        last_error = None
+        checker = getattr(self.hub, 'open_container_codes', None)
+        try:
+            while time.time() < deadline:
+                if not stop_sent:
+                    try:
+                        self.hub.browser_stop(code)
+                        stop_sent = True
+                    except HubApiError as exc:
+                        last_error = exc
+                        if exc.reason_code not in {
+                                'hubstudio_local_api_unreachable',
+                                'hubstudio_local_api_timeout'}:
+                            break
+                if stop_sent and not callable(checker):
+                    confirmed = True
+                    break
+                if stop_sent:
+                    try:
+                        if code not in checker():
+                            confirmed = True
+                            break
+                    except HubApiError as exc:
+                        last_error = exc
+                if self.stop_event.is_set() and not self.fatal_error_code:
+                    # 用户停止仍要尽量完成当前关闭，但不额外拖满 30 秒。
+                    break
+                time.sleep(BROWSER_CLOSE_POLL_SECONDS)
+        finally:
+            with self._browser_state:
+                self._active_browser_codes.discard(code)
+                if confirmed:
+                    self._pending_close_codes.discard(code)
+                else:
+                    self._pending_close_codes.add(code)
+                self._browser_state.notify_all()
+        if not confirmed:
+            detail = str(last_error or 'HubStudio 尚未确认环境完全关闭')
+            self._set_runtime_recovery(
+                'waiting_cleanup',
+                '环境关闭确认延迟：%s；后续查询已降为单环境运行' %
+                detail[:100])
+        return confirmed
+
     def requery(self, serial, env_index=None, force=False, on_finished=None,
-                site=None, allow_missing=False, browser_mode=None):
+                site=None, allow_missing=False, browser_mode=None,
+                allow_open_environment=None):
         """单行重新查询（复用同一套流程，不新增行）。
 
         force=True：环境浏览器处于打开状态时先关闭再查——用于清理上次
@@ -803,21 +1000,23 @@ class QueryOrchestrator(object):
                 raise ValueError('该序号不在当前结果中，请重新发起批量查询')
             site = normalize_site(site or self.site)
             self._prepare_run(
-                [serial], site, fresh=True, browser_mode=browser_mode)
+                [serial], site, fresh=True, browser_mode=browser_mode,
+                allow_open_environment=allow_open_environment)
         else:
             site = row.get('site') or self.site
         if force:
             self._force_stops.add(serial)
         if row is not None:
             self._prepare_run(
-                [serial], site, fresh=False, browser_mode=browser_mode)
+                [serial], site, fresh=False, browser_mode=browser_mode,
+                allow_open_environment=allow_open_environment)
         threading.Thread(
             target=self._run,
             args=([serial], env_index or {}, False, site, on_finished, True),
             daemon=True).start()
 
     def requery_failed(self, env_index=None, on_finished=None,
-                       browser_mode=None):
+                       browser_mode=None, allow_open_environment=None):
         """批量重查异常行（失败/使用中/未查询/已停止）。
 
         登录失效行不含在内——需先在 HubStudio 手动登录，否则重查结果不变。
@@ -835,7 +1034,8 @@ class QueryOrchestrator(object):
             site = next((r.get('site') for r in self.rows
                          if r['serial'] in serials), self.site)
         self._prepare_run(
-            serials, site, fresh=False, browser_mode=browser_mode)
+            serials, site, fresh=False, browser_mode=browser_mode,
+            allow_open_environment=allow_open_environment)
         threading.Thread(
             target=self._run,
             args=(serials, env_index or {}, False, site, on_finished, True),
@@ -844,6 +1044,8 @@ class QueryOrchestrator(object):
 
     def request_stop(self):
         self.stop_event.set()
+        with self._browser_state:
+            self._browser_state.notify_all()
 
     # ---- 主流程 ----
 
@@ -892,7 +1094,9 @@ class QueryOrchestrator(object):
                         time.sleep(self.env_interval)
 
             effective_concurrency = (
-                1 if self.browser_mode == 'visible' else self.concurrency)
+                1 if (self.browser_mode == 'visible'
+                      or self._resource_constrained)
+                else self.concurrency)
             n_workers = max(1, min(effective_concurrency, len(serials)))
             threads = [threading.Thread(target=worker, daemon=True)
                        for _ in range(n_workers)]
@@ -963,34 +1167,146 @@ class QueryOrchestrator(object):
             text = page.inner_text()
         return text
 
-    def _start_browser(self, code):
-        """启动浏览器：全局串行 + 对 -10005（上次 start 未执行完）耐心等待。
+    def _reconcile_timed_out_start(self, code):
+        """确认一次超时的 start 是否其实已由 HubStudio 执行成功。
+
+        Local API 的 HTTP 等待超时不等于 HubStudio 取消了启动。若环境已在
+        后台打开，直接再次调用 browser/start 会制造重复启动和额外资源
+        压力，因此必须先通过浏览器状态接口对账。
+        """
+        loader = getattr(self.hub, 'browser_status', None)
+        if not callable(loader):
+            return None
+        try:
+            statuses = loader(code, timeout=5.0)
+        except (HubApiError, NotImplementedError, TypeError):
+            return None
+        wanted = str(code)
+        for item in statuses or []:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get('containerCode') or '') != wanted:
+                continue
+            try:
+                port = int(item.get('debuggingPort') or 0)
+            except (TypeError, ValueError):
+                port = 0
+            if port > 0:
+                return dict(item)
+        return None
+
+    def _attach_open_browser(self, code):
+        """只读附着一个已打开环境，不取得该环境的关闭所有权。"""
+        loader = getattr(self.hub, 'browser_status', None)
+        if not callable(loader):
+            raise HubApiError(
+                '当前 HubStudio Local API 不支持读取已打开环境状态',
+                'hubstudio_browser_attach_unavailable')
+        try:
+            statuses = loader(code, timeout=10.0)
+        except (NotImplementedError, TypeError) as exc:
+            raise HubApiError(
+                '当前 HubStudio Local API 不支持连接已打开环境',
+                'hubstudio_browser_attach_unavailable') from exc
+        wanted = str(code)
+        for item in statuses or []:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get('containerCode') or '') != wanted:
+                continue
+            try:
+                port = int(item.get('debuggingPort') or 0)
+            except (TypeError, ValueError):
+                port = 0
+            if port > 0:
+                return dict(item)
+        raise HubApiError(
+            '已打开环境未返回可用调试端口，请稍后重查',
+            'hubstudio_browser_attach_unavailable')
+
+    def _start_browser(self, code, browser_mode=None):
+        """串行启动浏览器，并对资源压力与 Local API 波动自适应恢复。
 
         -10005 常见于并发场景或上一批次 start 尚在执行时同环境再次 start，
         正确处理是等待其执行完而非快速重试（默认 0.4s×3 次的重试对它无效）。
 
-        Local API 监听端口在大批量任务中可能瞬时断开。单次断开不能证明
-        HubStudio 已经离线；当前 start 保持串行，在有限恢复窗口内重试不会
-        引入另一个环境的并发 start。恢复窗口耗尽后仍按系统级故障终止。
+        -10008 表明 Local API 可达、但 HubStudio 无法继续分配浏览器资源。
+        此时先等待本批已启动环境完全关闭，再把后续执行降为单环境。Local
+        API 断连若客户端窗口仍在，也按可恢复行级故障处理，不再连带终止
+        尚未开始的整批任务。
         """
-        deadline = time.time() + 90
+        mode = normalize_browser_mode(browser_mode or self.browser_mode)
+        deadline = time.time() + 180
         transport_attempts = {}
+        resource_attempt = 0
         with self._start_lock:
             if self.stop_event.is_set() and self.fatal_error_code:
                 raise HubApiError(
                     self.fatal_error or 'HubStudio 系统状态不可用',
                     self.fatal_error_code)
             while True:
+                self._wait_for_degraded_slot(deadline)
+                if (self._resource_constrained
+                        and not self._wait_for_pending_closes(deadline)):
+                    raise HubApiError(
+                        '等待 HubStudio 完成环境关闭超时，可稍后重查此行',
+                        'hubstudio_system_resources_insufficient',
+                        api_code='-10008')
+                with self.lock:
+                    capacity_busy = bool(
+                        self._resource_constrained
+                        and self._active_browser_codes)
+                if capacity_busy:
+                    raise HubApiError(
+                        '等待上一环境释放资源超时，可稍后重查此行',
+                        'hubstudio_system_resources_insufficient',
+                        api_code='-10008')
                 try:
-                    return self.hub.browser_start(
-                        code, headless=self.browser_mode == 'headless')
+                    result = self.hub.browser_start(
+                        code, headless=mode == 'headless')
+                    self._mark_browser_started(code)
+                    return result
                 except HubApiError as e:
                     if '-10005' in str(e) and time.time() < deadline:
                         time.sleep(5)
                         continue
                     reason_code = str(e.reason_code or '')
+                    if reason_code == 'hubstudio_system_resources_insufficient':
+                        if (resource_attempt < len(HUB_RESOURCE_RECOVERY_DELAYS)
+                                and time.time() < deadline):
+                            resource_attempt += 1
+                            self._set_runtime_recovery(
+                                'recovering_resources',
+                                'HubStudio 资源不足，正在等待环境释放；'
+                                '后续自动降为单环境运行',
+                                resource_attempt)
+                            self._wait_for_degraded_slot(deadline)
+                            delay = min(
+                                HUB_RESOURCE_RECOVERY_DELAYS[
+                                    resource_attempt - 1],
+                                max(0.0, deadline - time.time()))
+                            if delay > 0:
+                                # 必须在 browser 控制锁外休眠，使另一个 worker
+                                # 可以提交 stop；全局 defer 会反过来阻塞资源释放。
+                                time.sleep(delay)
+                                continue
+                        self._set_runtime_recovery(
+                            'degraded',
+                            'HubStudio 资源在恢复窗口内仍不足；本行稍后可重查',
+                            resource_attempt)
+                        raise
                     recovery_delays = HUB_TRANSPORT_RECOVERY_DELAYS.get(
                         reason_code, ())
+                    retry_index = transport_attempts.get(reason_code, 0)
+                    if reason_code == 'hubstudio_local_api_timeout':
+                        self._set_runtime_recovery(
+                            'reconnecting_hub',
+                            'HubStudio 启动请求响应超时，正在核对环境是否已实际打开',
+                            retry_index + 1)
+                        reconciled = self._reconcile_timed_out_start(code)
+                        if reconciled is not None:
+                            self._mark_browser_started(code)
+                            return reconciled
                     client_running_getter = getattr(
                         self.hub, 'client_running_getter', None)
                     if recovery_delays and callable(client_running_getter):
@@ -1006,24 +1322,35 @@ class QueryOrchestrator(object):
                                 'hubstudio_client_not_running')
                             self._record_systemic_hub_failure(offline)
                             raise offline
-                    retry_index = transport_attempts.get(reason_code, 0)
                     if (retry_index < len(recovery_delays)
                             and time.time() < deadline):
                         transport_attempts[reason_code] = retry_index + 1
+                        if reason_code != 'hubstudio_local_api_timeout':
+                            self._set_runtime_recovery(
+                                'reconnecting_hub',
+                                'HubStudio Local API 暂时无响应，正在等待本机服务恢复',
+                                retry_index + 1)
+                        self._wait_for_degraded_slot(deadline)
                         delay = min(
                             recovery_delays[retry_index],
                             max(0.0, deadline - time.time()),
                         )
                         if delay > 0:
-                            runtime_gate = getattr(
-                                self.hub, 'runtime_gate', None)
-                            defer = getattr(
-                                runtime_gate, 'defer_requests', None)
-                            if callable(defer):
-                                defer(delay)
-                            else:
-                                time.sleep(delay)
+                            time.sleep(delay)
+                        if reason_code == 'hubstudio_local_api_timeout':
+                            reconciled = self._reconcile_timed_out_start(code)
+                            if reconciled is not None:
+                                self._mark_browser_started(code)
+                                return reconciled
+                        if time.time() < deadline:
                             continue
+                    if recovery_delays:
+                        self._set_runtime_recovery(
+                            'degraded',
+                            'HubStudio Local API 在恢复窗口内仍不可达；'
+                            '本行稍后可重查',
+                            retry_index)
+                        raise
                     self._record_systemic_hub_failure(e)
                     raise
 
@@ -1045,34 +1372,39 @@ class QueryOrchestrator(object):
         env_name = env.get('containerName') or ''
         self._update(row, envName=env_name,
                      state='running')
-        env_site = re.search(r'-(MX|US)-', env_name, re.I)
-        if env_site and env_site.group(1).upper() != site:
-            self._update(
-                row, state='fail', error=(
-                    '环境名显示为 %s 站，与所选 %s 站不一致；已跳过，未打开环境'
-                    % (env_site.group(1).upper(), site)))
-            return
+        data = None
         if code in open_codes:
             if serial in self._force_stops:
                 # 孤儿窗口清理：上次查询中断残留的打开状态，关闭后重查
                 self._force_stops.discard(serial)
                 try:
-                    self.hub.browser_stop(code)
-                    time.sleep(3)
+                    if not self._stop_browser_and_confirm(code):
+                        raise RuntimeError('HubStudio 未确认残留窗口已关闭')
                 except Exception as e:
                     self._update(row, state='fail',
                                  error='关闭残留窗口失败：%s' % str(e)[:80])
                     return
+            elif self.allow_open_environment:
+                try:
+                    data = self._attach_open_browser(code)
+                except HubApiError as e:
+                    self._update(
+                        row, state='fail',
+                        error='连接已打开环境失败：%s' % str(e)[:100])
+                    return
             else:
                 # 正在使用（采购同事开着或未归档）——跳过防登录态覆盖
                 self._update(row, state='inuse', error=(
-                    '环境浏览器处于打开状态：若为上次查询中断的残留窗口，'
-                    '请用「关闭并重查」；若有人正在使用请勿关闭'))
+                    '环境浏览器处于打开状态：可在高级设置启用'
+                    '「允许连接已打开环境」只读查询；'
+                    '若为上次查询中断的残留窗口也可用「关闭并重查」'))
                 return
         started = False
+        page = None
         try:
-            data = self._start_browser(code)
-            started = True
+            if data is None:
+                data = self._start_browser(code)
+                started = True
             port = int(data.get('debuggingPort'))
             ip = data.get('ip') or ''
             cdp = CdpClient(port)
@@ -1190,7 +1522,6 @@ class QueryOrchestrator(object):
             updates.update({k: v for k, v in info.items() if v})
             updates.update(screenshot)
             self._update(row, state='ok', error='', **updates)
-            page.close()
         except HubApiError as e:
             self._update(row, state='fail',
                          error='查询异常：%s' % str(e)[:120])
@@ -1199,8 +1530,13 @@ class QueryOrchestrator(object):
             self._update(row, state='fail',
                          error='查询异常：%s' % str(e)[:120])
         finally:
-            if started:
+            if page is not None:
                 try:
-                    self.hub.browser_stop(code)
+                    page.close()
                 except Exception:
                     pass
+            if started:
+                try:
+                    self._stop_browser_and_confirm(code)
+                except Exception:
+                    self._mark_browser_stopped(code)

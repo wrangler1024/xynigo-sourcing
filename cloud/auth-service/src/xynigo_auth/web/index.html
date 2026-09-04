@@ -52,7 +52,12 @@
   .progress-wrap { flex: 1; min-width: 240px; display: flex; align-items: center; gap: 10px; }
   .progress { flex: 1; height: 10px; background: var(--gray-bg); border-radius: 999px; overflow: hidden; }
   .progress .bar { height: 100%; width: 0%; background: var(--primary); border-radius: 999px; transition: width .4s ease; }
+  .progress.query-outcome-review { background: var(--red-bg); }
+  .progress.query-outcome-review .bar { background: linear-gradient(90deg, var(--green), var(--primary)); }
+  .progress.query-outcome-complete .bar { background: var(--green); }
   #progressText { font-size: 13px; color: var(--gray); min-width: 56px; text-align: right; }
+  #progressText.query-outcome-review { color: var(--red); font-weight: 600; min-width: 205px; }
+  #progressText.query-outcome-complete { color: var(--green); font-weight: 600; min-width: 120px; }
   #currentEnv { font-size: 13px; color: var(--blue); min-width: 170px; }
   #elapsed { font-size: 13px; color: var(--gray); min-width: 90px; text-align: right; }
   .table-wrap { overflow-x: auto; }
@@ -136,6 +141,9 @@
   .query-action-advanced summary::-webkit-details-marker { display:none; }
   .query-action-advanced[open] summary { border-bottom:1px solid var(--line); background:#f5f8fa; }
   .query-action-advanced-panel { position:absolute; top:calc(100% + 7px); left:0; z-index:40; width:260px; padding:2px; border:1px solid var(--line); border-radius:12px; background:#fff; box-shadow:0 14px 36px rgba(8,37,72,.16); }
+  .query-open-environment-option { border-top:1px solid var(--line); }
+  .query-open-environment-option label { display:flex; align-items:flex-start; gap:8px; color:var(--navy-800); font-weight:700; line-height:1.45; }
+  .query-open-environment-option input { margin-top:2px; }
   .query-field-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; max-height:420px; overflow:auto; }
   .query-field-list label { display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid var(--line); border-radius:9px; font-size:12px; }
   .export-split { position:relative; display:inline-flex; }
@@ -1875,7 +1883,7 @@
           <select id="groupSelect"><option>加载中…</option></select>
         </div>
         <button class="btn" id="btnGroupAll">查全部分组</button>
-        <div class="hint">分组列表由本机 HubStudio<br>实时读取；序号可在 HubStudio<br>环境列表中查看。</div>
+        <div class="hint">输入序号时会在全部 HubStudio 环境中查找，不校验环境名站点或所选分组；查询站点仅决定打开的 SHEIN 域名和解析规则。分组只用于批量载入序号。</div>
       </div>
     </div>
   </section>
@@ -1900,10 +1908,14 @@
             </select>
             <div class="hint">仅覆盖本次任务。可见模式会打开 HubStudio 环境窗口，并自动限制为单并发。</div>
           </div>
+          <div class="field query-open-environment-option">
+            <label><input id="queryAllowOpenEnvironment" type="checkbox">允许连接已打开环境（只读）</label>
+            <div class="hint">开启后只连接现有调试端口，并使用独立查询标签页；不会启动或关闭该环境，也不会关闭原有标签页。</div>
+          </div>
         </div>
       </details>
       <div class="progress-wrap">
-        <div class="progress"><div class="bar" id="bar"></div></div>
+        <div class="progress" id="queryProgress" role="progressbar" aria-label="物流查询进度" aria-valuemin="0" aria-valuenow="0" aria-valuemax="0"><div class="bar" id="bar"></div></div>
         <span id="progressText">0 / 0</span>
       </div>
       <span id="currentEnv">待开始</span>
@@ -2882,6 +2894,8 @@ let stopRequested = false;
 let queryBackgroundRestoreNotified = false;
 let lastRows = [];
 let queryElapsedBase = 0;
+let queryAttemptElapsedBase = 0;
+let queryElapsedPrefix = '已用';
 let queryElapsedObservedAt = Date.now();
 let toastTimer = null;
 let regTasks = null;
@@ -3745,6 +3759,8 @@ function cloudRunHubConnected(run) {
 
 function cloudLogisticsLegacySnapshot(run) {
   if (!run) return {running:false, rows:[], elapsedSec:0, hubConnected:false};
+  const cumulativeDuration = Number(run.durationSec);
+  const attemptDuration = Number(run.attemptDurationSec);
   const rows = (run.rows || []).map(row => ({
     serial:String(row.environmentSerial || ''),
     envName:String(row.environmentName || ''),
@@ -3775,13 +3791,18 @@ function cloudLogisticsLegacySnapshot(run) {
     terminal:!!run.terminal,
     cancelled:run.status === 'cancelled',
     current:rows.filter(row => row.state === 'running').map(row => row.serial).join(', '),
-    elapsedSec:cloudRunElapsed(run), rows,
+    elapsedSec:Number.isFinite(cumulativeDuration)
+      ? Math.max(0, cumulativeDuration) : cloudRunElapsed(run),
+    attemptElapsedSec:Number.isFinite(attemptDuration)
+      ? Math.max(0, attemptDuration) : cloudRunElapsed(run),
+    rows,
     progressCompleted:Number(run.progressCompleted || 0),
     progressTotal:Number(run.progressTotal || run.totalCount || 0),
     errorCode:String(run.resultCode || ''),
     phase:String(run.phase || ''),
     retryMode:String(run.queryMode || 'initial'), parentRunId:String(run.parentRunId || ''),
     browserMode:String(run.browserMode || 'default'),
+    allowOpenEnvironment:!!run.allowOpenEnvironment,
     site:run.site, hubConnected:cloudRunHubConnected(run),
   };
 }
@@ -3794,6 +3815,8 @@ function logisticsRunFailureText(code) {
     hubstudio_client_not_running:'所选电脑未检测到 HubStudio，请启动 HubStudio 后重试',
     hubstudio_local_api_unreachable:'无法连接所选电脑的 HubStudio Local API，请检查 HubStudio 本地 API 设置',
     hubstudio_local_api_timeout:'所选电脑的 HubStudio Local API 响应超时，请重启 HubStudio 后重试',
+    hubstudio_system_resources_insufficient:'HubStudio 浏览器资源不足，请等待环境释放后重试',
+    hubstudio_browser_cleanup_pending:'HubStudio 尚未完成环境关闭，请稍后重试',
     hubstudio_browser_core_missing:'HubStudio 浏览器内核不可用，请打开 HubStudio 安装或切换可用内核后重试',
     hubstudio_browser_launch_invalid:'HubStudio 未返回可用调试端口，请重启 HubStudio 后重试',
     operation_local_request_failed:'本地执行器未能启动查询；可能仍有上一批本机查询在收尾，请打开执行器状态中心核对',
@@ -6826,8 +6849,49 @@ function renderStats(rows) {
       }).join('')
     : '<span class="carrier-empty">暂无已发货订单</span>';
   const done = rows.filter(r => !['pending', 'running'].includes(r.state)).length;
-  $('progressText').textContent = `${done} / ${rows.length}`;
-  $('bar').style.width = (rows.length ? done / rows.length * 100 : 0) + '%';
+  return {processed:done, eligible:eligibleRows.length,
+    review:Math.max(0, rows.length - eligibleRows.length)};
+}
+
+function paintQueryProgress(snap, stats) {
+  const rows = snap.rows || [];
+  const total = Math.max(rows.length, Number(snap.progressTotal || 0));
+  const backendProcessed = Number(snap.progressCompleted);
+  const processed = Math.max(0, Math.min(total,
+    Number.isFinite(backendProcessed) && (snap.running || snap.parentRunId || snap.cancelled)
+      ? backendProcessed : Number(stats.processed || 0)));
+  const terminalWithRows = !snap.running && rows.length > 0;
+  const valid = Math.max(0, Math.min(total, Number(stats.eligible || 0)));
+  const review = terminalWithRows
+    ? Math.max(Number(stats.review || 0), total - valid)
+    : Math.max(0, Number(stats.review || 0));
+  const retryTotal = Number(snap.retryProgressTotal || 0);
+  const retryCurrent = Number(snap.retryProgressCompleted || 0);
+  const progress = $('queryProgress');
+  const text = $('progressText');
+  progress.classList.remove('query-outcome-review', 'query-outcome-complete');
+  text.classList.remove('query-outcome-review', 'query-outcome-complete');
+  let value = processed;
+  let label = total ? `已处理 ${processed} / ${total}` : '0 / 0';
+  if (snap.running && retryTotal) {
+    label += ` · 本次重查 ${retryCurrent} / ${retryTotal}`;
+  } else if (terminalWithRows && review > 0) {
+    value = valid;
+    label = `有效 ${valid} / ${total} · 待核对 ${review}`;
+    progress.classList.add('query-outcome-review');
+    text.classList.add('query-outcome-review');
+  } else if (terminalWithRows) {
+    value = total;
+    label = `完成 ${total} / ${total}`;
+    progress.classList.add('query-outcome-complete');
+    text.classList.add('query-outcome-complete');
+  }
+  const percent = total ? Math.round(value / total * 100) : 0;
+  $('bar').style.width = `${percent}%`;
+  text.textContent = label;
+  progress.setAttribute('aria-valuenow', String(value));
+  progress.setAttribute('aria-valuemax', String(total));
+  progress.setAttribute('aria-valuetext', label);
 }
 
 function render(snap) {
@@ -6835,26 +6899,20 @@ function render(snap) {
   isRunning = snap.running;
   lastRows = snap.rows || [];
   queryElapsedBase = Number(snap.elapsedSec || 0);
+  queryAttemptElapsedBase = Number(snap.attemptElapsedSec || 0);
+  queryElapsedPrefix = snap.parentRunId ? '累计' : '已用';
   queryElapsedObservedAt = Date.now();
   setHubStatus(snap.hubConnected);
   renderRows(lastRows);
-  renderStats(lastRows);
-  if ((snap.cancelled || !lastRows.length || snap.parentRunId)
-      && Number(snap.progressTotal || 0) > 0) {
-    const current = Number(snap.progressCompleted || 0);
-    const total = Number(snap.progressTotal || 0);
-    const retryTotal = Number(snap.retryProgressTotal || 0);
-    const retryCurrent = Number(snap.retryProgressCompleted || 0);
-    $('progressText').textContent = `${current} / ${total}`
-      + (retryTotal ? ` · 本次重查 ${retryCurrent} / ${retryTotal}` : '');
-    $('bar').style.width = (total ? current / total * 100 : 0) + '%';
-  }
+  const queryStats = renderStats(lastRows);
+  paintQueryProgress(snap, queryStats);
   $('btnStart').disabled = querySubmitting || isRunning
     || (CLOUD_WEB_MODE && !runtimeExecutorReady());
   $('btnStop').disabled = !isRunning;
   $('btnExport').disabled = isRunning || logisticsExporting;
   $('btnExportMenuToggle').disabled = isRunning || logisticsExporting;
   $('queryBrowserMode').disabled = isRunning;
+  $('queryAllowOpenEnvironment').disabled = isRunning;
   const retryable = lastRows.filter(r => ['fail', 'inuse', 'pending', 'stopped'].includes(r.state)).length;
   $('btnRetryFail').disabled = isRunning || !retryable;
   const stopped = lastRows.filter(r => r.state === 'stopped').length;
@@ -6867,40 +6925,79 @@ function render(snap) {
     && !!snap.errorCode && [
       'executor_offline', 'executor_upgrade_required', 'executor_hub_unavailable',
       'hubstudio_client_not_running', 'hubstudio_local_api_unreachable',
-      'hubstudio_local_api_timeout', 'hubstudio_browser_core_missing',
+      'hubstudio_local_api_timeout', 'hubstudio_system_resources_insufficient',
+      'hubstudio_browser_cleanup_pending', 'hubstudio_browser_core_missing',
       'hubstudio_browser_launch_invalid'
     ].includes(String(snap.errorCode));
+  const runtimePhase = String(snap.runtimeState || snap.phase || '')
+    .replace(/^logistics\./, '');
+  const recoveryPhase = ['recovering_resources','reconnecting_hub','waiting_cleanup']
+    .includes(runtimePhase);
   const preflightPhase = isRunning && !snap.current
     && ['created','queued','leased','starting','preparing',''].includes(String(snap.phase || ''));
   const phaseBanner = $('queryPhaseBanner');
   phaseBanner.hidden = !isRunning;
-  phaseBanner.classList.toggle('warning', preflightPhase && queryElapsedBase >= 30);
-  $('queryPhaseTitle').textContent = preflightPhase
+  phaseBanner.classList.toggle('warning', recoveryPhase
+    || (preflightPhase && queryElapsedBase >= 30));
+  $('queryPhaseTitle').textContent = runtimePhase === 'recovering_resources'
+    ? 'HubStudio 资源紧张，正在等待恢复'
+    : runtimePhase === 'reconnecting_hub'
+    ? 'HubStudio Local API 暂时无响应，正在重连'
+    : runtimePhase === 'waiting_cleanup'
+    ? '正在等待上一环境完全关闭'
+    : runtimePhase === 'degraded'
+    ? '查询已恢复，当前批次采用单环境运行'
+    : preflightPhase
     ? (queryElapsedBase >= 30 ? '预检耗时较长，仍在等待本机响应' : '正在预检并准备执行环境')
     : '查询正在执行';
   const activeBrowserMode = snap.browserMode === 'visible' ? '可见调试模式' : '无头模式';
-  $('queryPhaseDescription').textContent = preflightPhase
+  const openEnvironmentMode = snap.allowOpenEnvironment
+    ? '；允许只读连接已打开环境' : '';
+  $('queryPhaseDescription').textContent = runtimePhase === 'recovering_resources'
+    ? '已暂停启动新环境，等待当前环境关闭和资源释放；恢复后会自动降为单环境继续，不会直接终止剩余订单。'
+    : runtimePhase === 'reconnecting_hub'
+    ? '本地执行器仍在运行并持续重试 Local API；恢复后将从当前订单继续。'
+    : runtimePhase === 'waiting_cleanup'
+    ? '关闭确认完成后才会打开下一个环境，避免浏览器进程和句柄持续堆积。'
+    : runtimePhase === 'degraded'
+    ? '检测到过资源压力，本批后续只同时运行一个环境，以可靠性优先。'
+    : preflightPhase
     ? '正在确认执行器、HubStudio、Local API 与浏览器内核；任务已在后台托管，关闭或刷新页面不会停止。'
-    : (snap.current ? `当前环境：${snap.current}；${activeBrowserMode}，可关闭页面，任务会继续在后台执行。` : `已通过预检，正在以${activeBrowserMode}后台处理环境。`);
+    : (snap.current ? `当前环境：${snap.current}；${activeBrowserMode}${openEnvironmentMode}，可关闭页面，任务会继续在后台执行。` : `已通过预检，正在以${activeBrowserMode}后台处理环境${openEnvironmentMode}。`);
   $('btnStart').textContent = isRunning
     ? (preflightPhase ? '预检中…' : '查询中…') : '▶ 开始查询';
+  const outcomeTotal = Math.max(lastRows.length, Number(snap.progressTotal || 0));
+  const outcomeValid = Math.max(0, Number(queryStats.eligible || 0));
+  const outcomeReview = Math.max(
+    Number(queryStats.review || 0), outcomeTotal - outcomeValid);
+  const outcomeCopy = `有效 ${outcomeValid}/${outcomeTotal}`
+    + (outcomeReview ? `，待核对 ${outcomeReview}` : '');
   $('currentEnv').textContent = isRunning
-    ? ((snap.current ? '正在查询：' + snap.current : '执行器正在预检和准备') + ' …')
+    ? (recoveryPhase
+      ? (runtimePhase === 'recovering_resources' ? '等待 HubStudio 释放资源 …'
+        : runtimePhase === 'reconnecting_hub' ? '正在重连 HubStudio Local API …'
+        : '等待环境关闭确认 …')
+      : ((snap.current ? '正在查询：' + snap.current : '执行器正在预检和准备') + ' …'))
     : (snap.cancelled
-      ? `查询已停止：已完成 ${Number(snap.progressCompleted || 0)} / ${Number(snap.progressTotal || lastRows.length || 0)}`
-      : (terminalStartFailure || terminalSystemFailure)
+      ? `查询已停止：${outcomeCopy}`
+      : terminalStartFailure
       ? logisticsRunFailureText(snap.errorCode)
-      : (snap.rows && snap.rows.length ? '查询结束' : '待开始'));
-  paintContinuousElapsed('elapsed', queryElapsedBase);
+      : terminalSystemFailure
+      ? `查询异常结束：${outcomeCopy}；${logisticsRunFailureText(snap.errorCode)}`
+      : (snap.rows && snap.rows.length
+        ? (outcomeReview ? `查询结束：${outcomeCopy}` : `查询完成：${outcomeCopy}`)
+        : '待开始'));
+  paintContinuousElapsed('elapsed', queryElapsedBase, queryElapsedPrefix);
+  $('elapsed').title = snap.parentRunId
+    ? `本次异常重查已用 ${elapsedClock(queryAttemptElapsedBase)}` : '';
   if (wasRunning && (terminalStartFailure || terminalSystemFailure)) {
     toast(logisticsRunFailureText(snap.errorCode));
   }
   if (wasRunning && !isRunning && !terminalSystemFailure
       && snap.rows && snap.rows.length) {
-    const ok = snap.rows.filter(r => r.state === 'ok' && !r.riskOrder).length;
-    const risk = snap.rows.filter(r => r.state === 'ok' && r.riskOrder).length;
-    const riskText = risk ? `，风险订单 ${risk}` : '';
-    toast(stopRequested || snap.cancelled ? '已停止查询' : `查询完成：成功 ${ok} / ${snap.rows.length}${riskText}，可选择快速导出或完整导出保存结果`);
+    toast(stopRequested || snap.cancelled
+      ? `已停止查询：${outcomeCopy}`
+      : `${outcomeReview ? '查询结束' : '查询完成'}：${outcomeCopy}，可选择快速导出或完整导出保存结果`);
   }
 }
 
@@ -6979,16 +7076,25 @@ const ENV_RUN_PHASE_LABEL = {
   cancel_requested:'正在停止并撤销', uncertain:'执行结果待核对'
 };
 
-function paintContinuousElapsed(elementId, seconds) {
+function elapsedClock(seconds) {
   const value = Math.max(0, Math.floor(Number(seconds || 0)));
-  $(elementId).textContent = '已用 ' + String(Math.floor(value / 60)).padStart(2, '0')
+  return String(Math.floor(value / 60)).padStart(2, '0')
     + ':' + String(value % 60).padStart(2, '0');
+}
+
+function paintContinuousElapsed(elementId, seconds, prefix='已用') {
+  $(elementId).textContent = prefix + ' ' + elapsedClock(seconds);
 }
 
 setInterval(() => {
   if (isRunning) {
-    paintContinuousElapsed('elapsed', queryElapsedBase
-      + Math.floor((Date.now() - queryElapsedObservedAt) / 1000));
+    const liveDelta = Math.floor((Date.now() - queryElapsedObservedAt) / 1000);
+    paintContinuousElapsed(
+      'elapsed', queryElapsedBase + liveDelta, queryElapsedPrefix);
+    if (queryElapsedPrefix === '累计') {
+      $('elapsed').title = '本次异常重查已用 '
+        + elapsedClock(queryAttemptElapsedBase + liveDelta);
+    }
   }
   if (envRunning || backupRunning) {
     paintContinuousElapsed('envElapsed', envElapsedBase
@@ -7654,7 +7760,8 @@ $('btnStart').onclick = async () => {
   if (!serials) return;
   const site = $('querySite').value;
   const browserMode = $('queryBrowserMode').value;
-  const payload = {serials, site, browserMode};
+  const allowOpenEnvironment = $('queryAllowOpenEnvironment').checked;
+  const payload = {serials, site, browserMode, allowOpenEnvironment};
   const idempotencyKey = workspaceMutationKey('query-start', payload);
   querySubmitting = true;
   queryPollGraceUntil = Date.now() + 2 * 60 * 1000;
@@ -7667,7 +7774,7 @@ $('btnStart').onclick = async () => {
         method:'POST', headers:{'Content-Type':'application/json'},
         body:JSON.stringify({
           idempotencyKey, executorId:executor.id, queryMode:'initial', site,
-          environmentSerials:serials, browserMode,
+          environmentSerials:serials, browserMode, allowOpenEnvironment,
         })
       });
       j = created.data;
@@ -7721,7 +7828,7 @@ tbody.addEventListener('click', async e => {
   try {
     if (CLOUD_WEB_MODE) {
       const serial = String(btn.dataset.req || '');
-      const payload = {serial, force, site:$('querySite').value, browserMode:$('queryBrowserMode').value};
+      const payload = {serial, force, site:$('querySite').value, browserMode:$('queryBrowserMode').value, allowOpenEnvironment:$('queryAllowOpenEnvironment').checked};
       const idempotencyKey = workspaceMutationKey('query-single-retry', payload);
       const executor = await cloudFormalExecutor('logistics.query.v1');
       const created = await cloudFetchJson('/v1/operation-runs/logistics-query', {
@@ -7730,6 +7837,7 @@ tbody.addEventListener('click', async e => {
           idempotencyKey, executorId:executor.id, queryMode:'single_retry',
           force, site:payload.site, environmentSerials:[serial],
           parentRunId:cloudLogisticsRunId, browserMode:payload.browserMode,
+          allowOpenEnvironment:payload.allowOpenEnvironment,
         })
       });
       clearWorkspaceMutationKey('query-single-retry', idempotencyKey);
@@ -7739,7 +7847,7 @@ tbody.addEventListener('click', async e => {
     } else {
       await api('/api/requery', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ serial: btn.dataset.req, force, browserMode:$('queryBrowserMode').value })
+        body: JSON.stringify({ serial: btn.dataset.req, force, browserMode:$('queryBrowserMode').value, allowOpenEnvironment:$('queryAllowOpenEnvironment').checked })
       });
     }
     stopRequested = false;
@@ -8094,6 +8202,8 @@ $('btnHistoryRerun').onclick = () => {
   $('serialsInput').value = serials.join('\n');
   const site = String(detail.latestRun && detail.latestRun.site || detail.site || '');
   if (['MX','US'].includes(site)) $('querySite').value = site;
+  $('queryAllowOpenEnvironment').checked = !!(
+    detail.latestRun && detail.latestRun.allowOpenEnvironment);
   localExecutorSelectedDeviceId = '';
   runtimePendingExecutorId = '';
   saveSessionRuntimeExecutorId('');
@@ -8133,7 +8243,7 @@ $('btnRetryFail').onclick = async () => {
     ).map(row => String(row.serial || '')).filter(Boolean);
     let j;
     if (CLOUD_WEB_MODE) {
-      const payload = {serials:retrySerials, site:$('querySite').value, browserMode:$('queryBrowserMode').value};
+      const payload = {serials:retrySerials, site:$('querySite').value, browserMode:$('queryBrowserMode').value, allowOpenEnvironment:$('queryAllowOpenEnvironment').checked};
       const idempotencyKey = workspaceMutationKey('query-failed-retry', payload);
       const executor = await cloudFormalExecutor('logistics.query.v1');
       const created = await cloudFetchJson('/v1/operation-runs/logistics-query', {
@@ -8142,6 +8252,7 @@ $('btnRetryFail').onclick = async () => {
           idempotencyKey, executorId:executor.id, queryMode:'failed_retry',
           site:payload.site, environmentSerials:retrySerials,
           parentRunId:cloudLogisticsRunId, browserMode:payload.browserMode,
+          allowOpenEnvironment:payload.allowOpenEnvironment,
         })
       });
       clearWorkspaceMutationKey('query-failed-retry', idempotencyKey);
@@ -8155,7 +8266,7 @@ $('btnRetryFail').onclick = async () => {
     } else {
       j = await api('/api/requery-failed', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({browserMode:$('queryBrowserMode').value})
+        body: JSON.stringify({browserMode:$('queryBrowserMode').value, allowOpenEnvironment:$('queryAllowOpenEnvironment').checked})
       });
     }
     stopRequested = false;

@@ -233,6 +233,8 @@ def test_logistics_history_admin_can_filter_users_and_merges_retry_in_input_orde
         payload = detail.json()["data"]
         assert payload["rootRunId"] == root_id
         assert payload["latestRunId"] == newest_retry_id
+        assert payload["durationSec"] == 180
+        assert payload["attemptDurationSec"] == 60
         assert [row["environmentSerial"] for row in payload["rows"]] == ["20", "10"]
         assert [row["platformOrderNo"] for row in payload["rows"]] == [
             "ORDER-20-NEW",

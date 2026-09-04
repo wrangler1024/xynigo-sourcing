@@ -371,6 +371,7 @@ class LogisticsQueryRunCreateBody(BaseModel):
     executorId: uuid.UUID
     queryMode: Literal["initial", "single_retry", "failed_retry"] = "initial"
     browserMode: Literal["default", "headless", "visible"] = "default"
+    allowOpenEnvironment: bool = False
     parentRunId: uuid.UUID | None = None
     force: bool = False
     site: Literal["US", "MX"]

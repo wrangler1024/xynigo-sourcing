@@ -268,6 +268,10 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         self.assertIn("执行器正在预检和准备", renderer)
         self.assertIn("logisticsRunFailureText(snap.errorCode)", renderer)
         self.assertIn("hubstudio_browser_core_missing", html)
+        self.assertIn("hubstudio_system_resources_insufficient", html)
+        self.assertIn("recovering_resources", renderer)
+        self.assertIn("HubStudio 资源紧张，正在等待恢复", renderer)
+        self.assertIn("当前批次采用单环境运行", renderer)
 
     def test_cloud_workspace_renews_sessions_and_idempotently_submits_writes(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")
@@ -323,7 +327,7 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         )
         self.assertIn('id="cntStopped"', html)
 
-    def test_cancelled_logistics_run_shows_real_completed_count(self):
+    def test_terminal_logistics_progress_distinguishes_valid_and_review_rows(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")
         snapshot = html[
             html.index("function cloudLogisticsLegacySnapshot(run)"):
@@ -334,8 +338,17 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             html.index("function render(snap)"):
             html.index("/* ---------- 轮询 ---------- */")
         ]
-        self.assertIn("snap.cancelled || !lastRows.length", renderer)
-        self.assertIn("查询已停止：已完成", renderer)
+        progress = html[
+            html.index("function paintQueryProgress(snap, stats)"):
+            html.index("function render(snap)")
+        ]
+        self.assertIn('id="queryProgress"', html)
+        self.assertIn("terminalWithRows && review > 0", progress)
+        self.assertIn(
+            "`有效 ${valid} / ${total} · 待核对 ${review}`", progress)
+        self.assertIn("query-outcome-review", progress)
+        self.assertIn("查询已停止：${outcomeCopy}", renderer)
+        self.assertIn("查询异常结束：${outcomeCopy}", renderer)
         self.assertIn("'查询未完成行'", renderer)
 
     def test_cloud_copy_is_synced_from_single_ui_source(self):
@@ -562,6 +575,7 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             'id="businessSummary"',
             'id="carrierDistribution"',
             'id="queryBrowserMode"',
+            'id="queryAllowOpenEnvironment"',
             'id="queryAdvancedSettings"',
             'class="table-actions query-table-actions"',
             'id="bizFirstTrackLead"',
@@ -574,9 +588,16 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             "+ '/export?includeScreenshots='",
             "screenshotSizeKb:Number(row.screenshotSizeKb || 0)",
             "本次重查 ${retryCurrent} / ${retryTotal}",
+            "elapsedSec:Number.isFinite(cumulativeDuration)",
+            "attemptElapsedSec:Number.isFinite(attemptDuration)",
+            "queryElapsedPrefix = snap.parentRunId ? '累计' : '已用';",
+            "本次异常重查已用",
             "queryBackgroundRestoreNotified",
             "window.addEventListener('beforeunload'",
             "browserMode:$('queryBrowserMode').value",
+            "allowOpenEnvironment:$('queryAllowOpenEnvironment').checked",
+            '不会启动或关闭该环境，也不会关闭原有标签页',
+            '输入序号时会在全部 HubStudio 环境中查找',
             "共 ${shippedRows.length} 个已发货订单",
             '首轨时效中位数',
         ):

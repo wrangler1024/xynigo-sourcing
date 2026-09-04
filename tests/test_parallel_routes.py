@@ -17,6 +17,7 @@ from purchase_tool.task_runtime import LocalTaskCoordinator
 
 class FakeHub(object):
     def __init__(self):
+        self.env_list_groups = []
         self.envs = [{
             'serialNumber': 1001,
             'containerCode': 'code-1001',
@@ -24,6 +25,7 @@ class FakeHub(object):
         }]
 
     def env_list(self, _group=None):
+        self.env_list_groups.append(_group)
         return [dict(item) for item in self.envs]
 
     def env_by_serial(self, serial):
@@ -40,19 +42,22 @@ class FakeOrchestrator(object):
         self.start_calls = []
 
     def preflight_batch(self, serials, index, site='MX',
-                        browser_mode='headless'):
+                        browser_mode='headless',
+                        allow_open_environment=False):
         self.preflight_calls.append(
-            (list(serials), dict(index), site, browser_mode))
+            (list(serials), dict(index), site, browser_mode,
+             allow_open_environment))
         if self.preflight_error is not None:
             raise self.preflight_error
         return {'checked': True}
 
     def start_batch(self, serials, index, site='MX', on_finished=None,
-                    browser_mode='headless'):
+                    browser_mode='headless', allow_open_environment=False):
         self.running = True
         self.callback = on_finished
         self.start_calls.append(
-            (list(serials), dict(index), site, browser_mode))
+            (list(serials), dict(index), site, browser_mode,
+             allow_open_environment))
 
     def snapshot(self):
         return {'rows': [], 'running': self.running}
@@ -181,6 +186,19 @@ class ParallelRouteTests(unittest.TestCase):
         self.orch.callback()
         self.env_job.callback()
         self.assertFalse(self.state.tasks.running())
+
+    def test_serial_query_ignores_group_filter_and_forwards_readonly_attach(self):
+        status, query = self.post('/api/query', {
+            'serials': ['1001'], 'site': 'US',
+            'group': '不相关分组', 'allowOpenEnvironment': True,
+        })
+
+        self.assertEqual(status, 200)
+        self.assertEqual(self.state.hub.env_list_groups, [None])
+        self.assertTrue(query['allowOpenEnvironment'])
+        self.assertEqual(self.orch.preflight_calls[0][-1], True)
+        self.assertEqual(self.orch.start_calls[0][-1], True)
+        self.orch.callback()
 
     def test_hub_core_repair_status_and_start_routes(self):
         status, snapshot = self.get('/api/hub-core-repair/status')

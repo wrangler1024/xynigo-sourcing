@@ -1073,7 +1073,11 @@ class AppState(object):
                 'assistant.access',
                 legacy_clearer=self.lark_credentials.clear,
             ))
-        self.hub_runtime_gate = HubRuntimeGate(max_requests=4)
+        # 团队 Local API 配额已于 2026-09-04 提升到 300 次/分钟。
+        # 仍保留 0.3 秒全局错峰（理论上限约 200 次/分钟），给桌面状态探测
+        # 和 HubStudio 自身波动留余量；本轮瓶颈是浏览器资源而不是接口额度。
+        self.hub_runtime_gate = HubRuntimeGate(
+            max_requests=4, min_request_interval=0.3)
         self.tasks = LocalTaskCoordinator(
             lambda: bool(self.cfg.get('safeParallelTasks')))
         self.hub = self._build_hub_adapter()
@@ -4189,13 +4193,18 @@ class Handler(BaseHTTPRequestHandler):
                 serials = body.get('serials')
                 group = body.get('group')
                 site = normalize_site(body.get('site') or 'MX')
+                allow_open_environment = bool(
+                    body.get('allowOpenEnvironment'))
                 requested_browser_mode = str(
                     body.get('browserMode') or 'default').strip().casefold()
                 browser_mode = normalize_browser_mode(
                     STATE.cfg.get('queryBrowserMode')
                     if requested_browser_mode == 'default'
                     else requested_browser_mode)
-                envs = STATE.hub.env_list(group or None)
+                # 手工输入序号时始终在全部 HubStudio 环境中查找；分组只
+                # 服务于“查询整个分组”，不再作为序号查询的资格过滤器。
+                envs = STATE.hub.env_list(
+                    None if serials else (group or None))
                 env_index = {str(e.get('serialNumber')): e for e in envs
                              if e.get('serialNumber') is not None}
                 if not serials and group:
@@ -4211,7 +4220,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({'error': '查询模式无效'}, 400)
                 STATE.orch.preflight_batch(
                     selected_serials, env_index, site=site,
-                    browser_mode=browser_mode)
+                    browser_mode=browser_mode,
+                    allow_open_environment=allow_open_environment)
                 selected_envs = [env_index[str(serial)] for serial in selected_serials
                                  if str(serial) in env_index]
                 task_id = STATE.tasks.begin(
@@ -4234,13 +4244,15 @@ class Handler(BaseHTTPRequestHandler):
                     STATE.orch.start_batch(
                         serials, env_index, site=site,
                         on_finished=finish_query,
-                        browser_mode=browser_mode)
+                        browser_mode=browser_mode,
+                        allow_open_environment=allow_open_environment)
                 except Exception:
                     STATE.tasks.finish(task_id)
                     raise
                 self._json({'started': True, 'total': len(serials),
                             'site': site, 'taskId': task_id,
-                            'browserMode': browser_mode})
+                            'browserMode': browser_mode,
+                            'allowOpenEnvironment': allow_open_environment})
             elif path == '/api/stop':
                 STATE.orch.request_stop()
                 self._json({'stopped': True})
@@ -4259,6 +4271,8 @@ class Handler(BaseHTTPRequestHandler):
                     STATE.cfg.get('queryBrowserMode')
                     if requested_browser_mode == 'default'
                     else requested_browser_mode)
+                allow_open_environment = bool(
+                    body.get('allowOpenEnvironment'))
 
                 def finish_requery():
                     try:
@@ -4279,7 +4293,8 @@ class Handler(BaseHTTPRequestHandler):
                         on_finished=finish_requery,
                         site=body.get('site'),
                         allow_missing=bool(body.get('operationRunKey')),
-                        browser_mode=browser_mode)
+                        browser_mode=browser_mode,
+                        allow_open_environment=allow_open_environment)
                 except Exception:
                     STATE.tasks.finish(task_id)
                     raise
@@ -4303,6 +4318,8 @@ class Handler(BaseHTTPRequestHandler):
                     STATE.cfg.get('queryBrowserMode')
                     if requested_browser_mode == 'default'
                     else requested_browser_mode)
+                allow_open_environment = bool(
+                    body.get('allowOpenEnvironment'))
 
                 def finish_failed_requery():
                     try:
@@ -4320,7 +4337,8 @@ class Handler(BaseHTTPRequestHandler):
                     count = STATE.orch.requery_failed(
                         env_index=env_index,
                         on_finished=finish_failed_requery,
-                        browser_mode=browser_mode)
+                        browser_mode=browser_mode,
+                        allow_open_environment=allow_open_environment)
                 except Exception:
                     STATE.tasks.finish(task_id)
                     raise

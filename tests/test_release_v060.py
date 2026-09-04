@@ -203,7 +203,10 @@ class ReleaseV0140Tests(unittest.TestCase):
         self.assertIn('#envThead th { position: sticky; top: 0;', html)
         self.assertIn('id="querySite"', html)
         self.assertIn('<option value="US">美国站 · us.shein.com</option>', html)
-        self.assertIn('const payload = {serials, site, browserMode};', html)
+        self.assertIn(
+            'const payload = {serials, site, browserMode, allowOpenEnvironment};',
+            html,
+        )
         self.assertIn('body: JSON.stringify(payload)', html)
         self.assertIn("'Shipped': 'st-enviado'", html)
         self.assertIn("'Paid': 'st-procesando'", html)
@@ -212,8 +215,9 @@ class ReleaseV0140Tests(unittest.TestCase):
         self.assertIn('风险订单 <b id="cntRisk">0</b>', html)
         self.assertIn("if (r.riskOrder) cnt.risk++;", html)
         self.assertIn("else cnt.ok++;", html)
-        self.assertIn("r.state === 'ok' && !r.riskOrder", html)
-        self.assertIn("r.state === 'ok' && r.riskOrder", html)
+        self.assertIn(
+            "rows.filter(row => row.state === 'ok' && row.orderNo", html)
+        self.assertIn("&& !row.kanDan && !row.riskOrder", html)
         self.assertIn('id="cfgPurchaseTagMX"', html)
         self.assertIn('id="cfgPurchaseTagUS"', html)
         self.assertIn('id="cfgProxyLink"', html)
