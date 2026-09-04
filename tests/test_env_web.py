@@ -755,7 +755,9 @@ class EnvWebJobTests(unittest.TestCase):
             'vendor.xlsx', base64.b64encode(source_bytes()).decode('ascii'))
         preview = job.preview(
             parsed['planId'], '1:新刚', '20260819', site='US')
-        self.assertEqual(preview[0]['envName'], 'XG-US-0819-001')
+        self.assertRegex(
+            preview[0]['envName'],
+            r'^XG-US-260819-001-[A-HJ-NP-Z2-9]{4}$')
         with tempfile.TemporaryDirectory() as tmp:
             def store_factory(batch_id):
                 return ResumeStateStore(batch_id, tmp)
@@ -933,8 +935,12 @@ class BackupEnvJobTests(unittest.TestCase):
         hub = FakeHub()
         job = BackupEnvJob(lambda: hub, runtime_config)
         preview = job.preview('新刚', 2, '备用', '20260819')
-        self.assertEqual(preview['names'],
-                         ['XG-MX-0819-001', 'XG-MX-0819-002'])
+        self.assertRegex(
+            preview['names'][0],
+            r'^XG-MX-260819-001-[A-HJ-NP-Z2-9]{4}$')
+        self.assertRegex(
+            preview['names'][1],
+            r'^XG-MX-260819-002-[A-HJ-NP-Z2-9]{4}$')
         self.assertEqual(preview['remark'], '备用环境')
         self.assertEqual(preview['buyerCode'], 'XG')
         with self.assertRaises(ValueError):
@@ -956,10 +962,10 @@ class BackupEnvJobTests(unittest.TestCase):
                              for call in hub.calls))
         self.assertEqual(
             {env['containerName'] for env in hub.envs},
-            {'XG-MX-0819-001', 'XG-MX-0819-002'})
+            set(preview['names']))
         data, _name = job.result_export()
         text = data.decode('utf-8-sig')
-        self.assertIn('XG-MX-0819-001', text)
+        self.assertIn(preview['names'][0], text)
         self.assertIn('环境名', text)
         self.assertNotIn(TEST_PROXY, text)
         self.assertNotIn('proxy.example.test', text)
@@ -1140,7 +1146,9 @@ class BackupEnvJobTests(unittest.TestCase):
         self.assertEqual(create_body['tagName'], TEST_US_TAG)
         self.assertEqual(create_body['linkCode'],
                          'https://proxy.example.test/US')
-        self.assertEqual(hub.envs[0]['containerName'], 'ZH-US-测试-01')
+        self.assertRegex(
+            hub.envs[0]['containerName'],
+            r'^ZH-US-测试-260819-01-[A-HJ-NP-Z2-9]{4}$')
         self.assertEqual(hub.envs[0]['remark'], '测试环境')
 
 

@@ -26,7 +26,7 @@ from purchase_tool.env_batch import (
     batch_fingerprint, build_batch_plan, build_env_create_body,
     build_environment_inventory_snapshot,
     choose_resolution, envbatch_preflight, extract_vendor_order_no,
-    format_remark, load_vendor_xlsx,
+    format_environment_name, format_remark, load_vendor_xlsx,
     mapping_workbook_bytes, normalize_buyer, normalize_env_site,
     parse_assignment, parse_vendor_workbook, probe_env_ip,
     deserialize_buyer_accounts, serialize_buyer_accounts,
@@ -340,8 +340,10 @@ class EnvBatchTests(unittest.TestCase):
         ]
         plan = build_batch_plan(
             accounts, '1:新刚,1:志恒', existing, purchase_date='20260819')
-        self.assertEqual(plan[0].env_name, 'XG-MX-0819-004')
-        self.assertEqual(plan[1].env_name, 'ZH-MX-0819-010')
+        self.assertEqual(plan[0].env_name, format_environment_name(
+            'XG', 'MX', '20260819', 4, accounts[0].account_id))
+        self.assertEqual(plan[1].env_name, format_environment_name(
+            'ZH', 'MX', '20260819', 10, accounts[1].account_id))
 
         # 旧「采购-」格式不参与新代号续排
         us_plan = build_batch_plan(
@@ -349,8 +351,25 @@ class EnvBatchTests(unittest.TestCase):
             [{'containerName': 'XG-US-0819-006'},
              {'containerName': '采购-熊-US-0819-099'}],
             site='US', purchase_date='20260819')
-        self.assertEqual(us_plan[0].env_name, 'XG-US-0819-007')
-        self.assertEqual(us_plan[1].env_name, 'ZH-US-0819-001')
+        self.assertEqual(us_plan[0].env_name, format_environment_name(
+            'XG', 'US', '20260819', 7, accounts[0].account_id))
+        self.assertEqual(us_plan[1].env_name, format_environment_name(
+            'ZH', 'US', '20260819', 1, accounts[1].account_id))
+
+    def test_new_bound_name_has_year_and_stable_four_character_code(self):
+        identity = 'a' * 64
+        first = format_environment_name(
+            'XG', 'MX', '20260904', 150, identity)
+        repeated = format_environment_name(
+            'XG', 'MX', '20260904', 150, identity)
+        other = format_environment_name(
+            'XG', 'MX', '20260904', 150, 'b' * 64)
+
+        self.assertEqual(first, repeated)
+        self.assertRegex(
+            first, r'^XG-MX-260904-150-[A-HJ-NP-Z2-9]{4}$')
+        self.assertNotEqual(first, other)
+        self.assertNotRegex(first.rsplit('-', 1)[-1], r'[01IO]')
 
     def test_cloud_reserved_names_override_local_suffix_scan(self):
         accounts = parse_vendor_workbook(BytesIO(workbook_bytes(demo_rows())))
@@ -565,7 +584,8 @@ class EnvBatchTests(unittest.TestCase):
             sleep_fn=lambda _seconds: None)
         runner.prepare(accounts, '1:新刚')
         runner.run()
-        self.assertEqual(runner.rows[0].env_name, 'XG-US-0819-001')
+        self.assertEqual(runner.rows[0].env_name, format_environment_name(
+            'XG', 'US', '20260819', 1, accounts[0].account_id))
         create = next(call[1] for call in hub.calls if call[0] == 'create')
         account = next(call for call in hub.calls if call[0] == 'account')
         self.assertEqual(create['linkCode'], 'https://proxy.example.test/US')
@@ -1293,7 +1313,9 @@ class EnvBatchTests(unittest.TestCase):
         self.assertEqual(len({env['containerCode'] for env in hub.envs}), 5)
         self.assertEqual(
             [row.env_name for row in runner.rows],
-            ['XG-MX-0819-%03d' % n for n in range(1, 6)])
+            [format_environment_name(
+                'XG', 'MX', '20260819', index, account.account_id)
+             for index, account in enumerate(accounts, start=1)])
 
     def test_bound_run_reuses_snapshot_and_only_uses_targeted_lookups(self):
         accounts = parse_vendor_workbook(
@@ -1342,11 +1364,16 @@ class EnvBatchTests(unittest.TestCase):
         ]
         names = backup_env_names(
             existing, '新刚', 2, '备用', 'MX', '20260819')
-        self.assertEqual(names, ['XG-MX-0819-005', 'XG-MX-0819-006'])
+        self.assertEqual(len(names), 2)
+        self.assertRegex(names[0], r'^XG-MX-260819-005-[A-HJ-NP-Z2-9]{4}$')
+        self.assertRegex(names[1], r'^XG-MX-260819-006-[A-HJ-NP-Z2-9]{4}$')
         test_names = backup_env_names(
             [{'containerName': 'ZH-US-测试-02'}], '志恒', 2, '测试', 'US',
             '20260819')
-        self.assertEqual(test_names, ['ZH-US-测试-03', 'ZH-US-测试-04'])
+        self.assertRegex(
+            test_names[0], r'^ZH-US-测试-260819-03-[A-HJ-NP-Z2-9]{4}$')
+        self.assertRegex(
+            test_names[1], r'^ZH-US-测试-260819-04-[A-HJ-NP-Z2-9]{4}$')
         with self.assertRaisesRegex(EnvBatchError, '1-25'):
             backup_env_names([], '新刚', 26, '备用', 'MX', '20260819')
         with self.assertRaisesRegex(EnvBatchError, '备用 或 测试'):
@@ -1363,8 +1390,10 @@ class EnvBatchTests(unittest.TestCase):
             sleep_fn=lambda _seconds: None)
         runner.prepare('新刚', 2, '备用', '20260819')
         rows = runner.run()
-        self.assertEqual([row.env_name for row in rows],
-                         ['XG-MX-0819-001', 'XG-MX-0819-002'])
+        self.assertRegex(
+            rows[0].env_name, r'^XG-MX-260819-001-[A-HJ-NP-Z2-9]{4}$')
+        self.assertRegex(
+            rows[1].env_name, r'^XG-MX-260819-002-[A-HJ-NP-Z2-9]{4}$')
         self.assertEqual({row.state for row in rows}, {'done'})
         create_calls = [call for call in hub.calls if call[0] == 'create']
         self.assertEqual(len(create_calls), 2)
@@ -1382,8 +1411,12 @@ class EnvBatchTests(unittest.TestCase):
             hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY, site='MX',
             sleep_fn=lambda _seconds: None)
         runner2.prepare('新刚', 2, '备用', '20260819')
-        self.assertEqual([row.env_name for row in runner2.rows],
-                         ['XG-MX-0819-003', 'XG-MX-0819-004'])
+        self.assertRegex(
+            runner2.rows[0].env_name,
+            r'^XG-MX-260819-003-[A-HJ-NP-Z2-9]{4}$')
+        self.assertRegex(
+            runner2.rows[1].env_name,
+            r'^XG-MX-260819-004-[A-HJ-NP-Z2-9]{4}$')
 
     def test_bound_adoption_refuses_nonempty_remark_env(self):
         # 模拟计划后、执行前另一机器/批次占用同名环境（同步延迟或并发撞名）
@@ -1395,9 +1428,9 @@ class EnvBatchTests(unittest.TestCase):
             runner = BatchEnvOrchestrator(
                 hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY,
                 purchase_date='20260819', sleep_fn=lambda _s: None)
-            runner.prepare(accounts, '1:新刚')   # 计划 XG-MX-0819-001
+            runner.prepare(accounts, '1:新刚')
             hub.envs.append({
-                'containerName': 'XG-MX-0819-001',
+                'containerName': runner.rows[0].env_name,
                 'containerCode': '8001', 'serialNumber': 2001,
                 'remark': occupied_remark})
             runner.rows[0].state = 'failed'
@@ -1417,9 +1450,9 @@ class EnvBatchTests(unittest.TestCase):
         runner = BatchEnvOrchestrator(
             hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY,
             purchase_date='20260819', sleep_fn=lambda _s: None)
-        runner.prepare(accounts, '1:新刚')   # 计划 XG-MX-0819-001
+        runner.prepare(accounts, '1:新刚')
         hub.envs.append({
-            'containerName': 'XG-MX-0819-001',
+            'containerName': runner.rows[0].env_name,
             'containerCode': '8001', 'serialNumber': 2001, 'remark': ''})
         runner.rows[0].state = 'failed'
         runner.run()
@@ -1504,7 +1537,8 @@ class EnvBatchTests(unittest.TestCase):
         rows = runner.run()
         text = backup_result_tsv_bytes(rows, 'US').decode('utf-8-sig')
         self.assertIn('环境名', text)
-        self.assertIn('ZH-US-测试-01', text)
+        self.assertRegex(
+            text, r'ZH-US-测试-260819-01-[A-HJ-NP-Z2-9]{4}')
         self.assertIn('完成', text)
         self.assertNotIn(TEST_PROXY, text)
         self.assertNotIn('proxy.example.test', text)

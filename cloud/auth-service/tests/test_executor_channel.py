@@ -12,8 +12,10 @@ from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from openpyxl import load_workbook
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 from test_auth_flow import build_test_app, start_login
+from xynigo_auth.executor_service import ExecutorChannelService
 from xynigo_auth.models import (
     EnvironmentAccountPlan,
     EnvironmentAccountRunGuard,
@@ -22,6 +24,7 @@ from xynigo_auth.models import (
     EnvironmentNameSequence,
     ExecutorPairingCode,
     ExecutorTask,
+    ExecutorTaskEvent,
     HubEnvironmentInventory,
     HubEnvironmentInventorySync,
     HubEnvironmentObservation,
@@ -125,6 +128,7 @@ def heartbeat(
     config_summary: dict[str, object] | None = None,
     hub_status: str = "ready",
     client_version: str = "0.13.18",
+    accept_tasks: bool = True,
 ) -> dict[str, object]:
     body = {
         "waitSeconds": 0,
@@ -134,6 +138,7 @@ def heartbeat(
         "protocolVersion": 1,
         "capabilities": capabilities
         or ["config.read.v1", "config.write.v1"],
+        "acceptTasks": accept_tasks,
     }
     if config_summary is not None:
         body["configSummary"] = config_summary
@@ -176,6 +181,55 @@ def safe_config_summary() -> dict[str, object]:
         },
         "compliance": {"status": "ready", "issueCodes": []},
     }
+
+
+def workspace_snapshot_payload(
+    inventory_snapshot: dict[str, object] | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "schemaVersion": 1,
+        "snapshotRevision": "c" * 64,
+        "capturedAt": datetime.now(UTC).isoformat(),
+        "preferences": {
+            "purchaseSite": "MX",
+            "purchaseTags": {"MX": "MX采购", "US": "美国采购"},
+            "importBuyerPlan": "1:新刚",
+            "verifySampleCount": 1,
+            "buyers": [{"name": "新刚", "code": "XG"}],
+            "buyerDefaultSplit": ["新刚"],
+            "backupMaxCount": 25,
+        },
+        "runtimeConfig": {
+            "configRevision": REVISION_A,
+            "hubPort": 6873,
+            "concurrency": 2,
+            "envCreateWorkers": 5,
+            "verifySampleCount": 1,
+            "safeParallelTasks": True,
+            "queryBrowserMode": "headless",
+            "queryAllowOpenEnvironment": False,
+        },
+        "groups": ["MX采购", "美国采购"],
+        "preflight": {
+            site: {
+                "ready": True,
+                "hubConnected": True,
+                "groupFound": True,
+                "proxyConfigured": True,
+                "purchaseTag": group,
+                "configuredWorkers": 5,
+                "effectiveWorkers": 5,
+                "message": "预检通过",
+            }
+            for site, group in {
+                "MX": "MX采购",
+                "US": "美国采购",
+            }.items()
+        },
+    }
+    if inventory_snapshot is not None:
+        payload["inventorySnapshot"] = inventory_snapshot
+    return payload
 
 
 def test_environment_plan_is_parsed_in_cloud_and_site_errors_are_structured(
@@ -1517,6 +1571,351 @@ def test_admin_can_take_over_failed_environment_rows_on_another_executor(
             serialized = json.dumps(task.payload_envelope)
             assert "synthetic-password" not in serialized
             assert cloud_plan_id not in serialized
+
+
+def test_snapshot_reconciles_renamed_legacy_row_without_stranding_task(
+    tmp_path,
+) -> None:
+    app, database, _oauth = build_test_app(tmp_path)
+    capabilities = ["workspace.snapshot.v1", "environment.cloud-inventory.v1"]
+    old_order_ref = "sha256:" + hashlib.sha256(b"legacy-order").hexdigest()
+    stale_order_ref = "sha256:" + hashlib.sha256(b"stale-order").hexdigest()
+    protected_order_ref = "sha256:" + hashlib.sha256(
+        b"protected-order"
+    ).hexdigest()
+    active_order_ref = "sha256:" + hashlib.sha256(
+        b"active-order"
+    ).hexdigest()
+
+    with TestClient(app) as web_client, TestClient(app) as device_client:
+        login(web_client)
+        paired = pair(
+            device_client,
+            create_pairing_code(web_client),
+            capabilities=capabilities,
+        )
+        executor_id = str(paired["executorId"])
+        credential = str(paired["deviceCredential"])
+        assert heartbeat(
+            device_client, credential, capabilities=capabilities
+        )["task"] is None
+
+        with database.session_factory() as session:
+            executor = session.get(LocalExecutor, uuid.UUID(executor_id))
+            assert executor is not None
+            now = datetime.now(UTC)
+            session.add_all([
+                HubEnvironmentInventory(
+                    tenant_id=executor.tenant_id,
+                    account_ref="a" * 64,
+                    source_order_ref=old_order_ref,
+                    environment_name="SYN-MX-0828-095",
+                    site="MX",
+                    environment_group="MX采购",
+                    purchaser_label="合成采购员",
+                    state="deleted",
+                    created_at=now,
+                    updated_at=now,
+                ),
+                HubEnvironmentInventory(
+                    tenant_id=executor.tenant_id,
+                    account_ref="b" * 64,
+                    source_order_ref=stale_order_ref,
+                    environment_name="SYN-MX-0828-102",
+                    site="MX",
+                    environment_group="MX采购",
+                    purchaser_label="合成采购员",
+                    state="deleted",
+                    created_at=now,
+                    updated_at=now,
+                ),
+                HubEnvironmentInventory(
+                    tenant_id=executor.tenant_id,
+                    account_ref="c" * 64,
+                    source_order_ref=protected_order_ref,
+                    environment_name="ACT-MX-0828-001",
+                    site="MX",
+                    environment_group="MX采购",
+                    purchaser_label="合成采购员",
+                    state="deleted",
+                    created_at=now,
+                    updated_at=now,
+                ),
+                HubEnvironmentInventory(
+                    tenant_id=executor.tenant_id,
+                    account_ref="d" * 64,
+                    source_order_ref=active_order_ref,
+                    environment_name="ACT-MX-0828-002",
+                    environment_ref="active-owner-ref",
+                    site="MX",
+                    environment_group="MX采购",
+                    purchaser_label="合成采购员",
+                    state="active",
+                    created_at=now,
+                    updated_at=now,
+                ),
+                HubEnvironmentInventory(
+                    tenant_id=executor.tenant_id,
+                    account_ref="e" * 64,
+                    source_order_ref="sha256:" + "1" * 64,
+                    environment_name="AMB-MX-0828-010",
+                    environment_ref="shared-ref",
+                    site="MX",
+                    environment_group="MX采购",
+                    purchaser_label="合成采购员",
+                    state="active",
+                    created_at=now,
+                    updated_at=now,
+                ),
+                HubEnvironmentInventory(
+                    tenant_id=executor.tenant_id,
+                    account_ref="f" * 64,
+                    source_order_ref="sha256:" + "2" * 64,
+                    environment_name="AMB-MX-0828-011",
+                    environment_ref="shared-ref",
+                    site="MX",
+                    environment_group="MX采购",
+                    purchaser_label="合成采购员",
+                    state="active",
+                    created_at=now,
+                    updated_at=now,
+                ),
+            ])
+            session.commit()
+
+        created = web_client.post(
+            f"/v1/executors/{executor_id}/workspace-snapshot",
+            json={"idempotencyKey": "snapshot-legacy-rename-0001"},
+            headers=CSRF,
+        )
+        assert created.status_code == 202, created.text
+        task_id = created.json()["task"]["id"]
+        leased = heartbeat(
+            device_client, credential, capabilities=capabilities
+        )["task"]
+        lease_token = leased["leaseToken"]
+        assert device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/start",
+            json={"leaseToken": lease_token},
+            headers=device_headers(credential),
+        ).status_code == 200
+
+        inventory = {
+            "snapshotRevision": "d" * 64,
+            "capturedAt": datetime.now(UTC).isoformat(),
+            "environmentCount": 3,
+            "rows": [
+                {
+                    "environmentKey": "sha256:" + "e" * 64,
+                    "environmentName": "SYN-MX-0828-102",
+                    "environmentRef": "hub-renamed-102",
+                    "environmentSerial": "8320",
+                    "environmentGroup": "MX采购",
+                    "site": "MX",
+                    "sourceOrderRef": old_order_ref,
+                },
+                {
+                    "environmentKey": "sha256:" + "f" * 64,
+                    "environmentName": "ACT-MX-0828-002",
+                    "environmentRef": "protected-new-ref",
+                    "environmentSerial": "8321",
+                    "environmentGroup": "MX采购",
+                    "site": "MX",
+                    "sourceOrderRef": protected_order_ref,
+                },
+                {
+                    "environmentKey": "sha256:" + "3" * 64,
+                    "environmentName": "AMB-MX-0828-012",
+                    "environmentRef": "shared-ref",
+                    "environmentSerial": "8322",
+                    "environmentGroup": "MX采购",
+                    "site": "MX",
+                    "sourceOrderRef": None,
+                },
+            ],
+        }
+        finished = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/finish",
+            json={
+                "leaseToken": lease_token,
+                "outcome": "succeeded",
+                "resultCode": "workspace_snapshot_completed",
+                "resultSummary": workspace_snapshot_payload(inventory),
+            },
+            headers=device_headers(credential),
+        )
+        assert finished.status_code == 200, finished.text
+
+    with database.session_factory() as session:
+        rows = list(session.scalars(select(HubEnvironmentInventory)))
+        by_account = {row.account_ref: row for row in rows}
+        assert len(rows) == 5
+        assert "b" * 64 not in by_account
+        assert by_account["a" * 64].source_order_ref == old_order_ref
+        assert by_account["a" * 64].environment_name == "SYN-MX-0828-102"
+        assert by_account["a" * 64].environment_ref == "hub-renamed-102"
+        assert by_account["a" * 64].environment_serial == "8320"
+        assert by_account["a" * 64].state == "active"
+        # An active name owner is never deleted or overwritten.
+        assert by_account["c" * 64].environment_name == "ACT-MX-0828-001"
+        assert by_account["c" * 64].environment_ref is None
+        assert by_account["d" * 64].environment_name == "ACT-MX-0828-002"
+        assert by_account["d" * 64].environment_ref == "active-owner-ref"
+        # Two durable rows claiming one strong Hub ref are ambiguous and stay
+        # untouched while their snapshot observation is still cached.
+        assert by_account["e" * 64].environment_name == "AMB-MX-0828-010"
+        assert by_account["f" * 64].environment_name == "AMB-MX-0828-011"
+        task = session.get(ExecutorTask, uuid.UUID(task_id))
+        assert task is not None and task.status == "succeeded"
+        assert session.scalar(
+            select(func.count()).select_from(HubEnvironmentObservation)
+        ) == 3
+
+
+def test_new_task_recovers_expired_running_lease_and_accepts_late_finish(
+    tmp_path,
+) -> None:
+    app, database, _oauth = build_test_app(tmp_path)
+    capabilities = ["workspace.snapshot.v1"]
+
+    with TestClient(app) as web_client, TestClient(app) as device_client:
+        login(web_client)
+        paired = pair(
+            device_client,
+            create_pairing_code(web_client),
+            capabilities=capabilities,
+        )
+        executor_id = str(paired["executorId"])
+        credential = str(paired["deviceCredential"])
+        assert heartbeat(
+            device_client, credential, capabilities=capabilities
+        )["task"] is None
+
+        first = web_client.post(
+            f"/v1/executors/{executor_id}/workspace-snapshot",
+            json={"idempotencyKey": "snapshot-expired-0001"},
+            headers=CSRF,
+        )
+        assert first.status_code == 202, first.text
+        first_task_id = first.json()["task"]["id"]
+        expired_token = "expired-lease-" + "x" * 40
+        with database.session_factory() as session:
+            task = session.get(ExecutorTask, uuid.UUID(first_task_id))
+            assert task is not None
+            task.status = "running"
+            task.started_at = datetime.now(UTC) - timedelta(minutes=2)
+            task.lease_token_digest = hash_token(expired_token)
+            task.lease_until = datetime.now(UTC) - timedelta(seconds=1)
+            session.commit()
+
+        recovery_heartbeat = heartbeat(
+            device_client,
+            credential,
+            capabilities=capabilities,
+            accept_tasks=False,
+        )
+        assert recovery_heartbeat["task"] is None
+
+        second = web_client.post(
+            f"/v1/executors/{executor_id}/workspace-snapshot",
+            json={"idempotencyKey": "snapshot-expired-0002"},
+            headers=CSRF,
+        )
+        assert second.status_code == 202, second.text
+        second_task_id = second.json()["task"]["id"]
+        assert second_task_id != first_task_id
+
+        late = device_client.post(
+            f"/v1/executor-channel/tasks/{first_task_id}/finish",
+            json={
+                "leaseToken": expired_token,
+                "outcome": "succeeded",
+                "resultCode": "workspace_snapshot_completed",
+                "resultSummary": workspace_snapshot_payload(),
+            },
+            headers=device_headers(credential),
+        )
+        assert late.status_code == 200, late.text
+
+    with database.session_factory() as session:
+        first_task = session.get(ExecutorTask, uuid.UUID(first_task_id))
+        second_task = session.get(ExecutorTask, uuid.UUID(second_task_id))
+        assert first_task is not None and first_task.status == "succeeded"
+        assert second_task is not None and second_task.status == "queued"
+        assert session.scalar(select(ExecutorTaskEvent).where(
+            ExecutorTaskEvent.task_id == first_task.id,
+            ExecutorTaskEvent.event_type == "execution_uncertain",
+        )) is not None
+
+
+def test_snapshot_cache_integrity_error_does_not_block_task_finish(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    app, database, _oauth = build_test_app(tmp_path)
+    capabilities = ["workspace.snapshot.v1", "environment.cloud-inventory.v1"]
+
+    with TestClient(app) as web_client, TestClient(app) as device_client:
+        login(web_client)
+        paired = pair(
+            device_client,
+            create_pairing_code(web_client),
+            capabilities=capabilities,
+        )
+        executor_id = str(paired["executorId"])
+        credential = str(paired["deviceCredential"])
+        assert heartbeat(
+            device_client, credential, capabilities=capabilities
+        )["task"] is None
+        created = web_client.post(
+            f"/v1/executors/{executor_id}/workspace-snapshot",
+            json={"idempotencyKey": "snapshot-savepoint-0001"},
+            headers=CSRF,
+        )
+        assert created.status_code == 202, created.text
+        task_id = created.json()["task"]["id"]
+        leased = heartbeat(
+            device_client, credential, capabilities=capabilities
+        )["task"]
+        lease_token = leased["leaseToken"]
+        assert device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/start",
+            json={"leaseToken": lease_token},
+            headers=device_headers(credential),
+        ).status_code == 200
+
+        def fail_cache_sync(*_args, **_kwargs):
+            raise IntegrityError(
+                "synthetic inventory conflict", {}, RuntimeError("conflict")
+            )
+
+        monkeypatch.setattr(
+            ExecutorChannelService,
+            "_sync_hub_environment_snapshot",
+            fail_cache_sync,
+        )
+        inventory = {
+            "snapshotRevision": "4" * 64,
+            "capturedAt": datetime.now(UTC).isoformat(),
+            "environmentCount": 0,
+            "rows": [],
+        }
+        finished = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/finish",
+            json={
+                "leaseToken": lease_token,
+                "outcome": "succeeded",
+                "resultCode": "workspace_snapshot_completed",
+                "resultSummary": workspace_snapshot_payload(inventory),
+            },
+            headers=device_headers(credential),
+        )
+        assert finished.status_code == 200, finished.text
+
+    with database.session_factory() as session:
+        task = session.get(ExecutorTask, uuid.UUID(task_id))
+        assert task is not None and task.status == "succeeded"
+        assert session.scalar(select(HubEnvironmentInventorySync)) is None
 
 
 def test_offline_revision_conflict_revoke_and_sensitive_config_are_blocked(tmp_path) -> None:

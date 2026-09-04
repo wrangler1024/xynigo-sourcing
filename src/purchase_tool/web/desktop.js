@@ -284,6 +284,9 @@
     channel = channel || {};
     if (!paired) return {value:'等待配对', detail:'需要一次性配对码'};
     if (channel.status === 'online') {
+      if (channel.lastErrorCode === 'executor_finish_retrying') {
+        return {value:'已连接', detail:'任务结果回传重试中'};
+      }
       return {value:'已连接', detail:relativeTime(channel.lastPollAt)};
     }
     var failures = {

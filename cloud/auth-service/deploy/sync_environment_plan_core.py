@@ -29,6 +29,8 @@ ASSIGNMENTS = {
     "VENDOR_HEADER_ALIASES",
     "VENDOR_HEADER_TOKENS",
     "ENVIRONMENT_PLAN_ACCOUNT_KEYS",
+    "ENVIRONMENT_SHORT_CODE_ALPHABET",
+    "ENV_NAME_RE",
 }
 DEFINITIONS = {
     "EnvBatchError",
@@ -45,6 +47,10 @@ DEFINITIONS = {
     "parse_vendor_workbook",
     "serialize_buyer_accounts",
     "deserialize_buyer_accounts",
+    "environment_date_tokens",
+    "environment_name_pattern",
+    "environment_short_code",
+    "format_environment_name",
 }
 
 

@@ -58,8 +58,16 @@ ORDER_RE = re.compile(r'(?:[?&])orderNo=([0-9a-f]+)(?:[&#]|$)', re.I)
 REMARK_ORDER_RE = re.compile(r'(?:^|\|\s*)单号:([0-9a-f]+)', re.I)
 EMAIL_KEY_PATH = '/api/boobar-graph'
 MAIL_KEY_PATH = '/api'
-ENV_NAME_RE = r'^{code}-{site}-{mmdd}-(\d{{3}})$'
-TEST_ENV_NAME_RE = r'^{code}-{site}-测试-(\d{{2}})$'
+ENVIRONMENT_SHORT_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+ENV_NAME_RE = (
+    r'^{code}-{site}-{date_token}-(\d{{3}})'
+    r'(?:-([' + ENVIRONMENT_SHORT_CODE_ALPHABET + r']{{4}}))?$'
+)
+TEST_ENV_NAME_RE = (
+    r'^{code}-{site}-测试-{date_token}-(\d{{2}})'
+    r'(?:-([' + ENVIRONMENT_SHORT_CODE_ALPHABET + r']{{4}}))?$'
+)
+LEGACY_TEST_ENV_NAME_RE = r'^{code}-{site}-测试-(\d{{2}})$'
 
 # 采购员名单写死（Jeff 2026-08-19 确认）：(姓名, 英文代号)。
 # HUB 环境名统一用英文代号；页面显示「姓名-代号」。变更需改代码随版本发布。
@@ -800,6 +808,46 @@ def batch_fingerprint(source_bytes, assignment_spec, site, purchase_date):
     return digest.hexdigest()
 
 
+def environment_date_tokens(purchase_date):
+    """Return current and legacy date tokens accepted in environment names."""
+    value = str(purchase_date or '').strip()
+    return value[-6:], value[-4:]
+
+
+def environment_name_pattern(code, site, date_token):
+    return re.compile(ENV_NAME_RE.format(
+        code=re.escape(str(code)), site=re.escape(str(site)),
+        date_token=re.escape(str(date_token))))
+
+
+def environment_short_code(identity, base_name, attempt=0):
+    """Return a stable four-character, non-sensitive random-looking code.
+
+    The buyer identity is already a one-way account reference. Including the
+    readable base name and retry attempt keeps dry-run, formal execution and
+    resume names stable without exposing an email or vendor order number.
+    """
+    material = '%s\x1f%s\x1f%d' % (
+        str(identity or ''), str(base_name or ''), max(0, int(attempt)))
+    digest = hashlib.sha256(material.encode('utf-8')).digest()
+    value = int.from_bytes(digest[:3], 'big')
+    alphabet = ENVIRONMENT_SHORT_CODE_ALPHABET
+    return ''.join(
+        alphabet[(value >> shift) & 31] for shift in (15, 10, 5, 0))
+
+
+def format_environment_name(code, site, purchase_date, sequence, identity,
+                            attempt=0):
+    """Build the new readable YYMMDD name with a stable four-char suffix."""
+    date_token = environment_date_tokens(purchase_date)[0]
+    base_name = '%s-%s-%s-%03d' % (
+        str(code), str(site), date_token, int(sequence))
+    return '%s-%s' % (
+        base_name,
+        environment_short_code(identity, base_name, attempt=attempt),
+    )
+
+
 def _env_identity(env):
     """Return a stable, non-sensitive identity for cross-list membership."""
     code = str(env.get('containerCode') or '').strip()
@@ -1037,20 +1085,29 @@ def build_batch_plan(accounts, assignment_spec, existing_envs=None,
             raise EnvBatchError('云端预占环境名与买家号计划不一致')
         if len(set(planned_env_names.values())) != len(planned_env_names):
             raise EnvBatchError('云端预占环境名重复')
-    mmdd = purchase_date[-4:]
+    date_tokens = environment_date_tokens(purchase_date)
     max_suffix = {buyer: 0 for _count, buyer in assignments}
     for buyer in max_suffix:
-        pattern = re.compile(ENV_NAME_RE.format(
-            code=re.escape(BUYER_CODES[buyer]), site=re.escape(site),
-            mmdd=mmdd))
+        patterns = [
+            environment_name_pattern(BUYER_CODES[buyer], site, token)
+            for token in date_tokens
+        ]
         for env in existing_envs:
-            match = pattern.fullmatch(str(env.get('containerName') or ''))
-            if match:
-                max_suffix[buyer] = max(max_suffix[buyer], int(match.group(1)))
+            value = str(env.get('containerName') or '')
+            for pattern in patterns:
+                match = pattern.fullmatch(value)
+                if match:
+                    max_suffix[buyer] = max(
+                        max_suffix[buyer], int(match.group(1)))
+                    break
         for row in resume_rows.values():
-            match = pattern.fullmatch(str(row.get('envName') or ''))
-            if match:
-                max_suffix[buyer] = max(max_suffix[buyer], int(match.group(1)))
+            value = str(row.get('envName') or '')
+            for pattern in patterns:
+                match = pattern.fullmatch(value)
+                if match:
+                    max_suffix[buyer] = max(
+                        max_suffix[buyer], int(match.group(1)))
+                    break
 
     plan = []
     for account in accounts:
@@ -1103,16 +1160,18 @@ def build_batch_plan(accounts, assignment_spec, existing_envs=None,
         else:
             env_name = planned_env_names.get(account.account_id, '')
             if env_name:
-                pattern = re.compile(ENV_NAME_RE.format(
-                    code=re.escape(BUYER_CODES[account.buyer]),
-                    site=re.escape(site), mmdd=mmdd))
-                if not pattern.fullmatch(env_name):
+                patterns = [
+                    environment_name_pattern(
+                        BUYER_CODES[account.buyer], site, token)
+                    for token in date_tokens
+                ]
+                if not any(pattern.fullmatch(env_name) for pattern in patterns):
                     raise EnvBatchError('云端预占环境名与站点、日期或采购员不一致')
             else:
                 max_suffix[account.buyer] += 1
-                env_name = '%s-%s-%s-%03d' % (
-                    BUYER_CODES[account.buyer], site, mmdd,
-                    max_suffix[account.buyer])
+                env_name = format_environment_name(
+                    BUYER_CODES[account.buyer], site, purchase_date,
+                    max_suffix[account.buyer], account.account_id)
             item = BatchPlanItem(account=account, env_name=env_name)
         plan.append(item)
     return plan
@@ -1715,7 +1774,8 @@ def backup_env_names(existing_envs, buyer, count, backup_type, site,
     """备用/测试环境命名与续排（只读、按名幂等）。
 
     备用环境与绑号环境共享该采购员当日代号序号段并续排错开；
-    测试环境走 `{code}-{site}-测试-{NN}` 独立命名空间，序号上限 99。
+    测试环境走 `{code}-{site}-测试-{YYMMDD}-{NN}-{XXXX}` 独立命名空间，
+    序号上限 99；旧 `{code}-{site}-测试-{NN}` 继续参与兼容续排。
     """
     site = normalize_env_site(site)
     buyer = normalize_buyer(buyer)
@@ -1727,25 +1787,44 @@ def backup_env_names(existing_envs, buyer, count, backup_type, site,
     code = BUYER_CODES[buyer]
     existing = list(existing_envs or [])
     taken = {str(env.get('containerName') or '') for env in existing}
+    date_tokens = environment_date_tokens(purchase_date)
+
+    def append_short_code(base_name):
+        identity = 'backup:%s:%s:%s:%s' % (
+            buyer, backup_type, site, purchase_date)
+        return '%s-%s' % (
+            base_name, environment_short_code(identity, base_name))
+
     if backup_type == '备用':
-        pattern = re.compile(ENV_NAME_RE.format(
-            code=re.escape(code), site=re.escape(site),
-            mmdd=purchase_date[-4:]))
+        patterns = [
+            environment_name_pattern(code, site, token)
+            for token in date_tokens
+        ]
 
         def make(serial):
-            return '%s-%s-%s-%03d' % (code, site, purchase_date[-4:], serial)
+            return append_short_code('%s-%s-%s-%03d' % (
+                code, site, date_tokens[0], serial))
     else:
-        pattern = re.compile(TEST_ENV_NAME_RE.format(
-            code=re.escape(code), site=re.escape(site)))
+        patterns = [
+            re.compile(TEST_ENV_NAME_RE.format(
+                code=re.escape(code), site=re.escape(site),
+                date_token=re.escape(date_tokens[0]))),
+            re.compile(LEGACY_TEST_ENV_NAME_RE.format(
+                code=re.escape(code), site=re.escape(site))),
+        ]
 
         def make(serial):
-            return '%s-%s-测试-%02d' % (code, site, serial)
+            return append_short_code('%s-%s-测试-%s-%02d' % (
+                code, site, date_tokens[0], serial))
 
     serial = 0
     for env in existing:
-        match = pattern.fullmatch(str(env.get('containerName') or ''))
-        if match:
-            serial = max(serial, int(match.group(1)))
+        value = str(env.get('containerName') or '')
+        for pattern in patterns:
+            match = pattern.fullmatch(value)
+            if match:
+                serial = max(serial, int(match.group(1)))
+                break
     names = []
     while len(names) < count:
         serial += 1

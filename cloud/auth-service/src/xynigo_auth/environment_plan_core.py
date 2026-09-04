@@ -22,6 +22,10 @@ EMAIL_KEY_PATH = '/api/boobar-graph'
 
 MAIL_KEY_PATH = '/api'
 
+ENVIRONMENT_SHORT_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+
+ENV_NAME_RE = '^{code}-{site}-{date_token}-(\\d{{3}})(?:-([' + ENVIRONMENT_SHORT_CODE_ALPHABET + ']{{4}}))?$'
+
 VENDOR_TEMPLATE_HEADERS = ('邮箱账号', '密码', '接码Key链接', 'Cookie')
 
 VENDOR_HEADER_ALIASES = (frozenset({'邮箱', '邮箱账号', '邮箱地址', '账号邮箱', '账号', 'email', 'emailaddress', 'buyeremail', 'buyeremailaddress', 'accountemail'}), frozenset({'密码', '账号密码', '登录密码', 'password', 'accountpassword'}), frozenset({'接码key', '接码key链接', '接码链接', '接码url', '验证码链接', '邮箱接码key', 'verificationurl', 'verificationcodeurl', 'keyurl'}), frozenset({'cookie', 'cookies', 'cookiejson', '登录cookie', '登录cookies'}))
@@ -317,3 +321,30 @@ def deserialize_buyer_accounts(items, site='MX'):
         accounts.append(BuyerAccount(row_number=row_number, email=email, password=password, key_url=key_url, cookie_text=cookie_text, order_no=order_no))
     validate_accounts_site(accounts, site, allow_mixed=True)
     return accounts
+
+def environment_date_tokens(purchase_date):
+    """Return current and legacy date tokens accepted in environment names."""
+    value = str(purchase_date or '').strip()
+    return (value[-6:], value[-4:])
+
+def environment_name_pattern(code, site, date_token):
+    return re.compile(ENV_NAME_RE.format(code=re.escape(str(code)), site=re.escape(str(site)), date_token=re.escape(str(date_token))))
+
+def environment_short_code(identity, base_name, attempt=0):
+    """Return a stable four-character, non-sensitive random-looking code.
+
+    The buyer identity is already a one-way account reference. Including the
+    readable base name and retry attempt keeps dry-run, formal execution and
+    resume names stable without exposing an email or vendor order number.
+    """
+    material = '%s\x1f%s\x1f%d' % (str(identity or ''), str(base_name or ''), max(0, int(attempt)))
+    digest = hashlib.sha256(material.encode('utf-8')).digest()
+    value = int.from_bytes(digest[:3], 'big')
+    alphabet = ENVIRONMENT_SHORT_CODE_ALPHABET
+    return ''.join((alphabet[value >> shift & 31] for shift in (15, 10, 5, 0)))
+
+def format_environment_name(code, site, purchase_date, sequence, identity, attempt=0):
+    """Build the new readable YYMMDD name with a stable four-char suffix."""
+    date_token = environment_date_tokens(purchase_date)[0]
+    base_name = '%s-%s-%s-%03d' % (str(code), str(site), date_token, int(sequence))
+    return '%s-%s' % (base_name, environment_short_code(identity, base_name, attempt=attempt))

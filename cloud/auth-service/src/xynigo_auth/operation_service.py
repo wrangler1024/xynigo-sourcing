@@ -14,6 +14,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
 from .buyer_account_sync import enqueue_buyer_account_mirror
+from .environment_plan_core import (
+    environment_date_tokens,
+    environment_name_pattern,
+    format_environment_name,
+)
 from .environment_plan_redaction import mask_email
 from .models import (
     BuyerAccount,
@@ -582,10 +587,11 @@ class OperationRunService:
             self._account_ref(account): self._source_order_ref(account)
             for account in plan_accounts
         }
-        mmdd = purchase_date[-4:]
+        date_tokens = environment_date_tokens(purchase_date)
         prefixes = {
-            f"{self._purchaser_code(buyer)}-{site}-{mmdd}-"
+            f"{self._purchaser_code(buyer)}-{site}-{date_token}-"
             for buyer in buyers
+            for date_token in date_tokens
         }
         observations = list(self.session.scalars(
             select(HubEnvironmentObservation).where(
@@ -623,6 +629,19 @@ class OperationRunService:
                 ),
             )
         ))
+        reserved_names = list(self.session.scalars(
+            select(HubEnvironmentInventory.environment_name).where(
+                HubEnvironmentInventory.tenant_id == tenant_id,
+                or_(
+                    *(
+                        HubEnvironmentInventory.environment_name.like(
+                            prefix + "%"
+                        )
+                        for prefix in prefixes
+                    ),
+                ),
+            )
+        ))
         by_order: dict[
             str, dict[str, tuple[str, str, str | None]]
         ] = {}
@@ -651,7 +670,7 @@ class OperationRunService:
                 409,
             )
         known_names = [row.environment_name for row in observations]
-        known_names.extend(row.environment_name for row in inventories)
+        known_names.extend(reserved_names)
         for row in observations:
             if row.source_order_ref:
                 identity = row.environment_ref or "name:" + row.environment_name
@@ -675,13 +694,14 @@ class OperationRunService:
             code = self._purchaser_code(buyer)
             if code in offsets:
                 continue
-            prefix = f"{code}-{site}-{mmdd}-"
             values = [
                 int(match.group(1))
                 for value in known_names
-                if (match := re.fullmatch(
-                    re.escape(prefix) + r"(\d{3,})", value
-                ))
+                for pattern in (
+                    environment_name_pattern(code, site, token)
+                    for token in date_tokens
+                )
+                if (match := pattern.fullmatch(value))
             ]
             sequence = self.session.scalar(select(
                 EnvironmentNameSequence.last_value
@@ -694,6 +714,7 @@ class OperationRunService:
             offsets[code] = max(values + [int(sequence or 0), 0])
 
         rows = []
+        taken_names = set(known_names)
         for account, buyer in zip(plan_accounts, buyers):
             order_ref = self._source_order_ref(account)
             candidates = by_order.get(order_ref, {})
@@ -730,7 +751,20 @@ class OperationRunService:
                         "该采购员当日环境序号已超过 999，请调整购买日期后重试",
                         409,
                     )
-                env_name = f"{code}-{site}-{mmdd}-{offsets[code]:03d}"
+                for attempt in range(32):
+                    env_name = format_environment_name(
+                        code, site, purchase_date, offsets[code],
+                        self._account_ref(account), attempt=attempt,
+                    )
+                    if env_name not in taken_names:
+                        break
+                else:
+                    raise PurchaseServiceError(
+                        "environment_name_conflict",
+                        "环境名称短码冲突，请重新预览后重试",
+                        409,
+                    )
+                taken_names.add(env_name)
             rows.append({
                 "emailMasked": mask_email(str(account.get("email") or "")),
                 "purchaserLabel": buyer,
@@ -834,6 +868,8 @@ class OperationRunService:
 
         now = utcnow()
         offsets: dict[str, int] = {}
+        taken_names: set[str] = set()
+        date_tokens = environment_date_tokens(run.purchase_date)
         for buyer in buyers:
             code = self._purchaser_code(buyer)
             if code in offsets:
@@ -848,30 +884,44 @@ class OperationRunService:
                 )
                 .with_for_update()
             )
-            prefix = f"{code}-{run.site}-{run.purchase_date[-4:]}-"
+            prefixes = [
+                f"{code}-{run.site}-{date_token}-"
+                for date_token in date_tokens
+            ]
             known_names = list(
                 self.session.scalars(
                     select(HubEnvironmentInventory.environment_name).where(
                         HubEnvironmentInventory.tenant_id == run.tenant_id,
-                        HubEnvironmentInventory.environment_name.like(prefix + "%"),
+                        or_(*(
+                            HubEnvironmentInventory.environment_name.like(
+                                prefix + "%"
+                            )
+                            for prefix in prefixes
+                        )),
                     )
                 )
             )
             known_names.extend(self.session.scalars(
                 select(HubEnvironmentObservation.environment_name).where(
                     HubEnvironmentObservation.tenant_id == run.tenant_id,
-                    HubEnvironmentObservation.environment_name.like(prefix + "%"),
+                    or_(*(
+                        HubEnvironmentObservation.environment_name.like(
+                            prefix + "%"
+                        )
+                        for prefix in prefixes
+                    )),
                 )
             ))
+            taken_names.update(known_names)
             known_max = max(
                 [
                     int(match.group(1))
                     for value in known_names
-                    if (
-                        match := re.fullmatch(
-                            re.escape(prefix) + r"(\d{3,})", value
-                        )
+                    for pattern in (
+                        environment_name_pattern(code, run.site, token)
+                        for token in date_tokens
                     )
+                    if (match := pattern.fullmatch(value))
                 ] or [0]
             )
             if sequence is None:
@@ -914,9 +964,20 @@ class OperationRunService:
                     "该采购员当日环境序号已超过 999，请调整购买日期后重试",
                     409,
                 )
-            env_name = (
-                f"{code}-{run.site}-{run.purchase_date[-4:]}-{offsets[code]:03d}"
-            )
+            for name_attempt in range(32):
+                env_name = format_environment_name(
+                    code, run.site, run.purchase_date, offsets[code],
+                    account_ref, attempt=name_attempt,
+                )
+                if env_name not in taken_names:
+                    break
+            else:
+                raise PurchaseServiceError(
+                    "environment_name_conflict",
+                    "环境名称短码冲突，请重新提交后重试",
+                    409,
+                )
+            taken_names.add(env_name)
             sequence = sequences[code]
             sequence.last_value = offsets[code]
             sequence.updated_at = now

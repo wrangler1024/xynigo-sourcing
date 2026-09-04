@@ -469,6 +469,12 @@ class ExecutorChannelService:
         now = utcnow()
         if executor.status != "active":
             raise ExecutorServiceError("executor_revoked", status_code=409)
+        # A worker that is retrying a failed completion request cannot poll,
+        # so poll-only lease recovery can otherwise leave a phantom active
+        # task blocking every later preview. Sweep it before busy checks too.
+        self._recover_expired_leases(
+            executor=executor, now=now, trace_id=None, commit=False
+        )
         if DESKTOP_CONFIG_ONLY_CAPABILITY in set(executor.capabilities or []):
             config_task = task_type in {"config.read.v1", "config.write.v1"}
             config_rpc = (
@@ -703,6 +709,14 @@ class ExecutorChannelService:
         while True:
             now = utcnow()
             self._recover_expired_leases(executor=executor, now=now, trace_id=trace_id)
+            if not body.acceptTasks:
+                executor.last_seen_at = now
+                self.session.commit()
+                return {
+                    "serverTime": now.isoformat(),
+                    "pollAfterSeconds": 1,
+                    "task": None,
+                }
             task = self._lease_next(executor=executor, now=now, trace_id=trace_id)
             if task is not None:
                 lease_token = task.pop("_leaseToken")
@@ -852,15 +866,23 @@ class ExecutorChannelService:
             result_summary = workspace_snapshot.model_dump(
                 mode="json", exclude={"inventorySnapshot"}
             )
-        if task.status in {"succeeded", "failed"}:
+        late_expired_finish = (
+            task.status == "uncertain"
+            and task.result_code == "lease_expired_after_start"
+        )
+        if task.status in TERMINAL_TASK_STATUSES and not late_expired_finish:
             if (
-                task.status == body.outcome
+                task.status in {"succeeded", "failed"}
+                and task.status == body.outcome
                 and task.result_code == body.resultCode
                 and self._result_summary(task) == result_summary
             ):
                 return task
             raise ExecutorServiceError("executor_task_finish_conflict", status_code=409)
-        if task.status not in {"leased", "running", "cancel_requested"}:
+        if (
+            task.status not in {"leased", "running", "cancel_requested"}
+            and not late_expired_finish
+        ):
             raise ExecutorServiceError("executor_task_state_conflict", status_code=409)
         self._validate_config_result(task, body)
         self._validate_business_result(task, body)
@@ -872,13 +894,13 @@ class ExecutorChannelService:
         )
         now = utcnow()
         if preview_result is not None and preview_result.inventorySnapshot is not None:
-            self._sync_hub_environment_snapshot(
+            self._sync_hub_environment_snapshot_safely(
                 executor=executor,
                 snapshot=preview_result.inventorySnapshot,
                 now=now,
             )
         if workspace_inventory is not None:
-            self._sync_hub_environment_snapshot(
+            self._sync_hub_environment_snapshot_safely(
                 executor=executor,
                 snapshot=workspace_inventory,
                 now=now,
@@ -1097,6 +1119,7 @@ class ExecutorChannelService:
         executor: LocalExecutor,
         now: datetime,
         trace_id: str | None,
+        commit: bool = True,
     ) -> None:
         expired = list(
             self.session.scalars(
@@ -1143,7 +1166,10 @@ class ExecutorChannelService:
                     trace_id=trace_id,
                 )
                 self._purge_sensitive_request(task, now=now)
-        self.session.commit()
+        if commit:
+            self.session.commit()
+        else:
+            self.session.flush()
 
     @staticmethod
     def _purge_sensitive_request(task: ExecutorTask, *, now: datetime) -> None:
@@ -1353,28 +1379,98 @@ class ExecutorChannelService:
                 by_name.setdefault(inventory.environment_name, []).append(inventory)
             if inventory.environment_ref:
                 by_ref.setdefault(inventory.environment_ref, []).append(inventory)
+        snapshot_order_refs = {
+            item.sourceOrderRef for item in snapshot.rows
+            if item.sourceOrderRef
+        }
         touched: set[uuid.UUID] = set()
+
+        def unique_rows(
+            rows: list[HubEnvironmentInventory],
+        ) -> list[HubEnvironmentInventory]:
+            deduplicated: dict[uuid.UUID, HubEnvironmentInventory] = {}
+            for row in rows:
+                deduplicated[row.id] = row
+            return list(deduplicated.values())
+
         for item in snapshot.rows:
-            matches = []
-            if item.sourceOrderRef:
-                matches.extend(by_order.get(item.sourceOrderRef, ()))
-            matches.extend(by_name.get(item.environmentName, ()))
-            if item.environmentRef:
-                matches.extend(by_ref.get(item.environmentRef, ()))
-            for inventory in matches:
-                if inventory.id in touched:
+            ref_matches = unique_rows(
+                list(by_ref.get(item.environmentRef, ()))
+                if item.environmentRef else []
+            )
+            order_matches = unique_rows(
+                list(by_order.get(item.sourceOrderRef, ()))
+                if item.sourceOrderRef else []
+            )
+            name_matches = unique_rows(
+                list(by_name.get(item.environmentName, ()))
+            )
+            # A complete snapshot is authoritative, but two durable rows
+            # claiming the same strong identity require manual reconciliation.
+            # Persist the observation cache and leave those reservations alone
+            # instead of corrupting both rows or failing the whole task.
+            if len(ref_matches) > 1 or len(order_matches) > 1:
+                continue
+            ref_match = ref_matches[0] if ref_matches else None
+            order_match = order_matches[0] if order_matches else None
+            if (
+                ref_match is not None
+                and order_match is not None
+                and ref_match.id != order_match.id
+            ):
+                continue
+            canonical = ref_match or order_match
+            if canonical is None:
+                if len(name_matches) != 1:
                     continue
-                touched.add(inventory.id)
-                inventory.environment_name = item.environmentName
-                inventory.environment_ref = item.environmentRef
-                inventory.environment_serial = item.environmentSerial
-                if item.environmentGroup:
-                    inventory.environment_group = item.environmentGroup
-                if item.site:
-                    inventory.site = item.site
-                inventory.state = "active"
-                inventory.last_observed_at = captured_at
-                inventory.updated_at = now
+                canonical = name_matches[0]
+                if (
+                    item.sourceOrderRef
+                    and canonical.source_order_ref
+                    and item.sourceOrderRef != canonical.source_order_ref
+                ):
+                    continue
+                if (
+                    item.environmentRef
+                    and canonical.environment_ref
+                    and item.environmentRef != canonical.environment_ref
+                ):
+                    continue
+            if canonical.id in touched:
+                continue
+
+            name_conflicts = [
+                row for row in name_matches if row.id != canonical.id
+            ]
+            if name_conflicts:
+                safely_retired = all(
+                    row.state == "deleted"
+                    and not row.environment_ref
+                    and (
+                        not row.source_order_ref
+                        or row.source_order_ref not in snapshot_order_refs
+                    )
+                    for row in name_conflicts
+                )
+                if not safely_retired:
+                    continue
+                # Flush tombstones before renaming the canonical row so SQL
+                # statement ordering cannot trip the tenant/name constraint.
+                for stale in name_conflicts:
+                    self.session.delete(stale)
+                self.session.flush()
+
+            touched.add(canonical.id)
+            canonical.environment_name = item.environmentName
+            canonical.environment_ref = item.environmentRef
+            canonical.environment_serial = item.environmentSerial
+            if item.environmentGroup:
+                canonical.environment_group = item.environmentGroup
+            if item.site:
+                canonical.site = item.site
+            canonical.state = "active"
+            canonical.last_observed_at = captured_at
+            canonical.updated_at = now
 
         if marker is None:
             marker = HubEnvironmentInventorySync(
@@ -1394,6 +1490,30 @@ class ExecutorChannelService:
             marker.completed_at = captured_at
             marker.updated_at = now
         self.session.flush()
+
+    def _sync_hub_environment_snapshot_safely(
+        self,
+        *,
+        executor: LocalExecutor,
+        snapshot: ExecutorHubEnvironmentSnapshot,
+        now: datetime,
+    ) -> None:
+        """Keep cache reconciliation from poisoning task completion.
+
+        Inventory reservations are a safety index, while observations are a
+        replaceable performance cache. A future legacy-data edge case must not
+        strand a completed local task in an infinite finish retry loop.
+        """
+        try:
+            with self.session.begin_nested():
+                self._sync_hub_environment_snapshot(
+                    executor=executor, snapshot=snapshot, now=now
+                )
+        except IntegrityError:
+            # The savepoint rollback leaves the previous complete cache intact.
+            # The task result itself can still be committed and the next fresh
+            # snapshot can retry reconciliation after data repair.
+            self.session.expire_all()
 
     @staticmethod
     def _validated_workspace_snapshot(

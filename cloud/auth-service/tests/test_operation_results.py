@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import UTC, datetime
 import hashlib
 import uuid
 
@@ -8,6 +9,7 @@ import pytest
 from sqlalchemy import func, select
 
 from test_purchase_api import authenticated_client
+from xynigo_auth.environment_plan_core import format_environment_name
 from xynigo_auth.feishu_operation_sync import FeishuOperationSyncWorker
 from xynigo_auth.models import (
     AuditEvent,
@@ -17,6 +19,7 @@ from xynigo_auth.models import (
     EnvironmentCreationRun,
     EnvironmentNameSequence,
     HubEnvironmentInventory,
+    HubEnvironmentInventorySync,
     LogisticsQueryResult,
     LogisticsQueryRun,
     OperationalSyncOutbox,
@@ -110,6 +113,23 @@ def test_cloud_inventory_allocates_monotonic_names_and_blocks_cross_device_dupli
             "email": "inventory2@example.test", "orderNo": "a0000002",
         }]
         service = OperationRunService(session)
+        session.add(HubEnvironmentInventorySync(
+            tenant_id=tenant_id,
+            executor_id=None,
+            snapshot_revision="f" * 64,
+            environment_count=0,
+            completed_at=datetime.now(UTC),
+        ))
+        session.flush()
+        preview = service.preview_environment_names_from_cache(
+            tenant_id=tenant_id,
+            site="MX",
+            purchase_date="20260903",
+            environment_group="MX采购",
+            plan_accounts=accounts,
+            assignments=[{"purchaserLabel": "新刚", "count": 2}],
+        )
+        assert preview is not None
         first = make_run("inventory-run-0001")
         planned = service.reserve_environment_names(
             run=first,
@@ -117,7 +137,17 @@ def test_cloud_inventory_allocates_monotonic_names_and_blocks_cross_device_dupli
             assignments=[{"purchaserLabel": "新刚", "count": 2}],
         )
         assert [row["environmentName"] for row in planned] == [
-            "XG-MX-0903-001", "XG-MX-0903-002",
+            format_environment_name(
+                "XG", "MX", "20260903", 1,
+                hashlib.sha256(b"inventory1@example.test").hexdigest(),
+            ),
+            format_environment_name(
+                "XG", "MX", "20260903", 2,
+                hashlib.sha256(b"inventory2@example.test").hexdigest(),
+            ),
+        ]
+        assert [row["environmentName"] for row in preview["rows"]] == [
+            row["environmentName"] for row in planned
         ]
         inventory = list(session.scalars(select(HubEnvironmentInventory)))
         assert len(inventory) == 2
@@ -127,7 +157,8 @@ def test_cloud_inventory_allocates_monotonic_names_and_blocks_cross_device_dupli
         session.add(EnvironmentCreationResult(
             id=uuid.uuid4(), run_id=first.id, tenant_id=tenant_id,
             account_ref=account_ref, account_label="in***01@example.test",
-            purchaser_label="新刚", environment_name="XG-MX-0903-001",
+            purchaser_label="新刚",
+            environment_name=planned[0]["environmentName"],
             environment_ref="hub-0001", environment_serial="9001",
             status="success", completed_steps=["done"],
             recovered_existing=False, created_in_run=True,
@@ -166,7 +197,14 @@ def test_cloud_inventory_allocates_monotonic_names_and_blocks_cross_device_dupli
             assignments=[{"purchaserLabel": "新刚", "count": 2}],
         )
         assert [row["environmentName"] for row in next_names] == [
-            "XG-MX-0903-003", "XG-MX-0903-004",
+            format_environment_name(
+                "XG", "MX", "20260903", 3,
+                hashlib.sha256(b"inventory3@example.test").hexdigest(),
+            ),
+            format_environment_name(
+                "XG", "MX", "20260903", 4,
+                hashlib.sha256(b"inventory4@example.test").hexdigest(),
+            ),
         ]
         sequence = session.scalar(select(EnvironmentNameSequence))
         assert sequence is not None and sequence.last_value == 4

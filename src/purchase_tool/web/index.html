@@ -2129,7 +2129,7 @@
           <button class="btn" id="btnEnvClear" type="button">🧹 清空</button>
           <span class="assign-sum warn" id="envAssignSum">已分配 0/0</span>
         </div>
-        <div class="spec-line">提交后端的分配串：<b class="mono" id="envSpecOut">（未分配）</b> · 环境名格式 <b class="mono">XG-MX-0819-001</b>（英文代号、无中文）</div>
+        <div class="spec-line">提交后端的分配串：<b class="mono" id="envSpecOut">（未分配）</b> · 环境名格式 <b class="mono">XG-MX-260904-150-A7K2</b>（YYMMDD + 序号 + 4 位短码）</div>
       </div>
       <div id="envAssignBackup" class="hidden">
         <div class="field-label" style="margin-bottom:8px">环境归属采购员（单选）</div>
@@ -3514,6 +3514,7 @@ function cloudApiError(payload, status) {
     executor_task_cancel_requested:'本地执行器请求已进入取消流程',
     environment_cleanup_in_progress:'上一批环境任务仍在执行或撤销中，请等待清理完成后再提交',
     environment_account_already_bound:'检测到这些买家号已有云端环境记录；请打开原批次续跑，或由管理员接管原批次，禁止重新创建重复环境',
+    environment_name_conflict:'环境名称短码发生极端冲突，请重新预览后重试',
     environment_preview_response_invalid:'本地执行器返回的干跑预览结果不完整，请刷新后重试',
     executor_capability_missing:'本地执行器版本过旧，请安装云端提供的最新版本',
     executor_payload_encryption_unavailable:'云端执行器安全通道尚未就绪',
@@ -7183,9 +7184,9 @@ function envActiveBuyers() {
 function composeAssignmentSpec() {
   return envActiveBuyers().map(b => `${envBuyerCounts[b.name]}:${b.name}`).join(',');
 }
-function envMmdd() {
+function envDateToken() {
   const v = ($('envDate').value || '').replace(/\D/g, '');
-  return v.length === 8 ? v.slice(4) : '';
+  return v.length === 8 ? v.slice(2) : '';
 }
 function envPurchaseDate() {
   return ($('envDate').value || '').replace(/\D/g, '');
@@ -7201,14 +7202,14 @@ function renderEnvBuyerCards() {
   const total = envAccountCount;
   const assigned = envAssignedTotal();
   const busy = envPreviewRunning || envSubmitting || envRunning;
-  const mmdd = envMmdd(), site = $('envSite').value;
+  const dateToken = envDateToken(), site = $('envSite').value;
   grid.innerHTML = '';
   envBuyers.forEach(b => {
     const n = envBuyerCounts[b.name] || 0;
     const card = document.createElement('div');
     card.className = 'buyer-card' + (n > 0 ? ' active' : '');
-    const range = n > 0 && mmdd
-      ? `${b.code}-${site}-${mmdd}-001${n > 1 ? '~' + pad3(n) : ''}（续排以干跑预览为准）`
+    const range = n > 0 && dateToken
+      ? `${b.code}-${site}-${dateToken}-001-XXXX${n > 1 ? '~' + pad3(n) + '-XXXX' : ''}（续排以干跑预览为准）`
       : '未参与本批';
     card.innerHTML =
       `<div class="buyer-head">` +
@@ -7254,7 +7255,6 @@ function renderEnvBackupCards() {
   if (!envBackup.buyer || !envBuyers.some(b => b.name === envBackup.buyer)) {
     envBackup.buyer = envBuyers[0].name;
   }
-  const mmdd = envMmdd(), site = $('envSite').value;
   grid.innerHTML = '';
   envBuyers.forEach(b => {
     const selected = envBackup.buyer === b.name;
@@ -7269,16 +7269,16 @@ function renderEnvBackupCards() {
   });
   const last = backupNamePreview(envBuyerByName(envBackup.buyer), envBackup.count - 1);
   $('envBackupPattern').textContent = backupNamePreview(envBuyerByName(envBackup.buyer), 0) +
-    (envBackup.count > 1 ? ' ~ ' + last.split('-').pop() : '') + '（续排以干跑预览为准）';
+    (envBackup.count > 1 ? ' ~ ' + last : '') + '（续排以干跑预览为准）';
   $('envBackupRemark').textContent = `「${envBackup.type}环境」`;
   $('envBackupCount').value = envBackup.count;
 }
 
 function backupNamePreview(buyer, index) {
-  const mmdd = envMmdd() || 'MMDD', site = $('envSite').value;
+  const dateToken = envDateToken() || 'YYMMDD', site = $('envSite').value;
   if (!buyer) return '—';
-  if (envBackup.type === '备用') return `${buyer.code}-${site}-${mmdd}-续排${index + 1}`;
-  return `${buyer.code}-${site}-测试-${('0' + (index + 1)).slice(-2)}`;
+  if (envBackup.type === '备用') return `${buyer.code}-${site}-${dateToken}-续排${index + 1}-XXXX`;
+  return `${buyer.code}-${site}-测试-${dateToken}-${('0' + (index + 1)).slice(-2)}-XXXX`;
 }
 
 function refreshAssignUi() {

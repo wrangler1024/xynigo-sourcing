@@ -262,7 +262,7 @@ class CloudExecutorClient(object):
         return {'executorId': executor_id, 'deviceCredential': credential}
 
     def poll(self, credential, revision, hub_status, wait_seconds=25,
-             config_summary=None):
+             config_summary=None, accept_tasks=True):
         body = {
             'waitSeconds': max(0, min(25, int(wait_seconds))),
             'configRevision': revision,
@@ -273,6 +273,8 @@ class CloudExecutorClient(object):
         }
         if config_summary is not None and not self.compatibility_mode:
             body['configSummary'] = config_summary
+        if not accept_tasks and not self.compatibility_mode:
+            body['acceptTasks'] = False
         try:
             return self.client._request(
                 '/v1/executor-channel/poll',
@@ -290,6 +292,7 @@ class CloudExecutorClient(object):
             self.compatibility_mode = True
             body['capabilities'] = self._capabilities()
             body.pop('configSummary', None)
+            body.pop('acceptTasks', None)
             return self.client._request(
                 '/v1/executor-channel/poll',
                 method='POST', payload=body, token=credential,
@@ -458,8 +461,18 @@ class ExecutorChannelWorker(object):
                     self.user_session_installer(issued['sessionToken'])
                     user_session_ready = True
                     user_session_refresh_at = time.monotonic() + 4 * 60 * 60
+                finish_retrying = False
                 if self.pending_finish:
-                    self._flush_pending_finish(credential)
+                    try:
+                        self._flush_pending_finish(credential)
+                    except LocalAuthError as exc:
+                        if exc.code in (
+                                'executor_revoked',
+                                'executor_credential_invalid'):
+                            raise
+                        finish_retrying = True
+                    except Exception:
+                        finish_retrying = True
                 cfg = self.config_getter()
                 revision = config_revision(self.public_config_getter(cfg))
                 config_summary = (
@@ -492,20 +505,33 @@ class ExecutorChannelWorker(object):
                     # A zero-wait poll confirms the secure channel within one
                     # network round trip.  Only an already-confirmed channel
                     # may enter the 25-second task long poll.
-                    wait_seconds=0 if handshake_required else 25,
-                    config_summary=config_summary)
+                    wait_seconds=(
+                        0 if handshake_required or finish_retrying else 25),
+                    config_summary=config_summary,
+                    accept_tasks=not finish_retrying)
                 previous_state = self.state_store.load()
                 connected_at = (previous_state.get('connectedAt')
                                 if previous_state.get('status') == 'online'
                                 else None) or _now_iso()
                 self.state_store.update(
                     status='online', lastPollAt=_now_iso(),
-                    lastErrorCode='', configRevision=revision,
-                    connectionPhase='listening', connectionAttempt=0,
-                    nextRetryAt=None, connectedAt=connected_at)
+                    lastErrorCode=(
+                        'executor_finish_retrying' if finish_retrying else ''),
+                    configRevision=revision,
+                    connectionPhase=(
+                        'finish_retry_wait' if finish_retrying
+                        else 'listening'),
+                    connectionAttempt=0,
+                    nextRetryAt=(
+                        _future_iso(backoff) if finish_retrying else None),
+                    connectedAt=connected_at)
                 handshake_required = False
-                backoff = 1.0
                 consecutive_failures = 0
+                if finish_retrying:
+                    self._wait(backoff)
+                    backoff = min(30.0, backoff * 2.0)
+                    continue
+                backoff = 1.0
                 task = response.get('task') if isinstance(response, dict) else None
                 if task:
                     self._execute_task(credential, task)
@@ -755,9 +781,23 @@ class ExecutorChannelWorker(object):
          result_code, result_summary) = pending
         if stored_credential != credential:
             raise LocalAuthError('executor_credential_invalid', status=401)
-        self.client.finish(
-            credential, task_id, lease_token, outcome,
-            result_code, result_summary)
+        try:
+            self.client.finish(
+                credential, task_id, lease_token, outcome,
+                result_code, result_summary)
+        except LocalAuthError as exc:
+            if exc.code not in {
+                'executor_task_state_conflict',
+                'executor_task_finish_conflict',
+                'executor_lease_expired',
+                'executor_task_not_found',
+            }:
+                raise
+            # The cloud has already made this lease terminal. Retrying the
+            # same completion forever would block all future polls on this
+            # executor, so discard only these explicit terminal conflicts.
+            self.pending_finish = None
+            return
         self.pending_finish = None
 
     def _wait(self, seconds):

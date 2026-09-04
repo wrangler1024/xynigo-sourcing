@@ -34,6 +34,7 @@ class FakeExecutorClient(object):
         self.renewals = []
         self.pair_calls = []
         self.poll_calls = []
+        self.poll_accept_tasks = []
         self.poll_summaries = []
         self.poll_callback = None
         self.renew_callback = None
@@ -47,8 +48,9 @@ class FakeExecutorClient(object):
         }
 
     def poll(self, credential, revision, hub_status, wait_seconds=25,
-             config_summary=None):
+             config_summary=None, accept_tasks=True):
         self.poll_summaries.append(config_summary)
+        self.poll_accept_tasks.append(bool(accept_tasks))
         self.poll_calls.append(
             (credential, revision, hub_status, wait_seconds))
         if self.poll_callback:
@@ -570,6 +572,57 @@ class ExecutorTaskApplicationTests(unittest.TestCase):
         self.assertEqual(client.finishes[0]['resultSummary'], snapshot)
         self.assertFalse(coordinator.running())
 
+    def test_terminal_finish_conflict_releases_pending_result(self):
+        worker, client, _holder, _coordinator = self.build_worker({
+            'concurrency': 2, 'safeParallelTasks': True,
+        })
+        worker.pending_finish = (
+            DEVICE_CREDENTIAL,
+            'task-already-terminal',
+            LEASE_TOKEN,
+            'succeeded',
+            'workspace_snapshot_completed',
+            {'schemaVersion': 1},
+        )
+
+        def terminal_finish(*_args, **_kwargs):
+            raise LocalAuthError(
+                'executor_task_state_conflict', status=409)
+
+        client.finish = terminal_finish
+        worker._flush_pending_finish(DEVICE_CREDENTIAL)
+
+        self.assertIsNone(worker.pending_finish)
+
+    def test_transient_finish_failure_keeps_heartbeat_online_without_leasing(self):
+        worker, client, _holder, _coordinator = self.build_worker({
+            'concurrency': 2, 'safeParallelTasks': True,
+        })
+        worker.pending_finish = (
+            DEVICE_CREDENTIAL,
+            'task-finish-retry',
+            LEASE_TOKEN,
+            'succeeded',
+            'workspace_snapshot_completed',
+            {'schemaVersion': 1},
+        )
+
+        def failed_finish(*_args, **_kwargs):
+            raise LocalAuthError('auth_failed', status=500)
+
+        client.finish = failed_finish
+        client.poll_callback = worker.stop_event.set
+        self.assertTrue(worker.start())
+        worker.thread.join(timeout=2)
+
+        self.assertFalse(worker.thread.is_alive())
+        self.assertIsNotNone(worker.pending_finish)
+        self.assertEqual(client.poll_accept_tasks, [False])
+        state = worker.state_store.load()
+        self.assertEqual(state['status'], 'online')
+        self.assertEqual(state['lastErrorCode'], 'executor_finish_retrying')
+        self.assertEqual(state['connectionPhase'], 'finish_retry_wait')
+
 
 class PairingTests(unittest.TestCase):
     def test_pair_saves_credential_only_in_secure_store(self):
@@ -792,8 +845,9 @@ class ExecutorChannelLifecycleTests(unittest.TestCase):
 
         class FlakyClient(FakeExecutorClient):
             def poll(self, credential, revision, hub_status, wait_seconds=25,
-                     config_summary=None):
+                     config_summary=None, accept_tasks=True):
                 del config_summary
+                self.poll_accept_tasks.append(bool(accept_tasks))
                 self.poll_calls.append(
                     (credential, revision, hub_status, wait_seconds))
                 if len(self.poll_calls) <= 2:
@@ -821,8 +875,9 @@ class ExecutorChannelLifecycleTests(unittest.TestCase):
     def test_third_consecutive_poll_failure_reports_offline(self):
         class FlakyClient(FakeExecutorClient):
             def poll(self, credential, revision, hub_status, wait_seconds=25,
-                     config_summary=None):
+                     config_summary=None, accept_tasks=True):
                 del config_summary
+                self.poll_accept_tasks.append(bool(accept_tasks))
                 self.poll_calls.append(
                     (credential, revision, hub_status, wait_seconds))
                 if len(self.poll_calls) >= 3:

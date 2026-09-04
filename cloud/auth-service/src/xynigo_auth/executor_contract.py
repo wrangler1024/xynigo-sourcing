@@ -160,6 +160,7 @@ class ExecutorConfigSummaryV2(StrictBody):
 
 class ExecutorPollBody(StrictBody):
     waitSeconds: int = Field(default=25, ge=0, le=25)
+    acceptTasks: bool = True
     configRevision: str | None = None
     hubStatus: Literal["unknown", "ready", "offline", "limited"] = "unknown"
     clientVersion: str = Field(min_length=1, max_length=64)
