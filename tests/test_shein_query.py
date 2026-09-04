@@ -30,6 +30,37 @@ class SheinQueryParserTests(unittest.TestCase):
         self.assertEqual(mx['firstTrackingTime'], '2026-09-03 08:05:00')
         self.assertEqual(us['firstTrackingTime'], '2026-09-03 20:05:00')
 
+    def test_first_tracking_event_accepts_live_mx_timeline_without_year(self):
+        result = parse_first_tracking_event(
+            'Sep 03\n19:23\nCargando completo\n'
+            'Sep 03\n18:49\nAlmacén Internacional, paquete recogido\n'
+            'Sep 03\n00:00\nAlmacén Internacional, Pedido en espera de embalaje.',
+            order_time='2026-09-02 20:18:27', site='MX',
+            utc_offset_minutes=-360)
+        self.assertEqual(result['firstTrackingTime'], '2026-09-03 00:00:00')
+        self.assertEqual(result['firstTrackingLeadMinutes'], 221)
+        self.assertIn('Pedido en espera de embalaje',
+                      result['firstTrackingSummary'])
+        self.assertTrue(result['firstTrackingAt'].endswith('-06:00'))
+
+    def test_first_tracking_event_uses_previous_day_in_live_mx_timeline(self):
+        result = parse_first_tracking_event(
+            'Sep 03\n15:35\nCargando completo\n'
+            'Sep 03\n05:46\nPaquete en espera de envío\n'
+            'Sep 02\n23:15\nPedido en espera de embalaje.',
+            order_time='2026-09-02 20:19:50', site='MX',
+            utc_offset_minutes=-360)
+        self.assertEqual(result['firstTrackingTime'], '2026-09-02 23:15:00')
+        self.assertEqual(result['firstTrackingLeadMinutes'], 175)
+
+    def test_first_tracking_event_infers_next_year_for_short_date(self):
+        result = parse_first_tracking_event(
+            'Jan 01\n00:20\nCarrier received package',
+            order_time='2026-12-31 23:50:00', site='US',
+            utc_offset_minutes=-300)
+        self.assertEqual(result['firstTrackingTime'], '2027-01-01 00:20:00')
+        self.assertEqual(result['firstTrackingLeadMinutes'], 30)
+
     def test_first_tracking_event_does_not_report_invalid_lead(self):
         result = parse_first_tracking_event(
             '2026-09-01 08:00:00 Carrier received package',

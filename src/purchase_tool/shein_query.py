@@ -179,6 +179,14 @@ RE_TRACKING_MONTH_DAY_TIME = re.compile(
 RE_TRACKING_NUMERIC_TIME = re.compile(
     r'(?P<first>\d{1,2})[-/.](?P<secondPart>\d{1,2})[-/.]'
     r'(?P<year>20\d{2})[ T,\s]+' + _TRACK_TIME, re.I)
+# SHEIN 当前轨迹组件只渲染 ``Sep 03`` + ``19:23``，年份需从订单
+# 时间推断。DOM innerText 会保留换行，解析器拼接相邻行后再匹配。
+RE_TRACKING_DAY_MONTH_TIME_SHORT = re.compile(
+    r'(?P<day>\d{1,2})\s+(?P<monthName>[A-Za-zÁÉÍÓÚÜÑáéíóúüñ.]+)'
+    r'[,\s]+' + _TRACK_TIME, re.I)
+RE_TRACKING_MONTH_DAY_TIME_SHORT = re.compile(
+    r'(?P<monthName>[A-Za-zÁÉÍÓÚÜÑáéíóúüñ.]+)\s+'
+    r'(?P<day>\d{1,2})[,\s]+' + _TRACK_TIME, re.I)
 
 
 def normalize_site(site):
@@ -268,7 +276,8 @@ def _tracking_month_number(raw):
     return TRACKING_MONTH_NUMBERS.get(value.strip(' .').casefold())
 
 
-def _tracking_match_datetime(match, site='MX', utc_offset_minutes=None):
+def _tracking_match_datetime(match, site='MX', utc_offset_minutes=None,
+                             ordered_at=None):
     """Convert one rendered carrier timestamp to the environment timezone."""
     try:
         site = normalize_site(site)
@@ -289,10 +298,32 @@ def _tracking_match_datetime(match, site='MX', utc_offset_minutes=None):
             hour = hour % 12 + (12 if ampm == 'PM' else 0)
         offset = SITE_PROFILES[site]['utcOffsetMinutes'] \
             if utc_offset_minutes is None else int(utc_offset_minutes)
-        return datetime(
-            int(groups['year']), int(month), int(day), hour,
-            int(groups.get('minute') or 0), int(groups.get('second') or 0),
-            tzinfo=timezone(timedelta(minutes=offset)))
+        tz = timezone(timedelta(minutes=offset))
+        year = groups.get('year')
+        if year:
+            return datetime(
+                int(year), int(month), int(day), hour,
+                int(groups.get('minute') or 0),
+                int(groups.get('second') or 0), tzinfo=tz)
+
+        reference = ordered_at or datetime.now(tz)
+        candidates = []
+        for candidate_year in (
+                reference.year, reference.year + 1, reference.year - 1):
+            try:
+                candidates.append(datetime(
+                    candidate_year, int(month), int(day), hour,
+                    int(groups.get('minute') or 0),
+                    int(groups.get('second') or 0), tzinfo=tz))
+            except ValueError:
+                continue
+        if ordered_at is not None:
+            forward = [candidate for candidate in candidates
+                       if timedelta(0) <= candidate - ordered_at
+                       <= timedelta(days=366)]
+            if forward:
+                return min(forward)
+        return min(candidates, key=lambda candidate: abs(candidate - reference))
     except (TypeError, ValueError, OverflowError):
         return None
 
@@ -311,11 +342,24 @@ def parse_first_tracking_event(text, order_time='', site='MX',
         'firstTrackingAt': '', 'firstTrackingTime': '',
         'firstTrackingSummary': '', 'firstTrackingLeadMinutes': None,
     }
+    site = normalize_site(site)
+    offset = SITE_PROFILES[site]['utcOffsetMinutes'] \
+        if utc_offset_minutes is None else int(utc_offset_minutes)
+    ordered = None
+    try:
+        ordered = datetime.strptime(
+            str(order_time or '').strip(), '%Y-%m-%d %H:%M:%S')
+        ordered = ordered.replace(
+            tzinfo=timezone(timedelta(minutes=offset)))
+    except (TypeError, ValueError):
+        pass
     lines = [re.sub(r'\s+', ' ', line).strip()
              for line in str(text or '').splitlines() if line.strip()]
     patterns = (
         RE_TRACKING_ISO_TIME, RE_TRACKING_DAY_MONTH_TIME,
         RE_TRACKING_MONTH_DAY_TIME, RE_TRACKING_NUMERIC_TIME,
+        RE_TRACKING_DAY_MONTH_TIME_SHORT,
+        RE_TRACKING_MONTH_DAY_TIME_SHORT,
     )
     events = {}
     for index in range(len(lines)):
@@ -323,7 +367,7 @@ def parse_first_tracking_event(text, order_time='', site='MX',
         for pattern in patterns:
             for match in pattern.finditer(candidate):
                 observed = _tracking_match_datetime(
-                    match, site, utc_offset_minutes)
+                    match, site, utc_offset_minutes, ordered)
                 if observed is None:
                     continue
                 summary = candidate[match.end():].strip(' -–—|·,;')
@@ -339,15 +383,10 @@ def parse_first_tracking_event(text, order_time='', site='MX',
         return empty
     observed, summary = min(events.values(), key=lambda item: item[0])
     lead_minutes = None
-    try:
-        ordered = datetime.strptime(
-            str(order_time or '').strip(), '%Y-%m-%d %H:%M:%S')
-        ordered = ordered.replace(tzinfo=observed.tzinfo)
+    if ordered is not None:
         candidate_lead = int((observed - ordered).total_seconds() // 60)
         if 0 <= candidate_lead <= 366 * 24 * 60:
             lead_minutes = candidate_lead
-    except (TypeError, ValueError):
-        pass
     return {
         'firstTrackingAt': observed.isoformat(),
         'firstTrackingTime': observed.strftime('%Y-%m-%d %H:%M:%S'),
