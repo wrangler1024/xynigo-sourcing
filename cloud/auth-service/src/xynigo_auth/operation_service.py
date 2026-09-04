@@ -27,6 +27,7 @@ from .models import (
     LocalExecutor,
     OperationalSyncOutbox,
     Tenant,
+    User,
 )
 from .operation_contract import (
     EnvironmentCreationRunBody,
@@ -884,16 +885,19 @@ class OperationRunService:
         tenant_id: uuid.UUID,
         actor_user_id: uuid.UUID,
         root_run_id: uuid.UUID,
+        allow_tenant_scope: bool = False,
     ) -> tuple[LogisticsQueryRun, LogisticsQueryRun]:
-        """Resolve a user-owned logical batch and its newest retry descendant."""
+        """Resolve an allowed logical batch and its newest retry descendant."""
 
-        requested = self.session.scalar(
-            select(LogisticsQueryRun).where(
-                LogisticsQueryRun.id == root_run_id,
-                LogisticsQueryRun.tenant_id == tenant_id,
-                LogisticsQueryRun.actor_user_id == actor_user_id,
-            )
+        requested_query = select(LogisticsQueryRun).where(
+            LogisticsQueryRun.id == root_run_id,
+            LogisticsQueryRun.tenant_id == tenant_id,
         )
+        if not allow_tenant_scope:
+            requested_query = requested_query.where(
+                LogisticsQueryRun.actor_user_id == actor_user_id
+            )
+        requested = self.session.scalar(requested_query)
         if requested is None:
             raise PurchaseServiceError(
                 "operation_run_not_found", "物流查询历史不存在", 404
@@ -902,11 +906,12 @@ class OperationRunService:
         if resolved_root_id is None:
             lineage = self._logistics_lineage(requested)
             resolved_root_id = lineage[0].id
+        history_actor_user_id = requested.actor_user_id
         root = self.session.scalar(
             select(LogisticsQueryRun).where(
                 LogisticsQueryRun.id == resolved_root_id,
                 LogisticsQueryRun.tenant_id == tenant_id,
-                LogisticsQueryRun.actor_user_id == actor_user_id,
+                LogisticsQueryRun.actor_user_id == history_actor_user_id,
             )
         )
         if root is None:
@@ -917,7 +922,7 @@ class OperationRunService:
             select(LogisticsQueryRun)
             .where(
                 LogisticsQueryRun.tenant_id == tenant_id,
-                LogisticsQueryRun.actor_user_id == actor_user_id,
+                LogisticsQueryRun.actor_user_id == history_actor_user_id,
                 or_(
                     LogisticsQueryRun.id == root.id,
                     LogisticsQueryRun.root_run_id == root.id,
@@ -940,8 +945,10 @@ class OperationRunService:
         cursor: uuid.UUID | None = None,
         site: str | None = None,
         status: str | None = None,
+        include_all_users: bool = False,
+        filter_actor_user_id: uuid.UUID | None = None,
     ) -> dict[str, object]:
-        """Return one page of logical root batches for the current user."""
+        """Return one page of logical root batches in the authorized scope."""
 
         root_run = aliased(LogisticsQueryRun)
         latest_run = aliased(LogisticsQueryRun)
@@ -950,7 +957,7 @@ class OperationRunService:
             select(latest_run.id)
             .where(
                 latest_run.tenant_id == tenant_id,
-                latest_run.actor_user_id == actor_user_id,
+                latest_run.actor_user_id == root_run.actor_user_id,
                 or_(
                     latest_run.id == root_run.id,
                     latest_run.root_run_id == root_run.id,
@@ -965,7 +972,7 @@ class OperationRunService:
             select(func.count(descendant.id))
             .where(
                 descendant.tenant_id == tenant_id,
-                descendant.actor_user_id == actor_user_id,
+                descendant.actor_user_id == root_run.actor_user_id,
                 descendant.root_run_id == root_run.id,
                 descendant.id != root_run.id,
             )
@@ -977,23 +984,38 @@ class OperationRunService:
             .join(latest_run, latest_run.id == latest_id)
             .where(
                 root_run.tenant_id == tenant_id,
-                root_run.actor_user_id == actor_user_id,
                 root_run.parent_run_id.is_(None),
             )
         )
+        if include_all_users:
+            if filter_actor_user_id is not None:
+                statement = statement.where(
+                    root_run.actor_user_id == filter_actor_user_id
+                )
+        else:
+            statement = statement.where(
+                root_run.actor_user_id == actor_user_id
+            )
         if site is not None:
             statement = statement.where(root_run.site == site)
         if status is not None:
             statement = statement.where(latest_run.status == status)
         if cursor is not None:
-            cursor_run = self.session.scalar(
-                select(LogisticsQueryRun).where(
-                    LogisticsQueryRun.id == cursor,
-                    LogisticsQueryRun.tenant_id == tenant_id,
-                    LogisticsQueryRun.actor_user_id == actor_user_id,
-                    LogisticsQueryRun.parent_run_id.is_(None),
-                )
+            cursor_query = select(LogisticsQueryRun).where(
+                LogisticsQueryRun.id == cursor,
+                LogisticsQueryRun.tenant_id == tenant_id,
+                LogisticsQueryRun.parent_run_id.is_(None),
             )
+            if include_all_users:
+                if filter_actor_user_id is not None:
+                    cursor_query = cursor_query.where(
+                        LogisticsQueryRun.actor_user_id == filter_actor_user_id
+                    )
+            else:
+                cursor_query = cursor_query.where(
+                    LogisticsQueryRun.actor_user_id == actor_user_id
+                )
+            cursor_run = self.session.scalar(cursor_query)
             if cursor_run is None:
                 raise PurchaseServiceError(
                     "logistics_history_cursor_invalid", "查询历史游标无效", 422
@@ -1019,10 +1041,31 @@ class OperationRunService:
             self._logistics_history_item(root, latest, int(retries or 0))
             for root, latest, retries in page
         ]
+        actors = []
+        if include_all_users:
+            actors = [{
+                "userId": str(user_id),
+                "displayName": display_name,
+                "status": user_status,
+            } for user_id, display_name, user_status in self.session.execute(
+                select(User.id, User.display_name, User.status)
+                .join(
+                    LogisticsQueryRun,
+                    LogisticsQueryRun.actor_user_id == User.id,
+                )
+                .where(
+                    User.tenant_id == tenant_id,
+                    LogisticsQueryRun.tenant_id == tenant_id,
+                    LogisticsQueryRun.parent_run_id.is_(None),
+                )
+                .distinct()
+                .order_by(User.display_name, User.id)
+            )]
         return {
             "items": items,
             "nextCursor": str(page[-1][0].id) if has_more and page else None,
             "hasMore": has_more,
+            "actors": actors,
         }
 
     def logistics_history_snapshot(
@@ -1031,17 +1074,19 @@ class OperationRunService:
         tenant_id: uuid.UUID,
         actor_user_id: uuid.UUID,
         root_run_id: uuid.UUID,
+        allow_tenant_scope: bool = False,
     ) -> dict[str, object]:
         root, latest = self.resolve_latest_logistics_history_run(
             tenant_id=tenant_id,
             actor_user_id=actor_user_id,
             root_run_id=root_run_id,
+            allow_tenant_scope=allow_tenant_scope,
         )
         retry_count = int(
             self.session.scalar(
                 select(func.count(LogisticsQueryRun.id)).where(
                     LogisticsQueryRun.tenant_id == tenant_id,
-                    LogisticsQueryRun.actor_user_id == actor_user_id,
+                    LogisticsQueryRun.actor_user_id == root.actor_user_id,
                     LogisticsQueryRun.root_run_id == root.id,
                     LogisticsQueryRun.id != root.id,
                 )
@@ -1049,6 +1094,7 @@ class OperationRunService:
             or 0
         )
         snapshot = self.logistics_snapshot(latest)
+        actor = self.session.get(User, root.actor_user_id)
         snapshot.update(
             {
                 "rootRunId": str(root.id),
@@ -1056,6 +1102,9 @@ class OperationRunService:
                 "retryCount": retry_count,
                 "originalEnvironmentSerials": self._original_logistics_serials(root),
                 "logicalCreatedAt": _iso(root.created_at),
+                "actorUserId": str(root.actor_user_id),
+                "actorDisplayName": actor.display_name if actor else "未知用户",
+                "actorStatus": actor.status if actor else "unknown",
             }
         )
         snapshot.update(self._effective_logistics_counts(latest))
@@ -1095,6 +1144,7 @@ class OperationRunService:
             self.session.get(LocalExecutor, latest.executor_id)
             if latest.executor_id is not None else None
         )
+        actor = self.session.get(User, root.actor_user_id)
         duration_seconds = 0
         for item in self._logistics_lineage(latest):
             if item.started_at is None:
@@ -1120,6 +1170,9 @@ class OperationRunService:
             "retryCount": retry_count,
             "originalEnvironmentSerials": self._original_logistics_serials(root),
             "executorDisplayName": executor.display_name if executor else None,
+            "actorUserId": str(root.actor_user_id),
+            "actorDisplayName": actor.display_name if actor else "未知用户",
+            "actorStatus": actor.status if actor else "unknown",
             "durationSec": duration_seconds,
             **counts,
             "startedAt": _iso(root.started_at),

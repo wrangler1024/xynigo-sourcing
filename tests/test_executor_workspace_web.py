@@ -604,6 +604,10 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             'id="queryHistoryListView"',
             'id="queryHistoryDetailView"',
             'id="queryHistoryResultBody"',
+            'id="queryHistoryActor"',
+            '查询用户',
+            "query.set('userId'",
+            '只能重新查询本人创建的历史批次',
             "/v1/operation-runs/logistics-query/history?",
             "/v1/operation-runs/logistics-query/history/",
             "queryRowsHtml(rows, {history:true",
@@ -616,6 +620,19 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         ]
         self.assertNotIn("cloudLogisticsRunId =", detail)
         self.assertNotIn("lastRows =", detail)
+
+    def test_logistics_dates_stack_without_growing_the_query_row(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        self.assertIn('class="date-time-stack"', html)
+        self.assertIn('.date-time-stack { min-width:82px; height:26px;', html)
+        self.assertIn("cell('orderTime', dateTimeStack(r.orderTime)", html)
+        self.assertIn("cell('queryTime', dateTimeStack(r.time)", html)
+
+    def test_runtime_drawer_closes_on_outside_pointer_and_escape(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        self.assertIn('id="runtimeDrawerBackdrop"', html)
+        self.assertIn("$('runtimeDrawerBackdrop').onclick = closeRuntimeDrawer", html)
+        self.assertIn("e.key === 'Escape' && !$('runtimeDrawer').hidden", html)
 
     def test_logistics_history_rerun_requires_new_executor_confirmation(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")

@@ -153,6 +153,9 @@
   .query-history-toolbar { display:flex; align-items:flex-end; gap:10px; margin-bottom:14px; flex-wrap:wrap; }
   .query-history-toolbar .field { min-width:155px; }
   .query-history-toolbar select { width:100%; }
+  .date-time-stack { min-width:82px; height:26px; display:inline-grid; align-content:center; gap:1px; white-space:nowrap; line-height:1; }
+  .date-time-stack span:first-child { font-size:10px; }
+  .date-time-stack span:last-child { color:var(--navy-500); font-size:9px; }
   .query-history-table { min-width:840px; }
   .query-history-table td { height:52px; }
   .query-history-status { display:inline-flex; align-items:center; padding:3px 8px; border-radius:999px; background:var(--gray-bg); color:var(--navy-700); font-size:11px; font-weight:800; }
@@ -380,6 +383,7 @@
     overflow-y: auto; border-left: 1px solid #d6e3ea; background: #fff;
     box-shadow: -18px 0 42px rgba(8,37,72,.14); animation: runtime-drawer-in .2s ease-out;
   }
+  .runtime-drawer-backdrop { position:absolute; inset:0; z-index:69; background:transparent; }
   @keyframes runtime-drawer-in { from { transform: translateX(100%); opacity: .65; } to { transform: translateX(0); opacity: 1; } }
   .runtime-drawer-inner { min-height: 100%; padding: 22px; display: flex; flex-direction: column; }
   .runtime-drawer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
@@ -1568,6 +1572,7 @@
       </div>
     </header>
 
+    <div class="runtime-drawer-backdrop" id="runtimeDrawerBackdrop" hidden></div>
     <aside class="runtime-drawer" id="runtimeDrawer" aria-label="运行环境" hidden>
       <div class="runtime-drawer-inner">
         <div class="runtime-drawer-head"><div><h2>运行环境</h2><p>选择本次任务实际执行的电脑</p></div><button class="runtime-drawer-close" id="runtimeDrawerClose" type="button" aria-label="关闭运行环境">×</button></div>
@@ -2766,9 +2771,10 @@
         <div class="query-history-toolbar">
           <div class="field"><label for="queryHistorySite">站点</label><select id="queryHistorySite"><option value="">全部站点</option><option value="MX">墨西哥站</option><option value="US">美国站</option></select></div>
           <div class="field"><label for="queryHistoryStatus">任务状态</label><select id="queryHistoryStatus"><option value="">全部状态</option><option value="running">执行中</option><option value="completed">已完成</option><option value="partial_failure">部分异常</option><option value="uncertain">待核对</option><option value="failed">失败</option><option value="cancelled">已停止</option></select></div>
+          <div class="field" id="queryHistoryActorField" hidden><label for="queryHistoryActor">查询用户</label><select id="queryHistoryActor"><option value="">全部用户</option></select></div>
           <button class="btn" id="btnQueryHistoryRefresh" type="button">刷新</button>
         </div>
-        <div class="table-wrap"><table class="query-history-table"><thead><tr><th>查询时间</th><th>站点</th><th>环境数</th><th>结果</th><th>执行器</th><th>耗时</th><th>重查</th><th>操作</th></tr></thead><tbody id="queryHistoryBody"><tr><td colspan="8" class="query-history-empty">正在读取查询历史…</td></tr></tbody></table></div>
+        <div class="table-wrap"><table class="query-history-table"><thead><tr><th>查询时间</th><th>查询用户</th><th>站点</th><th>环境数</th><th>结果</th><th>执行器</th><th>耗时</th><th>重查</th><th>操作</th></tr></thead><tbody id="queryHistoryBody"><tr><td colspan="9" class="query-history-empty">正在读取查询历史…</td></tr></tbody></table></div>
         <div class="query-history-pagination"><span class="hint" id="queryHistoryPageText">第 1 页</span><button class="btn" id="btnQueryHistoryPrev" type="button" disabled>上一页</button><button class="btn" id="btnQueryHistoryNext" type="button" disabled>下一页</button></div>
       </div>
       <div id="queryHistoryDetailView" hidden>
@@ -6678,7 +6684,7 @@ function queryRowsHtml(rows, options={}) {
       cell('firstTrackTime', '—'), cell('firstTrackSummary', '—'),
       cell('firstTrackLead', '—'),
       cell('screenshot', '—'), cell('ip', esc(r.ip) || '—', 'mono'),
-      cell('result', result), cell('queryTime', r.time || '—', 'mono'),
+      cell('result', result), cell('queryTime', dateTimeStack(r.time), 'mono'),
       cell('action', action)
     ].join('');
     if (s === 'pending') {
@@ -6714,14 +6720,14 @@ function queryRowsHtml(rows, options={}) {
     return `<tr class="row-success">${[
       cell('serial', serial, 'mono'), cell('envName', name),
       cell('orderNo', esc(r.orderNo), 'mono'),
-      cell('orderTime', esc(r.orderTime) || '—', 'mono'),
+      cell('orderTime', dateTimeStack(r.orderTime), 'mono'),
       cell('amount', esc(r.amount)), cell('status', stBadge),
       cell('tracking', tracks), cell('carrier', esc(r.carrier) || '—'),
       cell('firstTrackTime', firstTrackTime, 'mono'),
       cell('firstTrackSummary', firstTrackSummary),
       cell('firstTrackLead', firstTrackLead),
       cell('screenshot', shot), cell('ip', esc(r.ip), 'mono'),
-      cell('result', resultBadge), cell('queryTime', r.time || '—', 'mono'),
+      cell('result', resultBadge), cell('queryTime', dateTimeStack(r.time), 'mono'),
       cell('action', action)
     ].join('')}</tr>`;
   }).join('');
@@ -7811,6 +7817,8 @@ document.addEventListener('keydown', e => {
     closeScreenshot();
   } else if (e.key === 'Escape' && $('queryHistoryMask').classList.contains('show')) {
     closeQueryHistory();
+  } else if (e.key === 'Escape' && !$('runtimeDrawer').hidden) {
+    closeRuntimeDrawer();
   }
 });
 
@@ -7866,7 +7874,9 @@ const QUERY_HISTORY_STATUS = {
 
 function formatQueryHistoryTime(value) {
   const parsed = new Date(String(value || ''));
-  return Number.isNaN(parsed.getTime()) ? '—' : parsed.toLocaleString('zh-CN', {hour12:false});
+  if (Number.isNaN(parsed.getTime())) return '—';
+  const pad = number => String(number).padStart(2, '0');
+  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())} ${pad(parsed.getHours())}:${pad(parsed.getMinutes())}:${pad(parsed.getSeconds())}`;
 }
 
 function formatQueryHistoryDuration(seconds) {
@@ -7876,6 +7886,13 @@ function formatQueryHistoryDuration(seconds) {
   return minutes ? `${minutes}分${rest}秒` : `${rest}秒`;
 }
 
+function dateTimeStack(value) {
+  const raw = String(value || '').trim();
+  const match = raw.match(/^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2}(?::\d{2})?)/);
+  if (!match) return esc(raw) || '—';
+  return `<span class="date-time-stack"><span>${esc(match[1])}</span><span>${esc(match[2])}</span></span>`;
+}
+
 function logisticsHistoryRunId(detail) {
   return String(detail && detail.latestRun && detail.latestRun.runId
     || detail && detail.rootRunId || '');
@@ -7883,13 +7900,13 @@ function logisticsHistoryRunId(detail) {
 
 function renderQueryHistoryItems(items) {
   if (!items.length) {
-    $('queryHistoryBody').innerHTML = '<tr><td colspan="8" class="query-history-empty">暂无符合条件的物流查询历史</td></tr>';
+    $('queryHistoryBody').innerHTML = '<tr><td colspan="9" class="query-history-empty">暂无符合条件的物流查询历史</td></tr>';
     return;
   }
   $('queryHistoryBody').innerHTML = items.map(item => {
     const status = QUERY_HISTORY_STATUS[String(item.status || '')] || [String(item.status || '未知'), ''];
     const rootRunId = esc(item.rootRunId);
-    return `<tr><td>${esc(formatQueryHistoryTime(item.createdAt))}</td><td>${esc(item.site || '—')}</td>`
+    return `<tr><td>${dateTimeStack(formatQueryHistoryTime(item.createdAt))}</td><td>${esc(item.actorDisplayName || '未知用户')}</td><td>${esc(item.site || '—')}</td>`
       + `<td>${Number(item.totalCount || 0)}</td><td><span class="query-history-status ${status[1]}">${esc(status[0])}</span><div class="hint">成功 ${Number(item.successCount || 0)} · 异常 ${Number(item.failedCount || 0)}</div></td>`
       + `<td>${esc(item.executorDisplayName || '—')}</td><td>${esc(formatQueryHistoryDuration(item.durationSec))}</td>`
       + `<td>${Number(item.retryCount || 0)} 次</td><td><button class="btn-mini" type="button" data-history-view="${rootRunId}">查看结果</button></td></tr>`;
@@ -7906,21 +7923,28 @@ async function loadQueryHistory({reset=false}={}) {
   }
   queryHistoryLoading = true;
   $('btnQueryHistoryRefresh').disabled = true;
-  $('queryHistoryBody').innerHTML = '<tr><td colspan="8" class="query-history-empty"><span class="spinner"></span>正在读取查询历史…</td></tr>';
+  $('queryHistoryBody').innerHTML = '<tr><td colspan="9" class="query-history-empty"><span class="spinner"></span>正在读取查询历史…</td></tr>';
   try {
     const query = new URLSearchParams({limit:'20'});
     if (queryHistoryCursor) query.set('cursor', queryHistoryCursor);
     if ($('queryHistorySite').value) query.set('site', $('queryHistorySite').value);
     if ($('queryHistoryStatus').value) query.set('status', $('queryHistoryStatus').value);
+    if ($('queryHistoryActor').value) query.set('userId', $('queryHistoryActor').value);
     const payload = await cloudFetchJson('/v1/operation-runs/logistics-query/history?' + query.toString());
     const data = payload.data || {};
+    const actors = Array.isArray(data.actors) ? data.actors : [];
+    const selectedActor = $('queryHistoryActor').value;
+    $('queryHistoryActorField').hidden = !hasRole('admin') && !hasRole('super_admin');
+    $('queryHistoryActor').innerHTML = '<option value="">全部用户</option>' + actors.map(actor =>
+      `<option value="${esc(actor.userId)}">${esc(actor.displayName || '未知用户')}${actor.status === 'disabled' ? '（已停用）' : ''}</option>`).join('');
+    $('queryHistoryActor').value = actors.some(actor => actor.userId === selectedActor) ? selectedActor : '';
     renderQueryHistoryItems(Array.isArray(data.items) ? data.items : []);
     queryHistoryNextCursor = String(data.nextCursor || '');
     $('queryHistoryPageText').textContent = `第 ${queryHistoryPage} 页`;
     $('btnQueryHistoryPrev').disabled = queryHistoryPage <= 1;
     $('btnQueryHistoryNext').disabled = !queryHistoryNextCursor;
   } catch (error) {
-    $('queryHistoryBody').innerHTML = `<tr><td colspan="8" class="query-history-empty">历史记录读取失败：${esc(error.message)}</td></tr>`;
+    $('queryHistoryBody').innerHTML = `<tr><td colspan="9" class="query-history-empty">历史记录读取失败：${esc(error.message)}</td></tr>`;
     $('btnQueryHistoryNext').disabled = true;
   } finally {
     queryHistoryLoading = false;
@@ -7944,10 +7968,13 @@ async function openQueryHistoryDetail(rootRunId) {
     const rows = cloudLogisticsLegacySnapshot(run).rows;
     activeQueryHistoryDetail = {...detail, rootRunId:String(detail.rootRunId || rootRunId), latestRun:run};
     const status = QUERY_HISTORY_STATUS[String(run.status || '')] || [String(run.status || '未知'), ''];
-    $('queryHistoryDetailMeta').innerHTML = `<span>${esc(formatQueryHistoryTime(run.createdAt))}</span><span>${esc(run.site || '—')} 站</span><span>${rows.length} 个环境</span><span>${esc(status[0])}</span><span>重查 ${Number(detail.retryCount || 0)} 次</span>`;
+    $('queryHistoryDetailMeta').innerHTML = `<span>${esc(detail.actorDisplayName || '未知用户')}</span><span>${esc(formatQueryHistoryTime(run.createdAt))}</span><span>${esc(run.site || '—')} 站</span><span>${rows.length} 个环境</span><span>${esc(status[0])}</span><span>重查 ${Number(detail.retryCount || 0)} 次</span>`;
     $('queryHistoryResultBody').innerHTML = queryRowsHtml(rows, {history:true, runId:logisticsHistoryRunId(activeQueryHistoryDetail)});
     const terminal = run.terminal !== false && !['created','queued','leased','running','cancel_requested'].includes(String(run.status || ''));
-    $('btnHistoryRerun').disabled = !(Array.isArray(detail.originalEnvironmentSerials) && detail.originalEnvironmentSerials.length);
+    const currentUserId = String(authIdentity && authIdentity.user && authIdentity.user.id || '');
+    const ownsHistory = !detail.actorUserId || String(detail.actorUserId) === currentUserId;
+    $('btnHistoryRerun').disabled = !ownsHistory || !(Array.isArray(detail.originalEnvironmentSerials) && detail.originalEnvironmentSerials.length);
+    $('btnHistoryRerun').title = ownsHistory ? '' : '只能重新查询本人创建的历史批次';
     $('btnHistoryExportQuick').disabled = !terminal;
     $('btnHistoryExportFull').disabled = !terminal;
   } catch (error) {
@@ -8031,6 +8058,7 @@ $('queryHistoryMask').onclick = event => { if (event.target === event.currentTar
 $('btnQueryHistoryRefresh').onclick = () => loadQueryHistory({reset:true});
 $('queryHistorySite').onchange = () => loadQueryHistory({reset:true});
 $('queryHistoryStatus').onchange = () => loadQueryHistory({reset:true});
+$('queryHistoryActor').onchange = () => loadQueryHistory({reset:true});
 $('btnQueryHistoryPrev').onclick = () => {
   if (queryHistoryPage <= 1 || queryHistoryLoading) return;
   queryHistoryCursor = queryHistoryCursorStack.pop() || '';
@@ -8793,15 +8821,18 @@ function openRuntimeDrawer() {
   }
   runtimePendingExecutorId = localExecutorSelectedDeviceId;
   renderRuntimeDeviceDrawer();
+  $('runtimeDrawerBackdrop').hidden = false;
   $('runtimeDrawer').hidden = false;
   $('runtimeEnvironmentEntry').setAttribute('aria-expanded', 'true');
   if (!localExecutorDeviceLoading) loadLocalExecutorDevices(false);
 }
 
 function closeRuntimeDrawer() {
+  $('runtimeDrawerBackdrop').hidden = true;
   $('runtimeDrawer').hidden = true;
   $('runtimeEnvironmentEntry').setAttribute('aria-expanded', 'false');
 }
+
 
 function localExecutorTime(value) {
   if (!value) return '从未在线';
@@ -9312,6 +9343,7 @@ $('runtimeEnvironmentEntry').onclick = openRuntimeDrawer;
 $('localExecutorEntry').onclick = openRuntimeDrawer;
 $('runtimeSelectionButton').onclick = openRuntimeDrawer;
 $('runtimeDrawerClose').onclick = closeRuntimeDrawer;
+$('runtimeDrawerBackdrop').onclick = closeRuntimeDrawer;
 $('runtimeDeviceList').onclick = event => {
   const button = event.target.closest('[data-runtime-device]');
   if (!button) return;

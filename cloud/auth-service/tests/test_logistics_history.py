@@ -13,8 +13,12 @@ from test_executor_channel import login
 from xynigo_auth.models import (
     LogisticsQueryResult,
     LogisticsQueryRun,
+    Permission,
+    Role,
+    RolePermission,
     Tenant,
     User,
+    UserRole,
 )
 
 
@@ -93,7 +97,7 @@ def _result(
     )
 
 
-def test_logistics_history_is_user_scoped_and_merges_retry_in_input_order(
+def test_logistics_history_admin_can_filter_users_and_merges_retry_in_input_order(
     tmp_path,
 ) -> None:
     app, database, _oauth = build_test_app(tmp_path)
@@ -173,27 +177,48 @@ def test_logistics_history_is_user_scoped_and_merges_retry_in_input_order(
             root_id = str(root.id)
             newest_retry_id = str(newest_retry.id)
             other_root_id = str(other_root.id)
+            user_id = str(user.id)
+            tenant_id = tenant.id
+            user_name = user.display_name
+            other_user_name = other_user.display_name
+            other_user_id = str(other_user.id)
 
         history = client.get("/v1/operation-runs/logistics-query/history")
         assert history.status_code == 200, history.text
-        items = history.json()["data"]["items"]
-        assert len(items) == 1
-        assert items[0]["rootRunId"] == root_id
-        assert items[0]["latestRunId"] == newest_retry_id
-        assert items[0]["retryCount"] == 2
-        assert items[0]["originalEnvironmentSerials"] == ["20", "10"]
-        assert items[0]["totalCount"] == 2
-        assert items[0]["successCount"] == 2
-        assert items[0]["durationSec"] == 180
+        history_data = history.json()["data"]
+        items = history_data["items"]
+        assert [item["rootRunId"] for item in items] == [other_root_id, root_id]
+        own_item = next(item for item in items if item["rootRunId"] == root_id)
+        assert own_item["latestRunId"] == newest_retry_id
+        assert own_item["retryCount"] == 2
+        assert own_item["originalEnvironmentSerials"] == ["20", "10"]
+        assert own_item["totalCount"] == 2
+        assert own_item["successCount"] == 2
+        assert own_item["durationSec"] == 180
+        assert own_item["actorDisplayName"] == user_name
+        assert {actor["displayName"] for actor in history_data["actors"]} == {
+            user_name,
+            other_user_name,
+        }
+
+        own_history = client.get(
+            "/v1/operation-runs/logistics-query/history",
+            params={"userId": user_id},
+        )
+        assert own_history.status_code == 200, own_history.text
+        assert [
+            item["rootRunId"]
+            for item in own_history.json()["data"]["items"]
+        ] == [root_id]
 
         latest_status = client.get(
             "/v1/operation-runs/logistics-query/history",
             params={"status": "completed"},
         )
         assert latest_status.status_code == 200, latest_status.text
-        assert [
+        assert set(
             item["rootRunId"] for item in latest_status.json()["data"]["items"]
-        ] == [root_id]
+        ) == {root_id, other_root_id}
         stale_root_status = client.get(
             "/v1/operation-runs/logistics-query/history",
             params={"status": "partial_failure"},
@@ -214,10 +239,11 @@ def test_logistics_history_is_user_scoped_and_merges_retry_in_input_order(
             "ORDER-10",
         ]
 
-        hidden = client.get(
+        other_detail = client.get(
             f"/v1/operation-runs/logistics-query/history/{other_root_id}"
         )
-        assert hidden.status_code == 404
+        assert other_detail.status_code == 200
+        assert other_detail.json()["data"]["actorDisplayName"] == "History other"
 
         quick_export = client.get(
             f"/v1/operation-runs/logistics-query/{root_id}/export",
@@ -237,15 +263,60 @@ def test_logistics_history_is_user_scoped_and_merges_retry_in_input_order(
         ] == ["ORDER-20-NEW", "ORDER-10"]
         workbook.close()
 
-        hidden_export = client.get(
+        other_export = client.get(
             f"/v1/operation-runs/logistics-query/{other_root_id}/export",
             params={"includeScreenshots": "false"},
         )
-        assert hidden_export.status_code == 404
-        hidden_screenshot = client.get(
+        assert other_export.status_code == 200
+        missing_screenshot = client.get(
             f"/v1/operation-runs/logistics-query/{other_root_id}/screenshots/99"
         )
-        assert hidden_screenshot.status_code == 404
+        assert missing_screenshot.status_code == 404
+
+        with database.session_factory() as session:
+            logistics_reader = Role(
+                tenant_id=tenant_id,
+                code="logistics_reader",
+                name="物流查询成员",
+                is_system=False,
+            )
+            session.add(logistics_reader)
+            session.flush()
+            read_permission = session.scalar(
+                select(Permission).where(
+                    Permission.code == "fulfillment.order.read"
+                )
+            )
+            assert read_permission is not None
+            for assignment in session.scalars(
+                select(UserRole).where(UserRole.user_id == uuid.UUID(user_id))
+            ):
+                session.delete(assignment)
+            session.add(UserRole(
+                user_id=uuid.UUID(user_id), role_id=logistics_reader.id
+            ))
+            session.add(RolePermission(
+                role_id=logistics_reader.id,
+                permission_id=read_permission.id,
+            ))
+            session.commit()
+
+        member_history = client.get("/v1/operation-runs/logistics-query/history")
+        assert member_history.status_code == 200, member_history.text
+        assert [
+            item["rootRunId"]
+            for item in member_history.json()["data"]["items"]
+        ] == [root_id]
+        assert member_history.json()["data"]["actors"] == []
+        forbidden_filter = client.get(
+            "/v1/operation-runs/logistics-query/history",
+            params={"userId": other_user_id},
+        )
+        assert forbidden_filter.status_code == 403
+        hidden_detail = client.get(
+            f"/v1/operation-runs/logistics-query/history/{other_root_id}"
+        )
+        assert hidden_detail.status_code == 404
 
 
 def test_active_retry_reports_logical_batch_progress(tmp_path) -> None:

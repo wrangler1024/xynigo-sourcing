@@ -3809,6 +3809,9 @@ def create_app(
             | None,
             Query(alias="status"),
         ] = None,
+        history_user_id: Annotated[
+            uuid.UUID | None, Query(alias="userId")
+        ] = None,
         session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
         authorization: Annotated[str | None, Header()] = None,
     ) -> dict[str, object]:
@@ -3821,6 +3824,16 @@ def create_app(
             authorization=authorization,
             audit_action=action,
         )
+        history_admin = (
+            _user_has_role(session, actor.user, ADMIN_ROLE)
+            or _user_has_role(session, actor.user, SUPER_ADMIN_ROLE)
+        )
+        if history_user_id is not None and not history_admin \
+                and history_user_id != actor.user.id:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "logistics_history_user_filter_forbidden"},
+            )
         service = OperationRunService(session)
         try:
             data = service.logistics_history(
@@ -3830,6 +3843,8 @@ def create_app(
                 cursor=cursor,
                 site=site,
                 status=run_status,
+                include_all_users=history_admin,
+                filter_actor_user_id=history_user_id,
             )
         except PurchaseServiceError as exc:
             purchase_error(request, session, actor, action, exc)
@@ -3852,12 +3867,17 @@ def create_app(
             authorization=authorization,
             audit_action=action,
         )
+        history_admin = (
+            _user_has_role(session, actor.user, ADMIN_ROLE)
+            or _user_has_role(session, actor.user, SUPER_ADMIN_ROLE)
+        )
         service = OperationRunService(session)
         try:
             data = service.logistics_history_snapshot(
                 tenant_id=actor.tenant.id,
                 actor_user_id=actor.user.id,
                 root_run_id=root_run_id,
+                allow_tenant_scope=history_admin,
             )
         except PurchaseServiceError as exc:
             purchase_error(
@@ -3915,6 +3935,10 @@ def create_app(
             authorization=authorization,
             audit_action="fulfillment.logistics.screenshot.read",
         )
+        history_admin = (
+            _user_has_role(session, actor.user, ADMIN_ROLE)
+            or _user_has_role(session, actor.user, SUPER_ADMIN_ROLE)
+        )
         serial = str(environment_serial or "").strip()
         if not serial or len(serial) > 64:
             raise HTTPException(status_code=422, detail={"code": "environment_serial_invalid"})
@@ -3924,6 +3948,7 @@ def create_app(
                 tenant_id=actor.tenant.id,
                 actor_user_id=actor.user.id,
                 root_run_id=run_id,
+                allow_tenant_scope=history_admin,
             )
         except PurchaseServiceError as exc:
             purchase_error(
@@ -3973,12 +3998,17 @@ def create_app(
             authorization=authorization,
             audit_action="fulfillment.logistics.export",
         )
+        history_admin = (
+            _user_has_role(session, actor.user, ADMIN_ROLE)
+            or _user_has_role(session, actor.user, SUPER_ADMIN_ROLE)
+        )
         service = OperationRunService(session)
         try:
             root_run, run = service.resolve_latest_logistics_history_run(
                 tenant_id=actor.tenant.id,
                 actor_user_id=actor.user.id,
                 root_run_id=run_id,
+                allow_tenant_scope=history_admin,
             )
         except PurchaseServiceError as exc:
             purchase_error(
