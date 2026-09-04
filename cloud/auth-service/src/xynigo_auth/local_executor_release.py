@@ -14,9 +14,9 @@ from urllib.parse import quote
 
 from . import __version__
 
-RELEASE_VERSION = "0.14.0"
+RELEASE_VERSION = "0.15.0"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-04T03:41:12Z"
+RELEASE_PUBLISHED_AT = "2026-09-04T09:31:31Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,8 +31,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.14.0-56ef98de7eff",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.14.0.exe",
+        "runtimeId": "0.15.0-e06915ce36bd",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.15.0.exe",
         "sha256": "5eb118efe8615316ba8bab64341c315c3c4d52a6cbcc110732bfbbf7e7be72bf",
         "size": 15_194_744,
         "installMode": "standard_per_user",
@@ -50,8 +50,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.14.0-56ef98de7eff",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.14.0.pkg",
+        "runtimeId": "0.15.0-e06915ce36bd",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.15.0.pkg",
         "sha256": "bed9090dfc666376cf2c4327a15094c17cd26281940211d8cf8d72226458af3b",
         "size": 11_484_669,
         "installMode": "standard_system_application",
@@ -320,12 +320,12 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "首轨解析支持 SHEIN 真实页面不含年份的时间格式，并根据下单时间安全推断年份。",
-            "跨年订单可正确识别下一年度首条轨迹，异常时间不会进入首轨时效统计。",
-            "本地执行器上传物流结果时携带经过云端验证的设备身份证明。",
-            "设备凭证只存在安全存储和请求头，不进入业务结果、日志或本地待同步队列。",
-            "查询历史展示真实执行器；旧版本地任务明确标注未记录设备，不盲目回填。",
-            "设备身份与当前登录用户、租户不一致时拒绝绑定，避免错误归属。",
+            "HubStudio Local API 使用全局限流、断路退避、端口重发现和安全重试，降低批量任务中断率。",
+            "物流查询识别墨西哥站砍单、支付待验证等真实订单状态，并支持只读连接已打开环境。",
+            "环境干跑预览提供分阶段进度，缓存有效时直接使用云端环境库存。",
+            "管理员可把失败的买家号建环境任务安全接管到另一台在线执行器。",
+            "云端保存完整环境快照和单号哈希，持续做全局查重与环境名续排，不上传备注或凭证。",
+            "多台电脑可并发下载客户端更新，服务端复用已校验安装包摘要。",
             "Windows 与 macOS 从同一 Git 基线同步构建并发布。",
             "稳定通道强制平台签名门槛；内部未签名包仅允许 test 通道。",
         ],

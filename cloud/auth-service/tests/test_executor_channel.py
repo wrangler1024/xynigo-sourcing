@@ -341,7 +341,7 @@ def test_local_logistics_upload_records_verified_executor_identity(tmp_path) -> 
             headers={
                 **CSRF,
                 "X-Xynigo-Executor-Credential": credential,
-                "X-Xynigo-Client-Version": "0.14.0",
+                "X-Xynigo-Client-Version": "0.15.0",
             },
         )
         assert uploaded.status_code == 200, uploaded.text
