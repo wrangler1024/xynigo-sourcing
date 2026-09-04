@@ -12,9 +12,9 @@ from urllib.parse import quote
 from . import __version__
 
 
-RELEASE_VERSION = "0.13.21"
+RELEASE_VERSION = "0.13.22"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-03T13:36:03Z"
+RELEASE_PUBLISHED_AT = "2026-09-04T02:02:19Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -29,8 +29,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.13.21-cbb812b2a643",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.21.exe",
+        "runtimeId": "0.13.22-656d124818ac",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.22.exe",
         "sha256": "7f6b8f6adb2d1208957b5f7c12f547a2db86743f2622f4457e65a80bcdd826e5",
         "size": 15_195_604,
         "installMode": "standard_per_user",
@@ -48,8 +48,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.13.21-cbb812b2a643",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.21.pkg",
+        "runtimeId": "0.13.22-656d124818ac",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.22.pkg",
         "sha256": "143ec1c0e42c536b129d637cf4b1ae863776b00d7c1903303da227837ce3fd24",
         "size": 11_479_169,
         "installMode": "standard_system_application",
@@ -234,12 +234,12 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "买家号建环境正式任务改为快速受理并由执行器异步执行，避免大批量任务误报超时。",
-            "云端新增租户级 Hub 环境缓存、跨设备全局查重和并发安全续号。",
-            "干跑预览改为真实调用所选执行器，并只返回脱敏账号和环境名。",
-            "环境建成后的出口 IP 抽检严格覆盖配置数量，小批次可验证全部环境。",
-            "物流查询历史、截图预览、字段偏好和分级导出链路完成收口。",
-            "飞书企业应用凭证统一由超级管理员在云端配置，员工执行器不接收 Secret。",
+            "物流查询在 HubStudio Local API 短暂断连时自动恢复，避免单点抖动终止整批任务。",
+            "物流结果新增第一条轨迹时间、轨迹摘要和下单至首轨时效，便于评估发货效率。",
+            "物流查询支持桌面端无头/可见调试模式设置，云端高级设置入口与站点、分组解耦。",
+            "物流历史新增查询用户字段；管理员可按用户筛选，普通成员仍保持本人数据隔离。",
+            "查询时间与下单时间改为紧凑的日期/时间双行展示，现有表格行高保持不变。",
+            "运行环境侧栏支持点击外部区域或按 Esc 关闭，查询工具栏执行前后位置保持稳定。",
             "Windows 与 macOS 从同一 Git 基线同步构建并发布。",
             "稳定通道强制平台签名门槛；内部未签名包仅允许 test 通道。",
         ],
