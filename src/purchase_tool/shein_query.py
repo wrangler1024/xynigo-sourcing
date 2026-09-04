@@ -68,12 +68,20 @@ SITE_PROFILES = {
 STATUS_CN = {
     'Procesando': '备货中', 'Empacando': '打包中', 'Enviado': '已发货',
     'Entregado': '已送达', 'Completado': '已完成', 'Cancelado': '已取消',
-    'Reembolsando': '砍单退款中', 'Devolución': '退换货', 'No pagado': '未支付',
+    'Esperando para enviarse': '待发货',
+    'Reembolsando': '砍单退款中', 'Reembolsado': '退款已处理',
+    'Devolución': '退换货', 'No pagado': '未支付',
+    'Pagado': '已支付/待备货',
     'Processing': '备货中', 'Packing': '打包中', 'Shipped': '已发货',
     'Delivered': '已送达', 'Completed': '已完成', 'Canceled': '已取消',
     'Cancelled': '已取消', 'Refunding': '退款中', 'Refunded': '已退款',
     'Returned': '已退货', 'Unpaid': '未支付', 'Paid': '已支付/待备货',
     'Risk verification': '风险订单/待验证',
+}
+STATUS_ALIASES = {
+    # 2026-09-04 真实 MX 页面使用了 envisarse 拼写，统一成正确展示文案。
+    'esperando para envisarse': 'Esperando para enviarse',
+    'esperando para enviarse': 'Esperando para enviarse',
 }
 
 RE_ORDER_NO_BY_SITE = {
@@ -120,7 +128,8 @@ RE_CARRIER = re.compile(r'"shipping_method_real":"([^"]{2,40})"')
 RE_CARRIER_NAME = re.compile(r'"carrier_name":"([^"]{2,80})"')
 RE_KANDAN_TEXT_BY_SITE = {
     'MX': re.compile(
-        r'Reembolsando|reembolso est[áa] siendo procesado', re.I),
+        r'Reembolsando|Reembolsado|Reembolsos procesados'
+        r'|reembolso est[áa] siendo procesado', re.I),
     # 避免把美国详情页固定导航项 "Refund" 误判成砍单。
     'US': re.compile(
         r'\bRefunding\b|\bRefunded\b|refund (?:is )?being processed'
@@ -129,8 +138,9 @@ RE_KANDAN_TEXT_BY_SITE = {
 # 大小写不敏感：页面出现过 EMPACANDO 大写形式（2026-08-18 实测 1007）
 RE_STATUS_WORDS_BY_SITE = {
     'MX': re.compile(
-        r'(Procesando|Empacando|Enviado|Reembolsando|Completado|Cancelado'
-        r'|Entregado|Devoluci[óo]n|No pagado)', re.I),
+        r'(Esperando para (?:enviarse|envisarse)|Procesando|Empacando'
+        r'|Enviado|Reembolsando|Reembolsado|Completado|Cancelado'
+        r'|Entregado|Devoluci[óo]n|No pagado|Pagado)', re.I),
     'US': re.compile(
         r'(Processing|Packing|Shipped|Delivered|Completed|Canceled|Cancelled'
         r'|Refunding|Refunded|Returned|Unpaid|Paid)', re.I),
@@ -141,9 +151,17 @@ RE_STATUS_WORDS_BY_SITE = {
 RE_DETAIL_ADD_TIME = re.compile(r'"addTime"\s*:\s*"?(\d{10,13})"?')
 RE_DETAIL_PAYMENT_TIME = re.compile(
     r'"paymentTime"\s*:\s*"?(\d{10,13})"?')
-RE_RISK_VERIFY_TEXT = re.compile(
-    r'order is detected to be at risk and needs to be verified'
-    r'|provide the supporting documents according to the instructions', re.I)
+RE_RISK_VERIFY_TEXT_BY_SITE = {
+    'MX': re.compile(
+        r'pedido fue detectado de estar en riesgo y requiere ser verificado'
+        r'|brinda los documentos de respaldo seg[uú]n las instrucciones'
+        r'|l[ií]mite de tiempo de validaci[oó]n[^.\n]*pulsa para validar',
+        re.I),
+    'US': re.compile(
+        r'order is detected to be at risk and needs to be verified'
+        r'|provide the supporting documents according to the instructions',
+        re.I),
+}
 RE_RISK_VERIFY_FLAG = re.compile(r'"is_verify"\s*:\s*"?1"?', re.I)
 RE_RISK_NOT_SUBMITTED = re.compile(
     r'"sensitive_status"\s*:\s*"no_submit"', re.I)
@@ -401,6 +419,8 @@ def parse_first_tracking_event(text, order_time='', site='MX',
 
 def _canonical_status(word):
     wanted = (word or '').casefold()
+    if wanted in STATUS_ALIASES:
+        return STATUS_ALIASES[wanted]
     for canonical in STATUS_CN:
         if canonical.casefold() == wanted:
             return canonical
@@ -443,10 +463,9 @@ def parse_detail_page(html, text, site='MX', utc_offset_minutes=None):
     """订单详情页解析。列表缺时间时可用 SSR addTime 回填。"""
     site = normalize_site(site)
     risk_order = bool(
-        site == 'US' and (
-            RE_RISK_VERIFY_TEXT.search(text or '') or
-            (RE_RISK_VERIFY_FLAG.search(html or '') and
-             RE_RISK_NOT_SUBMITTED.search(html or ''))))
+        RE_RISK_VERIFY_TEXT_BY_SITE[site].search(text or '') or
+        (RE_RISK_VERIFY_FLAG.search(html or '') and
+         RE_RISK_NOT_SUBMITTED.search(html or '')))
     m = RE_CARRIER.search(html)
     carrier = m.group(1) if m else ''
     m = RE_DETAIL_ADD_TIME.search(html)
@@ -464,6 +483,29 @@ def parse_detail_page(html, text, site='MX', utc_offset_minutes=None):
         'orderTime': _order_time_from_epoch(
             m.group(1), site, utc_offset_minutes) if m else '',
     }
+
+
+def merge_order_status_signals(info, detail, site='MX'):
+    """合并列表与详情状态，并应用退款/风险状态优先级。"""
+    site = normalize_site(site)
+    info = dict(info or {})
+    detail = dict(detail or {})
+    refund_statuses = (
+        {'Reembolsando', 'Reembolsado'}
+        if site == 'MX' else {'Refunding', 'Refunded'})
+    if detail.get('kanDan') and info.get('status') not in refund_statuses:
+        forced = 'Reembolsando' if site == 'MX' else 'Refunding'
+        info.update(status=forced, statusCn=STATUS_CN[forced])
+    if info.get('status') in refund_statuses:
+        detail['kanDan'] = True
+    if detail.get('riskOrder') and not detail.get('kanDan'):
+        if info.get('status') in {'Pagado', 'Paid'}:
+            info['statusCn'] = '已支付/待验证'
+        else:
+            info.update(
+                status='Risk verification',
+                statusCn=STATUS_CN['Risk verification'])
+    return info, detail
 
 
 def friendly_carrier(raw, tracks):
@@ -1482,20 +1524,9 @@ class QueryOrchestrator(object):
             html = page.outer_html()
             detail = parse_detail_page(
                 html, dtext, site, utc_offset_minutes=utc_offset)
-            # 砍单双信号：列表状态或详情文案任一命中即判定
-            refund_statuses = (
-                {'Reembolsando'} if site == 'MX' else {'Refunding', 'Refunded'})
-            if detail['kanDan'] and info['status'] not in refund_statuses:
-                forced = 'Reembolsando' if site == 'MX' else 'Refunding'
-                info = dict(info, status=forced,
-                            statusCn=STATUS_CN[forced])
-            if info['status'] in refund_statuses:
-                detail['kanDan'] = True
-            # 详情页风险验证是履约阻断，优先于列表页的 Paid；若已进入
-            # 退款状态，则退款是更新、更终局的业务状态。
-            if detail['riskOrder'] and not detail['kanDan']:
-                info = dict(info, status='Risk verification',
-                            statusCn=STATUS_CN['Risk verification'])
+            # 详情页风险/退款信号优先于普通列表状态；Pagado/Paid 与风险
+            # 验证同时存在时保留平台原状态，中文明确标为“已支付/待验证”。
+            info, detail = merge_order_status_signals(info, detail, site)
             if detail['tracks']:
                 try:
                     screenshot = self._capture_tracking(

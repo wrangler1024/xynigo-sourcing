@@ -6,8 +6,9 @@ from unittest.mock import patch
 
 from purchase_tool.hub_api import HubApiError
 from purchase_tool.shein_query import (
-    QueryOrchestrator, friendly_carrier, normalize_site, parse_detail_page,
-    parse_first_tracking_event, parse_list_page)
+    QueryOrchestrator, friendly_carrier, merge_order_status_signals,
+    normalize_site, parse_detail_page, parse_first_tracking_event,
+    parse_list_page)
 
 
 class SheinQueryParserTests(unittest.TestCase):
@@ -89,6 +90,41 @@ class SheinQueryParserTests(unittest.TestCase):
         result = parse_list_page(text)
         self.assertEqual(result['status'], 'Enviado')
 
+    def test_live_mx_waiting_to_ship_status_normalizes_page_typo(self):
+        # 4661：页面真实文案使用 envisarse，不能继续显示为空状态。
+        text = (
+            'Núm. de pedido GSH1RV32Q000K2S\n'
+            'Esperando para envisarse\n03 Sep 2026 07:29:40\n'
+            'Almacén Local, Programación de la entrega\n'
+            '$MXN252.00\nESPERANDO PARA ENVISARSE\n'
+            'Detalles de Pedido')
+
+        result = parse_list_page(text, 'MX')
+
+        self.assertEqual(result['status'], 'Esperando para enviarse')
+        self.assertEqual(result['statusCn'], '待发货')
+
+    def test_live_mx_refund_completed_status_is_recognized(self):
+        # 5342/5347/5362/5375：卡片顶部为退款说明，底部真实状态为
+        # Reembolsado；不可误回落为状态空值。
+        text = (
+            'Núm. de pedido GSH1REFUND\nReembolsos procesados\n'
+            '$MXN110.28 reembolso está siendo procesado por la '
+            'institución bancaria.\nTiempo estimado de reembolso: '
+            '5-15 días hábiles\n$MXN110.28\nReembolsado\n'
+            'Detalles de Pedido')
+
+        result = parse_list_page(text, 'MX')
+        detail = parse_detail_page(
+            '<script>{"front_status":5,"is_verify":0,'
+            '"orderStatus":11,"status":7}</script>',
+            'Detalles de devolución y reembolso\nReembolsado', 'MX')
+        merged, detail = merge_order_status_signals(result, detail, 'MX')
+
+        self.assertEqual(merged['status'], 'Reembolsado')
+        self.assertEqual(merged['statusCn'], '退款已处理')
+        self.assertTrue(detail['kanDan'])
+
     def test_header_status_is_not_used_for_order(self):
         text = (
             'Todos los pedidos No pagado Procesando Enviado\n'
@@ -148,6 +184,27 @@ class SheinQueryParserTests(unittest.TestCase):
         result = parse_detail_page(html, text, 'US')
         self.assertTrue(result['riskOrder'])
         self.assertIn('提交证明材料', result['riskMessage'])
+
+    def test_live_mx_paid_order_with_validation_is_marked_for_review(self):
+        # 5721/5758：列表显示 Pagado，但详情明确要求7天内验证。
+        info = parse_list_page(
+            'Núm. de pedido GSH1VERIFY\n'
+            'Límite de tiempo de validación de 7 días. Pulsa para validar\n'
+            '$MXN110.32\nPagado\nDetalles de Pedido', 'MX')
+        detail = parse_detail_page(
+            '<script>{"front_status":5,"is_verify":0,'
+            '"verify_level":1,"status":1}</script>',
+            'Tu pedido fue detectado de estar en riesgo y requiere ser '
+            'verificado, por favor, brinda los documentos de respaldo según '
+            'las instrucciones tan pronto como sea posible.',
+            'MX')
+
+        merged, detail = merge_order_status_signals(info, detail, 'MX')
+
+        self.assertEqual(merged['status'], 'Pagado')
+        self.assertEqual(merged['statusCn'], '已支付/待验证')
+        self.assertTrue(detail['riskOrder'])
+        self.assertFalse(detail['kanDan'])
 
     def test_us_internal_route_codes_map_to_commercial_carriers(self):
         self.assertEqual(

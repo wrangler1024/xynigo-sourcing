@@ -73,6 +73,10 @@ def build_logistics_workbook_export(
         }.get(state, state)
         if row.get("riskOrder"):
             result = "风险订单（待验证）"
+        elif str(row.get("platformStatus") or "").casefold() in {
+            "reembolsado", "refunded"
+        }:
+            result = "退款已处理"
         elif row.get("cancelled"):
             result = "成功（砍单退款中）"
         serial = str(row.get("environmentSerial") or "")

@@ -600,6 +600,10 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             '输入序号时会在全部 HubStudio 环境中查找',
             "共 ${shippedRows.length} 个已发货订单",
             '首轨时效中位数',
+            "'Esperando para enviarse': 'st-procesando'",
+            "'Reembolsado': 'st-reembolsando'",
+            "'Pagado': 'st-procesando'",
+            '退款已处理，无物流',
         ):
             self.assertIn(marker, html)
 

@@ -1927,7 +1927,7 @@
     <div class="card-title table-title-row query-results-title">
       <div class="table-title-copy">
         <span>② 查询结果</span>
-        <span class="legend">Shipped / Enviado=已发货 · Processing / Procesando=备货中 · Delivered / Entregado=已送达 · Refunding / Reembolsando=退款中</span>
+        <span class="legend">Enviado=已发货 · Esperando para enviarse=待发货 · Procesando=备货中 · Entregado=已送达 · Reembolsando=退款中 · Reembolsado=退款已处理</span>
       </div>
       <div class="table-actions query-table-actions">
         <button class="btn" id="btnQueryHistory" type="button" hidden>查询历史</button>
@@ -4785,12 +4785,15 @@ const ST_CLS = {
   'Enviado': 'st-enviado', 'Shipped': 'st-enviado',
   'Procesando': 'st-procesando', 'Empacando': 'st-procesando',
   'Processing': 'st-procesando', 'Packing': 'st-procesando',
-  'Paid': 'st-procesando', 'Unpaid': 'st-procesando',
+  'Esperando para enviarse': 'st-procesando',
+  'Pagado': 'st-procesando', 'Paid': 'st-procesando',
+  'Unpaid': 'st-procesando',
   'Entregado': 'st-entregado', 'Delivered': 'st-entregado',
   'Completado': 'st-completado', 'Completed': 'st-completado',
   'Cancelado': 'st-cancelado', 'Canceled': 'st-cancelado',
   'Cancelled': 'st-cancelado',
-  'Reembolsando': 'st-reembolsando', 'Refunding': 'st-reembolsando',
+  'Reembolsando': 'st-reembolsando', 'Reembolsado': 'st-reembolsando',
+  'Refunding': 'st-reembolsando',
   'Refunded': 'st-reembolsando', 'Returned': 'st-reembolsando',
   'Risk verification': 'st-reembolsando'
 };
@@ -6722,10 +6725,12 @@ function queryRowsHtml(rows, options={}) {
     // ok
     const st = (r.status || '') + (r.statusCn ? ' ' + r.statusCn : '');
     const stBadge = r.status ? `<span class="badge ${ST_CLS[r.status] || 'st-procesando'}">${esc(st)}</span>` : '—';
+    const refundCompleted = ['Reembolsado','Refunded'].includes(r.status);
     const tracks = (r.tracks || []).length
       ? r.tracks.map(x => `<span class="mono">${esc(x)}</span>`).join('；')
       : (r.riskOrder ? '—（风险订单待验证，无物流）'
-        : (r.kanDan ? '—（砍单退款，无物流）' : '（待揽收，暂无单号）'));
+        : (refundCompleted ? '—（退款已处理，无物流）'
+          : (r.kanDan ? '—（砍单退款，无物流）' : '（待揽收，暂无单号）')));
     const screenshotSize = Number(r.screenshotSizeKb || 0);
     const screenshotLabel = screenshotSize > 0
       ? `🖼 查看（${esc(screenshotSize)}KB）` : '🖼 查看';
@@ -6736,7 +6741,9 @@ function queryRowsHtml(rows, options={}) {
         : (r.screenshotState === 'expired' ? '—（截图已过期）' : '—（暂无物流）'));
     const resultBadge = r.riskOrder
       ? '<span class="badge fail">⚠ 风险订单，待验证</span>'
-      : '<span class="badge ok">✔ 成功</span>';
+      : (refundCompleted
+        ? '<span class="badge fail">↩ 退款已处理</span>'
+        : '<span class="badge ok">✔ 成功</span>');
     const firstTrackTime = esc(r.firstTrackingTime) || '—';
     const firstTrackSummary = esc(r.firstTrackingSummary) || '—';
     const firstTrackLead = formatTrackingLead(r.firstTrackingLeadMinutes);

@@ -237,6 +237,17 @@ class ExportTests(unittest.TestCase):
         self.assertIn('风险订单（待验证）', text)
         self.assertIn('风险订单待验证，无物流', text)
 
+    def test_refund_completed_export_uses_terminal_refund_wording(self):
+        data, _name, _mime = export_bytes([
+            result_row(
+                status='Reembolsado', statusCn='退款已处理', tracks=[],
+                pkgs=[], carrier='', kanDan=True, screenshotState='none')
+        ], 'csv')
+        text = data.decode('utf-8-sig')
+        self.assertIn('Reembolsado 退款已处理', text)
+        self.assertIn('退款已处理，无物流', text)
+        self.assertIn(',退款已处理,', text)
+
 
 if __name__ == '__main__':
     unittest.main()

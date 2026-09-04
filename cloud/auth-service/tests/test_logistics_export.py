@@ -139,3 +139,23 @@ def test_workbook_fields_and_legacy_bytes_contract() -> None:
         "Carrier received package",
         120,
     )
+
+
+def test_refund_completed_export_uses_terminal_refund_wording() -> None:
+    row = {
+        "environmentSerial": "40",
+        "environmentName": "ENV-40",
+        "status": "ok",
+        "platformStatus": "Reembolsado",
+        "statusLabel": "退款已处理",
+        "trackingNumbers": [],
+        "packageNumbers": [],
+        "cancelled": True,
+        "screenshotStatus": "none",
+    }
+
+    values = _sheet_values(build_logistics_workbook(
+        [row], include_screenshots=False))
+
+    assert values[1][5] == "Reembolsado 退款已处理"
+    assert values[1][11] == "退款已处理"

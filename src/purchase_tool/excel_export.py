@@ -15,6 +15,11 @@ STATE_CN = {'ok': '成功', 'login': '登录失效', 'inuse': '环境使用中�
             'stopped': '已停止'}
 
 
+def _refund_completed(row):
+    return str(row.get('status') or '').casefold() in {
+        'reembolsado', 'refunded'}
+
+
 def _screenshot_text(row, include_screenshots=True):
     state = row.get('screenshotState')
     if state == 'ok':
@@ -25,6 +30,8 @@ def _screenshot_text(row, include_screenshots=True):
         return '未生成'
     if row.get('riskOrder'):
         return '—（风险订单待验证，无物流）'
+    if _refund_completed(row):
+        return '—（退款已处理，无物流）'
     return '—（暂无物流）'
 
 
@@ -37,6 +44,8 @@ def export_bytes(rows, fmt, screenshot_reader=None, include_screenshots=True):
         if state == 'ok':
             if r.get('riskOrder'):
                 result = '风险订单（待验证）'
+            elif _refund_completed(r):
+                result = '退款已处理'
             else:
                 result = '成功（砍单退款中）' if r['kanDan'] else '成功'
         else:
@@ -47,7 +56,8 @@ def export_bytes(rows, fmt, screenshot_reader=None, include_screenshots=True):
             (r['status'] + ' ' + r['statusCn']).strip(),
             '; '.join(r['tracks']) or (
                 '—（风险订单待验证，无物流）' if r.get('riskOrder') else
-                ('—（砍单退款，无物流）' if r['kanDan'] else '')),
+                ('—（退款已处理，无物流）' if _refund_completed(r) else
+                 ('—（砍单退款，无物流）' if r['kanDan'] else ''))),
             '; '.join(r['pkgs']), r['carrier'],
             _screenshot_text(r, include_screenshots),
             r['ip'], result, r['error'], r['time'],
