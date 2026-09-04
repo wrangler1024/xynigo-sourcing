@@ -16,7 +16,7 @@ from . import __version__
 
 RELEASE_VERSION = "0.16.0"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-04T11:35:37Z"
+RELEASE_PUBLISHED_AT = "2026-09-04T11:39:00Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,10 +31,10 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.16.0-00524889fb3c",
+        "runtimeId": "0.16.0-59cdfad35141",
         "assetName": "Xynigo_Sourcing_Windows_Setup_v0.16.0.exe",
-        "sha256": "3e0ed0497406645d2b8d613ad92cb3247e460738d9bc5173018e6a6e21ee1c4b",
-        "size": 15_201_768,
+        "sha256": "84ac49257274ad3e3880203267bef04dcfd75c04effc326fcbcfd5b1fb223ac6",
+        "size": 15_208_800,
         "installMode": "standard_per_user",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_silent_installer",
@@ -50,10 +50,10 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.16.0-00524889fb3c",
+        "runtimeId": "0.16.0-59cdfad35141",
         "assetName": "Xynigo_Sourcing_macOS_Standard_v0.16.0.pkg",
-        "sha256": "82c453521449113712d4bf7763ca21aa816693157a9c84b33314237bfe0ba1bc",
-        "size": 11_499_298,
+        "sha256": "e064723bd31a94617f1b2d2558772a68fd931ddd5139a244e63ff9bfd2ec6345",
+        "size": 11_506_072,
         "installMode": "standard_system_application",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_system_installer",
