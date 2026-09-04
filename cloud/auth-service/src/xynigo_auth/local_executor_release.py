@@ -12,9 +12,9 @@ from urllib.parse import quote
 from . import __version__
 
 
-RELEASE_VERSION = "0.13.22"
+RELEASE_VERSION = "0.14.0"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-04T02:06:16Z"
+RELEASE_PUBLISHED_AT = "2026-09-04T03:35:38Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -29,8 +29,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.13.22-8f3cd2efffef",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.13.22.exe",
+        "runtimeId": "0.14.0-1f06815db731",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.14.0.exe",
         "sha256": "2b4e2311e10be0b132aaf6f9d8a46a8c3956bff27976fe6ff5c91b58f3babd6f",
         "size": 15_195_796,
         "installMode": "standard_per_user",
@@ -48,8 +48,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.13.22-8f3cd2efffef",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.13.22.pkg",
+        "runtimeId": "0.14.0-1f06815db731",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.14.0.pkg",
         "sha256": "13c0048dd64092b8ce2db7619e658657f60b063f6c828e8132572f28af7637e8",
         "size": 11_484_843,
         "installMode": "standard_system_application",
@@ -234,12 +234,12 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "物流查询在 HubStudio Local API 短暂断连时自动恢复，避免单点抖动终止整批任务。",
-            "物流结果新增第一条轨迹时间、轨迹摘要和下单至首轨时效，便于评估发货效率。",
-            "物流查询支持桌面端无头/可见调试模式设置，云端高级设置入口与站点、分组解耦。",
-            "物流历史新增查询用户字段；管理员可按用户筛选，普通成员仍保持本人数据隔离。",
-            "查询时间与下单时间改为紧凑的日期/时间双行展示，现有表格行高保持不变。",
-            "运行环境侧栏支持点击外部区域或按 Esc 关闭，查询工具栏执行前后位置保持稳定。",
+            "首轨解析支持 SHEIN 真实页面不含年份的时间格式，并根据下单时间安全推断年份。",
+            "跨年订单可正确识别下一年度首条轨迹，异常时间不会进入首轨时效统计。",
+            "本地执行器上传物流结果时携带经过云端验证的设备身份证明。",
+            "设备凭证只存在安全存储和请求头，不进入业务结果、日志或本地待同步队列。",
+            "查询历史展示真实执行器；旧版本地任务明确标注未记录设备，不盲目回填。",
+            "设备身份与当前登录用户、租户不一致时拒绝绑定，避免错误归属。",
             "Windows 与 macOS 从同一 Git 基线同步构建并发布。",
             "稳定通道强制平台签名门槛；内部未签名包仅允许 test 通道。",
         ],
