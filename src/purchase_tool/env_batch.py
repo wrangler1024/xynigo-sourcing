@@ -8,7 +8,7 @@ import argparse
 import csv
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from io import BytesIO, StringIO
 import hashlib
 import json
@@ -48,6 +48,10 @@ RES_POOL = (
 
 STEPS = ('env_created', 'cookie_imported', 'account_bound', 'remarked',
          'done')
+TRANSIENT_HUB_TRANSPORT_CODES = frozenset({
+    'hubstudio_local_api_unreachable',
+    'hubstudio_local_api_timeout',
+})
 MAPPING_HEADERS = ('邮箱', '环境名', 'HUB序号', '采购员', '绑定时间', '状态')
 EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 ORDER_RE = re.compile(r'(?:[?&])orderNo=([0-9a-f]+)(?:[&#]|$)', re.I)
@@ -376,6 +380,9 @@ class BatchPlanItem:
     completed_steps: set = field(default_factory=set)
     state: str = 'pending'
     error_step: str = ''
+    error_code: str = ''
+    error_retryable: bool = False
+    error_outcome_uncertain: bool = False
     error: str = ''
     binding_time: str = ''
     recovered_existing: bool = False
@@ -396,6 +403,9 @@ class BatchPlanItem:
             'completedSteps': [x for x in STEPS if x in self.completed_steps],
             'state': self.state,
             'errorStep': self.error_step,
+            'errorCode': self.error_code,
+            'errorRetryable': self.error_retryable,
+            'errorOutcomeUncertain': self.error_outcome_uncertain,
             'error': scrub_text(self.error)[:300],
             'bindingTime': self.binding_time,
             'recoveredExisting': self.recovered_existing,
@@ -804,6 +814,63 @@ def _env_identity(env):
     return None
 
 
+def build_environment_inventory_snapshot(environments, captured_at=None):
+    """Return a complete credential-free HubStudio inventory snapshot.
+
+    Remarks can contain the proxy extraction URL and buyer mailbox access
+    URL.  Only the one-way hash of the legacy order marker is retained; raw
+    remarks never leave the local executor.
+    """
+    observations = {}
+    for env in environments or []:
+        if not isinstance(env, dict):
+            continue
+        identity = _env_identity(env)
+        name = ' '.join(str(env.get('containerName') or '').split())[:255]
+        if identity is None or not name:
+            continue
+        identity_kind, identity_value = identity
+        environment_key = 'sha256:' + hashlib.sha256(
+            ('%s:%s' % (identity_kind, identity_value)).encode('utf-8')
+        ).hexdigest()
+        group = ' '.join(str(env.get('tagName') or '').split())[:255]
+        site_match = re.search(r'-(US|MX)-', name, re.I)
+        order_match = REMARK_ORDER_RE.search(str(env.get('remark') or ''))
+        source_order_ref = None
+        if order_match:
+            source_order_ref = 'sha256:' + hashlib.sha256(
+                order_match.group(1).strip().casefold().encode('utf-8')
+            ).hexdigest()
+        row = {
+            'environmentKey': environment_key,
+            'environmentName': name,
+            'environmentGroup': group,
+            'site': site_match.group(1).upper() if site_match else None,
+            'sourceOrderRef': source_order_ref,
+        }
+        environment_ref = str(env.get('containerCode') or '').strip()[:128]
+        environment_serial = str(env.get('serialNumber') or '').strip()[:64]
+        if environment_ref:
+            row['environmentRef'] = environment_ref
+        if environment_serial:
+            row['environmentSerial'] = environment_serial
+        observations[environment_key] = row
+    rows = sorted(
+        observations.values(), key=lambda item: item['environmentKey'])
+    revision = hashlib.sha256(json.dumps(
+        rows, ensure_ascii=False, sort_keys=True,
+        separators=(',', ':')).encode('utf-8')).hexdigest()
+    captured_at = captured_at or datetime.now(timezone.utc)
+    if captured_at.tzinfo is None:
+        captured_at = captured_at.replace(tzinfo=timezone.utc)
+    return {
+        'snapshotRevision': revision,
+        'capturedAt': captured_at.isoformat(),
+        'environmentCount': len(rows),
+        'rows': rows,
+    }
+
+
 class EnvironmentSnapshotIndex(object):
     """一次快照生成的环境名与号商单号内存索引。"""
 
@@ -1016,6 +1083,10 @@ def build_batch_plan(accounts, assignment_spec, existing_envs=None,
                 completed_steps=set(saved.get('completedSteps') or []),
                 state=str(saved.get('state') or 'pending'),
                 error_step=str(saved.get('errorStep') or ''),
+                error_code=str(saved.get('errorCode') or ''),
+                error_retryable=bool(saved.get('errorRetryable')),
+                error_outcome_uncertain=bool(
+                    saved.get('errorOutcomeUncertain')),
                 error=str(saved.get('error') or ''),
                 binding_time=str(saved.get('bindingTime') or ''),
                 created_in_run=bool(saved.get('createdInRun')),
@@ -1285,12 +1356,14 @@ class BatchEnvOrchestrator(_EnvironmentLookupMixin):
         self.rows = []
 
     def prepare(self, accounts, assignment_spec, existing_envs=None,
-                all_existing_envs=None, planned_env_names=None):
+                all_existing_envs=None, planned_env_names=None,
+                trust_cloud_inventory=False):
         existing = (
             self.hub.env_list(self.purchase_tag)
             if existing_envs is None else list(existing_envs))
         all_existing = (
-            (list(existing) if planned_env_names else self.hub.env_list())
+            (list(existing) if planned_env_names and trust_cloud_inventory
+             else self.hub.env_list())
             if all_existing_envs is None else list(all_existing_envs))
         environment_index = self._set_environment_snapshot(
             existing, all_existing)
@@ -1317,6 +1390,9 @@ class BatchEnvOrchestrator(_EnvironmentLookupMixin):
         row.completed_steps.add(step)
         row.error = ''
         row.error_step = ''
+        row.error_code = ''
+        row.error_retryable = False
+        row.error_outcome_uncertain = False
         row.state = 'done' if step == 'done' else step
         self._persist()
 
@@ -1329,6 +1405,9 @@ class BatchEnvOrchestrator(_EnvironmentLookupMixin):
         if self.stop_event.is_set():
             row.state = 'stopped'
             row.error_step = ''
+            row.error_code = ''
+            row.error_retryable = False
+            row.error_outcome_uncertain = False
             row.error = '安全停止：未开始执行'
             self._persist()
             return
@@ -1390,6 +1469,16 @@ class BatchEnvOrchestrator(_EnvironmentLookupMixin):
         except Exception as exc:
             row.state = 'failed'
             row.error_step = current_step
+            row.error_code = (
+                str(exc.reason_code or '')
+                if isinstance(exc, HubApiError) else '')
+            row.error_outcome_uncertain = bool(
+                isinstance(exc, HubApiError)
+                and exc.outcome_uncertain)
+            row.error_retryable = bool(
+                row.error_code in TRANSIENT_HUB_TRANSPORT_CODES
+                and (not row.error_outcome_uncertain
+                     or current_step in {'cookie_imported', 'remarked'}))
             error_text = str(exc)
             for secret in (row.account.email, row.account.password,
                            row.account.key_url, row.account.cookie_text,
@@ -1400,13 +1489,31 @@ class BatchEnvOrchestrator(_EnvironmentLookupMixin):
             row.error = scrub_text(error_text)[:300]
             self._persist()
 
-    def run(self):
-        if self.max_workers > 1 and len(self.rows) > 1:
+    def _run_rows(self, rows):
+        rows = list(rows)
+        if self.max_workers > 1 and len(rows) > 1:
             with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
-                list(pool.map(self._run_one, self.rows))
+                list(pool.map(self._run_one, rows))
         else:
-            for row in self.rows:
+            for row in rows:
                 self._run_one(row)
+
+    def run(self):
+        self._run_rows(self.rows)
+        # The adapter already spends a bounded recovery window on each safe
+        # operation.  If that window ends while HubStudio is restarting, give
+        # the batch one process-wide second chance after a read-only readiness
+        # probe.  Ambiguous non-idempotent writes are never replayed here.
+        retryable = [
+            row for row in self.rows
+            if row.state == 'failed' and row.error_retryable]
+        if retryable and not self.stop_event.is_set():
+            try:
+                self.hub.group_list()
+            except HubApiError:
+                pass
+            else:
+                self._run_rows(retryable)
         if self.state_store and all(row.state == 'done' for row in self.rows):
             self.state_store.remove()
         return self.rows
@@ -1657,6 +1764,9 @@ class BackupPlanItem:
     container_code: str = ''
     serial_number: object = None
     state: str = 'pending'
+    error_code: str = ''
+    error_retryable: bool = False
+    error_outcome_uncertain: bool = False
     error: str = ''
     created_in_run: bool = False
     cleanup_status: str = 'not_required'
@@ -1670,6 +1780,9 @@ class BackupPlanItem:
             'containerCode': self.container_code,
             'serialNumber': self.serial_number,
             'state': self.state,
+            'errorCode': self.error_code,
+            'errorRetryable': self.error_retryable,
+            'errorOutcomeUncertain': self.error_outcome_uncertain,
             'error': scrub_text(self.error)[:300],
             'createdInRun': self.created_in_run,
             'cleanupStatus': self.cleanup_status,
@@ -1726,12 +1839,16 @@ class BackupEnvOrchestrator(_EnvironmentLookupMixin):
         # 强切，确保不会制造缺备注的半成品环境。
         if self.stop_event.is_set():
             row.state = 'stopped'
+            row.error_code = ''
+            row.error_retryable = False
+            row.error_outcome_uncertain = False
             row.error = '安全停止：未开始执行'
             self._persist()
             return
         verify_remote_name = row.state != 'pending'
         row.state = 'running'
         self._persist()
+        current_step = 'env_created'
         try:
             existing, created_here = self._create_or_adopt_env(
                 row.env_name,
@@ -1746,12 +1863,27 @@ class BackupEnvOrchestrator(_EnvironmentLookupMixin):
                 raise EnvBatchError('环境回读缺少 containerCode 或 HUB 序号')
             row.created_in_run = bool(created_here)
             row.cleanup_status = 'not_required'
+            current_step = 'remarked'
             self.hub.env_update(
                 row.container_code, row.env_name, self.remark)
             self.sleep(self.write_interval)
             row.state = 'done'
+            row.error_code = ''
+            row.error_retryable = False
+            row.error_outcome_uncertain = False
+            row.error = ''
         except Exception as exc:
             row.state = 'failed'
+            row.error_code = (
+                str(exc.reason_code or '')
+                if isinstance(exc, HubApiError) else '')
+            row.error_outcome_uncertain = bool(
+                isinstance(exc, HubApiError)
+                and exc.outcome_uncertain)
+            row.error_retryable = bool(
+                row.error_code in TRANSIENT_HUB_TRANSPORT_CODES
+                and (not row.error_outcome_uncertain
+                     or current_step == 'remarked'))
             error_text = str(exc)
             for secret in (self.proxy_link,
                            self.proxy_link.replace('{region}', self.site)):
@@ -1760,13 +1892,27 @@ class BackupEnvOrchestrator(_EnvironmentLookupMixin):
             row.error = scrub_text(error_text)[:300]
         self._persist()
 
-    def run(self):
-        if self.max_workers > 1 and len(self.rows) > 1:
+    def _run_rows(self, rows):
+        rows = list(rows)
+        if self.max_workers > 1 and len(rows) > 1:
             with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
-                list(pool.map(self._run_one, self.rows))
+                list(pool.map(self._run_one, rows))
         else:
-            for row in self.rows:
+            for row in rows:
                 self._run_one(row)
+
+    def run(self):
+        self._run_rows(self.rows)
+        retryable = [
+            row for row in self.rows
+            if row.state == 'failed' and row.error_retryable]
+        if retryable and not self.stop_event.is_set():
+            try:
+                self.hub.group_list()
+            except HubApiError:
+                pass
+            else:
+                self._run_rows(retryable)
         return self.rows
 
     def rollback_created_environments(self):

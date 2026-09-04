@@ -2991,6 +2991,7 @@ let envBackup = { buyer: '', count: 10, type: '备用' };
 let backupRunning = false;
 let cloudEnvironmentRunId = '';
 let cloudEnvironmentTaskId = '';
+let cloudEnvironmentExecutorId = '';
 let cloudLogisticsRunId = '';
 let cloudLogisticsTaskId = '';
 let lastWorkspaceExecutorId = '';
@@ -3513,6 +3514,8 @@ function cloudApiError(payload, status) {
     executor_task_state_conflict:'本地执行器请求状态已变化，请刷新后重试',
     executor_task_cancel_requested:'本地执行器请求已进入取消流程',
     environment_cleanup_in_progress:'上一批环境任务仍在执行或撤销中，请等待清理完成后再提交',
+    environment_account_already_bound:'检测到这些买家号已有云端环境记录；请打开原批次续跑，或由管理员接管原批次，禁止重新创建重复环境',
+    environment_preview_response_invalid:'本地执行器返回的干跑预览结果不完整，请刷新后重试',
     executor_capability_missing:'本地执行器版本过旧，请安装云端提供的最新版本',
     executor_payload_encryption_unavailable:'云端执行器安全通道尚未就绪',
     workspace_rpc_operation_unsupported:'当前功能尚未适配新版本本地执行器',
@@ -3877,6 +3880,7 @@ function cloudEnvironmentLegacySnapshot(run) {
   };
   return {
     runId:String(run.runId || ''), site:String(run.site || ''),
+    executorId:String(run.executorId || ''),
     environmentGroup:String(run.environmentGroup || ''),
     running:!run.terminal, stopRequested:!!run.stopRequested,
     elapsedSec:cloudRunElapsed(run), rows, summary, ipChecks:checks,
@@ -7498,6 +7502,7 @@ function renderEnvExecutionState(snap, mode) {
 function renderEnvBatch(snap) {
   const wasRunning = envRunning;
   envRunning = !!snap.running;
+  if (snap.executorId) cloudEnvironmentExecutorId = String(snap.executorId);
   envStopRequested = !!snap.stopRequested;
   envElapsedBase = Number(snap.elapsedSec || 0);
   envElapsedObservedAt = Date.now();
@@ -10456,7 +10461,7 @@ $('btnEnvPreview').onclick = async () => {
     $('envSite').disabled = true;
     $('envSiteGroup').disabled = true;
     let idempotencyKey = '';
-    $('envPreviewText').textContent = '正在通过所选本地执行器读取 HubStudio 环境并计算续排序号…';
+    $('envPreviewText').textContent = '正在检查云端环境库存缓存；缓存过期时将通过所选本地执行器刷新 HubStudio 全量环境…';
     try {
       const executor = await cloudFormalExecutor('environment.preview-bound.v1');
       const assignments = envActiveBuyers().map(buyer => ({
@@ -10475,23 +10480,46 @@ $('btnEnvPreview').onclick = async () => {
           method:'POST', headers:{'Content-Type':'application/json'},
           body:JSON.stringify({...requestBody, idempotencyKey}),
         });
+      let result = created.result || null;
       const taskId = String(created.task && created.task.id || '');
-      if (!taskId) throw new Error('云端未返回干跑预览任务编号');
-      const task = await waitCloudExecutorTask(
-        taskId, 300000, null,
-        '等待本地执行器完成干跑预览超时，请检查 HubStudio 和执行器状态');
-      const result = task.resultSummary || {};
+      if (!result && !taskId) throw new Error('云端未返回干跑预览结果或任务编号');
+      if (!result) {
+        const task = await waitCloudExecutorTask(
+          taskId, 300000, state => {
+          const phase = String(state.phase || 'starting');
+          const labels = {
+            starting:'正在等待所选本地执行器领取预览任务…',
+            'environment.preview.importing_plan':'执行器正在导入云端加密计划…',
+            'environment.preview.reading_inventory':'正在读取 HubStudio 环境库存并完成全局查重、续排序号计算…',
+            'environment.preview.completed':'环境库存核对完成，正在返回脱敏预览结果…'
+          };
+          const current = Number(state.progressCurrent);
+          const total = Number(state.progressTotal);
+          const progress = Number.isFinite(current) && Number.isFinite(total)
+            && total > 0 ? `（${current}/${total}）` : '';
+          $('envPreviewText').textContent = (labels[phase]
+            || '本地执行器正在处理干跑预览…') + progress
+            + '\n\n该过程只读，不会创建或修改 HubStudio 环境。';
+          },
+          '等待本地执行器完成干跑预览超时，请检查 HubStudio 和执行器状态');
+        result = task.resultSummary || {};
+      }
       const rows = Array.isArray(result.rows) ? result.rows : [];
       if (result.valid !== true || Number(result.count || 0) !== envAccountCount
           || rows.length !== envAccountCount) {
         throw new Error('本地执行器返回的干跑预览结果不完整');
       }
+      const fromCloudCache = result.inventorySource === 'cloud_cache';
       $('envPreviewText').textContent = `真实干跑通过，共 ${result.count} 行：\n` +
         rows.slice(0, 8).map(x => `${x.emailMasked} → ${x.environmentName}${x.recoveredExisting ? '（已存在，正式执行将跳过）' : ''}`).join('\n') +
         (rows.length > 8 ? `\n…… 其余 ${rows.length - 8} 行已省略` : '') +
-        '\n\n已由所选本地执行器完成 HubStudio 只读检查；未创建、修改或删除环境。';
+        (fromCloudCache
+          ? '\n\n已使用近期完整的云端环境库存缓存；正式执行仍会做安全复核。'
+          : '\n\n已由所选本地执行器完成 HubStudio 全量只读检查并刷新云端缓存；未创建、修改或删除环境。');
       clearWorkspaceMutationKey('env-preview', idempotencyKey);
-      toast('真实干跑预览完成：HubStudio 未发生写入');
+      toast(fromCloudCache
+        ? '干跑预览完成：已使用云端环境库存缓存'
+        : '真实干跑预览完成：已刷新云端环境库存缓存');
     } catch (err) {
       if (idempotencyKey) clearWorkspaceMutationKey('env-preview', idempotencyKey);
       $('envPreviewText').textContent = '干跑预览失败：' + err.message;
@@ -10750,6 +10778,35 @@ $('btnEnvBackupResult').onclick = () => {
 };
 $('envDate').onchange = () => refreshAssignUi();
 
+async function cloudEnvironmentRetryRoute() {
+  if (!CLOUD_WEB_MODE) return {};
+  const executor = await cloudFormalExecutor('environment.cloud-inventory.v1');
+  const changingDevice = !cloudEnvironmentExecutorId
+    || String(executor.id) !== String(cloudEnvironmentExecutorId);
+  if (!changingDevice) return {};
+  if (!hasRole('admin') && !hasRole('super_admin')) {
+    const error = new Error('只有管理员可以将失败环境批次接管到另一台电脑');
+    error.code = 'environment_takeover_admin_required';
+    throw error;
+  }
+  if (!envCloudPlanId) {
+    const error = new Error('接管到另一台电脑前，请重新上传原始 xlsx；云端会只提取原批次失败账号，不会重复创建成功账号');
+    error.code = 'environment_takeover_plan_required';
+    throw error;
+  }
+  const capabilities = new Set(executor.capabilities || []);
+  if (!capabilities.has('environment.cloud-plan.v1')) {
+    const error = new Error('所选接管执行器版本过旧，请先升级客户端');
+    error.code = 'executor_capability_missing';
+    throw error;
+  }
+  return {
+    takeover:true,
+    executorId:String(executor.id),
+    cloudPlanId:String(envCloudPlanId),
+  };
+}
+
 $('btnEnvRetryFailed').onclick = async () => {
   if (envPreviewRunning || envSubmitting || envRunning || envRetryFailedSubmitting
       || envRetryAccountId || envFailedCount < 1) return;
@@ -10765,16 +10822,23 @@ $('btnEnvRetryFailed').onclick = async () => {
   try {
     let result;
     if (CLOUD_WEB_MODE) {
+      const retryRoute = await cloudEnvironmentRetryRoute();
       const created = await cloudFetchJson(
         `/v1/operation-runs/environment-creation/${encodeURIComponent(cloudEnvironmentRunId)}/retry`, {
           method:'POST', headers:{'Content-Type':'application/json'},
           body:JSON.stringify({
             idempotencyKey, retryMode:'failed', accountRefs:retryRefs,
+            ...retryRoute,
           })
         });
       result = {...created.data, count:created.data.totalCount};
       cloudEnvironmentRunId = String(result.runId || '');
       cloudEnvironmentTaskId = String(result.executorTaskId || '');
+      if (retryRoute.takeover) {
+        envCloudPlanId = null;
+        envLocalPlanId = null;
+        envCloudPlanPreview = [];
+      }
       renderEnvBatch(cloudEnvironmentLegacySnapshot(result));
     } else {
       result = await api('/api/envbatch/retry-failed', {
@@ -10818,8 +10882,10 @@ $('envTbody').addEventListener('click', async e => {
     '本次只继续失败账号的未完成步骤；已经完成的步骤不会重复执行。');
   try {
     if (CLOUD_WEB_MODE) {
+      const retryRoute = await cloudEnvironmentRetryRoute();
       const retryPayload = {
-        parentRunId:cloudEnvironmentRunId, accountRefs:[accountId]
+        parentRunId:cloudEnvironmentRunId, accountRefs:[accountId],
+        ...retryRoute,
       };
       const idempotencyKey = workspaceMutationKey(
         'env-retry-row', retryPayload);
@@ -10828,11 +10894,17 @@ $('envTbody').addEventListener('click', async e => {
           method:'POST', headers:{'Content-Type':'application/json'},
           body:JSON.stringify({
             idempotencyKey, retryMode:'single', accountRefs:[accountId],
+            ...retryRoute,
           })
         });
       clearWorkspaceMutationKey('env-retry-row', idempotencyKey);
       cloudEnvironmentRunId = String(created.data.runId || '');
       cloudEnvironmentTaskId = String(created.data.executorTaskId || '');
+      if (retryRoute.takeover) {
+        envCloudPlanId = null;
+        envLocalPlanId = null;
+        envCloudPlanPreview = [];
+      }
       renderEnvBatch(cloudEnvironmentLegacySnapshot(created.data));
     } else {
       await api('/api/envbatch/retry-row', {

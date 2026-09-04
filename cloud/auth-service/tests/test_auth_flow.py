@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from fastapi.testclient import TestClient
 import httpx
+from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from xynigo_auth.config import Settings
@@ -20,8 +24,8 @@ from xynigo_auth.models import (
     Permission,
     Role,
     SessionRecord,
-    User,
     TenantFeishuIntegration,
+    User,
 )
 from xynigo_auth.security import hash_token, pkce_challenge
 
@@ -238,6 +242,81 @@ def test_authenticated_member_downloads_allowlisted_asset_through_system_origin(
         assert response.headers["content-length"] == str(len(payload))
         assert "Xynigo_Test.pkg" in response.headers["content-disposition"]
         assert response.headers["x-xynigo-asset-sha256"] == digest
+
+
+def test_concurrent_installer_downloads_do_not_block_authenticated_requests(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from xynigo_auth import local_executor_release as release_catalog
+
+    payload = b"synthetic-concurrent-installer-payload"
+    digest = hashlib.sha256(payload).hexdigest()
+    monkeypatch.setattr(
+        release_catalog,
+        "_PLATFORMS",
+        {
+            "macos-arm64": {
+                "label": "macOS Apple Silicon",
+                "installMode": "standard_system_application",
+                "assetName": "Xynigo_Concurrent_Test.pkg",
+                "sha256": digest,
+                "size": len(payload),
+                "internalUnsignedTest": True,
+            }
+        },
+    )
+    asset_root = tmp_path / "release-assets"
+    asset_root.mkdir()
+    (asset_root / "Xynigo_Concurrent_Test.pkg").write_bytes(payload)
+    app, _database, _oauth = build_test_app(
+        tmp_path,
+        local_executor_asset_dir=str(asset_root),
+    )
+    verifier = app.state.local_executor_asset_integrity
+    original_sha256 = verifier._sha256
+    first_hash_started = threading.Event()
+    allow_hash_to_finish = threading.Event()
+    hash_calls = []
+
+    def slow_sha256(path: Path) -> str:
+        hash_calls.append(path)
+        first_hash_started.set()
+        assert allow_hash_to_finish.wait(2)
+        return original_sha256(path)
+
+    monkeypatch.setattr(verifier, "_sha256", slow_sha256)
+    download_path = (
+        "/v1/local-executor/releases/macos-arm64/primary/download"
+    )
+    with TestClient(app) as client:
+        state, _challenge = start_login(client)
+        callback = client.get(
+            "/v1/auth/feishu/callback",
+            params={"code": "authorization-code", "state": state},
+            follow_redirects=False,
+        )
+        assert callback.status_code == 303
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(client.get, download_path)
+            assert first_hash_started.wait(1)
+            second = pool.submit(client.get, download_path)
+            time.sleep(0.05)
+            assert len(hash_calls) == 1
+
+            status_started_at = time.monotonic()
+            identity = client.get("/v1/auth/me")
+            status_elapsed = time.monotonic() - status_started_at
+            assert identity.status_code == 200
+            assert status_elapsed < 1
+
+            allow_hash_to_finish.set()
+            responses = [first.result(timeout=2), second.result(timeout=2)]
+
+    assert [response.status_code for response in responses] == [200, 200]
+    assert [response.content for response in responses] == [payload, payload]
+    assert len(hash_calls) == 1
 
 
 def test_bootstrap_admin_login_creates_hashed_session_and_rbac(tmp_path) -> None:

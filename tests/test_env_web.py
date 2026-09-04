@@ -338,7 +338,7 @@ class EnvWebJobTests(unittest.TestCase):
                 site='MX')
         self.assertEqual(job.pending, {})
 
-    def test_environment_worker_setting_is_not_silently_capped(self):
+    def test_environment_worker_setting_has_visible_reliability_cap(self):
         cfg = {
             'purchaseTag': TEST_TAG,
             'proxyLink': TEST_PROXY,
@@ -347,10 +347,14 @@ class EnvWebJobTests(unittest.TestCase):
         }
         job = EnvBatchJob(lambda: FakeHub(), lambda: cfg)
         backup = BackupEnvJob(lambda: FakeHub(), lambda: cfg)
-        self.assertEqual(job._runtime_config()['workers'], 9)
+        self.assertEqual(job._runtime_config()['workers'], 2)
         self.assertEqual(job._runtime_config()['configuredWorkers'], 9)
-        self.assertEqual(backup._runtime_config()['workers'], 9)
+        self.assertEqual(backup._runtime_config()['workers'], 2)
         self.assertEqual(backup._runtime_config()['configuredWorkers'], 9)
+
+        cfg['safeParallelTasks'] = False
+        self.assertEqual(job._runtime_config()['workers'], 3)
+        self.assertEqual(backup._runtime_config()['workers'], 3)
 
     def test_safe_stop_request_is_idempotent_and_reports_stopped_rows(self):
         class BlockingFirstCreateHub(FakeHub):

@@ -1106,8 +1106,17 @@ class QueryOrchestrator(object):
                     return
             try:
                 open_codes = self.hub.open_container_codes()
-            except Exception:
-                open_codes = set()
+            except HubApiError as exc:
+                # After the shared adapter has exhausted its recovery window,
+                # an unknown open-set is not equivalent to an empty open-set.
+                # Guessing here can double-start environments and compound
+                # HubStudio resource pressure.
+                self._set_runtime_recovery(
+                    'degraded',
+                    '无法确认 HubStudio 已打开环境，已安全停止本批次')
+                self._fail_all(
+                    '读取 HubStudio 已打开环境失败：%s' % str(exc)[:120])
+                return
 
             work = queue_mod.Queue()
             for s in serials:

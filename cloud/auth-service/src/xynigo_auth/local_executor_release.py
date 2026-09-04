@@ -7,10 +7,12 @@ change; otherwise the import-time guard prevents advertising a stale build.
 
 from __future__ import annotations
 
+import hashlib
+import threading
+from pathlib import Path
 from urllib.parse import quote
 
 from . import __version__
-
 
 RELEASE_VERSION = "0.14.0"
 RELEASE_CHANNEL = "test"
@@ -170,6 +172,90 @@ validate_release_platforms(
     allow_unsigned_internal_test=RELEASE_CHANNEL == "test",
     require_synchronized_runtime=True,
 )
+
+
+class ReleaseAssetIntegrityCache:
+    """Verify immutable release assets once without serializing downloads.
+
+    Standard installers are mounted read-only in production.  The file
+    identity and timestamps therefore form a safe cache key together with the
+    reviewed catalog digest.  Concurrent first requests coalesce around one
+    SHA-256 pass; after verification every request can immediately hand its
+    own FileResponse to Starlette for independent streaming.
+    """
+
+    def __init__(self) -> None:
+        self._condition = threading.Condition()
+        self._verified: dict[str, tuple[object, ...]] = {}
+        self._inflight: set[tuple[object, ...]] = set()
+
+    @staticmethod
+    def _fingerprint(
+        path: Path,
+        *,
+        expected_size: int,
+        expected_hash: str,
+    ) -> tuple[object, ...]:
+        stat = path.stat()
+        if stat.st_size != expected_size:
+            raise OSError("asset size does not match the release catalog")
+        return (
+            str(path),
+            int(getattr(stat, "st_dev", 0)),
+            int(getattr(stat, "st_ino", 0)),
+            int(stat.st_size),
+            int(stat.st_mtime_ns),
+            int(stat.st_ctime_ns),
+            expected_hash,
+        )
+
+    @staticmethod
+    def _sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def verify(
+        self,
+        path: Path,
+        *,
+        expected_size: int,
+        expected_hash: str,
+    ) -> None:
+        fingerprint = self._fingerprint(
+            path,
+            expected_size=expected_size,
+            expected_hash=expected_hash,
+        )
+        path_key = str(path)
+        with self._condition:
+            while fingerprint in self._inflight:
+                self._condition.wait()
+            if self._verified.get(path_key) == fingerprint:
+                return
+            self._inflight.add(fingerprint)
+
+        verified = False
+        try:
+            if self._sha256(path) != expected_hash:
+                raise OSError("asset digest does not match the release catalog")
+            # Reject a file replaced while it was being hashed.  A later
+            # request may safely retry against the replacement fingerprint.
+            if self._fingerprint(
+                path,
+                expected_size=expected_size,
+                expected_hash=expected_hash,
+            ) != fingerprint:
+                raise OSError("asset changed during release verification")
+            verified = True
+        finally:
+            with self._condition:
+                self._inflight.discard(fingerprint)
+                if verified:
+                    self._verified[path_key] = fingerprint
+                self._condition.notify_all()
 
 
 def _system_download_path(platform_key: str, variant: str) -> str:

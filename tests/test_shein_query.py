@@ -618,6 +618,34 @@ class TrackingScreenshotTests(unittest.TestCase):
         self.assertEqual(job.fatal_error_code, '')
         self.assertTrue(all(row['state'] == 'pending' for row in job.rows))
 
+    def test_unknown_open_environment_state_fails_closed(self):
+        class UnavailableStatusHub(object):
+            def open_container_codes(self):
+                raise HubApiError(
+                    'HubStudio Local API 请求超时',
+                    'hubstudio_local_api_timeout')
+
+            def browser_start(self, _code, headless=False):
+                del headless
+                raise AssertionError(
+                    'cannot start while the open environment set is unknown')
+
+        hub = UnavailableStatusHub()
+        job = QueryOrchestrator(hub, settle_seconds=0, env_interval=0)
+        job._prepare_run(['1001'], 'MX', fresh=True)
+        job._run(['1001'], {'1001': {
+            'serialNumber': 1001,
+            'containerCode': 'container-1',
+            'containerName': 'XG-MX-0904-001',
+        }}, fresh=False, site='MX', prepared=True)
+
+        snapshot = job.snapshot()
+        self.assertFalse(snapshot['running'])
+        self.assertEqual(snapshot['runtimeState'], 'degraded')
+        self.assertEqual(snapshot['rows'][0]['state'], 'fail')
+        self.assertIn('读取 HubStudio 已打开环境失败',
+                      snapshot['rows'][0]['error'])
+
     def test_persistent_local_api_disconnect_only_fails_current_row_scope(self):
         class OfflineHub(object):
             def __init__(self):

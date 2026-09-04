@@ -99,6 +99,14 @@ class EnvironmentRetryRunCreateBody(BaseModel):
     idempotencyKey: str = Field(min_length=8, max_length=128, pattern=SAFE_KEY_RE)
     retryMode: Literal["single", "failed"]
     accountRefs: list[str] = Field(min_length=1, max_length=2000)
+    takeover: bool = False
+    executorId: uuid.UUID | None = None
+    cloudPlanId: str | None = Field(
+        default=None,
+        min_length=8,
+        max_length=128,
+        pattern=SAFE_KEY_RE,
+    )
 
     @field_validator("accountRefs")
     @classmethod
@@ -118,6 +126,11 @@ class EnvironmentRetryRunCreateBody(BaseModel):
     def validate_retry_mode(self) -> "EnvironmentRetryRunCreateBody":
         if self.retryMode == "single" and len(self.accountRefs) != 1:
             raise ValueError("single retry requires exactly one account")
+        takeover_fields = self.executorId is not None or self.cloudPlanId is not None
+        if self.takeover and (self.executorId is None or not self.cloudPlanId):
+            raise ValueError("takeover requires executorId and cloudPlanId")
+        if not self.takeover and takeover_fields:
+            raise ValueError("takeover fields require takeover=true")
         return self
 
 

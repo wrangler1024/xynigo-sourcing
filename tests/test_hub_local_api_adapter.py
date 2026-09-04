@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import json
 from pathlib import Path
+import socket
 from types import SimpleNamespace
 from unittest import mock
 import unittest
@@ -11,6 +12,7 @@ from purchase_tool.hub_api import HubApiError, HubStudioLocalApiAdapter
 from purchase_tool.hub_api_key import (
     HubApiKeyStoreError, MemoryHubApiKeyStore, SystemHubApiKeyStore, _wrap_key)
 from purchase_tool.main import AppState
+from purchase_tool.task_runtime import HubRuntimeGate
 
 
 class FakeResponse(object):
@@ -105,6 +107,173 @@ class MemoryTokenBackend(object):
 
 
 class HubStudioLocalApiAdapterTests(unittest.TestCase):
+    @staticmethod
+    def recovery_gate():
+        return HubRuntimeGate(
+            max_requests=1, min_request_interval=0,
+            sleep_fn=lambda _seconds: None,
+            transport_backoff=(0,))
+
+    def test_every_supported_local_api_endpoint_has_a_retry_policy(self):
+        self.assertEqual(hub_api.KNOWN_LOCAL_API_PATHS, {
+            '/group/list', '/env/list', '/browser/all-browser-status',
+            '/env/export-cookie', '/browser/stop', '/env/update',
+            '/env/import-cookie', '/browser/start',
+            '/browser/download-core', '/env/create', '/env/del',
+            '/container/add-account',
+        })
+        self.assertFalse(
+            hub_api.READ_ONLY_PATHS & hub_api.IDEMPOTENT_MUTATION_PATHS)
+        self.assertFalse(
+            hub_api.READ_ONLY_PATHS & hub_api.AMBIGUOUS_MUTATION_PATHS)
+        self.assertFalse(
+            hub_api.IDEMPOTENT_MUTATION_PATHS &
+            hub_api.AMBIGUOUS_MUTATION_PATHS)
+
+    def test_read_recovers_after_shared_transport_circuit_probe(self):
+        class FlakyOpener(FakeLocalApiOpener):
+            def __init__(self):
+                super().__init__()
+                self.env_attempts = 0
+
+            def open(self, request, timeout=None):
+                path = '/' + request.full_url.split('/api/v1/', 1)[1]
+                if path == '/env/list':
+                    self.env_attempts += 1
+                    if self.env_attempts == 1:
+                        raise URLError(ConnectionRefusedError('refused'))
+                return super().open(request, timeout=timeout)
+
+        opener = FlakyOpener()
+        adapter = HubStudioLocalApiAdapter(
+            opener=opener, client_running_getter=lambda: True,
+            runtime_gate=self.recovery_gate(), transport_attempts=3)
+
+        rows = adapter.env_list()
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(opener.env_attempts, 2)
+        self.assertIn('/group/list', [call[1] for call in opener.calls])
+
+    def test_business_call_rediscovers_fallback_port_after_listener_moves(self):
+        opener = FakeLocalApiOpener(unavailable_ports={7000})
+        adapter = HubStudioLocalApiAdapter(
+            port=7000, known_ports=(6873,), opener=opener,
+            client_running_getter=lambda: True,
+            runtime_gate=self.recovery_gate(), transport_attempts=3)
+
+        rows = adapter.env_list()
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(adapter.port, 6873)
+        self.assertEqual(adapter._base_snapshot(),
+                         'http://127.0.0.1:6873/api/v1')
+        env_ports = [
+            port for port, path, _body, _headers in opener.calls
+            if path == '/env/list']
+        self.assertEqual(env_ports[-1], 6873)
+
+    def test_idempotent_write_recovers_after_timeout(self):
+        class FlakyOpener(FakeLocalApiOpener):
+            def __init__(self):
+                super().__init__()
+                self.update_attempts = 0
+
+            def open(self, request, timeout=None):
+                path = '/' + request.full_url.split('/api/v1/', 1)[1]
+                if path == '/env/update':
+                    self.update_attempts += 1
+                    if self.update_attempts == 1:
+                        raise URLError(socket.timeout('timed out'))
+                return super().open(request, timeout=timeout)
+
+        opener = FlakyOpener()
+        adapter = HubStudioLocalApiAdapter(
+            opener=opener, client_running_getter=lambda: True,
+            runtime_gate=self.recovery_gate(), transport_attempts=3)
+
+        adapter.env_update('container-test-1', '脱敏测试环境', '已完成')
+
+        self.assertEqual(opener.update_attempts, 2)
+
+    def test_non_idempotent_create_timeout_is_reconciled_not_replayed(self):
+        class TimedOutCreateOpener(FakeLocalApiOpener):
+            def __init__(self):
+                super().__init__()
+                self.create_attempts = 0
+
+            def open(self, request, timeout=None):
+                path = '/' + request.full_url.split('/api/v1/', 1)[1]
+                if path == '/env/create':
+                    self.create_attempts += 1
+                    raise URLError(socket.timeout('timed out'))
+                return super().open(request, timeout=timeout)
+
+        opener = TimedOutCreateOpener()
+        adapter = HubStudioLocalApiAdapter(
+            opener=opener, client_running_getter=lambda: True,
+            runtime_gate=self.recovery_gate(), transport_attempts=4)
+
+        with self.assertRaises(HubApiError) as caught:
+            adapter.env_create({
+                'containerName': '不存在的新环境',
+                'tagName': '测试分组',
+            })
+
+        self.assertEqual(opener.create_attempts, 1)
+        self.assertTrue(caught.exception.outcome_uncertain)
+        self.assertEqual(caught.exception.operation, '/env/create')
+
+    def test_browser_start_timeout_reconciles_exact_open_environment(self):
+        class TimedOutStartOpener(FakeLocalApiOpener):
+            def __init__(self):
+                super().__init__(open_browsers=[{
+                    'containerCode': 'container-test-1',
+                    'debuggingPort': '59591',
+                    'ip': '203.0.113.20',
+                }])
+                self.start_attempts = 0
+
+            def open(self, request, timeout=None):
+                path = '/' + request.full_url.split('/api/v1/', 1)[1]
+                if path == '/browser/start':
+                    self.start_attempts += 1
+                    raise URLError(socket.timeout('timed out'))
+                return super().open(request, timeout=timeout)
+
+        opener = TimedOutStartOpener()
+        adapter = HubStudioLocalApiAdapter(
+            opener=opener, client_running_getter=lambda: True,
+            runtime_gate=self.recovery_gate(), transport_attempts=4)
+
+        result = adapter.browser_start('container-test-1', headless=True)
+
+        self.assertEqual(result['debuggingPort'], '59591')
+        self.assertEqual(opener.start_attempts, 1)
+
+    def test_core_download_timeout_moves_to_verification_without_replay(self):
+        class TimedOutDownloadOpener(FakeLocalApiOpener):
+            def __init__(self):
+                super().__init__()
+                self.download_attempts = 0
+
+            def open(self, request, timeout=None):
+                path = '/' + request.full_url.split('/api/v1/', 1)[1]
+                if path == '/browser/download-core':
+                    self.download_attempts += 1
+                    raise URLError(socket.timeout('timed out'))
+                return super().open(request, timeout=timeout)
+
+        opener = TimedOutDownloadOpener()
+        adapter = HubStudioLocalApiAdapter(
+            opener=opener, client_running_getter=lambda: True,
+            runtime_gate=self.recovery_gate(), transport_attempts=4)
+
+        result = adapter.download_core('chrome', '148')
+
+        self.assertTrue(result['responseLost'])
+        self.assertEqual(opener.download_attempts, 1)
+
     def test_environment_delete_accepts_only_explicit_numeric_codes(self):
         opener = FakeLocalApiOpener()
         adapter = HubStudioLocalApiAdapter(

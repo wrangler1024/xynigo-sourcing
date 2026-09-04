@@ -156,6 +156,39 @@ class HubRuntimeGateTests(unittest.TestCase):
         self.assertAlmostEqual(clock.sleeps[0], 0.3)
         self.assertAlmostEqual(clock.sleeps[1], 2.0)
 
+    def test_transport_failures_open_one_shared_escalating_circuit(self):
+        class FakeClock(object):
+            def __init__(self):
+                self.now = 0.0
+                self.sleeps = []
+
+            def monotonic(self):
+                return self.now
+
+            def sleep(self, seconds):
+                self.sleeps.append(seconds)
+                self.now += seconds
+
+        clock = FakeClock()
+        gate = HubRuntimeGate(
+            max_requests=2, min_request_interval=0,
+            sleep_fn=clock.sleep, monotonic_fn=clock.monotonic,
+            transport_backoff=(1, 2, 4))
+
+        first = gate.record_transport_failure()
+        second = gate.record_transport_failure()
+        self.assertEqual(first['delaySeconds'], 1)
+        self.assertEqual(second['delaySeconds'], 2)
+        self.assertEqual(
+            gate.transport_snapshot()['consecutiveFailures'], 2)
+
+        with gate.request():
+            pass
+        self.assertEqual(clock.sleeps[-1], 2)
+        self.assertTrue(gate.record_transport_success())
+        self.assertEqual(
+            gate.transport_snapshot()['consecutiveFailures'], 0)
+
 
 if __name__ == '__main__':
     unittest.main()

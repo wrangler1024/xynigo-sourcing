@@ -1253,25 +1253,34 @@ class LocalAuthService(object):
     def download_local_executor_release(
             self, path, target, *, expected_size, expected_hash,
             progress=None):
+        # Only protect the mutable authentication state while selecting the
+        # credential.  Holding this lock for the full installer stream used to
+        # make local identity/status requests wait behind a slow download,
+        # which desktop launchers surfaced as a misleading connection state.
         with self.lock:
             self.require()
             if not self.session_token:
                 raise LocalAuthError('authentication_required', status=401)
-            try:
-                return self.client.download_local_executor_release(
-                    path,
-                    self.session_token,
-                    target,
-                    expected_size=expected_size,
-                    expected_hash=expected_hash,
-                    progress=progress,
-                )
-            except LocalAuthError as exc:
-                if exc.status == 401:
-                    self.session_token = None
-                    self.identity = None
-                    self.last_verified = 0.0
-                raise
+            session_token = self.session_token
+        try:
+            return self.client.download_local_executor_release(
+                path,
+                session_token,
+                target,
+                expected_size=expected_size,
+                expected_hash=expected_hash,
+                progress=progress,
+            )
+        except LocalAuthError as exc:
+            if exc.status == 401:
+                with self.lock:
+                    # Do not erase a replacement login that completed while
+                    # this download was in flight with the previous token.
+                    if self.session_token == session_token:
+                        self.session_token = None
+                        self.identity = None
+                        self.last_verified = 0.0
+            raise
 
     def logout(self):
         with self.lock:

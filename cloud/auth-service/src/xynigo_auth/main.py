@@ -98,6 +98,7 @@ from .environment_plan_service import (
     CloudEnvironmentPlanService,
 )
 from .local_executor_release import (
+    ReleaseAssetIntegrityCache,
     latest_local_executor_release,
     resolve_local_executor_release_asset,
 )
@@ -515,6 +516,7 @@ def create_app(
     app.state.procurement_import_service = procurement_import_service
     app.state.procurement_import_worker = procurement_import_worker
     app.state.last_system_log_prune_at = 0.0
+    app.state.local_executor_asset_integrity = ReleaseAssetIntegrityCache()
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_host_list)
 
     def get_session() -> Iterator[Session]:
@@ -880,14 +882,11 @@ def create_app(
             asset_path = (asset_root / asset_name).resolve(strict=True)
             if asset_path.parent != asset_root or not asset_path.is_file():
                 raise OSError("asset path is outside the reviewed directory")
-            if asset_path.stat().st_size != expected_size:
-                raise OSError("asset size does not match the release catalog")
-            digest = hashlib.sha256()
-            with asset_path.open("rb") as stream:
-                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                    digest.update(chunk)
-            if digest.hexdigest() != str(asset["sha256"]):
-                raise OSError("asset digest does not match the release catalog")
+            app.state.local_executor_asset_integrity.verify(
+                asset_path,
+                expected_size=expected_size,
+                expected_hash=str(asset["sha256"]),
+            )
         except OSError:
             logger.error(
                 "local executor asset storage validation failed",
@@ -2351,6 +2350,12 @@ def create_app(
                 status_code=503,
                 detail={"code": "environment_plan_cloud_disabled"},
             )
+        channel = executor_channel(session)
+        channel.require_executor(
+            tenant_id=actor.tenant.id,
+            user_id=actor.user.id,
+            executor_id=body.executorId,
+        )
         try:
             _record, plan_accounts = environment_plan_service.load_for_execution(
                 session,
@@ -2367,7 +2372,44 @@ def create_app(
                 status_code=exc.status,
                 detail={"code": exc.code, "message": str(exc)},
             ) from exc
-        task = executor_channel(session).create_config_task(
+        runs = OperationRunService(session)
+        try:
+            cached_result = runs.preview_environment_names_from_cache(
+                tenant_id=actor.tenant.id,
+                site=body.site,
+                purchase_date=body.purchaseDate,
+                environment_group=body.environmentGroup,
+                plan_accounts=plan_accounts,
+                assignments=[
+                    item.model_dump(mode="json") for item in body.assignments
+                ],
+            )
+        except PurchaseServiceError as exc:
+            session.rollback()
+            purchase_error(
+                request,
+                session,
+                actor,
+                action,
+                exc,
+                business_object_id=cloud_plan_id,
+            )
+        if cached_result is not None:
+            append_executor_audit(
+                request,
+                session,
+                actor,
+                action=action,
+                object_id=body.executorId,
+                summary={
+                    "site": body.site,
+                    "totalCount": body.totalCount,
+                    "inventorySource": "cloud_cache",
+                },
+            )
+            session.commit()
+            return {"ok": True, "result": cached_result, "task": None}
+        task = channel.create_config_task(
             tenant_id=actor.tenant.id,
             user_id=actor.user.id,
             executor_id=body.executorId,
@@ -2399,7 +2441,7 @@ def create_app(
             },
         )
         session.commit()
-        return {"ok": True, "task": executor_channel(session).task_payload(task)}
+        return {"ok": True, "task": channel.task_payload(task)}
 
     @app.get("/v1/executor-tasks/{task_id}")
     def get_executor_task(
@@ -3382,6 +3424,9 @@ def create_app(
                 "assignments": [
                     item.model_dump(mode="json") for item in body.assignments
                 ],
+                "inventoryCacheFresh": runs.environment_inventory_cache_status(
+                    tenant_id=actor.tenant.id
+                )["fresh"],
             }
             if plan_accounts is not None:
                 task_payload["planAccounts"] = plan_accounts
@@ -3534,6 +3579,22 @@ def create_app(
         parent = runs.get_environment_run(
             tenant_id=actor.tenant.id, run_id=run_id
         )
+        if body.takeover and not (
+            _user_has_role(session, actor.user, ADMIN_ROLE)
+            or _user_has_role(session, actor.user, SUPER_ADMIN_ROLE)
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "environment_takeover_admin_required",
+                    "message": "跨设备接管失败环境批次仅限管理员",
+                },
+            )
+        takeover_plan_record = None
+        takeover_plan_accounts = None
+        takeover_planned_names = None
+        takeover_assignments = None
+        takeover_cleanup_blocked: list[str] = []
         try:
             run, unchanged = runs.create_environment_retry_run(
                 tenant_id=actor.tenant.id,
@@ -3542,11 +3603,67 @@ def create_app(
                 body=body,
             )
             if not unchanged:
-                runs.acquire_environment_account_guards(
-                    run=run,
-                    account_refs=set(body.accountRefs),
-                    allow_cleanup_failed=False,
-                )
+                if body.takeover:
+                    if environment_plan_service is None:
+                        raise PurchaseServiceError(
+                            "environment_plan_cloud_disabled",
+                            "云端买家号解析加密能力尚未启用",
+                            503,
+                        )
+                    channel = executor_channel(session)
+                    executor = channel.require_executor(
+                        tenant_id=actor.tenant.id,
+                        user_id=actor.user.id,
+                        executor_id=body.executorId,
+                    )
+                    required = {
+                        "environment.cloud-plan.v1",
+                        "environment.cloud-inventory.v1",
+                    }
+                    if not required.issubset(set(executor.capabilities or [])):
+                        raise PurchaseServiceError(
+                            "executor_capability_missing",
+                            "接管执行器版本过旧，请先升级",
+                            409,
+                        )
+                    try:
+                        takeover_plan_record, takeover_plan_accounts = (
+                            environment_plan_service.load_for_takeover(
+                                session,
+                                tenant_id=actor.tenant.id,
+                                actor_user_id=actor.user.id,
+                                cloud_plan_id=body.cloudPlanId,
+                                site=parent.site,
+                                environment_group=parent.environment_group,
+                                account_refs=set(body.accountRefs),
+                            )
+                        )
+                    except CloudEnvironmentPlanError as exc:
+                        raise PurchaseServiceError(
+                            exc.code, str(exc), exc.status
+                        ) from exc
+                    takeover_cleanup_blocked = sorted(
+                        runs.acquire_environment_account_guards(
+                            run=run,
+                            account_refs=set(body.accountRefs),
+                            allow_cleanup_failed=True,
+                        )
+                    )
+                    (
+                        takeover_planned_names,
+                        takeover_assignments,
+                        takeover_plan_accounts,
+                    ) = runs.prepare_environment_takeover(
+                        run=run,
+                        account_refs=list(body.accountRefs),
+                        plan_accounts=takeover_plan_accounts,
+                    )
+                else:
+                    runs.acquire_environment_account_guards(
+                        run=run,
+                        account_refs=set(body.accountRefs),
+                        allow_cleanup_failed=False,
+                    )
         except PurchaseServiceError as exc:
             session.rollback()
             purchase_error(
@@ -3559,26 +3676,42 @@ def create_app(
             )
         if not unchanged:
             task_type = (
-                "environment.retry-row.v1"
+                "environment.create-bound.v1"
+                if body.takeover
+                else "environment.retry-row.v1"
                 if body.retryMode == "single"
                 else "environment.retry-failed.v1"
             )
+            task_payload = {
+                "runId": str(run.id),
+                "runKey": run.source_run_key,
+                "parentRunId": str(parent.id),
+                "retryMode": body.retryMode,
+                "accountRefs": list(body.accountRefs),
+                "totalCount": len(body.accountRefs),
+                "site": run.site,
+                "purchaseDate": run.purchase_date,
+                "environmentGroup": run.environment_group,
+            }
+            if body.takeover:
+                task_payload.update({
+                    "mode": "bound",
+                    "cloudPlanId": body.cloudPlanId,
+                    "planAccounts": takeover_plan_accounts,
+                    "verifySampleCount": 0,
+                    "assignments": takeover_assignments,
+                    "plannedEnvironmentNames": takeover_planned_names,
+                    "cleanupBlockedAccountRefs": takeover_cleanup_blocked,
+                    "inventoryCacheFresh": runs.environment_inventory_cache_status(
+                        tenant_id=actor.tenant.id
+                    )["fresh"],
+                })
             task = executor_channel(session).create_config_task(
                 tenant_id=actor.tenant.id,
                 user_id=actor.user.id,
                 executor_id=run.executor_id,
                 task_type=task_type,
-                payload={
-                    "runId": str(run.id),
-                    "runKey": run.source_run_key,
-                    "parentRunId": str(parent.id),
-                    "retryMode": body.retryMode,
-                    "accountRefs": list(body.accountRefs),
-                    "totalCount": len(body.accountRefs),
-                    "site": run.site,
-                    "purchaseDate": run.purchase_date,
-                    "environmentGroup": run.environment_group,
-                },
+                payload=task_payload,
                 idempotency_key=f"operation:{body.idempotencyKey}",
                 commit=False,
             )
@@ -3586,6 +3719,8 @@ def create_app(
             run.status = "queued"
             run.phase = "queued"
             run.updated_at = utcnow()
+            if takeover_plan_record is not None:
+                environment_plan_service.mark_submitted(takeover_plan_record)
         result = runs.environment_snapshot(run, unchanged=unchanged)
         _add_audit(
             session,
@@ -3598,10 +3733,18 @@ def create_app(
             business_object_id=str(run.id),
             change_summary={
                 "retryMode": body.retryMode,
+                "takeover": bool(body.takeover),
                 "totalCount": len(body.accountRefs),
                 "unchanged": unchanged,
             },
-            details={"parentRunId": str(parent.id)},
+            details={
+                "parentRunId": str(parent.id),
+                "takeover": bool(body.takeover),
+                "sourceExecutorId": (
+                    str(parent.executor_id) if parent.executor_id else None
+                ),
+                "targetExecutorId": str(run.executor_id),
+            },
             **_request_log_context(request),
         )
         session.commit()

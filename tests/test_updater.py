@@ -4,6 +4,8 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import patch
 import zipfile
@@ -339,6 +341,68 @@ class UpdaterTests(unittest.TestCase):
         self.assertTrue(client.launched)
         self.assertEqual(exit_codes, [42])
         self.assertEqual(status['state'], 'restarting')
+
+    def test_two_standard_clients_can_download_updates_concurrently(self):
+        allow_downloads = threading.Event()
+        downloads_started = [threading.Event(), threading.Event()]
+
+        class BlockingClient(FakeClient):
+            def __init__(self, index):
+                super(BlockingClient, self).__init__()
+                self.index = index
+
+            def prepare_update(
+                    self, _release, output=print, progress=None, stage=None):
+                self.prepared = True
+                downloads_started[self.index].set()
+                if not allow_downloads.wait(2):
+                    raise UpdateError('并发下载测试等待超时')
+                if progress:
+                    progress(10, 10)
+                if stage:
+                    stage('verifying', '下载完成，正在校验 SHA-256…')
+                return object()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            managers = []
+            exit_codes = [[], []]
+            for index in range(2):
+                manager = UpdateCoordinator(
+                    Path(tmp) / str(index),
+                    '0.5.0',
+                    client=BlockingClient(index),
+                    output=lambda _line: None,
+                    exit_fn=exit_codes[index].append,
+                    environ={'XYNIGO_INSTALL_MODE': 'standard'},
+                    skip_marker_path=Path(tmp) / ('no-marker-%d' % index),
+                    standard_install_delay=0,
+                )
+                manager.check_now()
+                managers.append(manager)
+
+            started_at = time.monotonic()
+            self.assertTrue(managers[0].prompt_async())
+            self.assertTrue(managers[1].prompt_async())
+            self.assertLess(time.monotonic() - started_at, 0.25)
+            self.assertTrue(downloads_started[0].wait(1))
+            self.assertTrue(downloads_started[1].wait(1))
+            self.assertEqual(
+                [manager.snapshot()['state'] for manager in managers],
+                ['downloading', 'downloading'],
+            )
+
+            allow_downloads.set()
+            deadline = time.monotonic() + 2
+            while (time.monotonic() < deadline
+                   and any(manager.snapshot()['state'] != 'restarting'
+                           for manager in managers)):
+                time.sleep(0.01)
+
+        self.assertEqual(
+            [manager.snapshot()['state'] for manager in managers],
+            ['restarting', 'restarting'],
+        )
+        self.assertEqual(exit_codes, [[42], [42]])
 
     def test_standard_client_downloads_authenticated_installer_and_checks_hash(self):
         data = b'x' * 1_100_000

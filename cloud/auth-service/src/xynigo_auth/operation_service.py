@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import and_, delete, func, or_, select
@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
 from .buyer_account_sync import enqueue_buyer_account_mirror
+from .environment_plan_redaction import mask_email
 from .models import (
     BuyerAccount,
     EnvironmentAccountRunGuard,
@@ -22,6 +23,8 @@ from .models import (
     EnvironmentNameSequence,
     ExecutorTask,
     HubEnvironmentInventory,
+    HubEnvironmentInventorySync,
+    HubEnvironmentObservation,
     LogisticsQueryResult,
     LogisticsQueryRun,
     LocalExecutor,
@@ -83,6 +86,8 @@ def _iso(value: datetime | None) -> str | None:
 
 class OperationRunService:
     """Cloud-owned lifecycle and read model for local business operations."""
+
+    ENVIRONMENT_CACHE_MAX_AGE = timedelta(hours=6)
 
     TERMINAL_STATUSES = frozenset(
         {"completed", "partial_failure", "failed", "cancelled", "uncertain"}
@@ -270,9 +275,17 @@ class OperationRunService:
                     409,
                 )
             return existing, True
-        if parent.executor_id is None:
+        if parent.executor_id is None and not body.takeover:
             raise PurchaseServiceError(
                 "operation_run_executor_missing", "原环境任务没有可用执行器", 409
+            )
+        if body.takeover and parent.run_mode not in {
+            "bound", "retry_row", "retry_failed"
+        }:
+            raise PurchaseServiceError(
+                "environment_takeover_mode_invalid",
+                "备用或测试环境任务不支持跨设备接管",
+                409,
             )
         failed_refs = self._effective_environment_failed_refs(
             tenant_id=tenant_id, run=parent
@@ -291,7 +304,7 @@ class OperationRunService:
             actor_user_id=actor_user_id,
             source_run_key=body.idempotencyKey,
             payload_hash=digest,
-            executor_id=parent.executor_id,
+            executor_id=body.executorId if body.takeover else parent.executor_id,
             parent_run_id=parent.id,
             run_mode=(
                 "retry_row" if body.retryMode == "single" else "retry_failed"
@@ -311,6 +324,12 @@ class OperationRunService:
             request_summary={
                 "retryMode": body.retryMode,
                 "accountRefs": list(body.accountRefs),
+                "takeover": bool(body.takeover),
+                "sourceExecutorId": (
+                    str(parent.executor_id)
+                    if body.takeover and parent.executor_id
+                    else None
+                ),
             },
             source="cloud_web",
             created_at=now,
@@ -319,6 +338,116 @@ class OperationRunService:
         self.session.add(run)
         self.session.flush()
         return run, False
+
+    def prepare_environment_takeover(
+        self,
+        *,
+        run: EnvironmentCreationRun,
+        account_refs: list[str],
+        plan_accounts: list[dict[str, Any]],
+    ) -> tuple[
+        list[dict[str, str]],
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+    ]:
+        """Transfer failed cloud inventory reservations to a child Run."""
+        ordered_refs = [str(value or "").strip() for value in account_refs]
+        inventories = list(
+            self.session.scalars(
+                select(HubEnvironmentInventory)
+                .where(
+                    HubEnvironmentInventory.tenant_id == run.tenant_id,
+                    HubEnvironmentInventory.account_ref.in_(ordered_refs),
+                )
+                .with_for_update()
+            )
+        )
+        by_ref = {row.account_ref: row for row in inventories}
+        if set(by_ref) != set(ordered_refs):
+            raise PurchaseServiceError(
+                "environment_takeover_inventory_missing",
+                "云端环境库存缺少待续跑账号，请先执行库存同步",
+                409,
+            )
+        plan_by_ref: dict[str, dict[str, Any]] = {}
+        for account in plan_accounts:
+            account_ref = hashlib.sha256(
+                str(account.get("email") or "")
+                .strip()
+                .casefold()
+                .encode("utf-8")
+            ).hexdigest()
+            plan_by_ref[account_ref] = account
+        if set(plan_by_ref) != set(ordered_refs):
+            raise PurchaseServiceError(
+                "environment_takeover_plan_mismatch",
+                "接管文件与原批次失败账号不一致",
+                409,
+            )
+        planned: list[dict[str, str]] = []
+        buyer_counts: dict[str, int] = {}
+        buyer_order: list[str] = []
+        for account in plan_accounts:
+            account_ref = hashlib.sha256(
+                str(account.get("email") or "")
+                .strip()
+                .casefold()
+                .encode("utf-8")
+            ).hexdigest()
+            inventory = by_ref[account_ref]
+            if (
+                inventory.source_order_ref
+                and str(inventory.source_order_ref).casefold()
+                != self._source_order_ref(account).casefold()
+            ):
+                raise PurchaseServiceError(
+                    "environment_takeover_plan_mismatch",
+                    "接管文件中的号商单号与原批次不一致",
+                    409,
+                )
+            if not inventory.environment_name or not inventory.purchaser_label:
+                raise PurchaseServiceError(
+                    "environment_takeover_inventory_incomplete",
+                    "云端环境库存缺少原环境名或采购员",
+                    409,
+                )
+            inventory.source_run_id = run.id
+            inventory.state = "reserved"
+            inventory.updated_at = utcnow()
+            planned.append({
+                "accountRef": account_ref,
+                "environmentName": inventory.environment_name,
+            })
+            buyer = inventory.purchaser_label
+            if buyer not in buyer_counts:
+                buyer_order.append(buyer)
+                buyer_counts[buyer] = 0
+            buyer_counts[buyer] += 1
+        assignments = [
+            {"purchaserLabel": buyer, "count": buyer_counts[buyer]}
+            for buyer in buyer_order
+        ]
+        buyer_rank = {buyer: index for index, buyer in enumerate(buyer_order)}
+        ordered_plan_accounts = sorted(
+            plan_accounts,
+            key=lambda account: buyer_rank[
+                by_ref[
+                    hashlib.sha256(
+                        str(account.get("email") or "")
+                        .strip()
+                        .casefold()
+                        .encode("utf-8")
+                    ).hexdigest()
+                ].purchaser_label
+            ],
+        )
+        summary = dict(run.request_summary or {})
+        summary["plannedEnvironmentNames"] = planned
+        summary["assignments"] = assignments
+        run.request_summary = summary
+        run.updated_at = utcnow()
+        self.session.flush()
+        return planned, assignments, ordered_plan_accounts
 
     _PURCHASER_CODES = {
         "新刚": "XG",
@@ -347,6 +476,221 @@ class OperationRunService:
     def _source_order_ref(account: dict[str, Any]) -> str:
         value = str(account.get("orderNo") or "").strip().casefold()
         return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+    def environment_inventory_cache_status(
+        self, *, tenant_id: uuid.UUID, now: datetime | None = None
+    ) -> dict[str, Any]:
+        marker = self.session.get(HubEnvironmentInventorySync, tenant_id)
+        if marker is None:
+            return {"fresh": False, "capturedAt": None, "environmentCount": 0}
+        captured_at = marker.completed_at
+        if captured_at.tzinfo is None:
+            captured_at = captured_at.replace(tzinfo=timezone.utc)
+        current = now or utcnow()
+        fresh = current - captured_at <= self.ENVIRONMENT_CACHE_MAX_AGE
+        return {
+            "fresh": fresh,
+            "capturedAt": captured_at,
+            "environmentCount": marker.environment_count,
+            "snapshotRevision": marker.snapshot_revision,
+        }
+
+    def preview_environment_names_from_cache(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        site: str,
+        purchase_date: str,
+        environment_group: str,
+        plan_accounts: list[dict[str, Any]],
+        assignments: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        """Build a read-only dry run from a recent complete Hub snapshot."""
+        cache = self.environment_inventory_cache_status(tenant_id=tenant_id)
+        if not cache["fresh"]:
+            return None
+        buyers: list[str] = []
+        for assignment in assignments:
+            label = str(assignment.get("purchaserLabel") or "").strip()
+            count = int(assignment.get("count") or 0)
+            buyers.extend([label] * count)
+        if len(buyers) != len(plan_accounts):
+            raise PurchaseServiceError(
+                "environment_assignment_invalid", "采购员分配数量无效", 422
+            )
+
+        target_order_refs = {
+            self._source_order_ref(account) for account in plan_accounts
+        }
+        account_orders = {
+            self._account_ref(account): self._source_order_ref(account)
+            for account in plan_accounts
+        }
+        mmdd = purchase_date[-4:]
+        prefixes = {
+            f"{self._purchaser_code(buyer)}-{site}-{mmdd}-"
+            for buyer in buyers
+        }
+        observations = list(self.session.scalars(
+            select(HubEnvironmentObservation).where(
+                HubEnvironmentObservation.tenant_id == tenant_id,
+                or_(
+                    HubEnvironmentObservation.source_order_ref.in_(
+                        target_order_refs
+                    ),
+                    *(
+                        HubEnvironmentObservation.environment_name.like(
+                            prefix + "%"
+                        )
+                        for prefix in prefixes
+                    ),
+                ),
+            )
+        ))
+        inventories = list(self.session.scalars(
+            select(HubEnvironmentInventory).where(
+                HubEnvironmentInventory.tenant_id == tenant_id,
+                HubEnvironmentInventory.state != "deleted",
+                or_(
+                    HubEnvironmentInventory.source_order_ref.in_(
+                        target_order_refs
+                    ),
+                    HubEnvironmentInventory.account_ref.in_(
+                        account_orders.keys()
+                    ),
+                    *(
+                        HubEnvironmentInventory.environment_name.like(
+                            prefix + "%"
+                        )
+                        for prefix in prefixes
+                    ),
+                ),
+            )
+        ))
+        by_order: dict[
+            str, dict[str, tuple[str, str, str | None]]
+        ] = {}
+        if any(
+            row.account_ref in account_orders
+            and row.source_order_ref
+            and row.source_order_ref != account_orders[row.account_ref]
+            for row in inventories
+        ):
+            raise PurchaseServiceError(
+                "environment_account_already_bound",
+                "买家号已对应其他号商单号环境，请勿重复创建",
+                409,
+            )
+        if any(
+            (
+                row.source_order_ref in target_order_refs
+                or row.account_ref in account_orders
+            )
+            and row.state in {"reserved", "uncertain"}
+            for row in inventories
+        ):
+            raise PurchaseServiceError(
+                "environment_account_already_bound",
+                "买家号环境仍在创建或状态待确认，请勿重复创建",
+                409,
+            )
+        known_names = [row.environment_name for row in observations]
+        known_names.extend(row.environment_name for row in inventories)
+        for row in observations:
+            if row.source_order_ref:
+                identity = row.environment_ref or "name:" + row.environment_name
+                by_order.setdefault(row.source_order_ref, {})[identity] = (
+                    row.environment_name, row.environment_group, row.site,
+                )
+        for row in inventories:
+            inventory_order_ref = (
+                row.source_order_ref or account_orders.get(row.account_ref)
+            )
+            if inventory_order_ref and row.state == "active":
+                identity = row.environment_ref or "name:" + row.environment_name
+                by_order.setdefault(inventory_order_ref, {}).setdefault(
+                    identity, (
+                    row.environment_name, row.environment_group, row.site,
+                    )
+                )
+
+        offsets: dict[str, int] = {}
+        for buyer in buyers:
+            code = self._purchaser_code(buyer)
+            if code in offsets:
+                continue
+            prefix = f"{code}-{site}-{mmdd}-"
+            values = [
+                int(match.group(1))
+                for value in known_names
+                if (match := re.fullmatch(
+                    re.escape(prefix) + r"(\d{3,})", value
+                ))
+            ]
+            sequence = self.session.scalar(select(
+                EnvironmentNameSequence.last_value
+            ).where(
+                EnvironmentNameSequence.tenant_id == tenant_id,
+                EnvironmentNameSequence.site == site,
+                EnvironmentNameSequence.purchase_date == purchase_date,
+                EnvironmentNameSequence.purchaser_code == code,
+            ))
+            offsets[code] = max(values + [int(sequence or 0), 0])
+
+        rows = []
+        for account, buyer in zip(plan_accounts, buyers):
+            order_ref = self._source_order_ref(account)
+            candidates = by_order.get(order_ref, {})
+            if len(candidates) > 1:
+                raise PurchaseServiceError(
+                    "environment_duplicate_order_observed",
+                    "HubStudio 中同一号商单号对应多个环境，需人工处理",
+                    409,
+                )
+            recovered = False
+            if candidates:
+                env_name, group, observed_site = next(
+                    iter(candidates.values())
+                )
+                if group != environment_group:
+                    raise PurchaseServiceError(
+                        "environment_account_already_bound",
+                        "号商单号已存在于其他 HubStudio 分组，请勿重复创建",
+                        409,
+                    )
+                if observed_site and observed_site != site:
+                    raise PurchaseServiceError(
+                        "environment_account_already_bound",
+                        "号商单号已存在于其他站点环境，请勿重复创建",
+                        409,
+                    )
+                recovered = True
+            else:
+                code = self._purchaser_code(buyer)
+                offsets[code] += 1
+                if offsets[code] > 999:
+                    raise PurchaseServiceError(
+                        "environment_daily_sequence_exhausted",
+                        "该采购员当日环境序号已超过 999，请调整购买日期后重试",
+                        409,
+                    )
+                env_name = f"{code}-{site}-{mmdd}-{offsets[code]:03d}"
+            rows.append({
+                "emailMasked": mask_email(str(account.get("email") or "")),
+                "purchaserLabel": buyer,
+                "environmentName": env_name,
+                "recoveredExisting": recovered,
+            })
+        captured_at = cache["capturedAt"]
+        return {
+            "valid": True,
+            "count": len(rows),
+            "rows": rows,
+            "inventorySource": "cloud_cache",
+            "inventoryCapturedAt": (
+                captured_at.isoformat() if captured_at is not None else None
+            ),
+        }
 
     def reserve_environment_names(
         self,
@@ -419,6 +763,18 @@ class OperationRunService:
             row.account_ref: row for row in existing
             if row.account_ref in account_refs and row.state == "deleted"
         }
+        observed_orders = list(self.session.scalars(
+            select(HubEnvironmentObservation.source_order_ref).where(
+                HubEnvironmentObservation.tenant_id == run.tenant_id,
+                HubEnvironmentObservation.source_order_ref.in_(order_refs),
+            )
+        ))
+        if observed_orders:
+            raise PurchaseServiceError(
+                "environment_account_already_bound",
+                "买家号或号商单号已存在 HubStudio 环境，请勿跨设备重复创建",
+                409,
+            )
 
         now = utcnow()
         offsets: dict[str, int] = {}
@@ -445,6 +801,12 @@ class OperationRunService:
                     )
                 )
             )
+            known_names.extend(self.session.scalars(
+                select(HubEnvironmentObservation.environment_name).where(
+                    HubEnvironmentObservation.tenant_id == run.tenant_id,
+                    HubEnvironmentObservation.environment_name.like(prefix + "%"),
+                )
+            ))
             known_max = max(
                 [
                     int(match.group(1))

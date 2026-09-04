@@ -71,11 +71,13 @@ class LocalOperationExecutor(object):
             return self._execute_logistics(
                 payload, report, cancellation_event)
         if task_type == 'environment.preview-bound.v1':
-            return self._execute_environment_preview(payload)
+            return self._execute_environment_preview(
+                payload, report, cancellation_event)
         return self._execute_environment(
             task_type, payload, report, cancellation_event)
 
-    def _execute_environment_preview(self, payload):
+    def _execute_environment_preview(self, payload, report,
+                                     cancellation_event):
         site = self._site(payload)
         total = self._positive_int(payload, 'totalCount')
         group = self._required_text(payload, 'environmentGroup')
@@ -87,6 +89,13 @@ class LocalOperationExecutor(object):
                 'operation_payload_invalid', '云端预览计划账号数量无效')
         assignment = self._assignment_text(
             payload.get('assignments'), total)
+        self._safe_report(
+            report, phase='environment.preview.importing_plan',
+            current=0, total=3,
+            stable_code='environment_preview_importing_plan')
+        if cancellation_event.is_set():
+            raise OperationExecutionError(
+                'operation_cancelled', '建环境干跑预览已取消')
         imported = self._request('POST', '/api/envbatch/cloud-plan', {
             'cloudPlanId': cloud_plan_id,
             'site': site,
@@ -97,12 +106,20 @@ class LocalOperationExecutor(object):
             raise OperationExecutionError(
                 'operation_payload_invalid', '本地导入的云端预览计划不一致')
         local_plan_id = self._required_text(imported, 'planId')
+        self._safe_report(
+            report, phase='environment.preview.reading_inventory',
+            current=1, total=3,
+            stable_code='environment_preview_reading_inventory')
+        if cancellation_event.is_set():
+            raise OperationExecutionError(
+                'operation_cancelled', '建环境干跑预览已取消')
         result = self._request('POST', '/api/envbatch/preview', {
             'planId': local_plan_id,
             'assignment': assignment,
             'purchaseDate': purchase_date,
             'site': site,
             'environmentGroup': group,
+            'includeInventorySnapshot': True,
         })
         rows = result.get('rows')
         if (result.get('valid') is not True
@@ -125,9 +142,24 @@ class LocalOperationExecutor(object):
                     row.get('envName') or '')[:255],
                 'recoveredExisting': bool(row.get('recoveredExisting')),
             })
+        self._safe_report(
+            report, phase='environment.preview.completed',
+            current=3, total=3,
+            stable_code='environment_preview_completed')
+        summary = {
+            'valid': True,
+            'count': total,
+            'rows': safe_rows,
+            'inventorySource': 'hubstudio',
+        }
+        inventory_snapshot = result.get('inventorySnapshot')
+        if isinstance(inventory_snapshot, dict):
+            summary['inventorySnapshot'] = inventory_snapshot
+            summary['inventoryCapturedAt'] = inventory_snapshot.get(
+                'capturedAt')
         return (
             'succeeded', 'environment_preview_completed',
-            {'valid': True, 'count': total, 'rows': safe_rows})
+            summary)
 
     def _execute_environment(self, task_type, payload, report,
                              cancellation_event):
@@ -255,6 +287,8 @@ class LocalOperationExecutor(object):
                 'environmentGroup': group,
                 'cleanupBlockedAccountRefs': cleanup_blocked_refs,
                 'plannedEnvironmentNames': planned_names,
+                'trustCloudInventory': bool(
+                    payload.get('inventoryCacheFresh')),
                 'operationRunKey': run_key,
             }
             backup = False

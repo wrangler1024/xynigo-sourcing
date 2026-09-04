@@ -24,6 +24,7 @@ from purchase_tool.env_batch import (
     VENDOR_TEMPLATE_HEADERS,
     backup_env_names, backup_result_tsv_bytes,
     batch_fingerprint, build_batch_plan, build_env_create_body,
+    build_environment_inventory_snapshot,
     choose_resolution, envbatch_preflight, extract_vendor_order_no,
     format_remark, load_vendor_xlsx,
     mapping_workbook_bytes, normalize_buyer, normalize_env_site,
@@ -383,9 +384,44 @@ class EnvBatchTests(unittest.TestCase):
             accounts, '1:新刚',
             planned_env_names={
                 accounts[0].account_id: 'XG-MX-0819-321',
-            })
+            }, trust_cloud_inventory=True)
         self.assertEqual(rows[0].env_name, 'XG-MX-0819-321')
         self.assertEqual(hub.env_list_calls, 1)
+
+    def test_untrusted_cloud_inventory_keeps_full_global_safety_scan(self):
+        hub = FakeHub()
+        accounts = parse_vendor_workbook(
+            BytesIO(workbook_bytes(demo_rows()[:1])))
+        runner = BatchEnvOrchestrator(
+            hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY,
+            purchase_date='20260819', sleep_fn=lambda _seconds: None)
+        runner.prepare(
+            accounts, '1:新刚',
+            planned_env_names={
+                accounts[0].account_id: 'XG-MX-0819-321',
+            })
+        self.assertEqual(hub.env_list_calls, 2)
+
+    def test_environment_inventory_snapshot_never_contains_raw_remark(self):
+        snapshot = build_environment_inventory_snapshot([{
+            'containerName': 'XG-MX-0904-001',
+            'containerCode': 'container-safe-001',
+            'serialNumber': 7001,
+            'tagName': '墨西哥采购',
+            'remark': (
+                '邮箱接码:https://secret.example/key | 单号:abcdef01 '
+                '| 采购员:新刚 | 购买:20260904'
+            ),
+        }])
+        self.assertEqual(snapshot['environmentCount'], 1)
+        row = snapshot['rows'][0]
+        self.assertEqual(row['site'], 'MX')
+        self.assertEqual(row['environmentSerial'], '7001')
+        self.assertRegex(row['environmentKey'], r'^sha256:[a-f0-9]{64}$')
+        self.assertRegex(row['sourceOrderRef'], r'^sha256:[a-f0-9]{64}$')
+        serialized = json.dumps(snapshot, ensure_ascii=False)
+        self.assertNotIn('secret.example', serialized)
+        self.assertNotIn('abcdef01', serialized)
 
     def test_ip_verification_sample_honors_requested_count_and_all_mode(self):
         buyers = ['新刚', '志恒', '康德', '宇航']
@@ -846,6 +882,71 @@ class EnvBatchTests(unittest.TestCase):
             self.assertFalse(store.path.exists())
             with self.assertRaisesRegex(EnvBatchError, '没有失败行'):
                 runner.retry_failed()
+
+    def test_batch_automatically_retries_safe_transport_failure_once(self):
+        class RecoveringCookieHub(FakeHub):
+            def __init__(self):
+                super().__init__()
+                self.cookie_attempts = 0
+
+            def env_import_cookie(self, code, cookie_text):
+                self.cookie_attempts += 1
+                if self.cookie_attempts == 1:
+                    raise HubApiError(
+                        '无法连接 HubStudio Local API',
+                        'hubstudio_local_api_unreachable',
+                        operation='/env/import-cookie',
+                        transport_kind='connection_refused',
+                        outcome_uncertain=False)
+                return super().env_import_cookie(code, cookie_text)
+
+        accounts = parse_vendor_workbook(
+            BytesIO(workbook_bytes(demo_rows()[:1])))
+        hub = RecoveringCookieHub()
+        runner = BatchEnvOrchestrator(
+            hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY,
+            purchase_date='20260819', sleep_fn=lambda _seconds: None,
+            max_workers=1)
+        runner.prepare(accounts, '1:新刚')
+
+        runner.run()
+
+        self.assertEqual(runner.rows[0].state, 'done')
+        self.assertEqual(hub.cookie_attempts, 2)
+        self.assertEqual(sum(call[0] == 'create' for call in hub.calls), 1)
+
+    def test_batch_does_not_replay_ambiguous_account_binding_timeout(self):
+        class AmbiguousAccountHub(FakeHub):
+            def __init__(self):
+                super().__init__()
+                self.account_attempts = 0
+
+            def container_add_account(self, code, email, password, site):
+                del code, email, password, site
+                self.account_attempts += 1
+                raise HubApiError(
+                    'HubStudio Local API 请求超时',
+                    'hubstudio_local_api_timeout',
+                    operation='/container/add-account',
+                    transport_kind='timeout', outcome_uncertain=True)
+
+        accounts = parse_vendor_workbook(
+            BytesIO(workbook_bytes(demo_rows()[:1])))
+        hub = AmbiguousAccountHub()
+        runner = BatchEnvOrchestrator(
+            hub, purchase_tag=TEST_TAG, proxy_link=TEST_PROXY,
+            purchase_date='20260819', sleep_fn=lambda _seconds: None,
+            max_workers=1)
+        runner.prepare(accounts, '1:新刚')
+
+        runner.run()
+
+        row = runner.rows[0]
+        self.assertEqual(row.state, 'failed')
+        self.assertEqual(row.error_code, 'hubstudio_local_api_timeout')
+        self.assertTrue(row.error_outcome_uncertain)
+        self.assertFalse(row.error_retryable)
+        self.assertEqual(hub.account_attempts, 1)
 
     def test_retry_failed_honors_safe_stop_for_queued_failed_rows(self):
         class BlockingCookieHub(FakeHub):

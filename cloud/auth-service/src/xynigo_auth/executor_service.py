@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from .executor_contract import (
     ExecutorEnvironmentPreviewResult,
+    ExecutorHubEnvironmentSnapshot,
     ExecutorPairBody,
     ExecutorPollBody,
     ExecutorTaskFinishBody,
@@ -34,9 +35,13 @@ from .models import (
     ExecutorPairingCode,
     ExecutorTask,
     ExecutorTaskEvent,
+    HubEnvironmentInventory,
+    HubEnvironmentInventorySync,
+    HubEnvironmentObservation,
     LogisticsQueryResult,
     LogisticsQueryRun,
     LocalExecutor,
+    Tenant,
 )
 from .operation_contract import (
     EnvironmentPlanParseResult,
@@ -822,11 +827,17 @@ class ExecutorChannelService:
     ) -> ExecutorTask:
         task = self._device_task(executor=executor, task_id=task_id)
         self._require_lease(task, body.leaseToken, allow_expired=True)
+        preview_result = self._validate_environment_preview_result(task, body)
+        result_summary = body.resultSummary
+        if preview_result is not None:
+            result_summary = preview_result.model_dump(
+                mode="json", exclude={"inventorySnapshot"}
+            )
         if task.status in {"succeeded", "failed"}:
             if (
                 task.status == body.outcome
                 and task.result_code == body.resultCode
-                and self._result_summary(task) == body.resultSummary
+                and self._result_summary(task) == result_summary
             ):
                 return task
             raise ExecutorServiceError("executor_task_finish_conflict", status_code=409)
@@ -835,7 +846,6 @@ class ExecutorChannelService:
         self._validate_config_result(task, body)
         self._validate_business_result(task, body)
         self._validate_environment_parse_result(task, body)
-        self._validate_environment_preview_result(task, body)
         workspace_snapshot = self._validated_workspace_snapshot(task, body)
         self._sync_workspace_preferences(
             executor=executor,
@@ -843,6 +853,12 @@ class ExecutorChannelService:
             body=body,
         )
         now = utcnow()
+        if preview_result is not None and preview_result.inventorySnapshot is not None:
+            self._sync_hub_environment_snapshot(
+                executor=executor,
+                snapshot=preview_result.inventorySnapshot,
+                now=now,
+            )
         task.status = body.outcome
         task.finished_at = now
         task.result_code = body.resultCode
@@ -854,9 +870,9 @@ class ExecutorChannelService:
             try:
                 task.result_summary = {
                     "schemaVersion": 1,
-                    "resultHash": self._payload_hash(body.resultSummary),
+                    "resultHash": self._payload_hash(result_summary),
                     "encryptedResult": self.payload_cipher.encrypt(
-                        body.resultSummary,
+                        result_summary,
                         tenant_id=task.tenant_id,
                         task_id=task.id,
                         purpose="result",
@@ -865,7 +881,7 @@ class ExecutorChannelService:
             except ExecutorPayloadCipherError as exc:
                 raise ExecutorServiceError(str(exc), status_code=503) from exc
         else:
-            task.result_summary = body.resultSummary
+            task.result_summary = result_summary
         task.lease_until = None
         self._purge_sensitive_request(task, now=now)
         executor.last_seen_at = now
@@ -879,7 +895,7 @@ class ExecutorChannelService:
             executor.workspace_snapshot_revision = workspace_snapshot.snapshotRevision
             executor.workspace_snapshot_at = workspace_snapshot.capturedAt
         terminal_status = "completed" if body.outcome == "succeeded" else "failed"
-        requested_status = str(body.resultSummary.get("runStatus") or "")
+        requested_status = str(result_summary.get("runStatus") or "")
         if requested_status in {
             "completed",
             "partial_failure",
@@ -891,18 +907,18 @@ class ExecutorChannelService:
         self._sync_operation_run(
             task,
             status=terminal_status,
-            phase=str(body.resultSummary.get("phase") or terminal_status),
+            phase=str(result_summary.get("phase") or terminal_status),
             attempt=task.attempt,
             progress_current=_safe_nonnegative_int(
-                body.resultSummary.get("progressCompleted")
+                result_summary.get("progressCompleted")
             ),
-            progress_total=_safe_nonnegative_int(body.resultSummary.get("progressTotal")),
+            progress_total=_safe_nonnegative_int(result_summary.get("progressTotal")),
             heartbeat_at=now,
             completed_at=now,
-            result_summary=body.resultSummary,
+            result_summary=result_summary,
         )
         if body.outcome == "succeeded" and task.task_type.startswith("config."):
-            revision = str(body.resultSummary.get("configRevision") or "")
+            revision = str(result_summary.get("configRevision") or "")
             if len(revision) == 64 and all(char in "0123456789abcdef" for char in revision):
                 executor.config_revision = revision
         self._event(task, "finished", stable_code=body.resultCode, trace_id=trace_id)
@@ -941,6 +957,18 @@ class ExecutorChannelService:
         }
 
     def task_payload(self, task: ExecutorTask) -> dict[str, Any]:
+        latest_event = self.session.scalar(
+            select(ExecutorTaskEvent)
+            .where(
+                ExecutorTaskEvent.task_id == task.id,
+                ExecutorTaskEvent.phase.is_not(None),
+            )
+            .order_by(
+                ExecutorTaskEvent.created_at.desc(),
+                ExecutorTaskEvent.id.desc(),
+            )
+            .limit(1)
+        )
         return {
             "id": str(task.id),
             "executorId": str(task.executor_id),
@@ -951,6 +979,21 @@ class ExecutorChannelService:
             "leaseUntil": task.lease_until.isoformat() if task.lease_until else None,
             "resultCode": task.result_code,
             "resultSummary": self._result_summary(task),
+            "phase": latest_event.phase if latest_event is not None else None,
+            "progressCurrent": (
+                latest_event.progress_current if latest_event is not None else None
+            ),
+            "progressTotal": (
+                latest_event.progress_total if latest_event is not None else None
+            ),
+            "stableCode": (
+                latest_event.stable_code if latest_event is not None else None
+            ),
+            "progressAt": (
+                latest_event.created_at.isoformat()
+                if latest_event is not None and latest_event.created_at
+                else None
+            ),
             "createdAt": task.created_at.isoformat() if task.created_at else None,
             "startedAt": task.started_at.isoformat() if task.started_at else None,
             "finishedAt": task.finished_at.isoformat() if task.finished_at else None,
@@ -1188,9 +1231,9 @@ class ExecutorChannelService:
     @staticmethod
     def _validate_environment_preview_result(
         task: ExecutorTask, body: ExecutorTaskFinishBody
-    ) -> None:
+    ) -> ExecutorEnvironmentPreviewResult | None:
         if task.task_type != "environment.preview-bound.v1":
-            return
+            return None
         if body.outcome != "succeeded":
             summary = body.resultSummary
             if set(summary) - {
@@ -1199,13 +1242,132 @@ class ExecutorChannelService:
                 raise ExecutorServiceError(
                     "executor_result_invalid", status_code=422
                 )
-            return
+            return None
         try:
-            ExecutorEnvironmentPreviewResult.model_validate(body.resultSummary)
+            return ExecutorEnvironmentPreviewResult.model_validate(
+                body.resultSummary
+            )
         except ValidationError as exc:
             raise ExecutorServiceError(
                 "executor_result_invalid", status_code=422
             ) from exc
+
+    def _sync_hub_environment_snapshot(
+        self,
+        *,
+        executor: LocalExecutor,
+        snapshot: ExecutorHubEnvironmentSnapshot,
+        now: datetime,
+    ) -> None:
+        """Replace one tenant cache from a complete, credential-free snapshot."""
+        self.session.scalar(
+            select(Tenant.id)
+            .where(Tenant.id == executor.tenant_id)
+            .with_for_update()
+        )
+        marker = self.session.get(
+            HubEnvironmentInventorySync, executor.tenant_id
+        )
+        captured_at = as_utc(snapshot.capturedAt)
+        if captured_at > now + timedelta(minutes=5):
+            raise ExecutorServiceError(
+                "executor_result_invalid", status_code=422
+            )
+        if marker is not None and as_utc(marker.completed_at) > captured_at:
+            return
+
+        existing = list(self.session.scalars(
+            select(HubEnvironmentObservation).where(
+                HubEnvironmentObservation.tenant_id == executor.tenant_id
+            )
+        ))
+        by_key = {row.environment_key: row for row in existing}
+        seen: set[str] = set()
+        for item in snapshot.rows:
+            seen.add(item.environmentKey)
+            observation = by_key.get(item.environmentKey)
+            if observation is None:
+                observation = HubEnvironmentObservation(
+                    id=uuid.uuid4(),
+                    tenant_id=executor.tenant_id,
+                    environment_key=item.environmentKey,
+                    environment_name=item.environmentName,
+                    environment_group=item.environmentGroup,
+                    snapshot_revision=snapshot.snapshotRevision,
+                    last_observed_at=captured_at,
+                    created_at=now,
+                    updated_at=now,
+                )
+                self.session.add(observation)
+            observation.environment_name = item.environmentName
+            observation.environment_ref = item.environmentRef
+            observation.environment_serial = item.environmentSerial
+            observation.environment_group = item.environmentGroup
+            observation.site = item.site
+            observation.source_order_ref = item.sourceOrderRef
+            observation.snapshot_revision = snapshot.snapshotRevision
+            observation.last_observed_at = captured_at
+            observation.updated_at = now
+        for observation in existing:
+            if observation.environment_key not in seen:
+                self.session.delete(observation)
+
+        inventories = list(self.session.scalars(
+            select(HubEnvironmentInventory).where(
+                HubEnvironmentInventory.tenant_id == executor.tenant_id
+            )
+        ))
+        by_order: dict[str, list[HubEnvironmentInventory]] = {}
+        by_name: dict[str, list[HubEnvironmentInventory]] = {}
+        by_ref: dict[str, list[HubEnvironmentInventory]] = {}
+        for inventory in inventories:
+            if inventory.source_order_ref:
+                by_order.setdefault(inventory.source_order_ref, []).append(inventory)
+            if inventory.environment_name:
+                by_name.setdefault(inventory.environment_name, []).append(inventory)
+            if inventory.environment_ref:
+                by_ref.setdefault(inventory.environment_ref, []).append(inventory)
+        touched: set[uuid.UUID] = set()
+        for item in snapshot.rows:
+            matches = []
+            if item.sourceOrderRef:
+                matches.extend(by_order.get(item.sourceOrderRef, ()))
+            matches.extend(by_name.get(item.environmentName, ()))
+            if item.environmentRef:
+                matches.extend(by_ref.get(item.environmentRef, ()))
+            for inventory in matches:
+                if inventory.id in touched:
+                    continue
+                touched.add(inventory.id)
+                inventory.environment_name = item.environmentName
+                inventory.environment_ref = item.environmentRef
+                inventory.environment_serial = item.environmentSerial
+                if item.environmentGroup:
+                    inventory.environment_group = item.environmentGroup
+                if item.site:
+                    inventory.site = item.site
+                inventory.state = "active"
+                inventory.last_observed_at = captured_at
+                inventory.updated_at = now
+
+        if marker is None:
+            marker = HubEnvironmentInventorySync(
+                tenant_id=executor.tenant_id,
+                executor_id=executor.id,
+                snapshot_revision=snapshot.snapshotRevision,
+                environment_count=snapshot.environmentCount,
+                completed_at=captured_at,
+                created_at=now,
+                updated_at=now,
+            )
+            self.session.add(marker)
+        else:
+            marker.executor_id = executor.id
+            marker.snapshot_revision = snapshot.snapshotRevision
+            marker.environment_count = snapshot.environmentCount
+            marker.completed_at = captured_at
+            marker.updated_at = now
+        self.session.flush()
 
     @staticmethod
     def _validated_workspace_snapshot(
@@ -1721,5 +1883,6 @@ class ExecutorChannelService:
                 progress_total=total,
                 stable_code=stable_code,
                 trace_id=trace_id,
+                created_at=utcnow(),
             )
         )

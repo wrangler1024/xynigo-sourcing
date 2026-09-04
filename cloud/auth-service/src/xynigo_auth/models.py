@@ -1158,6 +1158,89 @@ class HubEnvironmentInventory(Base):
     )
 
 
+class HubEnvironmentObservation(Base):
+    """Credential-free row from a complete HubStudio environment snapshot."""
+
+    __tablename__ = "hub_environment_observations"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    environment_key: Mapped[str] = mapped_column(String(71), nullable=False)
+    environment_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    environment_ref: Mapped[str | None] = mapped_column(String(128))
+    environment_serial: Mapped[str | None] = mapped_column(String(64))
+    environment_group: Mapped[str] = mapped_column(String(255), nullable=False)
+    site: Mapped[str | None] = mapped_column(String(20))
+    source_order_ref: Mapped[str | None] = mapped_column(String(71))
+    snapshot_revision: Mapped[str] = mapped_column(String(64), nullable=False)
+    last_observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "environment_key",
+            name="uq_hub_observation_tenant_key",
+        ),
+        CheckConstraint(
+            "site IS NULL OR site IN ('US', 'MX')",
+            name="ck_hub_observation_site",
+        ),
+        Index(
+            "ix_hub_observation_tenant_order",
+            "tenant_id", "source_order_ref",
+        ),
+        Index(
+            "ix_hub_observation_tenant_name",
+            "tenant_id", "environment_name",
+        ),
+        Index(
+            "ix_hub_observation_tenant_snapshot",
+            "tenant_id", "snapshot_revision",
+        ),
+    )
+
+
+class HubEnvironmentInventorySync(Base):
+    """Freshness marker for the latest complete tenant HubStudio snapshot."""
+
+    __tablename__ = "hub_environment_inventory_syncs"
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), primary_key=True
+    )
+    executor_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("local_executors.id", ondelete="SET NULL")
+    )
+    snapshot_revision: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "environment_count >= 0",
+            name="ck_hub_inventory_sync_count",
+        ),
+        Index("ix_hub_inventory_sync_completed", "completed_at"),
+    )
+
+
 class EnvironmentNameSequence(Base):
     """Cloud-owned monotonic suffix per tenant/site/date/purchaser."""
 

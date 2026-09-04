@@ -78,6 +78,7 @@ class EnvironmentPreviewRpc(object):
 def test_bound_environment_preview_runs_on_local_hub_and_returns_safe_rows():
     rpc = EnvironmentPreviewRpc()
     executor = LocalOperationExecutor(rpc)
+    events = []
     accounts = [{
         'rowNumber': 1, 'email': 'buyer1@example.test',
         'password': 'secret-one', 'keyUrl': 'https://vendor.test/1',
@@ -100,13 +101,20 @@ def test_bound_environment_preview_runs_on_local_hub_and_returns_safe_rows():
                 {'purchaserLabel': '新刚', 'count': 1},
                 {'purchaserLabel': '志恒', 'count': 1},
             ],
-        }, lambda **_event: None)
+        }, lambda **event: events.append(event))
 
     assert outcome == 'succeeded'
     assert code == 'environment_preview_completed'
     assert summary['rows'][1]['recoveredExisting'] is True
     assert rpc.calls[1]['path'] == '/api/envbatch/preview'
     assert rpc.calls[1]['body']['assignment'] == '1:新刚,1:志恒'
+    assert rpc.calls[1]['body']['includeInventorySnapshot'] is True
+    assert summary['inventorySource'] == 'hubstudio'
+    assert [event['phase'] for event in events] == [
+        'environment.preview.importing_plan',
+        'environment.preview.reading_inventory',
+        'environment.preview.completed',
+    ]
     rendered = str(summary)
     for secret in ('buyer1@example.test', 'secret-one', 'secret-cookie-one'):
         assert secret not in rendered
@@ -233,6 +241,7 @@ def test_bound_environment_task_hydrates_encrypted_cloud_plan_before_start():
                 'accountRef': account_ref,
                 'environmentName': 'XG-MX-0901-101',
             }],
+            'inventoryCacheFresh': True,
         }, lambda **_event: None)
 
     assert outcome == 'succeeded'
@@ -246,6 +255,7 @@ def test_bound_environment_task_hydrates_encrypted_cloud_plan_before_start():
         'accountRef': account_ref,
         'environmentName': 'XG-MX-0901-101',
     }]
+    assert rpc.calls[1]['body']['trustCloudInventory'] is True
 
 
 def test_backup_environment_task_honors_cooperative_cancellation():

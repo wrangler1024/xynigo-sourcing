@@ -17,11 +17,14 @@ from test_auth_flow import build_test_app, start_login
 from xynigo_auth.models import (
     EnvironmentAccountPlan,
     EnvironmentAccountRunGuard,
+    EnvironmentCreationResult,
     EnvironmentCreationRun,
     EnvironmentNameSequence,
     ExecutorPairingCode,
     ExecutorTask,
     HubEnvironmentInventory,
+    HubEnvironmentInventorySync,
+    HubEnvironmentObservation,
     LogisticsQueryRun,
     LocalExecutor,
     Tenant,
@@ -764,6 +767,25 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
             json={"leaseToken": preview_lease_token},
             headers=device_headers(credential),
         ).status_code == 200
+        preview_progress = device_client.post(
+            f"/v1/executor-channel/tasks/{preview_task_id}/progress",
+            json={
+                "leaseToken": preview_lease_token,
+                "phase": "environment.preview.reading_inventory",
+                "current": 1,
+                "total": 3,
+                "stableCode": "environment_preview_reading_inventory",
+            },
+            headers=device_headers(credential),
+        )
+        assert preview_progress.status_code == 200, preview_progress.text
+        visible_progress = web_client.get(
+            f"/v1/executor-tasks/{preview_task_id}"
+        ).json()["task"]
+        assert visible_progress["phase"] == "environment.preview.reading_inventory"
+        assert visible_progress["progressCurrent"] == 1
+        assert visible_progress["progressTotal"] == 3
+        assert visible_progress["stableCode"] == "environment_preview_reading_inventory"
         preview_unsafe = device_client.post(
             f"/v1/executor-channel/tasks/{preview_task_id}/finish",
             json={
@@ -791,6 +813,22 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
                 "resultSummary": {
                     "valid": True,
                     "count": 2,
+                    "inventorySource": "hubstudio",
+                    "inventoryCapturedAt": datetime.now(UTC).isoformat(),
+                    "inventorySnapshot": {
+                        "snapshotRevision": "e" * 64,
+                        "capturedAt": datetime.now(UTC).isoformat(),
+                        "environmentCount": 1,
+                        "rows": [{
+                            "environmentKey": "sha256:" + "f" * 64,
+                            "environmentName": "LEGACY-MX-0831-001",
+                            "environmentRef": "legacy-container-001",
+                            "environmentSerial": "8001",
+                            "environmentGroup": "历史采购",
+                            "site": "MX",
+                            "sourceOrderRef": "sha256:" + "0" * 64,
+                        }],
+                    },
                     "rows": [{
                         "emailMasked": "bu***01@example.test",
                         "purchaserLabel": "合成采购员",
@@ -811,12 +849,38 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
             f"/v1/executor-tasks/{preview_task_id}"
         ).json()["task"]
         assert visible_preview["resultSummary"]["count"] == 2
+        assert "inventorySnapshot" not in visible_preview["resultSummary"]
         with database.session_factory() as session:
             preview_task = session.get(
                 ExecutorTask, uuid.UUID(preview_task_id)
             )
             assert preview_task is not None
             assert "encryptedPayload" not in preview_task.payload_envelope
+            assert session.scalar(
+                select(func.count()).select_from(HubEnvironmentObservation)
+            ) == 1
+            cache_marker = session.scalar(select(HubEnvironmentInventorySync))
+            assert cache_marker is not None
+            assert cache_marker.environment_count == 1
+        cached_preview = web_client.post(
+            f"/v1/environment-plans/{cloud_plan_id}/preview",
+            json={
+                "idempotencyKey": "environment-preview-cached-0002",
+                "executorId": executor_id,
+                "site": "MX",
+                "purchaseDate": "20260901",
+                "environmentGroup": "MX采购测试",
+                "totalCount": 2,
+                "assignments": [
+                    {"purchaserLabel": "合成采购员", "count": 2}
+                ],
+            },
+            headers=CSRF,
+        )
+        assert cached_preview.status_code == 202, cached_preview.text
+        assert cached_preview.json()["task"] is None
+        assert cached_preview.json()["result"]["inventorySource"] == "cloud_cache"
+        assert len(cached_preview.json()["result"]["rows"]) == 2
         create_body = {
             "idempotencyKey": "environment-run-create-0001",
             "executorId": executor_id,
@@ -921,6 +985,7 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
         assert len(leased["payload"]["planAccounts"]) == 2
         assert leased["payload"]["cleanupBlockedAccountRefs"] == []
         assert len(leased["payload"]["plannedEnvironmentNames"]) == 2
+        assert leased["payload"]["inventoryCacheFresh"] is True
         lease_token = leased["leaseToken"]
         leased_snapshot = web_client.get(
             f"/v1/operation-runs/environment-creation/{snapshot['runId']}"
@@ -1251,6 +1316,177 @@ def test_cloud_operation_runs_dispatch_formal_tasks_and_restore_progress(tmp_pat
             assert logistics_run is not None
             assert logistics_run.executor_task_id is not None
             assert logistics_run.request_summary["allowOpenEnvironment"] is True
+
+
+def test_admin_can_take_over_failed_environment_rows_on_another_executor(
+    tmp_path,
+) -> None:
+    app, database, _oauth = build_test_app(tmp_path)
+    capabilities = [
+        "config.read.v1",
+        "config.write.v1",
+        "environment.cloud-plan.v1",
+        "environment.cloud-inventory.v1",
+        "environment.create-bound.v1",
+    ]
+    account_ref = hashlib.sha256(
+        b"buyer1@example.test"
+    ).hexdigest()
+    order_ref = "sha256:" + hashlib.sha256(b"00000001").hexdigest()
+
+    with TestClient(app) as web_client, TestClient(app) as device_client:
+        login(web_client)
+        source_pair = pair(
+            device_client,
+            create_pairing_code(web_client),
+            capabilities=capabilities,
+        )
+        target_pair = pair(
+            device_client,
+            create_pairing_code(web_client),
+            capabilities=capabilities,
+        )
+        source_executor_id = uuid.UUID(str(source_pair["executorId"]))
+        target_executor_id = str(target_pair["executorId"])
+        target_credential = str(target_pair["deviceCredential"])
+        assert heartbeat(
+            device_client, target_credential, capabilities=capabilities
+        )["task"] is None
+
+        now = datetime.now(UTC)
+        with database.session_factory() as session:
+            tenant = session.scalar(select(Tenant))
+            actor = session.scalar(select(User))
+            assert tenant is not None and actor is not None
+            parent = EnvironmentCreationRun(
+                id=uuid.uuid4(),
+                tenant_id=tenant.id,
+                actor_user_id=actor.id,
+                source_run_key="environment-source-failed-0001",
+                payload_hash="d" * 64,
+                executor_id=source_executor_id,
+                run_mode="bound",
+                site="MX",
+                purchase_date="20260904",
+                environment_group="MX采购",
+                status="partial_failure",
+                phase="environment.completed",
+                progress_completed=1,
+                progress_total=1,
+                total_count=1,
+                success_count=0,
+                failed_count=1,
+                ip_ok_count=0,
+                ip_total_count=0,
+                request_summary={"accountRefs": [account_ref]},
+                source="cloud_web",
+                started_at=now - timedelta(minutes=2),
+                completed_at=now,
+                created_at=now - timedelta(minutes=2),
+                updated_at=now,
+            )
+            session.add(parent)
+            session.flush()
+            session.add(EnvironmentCreationResult(
+                id=uuid.uuid4(),
+                run_id=parent.id,
+                tenant_id=tenant.id,
+                account_ref=account_ref,
+                account_label="bu***01@example.test",
+                purchaser_label="新刚",
+                environment_name="XG-MX-0904-001",
+                status="failed",
+                current_step="env_created",
+                completed_steps=["env_created"],
+                error_step="account_bound",
+                error_summary="合成绑定失败",
+                created_in_run=True,
+                cleanup_status="deleted",
+                created_at=now,
+                updated_at=now,
+            ))
+            session.add(HubEnvironmentInventory(
+                id=uuid.uuid4(),
+                tenant_id=tenant.id,
+                account_ref=account_ref,
+                source_order_ref=order_ref,
+                environment_name="XG-MX-0904-001",
+                site="MX",
+                environment_group="MX采购",
+                purchaser_label="新刚",
+                state="deleted",
+                source_run_id=parent.id,
+                created_at=now,
+                updated_at=now,
+            ))
+            parent_id = str(parent.id)
+            session.commit()
+
+        parsed = web_client.post(
+            "/v1/environment-plans/parse",
+            json={
+                "idempotencyKey": "environment-takeover-plan-0001",
+                "filename": "failed-buyers.xlsx",
+                "contentBase64": environment_workbook(2),
+                "site": "MX",
+                "environmentGroup": "MX采购",
+            },
+            headers=CSRF,
+        )
+        assert parsed.status_code == 201, parsed.text
+        cloud_plan_id = parsed.json()["cloudPlanId"]
+        takeover = web_client.post(
+            f"/v1/operation-runs/environment-creation/{parent_id}/retry",
+            json={
+                "idempotencyKey": "environment-takeover-retry-0001",
+                "retryMode": "single",
+                "accountRefs": [account_ref],
+                "takeover": True,
+                "executorId": target_executor_id,
+                "cloudPlanId": cloud_plan_id,
+            },
+            headers=CSRF,
+        )
+        assert takeover.status_code == 202, takeover.text
+        child = takeover.json()["data"]
+        assert child["parentRunId"] == parent_id
+        assert child["executorId"] == target_executor_id
+
+        leased = heartbeat(
+            device_client, target_credential, capabilities=capabilities
+        )["task"]
+        assert leased["type"] == "environment.create-bound.v1"
+        assert leased["payload"]["cloudPlanId"] == cloud_plan_id
+        assert len(leased["payload"]["planAccounts"]) == 1
+        assert leased["payload"]["planAccounts"][0]["email"] == (
+            "buyer1@example.test"
+        )
+        assert leased["payload"]["plannedEnvironmentNames"] == [{
+            "accountRef": account_ref,
+            "environmentName": "XG-MX-0904-001",
+        }]
+        assert leased["payload"]["assignments"] == [{
+            "purchaserLabel": "新刚", "count": 1,
+        }]
+
+        with database.session_factory() as session:
+            inventory = session.scalar(select(HubEnvironmentInventory))
+            plan = session.get(
+                EnvironmentAccountPlan, uuid.UUID(str(cloud_plan_id))
+            )
+            child_run = session.get(
+                EnvironmentCreationRun, uuid.UUID(child["runId"])
+            )
+            assert inventory is not None and child_run is not None
+            assert inventory.source_run_id == child_run.id
+            assert inventory.state == "reserved"
+            assert plan is not None and plan.status == "submitted"
+            assert plan.encrypted_payload is None
+            task = session.get(ExecutorTask, child_run.executor_task_id)
+            assert task is not None
+            serialized = json.dumps(task.payload_envelope)
+            assert "synthetic-password" not in serialized
+            assert cloud_plan_id not in serialized
 
 
 def test_offline_revision_conflict_revoke_and_sensitive_config_are_blocked(tmp_path) -> None:

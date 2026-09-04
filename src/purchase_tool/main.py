@@ -67,6 +67,7 @@ from .env_batch import (BACKUP_MAX_COUNT, BACKUP_REMARK, BUYER_CODES,
                         ResumeStateStore, backup_env_names,
                         backup_result_tsv_bytes,
                         batch_fingerprint, build_batch_plan,
+                        build_environment_inventory_snapshot,
                         count_mixed_site_accounts,
                         deserialize_buyer_accounts,
                         envbatch_preflight,
@@ -1074,10 +1075,11 @@ class AppState(object):
                 legacy_clearer=self.lark_credentials.clear,
             ))
         # 团队 Local API 配额已于 2026-09-04 提升到 300 次/分钟。
-        # 仍保留 0.3 秒全局错峰（理论上限约 200 次/分钟），给桌面状态探测
-        # 和 HubStudio 自身波动留余量；本轮瓶颈是浏览器资源而不是接口额度。
+        # 仍保留 0.3 秒全局错峰（理论上限约 200 次/分钟），并把同时在途
+        # 请求压到 3。现场故障是 HubStudio 本地进程/浏览器资源压力，而非
+        # 云端额度；用满 300 次额度反而会放大本地监听器抖动。
         self.hub_runtime_gate = HubRuntimeGate(
-            max_requests=4, min_request_interval=0.3)
+            max_requests=3, min_request_interval=0.3)
         self.tasks = LocalTaskCoordinator(
             lambda: bool(self.cfg.get('safeParallelTasks')))
         self.hub = self._build_hub_adapter()
@@ -1976,6 +1978,25 @@ def ledger_tsv_filename(site, purchase_date):
             (site, purchase_date))
 
 
+def environment_worker_policy(cfg):
+    """Return configured/effective HubStudio environment write workers.
+
+    HubStudio's account-wide request quota is not its local process capacity.
+    Environment creation performs several sequential writes per row and can
+    run next to a logistics query, so keep enough Local API capacity for
+    browser cleanup and health probes.  The configured value remains visible
+    for audit while the effective value is the reliability boundary.
+    """
+    cfg = dict(cfg or {})
+    try:
+        configured = max(
+            1, min(10, int(cfg.get('envCreateWorkers') or 5)))
+    except (TypeError, ValueError):
+        configured = 5
+    cap = 2 if bool(cfg.get('safeParallelTasks')) else 3
+    return configured, min(configured, cap)
+
+
 class EnvBatchJob(object):
     """模块三后台任务：凭证仅保存在短生命周期内存对象。"""
 
@@ -2022,10 +2043,7 @@ class EnvBatchJob(object):
     def _runtime_config(self, site='MX', environment_group=None):
         site = normalize_env_site(site)
         cfg = dict(self.config_getter() or {})
-        try:
-            workers = max(1, min(10, int(cfg.get('envCreateWorkers') or 5)))
-        except (TypeError, ValueError):
-            workers = 5
+        configured_workers, workers = environment_worker_policy(cfg)
         return {
             'site': site,
             'purchaseTag': validate_purchase_group_site(
@@ -2035,7 +2053,7 @@ class EnvBatchJob(object):
                 site),
             'proxyLink': effective_proxy_link(cfg),
             'workers': workers,
-            'configuredWorkers': workers,
+            'configuredWorkers': configured_workers,
         }
 
     def preflight(self, site='MX', environment_group=None):
@@ -2142,7 +2160,7 @@ class EnvBatchJob(object):
         }
 
     def preview(self, plan_id, assignment, purchase_date, site='MX',
-                environment_group=None):
+                environment_group=None, include_inventory_snapshot=False):
         with self.lock:
             self._clean_pending()
             pending = self.pending.get(plan_id)
@@ -2160,12 +2178,15 @@ class EnvBatchJob(object):
             pending['accounts'], assignment, existing_envs=existing,
             site=runtime['site'], purchase_date=purchase_date,
             all_existing_envs=all_existing)
-        return [{
+        rows = [{
             'emailMasked': row.account.safe_email,
             'buyer': row.account.buyer,
             'envName': row.env_name,
             'recoveredExisting': row.recovered_existing,
         } for row in plan]
+        if include_inventory_snapshot:
+            return rows, build_environment_inventory_snapshot(all_existing)
+        return rows
 
     @staticmethod
     def _safe_error(exc, accounts, extra_secrets=()):
@@ -2289,7 +2310,7 @@ class EnvBatchJob(object):
               write_lark_ledger=False, confirm_lark_write=False,
               reserve_resources=None, on_finished=None,
               cleanup_blocked_account_refs=None, defer_preflight=False,
-              planned_environment_names=None):
+              planned_environment_names=None, trust_cloud_inventory=False):
         if not confirm_write:
             raise ValueError('正式执行必须二次确认 HubStudio 写入')
         if write_lark_ledger and not confirm_lark_write:
@@ -2433,7 +2454,8 @@ class EnvBatchJob(object):
                     accounts, assignment,
                     existing_envs=selected_existing,
                     all_existing_envs=all_existing,
-                    planned_env_names=planned_name_map)
+                    planned_env_names=planned_name_map,
+                    trust_cloud_inventory=trust_cloud_inventory)
                 if reserve_resources and defer_preflight:
                     reserve_resources(environment_resources(runner.rows))
                 if write_lark_ledger and defer_preflight:
@@ -2886,10 +2908,7 @@ class BackupEnvJob(object):
     def _runtime_config(self, site='MX', environment_group=None):
         site = normalize_env_site(site)
         cfg = dict(self.config_getter() or {})
-        try:
-            workers = max(1, min(10, int(cfg.get('envCreateWorkers') or 5)))
-        except (TypeError, ValueError):
-            workers = 5
+        configured_workers, workers = environment_worker_policy(cfg)
         return {
             'site': site,
             'purchaseTag': validate_purchase_group_site(
@@ -2899,7 +2918,7 @@ class BackupEnvJob(object):
                 site),
             'proxyLink': effective_proxy_link(cfg),
             'workers': workers,
-            'configuredWorkers': workers,
+            'configuredWorkers': configured_workers,
         }
 
     @staticmethod
@@ -4439,12 +4458,21 @@ class Handler(BaseHTTPRequestHandler):
                     cloud_plan_id=body.get('cloudPlanId'))
                 self._json(result)
             elif path == '/api/envbatch/preview':
-                rows = STATE.env_job.preview(
+                preview = STATE.env_job.preview(
                     body.get('planId'), body.get('assignment'),
                     body.get('purchaseDate') or time.strftime('%Y%m%d'),
                     site=body.get('site') or 'MX',
-                    environment_group=body.get('environmentGroup'))
-                self._json({'valid': True, 'count': len(rows), 'rows': rows})
+                    environment_group=body.get('environmentGroup'),
+                    include_inventory_snapshot=bool(
+                        body.get('includeInventorySnapshot')))
+                if isinstance(preview, tuple):
+                    rows, inventory_snapshot = preview
+                else:
+                    rows, inventory_snapshot = preview, None
+                result = {'valid': True, 'count': len(rows), 'rows': rows}
+                if inventory_snapshot is not None:
+                    result['inventorySnapshot'] = inventory_snapshot
+                self._json(result)
             elif path == '/api/envbatch/start':
                 if body.get('writeLarkLedger'):
                     raise ValueError(
@@ -4482,7 +4510,9 @@ class Handler(BaseHTTPRequestHandler):
                         defer_preflight=bool(str(
                             body.get('operationRunKey') or '').strip()),
                         planned_environment_names=body.get(
-                            'plannedEnvironmentNames'))
+                            'plannedEnvironmentNames'),
+                        trust_cloud_inventory=bool(
+                            body.get('trustCloudInventory')))
                 except Exception:
                     STATE.tasks.finish(task_id)
                     raise

@@ -591,6 +591,103 @@ class CloudAuthTests(unittest.TestCase):
         self.assertEqual(client.release_catalog_tokens, [SESSION_TOKEN])
         self.assertEqual(client.release_downloads[0][1], SESSION_TOKEN)
 
+    def test_standard_update_download_does_not_block_local_auth_status(self):
+        download_started = threading.Event()
+        allow_download = threading.Event()
+
+        class BlockingDownloadClient(FakeCloudClient):
+            def download_local_executor_release(
+                    self, path, token, target, *, expected_size,
+                    expected_hash, progress=None):
+                download_started.set()
+                self.assert_download_released = allow_download.wait(2)
+                return Path(target)
+
+        client = BlockingDownloadClient()
+        service = LocalAuthService(
+            client=client,
+            store=MemoryAuthSessionStore(SESSION_TOKEN),
+        )
+        service.identity = IDENTITY
+        service.last_verified = service.clock()
+        with tempfile.TemporaryDirectory() as tmp:
+            thread = threading.Thread(
+                target=service.download_local_executor_release,
+                args=(
+                    (
+                        '/v1/local-executor/releases/'
+                        'windows-x86_64/primary/download'
+                    ),
+                    Path(tmp) / 'installer.exe',
+                ),
+                kwargs={
+                    'expected_size': 1_000_000,
+                    'expected_hash': 'a' * 64,
+                },
+            )
+            thread.start()
+            self.assertTrue(download_started.wait(1))
+
+            started_at = time.monotonic()
+            status = service.status(force=False)
+            elapsed = time.monotonic() - started_at
+
+            allow_download.set()
+            thread.join(2)
+        self.assertFalse(thread.is_alive())
+        self.assertTrue(client.assert_download_released)
+        self.assertTrue(status['authenticated'])
+        self.assertLess(elapsed, 0.25)
+
+    def test_failed_old_update_download_does_not_clear_replacement_session(self):
+        replacement_token = 'r' * 64
+        download_started = threading.Event()
+        allow_failure = threading.Event()
+
+        class FailingDownloadClient(FakeCloudClient):
+            def download_local_executor_release(self, *_args, **_kwargs):
+                download_started.set()
+                allow_failure.wait(2)
+                raise LocalAuthError('session_invalid', status=401)
+
+        client = FailingDownloadClient()
+        service = LocalAuthService(
+            client=client,
+            store=MemoryAuthSessionStore(SESSION_TOKEN),
+        )
+        service.identity = IDENTITY
+        service.last_verified = service.clock()
+        errors = []
+        with tempfile.TemporaryDirectory() as tmp:
+            thread = threading.Thread(
+                target=lambda: self._capture_error(
+                    errors,
+                    lambda: service.download_local_executor_release(
+                        '/v1/local-executor/releases/'
+                        'windows-x86_64/primary/download',
+                        Path(tmp) / 'installer.exe',
+                        expected_size=1_000_000,
+                        expected_hash='a' * 64,
+                    ),
+                ),
+            )
+            thread.start()
+            self.assertTrue(download_started.wait(1))
+            service.install_executor_session(replacement_token)
+            allow_failure.set()
+            thread.join(2)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], LocalAuthError)
+        self.assertEqual(service.session_token, replacement_token)
+
+    @staticmethod
+    def _capture_error(errors, callback):
+        try:
+            callback()
+        except LocalAuthError as exc:
+            errors.append(exc)
+
     def test_cloud_client_streams_only_allowlisted_verified_installer(self):
         data = b'z' * 1_000_000
         digest = hashlib.sha256(data).hexdigest()

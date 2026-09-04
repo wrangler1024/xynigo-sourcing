@@ -125,7 +125,11 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         ]
         self.assertIn("environment.preview-bound.v1", handler)
         self.assertIn("/v1/environment-plans/${encodeURIComponent(envCloudPlanId)}/preview", handler)
-        self.assertIn("taskId, 300000, null", handler)
+        self.assertIn("taskId, 300000, state =>", handler)
+        self.assertIn("environment.preview.reading_inventory", handler)
+        self.assertIn("progressCurrent", handler)
+        self.assertIn("created.result || null", handler)
+        self.assertIn("cloud_cache", handler)
         self.assertIn("真实干跑通过", handler)
         self.assertNotIn("未调用本地执行器", handler)
 

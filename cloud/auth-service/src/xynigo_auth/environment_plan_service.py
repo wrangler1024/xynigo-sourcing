@@ -567,6 +567,74 @@ class CloudEnvironmentPlanService:
         accounts = self._accounts(record)
         return record, serialize_buyer_accounts(accounts)
 
+    def load_for_takeover(
+        self,
+        session: Session,
+        *,
+        tenant_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        cloud_plan_id: object,
+        site: str,
+        environment_group: str,
+        account_refs: set[str],
+    ) -> tuple[EnvironmentAccountPlan, list[dict[str, Any]]]:
+        """Load only failed accounts from a fresh admin-owned plan.
+
+        Submitted plans intentionally erase their encrypted credentials, so a
+        cross-device takeover must use a newly uploaded workbook.  The new
+        plan may contain either the entire original batch or only its failed
+        rows; account hashes select the exact subset without exposing emails
+        to the operation-run layer.
+        """
+        expected = {
+            str(value or "").strip() for value in account_refs
+            if str(value or "").strip()
+        }
+        if not expected:
+            raise CloudEnvironmentPlanError(
+                "environment_takeover_accounts_missing",
+                "接管计划没有待续跑账号",
+                status=422,
+            )
+        record = self._record(
+            session,
+            tenant_id=tenant_id,
+            actor_user_id=actor_user_id,
+            cloud_plan_id=cloud_plan_id,
+            for_update=True,
+        )
+        if record.status != "parsed":
+            raise CloudEnvironmentPlanError(
+                "environment_plan_consumed", "解析计划已提交，请重新上传 xlsx", status=409
+            )
+        if (
+            record.site != normalize_env_site(site)
+            or record.environment_group != str(environment_group or "").strip()
+        ):
+            raise CloudEnvironmentPlanError(
+                "environment_plan_context_mismatch",
+                "接管文件的站点或分组与原批次不一致",
+                status=409,
+            )
+        serialized = serialize_buyer_accounts(self._accounts(record))
+        selected: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for account in serialized:
+            account_ref = hashlib.sha256(
+                str(account.get("email") or "").strip().casefold().encode("utf-8")
+            ).hexdigest()
+            if account_ref not in expected:
+                continue
+            selected.append(account)
+            seen.add(account_ref)
+        if seen != expected:
+            raise CloudEnvironmentPlanError(
+                "environment_takeover_plan_mismatch",
+                "重新上传的文件未完整包含原批次待续跑账号",
+                status=409,
+            )
+        return record, selected
+
     def latest(
         self,
         session: Session,

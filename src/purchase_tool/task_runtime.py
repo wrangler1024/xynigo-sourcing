@@ -157,7 +157,9 @@ class HubRuntimeGate(object):
     """限制 Local API 总并发/请求速率，并串行提交浏览器控制请求。"""
 
     def __init__(self, max_requests=4, min_request_interval=0.3,
-                 sleep_fn=time.sleep, monotonic_fn=time.monotonic):
+                 sleep_fn=time.sleep, monotonic_fn=time.monotonic,
+                 transport_backoff=(1.0, 2.0, 4.0, 8.0, 15.0,
+                                    30.0, 30.0)):
         self.request_slots = threading.BoundedSemaphore(
             max(1, int(max_requests)))
         self.browser_control = threading.Lock()
@@ -166,6 +168,13 @@ class HubRuntimeGate(object):
         self.monotonic = monotonic_fn
         self.request_pacing = threading.Lock()
         self.next_request_at = 0.0
+        self.transport_backoff = tuple(
+            max(0.0, float(value)) for value in transport_backoff) or (1.0,)
+        self.transport_state_lock = threading.Lock()
+        self.transport_failures = 0
+        self.transport_generation = 0
+        self.last_transport_error_at = 0.0
+        self.last_transport_recovered_at = 0.0
 
     @contextmanager
     def request(self):
@@ -190,6 +199,49 @@ class HubRuntimeGate(object):
         with self.request_pacing:
             self.next_request_at = max(
                 self.next_request_at, self.monotonic() + delay)
+
+    def record_transport_failure(self):
+        """Open a shared circuit after one loopback transport failure.
+
+        HubStudio's Local API is one process-wide dependency.  When one
+        worker loses it, letting every other worker immediately issue its own
+        request creates a retry storm and makes recovery less likely.  The
+        shared gate therefore increases one backoff sequence for the whole
+        executor and delays all subsequent Local API calls together.
+        """
+        with self.transport_state_lock:
+            self.transport_failures += 1
+            self.transport_generation += 1
+            self.last_transport_error_at = self.monotonic()
+            index = min(
+                self.transport_failures - 1,
+                len(self.transport_backoff) - 1)
+            delay = self.transport_backoff[index]
+            snapshot = {
+                'generation': self.transport_generation,
+                'consecutiveFailures': self.transport_failures,
+                'delaySeconds': delay,
+            }
+        self.defer_requests(delay)
+        return snapshot
+
+    def record_transport_success(self):
+        """Close the shared circuit after a real Local API response."""
+        with self.transport_state_lock:
+            recovered = self.transport_failures > 0
+            self.transport_failures = 0
+            if recovered:
+                self.last_transport_recovered_at = self.monotonic()
+            return recovered
+
+    def transport_snapshot(self):
+        with self.transport_state_lock:
+            return {
+                'generation': self.transport_generation,
+                'consecutiveFailures': self.transport_failures,
+                'lastErrorAt': self.last_transport_error_at,
+                'lastRecoveredAt': self.last_transport_recovered_at,
+            }
 
     def browser(self):
         return self.browser_control

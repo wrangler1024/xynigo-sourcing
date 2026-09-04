@@ -1,9 +1,14 @@
+import hashlib
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
 import xynigo_auth.local_executor_release as release_catalog
 from xynigo_auth.local_executor_release import (
+    ReleaseAssetIntegrityCache,
     resolve_local_executor_release_asset,
     validate_release_platforms,
 )
@@ -30,6 +35,86 @@ def test_active_release_catalog_keeps_platform_runtimes_synchronized() -> None:
     macos = payload["platforms"]["macos-arm64"]["runtimeId"]
     assert windows == macos
     assert windows.startswith("0.14.0-")
+
+
+def test_release_asset_integrity_cache_coalesces_concurrent_verification(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    payload = b"synthetic-concurrent-installer"
+    path = tmp_path / "installer.pkg"
+    path.write_bytes(payload)
+    expected_hash = hashlib.sha256(payload).hexdigest()
+    verifier = ReleaseAssetIntegrityCache()
+    original_sha256 = verifier._sha256
+    first_hash_started = threading.Event()
+    allow_hash_to_finish = threading.Event()
+    hash_calls = []
+
+    def slow_sha256(asset_path: Path) -> str:
+        hash_calls.append(asset_path)
+        first_hash_started.set()
+        assert allow_hash_to_finish.wait(2)
+        return original_sha256(asset_path)
+
+    monkeypatch.setattr(verifier, "_sha256", slow_sha256)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(
+            verifier.verify,
+            path,
+            expected_size=len(payload),
+            expected_hash=expected_hash,
+        )
+        assert first_hash_started.wait(1)
+        second = pool.submit(
+            verifier.verify,
+            path,
+            expected_size=len(payload),
+            expected_hash=expected_hash,
+        )
+        time.sleep(0.05)
+        assert len(hash_calls) == 1
+        allow_hash_to_finish.set()
+        first.result(timeout=2)
+        second.result(timeout=2)
+
+    verifier.verify(
+        path,
+        expected_size=len(payload),
+        expected_hash=expected_hash,
+    )
+    assert len(hash_calls) == 1
+
+
+def test_release_asset_integrity_cache_revalidates_replaced_asset(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    payload = b"first-asset"
+    replacement = b"replacement"
+    path = tmp_path / "installer.exe"
+    path.write_bytes(payload)
+    verifier = ReleaseAssetIntegrityCache()
+    original_sha256 = verifier._sha256
+    hash_calls = []
+
+    def tracked_sha256(asset_path: Path) -> str:
+        hash_calls.append(asset_path)
+        return original_sha256(asset_path)
+
+    monkeypatch.setattr(verifier, "_sha256", tracked_sha256)
+    verifier.verify(
+        path,
+        expected_size=len(payload),
+        expected_hash=hashlib.sha256(payload).hexdigest(),
+    )
+    path.write_bytes(replacement)
+    verifier.verify(
+        path,
+        expected_size=len(replacement),
+        expected_hash=hashlib.sha256(replacement).hexdigest(),
+    )
+    assert len(hash_calls) == 2
 
 
 def test_synchronized_release_rejects_platform_runtime_drift() -> None:

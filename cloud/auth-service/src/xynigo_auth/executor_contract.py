@@ -308,12 +308,66 @@ class ExecutorEnvironmentPreviewRow(StrictBody):
         return value
 
 
+class ExecutorHubEnvironmentObservation(StrictBody):
+    environmentKey: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
+    environmentName: str = Field(min_length=1, max_length=255)
+    environmentRef: str | None = Field(default=None, min_length=1, max_length=128)
+    environmentSerial: str | None = Field(default=None, min_length=1, max_length=64)
+    environmentGroup: str = Field(default="", max_length=255)
+    site: Literal["US", "MX"] | None = None
+    sourceOrderRef: str | None = Field(
+        default=None, pattern=r"^sha256:[a-f0-9]{64}$"
+    )
+
+    @field_validator("environmentName")
+    @classmethod
+    def normalize_observation_name(cls, value: str) -> str:
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("environmentName must not be blank")
+        return normalized
+
+    @field_validator("environmentRef", "environmentSerial")
+    @classmethod
+    def normalize_optional_observation_text(
+        cls, value: str | None
+    ) -> str | None:
+        normalized = " ".join(str(value or "").split())
+        return normalized or None
+
+    @field_validator("environmentGroup")
+    @classmethod
+    def normalize_observation_group(cls, value: str) -> str:
+        return " ".join(value.split())
+
+
+class ExecutorHubEnvironmentSnapshot(StrictBody):
+    snapshotRevision: str = Field(pattern=r"^[a-f0-9]{64}$")
+    capturedAt: datetime
+    environmentCount: int = Field(ge=0, le=50000)
+    rows: list[ExecutorHubEnvironmentObservation] = Field(max_length=50000)
+
+    @model_validator(mode="after")
+    def validate_snapshot(self) -> "ExecutorHubEnvironmentSnapshot":
+        if self.capturedAt.tzinfo is None or self.capturedAt.utcoffset() is None:
+            raise ValueError("capturedAt must contain a timezone")
+        if self.environmentCount != len(self.rows):
+            raise ValueError("environmentCount must match rows")
+        keys = [row.environmentKey for row in self.rows]
+        if len(keys) != len(set(keys)):
+            raise ValueError("environment snapshot keys must be unique")
+        return self
+
+
 class ExecutorEnvironmentPreviewResult(StrictBody):
     valid: Literal[True]
     count: int = Field(ge=1, le=2000)
     rows: list[ExecutorEnvironmentPreviewRow] = Field(
         min_length=1, max_length=2000
     )
+    inventorySource: Literal["hubstudio", "cloud_cache"] = "hubstudio"
+    inventoryCapturedAt: datetime | None = None
+    inventorySnapshot: ExecutorHubEnvironmentSnapshot | None = None
 
     @model_validator(mode="after")
     def validate_rows(self) -> "ExecutorEnvironmentPreviewResult":
@@ -322,6 +376,14 @@ class ExecutorEnvironmentPreviewResult(StrictBody):
         names = [row.environmentName for row in self.rows]
         if len(names) != len(set(names)):
             raise ValueError("preview environment names must be unique")
+        if (
+            self.inventoryCapturedAt is not None
+            and (
+                self.inventoryCapturedAt.tzinfo is None
+                or self.inventoryCapturedAt.utcoffset() is None
+            )
+        ):
+            raise ValueError("inventoryCapturedAt must contain a timezone")
         return self
 
 

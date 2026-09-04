@@ -11,6 +11,7 @@
 - browser/start：data 含 debuggingPort（字符串）和 ip（出口IP），支持
   isHeadless=true 的无头启动
 """
+import errno
 import json
 import os
 import re
@@ -29,6 +30,27 @@ KNOWN_FALLBACK_PORTS = (6873, 6874, 6875)
 RATE_LIMIT_CODE = 'E010205'
 INSUFFICIENT_RESOURCES_CODE = '-10008'
 RUNTIME_FAILURE_TTL_SECONDS = 120.0
+DEFAULT_TRANSPORT_ATTEMPTS = 8
+READ_ONLY_PATHS = frozenset({
+    '/group/list',
+    '/env/list',
+    '/browser/all-browser-status',
+    '/env/export-cookie',
+})
+IDEMPOTENT_MUTATION_PATHS = frozenset({
+    '/browser/stop',
+    '/env/update',
+    '/env/import-cookie',
+})
+AMBIGUOUS_MUTATION_PATHS = frozenset({
+    '/browser/start',
+    '/browser/download-core',
+    '/env/create',
+    '/env/del',
+    '/container/add-account',
+})
+KNOWN_LOCAL_API_PATHS = (
+    READ_ONLY_PATHS | IDEMPOTENT_MUTATION_PATHS | AMBIGUOUS_MUTATION_PATHS)
 CORE_VERSION_RE = re.compile(r'^[1-9][0-9]{1,2}$')
 MISSING_CORE_RE = re.compile(
     r'\b(Chrome|Firefox)\s*\[\s*([0-9]{2,3})\s*\]\s*Core\b', re.I)
@@ -40,11 +62,15 @@ OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 class HubApiError(Exception):
     def __init__(self, message, reason_code='hubstudio_local_api_error',
-                 api_code=None, browser_type='', core_version=''):
+                 api_code=None, browser_type='', core_version='',
+                 operation='', transport_kind='', outcome_uncertain=False):
         self.reason_code = str(reason_code)
         self.api_code = None if api_code is None else str(api_code)
         self.browser_type = str(browser_type or '').casefold()
         self.core_version = str(core_version or '')
+        self.operation = str(operation or '')
+        self.transport_kind = str(transport_kind or '')
+        self.outcome_uncertain = bool(outcome_uncertain)
         super().__init__(str(message))
 
 
@@ -166,7 +192,8 @@ class HubStudioAdapter(object):
 class HubStudioLocalApiAdapter(HubStudioAdapter):
     def __init__(self, port=DEFAULT_PORT, timeout=30, retries=3, api_key=None,
                  runtime_gate=None, known_ports=None, opener=None,
-                 client_running_getter=None):
+                 client_running_getter=None,
+                 transport_attempts=DEFAULT_TRANSPORT_ATTEMPTS):
         self.configured_port = int(port)
         candidates = [self.configured_port]
         for candidate in (known_ports or KNOWN_FALLBACK_PORTS):
@@ -178,12 +205,15 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
         self.base = self._base_for_port(self.port)
         self.timeout = timeout
         self.retries = retries
+        self.transport_attempts = max(1, int(transport_attempts))
         self.runtime_gate = runtime_gate or HubRuntimeGate()
         self.opener = opener
         self.client_running_getter = (
             client_running_getter or _default_client_running)
         self.headers = {'Content-Type': 'application/json'}
         self._runtime_failure_lock = threading.Lock()
+        self._endpoint_lock = threading.Lock()
+        self._transport_recovery_lock = threading.Lock()
         self._runtime_failure = None
         self._core_requirement = None
         if api_key:
@@ -253,7 +283,7 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
             'localApiEnabled': True,
             'authenticated': True,
             'apiVersion': 'v1',
-            'endpoint': self.base,
+            'endpoint': self._base_snapshot(),
             'reasonCode': failure['reasonCode'],
             'message': failure['message'],
         }
@@ -285,35 +315,156 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
         with self._runtime_failure_lock:
             self._core_requirement = None
 
-    def _post(self, path, body, retries=None, timeout=None):
-        """POST JSON；普通异常短退避，限流则触发跨线程共享冷却。"""
+    def _base_snapshot(self):
+        with self._endpoint_lock:
+            return self.base
+
+    def _activate_port(self, port):
+        with self._endpoint_lock:
+            self.port = int(port)
+            self.base = self._base_for_port(self.port)
+
+    @staticmethod
+    def _transport_error(path, exc):
+        reason = getattr(exc, 'reason', exc)
+        timed_out = isinstance(reason, (socket.timeout, TimeoutError))
+        number = getattr(reason, 'errno', None)
+        definitely_not_sent = (
+            isinstance(reason, ConnectionRefusedError)
+            or number in {
+                errno.ECONNREFUSED, errno.ENETUNREACH, errno.EHOSTUNREACH,
+            })
+        kind = (
+            'timeout' if timed_out else
+            'connection_refused' if definitely_not_sent else
+            'connection_reset' if isinstance(reason, ConnectionResetError)
+            else 'unreachable')
+        return HubApiError(
+            ('HubStudio Local API 请求超时' if timed_out else
+             '无法连接 HubStudio Local API'),
+            ('hubstudio_local_api_timeout' if timed_out else
+             'hubstudio_local_api_unreachable'),
+            operation=path, transport_kind=kind,
+            outcome_uncertain=not definitely_not_sent)
+
+    def _record_transport_failure(self):
+        reporter = getattr(self.runtime_gate, 'record_transport_failure', None)
+        if callable(reporter):
+            return reporter()
+        defer = getattr(self.runtime_gate, 'defer_requests', None)
+        if callable(defer):
+            defer(1.0)
+        return {'consecutiveFailures': 1, 'delaySeconds': 1.0}
+
+    def _record_transport_success(self):
+        reporter = getattr(self.runtime_gate, 'record_transport_success', None)
+        if callable(reporter):
+            reporter()
+
+    def _transport_is_retriable(self, path, error):
+        # Reads and state-replacement writes are safe to repeat even if the
+        # previous response was lost.  Non-idempotent writes are only repeated
+        # when TCP was definitely never established; otherwise their caller
+        # must reconcile the external state before deciding what to do.
+        return (
+            path in READ_ONLY_PATHS
+            or path in IDEMPOTENT_MUTATION_PATHS
+            or not error.outcome_uncertain)
+
+    def _client_is_running(self):
+        try:
+            return bool(self.client_running_getter())
+        except Exception:
+            # A failure in the diagnostic command is not evidence that the
+            # interactive client exited.  Preserve the recovery path.
+            return True
+
+    def _probe_ports_for_recovery(self, request_timeout):
+        current_base = self._base_snapshot()
+        current_port = int(current_base.split(':')[2].split('/')[0])
+        ports = [current_port]
+        ports.extend(port for port in self.candidate_ports if port not in ports)
+        for port in ports:
+            try:
+                self._post(
+                    '/group/list', {'current': 1, 'size': 1},
+                    retries=1, timeout=min(2.5, request_timeout),
+                    transport_retries=1, recover_transport=False,
+                    base_url=self._base_for_port(port),
+                    record_transport=False)
+            except HubApiError:
+                continue
+            self._activate_port(port)
+            self._record_transport_success()
+            return True
+        return False
+
+    def _recover_transport(self, request_timeout):
+        if not self._client_is_running():
+            raise HubApiError(
+                '未检测到 HubStudio 客户端运行',
+                'hubstudio_client_not_running')
+        with self._transport_recovery_lock:
+            snapshotter = getattr(
+                self.runtime_gate, 'transport_snapshot', None)
+            if callable(snapshotter):
+                snapshot = snapshotter()
+                if int(snapshot.get('consecutiveFailures') or 0) == 0:
+                    return True
+            return self._probe_ports_for_recovery(request_timeout)
+
+    def _post(self, path, body, retries=None, timeout=None,
+              transport_retries=None, recover_transport=True,
+              base_url=None, record_transport=True):
+        """POST JSON with one process-wide transport circuit.
+
+        Business errors retain the short retry policy.  Loopback transport
+        failures use a shared escalating cooldown so all modules stop
+        pressuring HubStudio together.  Ambiguous non-idempotent writes are
+        never blindly replayed; their domain orchestrator must reconcile the
+        external state first.
+        """
         data = json.dumps(body).encode('utf-8')
         last_err = None
-        attempts = max(1, int(self.retries if retries is None else retries))
+        api_attempts = max(
+            1, int(self.retries if retries is None else retries))
+        if transport_retries is None:
+            transport_attempts = (
+                api_attempts if retries is not None
+                else self.transport_attempts)
+        else:
+            transport_attempts = max(1, int(transport_retries))
         request_timeout = self.timeout if timeout is None else float(timeout)
-        for i in range(attempts):
+        api_index = 0
+        transport_index = 0
+        while True:
             deferred_by_gate = False
-            retry_delay = 0.4 * (i + 1)
+            retry_delay = 0.4 * (api_index + 1)
             try:
+                request_base = base_url or self._base_snapshot()
                 req = urllib.request.Request(
-                    self.base + path, data=data, headers=self.headers,
+                    request_base + path, data=data, headers=self.headers,
                     method='POST')
                 with self.runtime_gate.request():
                     with (self.opener or OPENER).open(
                             req, timeout=request_timeout) as resp:
                         raw = resp.read()
+                if record_transport:
+                    self._record_transport_success()
                 try:
                     j = json.loads(raw.decode('utf-8'))
                 except (UnicodeError, ValueError) as exc:
                     raise HubApiError(
                         'HubStudio Local API 返回格式不兼容',
-                        'hubstudio_local_api_incompatible') from exc
+                        'hubstudio_local_api_incompatible',
+                        operation=path) from exc
                 if not isinstance(j, dict) or 'code' not in j:
                     raise HubApiError(
                         'HubStudio Local API 返回协议不兼容',
-                        'hubstudio_local_api_incompatible')
+                        'hubstudio_local_api_incompatible', operation=path)
                 if j.get('code') == 0:
                     return j.get('data')
+                api_index += 1
                 api_code = str(j.get('code') or '')
                 safe_message = _safe_api_message(j.get('msg'))
                 browser_core_missing = api_code == '-10007'
@@ -342,58 +493,79 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
                       'hubstudio_system_resources_insufficient'
                       if api_code == INSUFFICIENT_RESOURCES_CODE else
                       'hubstudio_local_api_error')),
-                    api_code=api_code,
+                    api_code=api_code, operation=path,
                     browser_type=core_browser_type,
                     core_version=core_version)
                 if api_code == RATE_LIMIT_CODE:
-                    # HubStudio 的 E010205 是时间窗限流；原 0.4/0.8 秒
-                    # 单线程重试会被并行 worker 继续打断。把 2/4/8 秒
-                    # 冷却写入共享闸门，所有 Local API 调用一起避让。
-                    retry_delay = min(8.0, 2.0 * (2 ** i))
+                    retry_delay = min(8.0, 2.0 * (2 ** (api_index - 1)))
                     defer = getattr(self.runtime_gate,
                                     'defer_requests', None)
                     if callable(defer):
                         defer(retry_delay)
                         deferred_by_gate = True
                 elif api_code == INSUFFICIENT_RESOURCES_CODE:
-                    # 资源不足不是普通瞬时业务错误。快速重试只会继续给
-                    # HubStudio 的浏览器进程/句柄回收施压；由上层查询编排
-                    # 负责暂停启动、等待已打开环境退出并降为单环境运行。
+                    # Browser capacity requires lifecycle-aware recovery in
+                    # the caller; retrying the same start immediately makes
+                    # process/handle pressure worse.
                     break
                 elif browser_core_missing:
                     break
             except urllib.error.HTTPError as exc:
+                if record_transport:
+                    self._record_transport_success()
                 if exc.code in (401, 403):
                     last_err = HubApiError(
                         'HubStudio Local API 认证失败',
                         'hubstudio_local_api_authentication_failed',
-                        api_code=exc.code)
+                        api_code=exc.code, operation=path)
                 elif exc.code in (404, 405, 410, 426):
                     last_err = HubApiError(
                         'HubStudio Local API 版本不兼容',
                         'hubstudio_local_api_incompatible',
-                        api_code=exc.code)
+                        api_code=exc.code, operation=path)
                 else:
                     last_err = HubApiError(
                         'HubStudio Local API HTTP 错误（%s）' % exc.code,
-                        'hubstudio_local_api_http_error', api_code=exc.code)
+                        'hubstudio_local_api_http_error', api_code=exc.code,
+                        operation=path)
                 break
             except urllib.error.URLError as exc:
-                reason = getattr(exc, 'reason', None)
-                timed_out = isinstance(reason, (socket.timeout, TimeoutError))
-                last_err = HubApiError(
-                    ('HubStudio Local API 请求超时' if timed_out else
-                     '无法连接 HubStudio Local API'),
-                    ('hubstudio_local_api_timeout' if timed_out else
-                     'hubstudio_local_api_unreachable'))
-                break   # 客户端没开，重试无意义
-            except (socket.timeout, TimeoutError):
-                last_err = HubApiError(
-                    'HubStudio Local API 请求超时',
-                    'hubstudio_local_api_timeout')
-                break
+                last_err = self._transport_error(path, exc)
+                transport_index += 1
+                if record_transport:
+                    self._record_transport_failure()
+                if (not recover_transport
+                        or transport_index >= transport_attempts
+                        or not self._transport_is_retriable(path, last_err)):
+                    break
+                try:
+                    self._recover_transport(request_timeout)
+                except HubApiError as recovery_error:
+                    if recovery_error.reason_code == \
+                            'hubstudio_client_not_running':
+                        last_err = recovery_error
+                        break
+                continue
+            except (socket.timeout, TimeoutError) as exc:
+                last_err = self._transport_error(path, exc)
+                transport_index += 1
+                if record_transport:
+                    self._record_transport_failure()
+                if (not recover_transport
+                        or transport_index >= transport_attempts
+                        or not self._transport_is_retriable(path, last_err)):
+                    break
+                try:
+                    self._recover_transport(request_timeout)
+                except HubApiError as recovery_error:
+                    if recovery_error.reason_code == \
+                            'hubstudio_client_not_running':
+                        last_err = recovery_error
+                        break
+                continue
             except HubApiError as exc:
                 last_err = exc
+                api_index += 1
                 if exc.reason_code in {
                         'hubstudio_local_api_incompatible',
                         'hubstudio_local_api_authentication_failed',
@@ -402,8 +574,11 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
             except Exception:   # 不对外回显未知异常内容
                 last_err = HubApiError(
                     'HubStudio Local API 调用异常',
-                    'hubstudio_local_api_error')
-            if i + 1 < attempts and not deferred_by_gate:
+                    'hubstudio_local_api_error', operation=path)
+                api_index += 1
+            if api_index >= api_attempts:
+                break
+            if not deferred_by_gate:
                 time.sleep(retry_delay)
         raise last_err
 
@@ -421,15 +596,14 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
             client_running = False
         if not client_running:
             self.clear_runtime_failure()
-            self.port = self.configured_port
-            self.base = self._base_for_port(self.port)
+            self._activate_port(self.configured_port)
             return {
                 'available': False,
                 'clientRunning': False,
                 'localApiEnabled': False,
                 'authenticated': False,
                 'apiVersion': '',
-                'endpoint': self.base,
+                'endpoint': self._base_snapshot(),
                 'reasonCode': 'hubstudio_client_not_running',
                 'message': '未检测到 HubStudio 客户端主窗口',
             }
@@ -437,31 +611,36 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
         if runtime_failure is not None:
             return runtime_failure
         failures = []
-        probe_ports = [self.port]
+        current_base = self._base_snapshot()
+        current_port = int(current_base.split(':')[2].split('/')[0])
+        probe_ports = [current_port]
         probe_ports.extend(
             port for port in self.candidate_ports if port not in probe_ports)
         for port in probe_ports:
-            self.port = int(port)
-            self.base = self._base_for_port(self.port)
+            probe_base = self._base_for_port(port)
             try:
                 # Startup/capability checks are read-only and deliberately
                 # short. Business operations retain their configured timeout
                 # and retry policy once the endpoint has been discovered.
                 self._post(
                     '/group/list', {'current': 1, 'size': 1},
-                    retries=1, timeout=min(2.5, float(self.timeout)))
+                    retries=1, timeout=min(2.5, float(self.timeout)),
+                    transport_retries=1, recover_transport=False,
+                    base_url=probe_base, record_transport=False)
+                self._activate_port(port)
+                self._record_transport_success()
                 return {
                     'available': True,
                     'clientRunning': True,
                     'localApiEnabled': True,
                     'authenticated': True,
                     'apiVersion': 'v1',
-                    'endpoint': self.base,
+                    'endpoint': probe_base,
                     'reasonCode': 'ok',
                     'message': 'HubStudio Local API 已就绪',
                 }
             except HubApiError as exc:
-                failures.append((self.port, exc))
+                failures.append((port, exc))
                 if exc.reason_code not in {
                         'hubstudio_local_api_unreachable',
                         'hubstudio_local_api_timeout'}:
@@ -491,12 +670,11 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
                             reason.endswith('_required')
                             or 'authentication' in reason),
                         'apiVersion': 'v1',
-                        'endpoint': self.base,
+                        'endpoint': probe_base,
                         'reasonCode': reason,
                         'message': message,
                     }
-        self.port = self.configured_port
-        self.base = self._base_for_port(self.port)
+        self._activate_port(self.configured_port)
         timeout_seen = any(
             error.reason_code == 'hubstudio_local_api_timeout'
             for _port, error in failures)
@@ -515,7 +693,7 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
             'localApiEnabled': False,
             'authenticated': False,
             'apiVersion': '',
-            'endpoint': self.base,
+            'endpoint': self._base_snapshot(),
             'reasonCode': reason,
             'message': message,
         }
@@ -698,6 +876,30 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
             with self.runtime_gate.browser():
                 result = self._post('/browser/start', body) or {}
         except HubApiError as exc:
+            if exc.reason_code == 'hubstudio_local_api_timeout':
+                # A lost response does not mean HubStudio cancelled the
+                # launch.  Reconcile the exact container before any caller is
+                # allowed to submit a duplicate browser/start request.
+                try:
+                    statuses = self.browser_status(
+                        container_code, timeout=min(5.0, float(self.timeout)))
+                except HubApiError:
+                    statuses = []
+                matched = None
+                for item in statuses:
+                    if str(item.get('containerCode') or '') != \
+                            str(container_code):
+                        continue
+                    try:
+                        debugging_port = int(item.get('debuggingPort') or 0)
+                    except (TypeError, ValueError):
+                        debugging_port = 0
+                    if debugging_port > 0:
+                        matched = item
+                        break
+                if matched is not None:
+                    self.clear_runtime_failure()
+                    return matched
             self.mark_runtime_failure(
                 exc.reason_code, str(exc),
                 browser_type=exc.browser_type,
@@ -729,10 +931,22 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
             'BrowserType': browser_code,
             'Version': normalized_version,
         }]}
-        with self.runtime_gate.browser():
-            return self._post(
-                '/browser/download-core', body,
-                retries=1, timeout=max(1200.0, float(self.timeout)))
+        try:
+            with self.runtime_gate.browser():
+                return self._post(
+                    '/browser/download-core', body,
+                    retries=1, timeout=max(1200.0, float(self.timeout)))
+        except HubApiError as exc:
+            if exc.reason_code != 'hubstudio_local_api_timeout':
+                raise
+            # The download may continue inside HubStudio after its response is
+            # lost.  Returning an explicit uncertain acceptance lets the core
+            # repair coordinator verify the requested version instead of
+            # submitting a duplicate long-running download.
+            return {
+                'accepted': True,
+                'responseLost': True,
+            }
 
     def env_delete(self, container_codes):
         """Delete explicitly identified environments through the Local API.
@@ -818,7 +1032,31 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
     # ---- 注册模块写操作（上层必须显式 --apply） ----
 
     def env_create(self, body):
-        return self._post('/env/create', dict(body)) or {}
+        body = dict(body)
+        try:
+            return self._post('/env/create', body) or {}
+        except HubApiError as exc:
+            if (exc.reason_code not in {
+                    'hubstudio_local_api_timeout',
+                    'hubstudio_local_api_unreachable'}
+                    or not exc.outcome_uncertain):
+                raise
+            # env/create may commit before its HTTP response is lost.  Exact
+            # name+group lookup turns that ambiguity into an idempotent result
+            # for every caller (batch creation, registration and backup envs).
+            name = str(body.get('containerName') or '').strip()
+            tag = str(body.get('tagName') or '').strip()
+            if not name:
+                raise
+            existing = self.env_lookup(
+                container_name=name, tag_name=tag or None)
+            if existing is None:
+                raise
+            return {
+                'containerCode': str(existing.get('containerCode') or ''),
+                'serialNumber': existing.get('serialNumber'),
+                'reconciledAfterTransportFailure': True,
+            }
 
     def env_update(self, container_code, container_name, remark=None):
         body = {'containerCode': str(container_code),
