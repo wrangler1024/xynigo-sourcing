@@ -39,6 +39,13 @@ SYSTEMIC_HUB_FAILURE_CODES = {
     'hubstudio_browser_core_missing',
     'hubstudio_browser_launch_invalid',
 }
+# HubStudio 的 Local API 在连续启动/关闭大量环境时可能短暂重启监听端口。
+# 对“连接不到端口”给予约 30 秒恢复窗口；超时本身已经消耗了请求超时，
+# 因此只额外确认一次，避免真正卡死时把整批挂起数分钟。
+HUB_TRANSPORT_RECOVERY_DELAYS = {
+    'hubstudio_local_api_unreachable': (2.0, 4.0, 8.0, 8.0, 8.0),
+    'hubstudio_local_api_timeout': (2.0,),
+}
 SITE_PROFILES = {
     'MX': {
         'baseUrl': 'https://www.shein.com.mx',
@@ -782,8 +789,13 @@ class QueryOrchestrator(object):
 
         -10005 常见于并发场景或上一批次 start 尚在执行时同环境再次 start，
         正确处理是等待其执行完而非快速重试（默认 0.4s×3 次的重试对它无效）。
+
+        Local API 监听端口在大批量任务中可能瞬时断开。单次断开不能证明
+        HubStudio 已经离线；当前 start 保持串行，在有限恢复窗口内重试不会
+        引入另一个环境的并发 start。恢复窗口耗尽后仍按系统级故障终止。
         """
         deadline = time.time() + 90
+        transport_attempts = {}
         with self._start_lock:
             if self.stop_event.is_set() and self.fatal_error_code:
                 raise HubApiError(
@@ -797,6 +809,42 @@ class QueryOrchestrator(object):
                     if '-10005' in str(e) and time.time() < deadline:
                         time.sleep(5)
                         continue
+                    reason_code = str(e.reason_code or '')
+                    recovery_delays = HUB_TRANSPORT_RECOVERY_DELAYS.get(
+                        reason_code, ())
+                    client_running_getter = getattr(
+                        self.hub, 'client_running_getter', None)
+                    if recovery_delays and callable(client_running_getter):
+                        try:
+                            client_running = bool(client_running_getter())
+                        except Exception:
+                            # 进程诊断本身异常时不能把一次可恢复连接波动
+                            # 误判成用户主动关闭 HubStudio。
+                            client_running = True
+                        if not client_running:
+                            offline = HubApiError(
+                                '未检测到 HubStudio 客户端运行',
+                                'hubstudio_client_not_running')
+                            self._record_systemic_hub_failure(offline)
+                            raise offline
+                    retry_index = transport_attempts.get(reason_code, 0)
+                    if (retry_index < len(recovery_delays)
+                            and time.time() < deadline):
+                        transport_attempts[reason_code] = retry_index + 1
+                        delay = min(
+                            recovery_delays[retry_index],
+                            max(0.0, deadline - time.time()),
+                        )
+                        if delay > 0:
+                            runtime_gate = getattr(
+                                self.hub, 'runtime_gate', None)
+                            defer = getattr(
+                                runtime_gate, 'defer_requests', None)
+                            if callable(defer):
+                                defer(delay)
+                            else:
+                                time.sleep(delay)
+                            continue
                     self._record_systemic_hub_failure(e)
                     raise
 

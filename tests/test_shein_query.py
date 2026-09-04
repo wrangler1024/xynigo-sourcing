@@ -325,6 +325,107 @@ class TrackingScreenshotTests(unittest.TestCase):
             ('stop', 'container-1'),
         ])
 
+    def test_transient_local_api_disconnect_recovers_without_stopping_batch(self):
+        class RecoveringHub(object):
+            def __init__(self):
+                self.start_calls = 0
+
+            def browser_start(self, _code, headless=False):
+                self.start_calls += 1
+                if self.start_calls < 3:
+                    raise HubApiError(
+                        '无法连接 HubStudio Local API',
+                        'hubstudio_local_api_unreachable')
+                return {'debuggingPort': '9222', 'headless': headless}
+
+        hub = RecoveringHub()
+        job = QueryOrchestrator(hub, settle_seconds=0, env_interval=0)
+        with patch('purchase_tool.shein_query.time.sleep') as sleep:
+            result = job._start_browser('container-1')
+
+        self.assertEqual(result['debuggingPort'], '9222')
+        self.assertEqual(hub.start_calls, 3)
+        self.assertEqual(
+            [call.args[0] for call in sleep.call_args_list], [2.0, 4.0])
+        self.assertFalse(job.stop_event.is_set())
+        self.assertEqual(job.fatal_error_code, '')
+
+    def test_persistent_local_api_disconnect_stops_after_recovery_window(self):
+        class OfflineHub(object):
+            def __init__(self):
+                self.start_calls = 0
+
+            def browser_start(self, _code, headless=False):
+                self.start_calls += 1
+                raise HubApiError(
+                    '无法连接 HubStudio Local API',
+                    'hubstudio_local_api_unreachable')
+
+        hub = OfflineHub()
+        job = QueryOrchestrator(hub, settle_seconds=0, env_interval=0)
+        with patch('purchase_tool.shein_query.time.sleep') as sleep:
+            with self.assertRaises(HubApiError) as caught:
+                job._start_browser('container-1')
+
+        self.assertEqual(
+            caught.exception.reason_code, 'hubstudio_local_api_unreachable')
+        self.assertEqual(hub.start_calls, 6)
+        self.assertEqual(
+            [call.args[0] for call in sleep.call_args_list],
+            [2.0, 4.0, 8.0, 8.0, 8.0])
+        self.assertTrue(job.stop_event.is_set())
+        self.assertEqual(
+            job.fatal_error_code, 'hubstudio_local_api_unreachable')
+
+    def test_authentication_failure_is_not_retried_as_transport_recovery(self):
+        class AuthenticationFailureHub(object):
+            def __init__(self):
+                self.start_calls = 0
+
+            def browser_start(self, _code, headless=False):
+                self.start_calls += 1
+                raise HubApiError(
+                    'HubStudio Local API 认证失败',
+                    'hubstudio_local_api_authentication_failed')
+
+        hub = AuthenticationFailureHub()
+        job = QueryOrchestrator(hub, settle_seconds=0, env_interval=0)
+        with patch('purchase_tool.shein_query.time.sleep') as sleep:
+            with self.assertRaises(HubApiError) as caught:
+                job._start_browser('container-1')
+
+        self.assertEqual(
+            caught.exception.reason_code,
+            'hubstudio_local_api_authentication_failed')
+        self.assertEqual(hub.start_calls, 1)
+        sleep.assert_not_called()
+        self.assertTrue(job.stop_event.is_set())
+
+    def test_transport_disconnect_fails_fast_when_hubstudio_has_exited(self):
+        class StoppedHub(object):
+            def __init__(self):
+                self.start_calls = 0
+                self.client_running_getter = lambda: False
+
+            def browser_start(self, _code, headless=False):
+                self.start_calls += 1
+                raise HubApiError(
+                    '无法连接 HubStudio Local API',
+                    'hubstudio_local_api_unreachable')
+
+        hub = StoppedHub()
+        job = QueryOrchestrator(hub, settle_seconds=0, env_interval=0)
+        with patch('purchase_tool.shein_query.time.sleep') as sleep:
+            with self.assertRaises(HubApiError) as caught:
+                job._start_browser('container-1')
+
+        self.assertEqual(
+            caught.exception.reason_code, 'hubstudio_client_not_running')
+        self.assertEqual(hub.start_calls, 1)
+        sleep.assert_not_called()
+        self.assertEqual(
+            job.fatal_error_code, 'hubstudio_client_not_running')
+
     def test_systemic_browser_failure_stops_the_whole_parallel_batch(self):
         class MissingCoreHub(object):
             def __init__(self):
