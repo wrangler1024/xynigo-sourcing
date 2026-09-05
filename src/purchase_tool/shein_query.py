@@ -88,6 +88,8 @@ STATUS_ALIASES = {
     # 2026-09-04 真实 MX 页面使用了 envisarse 拼写，统一成正确展示文案。
     'esperando para envisarse': 'Esperando para enviarse',
     'esperando para enviarse': 'Esperando para enviarse',
+    # MX 还使用“等待被发货”；不能只匹配句尾 enviado（已发货）。
+    'esperando ser enviado': 'Esperando para enviarse',
 }
 
 RE_ORDER_NO_BY_SITE = {
@@ -144,7 +146,8 @@ RE_KANDAN_TEXT_BY_SITE = {
 # 大小写不敏感：页面出现过 EMPACANDO 大写形式（2026-08-18 实测 1007）
 RE_STATUS_WORDS_BY_SITE = {
     'MX': re.compile(
-        r'(Esperando para (?:enviarse|envisarse)|Procesando|Empacando'
+        r'(Esperando\s+(?:para\s+(?:enviarse|envisarse)|ser\s+enviado)'
+        r'|Procesando|Empacando'
         r'|Enviado|Reembolsando|Reembolsado|Completado|Cancelado'
         r'|Entregado|Devoluci[óo]n|No pagado|Pagado)', re.I),
     'US': re.compile(
@@ -459,7 +462,7 @@ def parse_first_tracking_event(text, order_time='', site='MX',
 
 
 def _canonical_status(word):
-    wanted = (word or '').casefold()
+    wanted = ' '.join((word or '').split()).casefold()
     if wanted in STATUS_ALIASES:
         return STATUS_ALIASES[wanted]
     for canonical in STATUS_CN:

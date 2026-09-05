@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+import json
+from pathlib import Path
 import threading
 import time
 import unittest
@@ -125,6 +127,25 @@ class SheinQueryParserTests(unittest.TestCase):
         self.assertEqual(merged['status'], 'Reembolsado')
         self.assertEqual(merged['statusCn'], '退款已处理')
         self.assertTrue(detail['kanDan'])
+
+    def test_waiting_to_be_shipped_is_not_shipped(self):
+        sample_path = (Path(__file__).resolve().parents[1] / '数据' /
+                       '脱敏样例' / '物流待发货状态误判_20260905.json')
+        sample = json.loads(sample_path.read_text(encoding='utf-8'))
+        for phrase in ('Esperando ser enviado', 'ESPERANDO SER ENVIADO',
+                       'Esperando\nser enviado', 'Esperando  ser  enviado'):
+            with self.subTest(phrase=phrase):
+                text = sample['listText'].replace(
+                    'Esperando ser enviado', phrase)
+                info = parse_list_page(text, sample['site'])
+                detail = parse_detail_page(
+                    sample['detailHtml'], sample['detailText'], sample['site'])
+                info, detail = merge_order_status_signals(
+                    info, detail, sample['site'])
+                for key in ('status', 'statusCn'):
+                    self.assertEqual(info[key], sample['expected'][key])
+                for key in ('tracks', 'pkgs'):
+                    self.assertEqual(detail[key], sample['expected'][key])
 
     def test_header_status_is_not_used_for_order(self):
         text = (

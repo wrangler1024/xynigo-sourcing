@@ -1,0 +1,13 @@
+{
+  "说明": "合成脱敏样例；复现 Esperando ser enviado 被截取为 Enviado，不含真实订单或账号信息。",
+  "site": "MX",
+  "listText": "Todos los pedidos\nProcesando\nEnviado\n01 Sep 2026 10:00:00\nNúm. de pedido GSH1TESTWAIT\nEsperando ser enviado\nAlmacén Internacional, Combinar la llegada al almacén de embalaje\nEntrega: 08-21 Sep(5-13 días hábiles.)\n$MXN100.00\nESPERANDO SER ENVIADO\nDetalles de Pedido",
+  "detailHtml": "<script>{\"orderGoodsList\":[{\"is_shipped\":0,\"shipping_no\":\"\",\"goods_pkg_rel_list\":[{\"package_no\":\"TESTPKG_A\",\"shipping_method_real\":\"\",\"shipping_no\":\"\"}]},{\"is_shipped\":0,\"shipping_no\":\"\",\"goods_pkg_rel_list\":[{\"package_no\":\"TESTPKG_B\",\"shipping_method_real\":\"\",\"shipping_no\":\"\"}]}]}</script>",
+  "detailText": "Awaiting shipping",
+  "expected": {
+    "status": "Esperando para enviarse",
+    "statusCn": "待发货",
+    "tracks": [],
+    "pkgs": ["TESTPKG_A", "TESTPKG_B"]
+  }
+}
