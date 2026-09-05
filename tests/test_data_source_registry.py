@@ -709,6 +709,89 @@ class DataSourceRegistryRouteTests(unittest.TestCase):
         self.assertEqual(removed['environmentBindings'], [])
         self.assertEqual(cleared['teamDefaultDataSourceId'], '')
 
+    def test_admin_can_switch_another_member_between_personal_and_team_default(self):
+        self.auth.roles = ['admin']
+        initial = self._request('/api/local-config/data-sources')
+        team_id = next(
+            item['id'] for item in initial['dataSources']
+            if item['scope'] == 'team')
+        team_default = self._request(
+            '/api/local-config/data-sources/team-default', {
+                'sourceId': team_id,
+                'expectedRevision': initial['registryRevision'],
+            })
+        personal = self.registry.upsert_personal(MEMBER_B, {
+            'spreadsheetToken': 'SpreadsheetMemberB123',
+            'sheetId': 'sheet_member_b',
+            'cellRange': 'A1:H',
+            'sheetName': '成员 B 速填表',
+        }, expected_revision=team_default['registryRevision'])
+        personal_id = personal['dataSourceId']
+
+        selected = self._request(
+            '/api/local-config/data-sources/buyer-default', {
+                'memberId': MEMBER_B,
+                'sourceId': personal_id,
+                'expectedRevision': personal['configRevision'],
+            })
+        switched = self._request(
+            '/api/local-config/data-sources/buyer-default/clear', {
+                'memberId': MEMBER_B,
+                'expectedRevision': selected['registryRevision'],
+            })
+
+        self.assertTrue(selected['saved'])
+        self.assertTrue(any(
+            item['memberId'] == MEMBER_B
+            and item['defaultDataSourceId'] == personal_id
+            for item in selected['buyerProfiles']))
+        self.assertFalse(any(
+            item['memberId'] == MEMBER_B
+            for item in switched['buyerProfiles']))
+        self.assertEqual(
+            self.registry.resolve(MEMBER_B, allow_team_default=True)['id'],
+            team_id)
+
+    def test_current_member_can_switch_from_personal_to_team_default(self):
+        initial = self._request('/api/local-config/data-sources')
+        team_id = next(
+            item['id'] for item in initial['dataSources']
+            if item['scope'] == 'team')
+        personal_id = next(
+            item['id'] for item in initial['dataSources']
+            if item['scope'] == 'personal')
+        claimed = self._request(
+            '/api/local-config/data-sources/claim-personal', {
+                'sourceId': personal_id,
+                'expectedRevision': initial['registryRevision'],
+            })
+        team_default = self.registry.set_team_default(
+            team_id, expected_revision=claimed['registryRevision'])
+
+        switched = self._request(
+            '/api/local-config/data-sources/buyer-default/clear', {
+                'memberId': MEMBER_A,
+                'expectedRevision': team_default['configRevision'],
+            })
+
+        self.assertEqual(switched['buyerProfiles'], [])
+        self.assertEqual(
+            self.registry.resolve(MEMBER_A, allow_team_default=True)['id'],
+            team_id)
+
+    def test_non_admin_cannot_change_another_members_default(self):
+        initial = self._request('/api/local-config/data-sources')
+        team_id = next(
+            item['id'] for item in initial['dataSources']
+            if item['scope'] == 'team')
+        with self.assertRaises(urllib.error.HTTPError) as denied:
+            self._request('/api/local-config/data-sources/buyer-default', {
+                'memberId': MEMBER_B,
+                'sourceId': team_id,
+                'expectedRevision': initial['registryRevision'],
+            })
+        self.assertEqual(denied.exception.code, 403)
+
     def test_stale_revision_does_not_consume_validated_source(self):
         initial = self._request('/api/local-config/data-sources')
         team_id = next(

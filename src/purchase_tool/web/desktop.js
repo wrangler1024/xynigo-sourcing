@@ -404,15 +404,30 @@
   }
   function buyerDefaults() {
     var ds = currentSources();
+    var role = roleInfo();
     var profiles = ds.buyerProfiles || [];
-    var members = (state.members || []).length ? state.members : profiles.map(function (profile) { return {id:profile.memberId,name:memberName(profile.memberId)}; });
+    var sources = ds.dataSources || [];
+    var members = role.admin
+      ? ((state.members || []).length ? state.members : profiles.map(function (profile) { return {id:profile.memberId,name:memberName(profile.memberId)}; }))
+      : [{id:role.id,name:role.name}];
     if (!members.length) return '<div class="card empty">当前没有采购员默认映射。</div>';
-    return '<div class="card table-card"><table class="data-table"><thead><tr><th>采购员</th><th>默认数据源</th><th>环境数</th><th>状态</th></tr></thead><tbody>' + members.map(function (member) {
+    return '<div class="card table-card buyer-default-table"><table class="data-table"><thead><tr><th>采购员</th><th>当前默认</th><th>环境数</th><th>状态</th><th>调整默认数据源</th></tr></thead><tbody>' + members.map(function (member) {
       var profile = profiles.find(function (item) { return item.memberId === member.id; });
       var sourceId = profile ? profile.defaultDataSourceId : ds.teamDefaultDataSourceId;
       var envs = (ds.environmentBindings || []).filter(function (binding) { return binding.memberId === member.id; }).length;
       var team = !profile && !!ds.teamDefaultDataSourceId;
-      return '<tr><td><b>' + esc(member.name || memberName(member.id)) + '</b><br><small>云端成员已关联</small></td><td><b>' + esc(sourceId ? sourceName(sourceId) : '尚未配置') + '</b></td><td>' + envs + '</td><td><span class="pill ' + (sourceId ? (team ? 'pill-blue' : 'pill-ok') : 'pill-warn') + '">' + (sourceId ? (team ? '团队默认' : '已就绪') : '待配置') + '</span></td></tr>';
+      var personalSources = sources.filter(function (source) {
+        return source.scope === 'personal' && source.ownerMemberId === member.id && source.enabled && source.migrationState === 'ready';
+      });
+      var options = [];
+      if (ds.teamDefaultDataSourceId) options.push('<option value="__team_default__"' + (team ? ' selected' : '') + '>团队默认 · ' + esc(sourceName(ds.teamDefaultDataSourceId)) + '</option>');
+      personalSources.forEach(function (source) {
+        options.push('<option value="' + esc(source.id) + '"' + (profile && profile.defaultDataSourceId === source.id ? ' selected' : '') + '>个人 · ' + esc(source.label) + '</option>');
+      });
+      var control = options.length
+        ? '<div class="buyer-default-control"><select class="select buyer-default-select" aria-label="调整 ' + esc(member.name || memberName(member.id)) + ' 默认数据源" data-buyer-member="' + esc(member.id) + '">' + options.join('') + '</select><button class="button small" data-action="save-buyer-default:' + esc(member.id) + '">应用</button></div>'
+        : '<small>请先配置个人表或团队默认表</small>';
+      return '<tr><td><b>' + esc(member.name || memberName(member.id)) + '</b><br><small>云端成员已关联</small></td><td><b>' + esc(sourceId ? sourceName(sourceId) : '尚未配置') + '</b></td><td>' + envs + '</td><td><span class="pill ' + (sourceId ? (team ? 'pill-blue' : 'pill-ok') : 'pill-warn') + '">' + (sourceId ? (team ? '团队默认' : '个人默认') : '待配置') + '</span></td><td>' + control + '</td></tr>';
     }).join('') + '</tbody></table></div>';
   }
   function environmentMappings() {
@@ -433,10 +448,10 @@
     var role = roleInfo();
     var counts = sourceCounts();
     var admin = role.admin;
-    if (!admin) state.sourceTab = 'registry';
+    if (!admin && state.sourceTab === 'environments') state.sourceTab = 'registry';
     var actions = '<span class="pill" style="border:1px solid #e2e8f0;background:#fff;color:#475569">' + (admin ? '管理员范围' : '仅管理本人数据源') + '</span>' + button(admin ? '添加数据源' : '配置我的个人表','add-source','plus','primary');
     var roleNotice = admin ? '' : '<section class="notice-strip" style="border-color:#dbeafe;background:#eff6ff;color:#172554">' + icon('user') + '<div><b>当前登录：' + esc(role.name) + ' · 采购员</b><p style="color:#1e40af">只显示你的个人速填表和可用的团队协作表；其他采购员与环境映射由管理员维护。</p></div></section>';
-    var tabs = '<div class="tabs"><button class="tab ' + (state.sourceTab === 'registry' ? 'active' : '') + '" data-source-tab="registry">数据源注册表<span class="count">' + ((state.sources && state.sources.dataSources || []).length || counts.personal + counts.team) + '</span></button>' + (admin ? '<button class="tab ' + (state.sourceTab === 'buyers' ? 'active' : '') + '" data-source-tab="buyers">采购员默认映射<span class="count">' + ((state.sources && state.sources.buyerProfiles || []).length || 0) + '</span></button><button class="tab ' + (state.sourceTab === 'environments' ? 'active' : '') + '" data-source-tab="environments">HubStudio 环境映射<span class="count">' + counts.mapped + '</span></button>' : '') + '</div>';
+    var tabs = '<div class="tabs"><button class="tab ' + (state.sourceTab === 'registry' ? 'active' : '') + '" data-source-tab="registry">数据源注册表<span class="count">' + ((state.sources && state.sources.dataSources || []).length || counts.personal + counts.team) + '</span></button><button class="tab ' + (state.sourceTab === 'buyers' ? 'active' : '') + '" data-source-tab="buyers">' + (admin ? '采购员默认映射' : '我的默认数据源') + '<span class="count">' + ((state.sources && state.sources.buyerProfiles || []).length || 0) + '</span></button>' + (admin ? '<button class="tab ' + (state.sourceTab === 'environments' ? 'active' : '') + '" data-source-tab="environments">HubStudio 环境映射<span class="count">' + counts.mapped + '</span></button>' : '') + '</div>';
     var panel = state.sourceTab === 'buyers' ? buyerDefaults() : (state.sourceTab === 'environments' ? environmentMappings() : sourceRegistry());
     return header('sources',actions) + '<div class="content stack">' + roleNotice + '<section class="metric-grid">' + metric('个人速填表',counts.personal,admin ? '已配置的成员个人表' : '当前账号已配置','user') + metric('团队协作表',counts.team,'可作团队默认','table') + metric('已映射环境',counts.mapped,admin ? 'containerCode 精确绑定' : '当前账号可用','route') + metric('待处理',counts.pending,counts.pending ? '新发现环境尚未映射' : '没有待处理项','alert',counts.pending > 0) + '</section>' + tabs + panel + '</div>';
   }
@@ -695,6 +710,24 @@
     }).catch(function (error) { if (error.code === 'config_revision_conflict') loadWorkspaceData(); showError(error); });
   }
 
+  function saveBuyerDefault(memberId, buttonNode) {
+    var select = Array.from(document.querySelectorAll('.buyer-default-select')).find(function (node) {
+      return node.getAttribute('data-buyer-member') === memberId;
+    });
+    if (!select || !select.value) return showError(new Error('请选择可用的数据源'));
+    var useTeamDefault = select.value === '__team_default__';
+    var path = useTeamDefault ? '/api/local-config/data-sources/buyer-default/clear' : '/api/local-config/data-sources/buyer-default';
+    var payload = {memberId:memberId,expectedRevision:state.sources.registryRevision};
+    if (!useTeamDefault) payload.sourceId = select.value;
+    buttonNode.disabled = true;
+    post(path,payload).then(function (result) {
+      state.sources=result; renderWorkspace(); showToast(useTeamDefault ? '已改用团队默认数据源' : '个人默认数据源已更新');
+    }).catch(function (error) {
+      if (error.code === 'config_revision_conflict') loadWorkspaceData();
+      showError(error);
+    }).finally(function () { buttonNode.disabled = false; });
+  }
+
   function saveSettings() {
     if (!canConfigure()) return;
     var payload = {
@@ -777,6 +810,7 @@
     else if (action.indexOf('claim-source:') === 0) claimSource(action.split(':')[1]);
     else if (action.indexOf('revalidate-source:') === 0) revalidateSource(action.split(':')[1]);
     else if (action.indexOf('toggle-team-default:') === 0) toggleTeamDefault(action.split(':')[1]);
+    else if (action.indexOf('save-buyer-default:') === 0) saveBuyerDefault(action.split(':')[1], actionNode);
     else if (action === 'modal-close') closeModal();
     else if (action === 'inspect-source') inspectSource();
     else if (action === 'validate-source-draft') validateSourceDraft();

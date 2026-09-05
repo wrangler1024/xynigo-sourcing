@@ -64,12 +64,17 @@ class DesktopUIContractTests(unittest.TestCase):
         for marker in (
                 '查看详情', '认领为我的', '重新配置',
                 '更换表格/工作表', '保存修改', '设为团队默认',
+                '调整默认数据源', 'save-buyer-default:',
+                '我的默认数据源', '已改用团队默认数据源',
                 '/api/local-config/data-sources/metadata',
                 '/api/local-config/data-sources/replace',
                 '/api/local-config/data-sources/revalidate',
-                '/api/local-config/data-sources/claim-personal'):
+                '/api/local-config/data-sources/claim-personal',
+                '/api/local-config/data-sources/buyer-default',
+                '/api/local-config/data-sources/buyer-default/clear'):
             self.assertIn(marker, self.javascript)
         self.assertNotIn('已提交只读验证', self.javascript)
+        self.assertIn('.buyer-default-control', self.css)
 
     def test_configured_secrets_render_only_masked_recognition_hints(self):
         for marker in (

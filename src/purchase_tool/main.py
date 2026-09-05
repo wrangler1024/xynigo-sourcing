@@ -160,6 +160,17 @@ def editable_data_source(identity, source_id, *, allow_unclaimed=False):
     return source
 
 
+def editable_buyer_member_id(identity, submitted_member_id=None):
+    """Allow members to edit themselves and admins to edit another member."""
+    current_member_id = str(
+        ((identity or {}).get('user') or {}).get('id') or '').strip()
+    member_id = str(submitted_member_id or current_member_id).strip()
+    roles = set((identity or {}).get('roles') or [])
+    if member_id != current_member_id and not roles & {'admin', 'super_admin'}:
+        raise LocalAuthError('permission_denied', status=403)
+    return member_id
+
+
 def public_purchase_assistant_source_context(identity, source_status,
                                              container_code=''):
     """Attach only safe desktop-management and resolution context."""
@@ -4901,7 +4912,8 @@ class Handler(BaseHTTPRequestHandler):
                         member_id, include_all=True),
                 })
             elif path == DATA_SOURCE_API_PREFIX + '/buyer-default':
-                member_id = request_identity['user']['id']
+                member_id = editable_buyer_member_id(
+                    request_identity, body.get('memberId'))
                 include_all = bool(set(request_identity.get('roles') or []) & {
                     'admin', 'super_admin'})
                 STATE.data_sources.set_buyer_default(
@@ -4914,7 +4926,8 @@ class Handler(BaseHTTPRequestHandler):
                         member_id, include_all=include_all),
                 })
             elif path == DATA_SOURCE_API_PREFIX + '/buyer-default/clear':
-                member_id = request_identity['user']['id']
+                member_id = editable_buyer_member_id(
+                    request_identity, body.get('memberId'))
                 include_all = bool(set(request_identity.get('roles') or []) & {
                     'admin', 'super_admin'})
                 STATE.data_sources.use_team_default(

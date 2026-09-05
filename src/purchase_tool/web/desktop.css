@@ -231,6 +231,11 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
 .data-table td b { color:#334155; }
 .data-table tr.warn { background:rgba(255,251,235,.65); }
 .data-table .select { height:30px; margin:0; }
+.buyer-default-table { overflow-x:auto; }
+.buyer-default-table .data-table { min-width:960px; table-layout:auto; }
+.buyer-default-control { display:flex; align-items:center; gap:8px; min-width:300px; }
+.buyer-default-control .select { min-width:220px; }
+.buyer-default-control .button { flex:0 0 auto; }
 .empty { padding:42px; color:var(--muted); font-size:12px; text-align:center; }
 
 .diagnostic-layout { display:grid; grid-template-columns:1.2fr .8fr; gap:18px; }
