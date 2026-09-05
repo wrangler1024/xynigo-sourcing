@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Release contract tests for Xynigo Sourcing v0.17.1 candidate."""
+"""Release contract tests for Xynigo Sourcing v0.17.2 candidate."""
 
 from pathlib import Path
 import hashlib
@@ -15,21 +15,21 @@ from purchase_tool import __version__
 class ReleaseV0170Tests(unittest.TestCase):
     def test_version_and_packaging_are_aligned(self):
         root = Path(__file__).resolve().parents[1]
-        self.assertEqual(__version__, '0.17.1')
+        self.assertEqual(__version__, '0.17.2')
         pyproject = (root / 'pyproject.toml').read_text(encoding='utf-8')
-        self.assertIn('version = "0.17.1"', pyproject)
+        self.assertIn('version = "0.17.2"', pyproject)
         cloud_project = (root / 'cloud' / 'auth-service' /
                          'pyproject.toml').read_text(encoding='utf-8')
-        self.assertIn('version = "0.17.1"', cloud_project)
+        self.assertIn('version = "0.17.2"', cloud_project)
         cloud_init = (root / 'cloud' / 'auth-service' / 'src' /
                       'xynigo_auth' / '__init__.py').read_text(
                           encoding='utf-8')
-        self.assertIn('__version__ = "0.17.1"', cloud_init)
+        self.assertIn('__version__ = "0.17.2"', cloud_init)
         cloud_main = (root / 'cloud' / 'auth-service' / 'src' /
                       'xynigo_auth' / 'main.py').read_text(encoding='utf-8')
-        self.assertIn('version="0.17.1"', cloud_main)
-        self.assertTrue((root / 'release' / 'v0.17.1.zh-CN.json').is_file())
-        self.assertTrue((root / 'release' / 'v0.17.1.zh-CN.md').is_file())
+        self.assertIn('version="0.17.2"', cloud_main)
+        self.assertTrue((root / 'release' / 'v0.17.2.zh-CN.json').is_file())
+        self.assertTrue((root / 'release' / 'v0.17.2.zh-CN.md').is_file())
         script = (root / '组装Windows绿色包.sh').read_text(encoding='utf-8')
         self.assertIn('v${VERSION}${BUILD_SUFFIX}.zip', script)
         self.assertIn('rm -f "$ZIP"', script)
@@ -69,19 +69,19 @@ class ReleaseV0170Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp = Path(temp_dir)
             asset = temp / 'Xynigo_Sourcing_test.zip'
-            asset.write_bytes(b'xynigo-v0.17.1-test-package')
+            asset.write_bytes(b'xynigo-v0.17.2-test-package')
             manifest = temp / 'latest.json'
             sha_file = temp / 'SHA256SUMS.txt'
             subprocess.run(
                 [
                     sys.executable,
                     str(root / 'scripts' / 'update_release_assets.py'),
-                    '--version', '0.17.1',
+                    '--version', '0.17.2',
                     '--channel', 'test',
                     '--platform', 'macos-arm64',
                     '--asset', str(asset),
                     '--notes', str(root / 'release' /
-                                   'v0.17.1.zh-CN.json'),
+                                   'v0.17.2.zh-CN.json'),
                     '--manifest', str(manifest),
                     '--sha-file', str(sha_file),
                 ],
@@ -93,7 +93,7 @@ class ReleaseV0170Tests(unittest.TestCase):
             digest = hashlib.sha256(asset.read_bytes()).hexdigest()
             self.assertEqual(payload['schemaVersion'], 2)
             self.assertEqual(payload['channel'], 'test')
-            self.assertEqual(payload['version'], '0.17.1')
+            self.assertEqual(payload['version'], '0.17.2')
             self.assertEqual(payload['platforms']['macos-arm64']['sha256'],
                              digest)
             self.assertEqual(
@@ -111,11 +111,11 @@ class ReleaseV0170Tests(unittest.TestCase):
             command = [
                 sys.executable,
                 str(root / 'scripts' / 'update_release_assets.py'),
-                '--version', '0.17.1',
+                '--version', '0.17.2',
                 '--channel', 'test',
                 '--platform', 'macos-arm64',
                 '--asset', str(asset),
-                '--notes', str(root / 'release' / 'v0.17.1.zh-CN.json'),
+                '--notes', str(root / 'release' / 'v0.17.2.zh-CN.json'),
                 '--manifest', str(manifest),
                 '--sha-file', str(sha_file),
             ]
@@ -201,11 +201,11 @@ class ReleaseV0170Tests(unittest.TestCase):
         self.assertIn('id="envTableWrap"', html)
         self.assertIn('#envTableWrap { max-height: 480px; overflow-y: auto; }', html)
         self.assertIn('#envThead th { position: sticky; top: 0;', html)
-        self.assertIn('id="querySite"', html)
+        self.assertNotIn('id="querySite"', html)
         self.assertIn('<option value="US">美国站 · us.shein.com</option>', html)
         self.assertIn('const payload = {serials, site};', html)
-        self.assertIn('>⚙ 高级设置<', html)
-        self.assertIn('网页仅回显', html)
+        self.assertNotIn('id="queryExecutorSettings"', html)
+        self.assertNotIn('id="queryCurrentId"', html)
         self.assertIn('body: JSON.stringify(payload)', html)
         self.assertIn("'Shipped': 'st-enviado'", html)
         self.assertIn("'Paid': 'st-procesando'", html)
@@ -227,8 +227,8 @@ class ReleaseV0170Tests(unittest.TestCase):
         self.assertIn("cfg.proxySource === 'custom'", html)
         self.assertIn('系统模板固定带表头', html)
         self.assertNotIn('https://proxy.example.test', html)
-        self.assertIn('Xynigo Sourcing v0.17.1', html)
-        self.assertIn('累计修复测试 v0.17.1', html)
+        self.assertIn('Xynigo Sourcing v0.17.2', html)
+        self.assertIn('累计修复测试 v0.17.2', html)
         self.assertIn('测试环境 · 数据隔离', html)
         self.assertNotIn('本机数据不出站', html)
         self.assertIn('Xyni, GO!', html)

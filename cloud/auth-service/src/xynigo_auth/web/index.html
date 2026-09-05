@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Xynigo Sourcing v0.17.1</title>
+<title>Xynigo Sourcing v0.17.2</title>
 <link rel="icon" type="image/png" sizes="260x260" href="/xynigo-x.png?v=6">
 <link rel="icon" type="image/x-icon" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256" href="/favicon.ico?v=6">
 <link rel="shortcut icon" href="/favicon.ico?v=6">
@@ -129,9 +129,6 @@
   .carrier-bar { height:5px; margin-top:5px; overflow:hidden; border-radius:999px; background:#e8eff3; }
   .carrier-bar span { display:block; height:100%; border-radius:inherit; background:var(--action-gradient); }
   .carrier-empty { color:var(--navy-500); font-size:9px; }
-  .query-settings-source { max-width:245px; padding:7px 10px; border:1px solid var(--line); border-radius:11px; background:#f8fafb; color:var(--navy-500); font-size:10px; line-height:1.45; text-align:left; cursor:pointer; }
-  .query-settings-source b { display:block; color:var(--navy-700); font-size:11px; }
-  .query-settings-source span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .query-title-help { position:relative; display:inline-flex; align-items:center; }
   .query-title-help-button { width:20px; height:20px; padding:0; border:1px solid #cbd8e1; border-radius:50%; background:#fff; color:var(--rhino-600); font:800 11px/18px inherit; cursor:help; }
   .query-title-help-popover { position:absolute; left:0; top:calc(100% + 8px); z-index:80; width:min(430px,calc(100vw - 48px)); padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:#fff; box-shadow:0 14px 34px rgba(8,37,72,.18); color:var(--navy-700); font-size:11px; font-weight:500; line-height:1.65; opacity:0; visibility:hidden; pointer-events:none; transform:translateY(-3px); transition:opacity .14s,transform .14s,visibility .14s; }
@@ -1606,7 +1603,7 @@
           <div class="hero-kicker">XYNIGO SOURCING WORKSPACE</div>
           <h1>让小犀帮你把每一单稳稳带回来，<span class="hero-call">Xyni, GO!</span></h1>
           <p id="moduleSummary">批量查询订单与物流状态，异常任务集中处理，结果一键导出。</p>
-          <div class="hero-meta"><span class="hero-chip">累计修复测试 v0.17.1</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
+          <div class="hero-meta"><span class="hero-chip">累计修复测试 v0.17.2</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
         </div>
         <div class="hero-lockup" role="img" aria-label="小犀与 Xynigo 完整品牌一体图形">
           <img src="xynigo-logo.png" alt="">
@@ -1879,19 +1876,16 @@
         <textarea id="serialsInput" placeholder="例如：&#10;1001&#10;1002, 1003&#10;1004"></textarea>
       </div>
       <div class="side-col">
-        <div class="field">
-          <label>查询站点</label>
-          <select id="querySite">
-            <option value="MX">墨西哥站 · shein.com.mx</option>
-            <option value="US">美国站 · us.shein.com</option>
-          </select>
-        </div>
-        <div class="field">
-          <label>HubStudio 分组</label>
-          <select id="groupSelect"><option>加载中…</option></select>
-        </div>
-        <button class="btn" id="btnGroupAll">查全部分组</button>
-        <div class="hint">输入序号时会在全部 HubStudio 环境中查找，不校验环境名站点或所选分组；查询站点仅决定打开的 SHEIN 域名和解析规则。分组只用于批量载入序号。</div>
+        <div class="hint">输入序号时会在全部 HubStudio 环境中查找，可混合输入美国和墨西哥环境。系统按每个环境识别 SHEIN 站点。</div>
+        <details>
+          <summary>按分组导入序号（可选）</summary>
+          <div class="field">
+            <label>HubStudio 分组</label>
+            <select id="groupSelect"><option value="">加载中…</option></select>
+          </div>
+          <button class="btn" id="btnGroupAll">导入该分组序号</button>
+          <div class="hint">仅用于填入环境序号，不影响查询范围和站点。</div>
+        </details>
       </div>
     </div>
   </section>
@@ -1904,11 +1898,6 @@
     <div class="action-row">
       <button class="btn primary" id="btnStart">▶ 开始查询</button>
       <button class="btn danger" id="btnStop" disabled>⏹ 停止</button>
-      <button class="query-settings-source" id="queryExecutorSettings" type="button" title="网页仅回显；请在执行任务电脑的 Xynigo 桌面客户端 → 本机设置中修改">
-        <b>⚙ 高级设置</b>
-        <span id="queryExecutorSettingsSummary">选择执行器后显示当前策略</span>
-      </button>
-      <button class="stable-id-button" id="queryCurrentId" type="button" hidden title="复制完整查询 ID"></button>
       <div class="progress-wrap">
         <div class="progress" id="queryProgress" role="progressbar" aria-label="物流查询进度" aria-valuemin="0" aria-valuenow="0" aria-valuemax="0"><div class="bar" id="bar"></div></div>
         <span id="progressText">已处理 0 / 0 ｜ 平均 — ｜ 本轮重查 — ｜ 累计执行 00:00</span>
@@ -3539,6 +3528,7 @@ function cloudApiError(payload, status) {
     executor_selection_required:'请先选择本次任务使用的本地执行器',
     executor_not_found:'本地执行器设备不存在或不属于当前组织',
     executor_offline:'所选本地执行器当前离线，请先启动执行器',
+    executor_auto_site_required:'所选执行器尚不支持按环境自动识别站点，请更新桌面执行器后重试',
     executor_upgrade_required:'所选执行器版本过旧，请先在线更新到 v0.13.18 或更高版本',
     executor_hub_unavailable:'所选执行器尚未确认 HubStudio 可用，请先启动并检查 HubStudio',
     executor_revoked:'本地执行器设备已被撤销，请重新配对',
@@ -3576,7 +3566,7 @@ async function cloudFetchJson(path, opts={}) {
   const headers = new Headers(opts.headers || {});
   headers.set('Accept', 'application/json');
   headers.set('X-Xynigo-Source', 'cloud_web_workspace');
-  headers.set('X-Xynigo-Client-Version', '0.17.1-cloud-web');
+  headers.set('X-Xynigo-Client-Version', '0.17.2-cloud-web');
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     headers.set('X-Xynigo-Web-CSRF', 'same-origin');
   }
@@ -3861,6 +3851,7 @@ function cloudLogisticsLegacySnapshot(run) {
 function logisticsRunFailureText(code) {
   return ({
     executor_offline:'所选本地执行器已离线，请启动执行器并重新选择设备',
+    executor_auto_site_required:'所选执行器尚不支持按环境自动识别站点，请更新桌面执行器后重试',
     executor_upgrade_required:'所选执行器版本过旧，请先在线更新到 v0.13.18 或更高版本',
     executor_hub_unavailable:'所选执行器尚未确认 HubStudio 可用，请先启动并检查 HubStudio',
     hubstudio_client_not_running:'所选电脑未检测到 HubStudio，请启动 HubStudio 后重试',
@@ -4792,31 +4783,6 @@ function applyQueryColumnVisibility() {
   });
 }
 
-function renderQueryExecutorSettings(runtime) {
-  const summary = $('queryExecutorSettingsSummary');
-  if (!summary) return;
-  if (!runtime || typeof runtime !== 'object') {
-    summary.textContent = CLOUD_WEB_MODE
-      ? '选择执行器后显示当前策略'
-      : '请在 Xynigo 桌面客户端 → 本机设置中查看';
-    return;
-  }
-  const browserMode = runtime.queryBrowserMode === 'visible'
-    ? '可见调试' : '无头模式';
-  const openMode = runtime.queryAllowOpenEnvironment === true
-    ? '允许只读连接已打开环境' : '不连接已打开环境';
-  summary.textContent = `${browserMode} · ${openMode}`;
-}
-
-$('queryExecutorSettings').onclick = () => {
-  if (CLOUD_WEB_MODE) {
-    openRuntimeDrawer();
-    toast('网页仅显示桌面执行器设置；修改请在 Xynigo 桌面客户端完成');
-  } else {
-    toast('请在 Xynigo 桌面客户端 → 本机设置中修改高级设置');
-  }
-};
-
 async function loadQueryDisplayConfig() {
   try {
     if (CLOUD_WEB_MODE) {
@@ -4827,7 +4793,6 @@ async function loadQueryDisplayConfig() {
     }
     const cfg = await api('/api/config');
     setHiddenQueryColumns(cfg.hiddenQueryColumns || []);
-    renderQueryExecutorSettings(cfg);
   } catch (e) {}
 }
 
@@ -7029,10 +6994,6 @@ function render(snap) {
   renderRows(lastRows);
   const queryStats = renderStats(lastRows);
   paintQueryProgress(snap, queryStats);
-  const queryId = String(snap.queryId || '');
-  $('queryCurrentId').hidden = !queryId;
-  $('queryCurrentId').textContent = queryId ? `查询 ID ${queryId.slice(0,8)}` : '';
-  $('queryCurrentId').dataset.copyId = queryId;
   $('btnStart').disabled = querySubmitting || isRunning
     || (CLOUD_WEB_MODE && !runtimeExecutorReady());
   $('btnStop').disabled = !isRunning;
@@ -7865,7 +7826,7 @@ $('btnStart').onclick = async () => {
   if (!hubConnected) { toast('未检测到 HubStudio：请在对应电脑启动并登录 HubStudio，然后从底部运行状态栏刷新'); return; }
   const serials = parseSerials();
   if (!serials) return;
-  const site = $('querySite').value;
+  const site = 'AUTO';
   const payload = {serials, site};
   const idempotencyKey = workspaceMutationKey('query-start', payload);
   querySubmitting = true;
@@ -7897,8 +7858,7 @@ $('btnStart').onclick = async () => {
     isRunning = true;
     queryProgressLoaded = false;
     poll();
-    const siteName = j.site === 'US' ? '美国站' : '墨西哥站';
-    toast(`开始查询${siteName}，共 ${j.total || j.totalCount} 个环境。每个环境约 30-60 秒，请耐心等待`);
+    toast(`开始按环境序号查询，共 ${j.total || j.totalCount} 个环境。每个环境约 30-60 秒，请耐心等待`);
   } catch (e) {
     queryPollGraceUntil = Date.now() + 30 * 1000;
     queryProgressLoaded = false;
@@ -7938,7 +7898,7 @@ tbody.addEventListener('click', async e => {
   try {
     if (CLOUD_WEB_MODE) {
       const serial = String(btn.dataset.req || '');
-      const payload = {serial, force, site:$('querySite').value};
+      const payload = {serial, force, site:'AUTO'};
       const idempotencyKey = workspaceMutationKey('query-single-retry', payload);
       const executor = await cloudFormalExecutor('logistics.query.v1');
       const created = await cloudFetchJson('/v1/operation-runs/logistics-query', {
@@ -8488,8 +8448,6 @@ $('btnHistoryRerun').onclick = () => {
   if (!serials.length) { toast('该历史记录没有可重新查询的环境序号'); return; }
   if (!confirm(`将载入 ${serials.length} 个历史环境序号。载入后请重新选择当前在线执行器，再手动点击“开始查询”。`)) return;
   $('serialsInput').value = serials.join('\n');
-  const site = String(detail.latestRun && detail.latestRun.site || detail.site || '');
-  if (['MX','US'].includes(site)) $('querySite').value = site;
   localExecutorSelectedDeviceId = '';
   runtimePendingExecutorId = '';
   saveSessionRuntimeExecutorId('');
@@ -8528,7 +8486,6 @@ $('btnQueryTitleHelp').onclick = event => {
   wrapper.classList.toggle('open', open);
   $('btnQueryTitleHelp').setAttribute('aria-expanded', String(open));
 };
-$('queryCurrentId').onclick = () => copyStableId($('queryCurrentId').dataset.copyId);
 document.addEventListener('click', event => {
   if (!event.target.closest('#queryTitleHelp')) {
     $('queryTitleHelp').classList.remove('open');
@@ -8544,7 +8501,7 @@ $('btnRetryFail').onclick = async () => {
     ).map(row => String(row.serial || '')).filter(Boolean);
     let j;
     if (CLOUD_WEB_MODE) {
-      const payload = {serials:retrySerials, site:$('querySite').value};
+      const payload = {serials:retrySerials, site:'AUTO'};
       const idempotencyKey = workspaceMutationKey('query-failed-retry', payload);
       const executor = await cloudFormalExecutor('logistics.query.v1');
       const created = await cloudFetchJson('/v1/operation-runs/logistics-query', {
@@ -9267,7 +9224,6 @@ function resetLocalExecutorConfig(message='请选择设备后读取只读摘要�
     'executorSummaryQueryMode', 'executorSummaryAllowOpen',
     'executorSummaryDataSources', 'executorSummaryCompliance'
   ].forEach(id => { $(id).textContent = '—'; });
-  renderQueryExecutorSettings(null);
   setLocalExecutorConfigState('', message);
 }
 
@@ -9295,7 +9251,6 @@ function applyLocalExecutorConfigSummary(payload) {
     ? '可见调试' : '无头模式';
   $('executorSummaryAllowOpen').textContent = runtime.queryAllowOpenEnvironment === true
     ? '允许只读连接' : '禁止连接';
-  renderQueryExecutorSettings(runtime);
   $('executorSummaryIntegrations').textContent = [
     `Hub Key ${configured.hubApiKey ? '已配置' : '未配置'}`,
     `飞书应用 ${configured.larkAppCredentials ? '已配置' : '未配置'}`,
@@ -11240,7 +11195,7 @@ $('btnEnvTsv').onclick = () => toast('旧统一台账直贴导出已停用');
 
 $('btnGroupAll').onclick = async () => {
   const g = $('groupSelect').value;
-  inferQuerySite(g);
+  if (!g) { toast('请先选择要导入的分组'); return; }
   try {
     const j = await api('/api/group-envs?group=' + encodeURIComponent(g));
     if (!j.serials.length) { toast('该分组下没有环境'); return; }
@@ -11306,6 +11261,7 @@ async function loadGroupsOnce() {
       } else throw error;
     }
     const sel = $('groupSelect');
+    const previousGroup = sel.value;
     sel.innerHTML = '';
     const groups = Array.from(new Set(
       (j.groups || []).map(group => String(group || '').trim()).filter(Boolean)
@@ -11322,14 +11278,22 @@ async function loadGroupsOnce() {
       o.textContent = g;
       sel.appendChild(o);
     });
-    $('btnGroupAll').disabled = groups.length === 0;
-    inferQuerySite(sel.value);
+    if (previousGroup && groups.includes(previousGroup)) {
+      sel.value = previousGroup;
+    } else {
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = previousGroup ? '原分组已不可用，请重新选择' : '请选择要导入的分组';
+      sel.insertBefore(placeholder, sel.firstChild);
+      sel.value = '';
+    }
+    $('btnGroupAll').disabled = !sel.value;
   } catch (e) {
-    $('groupSelect').innerHTML = '<option>— 无法连接，请先启动 HubStudio —</option>';
+    toast('分组加载失败，已保留原选择；仍可输入序号查询');
     $('btnGroupAll').disabled = true;
   }
 }
-$('groupSelect').onchange = e => inferQuerySite(e.target.value);
+$('groupSelect').onchange = e => { $('btnGroupAll').disabled = !e.target.value; };
 
 function rememberEnvWorkspacePreference(site, group='') {
   if (!CLOUD_WEB_MODE || !cloudWorkspaceSnapshotCache) return;
@@ -11539,12 +11503,6 @@ $('envSiteGroup').onchange = e => {
   refreshAssignUi();
   toast('采购分组已切换；偏好正在后台保存');
 };
-
-function inferQuerySite(groupName) {
-  const name = String(groupName || '');
-  if (/美国|\bUS\b/i.test(name)) $('querySite').value = 'US';
-  else if (/墨西哥|\bMX\b/i.test(name)) $('querySite').value = 'MX';
-}
 
 function applyLarkRuntimeStatus(state) {
   larkReady = !!(state && (state.ready || state.configured));

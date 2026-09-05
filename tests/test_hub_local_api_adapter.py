@@ -346,6 +346,32 @@ class HubStudioLocalApiAdapterTests(unittest.TestCase):
             'hubstudio_system_resources_insufficient')
         self.assertEqual(len(opener.calls), 1)
 
+    def test_localized_code_minus_one_missing_core_is_actionable(self):
+        opener = FakeLocalApiOpener(
+            response_code=-1,
+            response_message=(
+                '此环境需使用“150”版本内核才可打开，请将软件升级到最新版本'))
+        adapter = HubStudioLocalApiAdapter(
+            opener=opener, client_running_getter=lambda: True,
+            retries=3, timeout=1)
+
+        with self.assertRaises(HubApiError) as context:
+            adapter.browser_start('container-localized-core', headless=True)
+
+        self.assertEqual(
+            context.exception.reason_code,
+            'hubstudio_browser_core_missing')
+        self.assertEqual(context.exception.api_code, '-1')
+        self.assertEqual(context.exception.browser_type, 'chrome')
+        self.assertEqual(context.exception.core_version, '150')
+        self.assertEqual(len(opener.calls), 1)
+        self.assertEqual(adapter.core_requirement_snapshot(), {
+            'known': True,
+            'browserType': 'chrome',
+            'version': '150',
+            'containerCode': 'container-localized-core',
+        })
+
     def test_download_core_uses_official_local_api_contract(self):
         opener = FakeLocalApiOpener()
         adapter = HubStudioLocalApiAdapter(

@@ -109,7 +109,7 @@ from .redaction import scrub_text
 from .resource_center import ResourceCenterService
 from .secure_store_transaction import SecureStoreTransaction
 from .shein_query import (
-    QueryOrchestrator, normalize_browser_mode, normalize_site)
+    QueryOrchestrator, normalize_browser_mode, normalize_query_site)
 from .task_runtime import (HubRuntimeGate, LocalTaskCoordinator, TaskConflict,
                            environment_resources)
 from .updater import StandardInstallerUpdateClient, UpdateCoordinator
@@ -4247,7 +4247,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/query':
                 serials = body.get('serials')
                 group = body.get('group')
-                site = normalize_site(body.get('site') or 'MX')
+                site = normalize_query_site(body.get('site'))
                 allow_open_environment = bool(
                     STATE.cfg.get('queryAllowOpenEnvironment'))
                 browser_mode = normalize_browser_mode(

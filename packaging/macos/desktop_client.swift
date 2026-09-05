@@ -318,13 +318,16 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
 
     private func buildWindow() {
         let desktopWindow = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1360, height: 746),
+            // NSWindow receives the content size (the title bar is added by
+            // AppKit).  1240×812 produces an outer frame close to the same
+            // 1.47:1 proportion used by the Windows launcher.
+            contentRect: NSRect(x: 0, y: 0, width: 1240, height: 812),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         desktopWindow.title = "Xynigo 本地执行器"
-        desktopWindow.minSize = NSSize(width: 1080, height: 650)
+        desktopWindow.minSize = NSSize(width: 1024, height: 672)
         desktopWindow.center()
         desktopWindow.delegate = self
         desktopWindow.isReleasedWhenClosed = false

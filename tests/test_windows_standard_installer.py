@@ -172,7 +172,7 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
             '/executor-status.json',
         ):
             self.assertIn(source, self.gui_launcher)
-        self.assertIn('Icon:       "xynigo-x.ico"', self.gui_launcher)
+        self.assertIn('Icon:     "xynigo-x.ico"', self.gui_launcher)
         self.assertIn('使用飞书授权登录', self.desktop_ui)
         self.assertIn('/api/auth/start', self.desktop_ui)
         self.assertIn('/api/local-config/data-sources', self.desktop_ui)
@@ -207,8 +207,8 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
 
     def test_desktop_v3_is_webview2_full_width_and_state_driven(self):
         for source in (
-            'Size:       Size{Width: 1360, Height: 790}',
-            'MinSize:    Size{Width: 1080, Height: 650}',
+            'Size:       Size{Width: 1240, Height: 840}',
+            'MinSize:    Size{Width: 1024, Height: 700}',
             'browser.MessageCallback = app.handleWebMessage',
             'WebView2-v2',
             'WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS',
@@ -337,7 +337,7 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
 
 class WindowsStandardInstallerArtifactTests(unittest.TestCase):
     def test_local_compiled_artifact_metadata_when_present(self):
-        metadata = ROOT / 'dist/Xynigo_Sourcing_Windows_Setup_v0.17.1.json'
+        metadata = ROOT / 'dist/Xynigo_Sourcing_Windows_Setup_v0.17.2.json'
         if not metadata.is_file():
             self.skipTest('standard installer artifact is built in packaging CI')
         import json

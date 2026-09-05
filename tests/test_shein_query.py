@@ -316,6 +316,47 @@ class TrackingScreenshotTests(unittest.TestCase):
         updates.update({k: v for k, v in info.items() if v})
         self.assertEqual(updates['orderTime'], '2026-08-18 01:05:40')
 
+    def test_transient_login_redirect_is_retried_before_classification(self):
+        class Page(object):
+            def __init__(self):
+                self.url = 'https://us.shein.com/user/auth/login'
+                self.goto_calls = []
+
+            def _evaluate(self, _expression):
+                return self.url.endswith('/login')
+
+            def goto(self, url, settle_seconds=0):
+                self.goto_calls.append((url, settle_seconds))
+                self.url = url
+
+        page = Page()
+        job = QueryOrchestrator(hub=None, settle_seconds=0)
+
+        self.assertFalse(job._login_redirect_confirmed(
+            page, 'https://us.shein.com/user/orders/list'))
+        self.assertEqual(page.goto_calls, [
+            ('https://us.shein.com/user/orders/list', 0.0)])
+
+    def test_persistent_rendered_login_is_confirmed_after_reload(self):
+        class Page(object):
+            url = 'https://us.shein.com/user/auth/login'
+
+            def __init__(self):
+                self.goto_calls = 0
+
+            def _evaluate(self, _expression):
+                return True
+
+            def goto(self, _url, settle_seconds=0):
+                self.goto_calls += 1
+
+        page = Page()
+        job = QueryOrchestrator(hub=None, settle_seconds=0)
+
+        self.assertTrue(job._login_redirect_confirmed(
+            page, 'https://us.shein.com/user/orders/list'))
+        self.assertEqual(page.goto_calls, 1)
+
     def test_serial_query_does_not_reject_environment_name_site_marker(self):
         class ReadyHub(object):
             def __init__(self):

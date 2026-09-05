@@ -62,6 +62,9 @@ KNOWN_LOCAL_API_PATHS = (
 CORE_VERSION_RE = re.compile(r'^[1-9][0-9]{1,2}$')
 MISSING_CORE_RE = re.compile(
     r'\b(Chrome|Firefox)\s*\[\s*([0-9]{2,3})\s*\]\s*Core\b', re.I)
+MISSING_CORE_VERSION_CN_RE = re.compile(
+    r'(?:需(?:要)?使用|请使用).*?[“"‘\[]?\s*([0-9]{2,3})\s*'
+    r'[”"’\]]?\s*版本内核')
 
 # 强制直连不走系统代理：同事电脑开着 Clash 类系统代理时，urllib 默认会把
 # 127.0.0.1 的请求也送进代理导致"连接失败"（PowerShell/浏览器则默认绕过本地）
@@ -91,9 +94,17 @@ def _safe_api_message(value):
 
 def _missing_core_details(message):
     match = MISSING_CORE_RE.search(str(message or ''))
-    if not match:
-        return '', ''
-    return match.group(1).casefold(), match.group(2)
+    if match:
+        return match.group(1).casefold(), match.group(2)
+    # HubStudio 3.58 may return ``code=-1`` with a localized message such as
+    # “此环境需使用‘150’版本内核才可打开”, instead of the documented
+    # ``-10007 / Chrome[150]Core`` contract.  HubStudio's numbered environment
+    # cores are Chromium cores, so keep the repair target actionable while
+    # preserving the exact version from the response.
+    match = MISSING_CORE_VERSION_CN_RE.search(str(message or ''))
+    if match:
+        return 'chrome', match.group(1)
+    return '', ''
 
 
 def _windows_hidden_process_kwargs():
@@ -478,9 +489,11 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
                 api_index += 1
                 api_code = str(j.get('code') or '')
                 safe_message = _safe_api_message(j.get('msg'))
-                browser_core_missing = api_code == '-10007'
                 core_browser_type, core_version = _missing_core_details(
                     safe_message)
+                browser_core_missing = (
+                    api_code == '-10007'
+                    or bool(core_browser_type and core_version))
                 auth_failed = (
                     api_code in {'401', '403', 'E010401', 'E010403'}
                     or any(marker in safe_message.casefold() for marker in (

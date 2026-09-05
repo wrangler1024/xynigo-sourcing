@@ -22,13 +22,14 @@ import threading
 import time
 import unicodedata
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit
 
 from .cdp import CdpClient
 from .hub_api import BROWSER_LIFECYCLE_STATES, HubApiError
 
 SUPPORTED_SITES = ('MX', 'US')
 SUPPORTED_BROWSER_MODES = ('headless', 'visible')
-SITE_LABELS = {'MX': '墨西哥站', 'US': '美国站'}
+SITE_LABELS = {'MX': '墨西哥站', 'US': '美国站', 'AUTO': '按环境识别'}
 SYSTEMIC_HUB_FAILURE_CODES = {
     'hubstudio_client_not_running',
     'hubstudio_local_api_disabled',
@@ -55,6 +56,7 @@ BROWSER_START_STATUS_POLL_SECONDS = 2.0
 BROWSER_START_TERMINAL_CONFIRMATIONS = 2
 BROWSER_START_RESTART_LIMIT = 1
 RECOVERY_HEALTHY_LIFECYCLES = 3
+LOGIN_REDIRECT_CONFIRM_SECONDS = 2.0
 SITE_PROFILES = {
     'MX': {
         'baseUrl': 'https://www.shein.com.mx',
@@ -222,6 +224,39 @@ def normalize_site(site):
     return value
 
 
+def normalize_query_site(site):
+    """AUTO is a batch routing mode, never a parser/site profile."""
+    value = str(site or 'AUTO').strip().upper()
+    return value if value == 'AUTO' else normalize_site(value)
+
+
+def resolve_environment_site(env, pages):
+    """Use this browser's exact SHEIN hosts; never consult its group.
+
+    A clear environment-name marker is a fallback for fresh/blank browsers.
+    Ambiguous browser state must not silently select a country.
+    """
+    hosts = {'www.shein.com.mx': 'MX', 'shein.com.mx': 'MX',
+             'us.shein.com': 'US'}
+    sites = set()
+    for page in pages:
+        try:
+            site = hosts.get(urlsplit(str(page.get('url') or '')).hostname)
+        except ValueError:
+            site = None
+        if site:
+            sites.add(site)
+    if len(sites) == 1:
+        return sites.pop()
+    if len(sites) > 1:
+        raise ValueError('环境同时打开美国和墨西哥 SHEIN 页面，无法确定查询站点；请保留目标站点页面后重查')
+    name = str(env.get('containerName') or '')
+    markers = set(re.findall(r'(?<![A-Za-z0-9])(MX|US)(?![A-Za-z0-9])', name.upper()))
+    if len(markers) == 1:
+        return markers.pop()
+    raise ValueError('无法识别该环境的 SHEIN 站点；请在环境中打开目标 SHEIN 站点后重查，或在环境名中明确标记 MX/US')
+
+
 def normalize_browser_mode(mode):
     value = str(mode or 'headless').strip().casefold()
     if value not in SUPPORTED_BROWSER_MODES:
@@ -244,8 +279,10 @@ def _site_profile(site):
 
 def _query_timestamp(site='MX', utc_offset_minutes=None):
     """返回环境当地时间；浏览器偏移优先，站点配置仅作降级。"""
-    site = normalize_site(site)
+    site = normalize_query_site(site)
     if utc_offset_minutes is None:
+        if site == 'AUTO':
+            return ''  # No invented local time before the environment is resolved.
         utc_offset_minutes = SITE_PROFILES[site]['utcOffsetMinutes']
     tz = timezone(timedelta(minutes=int(utc_offset_minutes)))
     return datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
@@ -579,7 +616,7 @@ class QueryOrchestrator(object):
     # ---- 行状态 ----
 
     def _blank_row(self, serial, site=None):
-        site = normalize_site(site or self.site)
+        site = normalize_query_site(site or self.site)
         return {'serial': str(serial), 'envName': '', 'state': 'pending',
                 'site': site, 'siteName': SITE_LABELS[site],
                 'orderNo': '', 'orderTime': '', 'amount': '', 'status': '',
@@ -773,7 +810,7 @@ class QueryOrchestrator(object):
         usable browser core.  This reversible start/stop probe keeps a broken
         installation from creating a formal run and then failing every row.
         """
-        site = normalize_site(site)
+        site = normalize_query_site(site)
         browser_mode = normalize_browser_mode(browser_mode)
         serials = [str(serial) for serial in serials]
         with self.lock:
@@ -878,7 +915,7 @@ class QueryOrchestrator(object):
                     on_finished=None, browser_mode='headless',
                     allow_open_environment=False):
         """启动批量查询线程。env_index: {serialNumber(str): env dict}。"""
-        site = normalize_site(site)
+        site = normalize_query_site(site)
         serials = list(serials)
         self._prepare_run(
             serials, site, fresh=True, browser_mode=browser_mode,
@@ -1150,10 +1187,15 @@ class QueryOrchestrator(object):
         if row is None:
             if not allow_missing:
                 raise ValueError('该序号不在当前结果中，请重新发起批量查询')
-            site = normalize_site(site or self.site)
+            site = normalize_query_site(site or self.site)
             self._prepare_run(
                 [serial], site, fresh=True, browser_mode=browser_mode,
                 allow_open_environment=allow_open_environment)
+        elif site == 'AUTO':
+            # A new cloud retry must resolve again, even when a previous
+            # legacy/manual run left this serial in the local result cache.
+            self._update(row, site='AUTO', siteName=SITE_LABELS['AUTO'],
+                         timeZone='', utcOffsetMinutes=None, time='')
         else:
             site = row.get('site') or self.site
         if force:
@@ -1183,8 +1225,9 @@ class QueryOrchestrator(object):
         if not serials:
             raise ValueError('没有可重查的异常行（失败 / 使用中 / 未查询）')
         with self.lock:
-            site = next((r.get('site') for r in self.rows
-                         if r['serial'] in serials), self.site)
+            sites = {r.get('site') or self.site for r in self.rows
+                     if r['serial'] in serials}
+            site = sites.pop() if len(sites) == 1 else 'AUTO'
         self._prepare_run(
             serials, site, fresh=False, browser_mode=browser_mode,
             allow_open_environment=allow_open_environment)
@@ -1203,7 +1246,7 @@ class QueryOrchestrator(object):
 
     def _run(self, serials, env_index, fresh=True, site='MX',
              on_finished=None, prepared=False):
-        site = normalize_site(site)
+        site = normalize_query_site(site)
         if not prepared:
             self._prepare_run(serials, site, fresh=fresh)
         try:
@@ -1247,7 +1290,7 @@ class QueryOrchestrator(object):
                         self._inflight.add(str(serial))
                     try:
                         self._query_one(row, str(serial), env_index,
-                                        open_codes, site)
+                                        open_codes, row.get('site') or site)
                     finally:
                         with self.lock:
                             self._inflight.discard(str(serial))
@@ -1337,6 +1380,51 @@ class QueryOrchestrator(object):
             time.sleep(3)
             text = page.inner_text()
         return text
+
+    @staticmethod
+    def _is_login_page(page):
+        """Require both a login URL and a rendered sign-in surface.
+
+        Cross-device HubStudio profile hydration can briefly visit SHEIN's
+        login route before the latest archived profile has settled.  URL-only
+        classification turned that transition into a permanent “login
+        expired” row.  A CDP failure falls back to the URL signal so a broken
+        page cannot silently pass as authenticated.
+        """
+        if 'login' not in str(getattr(page, 'url', '') or '').casefold():
+            return False
+        try:
+            rendered = page._evaluate(r'''
+                (() => {
+                  const visible = e => {
+                    if (!e) return false;
+                    const r=e.getBoundingClientRect();
+                    return r.width>0 && r.height>0;
+                  };
+                  const selectors=[
+                    '#continue-alias-input',
+                    'input[type="password"]',
+                    'form[action*="login" i]'
+                  ];
+                  if (selectors.some(s => [...document.querySelectorAll(s)]
+                        .some(visible))) return true;
+                  return /\b(sign in|log in)\b/i.test(document.title || '');
+                })()
+            ''')
+        except Exception:
+            return True
+        return bool(rendered)
+
+    def _login_redirect_confirmed(self, page, target_url):
+        """Reload once before declaring this device's profile signed out."""
+        if not self._is_login_page(page):
+            return False
+        delay = min(LOGIN_REDIRECT_CONFIRM_SECONDS,
+                    max(0.0, float(self.settle_seconds)))
+        if delay:
+            time.sleep(delay)
+        page.goto(target_url, settle_seconds=delay)
+        return self._is_login_page(page)
 
     def _await_browser_start_resolution(self, code, deadline):
         """Wait for a timed-out/pending start without submitting another one.
@@ -1585,8 +1673,7 @@ class QueryOrchestrator(object):
                     raise
 
     def _query_one(self, row, serial, env_index, open_codes, site='MX'):
-        site = normalize_site(site)
-        profile = _site_profile(site)
+        site = normalize_query_site(site)
         self._remove_screenshot(serial)
         self._update(
             row, screenshotState='pending', screenshotFile='',
@@ -1643,6 +1730,10 @@ class QueryOrchestrator(object):
             port = int(data.get('debuggingPort'))
             ip = data.get('ip') or ''
             cdp = CdpClient(port)
+            if site == 'AUTO':
+                site = resolve_environment_site(env, cdp.list_pages())
+            profile = _site_profile(site)
+            self._update(row, site=site, siteName=SITE_LABELS[site])
             page = cdp.new_page()
             try:
                 time_zone = page._evaluate(
@@ -1663,13 +1754,16 @@ class QueryOrchestrator(object):
             for attempt in (1, 2, 3):
                 page.goto(profile['ordersListUrl'],
                           settle_seconds=self.settle_seconds)
-                text = self._read_text_stable(
-                    page, ready_re=RE_ORDER_NO_BY_SITE[site])
-                if 'login' in page.url:
+                if self._login_redirect_confirmed(
+                        page, profile['ordersListUrl']):
                     self._save_snapshot(serial, 'list_login',
                                         page.outer_html())
-                    self._update(row, state='login', ip=ip, error='')
+                    self._update(row, state='login', ip=ip, error=(
+                        '当前电脑打开的环境未加载到登录态；请确认其他电脑已关闭'
+                        '并完成归档后重查'))
                     return
+                text = self._read_text_stable(
+                    page, ready_re=RE_ORDER_NO_BY_SITE[site])
                 m = RE_ERR_PAGE.search(text)
                 if m:
                     err = '%s，代理波动' % m.group(1)
@@ -1698,11 +1792,14 @@ class QueryOrchestrator(object):
             # 2) 详情页：物流单号 / 承运商 / 砍单
             page.goto(profile['orderDetailUrl'] % info['orderNo'],
                       settle_seconds=self.settle_seconds)
-            dtext = self._read_text_stable(page)
-            if 'login' in page.url:
+            if self._login_redirect_confirmed(
+                    page, profile['orderDetailUrl'] % info['orderNo']):
                 self._save_snapshot(serial, 'detail_login', page.outer_html())
-                self._update(row, state='login', error='')
+                self._update(row, state='login', error=(
+                    '当前电脑打开的环境未加载到登录态；请确认其他电脑已关闭'
+                    '并完成归档后重查'))
                 return
+            dtext = self._read_text_stable(page)
             m = RE_ERR_PAGE.search(dtext)
             if m:
                 self._save_snapshot(serial, 'detail_err', page.outer_html())

@@ -356,7 +356,10 @@ class LocalOperationExecutor(object):
 
     def _execute_logistics(self, payload, report, cancellation_event):
         run_key = self._required_text(payload, 'runKey')
-        site = self._site(payload)
+        site = str(payload.get('site') or 'AUTO').strip().upper()
+        if site not in ('AUTO', 'MX', 'US'):
+            raise OperationExecutionError(
+                'operation_payload_invalid', '物流查询站点模式无效')
         serials = payload.get('environmentSerials')
         if (not isinstance(serials, list) or not serials
                 or any(not str(item or '').strip() for item in serials)):

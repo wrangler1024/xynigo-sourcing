@@ -36,6 +36,18 @@ class DesktopClientParityTests(unittest.TestCase):
         self.assertNotIn('application.setActivationPolicy(.accessory)',
                          self.macos)
 
+    def test_both_platforms_use_the_compact_field_window_proportion(self):
+        self.assertIn(
+            'Size:       Size{Width: 1240, Height: 840}', self.windows)
+        self.assertIn(
+            'MinSize:    Size{Width: 1024, Height: 700}', self.windows)
+        self.assertIn(
+            'contentRect: NSRect(x: 0, y: 0, width: 1240, height: 812)',
+            self.macos)
+        self.assertIn(
+            'desktopWindow.minSize = NSSize(width: 1024, height: 672)',
+            self.macos)
+
     def test_both_platforms_expose_the_same_operator_actions(self):
         native_actions = (
             '打开云端工作台',

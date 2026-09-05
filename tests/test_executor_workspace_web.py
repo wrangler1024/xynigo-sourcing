@@ -87,7 +87,7 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         )
         env_groups = html[
             html.index("async function loadEnvGroups(options={})"):
-            html.index("function inferQuerySite(groupName)")
+            html.index("function applyLarkRuntimeStatus")
         ]
         self.assertIn("/api/envbatch/preferences", env_groups)
         self.assertNotIn("api('/api/config'", env_groups)
@@ -487,7 +487,7 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         ]
         group_handler = html[
             html.index("$('envSiteGroup').onchange"):
-            html.index("function inferQuerySite(groupName)")
+            html.index("function applyLarkRuntimeStatus")
         ]
         self.assertNotIn('await loadEnvGroups()', site_handler)
         self.assertNotIn('refreshEnvPreflight(true)', site_handler)
@@ -595,11 +595,6 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             'id="queryPhaseBanner"',
             'id="businessSummary"',
             'id="carrierDistribution"',
-            'id="queryExecutorSettings"',
-            'id="queryExecutorSettingsSummary"',
-            '>⚙ 高级设置<',
-            '网页仅显示桌面执行器设置',
-            'function renderQueryExecutorSettings(runtime)',
             'class="table-actions query-table-actions"',
             'id="bizFirstTrackLead"',
             "['firstTrackLead','首轨时效']",
@@ -617,7 +612,6 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             "累计执行 ${elapsedClock(snap.elapsedSec || 0)}",
             "queryBackgroundRestoreNotified",
             "window.addEventListener('beforeunload'",
-            '不连接已打开环境',
             '输入序号时会在全部 HubStudio 环境中查找',
             "共 ${shippedRows.length} 个已发货订单",
             '首轨时效中位数',
@@ -652,7 +646,8 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             html.index('<div class="action-row">', html.index('id="queryPhaseBanner"')):
             html.index('</section>', html.index('id="queryPhaseBanner"'))
         ]
-        self.assertIn('id="queryExecutorSettings"', action_row)
+        self.assertNotIn('高级设置', action_row)
+        self.assertNotIn('queryExecutorSettings', html)
         self.assertNotIn('id="queryAdvancedSettings"', html)
         self.assertNotIn('id="queryBrowserMode"', html)
         self.assertNotIn('id="queryAllowOpenEnvironment"', html)
@@ -688,7 +683,6 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
     def test_operation_ids_environment_history_and_status_help_are_accessible(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")
         for marker in (
-            'id="queryCurrentId"',
             'data-copy-id=',
             'id="btnEnvironmentHistory"',
             'id="environmentHistoryMask"',
@@ -700,6 +694,7 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             "if (!event.target.closest('#queryTitleHelp'))",
         ):
             self.assertIn(marker, html)
+        self.assertNotIn('id="queryCurrentId"', html)
         query_title = html[
             html.index('class="card-title table-title-row query-results-title"'):
             html.index('class="table-actions query-table-actions"')

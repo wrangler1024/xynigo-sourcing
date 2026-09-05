@@ -370,7 +370,8 @@ class OperationRunService:
                 raise PurchaseServiceError(
                     "operation_parent_run_not_found", "原物流查询批次不存在", 404
                 )
-            if parent.executor_id != body.executorId or parent.site != body.site:
+            if (parent.executor_id != body.executorId
+                    or (body.site != "AUTO" and parent.site != body.site)):
                 raise PurchaseServiceError(
                     "operation_retry_context_changed",
                     "执行设备或查询站点已变化，请重新发起整批查询",

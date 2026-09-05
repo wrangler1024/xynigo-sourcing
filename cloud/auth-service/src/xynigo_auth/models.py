@@ -1373,7 +1373,7 @@ class LogisticsQueryRun(Base):
         UniqueConstraint(
             "tenant_id", "source_run_key", name="uq_logistics_run_tenant_source"
         ),
-        CheckConstraint("site IN ('US', 'MX')", name="ck_logistics_run_site"),
+        CheckConstraint("site IN ('US', 'MX', 'AUTO')", name="ck_logistics_run_site"),
         CheckConstraint(
             "query_mode IN ('initial', 'single_retry', 'failed_retry')",
             name="ck_logistics_run_mode",

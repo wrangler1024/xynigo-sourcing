@@ -315,12 +315,15 @@ func (app *launcherApp) buildWindow() error {
 		return fmt.Errorf("无法定位桌面客户端资源目录：%w", err)
 	}
 	window := MainWindow{
-		AssignTo:   &app.mw,
-		Title:      "Xynigo 本地执行器",
-		Icon:       "xynigo-x.ico",
-		Visible:    false,
-		Size:       Size{Width: 1360, Height: 790},
-		MinSize:    Size{Width: 1080, Height: 650},
+		AssignTo: &app.mw,
+		Title:    "Xynigo 本地执行器",
+		Icon:     "xynigo-x.ico",
+		Visible:  false,
+		// Keep the desktop client close to the field-tested 1.47:1 window
+		// proportion so overview cards remain readable without an overly wide
+		// strip on both laptop and external displays.
+		Size:       Size{Width: 1240, Height: 840},
+		MinSize:    Size{Width: 1024, Height: 700},
 		Background: SolidColorBrush{Color: walk.RGB(255, 255, 255)},
 		Font:       Font{Family: "Microsoft YaHei UI", PointSize: 9},
 		Layout:     VBox{MarginsZero: true, SpacingZero: true},

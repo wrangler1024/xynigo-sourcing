@@ -192,6 +192,15 @@ class ParallelRouteTests(unittest.TestCase):
         self.env_job.callback()
         self.assertFalse(self.state.tasks.running())
 
+    def test_serial_only_query_defaults_to_auto_and_ignores_group(self):
+        status, result = self.post('/api/query', {
+            'serials': ['1001'], 'group': 'unrelated-group'})
+        self.assertEqual(status, 200)
+        self.assertEqual(self.orch.preflight_calls[0][2], 'AUTO')
+        self.assertEqual(self.orch.start_calls[0][2], 'AUTO')
+        self.assertEqual(self.state.hub.env_list_groups, [None])
+        self.orch.callback()
+
     def test_serial_query_uses_desktop_advanced_settings(self):
         self.state.cfg['queryBrowserMode'] = 'visible'
         self.state.cfg['queryAllowOpenEnvironment'] = True

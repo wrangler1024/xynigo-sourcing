@@ -31,6 +31,7 @@ EXECUTOR_CAPABILITIES = Literal[
     "environment.cloud-inventory.v1",
     "environment.preview-bound.v1",
     "logistics.query.v1",
+    "logistics.auto-site.v1",
     "environment.create-bound.v1",
     "environment.create-backup.v1",
     "environment.retry-row.v1",

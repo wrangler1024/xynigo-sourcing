@@ -389,7 +389,7 @@ class LogisticsQueryRunCreateBody(BaseModel):
     allowOpenEnvironment: bool = False
     parentRunId: uuid.UUID | None = None
     force: bool = False
-    site: Literal["US", "MX"]
+    site: Literal["US", "MX", "AUTO"] = "AUTO"
     environmentSerials: list[str] = Field(min_length=1, max_length=2000)
 
     @field_validator("environmentSerials")
@@ -809,7 +809,7 @@ class LogisticsQueryRunBody(BaseModel):
     source: Literal["local_executor"] = "local_executor"
     runKey: str = Field(min_length=8, max_length=128, pattern=SAFE_KEY_RE)
     queryMode: Literal["initial", "single_retry", "failed_retry"]
-    site: Literal["US", "MX"]
+    site: Literal["US", "MX", "AUTO"] = "AUTO"
     startedAt: datetime | None = None
     completedAt: datetime
     results: list[LogisticsQueryResultItem] = Field(min_length=1, max_length=2000)

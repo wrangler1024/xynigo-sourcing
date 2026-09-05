@@ -48,12 +48,14 @@ SUPPORTED_CAPABILITIES = (
     'environment.cloud-inventory.v1',
     'environment.preview-bound.v1',
     'logistics.query.v1',
+    'logistics.auto-site.v1',
     'environment.create-bound.v1',
     'environment.create-backup.v1',
     'environment.retry-row.v1',
     'environment.retry-failed.v1',
 )
 MODERN_ONLY_CAPABILITIES = frozenset({
+    'logistics.auto-site.v1',
     'config.summary.v2',
     'local.config.desktop.v1',
 })

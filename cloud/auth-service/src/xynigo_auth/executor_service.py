@@ -499,6 +499,10 @@ class ExecutorChannelService:
             raise ExecutorServiceError(
                 "executor_upgrade_required", status_code=409
             )
+        if (task_type == "logistics.query.v1"
+                and payload.get("site") == "AUTO"
+                and "logistics.auto-site.v1" not in set(executor.capabilities or [])):
+            raise ExecutorServiceError("executor_auto_site_required", status_code=409)
         if task_type not in set(executor.capabilities or []):
             raise ExecutorServiceError("executor_capability_missing", status_code=409)
         if task_type in ENCRYPTED_TASK_TYPES and self.payload_cipher is None:
