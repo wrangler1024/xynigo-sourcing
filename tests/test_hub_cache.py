@@ -93,7 +93,7 @@ def test_selected_cleanup_preserves_all_account_state_and_other_caches(fixture):
     scan = scanned(f)
     f.manager.clear(scan['scanId'], ['web'], confirmed=True)
     result = wait(f.manager)
-    assert result['state'] == 'complete'
+    assert result['state'] == 'complete', result
     assert result['removedBytes'] == 128
     assert result['removedFiles'] == 1
     assert not (f.profile / 'Default/Cache/Cache_Data/resource').exists()

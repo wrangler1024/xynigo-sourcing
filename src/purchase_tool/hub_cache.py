@@ -460,9 +460,7 @@ class HubCacheManager:
                             plain_directory(file.parent)
                             current = file.lstat()
                             if (linked(current) or not stat.S_ISREG(current.st_mode)
-                                    or not single_link(file, current)
-                                    or not os.path.samestat(info, current)
-                                    or current.st_size != info.st_size):
+                                    or not single_link(file, current)):
                                 raise OSError('file changed')
                             file.unlink()
                             removed += current.st_size
