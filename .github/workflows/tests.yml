@@ -239,7 +239,21 @@ jobs:
           $uninstaller = Get-Item "$installDir\卸载 Xynigo Sourcing.exe"
           $uninstall = Start-Process -FilePath $uninstaller.FullName -ArgumentList "/S" -Wait -PassThru
           if ($uninstall.ExitCode -ne 0) { throw "uninstall failed: $($uninstall.ExitCode)" }
-          Start-Sleep -Seconds 1
+          # The uninstaller may hand off to a temporary process. Wait for the
+          # observable cleanup, while keeping the removal assertions strict.
+          $cleanupDeadline = (Get-Date).AddSeconds(30)
+          while (((Test-Path "$installDir\versions") -or
+                  (Test-Path "HKCU:\Software\Classes\xynigo")) -and
+                 (Get-Date) -lt $cleanupDeadline) {
+            Start-Sleep -Milliseconds 250
+          }
+          if (Test-Path "$installDir\versions") {
+            Get-ChildItem "$installDir\versions" -Recurse |
+              Select-Object FullName,Length | Format-Table | Out-String | Write-Host
+            Get-CimInstance Win32_Process |
+              Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($installDir) } |
+              Select-Object Name,ProcessId,ExecutablePath | Format-Table | Out-String | Write-Host
+          }
           if (Test-Path "$installDir\versions") { throw "uninstall kept managed versions" }
           if (-not (Test-Path "$installDir\config.json")) { throw "uninstall removed config" }
           if (-not (Test-Path "$installDir\运行数据\keep.txt")) { throw "uninstall removed runtime data" }
