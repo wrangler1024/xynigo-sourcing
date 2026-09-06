@@ -316,7 +316,7 @@ def test_http_auth_origin_and_rpc_protect_scan_and_delete(api_server, fixture):
     assert fixture.manager.snapshot()['state'] == 'idle'
 
 
-def test_ui_selection_totals_and_path_escaping():
+def test_ui_selection_totals_and_path_escaping(tmp_path):
     javascript = (Path(__file__).resolve().parents[1] / 'src/purchase_tool/web/desktop.js').read_text(
         encoding='utf-8')
     javascript = javascript.replace('  initializeAuth();', '''
@@ -343,4 +343,7 @@ state.hubCache.running = true; state.hubCache.state = 'cleaning';
 assert.ok(panel().includes('正在清理'));
 assert.ok(panel().includes('data-action="clear-hub-cache" disabled'));
 '''.replace('SOURCE', json.dumps(javascript))
-    subprocess.run(['node', '-e', script], check=True, capture_output=True, text=True)
+    script_path = tmp_path / 'hub-cache-ui-test.js'
+    script_path.write_text(script, encoding='utf-8')
+    subprocess.run(['node', str(script_path)], check=True,
+                   capture_output=True, text=True)
