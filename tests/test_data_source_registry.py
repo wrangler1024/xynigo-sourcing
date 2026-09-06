@@ -249,8 +249,8 @@ class DataSourceRegistryTests(unittest.TestCase):
             'sheetName': '成员 A 个人表',
         })
         second = self.registry.upsert_personal(MEMBER_B, {
-            'spreadsheetToken': 'SpreadsheetPersonal123',
-            'sheetId': 'sheet_personal',
+            'spreadsheetToken': 'SpreadsheetPersonalB123',
+            'sheetId': 'sheet_personal_b',
             'cellRange': 'A1:Q',
             'sheetName': '成员 B 个人表',
         }, expected_revision=first['configRevision'])
@@ -267,6 +267,21 @@ class DataSourceRegistryTests(unittest.TestCase):
         self.assertEqual(runtime['purchaseAssistantSourceMode'], 'personal')
         self.assertEqual(runtime['purchaseAssistantTeamSpreadsheetToken'], '')
         self.assertRegex(second['configRevision'], r'^[0-9a-f]{64}$')
+
+    def test_same_personal_sheet_cannot_be_assigned_to_two_members(self):
+        target = {
+            'spreadsheetToken': 'SpreadsheetPrivateOwner123',
+            'sheetId': 'sheet_private_owner',
+            'cellRange': 'A1:H',
+            'sheetName': '采购员个人表',
+        }
+        first = self.registry.upsert_personal(MEMBER_A, target)
+
+        with self.assertRaisesRegex(
+                DataSourceRegistryError, '已归属其他采购员'):
+            self.registry.upsert_personal(
+                MEMBER_B, target,
+                expected_revision=first['configRevision'])
 
     def test_fresh_install_can_create_and_clear_team_source_policy(self):
         created = self.registry.upsert_team({
@@ -646,6 +661,49 @@ class DataSourceRegistryRouteTests(unittest.TestCase):
         self.assertEqual(saved['buyerProfiles'][0]['memberId'], MEMBER_A)
         self.assertNotIn('SpreadsheetFreshRoute123', rendered)
         self.assertNotIn('sheet_fresh_route', rendered)
+
+    def test_admin_can_create_a_personal_source_for_another_member(self):
+        self.auth.roles = ['admin']
+        self.registry = DataSourceRegistry(
+            Path(self.tempdir.name) / 'admin-personal-bindings-v1.json')
+        main_module.STATE.data_sources = self.registry
+        initial = self._request('/api/local-config/data-sources')
+        inspected = self._request(
+            '/api/local-config/data-sources/inspect', {
+                'spreadsheetUrl': 'https://example.test/sheets/fresh',
+            })
+        checked = self._request(
+            '/api/local-config/data-sources/validate', {
+                'inspectionId': inspected['inspectionId'],
+                'selectionId': inspected['sheets'][0]['selectionId'],
+            })
+        saved = self._request(
+            '/api/local-config/data-sources/personal', {
+                'memberId': MEMBER_B,
+                'validationId': checked['validationId'],
+                'expectedRevision': initial['registryRevision'],
+            })
+
+        source = next(
+            item for item in saved['dataSources']
+            if item['scope'] == 'personal')
+        self.assertEqual(source['ownerMemberId'], MEMBER_B)
+        self.assertTrue(any(
+            item['memberId'] == MEMBER_B
+            and item['defaultDataSourceId'] == source['id']
+            for item in saved['buyerProfiles']))
+
+    def test_non_admin_cannot_create_a_personal_source_for_another_member(self):
+        initial = self._request('/api/local-config/data-sources')
+        with self.assertRaises(urllib.error.HTTPError) as denied:
+            self._request('/api/local-config/data-sources/personal', {
+                'memberId': MEMBER_B,
+                'validationId': 'validation-safe',
+                'expectedRevision': initial['registryRevision'],
+            })
+
+        self.assertEqual(denied.exception.code, 403)
+        self.assertEqual(self.purchase_assistant.consume_count, 0)
 
     def test_team_source_and_environment_options_require_admin(self):
         initial = self._request('/api/local-config/data-sources')

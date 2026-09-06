@@ -764,7 +764,9 @@ class HubStudioLocalApiAdapterTests(unittest.TestCase):
         files.extend(path for path in root.glob('*.sh') if path.is_file())
         combined = '\n'.join(path.read_text(
             encoding='utf-8', errors='ignore') for path in files)
-        self.assertNotIn('hubstudio-cli', combined.casefold())
+        # HubStudio's data directory is named "hubstudio-client"; that is
+        # not a dependency on the separate hubstudio-cli executable.
+        self.assertNotRegex(combined.casefold(), r'\bhubstudio-cli\b')
 
 
 if __name__ == '__main__':

@@ -598,6 +598,17 @@ class DataSourceRegistry(object):
 
         def update(current, _submitted):
             candidate = copy.deepcopy(current)
+            duplicate_owner = next((
+                item for item in candidate['dataSources']
+                if item['scope'] == 'personal'
+                and item['ownerMemberId'] != member
+                and item['spreadsheetToken'] == token
+                and item['sheetId'] == sheet_id
+                and item['cellRange'] == cell_range
+            ), None)
+            if duplicate_owner is not None:
+                raise DataSourceRegistryError(
+                    '该个人速填表已归属其他采购员；多人共用请配置为团队协作表')
             record = {
                 'id': wanted,
                 'scope': 'personal',

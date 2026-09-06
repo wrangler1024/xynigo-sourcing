@@ -88,6 +88,7 @@ from .operation_executor import LocalOperationExecutor, backup_account_ref
 from .extension_bridge import ExtensionBridge, ExtensionBridgeError
 from .hub_api import HubApiError, HubStudioApi, DEFAULT_PORT
 from .hub_core_repair import HubCoreRepairCoordinator, HubCoreRepairError
+from .hub_cache import HubCacheManager, HubCacheError
 from .hub_api_key import (
     HubApiKeyStoreError, public_hub_api_key_status,
     system_hub_api_key_store)
@@ -1113,6 +1114,7 @@ class AppState(object):
         self.tasks = LocalTaskCoordinator(
             lambda: bool(self.cfg.get('safeParallelTasks')))
         self.hub = self._build_hub_adapter()
+        self.hub_cache = HubCacheManager(self.tasks)
         self.hub_core_repair = HubCoreRepairCoordinator(
             lambda: self.hub, self.tasks, HUB_CORE_AUDIT_PATH,
             device_info_getter=lambda: {
@@ -3590,6 +3592,23 @@ class Handler(BaseHTTPRequestHandler):
             }, 500)
 
     def _require_auth(self, path):
+        if path.startswith('/api/hub-cache/'):
+            # Cache paths and destructive maintenance stay on this computer.
+            # Never accept cloud executor RPC or a cross-origin browser page.
+            peer = str(self.client_address[0])
+            host = str(self.headers.get('Host') or '')
+            origin = str(self.headers.get('Origin') or '')
+            allowed_hosts = {
+                '127.0.0.1:%s' % self.server.server_port,
+                'localhost:%s' % self.server.server_port,
+            }
+            if (peer not in {'127.0.0.1', '::1'} or host not in allowed_hosts
+                    or self.headers.get('X-Xynigo-Executor-RPC')
+                    or self.headers.get('Sec-Fetch-Site') == 'cross-site'
+                    or (origin and origin != 'http://' + host)):
+                raise LocalAuthError('hub_cache_local_only',
+                                     '缓存维护仅支持已登录的本机客户端', 403)
+            return STATE.auth.require()
         if self._internal_executor_rpc_allowed():
             return {
                 'user': {'id': 'executor-channel', 'name': '云端执行器'},
@@ -3908,6 +3927,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({'connected': ok, 'error': err})
             elif path == '/api/hub-core-repair/status':
                 self._json(STATE.hub_core_repair.snapshot())
+            elif path == '/api/hub-cache/status':
+                self._json(STATE.hub_cache.snapshot())
             elif path == '/api/update/status':
                 STATE.updates.check_async()
                 self._json(STATE.updates.snapshot())
@@ -4277,6 +4298,12 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/hub-core-repair/start':
                 self._json(
                     STATE.hub_core_repair.start(actor=request_identity), 202)
+            elif path == '/api/hub-cache/scan':
+                self._json(STATE.hub_cache.scan(body.get('customPath', '')), 202)
+            elif path == '/api/hub-cache/clear':
+                self._json(STATE.hub_cache.clear(
+                    body.get('scanId'), body.get('groups'),
+                    confirmed=body.get('confirmed')), 202)
             elif path.startswith('/api/admin/'):
                 cloud_path, cloud_method = admin_cloud_write_target(path)
                 self._json(STATE.auth.admin_request(
@@ -4919,11 +4946,13 @@ class Handler(BaseHTTPRequestHandler):
                         owner_key=member_id),
                 })
             elif path == DATA_SOURCE_API_PREFIX + '/personal':
-                member_id = request_identity['user']['id']
+                requester_member_id = request_identity['user']['id']
+                member_id = editable_buyer_member_id(
+                    request_identity, body.get('memberId'))
                 STATE.data_sources.service.assert_revision(
                     body.get('expectedRevision'))
                 target = STATE.purchase_assistant.consume_validated_target(
-                    body.get('validationId'), owner_key=member_id)
+                    body.get('validationId'), owner_key=requester_member_id)
                 STATE.data_sources.upsert_personal(
                     member_id, target,
                     expected_revision=body.get('expectedRevision'))
@@ -5096,7 +5125,7 @@ class Handler(BaseHTTPRequestHandler):
                     'error': str(e),
                     'code': 'source_invalid',
                 }, 422)
-        except HubCoreRepairError as e:
+        except (HubCoreRepairError, HubCacheError) as e:
             self._json({'error': str(e), 'code': e.code}, e.status)
         except HubApiError as e:
             self._json({

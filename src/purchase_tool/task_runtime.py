@@ -13,6 +13,7 @@ TASK_LABELS = {
     'backup_env': '备用/测试环境创建',
     'config': '本地配置更新',
     'hub_core_repair': 'HubStudio 内核修复',
+    'hub_cache': 'HubStudio 缓存清理',
 }
 
 
