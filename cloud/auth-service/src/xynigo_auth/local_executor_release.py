@@ -14,9 +14,9 @@ from urllib.parse import quote
 
 from . import __version__
 
-RELEASE_VERSION = "0.17.4"
+RELEASE_VERSION = "0.17.5"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-06T10:42:06Z"
+RELEASE_PUBLISHED_AT = "2026-09-06T11:21:26Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,8 +31,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.17.4-763682361841",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.4.exe",
+        "runtimeId": "0.17.5-pending",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.5.exe",
         "sha256": "979ee1cab63551d3f46f02817ec0213e17802b3ed0b2ed49b2f3c0eb77eaa6e6",
         "size": 15221327,
         "installMode": "standard_per_user",
@@ -50,8 +50,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.17.4-763682361841",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.4.pkg",
+        "runtimeId": "0.17.5-pending",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.5.pkg",
         "sha256": "74b6a996faacb512ec64a3823e6ca0092b9207ad1c20042d25662a249d3de51c",
         "size": 11558189,
         "installMode": "standard_system_application",
@@ -320,11 +320,11 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "桌面客户端新增 HubStudio 缓存检测与分类清理，清理前验证 HubStudio 已退出并暂停本机业务任务准入。",
-            "缓存清理仅处理网页资源、脚本渲染和客户端界面缓存，保留登录数据、扩展、下载文件和浏览器内核。",
-            "超级管理员可为指定采购员新建个人速填表；同一张个人表不能重复归属给不同采购员。",
-            "采购员默认映射可明确改用团队默认，并说明团队默认不会自动覆盖个人默认。",
-            "采购助手插件配置窗口采用紧凑宽屏布局，减少右侧空白。",
+            "HubStudio 缓存清理确认后立即显示实时进度弹窗，持续回显已处理容量、文件数和百分比。",
+            "清理任务可转到后台运行，客户端所有页面保留任务提示条，并可随时重新打开实时进度。",
+            "清理结束后明确区分完成、部分完成和失败，并支持直接重新检测缓存。",
+            "检测到 HubStudio 仍在运行时显示三步退出引导，可重新检查后继续。",
+            "后台按文件数或时间间隔持续发布清理进度，减少大缓存目录长时间无反馈。",
             "云端与执行器配套升级，数据库迁移版本保持不变。",
             "Windows 与 macOS 从同一 Git 基线同步构建并发布。",
             "稳定通道强制平台签名门槛；内部未签名包仅允许 test 通道。",
