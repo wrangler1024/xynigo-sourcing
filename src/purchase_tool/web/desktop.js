@@ -257,7 +257,7 @@
   };
   function header(view, actions) {
     var copy = viewCopy[view];
-    return '<header class="content-header"><div class="header-copy"><h1>' + copy[0] + '</h1>' + (view === 'overview' ? '<span class="pill pill-ok">设备在线</span>' : '') + '<p>' + copy[1] + '</p></div><div class="header-actions">' + (actions || '') + '</div></header>';
+    return '<header class="content-header"><div class="header-copy"><h1>' + copy[0] + '</h1>' + (view === 'overview' ? '<span class="pill pill-ok">设备在线</span>' : '') + '<p>' + copy[1] + '</p></div><div class="header-actions">' + (actions || '') + '</div></header>' + hubCacheGlobalTaskNotice();
   }
   function button(label, action, iconName, classes, disabled) {
     return '<button class="button ' + (classes || '') + '" data-action="' + action + '"' + (disabled ? ' disabled' : '') + '>' + (iconName ? icon(iconName) : '') + label + '</button>';
@@ -523,13 +523,25 @@
     var actions = running
       ? '<button class="button" data-action="cache-progress-background">转到后台</button>'
       : '<button class="button" data-action="cache-progress-rescan">重新检测</button><button class="button primary" data-action="cache-progress-close">完成</button>';
-    modalRoot.innerHTML = '<div class="modal-backdrop"><section class="modal hub-cache-progress-modal" role="dialog" aria-modal="true" aria-label="HubStudio 缓存清理进度"><div class="hub-cache-progress-title ' + (running ? 'running' : (progress.complete ? 'complete' : 'warning')) + '"><span>' + icon(iconName) + '</span><div><h2>' + title + '</h2><p>' + esc(groupNames) + '</p></div></div>' + hubCacheProgressBar(cache, false) + '<p class="hub-cache-progress-note">' + (running ? '请保持 HubStudio 关闭。可以转到后台继续使用客户端，清理任务不会中断。' : (cache.message || '任务已结束。')) + '</p><div class="modal-footer">' + actions + '</div></section></div>';
+    modalRoot.innerHTML = '<div class="modal-backdrop"><section class="modal hub-cache-progress-modal" role="dialog" aria-modal="true" aria-label="HubStudio 缓存清理进度"><div class="hub-cache-progress-title ' + (running ? 'running' : (progress.complete ? 'complete' : 'warning')) + '"><span>' + icon(iconName) + '</span><div><h2>' + title + '</h2><p>' + esc(groupNames) + '</p></div></div>' + hubCacheProgressBar(cache, false) + '<p class="hub-cache-progress-note">' + (running ? '请保持 HubStudio 关闭，并且不要退出 Xynigo 客户端。可以转到后台继续使用其他客户端页面，清理任务不会中断。' : (cache.message || '任务已结束。')) + '</p><div class="modal-footer">' + actions + '</div></section></div>';
+  }
+  function hubCacheGlobalTaskNotice() {
+    var cache = state.hubCache || {};
+    if (cache.state !== 'cleaning' || !cache.running) return '<div id="hub-cache-global-task" hidden></div>';
+    var progress = hubCacheProgress(cache);
+    var label = progress.removed ? progress.percent + '%' : '正在准备';
+    return '<div id="hub-cache-global-task" class="global-task-notice" role="status" aria-live="polite"><span class="hub-cache-spinner">' + icon('refresh') + '</span><div><b>正在清理 HubStudio 缓存</b><p>已处理 ' + formatBytes(progress.removed) + (progress.total ? ' / ' + formatBytes(progress.total) : '') + ' · 请勿启动 HubStudio 或退出 Xynigo</p></div><span class="global-task-percent">' + label + '</span>' + button('查看进度','open-hub-cache-progress','gauge','') + '</div>';
+  }
+  function updateHubCacheGlobalTaskNotice() {
+    var node = document.getElementById('hub-cache-global-task');
+    if (node) node.outerHTML = hubCacheGlobalTaskNotice();
   }
   function hubCachePanel() {
     var cache = state.hubCache || {state:'idle',message:'点击检测，查看本机可清理的缓存'};
     var busy = !!cache.running;
     var ready = cache.state === 'ready' && !!cache.scanId;
     var active = Number(currentStatus().tasks && currentStatus().tasks.activeCount || 0);
+    var hubRunning = !!(currentStatus().hubStudio && currentStatus().hubStudio.clientRunning);
     var rows = (cache.groups || []).map(function (group) {
       return '<label class="hub-cache-choice"><input type="checkbox" data-hub-cache-group="' + esc(group.id) + '"' + (state.cacheSelection[group.id] ? ' checked' : '') + (!ready || !group.bytes ? ' disabled' : '') + '><span><b>' + esc(group.label) + '</b><small>' + Number(group.directoryCount || 0) + ' 个目录 · ' + Number(group.fileCount || 0) + ' 个文件</small></span><strong>' + formatBytes(group.bytes) + '</strong></label>';
     }).join('');
@@ -546,15 +558,20 @@
       ((cache.groups || []).length ? '<div class="hub-cache-total">上次检测可清理 <strong>' + formatBytes(cache.cleanableBytes) + '</strong><span>仅统计安全清理范围，环境目录总占用可能更大。</span></div>' + rows : '') +
       (cache.warnings || []).map(function (warning) { return '<p class="hub-cache-warning">' + esc(warning) + '</p>'; }).join('') + activeProgress + result +
       (paths || installations ? '<details class="hub-cache-paths"><summary>查看安装位置与缓存目录</summary>' + (installations ? '<b>安装位置</b><ul>' + installations + '</ul>' : '') + '<b>已识别的缓存目录</b><ul>' + paths + '</ul></details>' : '') +
-      '<div class="hub-cache-footer"><span>已选 ' + formatBytes(cacheSelectedBytes()) + (active ? ' · 本机任务结束后可清理' : '') + '</span>' + button('清理所选缓存','clear-hub-cache','refresh','primary',!ready || !cacheSelectedBytes() || !!active) + '</div></div></section>';
+      '<div class="hub-cache-footer"><span>已选 ' + formatBytes(cacheSelectedBytes()) + (active ? ' · 本机任务结束后可清理' : (hubRunning ? ' · HubStudio 运行中，退出后可清理' : '')) + '</span>' + button('清理所选缓存','clear-hub-cache','refresh','primary',!ready || !cacheSelectedBytes() || !!active) + '</div></div></section>';
   }
   function refreshHubCache() {
     clearTimeout(cachePollTimer);
     return api('/api/hub-cache/status').then(function (cache) {
+      var wasRunning = !!(state.hubCache && state.hubCache.running);
       state.hubCache = cache;
       if (!cache.running) state.cacheSelection = {};
       if (state.view === 'diagnostics') renderWorkspace();
+      else updateHubCacheGlobalTaskNotice();
       if (state.cacheProgressOpen) renderHubCacheProgressModal();
+      else if (wasRunning && !cache.running) showToast(
+        cache.message || '缓存清理任务已结束',
+        cache.state === 'complete' ? '缓存清理完成' : '缓存清理需要处理');
       if (cache.running) cachePollTimer = setTimeout(refreshHubCache, 1000);
     }).catch(function (error) {
       if (state.hubCache) state.hubCache.running = false;
@@ -579,8 +596,29 @@
   function confirmHubCache() {
     var cache = state.hubCache || {};
     if (!cache.scanId || !cacheSelectedBytes()) return;
+    if (currentStatus().hubStudio && currentStatus().hubStudio.clientRunning) {
+      renderHubCacheExitModal();
+      return;
+    }
+    renderHubCacheConfirmation();
+  }
+  function renderHubCacheExitModal(message) {
+    modalRoot.innerHTML = '<div class="modal-backdrop"><section class="modal hub-cache-exit-modal" role="dialog" aria-modal="true" aria-label="退出 HubStudio 后清理缓存"><div class="hub-cache-progress-title warning"><span>' + icon('alert') + '</span><div><h2>请先完全退出 HubStudio</h2><p>检测到 HubStudio 客户端或环境仍在运行</p></div></div><ol class="hub-cache-exit-steps"><li><b>关闭全部环境</b><span>确认没有正在打开或归档中的浏览器环境。</span></li><li><b>等待环境归档完成</b><span>不要在环境数据仍写入时清理缓存。</span></li><li><b>从托盘或菜单栏退出 HubStudio</b><span>只关闭主窗口不代表客户端已经退出。</span></li></ol>' + (message ? '<p class="hub-cache-warning">' + esc(message) + '</p>' : '') + '<div class="modal-footer"><button class="button" data-action="modal-close">取消</button><button class="button primary" data-action="cache-preflight-retry">我已退出，重新检查</button></div></section></div>';
+  }
+  function renderHubCacheConfirmation() {
+    var cache = state.hubCache || {};
     var names = (cache.groups || []).filter(function (g) { return state.cacheSelection[g.id]; }).map(function (g) { return g.label; });
-    modalRoot.innerHTML = '<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true" aria-label="清理 HubStudio 缓存"><h2>清理所选缓存</h2><p>' + esc(names.join('、')) + '，预计 ' + formatBytes(cacheSelectedBytes()) + '。</p><p>请先关闭环境并等待归档完成，然后退出 HubStudio。只删除已识别的网页、脚本和渲染缓存，保留账号登录数据；再次访问网页时会重新下载资源。</p><div class="modal-footer"><button class="button" data-action="modal-close">取消</button><button class="button primary" data-action="confirm-clear-hub-cache">确认清理</button></div></section></div>';
+    modalRoot.innerHTML = '<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true" aria-label="清理 HubStudio 缓存"><h2>清理所选缓存</h2><p>' + esc(names.join('、')) + '，预计 ' + formatBytes(cacheSelectedBytes()) + '。</p><p>只删除已识别的网页、脚本和渲染缓存，保留账号登录数据；再次访问网页时会重新下载资源。清理期间请保持 HubStudio 关闭，并且不要退出 Xynigo。</p><div class="modal-footer"><button class="button" data-action="modal-close">取消</button><button class="button primary" data-action="confirm-clear-hub-cache">确认清理</button></div></section></div>';
+  }
+  function retryHubCachePreflight(actionNode) {
+    actionNode.disabled = true;
+    actionNode.textContent = '正在检查 HubStudio…';
+    post('/api/hub-cache/preflight',{}).then(function () {
+      renderHubCacheConfirmation();
+    }).catch(function (error) {
+      renderHubCacheExitModal(error.message);
+      showError(error);
+    });
   }
   function clearHubCache() {
     var groups = Object.keys(state.cacheSelection).filter(function (id) { return state.cacheSelection[id]; });
@@ -954,6 +992,7 @@
     else if (action === 'confirm-hub-core-repair') startCoreRepair(actionNode);
     else if (action === 'scan-hub-cache') scanHubCache();
     else if (action === 'clear-hub-cache') confirmHubCache();
+    else if (action === 'cache-preflight-retry') retryHubCachePreflight(actionNode);
     else if (action === 'confirm-clear-hub-cache') clearHubCache();
     else if (action === 'open-hub-cache-progress') { state.cacheProgressOpen=true; renderHubCacheProgressModal(); }
     else if (action === 'cache-progress-background') { state.cacheProgressOpen=false; closeModal(); showToast('缓存清理将在后台继续，维护页面可随时查看进度','任务仍在进行'); }

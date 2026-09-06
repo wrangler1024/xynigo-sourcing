@@ -33,7 +33,8 @@ class DesktopUIContractTests(unittest.TestCase):
                 '/executor-status.json', '/api/auth/status',
                 '/api/auth/start', '/api/auth/poll', '/api/auth/logout',
                 '/api/config',
-                '/api/local-config/data-sources'):
+                '/api/local-config/data-sources',
+                '/api/hub-cache/preflight'):
             self.assertIn(path, self.javascript)
         rendered = self.html + self.css + self.javascript
         self.assertNotIn('XYNIGO_LAUNCHER_TOKEN', rendered)
@@ -119,7 +120,10 @@ class DesktopUIContractTests(unittest.TestCase):
                 '缓存清理正在后台进行', '查看实时进度', '转到后台',
                 'cache-progress-background', 'cache-progress-rescan',
                 'role="progressbar"', 'aria-valuenow',
-                'hub-cache-progress-track', 'hub-cache-spinner'):
+                'hub-cache-progress-track', 'hub-cache-spinner',
+                'hubCacheGlobalTaskNotice', 'global-task-notice',
+                '请先完全退出 HubStudio', '我已退出，重新检查',
+                'cache-preflight-retry', '请勿启动 HubStudio 或退出 Xynigo'):
             self.assertIn(marker, rendered)
         self.assertIn('if (state.cacheProgressOpen) renderHubCacheProgressModal()',
                       self.javascript)

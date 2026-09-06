@@ -260,6 +260,18 @@ def test_process_failures_block_cleanup_and_unrelated_chrome_is_allowed():
             require_hub_closed()
 
 
+def test_preflight_reports_when_hubstudio_must_be_closed(fixture):
+    fixture.manager.closed_check = lambda: None
+    assert fixture.manager.preflight() == {
+        'ready': True,
+        'message': 'HubStudio 已退出，可以继续清理缓存',
+    }
+    fixture.manager.closed_check = lambda: (_ for _ in ()).throw(
+        HubCacheError('hub_cache_browser_running', '请退出 HubStudio'))
+    with pytest.raises(HubCacheError, match='退出 HubStudio'):
+        fixture.manager.preflight()
+
+
 def test_scan_failure_is_visible_and_invalidates_previous_scan(fixture):
     f = fixture
     scanned(f)
@@ -297,6 +309,8 @@ def api_server(fixture, monkeypatch):
 
 def test_real_http_scan_select_clear_and_status(api_server, fixture):
     request, _ = api_server
+    assert request('/api/hub-cache/preflight', {}) == (
+        200, {'ready': True, 'message': 'HubStudio 已退出，可以继续清理缓存'})
     assert request('/api/hub-cache/scan', {})[0] == 202
     scan = wait(fixture.manager)
     assert request('/api/hub-cache/status')[1]['cleanableBytes'] == 240
@@ -309,12 +323,14 @@ def test_http_auth_origin_and_rpc_protect_scan_and_delete(api_server, fixture):
     request, auth = api_server
     for headers in ({'Origin': 'https://external.invalid'}, {'X-Xynigo-Executor-RPC': 'x' * 40}, {'Sec-Fetch-Site': 'cross-site'}):
         assert request('/api/hub-cache/scan', {}, headers)[0] == 403
+        assert request('/api/hub-cache/preflight', {}, headers)[0] == 403
         assert request('/api/hub-cache/clear', {}, headers)[0] == 403
         assert request('/api/hub-cache/status', headers=headers)[0] == 403
     def denied():
         raise LocalAuthError('auth_required', '请先登录', 401)
     auth.require = denied
     assert request('/api/hub-cache/scan', {})[0] == 401
+    assert request('/api/hub-cache/preflight', {})[0] == 401
     assert request('/api/hub-cache/clear', {})[0] == 401
     assert request('/api/hub-cache/status')[0] == 401
     assert fixture.manager.snapshot()['state'] == 'idle'
@@ -324,7 +340,7 @@ def test_ui_selection_totals_and_path_escaping(tmp_path):
     javascript = (Path(__file__).resolve().parents[1] / 'src/purchase_tool/web/desktop.js').read_text(
         encoding='utf-8')
     javascript = javascript.replace('  initializeAuth();', '''
-  window.testCache = {state:state, panel:hubCachePanel, selected:cacheSelectedBytes, progress:renderHubCacheProgressModal};
+  window.testCache = {state:state, panel:hubCachePanel, selected:cacheSelectedBytes, progress:renderHubCacheProgressModal, global:hubCacheGlobalTaskNotice, exitModal:renderHubCacheExitModal};
   // initializeAuth();''')
     script = '''
 const vm = require('node:vm');
@@ -333,7 +349,7 @@ const node = {innerHTML:'', className:''};
 const context = {URLSearchParams, location:{search:'',pathname:'/desktop/',origin:'http://127.0.0.1'},
 document:{getElementById:()=>node,addEventListener:()=>{}},window:{},setTimeout,clearTimeout};
 vm.runInNewContext(SOURCE, context);
-const {state,panel,selected,progress} = context.window.testCache;
+const {state,panel,selected,progress,global,exitModal} = context.window.testCache;
 state.hubCache = {state:'ready',scanId:'test',cleanableBytes:3072,groups:[
 {id:'web',label:'网页资源缓存',bytes:1024},{id:'code',label:'脚本与渲染缓存',bytes:2048}],
 locations:[{path:'<script>unsafe</script>',cleanableBytes:3072}]};
@@ -348,6 +364,12 @@ let active = panel();
 assert.ok(active.includes('缓存清理正在后台进行'));
 assert.ok(active.includes('data-action="open-hub-cache-progress"'));
 assert.ok(active.includes('data-action="clear-hub-cache" disabled'));
+assert.ok(global().includes('正在清理 HubStudio 缓存'));
+assert.ok(global().includes('请勿启动 HubStudio 或退出 Xynigo'));
+assert.ok(global().includes('data-action="open-hub-cache-progress"'));
+exitModal('请退出 HubStudio');
+assert.ok(node.innerHTML.includes('请先完全退出 HubStudio'));
+assert.ok(node.innerHTML.includes('data-action="cache-preflight-retry"'));
 state.cacheProgressOpen = true;
 state.cacheClearGroupNames = ['网页资源缓存'];
 progress();

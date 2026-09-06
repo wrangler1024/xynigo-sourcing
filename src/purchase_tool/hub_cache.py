@@ -410,6 +410,15 @@ class HubCacheManager:
         if self.state['running']:
             raise HubCacheError('hub_cache_busy', '缓存检测或清理正在进行')
 
+    def preflight(self):
+        with self.lock:
+            self._idle()
+        self.closed_check()
+        return {
+            'ready': True,
+            'message': 'HubStudio 已退出，可以继续清理缓存',
+        }
+
     def clear(self, scan_id, groups, confirmed=False):
         with self.lock:
             self._idle()

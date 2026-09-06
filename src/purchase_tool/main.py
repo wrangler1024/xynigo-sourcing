@@ -4300,6 +4300,8 @@ class Handler(BaseHTTPRequestHandler):
                     STATE.hub_core_repair.start(actor=request_identity), 202)
             elif path == '/api/hub-cache/scan':
                 self._json(STATE.hub_cache.scan(body.get('customPath', '')), 202)
+            elif path == '/api/hub-cache/preflight':
+                self._json(STATE.hub_cache.preflight())
             elif path == '/api/hub-cache/clear':
                 self._json(STATE.hub_cache.clear(
                     body.get('scanId'), body.get('groups'),
