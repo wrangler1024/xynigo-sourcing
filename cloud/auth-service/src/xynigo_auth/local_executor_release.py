@@ -14,9 +14,9 @@ from urllib.parse import quote
 
 from . import __version__
 
-RELEASE_VERSION = "0.17.3"
+RELEASE_VERSION = "0.17.4"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-06T09:13:23Z"
+RELEASE_PUBLISHED_AT = "2026-09-06T10:06:40Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,8 +31,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.17.3-05f24ca27a7a",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.3.exe",
+        "runtimeId": "0.17.4-pending",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.4.exe",
         "sha256": "ef0fe258da0bc503debf8de5c2d6839212412548367d8859d01b7d60a9aedaf0",
         "size": 15211222,
         "installMode": "standard_per_user",
@@ -50,8 +50,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.17.3-05f24ca27a7a",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.3.pkg",
+        "runtimeId": "0.17.4-pending",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.4.pkg",
         "sha256": "a222f8a2e1ea0d6a4106f21b8fc168cf9ec569396734fa98322b9211f4d2f50b",
         "size": 11514277,
         "installMode": "standard_system_application",
