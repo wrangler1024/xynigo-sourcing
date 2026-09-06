@@ -47,6 +47,9 @@ SetCompressor /SOLID lzma
 !ifndef STANDARD_PAIR_LAUNCHER
   !error "STANDARD_PAIR_LAUNCHER is required"
 !endif
+!ifndef MANAGED_EXECUTOR_STOP_SCRIPT
+  !error "MANAGED_EXECUTOR_STOP_SCRIPT is required"
+!endif
 
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
@@ -314,6 +317,7 @@ Section "$(CoreSectionName)" SEC_CORE
   File /oname=xynigo-x.ico "${STANDARD_ICON_ICO}"
   File /oname=Xynigo.cmd "${STANDARD_LAUNCHER}"
   File /oname=配对本地执行器.cmd "${STANDARD_PAIR_LAUNCHER}"
+  File /oname=stop-managed-executors.ps1 "${MANAGED_EXECUTOR_STOP_SCRIPT}"
   FileOpen $0 "$INSTDIR\current-version.txt" w
   FileWrite $0 "${APP_RUNTIME_ID}"
   FileClose $0
@@ -374,9 +378,22 @@ SectionEnd
 Section "Uninstall"
   SetShellVarContext current
 
-  nsExec::ExecToStack '"$SYSDIR\taskkill.exe" /IM Xynigo.exe /T /F'
+  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\stop-managed-executors.ps1" -InstallDir "$INSTDIR"'
   Pop $0
   Pop $1
+  ${If} $0 != 0
+    DetailPrint "$1"
+    SetErrorLevel 1
+    Abort
+  ${EndIf}
+
+  ; Keep the registered installation intact when a managed file is still locked.
+  ClearErrors
+  RMDir /r "$INSTDIR\versions"
+  ${If} ${Errors}
+    SetErrorLevel 1
+    Abort
+  ${EndIf}
 
   Delete "$DESKTOP\${APP_NAME}.lnk"
   RMDir /r "$SMPROGRAMS\${APP_NAME}"
@@ -388,13 +405,13 @@ Section "Uninstall"
 
   ; Remove managed application versions only. Deliberately preserve
   ; config.json, 查询日志, 日志, logs, 运行数据, data, 数据, imports and 导入文件.
-  RMDir /r "$INSTDIR\versions"
   Delete "$INSTDIR\Xynigo.cmd"
   Delete "$INSTDIR\Xynigo.exe"
   Delete "$INSTDIR\xynigo-logo.png"
   Delete "$INSTDIR\xynigo-x.ico"
   Delete "$INSTDIR\配对本地执行器.cmd"
   Delete "$INSTDIR\current-version.txt"
+  Delete "$INSTDIR\stop-managed-executors.ps1"
   Delete "$INSTDIR\卸载 Xynigo Sourcing.exe"
   RMDir "$INSTDIR"
 SectionEnd

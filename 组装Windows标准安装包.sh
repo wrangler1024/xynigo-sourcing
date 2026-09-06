@@ -132,6 +132,7 @@ defines = {
     'STANDARD_ICON_ICO': root / 'src/purchase_tool/web/xynigo-x.ico',
     'STANDARD_LAUNCHER': root / 'packaging/windows/Xynigo.cmd',
     'STANDARD_PAIR_LAUNCHER': root / 'packaging/windows/配对本地执行器.cmd',
+    'MANAGED_EXECUTOR_STOP_SCRIPT': root / 'packaging/windows/stop-managed-executors.ps1',
 }
 lines = [
     '!define %s "%s"' % (name, quote(value))

@@ -236,6 +236,13 @@ jobs:
           if (-not (Test-Path "$installDir\运行数据\keep.txt")) { throw "upgrade removed runtime data" }
           & taskkill.exe /IM Xynigo.exe /T /F | Out-Null
           Start-Sleep -Milliseconds 800
+          # Reproduce a detached runtime that taskkill of the launcher cannot
+          # reach, and prove uninstall does not kill an unrelated Python.
+          $sleepArgs = '-c "import time; time.sleep(300)"'
+          $uninstallOrphan = Start-Process -FilePath $pythonw -ArgumentList $sleepArgs -PassThru
+          $unrelatedPython = Start-Process -FilePath (Join-Path $env:pythonLocation 'python.exe') -ArgumentList $sleepArgs -PassThru
+          Start-Sleep -Milliseconds 300
+          if ($uninstallOrphan.HasExited -or $unrelatedPython.HasExited) { throw "uninstall process fixtures did not start" }
           $uninstaller = Get-Item "$installDir\卸载 Xynigo Sourcing.exe"
           $uninstall = Start-Process -FilePath $uninstaller.FullName -ArgumentList "/S" -Wait -PassThru
           if ($uninstall.ExitCode -ne 0) { throw "uninstall failed: $($uninstall.ExitCode)" }
@@ -258,6 +265,11 @@ jobs:
           if (-not (Test-Path "$installDir\config.json")) { throw "uninstall removed config" }
           if (-not (Test-Path "$installDir\运行数据\keep.txt")) { throw "uninstall removed runtime data" }
           if (Test-Path "HKCU:\Software\Classes\xynigo") { throw "protocol registration remained" }
+          $uninstallOrphan.Refresh()
+          $unrelatedPython.Refresh()
+          if (-not $uninstallOrphan.HasExited) { throw "uninstall left the detached runtime alive" }
+          if ($unrelatedPython.HasExited) { throw "uninstall stopped an unrelated Python process" }
+          Stop-Process -Id $unrelatedPython.Id -Force
       - uses: actions/upload-artifact@v7
         with:
           name: xynigo-sourcing-windows-standard-installer
