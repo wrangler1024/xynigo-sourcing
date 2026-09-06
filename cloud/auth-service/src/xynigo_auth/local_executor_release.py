@@ -16,7 +16,7 @@ from . import __version__
 
 RELEASE_VERSION = "0.17.4"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-06T10:06:40Z"
+RELEASE_PUBLISHED_AT = "2026-09-06T10:14:40Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,10 +31,10 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.17.4-pending",
+        "runtimeId": "0.17.4-0b8aa244f111",
         "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.4.exe",
-        "sha256": "ef0fe258da0bc503debf8de5c2d6839212412548367d8859d01b7d60a9aedaf0",
-        "size": 15211222,
+        "sha256": "6d6ffda216ace211abe4ce1df40728bb2909245fbdb4662278b709f8a84df4ca",
+        "size": 15219389,
         "installMode": "standard_per_user",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_silent_installer",
@@ -50,10 +50,10 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.17.4-pending",
+        "runtimeId": "0.17.4-0b8aa244f111",
         "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.4.pkg",
-        "sha256": "a222f8a2e1ea0d6a4106f21b8fc168cf9ec569396734fa98322b9211f4d2f50b",
-        "size": 11514277,
+        "sha256": "0577f117044b4aab6126d5183863a76e54b559b2f0e88d472dcc91ceb6ab93c5",
+        "size": 11557924,
         "installMode": "standard_system_application",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_system_installer",
@@ -320,13 +320,12 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "新建采购买家号环境采用日期、连续序号和稳定四位短码三层命名，极端重名时继续安全换码。",
-            "云端缓存以 HubStudio 环境 UUID 和 containerCode 为真实身份，名称只作为兼容旧环境的可读标签。",
-            "完整环境快照会安全合并重复旧记录并清理已确认删除的占位记录，避免唯一约束导致任务中断。",
-            "缓存同步异常使用独立保存点隔离，不再污染任务完成回传事务。",
-            "执行器在领取任务前回收过期租约；超时后迟到的有效结果仍可完成原任务，消除幽灵运行状态。",
-            "任务结果回传重试期间保持在线心跳但不领取新任务，桌面状态中心准确显示恢复阶段。",
-            "旧环境名称继续兼容，无需批量重命名已有环境。",
+            "桌面客户端新增 HubStudio 缓存检测与分类清理，清理前验证 HubStudio 已退出并暂停本机业务任务准入。",
+            "缓存清理仅处理网页资源、脚本渲染和客户端界面缓存，保留登录数据、扩展、下载文件和浏览器内核。",
+            "超级管理员可为指定采购员新建个人速填表；同一张个人表不能重复归属给不同采购员。",
+            "采购员默认映射可明确改用团队默认，并说明团队默认不会自动覆盖个人默认。",
+            "采购助手插件配置窗口采用紧凑宽屏布局，减少右侧空白。",
+            "云端与执行器配套升级，数据库迁移版本保持不变。",
             "Windows 与 macOS 从同一 Git 基线同步构建并发布。",
             "稳定通道强制平台签名门槛；内部未签名包仅允许 test 通道。",
         ],
