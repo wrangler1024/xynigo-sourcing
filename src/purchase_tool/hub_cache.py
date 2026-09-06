@@ -424,6 +424,11 @@ class HubCacheManager:
             selected = [t for t in self.targets if t[1] in groups]
             if not selected:
                 raise HubCacheError('hub_cache_empty', '选中的类别没有可清理缓存')
+            selected_ids = list(dict.fromkeys(groups))
+            summaries = {
+                item.get('id'): item for item in self.state.get('groups', [])
+                if isinstance(item, dict)
+            }
             task_id = self.tasks.begin('hub_cache')
             try:
                 self.closed_check()
@@ -432,6 +437,11 @@ class HubCacheManager:
                 raise
             self.state.update(state='cleaning', running=True, errorCode='', scanId='',
                               removedBytes=0, removedFiles=0, skippedFiles=0,
+                              selectedGroups=selected_ids,
+                              selectedBytes=sum(int(summaries.get(group, {}).get('bytes') or 0)
+                                                for group in selected_ids),
+                              selectedFileCount=sum(int(summaries.get(group, {}).get('fileCount') or 0)
+                                                    for group in selected_ids),
                               message='正在清理选中的缓存，请保持 HubStudio 关闭')
             threading.Thread(target=self._clear, args=(selected, task_id), daemon=True,
                              name='xynigo-hub-cache-clear').start()
@@ -440,6 +450,7 @@ class HubCacheManager:
     def _clear(self, selected, task_id):
         removed, count, errors = 0, 0, []
         stopped = None
+        last_progress = time.monotonic()
         try:
             next_check = 0
             for path, _, root, _, _ in selected:
@@ -452,7 +463,7 @@ class HubCacheManager:
                     if path == root:
                         raise OSError('unsafe cache target')
                     path.relative_to(root)
-                    for file, info in files_in(path, errors):
+                    for file, _ in files_in(path, errors):
                         if time.monotonic() >= next_check:
                             self.closed_check()
                             next_check = time.monotonic() + 1
@@ -465,6 +476,13 @@ class HubCacheManager:
                             file.unlink()
                             removed += current.st_size
                             count += 1
+                            now = time.monotonic()
+                            if count % 100 == 0 or now - last_progress >= .25:
+                                with self.lock:
+                                    self.state.update(removedBytes=removed,
+                                                      removedFiles=count,
+                                                      skippedFiles=len(errors))
+                                last_progress = now
                         except OSError:
                             errors.append(1)
                     with self.lock:

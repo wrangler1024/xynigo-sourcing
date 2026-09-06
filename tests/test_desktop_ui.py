@@ -112,6 +112,18 @@ class DesktopUIContractTests(unittest.TestCase):
             self.javascript,
         )
 
+    def test_hub_cache_cleanup_has_live_modal_and_background_progress(self):
+        rendered = self.javascript + self.css
+        for marker in (
+                'renderHubCacheProgressModal', 'hubCacheProgressBar',
+                '缓存清理正在后台进行', '查看实时进度', '转到后台',
+                'cache-progress-background', 'cache-progress-rescan',
+                'role="progressbar"', 'aria-valuenow',
+                'hub-cache-progress-track', 'hub-cache-spinner'):
+            self.assertIn(marker, rendered)
+        self.assertIn('if (state.cacheProgressOpen) renderHubCacheProgressModal()',
+                      self.javascript)
+
     def test_local_task_card_opens_redacted_live_details(self):
         rendered = self.javascript + self.css
         for marker in (

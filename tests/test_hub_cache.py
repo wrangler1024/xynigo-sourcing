@@ -95,6 +95,9 @@ def test_selected_cleanup_preserves_all_account_state_and_other_caches(fixture):
     f.manager.clear(scan['scanId'], ['web'], confirmed=True)
     result = wait(f.manager)
     assert result['state'] == 'complete', result
+    assert result['selectedGroups'] == ['web']
+    assert result['selectedBytes'] == 128
+    assert result['selectedFileCount'] == 1
     assert result['removedBytes'] == 128
     assert result['removedFiles'] == 1
     assert not (f.profile / 'Default/Cache/Cache_Data/resource').exists()
@@ -321,7 +324,7 @@ def test_ui_selection_totals_and_path_escaping(tmp_path):
     javascript = (Path(__file__).resolve().parents[1] / 'src/purchase_tool/web/desktop.js').read_text(
         encoding='utf-8')
     javascript = javascript.replace('  initializeAuth();', '''
-  window.testCache = {state:state, panel:hubCachePanel, selected:cacheSelectedBytes};
+  window.testCache = {state:state, panel:hubCachePanel, selected:cacheSelectedBytes, progress:renderHubCacheProgressModal};
   // initializeAuth();''')
     script = '''
 const vm = require('node:vm');
@@ -330,7 +333,7 @@ const node = {innerHTML:'', className:''};
 const context = {URLSearchParams, location:{search:'',pathname:'/desktop/',origin:'http://127.0.0.1'},
 document:{getElementById:()=>node,addEventListener:()=>{}},window:{},setTimeout,clearTimeout};
 vm.runInNewContext(SOURCE, context);
-const {state,panel,selected} = context.window.testCache;
+const {state,panel,selected,progress} = context.window.testCache;
 state.hubCache = {state:'ready',scanId:'test',cleanableBytes:3072,groups:[
 {id:'web',label:'网页资源缓存',bytes:1024},{id:'code',label:'脚本与渲染缓存',bytes:2048}],
 locations:[{path:'<script>unsafe</script>',cleanableBytes:3072}]};
@@ -340,9 +343,24 @@ let html = panel();
 assert.ok(html.includes('已选 1.0 KB'));
 assert.ok(html.includes('&lt;script&gt;unsafe&lt;/script&gt;'));
 assert.ok(!html.includes('<script>unsafe'));
-state.hubCache.running = true; state.hubCache.state = 'cleaning';
-assert.ok(panel().includes('正在清理'));
-assert.ok(panel().includes('data-action="clear-hub-cache" disabled'));
+state.hubCache = {state:'cleaning',running:true,message:'正在清理选中的缓存',selectedBytes:3072,selectedFileCount:3,removedBytes:1024,removedFiles:1,groups:state.hubCache.groups};
+let active = panel();
+assert.ok(active.includes('缓存清理正在后台进行'));
+assert.ok(active.includes('data-action="open-hub-cache-progress"'));
+assert.ok(active.includes('data-action="clear-hub-cache" disabled'));
+state.cacheProgressOpen = true;
+state.cacheClearGroupNames = ['网页资源缓存'];
+progress();
+assert.ok(node.innerHTML.includes('正在清理 HubStudio 缓存'));
+assert.ok(node.innerHTML.includes('role="progressbar"'));
+assert.ok(node.innerHTML.includes('aria-valuenow="33"'));
+assert.ok(node.innerHTML.includes('1.0 KB / 3.0 KB'));
+assert.ok(node.innerHTML.includes('data-action="cache-progress-background"'));
+state.hubCache.running = false; state.hubCache.state = 'complete'; state.hubCache.removedBytes = 3072; state.hubCache.removedFiles = 3;
+progress();
+assert.ok(node.innerHTML.includes('缓存清理完成'));
+assert.ok(node.innerHTML.includes('aria-valuenow="100"'));
+assert.ok(node.innerHTML.includes('data-action="cache-progress-close"'));
 '''.replace('SOURCE', json.dumps(javascript))
     script_path = tmp_path / 'hub-cache-ui-test.js'
     script_path.write_text(script, encoding='utf-8')

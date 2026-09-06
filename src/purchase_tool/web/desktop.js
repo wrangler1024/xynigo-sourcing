@@ -30,6 +30,9 @@
     hubCache: null,
     cacheSelection: {},
     cachePath: '',
+    cacheProgressOpen: false,
+    cacheClearExpectedBytes: 0,
+    cacheClearGroupNames: [],
     notice: ''
   };
 
@@ -487,6 +490,41 @@
       return sum + (state.cacheSelection[group.id] ? Number(group.bytes || 0) : 0);
     }, 0);
   }
+  function hubCacheProgress(cache) {
+    cache = cache || state.hubCache || {};
+    var total = Math.max(0, Number(cache.selectedBytes || state.cacheClearExpectedBytes || 0));
+    var removed = Math.max(0, Number(cache.removedBytes || 0));
+    var totalFiles = Math.max(0, Number(cache.selectedFileCount || 0));
+    var removedFiles = Math.max(0, Number(cache.removedFiles || 0));
+    var complete = !cache.running && cache.state === 'complete';
+    var partial = !cache.running && cache.state === 'partial';
+    var failed = !cache.running && cache.state === 'failed';
+    var percent = total ? Math.min(100, Math.round(removed * 100 / total)) : 0;
+    if (cache.running && percent >= 100) percent = 99;
+    if (complete) percent = 100;
+    return {total:total,removed:removed,totalFiles:totalFiles,removedFiles:removedFiles,complete:complete,partial:partial,failed:failed,percent:percent};
+  }
+  function hubCacheProgressBar(cache, compact) {
+    var progress = hubCacheProgress(cache);
+    var running = !!cache.running;
+    var indeterminate = running && progress.removed === 0;
+    var label = running ? (indeterminate ? '正在准备' : progress.percent + '%') : (progress.complete ? '100%' : progress.percent + '%');
+    var detail = formatBytes(progress.removed) + (progress.total ? ' / ' + formatBytes(progress.total) : '') + ' · ' + progress.removedFiles + (progress.totalFiles ? ' / ' + progress.totalFiles : '') + ' 个文件';
+    return '<div class="hub-cache-progress' + (compact ? ' compact' : '') + '" role="progressbar" aria-label="HubStudio 缓存清理进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + progress.percent + '"><div class="hub-cache-progress-head"><b>' + esc(cache.message || '正在清理所选缓存') + '</b><span>' + label + '</span></div><div class="hub-cache-progress-track' + (indeterminate ? ' indeterminate' : '') + '"><i style="width:' + progress.percent + '%"></i></div><div class="hub-cache-progress-meta">' + detail + '</div></div>';
+  }
+  function renderHubCacheProgressModal() {
+    if (!state.cacheProgressOpen) return;
+    var cache = state.hubCache || {};
+    var progress = hubCacheProgress(cache);
+    var running = !!cache.running;
+    var title = running ? '正在清理 HubStudio 缓存' : (progress.complete ? '缓存清理完成' : (progress.partial ? '缓存清理部分完成' : '缓存清理未完成'));
+    var groupNames = state.cacheClearGroupNames.length ? state.cacheClearGroupNames.join('、') : ((cache.selectedGroups || []).map(function (id) { return id === 'web' ? '网页资源缓存' : (id === 'code' ? '脚本与渲染缓存' : '客户端界面缓存'); }).join('、') || '所选缓存');
+    var iconName = running ? 'refresh' : (progress.complete ? 'check' : 'alert');
+    var actions = running
+      ? '<button class="button" data-action="cache-progress-background">转到后台</button>'
+      : '<button class="button" data-action="cache-progress-rescan">重新检测</button><button class="button primary" data-action="cache-progress-close">完成</button>';
+    modalRoot.innerHTML = '<div class="modal-backdrop"><section class="modal hub-cache-progress-modal" role="dialog" aria-modal="true" aria-label="HubStudio 缓存清理进度"><div class="hub-cache-progress-title ' + (running ? 'running' : (progress.complete ? 'complete' : 'warning')) + '"><span>' + icon(iconName) + '</span><div><h2>' + title + '</h2><p>' + esc(groupNames) + '</p></div></div>' + hubCacheProgressBar(cache, false) + '<p class="hub-cache-progress-note">' + (running ? '请保持 HubStudio 关闭。可以转到后台继续使用客户端，清理任务不会中断。' : (cache.message || '任务已结束。')) + '</p><div class="modal-footer">' + actions + '</div></section></div>';
+  }
   function hubCachePanel() {
     var cache = state.hubCache || {state:'idle',message:'点击检测，查看本机可清理的缓存'};
     var busy = !!cache.running;
@@ -499,13 +537,14 @@
       return '<li><code>' + esc(item.path) + '</code><span>可清理 ' + formatBytes(item.cleanableBytes) + ' · 所在磁盘可用 ' + (item.diskFreeBytes == null ? '未知' : formatBytes(item.diskFreeBytes)) + '</span></li>';
     }).join('');
     var installations = (cache.installations || []).map(function (path) { return '<li><code>' + esc(path) + '</code></li>'; }).join('');
-    var result = cache.removedBytes != null ? '<div class="hub-cache-result" role="status">已清理 <b>' + formatBytes(cache.removedBytes) + '</b> · ' + Number(cache.removedFiles || 0) + ' 个文件' + (cache.skippedFiles ? ' · ' + Number(cache.skippedFiles) + ' 项未能处理' : '') + '。大小按已删除文件的逻辑字节统计，磁盘可用空间可能因其他程序活动而不同。</div>' : '';
+    var activeProgress = cache.state === 'cleaning' && cache.running ? '<div class="hub-cache-active"><span class="hub-cache-spinner">' + icon('refresh') + '</span><div><b>缓存清理正在后台进行</b><p>可继续查看其他页面，清理期间请保持 HubStudio 关闭。</p></div>' + button('查看实时进度','open-hub-cache-progress','gauge','') + hubCacheProgressBar(cache, true) + '</div>' : '';
+    var result = !cache.running && cache.removedBytes != null ? '<div class="hub-cache-result" role="status">已清理 <b>' + formatBytes(cache.removedBytes) + '</b> · ' + Number(cache.removedFiles || 0) + ' 个文件' + (cache.skippedFiles ? ' · ' + Number(cache.skippedFiles) + ' 项未能处理' : '') + '。大小按已删除文件的逻辑字节统计，磁盘可用空间可能因其他程序活动而不同。</div>' : '';
     return '<section class="card section-card hub-cache-panel">' + sectionTitle('database','HubStudio 缓存管理','手动检测本机缓存大小，按类别选择清理','本机维护') + '<div class="section-body stack">' +
       '<p class="hub-cache-help">保留 Cookie、LocalStorage、IndexedDB、扩展、下载文件及浏览器内核。清理前请关闭所有环境，等待归档完成，再从托盘退出 HubStudio；清理期间本机业务任务暂停准入。</p>' +
       '<div class="hub-cache-scan"><label for="hub-cache-path">补充缓存路径（可选）<input id="hub-cache-path" type="text" value="' + esc(state.cachePath) + '" placeholder="默认自动识别；也可粘贴 HubStudio 本地设置中的完整路径"' + (busy ? ' disabled' : '') + '></label>' + button(busy ? (cache.state === 'scanning' ? '正在检测…' : '正在清理…') : '检测缓存大小','scan-hub-cache','refresh','',busy) + '</div>' +
       '<div class="hub-cache-status" role="status" aria-live="polite">' + esc(cache.message || '') + (cache.scannedAt ? ' · 上次检测 ' + esc(cache.scannedAt) : '') + '</div>' +
       ((cache.groups || []).length ? '<div class="hub-cache-total">上次检测可清理 <strong>' + formatBytes(cache.cleanableBytes) + '</strong><span>仅统计安全清理范围，环境目录总占用可能更大。</span></div>' + rows : '') +
-      (cache.warnings || []).map(function (warning) { return '<p class="hub-cache-warning">' + esc(warning) + '</p>'; }).join('') + result +
+      (cache.warnings || []).map(function (warning) { return '<p class="hub-cache-warning">' + esc(warning) + '</p>'; }).join('') + activeProgress + result +
       (paths || installations ? '<details class="hub-cache-paths"><summary>查看安装位置与缓存目录</summary>' + (installations ? '<b>安装位置</b><ul>' + installations + '</ul>' : '') + '<b>已识别的缓存目录</b><ul>' + paths + '</ul></details>' : '') +
       '<div class="hub-cache-footer"><span>已选 ' + formatBytes(cacheSelectedBytes()) + (active ? ' · 本机任务结束后可清理' : '') + '</span>' + button('清理所选缓存','clear-hub-cache','refresh','primary',!ready || !cacheSelectedBytes() || !!active) + '</div></div></section>';
   }
@@ -513,11 +552,14 @@
     clearTimeout(cachePollTimer);
     return api('/api/hub-cache/status').then(function (cache) {
       state.hubCache = cache;
+      if (!cache.running) state.cacheSelection = {};
       if (state.view === 'diagnostics') renderWorkspace();
+      if (state.cacheProgressOpen) renderHubCacheProgressModal();
       if (cache.running) cachePollTimer = setTimeout(refreshHubCache, 1000);
     }).catch(function (error) {
       if (state.hubCache) state.hubCache.running = false;
       if (state.view === 'diagnostics') renderWorkspace();
+      if (state.cacheProgressOpen) renderHubCacheProgressModal();
       showError(error);
     });
   }
@@ -543,14 +585,26 @@
   function clearHubCache() {
     var groups = Object.keys(state.cacheSelection).filter(function (id) { return state.cacheSelection[id]; });
     var scanId = state.hubCache && state.hubCache.scanId;
-    closeModal();
-    if (previewRole) { showToast('演示模式不会删除文件'); return; }
+    var selectedBytes = cacheSelectedBytes();
+    state.cacheClearExpectedBytes = selectedBytes;
+    state.cacheClearGroupNames = ((state.hubCache && state.hubCache.groups) || []).filter(function (group) { return state.cacheSelection[group.id]; }).map(function (group) { return group.label; });
+    if (previewRole) { closeModal(); showToast('演示模式不会删除文件'); return; }
+    state.cacheProgressOpen = true;
     state.hubCache.running = true;
     state.hubCache.state = 'cleaning';
+    state.hubCache.selectedBytes = selectedBytes;
+    state.hubCache.message = '正在提交缓存清理任务…';
     renderWorkspace();
-    post('/api/hub-cache/clear',{scanId:scanId,groups:groups,confirmed:true}).then(function () {
-      state.cacheSelection = {}; return refreshHubCache();
-    }).catch(function (error) { refreshHubCache(); showError(error); });
+    renderHubCacheProgressModal();
+    post('/api/hub-cache/clear',{scanId:scanId,groups:groups,confirmed:true}).then(function (cache) {
+      state.hubCache = cache;
+      renderWorkspace();
+      renderHubCacheProgressModal();
+      return refreshHubCache();
+    }).catch(function (error) {
+      state.hubCache = Object.assign({}, state.hubCache || {}, {state:'failed',running:false,message:error.message});
+      renderWorkspace(); renderHubCacheProgressModal(); showError(error);
+    });
   }
   function renderDiagnostics() {
     var s = currentStatus();
@@ -887,7 +941,7 @@
     else if (action === 'preview-auth-complete') { authenticated(previewIdentity(previewRole)); showToast('飞书授权成功：' + roleInfo().name + ' · ' + roleInfo().role); }
     else if (action === 'account-toggle') { state.accountOpen=!state.accountOpen; renderWorkspace(); }
     else if (action === 'auth-logout' || action === 'auth-switch') {
-      var done = function () { clearTimeout(cachePollTimer); state.hubCache=null; state.cacheSelection={}; state.cachePath=''; state.identity=null; state.accountOpen=false; state.authMode='signedOut'; state.notice=action === 'auth-switch' ? '请使用新的飞书账号继续登录。' : '已安全退出当前账号。'; renderAuth(); };
+      var done = function () { clearTimeout(cachePollTimer); state.hubCache=null; state.cacheSelection={}; state.cachePath=''; state.cacheProgressOpen=false; state.cacheClearExpectedBytes=0; state.cacheClearGroupNames=[]; modalRoot.innerHTML=''; state.identity=null; state.accountOpen=false; state.authMode='signedOut'; state.notice=action === 'auth-switch' ? '请使用新的飞书账号继续登录。' : '已安全退出当前账号。'; renderAuth(); };
       if (previewRole) done(); else post('/api/auth/logout',{}).catch(showError).finally(done);
     }
     else if (action === 'refresh-status') loadStatus().then(function () { showToast('状态已刷新'); });
@@ -901,6 +955,10 @@
     else if (action === 'scan-hub-cache') scanHubCache();
     else if (action === 'clear-hub-cache') confirmHubCache();
     else if (action === 'confirm-clear-hub-cache') clearHubCache();
+    else if (action === 'open-hub-cache-progress') { state.cacheProgressOpen=true; renderHubCacheProgressModal(); }
+    else if (action === 'cache-progress-background') { state.cacheProgressOpen=false; closeModal(); showToast('缓存清理将在后台继续，维护页面可随时查看进度','任务仍在进行'); }
+    else if (action === 'cache-progress-close') { state.cacheProgressOpen=false; state.cacheClearExpectedBytes=0; state.cacheClearGroupNames=[]; closeModal(); }
+    else if (action === 'cache-progress-rescan') { state.cacheProgressOpen=false; state.cacheClearExpectedBytes=0; state.cacheClearGroupNames=[]; closeModal(); scanHubCache(); }
     else if (action === 'open-logs') nativeAction('open-logs');
     else if (action === 'restart-executor') nativeAction('restart-executor');
     else if (action === 'check-update') { nativeAction('check-update'); scheduleStatusRefresh(250); }
