@@ -88,8 +88,9 @@ def test_scan_is_read_only_and_deduplicates_roots(fixture):
 
 def test_selected_cleanup_preserves_all_account_state_and_other_caches(fixture):
     f = fixture
+    web_cache = f.profile / 'Default/Cache'
     protected = {p: p.read_bytes() for p in f.profile.rglob('*')
-                 if p.is_file() and '/Default/Cache/' not in str(p)}
+                 if p.is_file() and web_cache not in p.parents}
     scan = scanned(f)
     f.manager.clear(scan['scanId'], ['web'], confirmed=True)
     result = wait(f.manager)
