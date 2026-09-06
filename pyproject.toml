@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "xynigo-sourcing"
-version = "0.17.2"
+version = "0.17.3"
 description = "Open-source sourcing orchestration for cross-border ecommerce teams"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -15,6 +15,7 @@ dependencies = [
   "openpyxl>=3.1,<4",
   "websocket-client>=1.6,<2",
 ]
+
 classifiers = [
   "Development Status :: 3 - Alpha",
   "License :: OSI Approved :: Apache Software License",
@@ -24,6 +25,9 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
 ]
+
+[project.optional-dependencies]
+test = ["pytest>=8.3,<9"]
 
 [project.urls]
 Repository = "https://github.com/wrangler1024/xynigo-sourcing"
