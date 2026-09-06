@@ -45,6 +45,64 @@ def linked(info):
         getattr(info, 'st_file_attributes', 0) & 0x400)
 
 
+def single_link(path, info):
+    """Require one filesystem link, including Windows volumes reporting zero."""
+    link_count = getattr(info, 'st_nlink', None)
+    if link_count == 1:
+        return True
+    if link_count not in (None, 0) or sys.platform != 'win32':
+        return False
+    handle = None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class FileInformation(ctypes.Structure):
+            _fields_ = [
+                ('attributes', wintypes.DWORD),
+                ('creation_time', wintypes.FILETIME),
+                ('access_time', wintypes.FILETIME),
+                ('write_time', wintypes.FILETIME),
+                ('volume_serial', wintypes.DWORD),
+                ('size_high', wintypes.DWORD),
+                ('size_low', wintypes.DWORD),
+                ('number_of_links', wintypes.DWORD),
+                ('file_index_high', wintypes.DWORD),
+                ('file_index_low', wintypes.DWORD),
+            ]
+
+        kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        create_file = kernel32.CreateFileW
+        create_file.argtypes = [wintypes.LPCWSTR, wintypes.DWORD,
+                                wintypes.DWORD, wintypes.LPVOID,
+                                wintypes.DWORD, wintypes.DWORD,
+                                wintypes.HANDLE]
+        create_file.restype = wintypes.HANDLE
+        get_info = kernel32.GetFileInformationByHandle
+        get_info.argtypes = [wintypes.HANDLE, ctypes.POINTER(FileInformation)]
+        get_info.restype = wintypes.BOOL
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes = [wintypes.HANDLE]
+        close_handle.restype = wintypes.BOOL
+
+        handle = create_file(str(path), 0, 0x1 | 0x2 | 0x4, None, 3,
+                             0x00200000, None)
+        if handle in (None, ctypes.c_void_p(-1).value):
+            handle = None
+            return False
+        details = FileInformation()
+        return bool(get_info(handle, ctypes.byref(details))
+                    and details.number_of_links == 1)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return False
+    finally:
+        if handle is not None:
+            try:
+                close_handle(handle)
+            except (NameError, OSError):
+                pass
+
+
 def plain_directory(path):
     """Reject symlinks/junctions in every component, including the root."""
     path = Path(os.path.abspath(path))
@@ -291,7 +349,8 @@ def files_in(path, errors):
                         errors.append(1)
                     elif stat.S_ISDIR(info.st_mode):
                         pending.append(Path(entry.path))
-                    elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
+                    elif stat.S_ISREG(info.st_mode) and single_link(
+                            Path(entry.path), info):
                         yield Path(entry.path), info
                     else:
                         errors.append(1)
@@ -398,7 +457,7 @@ class HubCacheManager:
                             plain_directory(file.parent)
                             current = file.lstat()
                             if (linked(current) or not stat.S_ISREG(current.st_mode)
-                                    or current.st_nlink != 1
+                                    or not single_link(file, current)
                                     or (current.st_dev, current.st_ino, current.st_mtime_ns)
                                     != (info.st_dev, info.st_ino, info.st_mtime_ns)):
                                 raise OSError('file changed')

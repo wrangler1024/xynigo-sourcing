@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -16,7 +17,7 @@ from purchase_tool import main
 from purchase_tool.cloud_auth import LocalAuthError
 from purchase_tool.hub_cache import (
     HubCacheError, HubCacheManager, configured_cache, discover_roots,
-    inspect_cache, require_hub_closed,
+    inspect_cache, require_hub_closed, single_link,
 )
 from purchase_tool.task_runtime import LocalTaskCoordinator, TaskConflict
 
@@ -202,6 +203,18 @@ def test_windows_junction_is_not_traversed(fixture):
     assert not linked(SimpleNamespace(st_mode=stat.S_IFDIR, st_file_attributes=0))
 
 
+def test_single_link_rejects_hardlinked_files(tmp_path):
+    original = tmp_path / 'original'
+    duplicate = tmp_path / 'duplicate'
+    original.write_text('cache')
+    assert single_link(original, original.lstat())
+    try:
+        os.link(original, duplicate)
+    except OSError:
+        pytest.skip('hard links unavailable')
+    assert not single_link(original, original.lstat())
+
+
 def test_locked_file_reports_partial_instead_of_fake_success(fixture):
     f = fixture
     scan = scanned(f)
@@ -304,7 +317,8 @@ def test_http_auth_origin_and_rpc_protect_scan_and_delete(api_server, fixture):
 
 
 def test_ui_selection_totals_and_path_escaping():
-    javascript = (Path(__file__).resolve().parents[1] / 'src/purchase_tool/web/desktop.js').read_text()
+    javascript = (Path(__file__).resolve().parents[1] / 'src/purchase_tool/web/desktop.js').read_text(
+        encoding='utf-8')
     javascript = javascript.replace('  initializeAuth();', '''
   window.testCache = {state:state, panel:hubCachePanel, selected:cacheSelectedBytes};
   // initializeAuth();''')
