@@ -2148,8 +2148,8 @@
     <section class="card">
       <div class="card-title" id="envExecuteCardTitle">④ 执行确认</div>
       <div class="check-row">
-        <label><input type="checkbox" id="envVerify" checked> <span>后台无头验证全部新建环境出口 IP，读取检测结果后立即关闭；不会打开可见的 HubStudio 环境窗口。</span></label>
-        <input type="hidden" id="envVerifyCount" value="1">
+        <div id="envVerifySummary">出口 IP 抽检数量按所选执行器的本机设置，在任务开始时确定。</div>
+        <div class="hint">如需调整数量，请在执行器桌面客户端设置中修改；0 表示不抽检。检测在后台进行，完成后关闭检测环境。</div>
         <input type="hidden" id="envWriteLedger">
         <div class="hint" id="envWriteLedgerLabel">建环境结果自动回传数据库，并由云端 outbox 同步到独立测试 Base；不再读取或直写旧统一台账。</div>
         <div class="hint" id="envLedgerState">数据库为事实源，Base 同步失败会由云端自动重试。</div>
@@ -2411,8 +2411,8 @@
       <div class="card-title">环境创建设置</div>
       <div class="settings-grid">
         <div class="settings-field">
-          <label>后台出口 IP 验证</label>
-          <div class="query-col-checks"><label><input type="checkbox" id="cfgEnvVerify" checked> 新建完成后验证全部环境</label></div>
+          <label>新建完成抽检数（0–10）</label>
+          <input type="number" id="cfgEnvVerify" value="3" min="0" max="10" step="1">
           <div class="hint">通过 HubStudio Local API 无头、只读启动环境进程，页面不会弹出真实环境窗口。</div>
         </div>
         <div class="settings-field">
@@ -3124,7 +3124,7 @@ const FEATURE_MODULES = {
   envbatch: {
     label: '环境创建', primary: 'resources',
     requiredPermission: 'resource.environment.create',
-    summary: '按采购需求创建 HubStudio 环境，并在后台验证全部新建环境出口 IP。'
+    summary: '按采购需求创建 HubStudio 环境，并按执行器设置抽检出口 IP。'
   },
   storemanagement: {
     label: '店铺管理', primary: 'resources',
@@ -3868,6 +3868,25 @@ function logisticsRunFailureText(code) {
   })[String(code || '')] || `查询启动失败（${String(code || 'unknown')}）`;
 }
 
+function renderEnvironmentVerificationSetting(value) {
+  const count = value == null ? null : Number(value);
+  $('envVerifySummary').textContent = Number.isInteger(count) && count >= 0
+    ? `所选执行器当前设置：${count === 0 ? '不抽检' : '抽检 ' + count + ' 个'}；实际数量在任务开始时按本机设置确定。`
+    : '出口 IP 抽检数量按所选执行器的本机设置，在任务开始时确定。';
+}
+
+function environmentIpProgressText(snap) {
+  const checks = snap.ipChecks || [];
+  const done = Number(snap.ipCheckDone ?? checks.length);
+  const total = snap.ipCheckTotal == null ? null : Number(snap.ipCheckTotal);
+  const progress = Number.isInteger(total) && total >= done
+    ? `${done}/${total}` : `已完成 ${done} 个，计划数待确认`;
+  const stopped = ['stopped', 'rolling_back', 'failed', 'uncertain'].includes(snap.phase)
+    || (total !== null && done < total);
+  const state = snap.phase === 'ip_checking' ? '中' : stopped ? '已结束' : '完成';
+  return `出口 IP 检测${state}：${progress}`;
+}
+
 function cloudEnvironmentLegacySnapshot(run) {
   if (!run) return {running:false, rows:[], elapsedSec:0, hubConnected:false};
   const rows = (run.rows || []).map(row => {
@@ -3910,7 +3929,8 @@ function cloudEnvironmentLegacySnapshot(run) {
       && row.cleanupStatus !== 'not_required').length),
     cleanupDone:Number(run.cleanupDone || rows.filter(row => row.cleanupStatus === 'deleted').length),
     cleanupFailed:Number(run.cleanupFailed || rows.filter(row => row.cleanupStatus === 'failed').length),
-    ipOk:Number(run.ipOkCount || 0), ipTotal:Number(run.ipTotalCount || 0),
+    ipOk:Number(run.ipOkCount || checks.filter(item => item.ok).length),
+    ipTotal:Number(run.ipTotalCount || checks.length),
   };
   const resultMessages = {
     environment_retry_source_expired:'执行器中的敏感解析数据已安全清理，请按原站点、分组和日期重新上传原始 xlsx 后续跑。',
@@ -3923,7 +3943,8 @@ function cloudEnvironmentLegacySnapshot(run) {
     environmentGroup:String(run.environmentGroup || ''),
     running:!run.terminal, stopRequested:!!run.stopRequested,
     elapsedSec:cloudRunElapsed(run), rows, summary, ipChecks:checks,
-    phase, ipCheckDone:checks.length, ipCheckTotal:Number(run.ipTotalCount || checks.length),
+    phase, ipCheckDone:checks.length,
+    ipCheckTotal:run.ipCheckTotal ?? (run.terminal ? Number(run.ipTotalCount || checks.length) : null),
     fatalError:run.status === 'failed'
       ? String((rows.find(row => row.error) || {}).error
         || resultMessages[String(run.resultCode || '')] || '任务执行失败') : '',
@@ -7292,7 +7313,7 @@ function refreshAssignUi() {
   chip.textContent = `已分配 ${assigned}/${total || '—'}` + (balanced ? ' ✓' : (assigned < total ? `，还差 ${total - assigned}` : ''));
   chip.className = 'assign-sum ' + (balanced ? 'ok' : 'warn');
   $('envSpecOut').textContent = assigned > 0 ? composeAssignmentSpec() : '（未分配）';
-  for (const id of ['envDate', 'envVerify', 'envVerifyCount',
+  for (const id of ['envDate',
                     'btnEnvEven', 'btnEnvClear', 'envBackupDec',
                     'envBackupCount', 'envBackupInc']) {
     $(id).disabled = busy;
@@ -7403,7 +7424,6 @@ function setEnvMode(next) {
   envFailedCount = 0;
   $('envIpList').textContent = '尚无后台出口 IP 检测结果';
   renderLedgerSummary({enabled:false});
-  $('envVerifyCount').value = '1';
   $('envPreviewText').textContent = bound
     ? '解析后点“干跑预览”，将只读 HubStudio 全量环境并核对续排序号，不做任何写入。'
     : '选定采购员、数量与类型后点“干跑预览”，只读核对续排序号，不做任何写入。';
@@ -7501,11 +7521,9 @@ function renderEnvExecutionState(snap, mode) {
       return;
     }
     if (snap.phase === 'ip_checking') {
-      const ipDone = Number(snap.ipCheckDone || 0);
-      const ipTotal = Number(snap.ipCheckTotal || 0);
       setEnvExecutionState(
         'running', `${taskName}环境创建完成，正在检测出口 IP`,
-        `检测进度 ${ipDone}/${ipTotal || '—'}；检测会在后台依次启动环境、读取出口 IP 并立即关闭，请保持 HubStudio 和执行器运行。`);
+        `${environmentIpProgressText(snap)}；检测会在后台依次启动环境、读取出口 IP 并立即关闭，请保持 HubStudio 和执行器运行。`);
       return;
     }
     setEnvExecutionState(
@@ -7632,7 +7650,7 @@ function renderEnvBatch(snap) {
   $('envSummary').innerHTML = `<div class="stat-chip ok"><b>${created}</b>本批新建</div><div class="stat-chip blue"><b>${recovered}</b>历史恢复</div><div class="stat-chip warn"><b>${cleanupDone}</b>已销毁</div><div class="stat-chip bad"><b>${cleanupFailed || (summary.failed ?? failed)}</b>${cleanupFailed ? '销毁失败' : '失败'}</div><div class="stat-chip blue"><b>${summary.ipOk || 0}/${summary.ipTotal || 0}</b>出口 IP 国家匹配</div>`;
   const checks = snap.ipChecks || [];
   const ipChecking = snap.phase === 'ip_checking';
-  const ipProgress = `出口 IP 检测${ipChecking ? '中' : '完成'}：${Number(snap.ipCheckDone || checks.length)}/${Number(snap.ipCheckTotal || checks.length)}`;
+  const ipProgress = environmentIpProgressText(snap);
   $('envIpList').textContent = checks.length
     ? ipProgress + '\n' + checks.map(x => `${x.envName} → ${x.ip || '—'} · ${x.country || x.error || '检测失败'}${x.errorCode ? `（${x.errorCode}）` : ''} ${x.ok ? '✓' : '⚠'}`).join('\n')
     : (ipChecking ? ipProgress + '\n正在启动首个环境并读取出口 IP，请稍候…' : '尚无后台出口 IP 检测结果');
@@ -7688,7 +7706,7 @@ function renderBackupBatch(snap) {
   $('envSummary').innerHTML = `<div class="stat-chip ok"><b>${summary.created || rows.filter(row => row.createdInRun).length}</b>本批新建</div><div class="stat-chip warn"><b>${summary.cleanupDone || rows.filter(row => row.cleanupStatus === 'deleted').length}</b>已销毁</div><div class="stat-chip bad"><b>${summary.cleanupFailed || (summary.failed ?? failed)}</b>失败</div><div class="stat-chip blue"><b>${summary.ipOk || 0}/${summary.ipTotal || 0}</b>出口 IP 国家匹配</div>`;
   const checks = snap.ipChecks || [];
   const ipChecking = snap.phase === 'ip_checking';
-  const ipProgress = `出口 IP 检测${ipChecking ? '中' : '完成'}：${Number(snap.ipCheckDone || checks.length)}/${Number(snap.ipCheckTotal || checks.length)}`;
+  const ipProgress = environmentIpProgressText(snap);
   $('envIpList').textContent = checks.length
     ? ipProgress + '\n' + checks.map(x => `${x.envName} → ${x.ip || '—'} · ${x.country || x.error || '检测失败'}${x.errorCode ? `（${x.errorCode}）` : ''} ${x.ok ? '✓' : '⚠'}`).join('\n')
     : (ipChecking ? ipProgress + '\n正在启动首个环境并读取出口 IP，请稍候…' : '尚无后台出口 IP 检测结果');
@@ -10802,7 +10820,6 @@ $('btnEnvStart').onclick = async () => {
   if (!hubConnected) { toast('未检测到 HubStudio'); return; }
   const site = $('envSite').value;
   const siteName = site === 'US' ? '美国站' : '墨西哥站';
-  const verifyCount = $('envVerify').checked ? (envMode === 'backup' ? envBackup.count : envAccountCount) : 0;
   if (envMode === 'backup') {
     if (!confirm(`将按${siteName}为 ${envBackup.buyer} 创建 ${envBackup.count} 个「${envBackup.type}环境」：只建环境并写备注，不导 Cookie、不绑号、不写台账。\n\n确认正式执行？`)) return;
     if (CLOUD_WEB_MODE) {
@@ -10814,7 +10831,7 @@ $('btnEnvStart').onclick = async () => {
       '正在等待本机服务受理，请勿重复点击或关闭页面；受理后会自动切换为“后台执行中”。');
     const payload = {buyer:envBackup.buyer, count:envBackup.count,
       type:envBackup.type, purchaseDate:envPurchaseDate(),
-      verifySampleCount:verifyCount, confirmWrite:true, site,
+      confirmWrite:true, site,
       environmentGroup:$('envSiteGroup').value};
     const idempotencyKey = workspaceMutationKey('env-backup-start', payload);
     try {
@@ -10829,7 +10846,7 @@ $('btnEnvStart').onclick = async () => {
             site, purchaseDate:payload.purchaseDate,
             environmentGroup:payload.environmentGroup,
             buyerLabel:envBackup.buyer, totalCount:envBackup.count,
-            verifySampleCount:verifyCount, assignments:[],
+            assignments:[],
           })
         });
         result = {...created.data, count:created.data.totalCount};
@@ -10880,7 +10897,7 @@ $('btnEnvStart').onclick = async () => {
     '正在等待本机服务受理，请勿重复点击或关闭页面；完成后结果将回传数据库。');
   await paintEnvSubmissionState();
   const payload = {planId:envLocalPlanId, assignment,
-    purchaseDate:envPurchaseDate(), verifySampleCount:verifyCount,
+    purchaseDate:envPurchaseDate(),
     confirmWrite:true, site, environmentGroup:$('envSiteGroup').value,
     writeLarkLedger, confirmLarkWrite};
   const idempotencyPayload = CLOUD_WEB_MODE
@@ -10904,7 +10921,7 @@ $('btnEnvStart').onclick = async () => {
           idempotencyKey, executorId:executor.id, mode:'bound', site,
           purchaseDate:payload.purchaseDate, environmentGroup:payload.environmentGroup,
           cloudPlanId:envCloudPlanId, totalCount:envAccountCount,
-          verifySampleCount:verifyCount, assignments,
+          assignments,
         })
       });
       result = {...created.data, count:created.data.totalCount};
@@ -11420,7 +11437,8 @@ async function loadEnvGroups(options={}) {
     refreshAssignUi();
     if (cfg.backupMaxCount) envBackupMax = cfg.backupMaxCount;
     if (cfg.importBuyerPlan) envImportBuyerPlan = cfg.importBuyerPlan;
-    $('envVerify').checked = Number(cfg.verifySampleCount == null ? 1 : cfg.verifySampleCount) > 0;
+    renderEnvironmentVerificationSetting(
+      (snapshotMeta && snapshotMeta.runtimeConfig || cfg).verifySampleCount);
     // 买家号环境分组过滤：Hub 里店铺/后台/运营分组太多，只留采购与买家号相关
     const allGroups = Array.from(new Set(
       (result.groups || []).map(group => String(group || '').trim()).filter(Boolean)
@@ -11753,7 +11771,7 @@ async function loadLocalSettingsPage() {
     setHiddenQueryColumns(cfg.hiddenQueryColumns || []);
     $('cfgHideEnvName').checked = hiddenQueryColumns.has('envName');
     $('cfgHideIp').checked = hiddenQueryColumns.has('ip');
-    $('cfgEnvVerify').checked = Number(cfg.verifySampleCount == null ? 1 : cfg.verifySampleCount) > 0;
+    $('cfgEnvVerify').value = String(cfg.verifySampleCount ?? 3);
     $('cfgEnvWorkers').value = cfg.envCreateWorkers == null ? 5 : cfg.envCreateWorkers;
     const rawPlan = cfg.importBuyerPlan || '1:新刚';
     $('cfgEnvAssign').value = planTemplateIsValid(rawPlan) ? rawPlan : '1:新刚';
@@ -11914,7 +11932,8 @@ $('btnCfgSave').onclick = async () => {
   if (!port || port < 1 || port > 65535) { toast('端口无效，请输入 1-65535 的数字'); return; }
   const conc = parseInt($('cfgConcurrency').value.trim(), 10);
   if (!conc || conc < 1 || conc > 5) { toast('并发数请填 1-5 的整数（建议 2-3）'); return; }
-  const verifyCount = $('cfgEnvVerify').checked ? 1 : 0;
+  const verifyCount = Number($('cfgEnvVerify').value);
+  if (!Number.isInteger(verifyCount) || verifyCount < 0 || verifyCount > 10) { toast('抽检数请填写 0–10 的整数'); return; }
   const envWorkers = parseInt($('cfgEnvWorkers').value.trim(), 10);
   if (Number.isNaN(envWorkers) || envWorkers < 1 || envWorkers > 10) { toast('模块三建环境并发数请填 1-10'); return; }
   const importBuyerPlan = $('cfgEnvAssign').value.trim();
@@ -11938,8 +11957,7 @@ $('btnCfgSave').onclick = async () => {
     });
     localSettingsConfigRevision = String(j.configRevision || localSettingsConfigRevision);
     setHiddenQueryColumns(hiddenQueryColumns);
-    $('envVerify').checked = verifyCount > 0;
-    $('envVerifyCount').value = '1';
+    renderEnvironmentVerificationSetting(verifyCount);
     envImportBuyerPlan = importBuyerPlan;
     setHubStatus(j.hubConnected);
     safeParallelTasks = $('cfgSafeParallel').checked;

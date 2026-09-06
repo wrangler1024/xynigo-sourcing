@@ -3343,6 +3343,24 @@ def create_app(
         session.commit()
         return {"ok": True, "data": result}
 
+    def environment_verification_settings(channel, actor, run):
+        # A queued task uses the last reported device setting. The upgraded
+        # local acceptance endpoint freezes its current value and reports it
+        # back, so a stale Web payload can never request full-batch probing.
+        cached = channel.cached_config_payload(
+            tenant_id=actor.tenant.id, user_id=actor.user.id,
+            executor_id=run.executor_id,
+        )
+        config = (cached or {}).get("config") or {}
+        count = min(run.total_count, int(config.get("verifySampleCount", 3)))
+        run.request_summary = {
+            **(run.request_summary or {}),
+            "verifySampleCount": count,
+            "verificationSettingsSource": "desktop_executor",
+            "verificationSettingsSnapshotRevision": (cached or {}).get("configRevision"),
+        }
+        return count
+
     @app.post(
         "/v1/operation-runs/environment-creation",
         status_code=status.HTTP_202_ACCEPTED,
@@ -3384,6 +3402,7 @@ def create_app(
             plan_accounts = None
             cleanup_blocked_refs: list[str] = []
             channel = executor_channel(session)
+            verify_count = environment_verification_settings(channel, actor, run)
             if body.mode == "bound":
                 if environment_plan_service is None:
                     raise HTTPException(
@@ -3493,7 +3512,8 @@ def create_app(
                 "cloudPlanId": body.cloudPlanId,
                 "buyerLabel": body.buyerLabel,
                 "totalCount": body.totalCount,
-                "verifySampleCount": body.verifySampleCount,
+                "verifySampleCount": verify_count,
+                "ipVerificationProgress": 1,
                 "assignments": [
                     item.model_dump(mode="json") for item in body.assignments
                 ],
@@ -3851,6 +3871,8 @@ def create_app(
                 business_object_id=str(run_id),
             )
         if not unchanged:
+            verify_count = environment_verification_settings(
+                executor_channel(session), actor, run)
             task_type = (
                 "environment.create-bound.v1"
                 if body.takeover
@@ -3865,6 +3887,8 @@ def create_app(
                 "runKey": run.source_run_key,
                 "parentRunId": str(parent.id),
                 "retryMode": body.retryMode,
+                "verifySampleCount": verify_count,
+                "ipVerificationProgress": 1,
                 "accountRefs": list(body.accountRefs),
                 "totalCount": len(body.accountRefs),
                 "site": run.site,
@@ -3876,7 +3900,7 @@ def create_app(
                     "mode": "bound",
                     "cloudPlanId": body.cloudPlanId,
                     "planAccounts": takeover_plan_accounts,
-                    "verifySampleCount": 0,
+                    "verifySampleCount": verify_count,
                     "assignments": takeover_assignments,
                     "plannedEnvironmentNames": takeover_planned_names,
                     "cleanupBlockedAccountRefs": takeover_cleanup_blocked,

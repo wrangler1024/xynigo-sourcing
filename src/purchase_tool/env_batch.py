@@ -1683,10 +1683,10 @@ class BatchEnvOrchestrator(_EnvironmentLookupMixin):
                 break
         return chosen
 
-    def verify_ips(self, count=3, geo_lookup=None, on_progress=None):
+    def verify_ips(self, count=3, geo_lookup=None, on_progress=None, rows=None):
         geo_lookup = geo_lookup or lookup_ip_country
         results = []
-        for row in self._verification_sample(self.rows, count):
+        for row in self._verification_sample(self.rows if rows is None else rows, count):
             if self.stop_event.is_set():
                 break
             results.append(probe_env_ip(

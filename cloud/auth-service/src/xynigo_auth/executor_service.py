@@ -46,6 +46,7 @@ from .models import (
 from .operation_contract import (
     EnvironmentPlanParseResult,
     EnvironmentRunProgressItem,
+    EnvironmentIpVerificationProgress,
     ExecutorWorkspaceSnapshotResult,
     LogisticsRunProgressItem,
     LogisticsScreenshotProgressItem,
@@ -1887,11 +1888,16 @@ class ExecutorChannelService:
         snapshot: dict[str, Any],
         now: datetime,
     ) -> None:
-        if set(snapshot) != {"rows"} or not isinstance(snapshot.get("rows"), list):
+        if (set(snapshot) - {"rows", "ipVerification"}
+                or not isinstance(snapshot.get("rows"), list)):
             raise ExecutorServiceError("executor_progress_snapshot_invalid", status_code=422)
         try:
             rows = [EnvironmentRunProgressItem.model_validate(item) for item in snapshot["rows"]]
-        except ValidationError as exc:
+            verification = (EnvironmentIpVerificationProgress.model_validate(
+                snapshot["ipVerification"]) if "ipVerification" in snapshot else None)
+            if verification is not None and verification.totalCount > run.total_count:
+                raise ValueError("IP verification total exceeds run size")
+        except (ValidationError, ValueError) as exc:
             raise ExecutorServiceError("executor_progress_snapshot_invalid", status_code=422) from exc
         refs = [row.accountRef for row in rows]
         if len(refs) != len(set(refs)) or len(rows) > run.total_count:
@@ -1923,6 +1929,7 @@ class ExecutorChannelService:
                     updated_at=now,
                 )
                 self.session.add(row)
+                existing[item.accountRef] = row
             row.account_label = item.accountLabel
             row.purchaser_label = item.purchaserLabel
             row.environment_name = item.environmentName
@@ -1944,6 +1951,19 @@ class ExecutorChannelService:
             row.ip_error_code = item.ipErrorCode or None
             row.ip_error_summary = item.ipErrorSummary or None
             row.updated_at = now
+
+        checked = [row for row in existing.values() if row.ip_verified is not None]
+        run.ip_total_count = len(checked)
+        run.ip_ok_count = sum(bool(row.ip_verified) for row in checked)
+        if verification is not None:
+            if verification.totalCount < len(checked):
+                raise ExecutorServiceError("executor_progress_snapshot_invalid", status_code=422)
+            run.request_summary = {
+                **(run.request_summary or {}),
+                "verifySampleCount": verification.requestedCount,
+                "ipCheckTotal": verification.totalCount,
+                "verificationSettingsSource": "desktop_executor",
+            }
 
     def _upsert_logistics_progress(
         self,

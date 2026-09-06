@@ -67,7 +67,10 @@ class EnvironmentCreationRunCreateBody(BaseModel):
     )
     buyerLabel: str | None = Field(default=None, min_length=1, max_length=100)
     totalCount: int = Field(ge=1, le=2000)
-    verifySampleCount: int = Field(default=0, ge=0, le=2000)
+    verifySampleCount: int = Field(
+        default=0, ge=0, le=2000,
+        description="Legacy request field; desktop runtime settings determine the actual count.",
+    )
     assignments: list[PurchaserAllocationSummary] = Field(
         default_factory=list, max_length=100
     )
@@ -506,6 +509,20 @@ class EnvironmentCreationResultItem(BaseModel):
             raise ValueError(
                 "successful environment result requires reference and serial"
             )
+        return self
+
+
+class EnvironmentIpVerificationProgress(BaseModel):
+    """Frozen local sample count and the actual number of eligible probes."""
+
+    model_config = ConfigDict(extra="forbid")
+    requestedCount: int = Field(ge=0, le=2000, strict=True)
+    totalCount: int = Field(ge=0, le=2000, strict=True)
+
+    @model_validator(mode="after")
+    def validate_total(self) -> "EnvironmentIpVerificationProgress":
+        if self.totalCount > self.requestedCount:
+            raise ValueError("IP verification total exceeds the requested count")
         return self
 
 

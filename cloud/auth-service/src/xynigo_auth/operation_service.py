@@ -2425,6 +2425,23 @@ class OperationRunService:
             ),
         }
 
+    @staticmethod
+    def environment_ip_check_total(run, rows):
+        summary = run.request_summary or {}
+        total = summary.get("ipCheckTotal")
+        if isinstance(total, int) and not isinstance(total, bool) and total >= 0:
+            return total
+        # Old executors do not report the plan. Infer it only when the saved
+        # request exists and creation has finished; otherwise report unknown.
+        requested = summary.get("verifySampleCount")
+        if (isinstance(requested, int) and not isinstance(requested, bool)
+                and requested >= 0 and ("ip_checking" in run.phase
+                                       or run.status in OperationRunService.TERMINAL_STATUSES)):
+            return min(requested, sum(row.status == "success" for row in rows))
+        if run.status in OperationRunService.TERMINAL_STATUSES:
+            return max(run.ip_total_count, sum(row.ip_verified is not None for row in rows))
+        return None
+
     def environment_snapshot(
         self, run: EnvironmentCreationRun, *, unchanged: bool = False
     ) -> dict[str, object]:
@@ -2475,6 +2492,9 @@ class OperationRunService:
             "failedCount": run.failed_count,
             "ipOkCount": run.ip_ok_count,
             "ipTotalCount": run.ip_total_count,
+            "ipCheckDone": sum(row.ip_verified is not None for row in rows),
+            "ipCheckTotal": self.environment_ip_check_total(run, rows),
+            "verifySampleCount": (run.request_summary or {}).get("verifySampleCount"),
             "errorCode": run.error_code,
             "errorSummary": run.error_summary,
             "createdCount": created_count,

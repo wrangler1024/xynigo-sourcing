@@ -2021,6 +2021,14 @@ def ledger_tsv_filename(site, purchase_date):
             (site, purchase_date))
 
 
+def environment_verification_count(cfg):
+    """Desktop runtime settings own the count; request bodies cannot override it."""
+    value = cfg.get('verifySampleCount', 3)
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 10:
+        raise ValueError('本机抽检数量无效，请在桌面设置中保存 0–10 的整数')
+    return value
+
+
 def environment_worker_policy(cfg):
     """Return configured/effective HubStudio environment write workers.
 
@@ -2067,6 +2075,7 @@ class EnvBatchJob(object):
         self.ip_checks = []
         self.phase = 'idle'
         self.ip_check_total = 0
+        self.verify_sample_count = 0
         self.fatal_error = ''
         self.fatal_error_code = ''
         self.mapping_data = None
@@ -2252,6 +2261,8 @@ class EnvBatchJob(object):
     def _set_ip_checks(self, checks):
         with self.lock:
             self.ip_checks = [dict(item) for item in checks]
+            self.summary.update(ipOk=sum(bool(item.get('ok')) for item in checks),
+                                ipTotal=len(checks))
 
     @staticmethod
     def _fatal_reason(exc):
@@ -2447,6 +2458,7 @@ class EnvBatchJob(object):
             self.ip_checks = []
             self.phase = 'preparing'
             self.ip_check_total = 0
+            self.verify_sample_count = verify_sample_count
             self.fatal_error = ''
             self.fatal_error_code = ''
             self.mapping_data = None
@@ -2611,8 +2623,18 @@ class EnvBatchJob(object):
                 'message': '已停止领取新行；当前并发行收尾后将销毁本任务新建环境',
             }
 
+    def _verify_retry_ips(self, rows):
+        # Limit probes to this retry's rows, never the previous successful batch.
+        total = min(self.verify_sample_count, sum(
+            row.state == 'done' and bool(row.container_code) for row in rows))
+        with self.lock:
+            self.ip_check_total = total
+            self.phase = 'ip_checking' if total else 'finalizing'
+        if total and not self.stop_event.is_set():
+            self.runner.verify_ips(total, rows=rows, on_progress=self._set_ip_checks)
+
     def retry_row(self, account_id, reserve_resources=None,
-                  on_finished=None):
+                  on_finished=None, verify_sample_count=0):
         with self.lock:
             if self.running:
                 raise RuntimeError('模块三任务正在执行')
@@ -2626,6 +2648,10 @@ class EnvBatchJob(object):
                 raise ValueError('凭证内存已清理，请重新选择原始 xlsx 后续跑')
             if reserve_resources:
                 reserve_resources(environment_resources([row]))
+            self.verify_sample_count = max(0, int(verify_sample_count))
+            self.ip_checks = []
+            self.ip_check_total = 0
+            self.summary.update(ipOk=0, ipTotal=0)
             self._cancel_sensitive_cleanup_locked()
             self.running = True
             self.stop_requested = False
@@ -2641,6 +2667,7 @@ class EnvBatchJob(object):
         def worker():
             try:
                 self.runner.retry_one(account_id)
+                self._verify_retry_ips([row])
                 result_rows = self.runner.rows
                 if self.ledger_enabled:
                     service = (self._ledger_service or
@@ -2683,7 +2710,8 @@ class EnvBatchJob(object):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def retry_failed(self, reserve_resources=None, on_finished=None):
+    def retry_failed(self, reserve_resources=None, on_finished=None,
+                     verify_sample_count=0):
         with self.lock:
             if self.running:
                 raise RuntimeError('模块三任务正在执行')
@@ -2698,6 +2726,10 @@ class EnvBatchJob(object):
             if reserve_resources:
                 reserve_resources(environment_resources(failed_rows))
             account_ids = [row.account.account_id for row in failed_rows]
+            self.verify_sample_count = max(0, int(verify_sample_count))
+            self.ip_checks = []
+            self.ip_check_total = 0
+            self.summary.update(ipOk=0, ipTotal=0)
             self._cancel_sensitive_cleanup_locked()
             self.running = True
             self.stop_requested = False
@@ -2713,6 +2745,7 @@ class EnvBatchJob(object):
         def worker():
             try:
                 self.runner.retry_failed()
+                self._verify_retry_ips(failed_rows)
                 result_rows = self.runner.rows
                 if self.ledger_enabled:
                     service = (self._ledger_service or
@@ -2904,6 +2937,7 @@ class EnvBatchJob(object):
                 'phase': self.phase,
                 'ipCheckDone': len(self.ip_checks),
                 'ipCheckTotal': self.ip_check_total,
+                'verifySampleCount': self.verify_sample_count,
                 'fatalErrorCode': self.fatal_error_code,
                 'fatalError': self.fatal_error,
                 'mappingReady': self.mapping_data is not None,
@@ -2944,6 +2978,7 @@ class BackupEnvJob(object):
         self.ip_checks = []
         self.phase = 'idle'
         self.ip_check_total = 0
+        self.verify_sample_count = 0
         self.fatal_error = ''
         self.result_data = None
         self.result_name = ''
@@ -3004,6 +3039,8 @@ class BackupEnvJob(object):
     def _set_ip_checks(self, checks):
         with self.lock:
             self.ip_checks = [dict(item) for item in checks]
+            self.summary.update(ipOk=sum(bool(item.get('ok')) for item in checks),
+                                ipTotal=len(checks))
 
     def start(self, buyer, count, backup_type, purchase_date,
               verify_sample_count=1, confirm_write=False, site='MX',
@@ -3047,6 +3084,7 @@ class BackupEnvJob(object):
             self.ip_checks = []
             self.phase = 'preparing'
             self.ip_check_total = 0
+            self.verify_sample_count = verify_sample_count
             self.fatal_error = ''
             self.result_data = None
             self.result_name = ''
@@ -3167,6 +3205,7 @@ class BackupEnvJob(object):
                 'phase': self.phase,
                 'ipCheckDone': len(self.ip_checks),
                 'ipCheckTotal': self.ip_check_total,
+                'verifySampleCount': self.verify_sample_count,
                 'fatalError': self.fatal_error,
                 'resultReady': self.result_data is not None,
             }
@@ -4616,7 +4655,7 @@ class Handler(BaseHTTPRequestHandler):
                     count = STATE.env_job.start(
                         body.get('planId'), body.get('assignment'),
                         body.get('purchaseDate') or time.strftime('%Y%m%d'),
-                        verify_sample_count=body.get('verifySampleCount', 3),
+                        verify_sample_count=environment_verification_count(STATE.cfg),
                         confirm_write=bool(body.get('confirmWrite')),
                         site=body.get('site') or 'MX',
                         environment_group=body.get('environmentGroup'),
@@ -4663,7 +4702,8 @@ class Handler(BaseHTTPRequestHandler):
                         account_id,
                         reserve_resources=lambda resources:
                             STATE.tasks.reserve(task_id, resources),
-                        on_finished=finish_environment_retry)
+                        on_finished=finish_environment_retry,
+                        verify_sample_count=environment_verification_count(STATE.cfg))
                 except Exception:
                     STATE.tasks.finish(task_id)
                     raise
@@ -4689,7 +4729,8 @@ class Handler(BaseHTTPRequestHandler):
                     count = STATE.env_job.retry_failed(
                         reserve_resources=lambda resources:
                             STATE.tasks.reserve(task_id, resources),
-                        on_finished=finish_environment_failed_retry)
+                        on_finished=finish_environment_failed_retry,
+                        verify_sample_count=environment_verification_count(STATE.cfg))
                 except Exception:
                     STATE.tasks.finish(task_id)
                     raise
@@ -4729,7 +4770,7 @@ class Handler(BaseHTTPRequestHandler):
                     count = STATE.backup_job.start(
                         body.get('buyer'), body.get('count'), body.get('type'),
                         purchase_date,
-                        verify_sample_count=body.get('verifySampleCount', 1),
+                        verify_sample_count=environment_verification_count(STATE.cfg),
                         confirm_write=bool(body.get('confirmWrite')),
                         site=site,
                         environment_group=body.get('environmentGroup'),

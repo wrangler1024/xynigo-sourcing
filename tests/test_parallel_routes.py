@@ -106,7 +106,8 @@ class FakeEnvJob(object):
         self.stop_calls += 1
         return {'stopping': True, 'stopRequested': True}
 
-    def retry_failed(self, reserve_resources=None, on_finished=None):
+    def retry_failed(self, reserve_resources=None, on_finished=None, verify_sample_count=0):
+        self.verify_sample_count = verify_sample_count
         self.retry_failed_calls += 1
         if reserve_resources:
             reserve_resources({
@@ -296,7 +297,9 @@ class ParallelRouteTests(unittest.TestCase):
         self.state.backup_job.callback()
 
     def test_environment_batch_retry_route_keeps_task_until_finished(self):
-        status, body = self.post('/api/envbatch/retry-failed', {})
+        self.state.cfg['verifySampleCount'] = 1
+        status, body = self.post('/api/envbatch/retry-failed', {'verifySampleCount':100})
+        self.assertEqual(self.env_job.verify_sample_count, 1)
         self.assertEqual(status, 200)
         self.assertTrue(body['started'])
         self.assertEqual(body['count'], 2)

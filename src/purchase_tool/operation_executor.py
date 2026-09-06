@@ -339,6 +339,12 @@ class LocalOperationExecutor(object):
                 'total': total,
                 'snapshot': {'rows': rows},
             }
+            # Only new cloud tasks opt into the extended snapshot contract.
+            if payload.get('ipVerificationProgress') == 1:
+                event['snapshot']['ipVerification'] = {
+                    'requestedCount': int(snapshot.get('verifySampleCount') or 0),
+                    'totalCount': int(snapshot.get('ipCheckTotal') or 0),
+                }
             serialized = json.dumps(
                 event, ensure_ascii=False, sort_keys=True,
                 separators=(',', ':'))
@@ -350,8 +356,9 @@ class LocalOperationExecutor(object):
             self.sleep(self.poll_interval)
         summary = self._environment_summary(snapshot, total, rows)
         if selected_refs is not None:
-            summary['ipOkCount'] = 0
-            summary['ipTotalCount'] = 0
+            checked = [row for row in rows if row.get('ipVerified') is not None]
+            summary['ipOkCount'] = sum(bool(row['ipVerified']) for row in checked)
+            summary['ipTotalCount'] = len(checked)
         return self._terminal_result('environment', summary)
 
     def _execute_logistics(self, payload, report, cancellation_event):
