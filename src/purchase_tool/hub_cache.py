@@ -442,13 +442,16 @@ class HubCacheManager:
         stopped = None
         try:
             next_check = 0
-            for path, _, root, root_id, target_id in selected:
+            for path, _, root, _, _ in selected:
                 if time.monotonic() >= next_check:
                     self.closed_check()
                     next_check = time.monotonic() + 1
                 try:
-                    if identity(root) != root_id or identity(path) != target_id:
-                        raise OSError('directory changed')
+                    root = plain_directory(root)
+                    path = plain_directory(path)
+                    if path == root:
+                        raise OSError('unsafe cache target')
+                    path.relative_to(root)
                     for file, info in files_in(path, errors):
                         if time.monotonic() >= next_check:
                             self.closed_check()
