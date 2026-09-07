@@ -23,6 +23,8 @@
     config: null,
     lark: null,
     sources: null,
+    sourceSync: null,
+    sourceSyncBusy: false,
     members: [],
     environments: [],
     sourceDraft: null,
@@ -30,6 +32,7 @@
     hubCache: null,
     cacheSelection: {},
     cachePath: '',
+    cacheScanProgressOpen: false,
     cacheProgressOpen: false,
     cacheClearExpectedBytes: 0,
     cacheClearGroupNames: [],
@@ -38,7 +41,7 @@
 
   var sampleStatus = {
     schemaVersion: 1,
-    version: '0.17.6',
+    version: '0.17.7',
     localPort: 8765,
     executor: {running:true, paired:true, displayName:'采购电脑 · 上海办公室 03', platform:platform, architecture:platform === 'mac' ? 'arm64' : 'amd64'},
     cloudChannel: {status:'online', lastPollAt:new Date(Date.now() - 18000).toISOString(), phase:'polling'},
@@ -48,7 +51,7 @@
       startedAt:new Date(Date.now() - 84000).toISOString(),
       elapsedSec:84, resourceCount:3
     }]},
-    update: {enabled:true, state:'current', installMode:'standard', currentVersion:'0.17.6', latestVersion:'0.17.6', message:'已是推荐版本'}
+    update: {enabled:true, state:'current', installMode:'standard', currentVersion:'0.17.7', latestVersion:'0.17.7', message:'已是推荐版本'}
   };
   var sampleConfig = {hubPort:6873, concurrency:2, envCreateWorkers:5, verifySampleCount:3, safeParallelTasks:true, queryBrowserMode:'headless', queryAllowOpenEnvironment:false, configRevision:'e5a931'};
   var sampleSources = {
@@ -72,6 +75,7 @@
       {memberId:'member-yh',containerCode:'CN-80E5-71A3',dataSourceId:'ds-team'}
     ]
   };
+  var sampleSourceSync = {configured:true,organizationRevision:3,organizationDataSourceCount:4,organizationBuyerProfileCount:4,sourceExecutorId:'executor-sample',sourceExecutorName:'采购电脑 · 上海办公室 03',updatedAt:new Date().toISOString(),visibility:'all',inSync:true};
   var sampleMembers = [
     {id:'member-xg',name:'新刚',code:'XG'}, {id:'member-zh',name:'志恒',code:'ZH'},
     {id:'member-kd',name:'康德',code:'KD'}, {id:'member-yh',name:'宇航',code:'YH'}
@@ -252,7 +256,7 @@
   var viewCopy = {
     overview:['状态总览','这台电脑的连接、任务与配置健康状态'],
     settings:['本机设置','所有配置只保存在当前电脑，云端仅接收脱敏摘要'],
-    sources:['采购助手数据源','管理飞书表、采购员默认值和 HubStudio 环境映射'],
+    sources:['采购助手数据源','组织同步飞书表与采购员默认；环境映射保留在当前设备'],
     diagnostics:['诊断与维护','连接检测、运行日志、更新与迁移状态']
   };
   function header(view, actions) {
@@ -402,7 +406,7 @@
     var sources = (ds.dataSources || []).filter(function (source) {
       return role.admin || source.scope === 'team' || !source.ownerMemberId || source.ownerMemberId === role.id;
     });
-    if (!sources.length) return '<div class="card empty">本机尚未登记采购助手数据源。</div>';
+    if (!sources.length) return '<div class="card empty">当前设备尚未同步或登记采购助手数据源。</div>';
     return '<div class="source-grid">' + sources.map(function (source) {
       var count = Number(source.environmentCount || bindings.filter(function (b) { return b.dataSourceId === source.id; }).length);
       var personal = source.scope === 'personal';
@@ -454,6 +458,39 @@
       return '<tr class="' + (binding ? '' : 'warn') + '" data-container="' + esc(env.containerCode) + '"><td><b>#' + esc(env.serialNumber || '—') + '</b><br><small>' + esc(safeId(env.containerCode)) + '</small></td><td><b>' + esc(env.containerName || env.name || env.containerCode) + '</b></td><td>' + esc(env.groupName || env.group || '—') + '</td><td><select class="select binding-member">' + memberOptions + '</select></td><td><select class="select binding-source">' + sourceOptions + '</select></td><td><span class="pill ' + (binding ? 'pill-ok' : 'pill-warn') + '">' + (binding ? '已绑定' : '待处理') + '</span></td></tr>';
     }).join('') + '</tbody></table></div>';
   }
+  function sourceSyncPanel() {
+    var sync = state.sourceSync;
+    var role = roleInfo();
+    var executor = currentStatus().executor || {};
+    var deviceName = executor.displayName || (platform === 'mac' ? '当前 Mac' : '当前 PC');
+    var busy = !!state.sourceSyncBusy;
+    var localCount = Number(state.sources && state.sources.dataSources && state.sources.dataSources.length || 0);
+    var tone = 'pending';
+    var title = '正在检查组织数据源配置';
+    var detail = '当前设备：' + deviceName;
+    if (sync && sync.error) {
+      tone = 'warning';
+      title = '组织同步状态暂不可用';
+      detail = sync.error;
+    } else if (sync && !sync.configured) {
+      tone = 'warning';
+      title = '组织数据源配置尚未建立';
+      detail = role.admin ? '请在已有数据的设备上发布一次组织配置' : '请联系管理员发布组织配置';
+    } else if (sync && sync.inSync) {
+      tone = 'ready';
+      title = '当前设备已与组织配置同步';
+      detail = '组织修订 ' + Number(sync.organizationRevision || 0) + ' · ' + Number(sync.organizationDataSourceCount || 0) + ' 个数据源';
+    } else if (sync) {
+      tone = 'warning';
+      title = '当前设备与组织配置有差异';
+      detail = '组织修订 ' + Number(sync.organizationRevision || 0) + (sync.sourceExecutorName ? ' · 最近由 ' + sync.sourceExecutorName + ' 发布' : '');
+    }
+    var actions = sync && sync.configured
+      ? button(busy ? '正在同步…' : '同步组织配置','sync-organization-sources','refresh','',busy)
+      : '';
+    if (role.admin) actions += button(busy ? '正在发布…' : (sync && sync.configured ? '发布本机更改' : '建立组织配置'),'publish-organization-sources','cloud','primary',busy || !localCount);
+    return '<section class="source-sync-panel ' + tone + '"><span class="source-sync-icon">' + icon(sync && sync.inSync ? 'check' : (sync && sync.error ? 'alert' : 'cloud')) + '</span><div class="source-sync-copy"><b>' + esc(title) + '</b><p>' + esc(detail) + '</p><small>数据源定义和采购员默认由组织加密同步；HubStudio containerCode 环境映射仅保存在“' + esc(deviceName) + '”。</small></div><div class="source-sync-actions">' + actions + '</div></section>';
+  }
   function renderSources() {
     var role = roleInfo();
     var counts = sourceCounts();
@@ -461,9 +498,9 @@
     if (!admin && state.sourceTab === 'environments') state.sourceTab = 'registry';
     var actions = '<span class="pill" style="border:1px solid #e2e8f0;background:#fff;color:#475569">' + (admin ? '管理员范围' : '仅管理本人数据源') + '</span>' + button(admin ? '添加数据源' : '配置我的个人表','add-source','plus','primary');
     var roleNotice = admin ? '' : '<section class="notice-strip" style="border-color:#dbeafe;background:#eff6ff;color:#172554">' + icon('user') + '<div><b>当前登录：' + esc(role.name) + ' · 采购员</b><p style="color:#1e40af">只显示你的个人速填表和可用的团队协作表；其他采购员与环境映射由管理员维护。</p></div></section>';
-    var tabs = '<div class="tabs"><button class="tab ' + (state.sourceTab === 'registry' ? 'active' : '') + '" data-source-tab="registry">数据源注册表<span class="count">' + ((state.sources && state.sources.dataSources || []).length || counts.personal + counts.team) + '</span></button><button class="tab ' + (state.sourceTab === 'buyers' ? 'active' : '') + '" data-source-tab="buyers">' + (admin ? '采购员默认映射' : '我的默认数据源') + '<span class="count">' + ((state.sources && state.sources.buyerProfiles || []).length || 0) + '</span></button>' + (admin ? '<button class="tab ' + (state.sourceTab === 'environments' ? 'active' : '') + '" data-source-tab="environments">HubStudio 环境映射<span class="count">' + counts.mapped + '</span></button>' : '') + '</div>';
+    var tabs = '<div class="tabs"><button class="tab ' + (state.sourceTab === 'registry' ? 'active' : '') + '" data-source-tab="registry">当前设备数据源<span class="count">' + ((state.sources && state.sources.dataSources || []).length || counts.personal + counts.team) + '</span></button><button class="tab ' + (state.sourceTab === 'buyers' ? 'active' : '') + '" data-source-tab="buyers">' + (admin ? '采购员默认映射' : '我的默认数据源') + '<span class="count">' + ((state.sources && state.sources.buyerProfiles || []).length || 0) + '</span></button>' + (admin ? '<button class="tab ' + (state.sourceTab === 'environments' ? 'active' : '') + '" data-source-tab="environments">本机环境映射<span class="count">' + counts.mapped + '</span></button>' : '') + '</div>';
     var panel = state.sourceTab === 'buyers' ? buyerDefaults() : (state.sourceTab === 'environments' ? environmentMappings() : sourceRegistry());
-    return header('sources',actions) + '<div class="content stack">' + roleNotice + '<section class="metric-grid">' + metric('个人速填表',counts.personal,admin ? '已配置的成员个人表' : '当前账号已配置','user') + metric('团队协作表',counts.team,'可作团队默认','table') + metric('已映射环境',counts.mapped,admin ? 'containerCode 精确绑定' : '当前账号可用','route') + metric('待处理',counts.pending,counts.pending ? '新发现环境尚未映射' : '没有待处理项','alert',counts.pending > 0) + '</section>' + tabs + panel + '</div>';
+    return header('sources',actions) + '<div class="content stack">' + roleNotice + sourceSyncPanel() + '<section class="metric-grid">' + metric('个人速填表',counts.personal,admin ? '组织配置同步到本机' : '当前账号已配置','user') + metric('团队协作表',counts.team,'组织共享并加密同步','table') + metric('已映射环境',counts.mapped,admin ? '仅保存在当前设备' : '当前账号可用','route') + metric('待处理',counts.pending,counts.pending ? '新发现环境尚未映射' : '没有待处理项','alert',counts.pending > 0) + '</section>' + tabs + panel + '</div>';
   }
 
   function diagnosticRow(iconName, title, detail, ok) {
@@ -504,13 +541,36 @@
     if (complete) percent = 100;
     return {total:total,removed:removed,totalFiles:totalFiles,removedFiles:removedFiles,complete:complete,partial:partial,failed:failed,percent:percent};
   }
+  function hubCacheEtaLabel(cache) {
+    cache = cache || {};
+    if (!cache.running) return cache.durationSeconds != null ? '实际用时 ' + taskElapsed(cache.durationSeconds) : '';
+    if (cache.etaState === 'ready' && Number.isFinite(Number(cache.estimatedRemainingSeconds))) {
+      var seconds = Math.max(0, Number(cache.estimatedRemainingSeconds));
+      if (seconds < 60) return '预计不到 1 分钟';
+      if (seconds < 3600) return '预计还需约 ' + Math.ceil(seconds / 60) + ' 分钟';
+      return '预计还需约 ' + Math.floor(seconds / 3600) + ' 小时 ' + Math.ceil((seconds % 3600) / 60) + ' 分钟';
+    }
+    if (cache.etaState === 'unavailable') return '剩余时间暂无法准确估算';
+    if (cache.etaState === 'complete') return '即将完成';
+    return '正在估算剩余时间…';
+  }
   function hubCacheProgressBar(cache, compact) {
     var progress = hubCacheProgress(cache);
     var running = !!cache.running;
     var indeterminate = running && progress.removed === 0;
     var label = running ? (indeterminate ? '正在准备' : progress.percent + '%') : (progress.complete ? '100%' : progress.percent + '%');
     var detail = formatBytes(progress.removed) + (progress.total ? ' / ' + formatBytes(progress.total) : '') + ' · ' + progress.removedFiles + (progress.totalFiles ? ' / ' + progress.totalFiles : '') + ' 个文件';
-    return '<div class="hub-cache-progress' + (compact ? ' compact' : '') + '" role="progressbar" aria-label="HubStudio 缓存清理进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + progress.percent + '"><div class="hub-cache-progress-head"><b>' + esc(cache.message || '正在清理所选缓存') + '</b><span>' + label + '</span></div><div class="hub-cache-progress-track' + (indeterminate ? ' indeterminate' : '') + '"><i style="width:' + progress.percent + '%"></i></div><div class="hub-cache-progress-meta">' + detail + '</div></div>';
+    var eta = hubCacheEtaLabel(cache);
+    return '<div class="hub-cache-progress' + (compact ? ' compact' : '') + '" role="progressbar" aria-label="HubStudio 缓存清理进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + progress.percent + '" aria-valuetext="' + esc(label + (eta ? '，' + eta : '')) + '"><div class="hub-cache-progress-head"><b>' + esc(cache.message || '正在清理所选缓存') + '</b><span>' + label + '</span></div><div class="hub-cache-progress-track' + (indeterminate ? ' indeterminate' : '') + '"><i style="width:' + progress.percent + '%"></i></div><div class="hub-cache-progress-meta"><span class="hub-cache-progress-eta">' + esc(eta) + '</span><span>' + detail + '</span></div></div>';
+  }
+  function renderHubCacheScanModal() {
+    if (!state.cacheScanProgressOpen) return;
+    var cache = state.hubCache || {};
+    var elapsed = taskElapsed(cache.elapsedSeconds || 0);
+    var profiles = Number(cache.profileDirectoryCount || 0);
+    var directories = Number(cache.cacheDirectoryCount || 0);
+    var detail = profiles || directories ? ('已发现 ' + profiles + ' 个环境目录 · 已统计 ' + directories + ' 个缓存目录') : '正在定位本机缓存目录';
+    modalRoot.innerHTML = '<div class="modal-backdrop"><section class="modal hub-cache-progress-modal" role="dialog" aria-modal="true" aria-label="HubStudio 缓存检测进度"><div class="hub-cache-progress-title running"><span>' + icon('refresh') + '</span><div><h2>正在检测 HubStudio 缓存</h2><p>检测不会删除任何数据</p></div></div><div class="hub-cache-scan-wait" role="status" aria-live="polite"><div class="hub-cache-progress-head"><b>' + esc(cache.message || '正在检测缓存大小…') + '</b><span>已检测 ' + esc(elapsed) + '</span></div><div class="hub-cache-progress-track indeterminate"><i></i></div><div class="hub-cache-progress-meta"><span>环境较多时可能需要几分钟</span><span>' + esc(detail) + '</span></div></div><p class="hub-cache-progress-note">请勿退出 Xynigo。可以转到后台继续使用其他客户端页面，检测任务不会中断。</p><div class="modal-footer"><button class="button" data-action="cache-scan-background">转到后台</button></div></section></div>';
   }
   function renderHubCacheProgressModal() {
     if (!state.cacheProgressOpen) return;
@@ -527,10 +587,13 @@
   }
   function hubCacheGlobalTaskNotice() {
     var cache = state.hubCache || {};
+    if (cache.state === 'scanning' && cache.running) {
+      return '<div id="hub-cache-global-task" class="global-task-notice" role="status" aria-live="polite"><span class="hub-cache-spinner">' + icon('refresh') + '</span><div><b>正在检测 HubStudio 缓存</b><p>' + esc(cache.message || '正在检测缓存大小…') + ' · 已检测 ' + esc(taskElapsed(cache.elapsedSeconds || 0)) + '</p></div><span class="global-task-percent">检测中</span>' + button('查看进度','open-hub-cache-scan-progress','gauge','') + '</div>';
+    }
     if (cache.state !== 'cleaning' || !cache.running) return '<div id="hub-cache-global-task" hidden></div>';
     var progress = hubCacheProgress(cache);
     var label = progress.removed ? progress.percent + '%' : '正在准备';
-    return '<div id="hub-cache-global-task" class="global-task-notice" role="status" aria-live="polite"><span class="hub-cache-spinner">' + icon('refresh') + '</span><div><b>正在清理 HubStudio 缓存</b><p>已处理 ' + formatBytes(progress.removed) + (progress.total ? ' / ' + formatBytes(progress.total) : '') + ' · 请勿启动 HubStudio 或退出 Xynigo</p></div><span class="global-task-percent">' + label + '</span>' + button('查看进度','open-hub-cache-progress','gauge','') + '</div>';
+    return '<div id="hub-cache-global-task" class="global-task-notice" role="status" aria-live="polite"><span class="hub-cache-spinner">' + icon('refresh') + '</span><div><b>正在清理 HubStudio 缓存</b><p>' + esc(hubCacheEtaLabel(cache)) + ' · 已处理 ' + formatBytes(progress.removed) + (progress.total ? ' / ' + formatBytes(progress.total) : '') + ' · 请勿启动 HubStudio 或退出 Xynigo</p></div><span class="global-task-percent">' + label + '</span>' + button('查看进度','open-hub-cache-progress','gauge','') + '</div>';
   }
   function updateHubCacheGlobalTaskNotice() {
     var node = document.getElementById('hub-cache-global-task');
@@ -549,33 +612,44 @@
       return '<li><code>' + esc(item.path) + '</code><span>可清理 ' + formatBytes(item.cleanableBytes) + ' · 所在磁盘可用 ' + (item.diskFreeBytes == null ? '未知' : formatBytes(item.diskFreeBytes)) + '</span></li>';
     }).join('');
     var installations = (cache.installations || []).map(function (path) { return '<li><code>' + esc(path) + '</code></li>'; }).join('');
+    var scanProgress = cache.state === 'scanning' && cache.running ? '<div class="hub-cache-active hub-cache-scan-active"><span class="hub-cache-spinner">' + icon('refresh') + '</span><div><b>' + esc(cache.message || '正在检测 HubStudio 缓存') + '</b><p>已检测 ' + esc(taskElapsed(cache.elapsedSeconds || 0)) + ' · 检测不会删除任何数据，可转到后台继续。</p></div>' + button('查看检测进度','open-hub-cache-scan-progress','gauge','') + '</div>' : '';
     var activeProgress = cache.state === 'cleaning' && cache.running ? '<div class="hub-cache-active"><span class="hub-cache-spinner">' + icon('refresh') + '</span><div><b>缓存清理正在后台进行</b><p>可继续查看其他页面，清理期间请保持 HubStudio 关闭。</p></div>' + button('查看实时进度','open-hub-cache-progress','gauge','') + hubCacheProgressBar(cache, true) + '</div>' : '';
-    var result = !cache.running && cache.removedBytes != null ? '<div class="hub-cache-result" role="status">已清理 <b>' + formatBytes(cache.removedBytes) + '</b> · ' + Number(cache.removedFiles || 0) + ' 个文件' + (cache.skippedFiles ? ' · ' + Number(cache.skippedFiles) + ' 项未能处理' : '') + '。大小按已删除文件的逻辑字节统计，磁盘可用空间可能因其他程序活动而不同。</div>' : '';
+    var result = !cache.running && cache.removedBytes != null ? '<div class="hub-cache-result" role="status">已清理 <b>' + formatBytes(cache.removedBytes) + '</b> · ' + Number(cache.removedFiles || 0) + ' 个文件' + (cache.durationSeconds != null ? ' · 用时 ' + esc(taskElapsed(cache.durationSeconds)) : '') + (cache.skippedFiles ? ' · ' + Number(cache.skippedFiles) + ' 项未能处理' : '') + '。大小按已删除文件的逻辑字节统计，磁盘可用空间可能因其他程序活动而不同。</div>' : '';
     return '<section class="card section-card hub-cache-panel">' + sectionTitle('database','HubStudio 缓存管理','手动检测本机缓存大小，按类别选择清理','本机维护') + '<div class="section-body stack">' +
       '<p class="hub-cache-help">保留 Cookie、LocalStorage、IndexedDB、扩展、下载文件及浏览器内核。清理前请关闭所有环境，等待归档完成，再从托盘退出 HubStudio；清理期间本机业务任务暂停准入。</p>' +
       '<div class="hub-cache-scan"><label for="hub-cache-path">补充缓存路径（可选）<input id="hub-cache-path" type="text" value="' + esc(state.cachePath) + '" placeholder="默认自动识别；也可粘贴 HubStudio 本地设置中的完整路径"' + (busy ? ' disabled' : '') + '></label>' + button(busy ? (cache.state === 'scanning' ? '正在检测…' : '正在清理…') : '检测缓存大小','scan-hub-cache','refresh','',busy) + '</div>' +
       '<div class="hub-cache-status" role="status" aria-live="polite">' + esc(cache.message || '') + (cache.scannedAt ? ' · 上次检测 ' + esc(cache.scannedAt) : '') + '</div>' +
       ((cache.groups || []).length ? '<div class="hub-cache-total">上次检测可清理 <strong>' + formatBytes(cache.cleanableBytes) + '</strong><span>仅统计安全清理范围，环境目录总占用可能更大。</span></div>' + rows : '') +
-      (cache.warnings || []).map(function (warning) { return '<p class="hub-cache-warning">' + esc(warning) + '</p>'; }).join('') + activeProgress + result +
+      (cache.warnings || []).map(function (warning) { return '<p class="hub-cache-warning">' + esc(warning) + '</p>'; }).join('') + scanProgress + activeProgress + result +
       (paths || installations ? '<details class="hub-cache-paths"><summary>查看安装位置与缓存目录</summary>' + (installations ? '<b>安装位置</b><ul>' + installations + '</ul>' : '') + '<b>已识别的缓存目录</b><ul>' + paths + '</ul></details>' : '') +
       '<div class="hub-cache-footer"><span>已选 ' + formatBytes(cacheSelectedBytes()) + (active ? ' · 本机任务结束后可清理' : (hubRunning ? ' · HubStudio 运行中，退出后可清理' : '')) + '</span>' + button('清理所选缓存','clear-hub-cache','refresh','primary',!ready || !cacheSelectedBytes() || !!active) + '</div></div></section>';
   }
   function refreshHubCache() {
     clearTimeout(cachePollTimer);
     return api('/api/hub-cache/status').then(function (cache) {
-      var wasRunning = !!(state.hubCache && state.hubCache.running);
+      var previous = state.hubCache || {};
+      var wasRunning = !!previous.running;
+      var wasScanning = previous.state === 'scanning';
       state.hubCache = cache;
       if (!cache.running) state.cacheSelection = {};
       if (state.view === 'diagnostics') renderWorkspace();
       else updateHubCacheGlobalTaskNotice();
-      if (state.cacheProgressOpen) renderHubCacheProgressModal();
+      if (state.cacheScanProgressOpen) {
+        if (cache.state === 'scanning' && cache.running) renderHubCacheScanModal();
+        else {
+          state.cacheScanProgressOpen = false;
+          closeModal();
+          showToast(cache.message || '缓存检测任务已结束', cache.state === 'ready' ? '缓存检测完成' : '缓存检测未完成');
+        }
+      } else if (state.cacheProgressOpen) renderHubCacheProgressModal();
       else if (wasRunning && !cache.running) showToast(
-        cache.message || '缓存清理任务已结束',
-        cache.state === 'complete' ? '缓存清理完成' : '缓存清理需要处理');
+        cache.message || (wasScanning ? '缓存检测任务已结束' : '缓存清理任务已结束'),
+        wasScanning ? (cache.state === 'ready' ? '缓存检测完成' : '缓存检测未完成') : (cache.state === 'complete' ? '缓存清理完成' : '缓存清理需要处理'));
       if (cache.running) cachePollTimer = setTimeout(refreshHubCache, 1000);
     }).catch(function (error) {
       if (state.hubCache) state.hubCache.running = false;
       if (state.view === 'diagnostics') renderWorkspace();
+      if (state.cacheScanProgressOpen) { state.cacheScanProgressOpen=false; closeModal(); }
       if (state.cacheProgressOpen) renderHubCacheProgressModal();
       showError(error);
     });
@@ -586,10 +660,14 @@
       state.hubCache = {state:'ready',running:false,scanId:'preview',message:'示例检测完成（演示数据）',cleanableBytes:2362232013,scannedAt:nowTime(),groups:[{id:'web',label:'网页资源缓存',bytes:2147483648,directoryCount:200,fileCount:12000},{id:'code',label:'脚本与渲染缓存',bytes:214748365,directoryCount:400,fileCount:1400}],locations:[{path:platform === 'mac' ? '~/Library/Caches/hubstudio-client/sdk/cache' : 'D:\\Hubstudio\\sdk\\cache',cleanableBytes:2362232013,diskFreeBytes:85899345920}]};
       renderWorkspace(); return;
     }
-    state.hubCache = {state:'scanning',running:true,message:'正在检测缓存大小…'};
+    state.cacheScanProgressOpen = true;
+    state.hubCache = {state:'scanning',running:true,phase:'locating',elapsedSeconds:0,startedAt:new Date().toISOString(),message:'正在查找 HubStudio 缓存目录'};
     renderWorkspace();
+    renderHubCacheScanModal();
     post('/api/hub-cache/scan',{customPath:state.cachePath}).then(refreshHubCache).catch(function (error) {
       state.hubCache = {state:'failed',running:false,message:error.message};
+      state.cacheScanProgressOpen = false;
+      closeModal();
       renderWorkspace(); showError(error);
     });
   }
@@ -698,11 +776,85 @@
       });
     }, delay == null ? 5000 : delay);
   }
+  function acceptSourceMutation(result, affectsOrganization) {
+    state.sources = result;
+    if (affectsOrganization && state.sourceSync) {
+      state.sourceSync = Object.assign({}, state.sourceSync, {inSync:false});
+    }
+  }
+  function pullOrganizationSources(silent) {
+    if (state.sourceSyncBusy || !state.sources) return Promise.resolve(null);
+    state.sourceSyncBusy = true;
+    if (!silent) renderWorkspace();
+    return post('/api/local-config/data-sources/organization-sync/pull',{
+      expectedRevision:state.sources.registryRevision || ''
+    }).then(function (result) {
+      state.sources = result;
+      state.sourceSync = result.organizationSync || state.sourceSync;
+      if (!silent) showToast('组织数据源已同步；本机环境映射保持独立','同步完成');
+      return result;
+    }).catch(function (error) {
+      if (error.code === 'config_revision_conflict') loadWorkspaceData();
+      if (!silent) showError(error);
+      else state.sourceSync = Object.assign({}, state.sourceSync || {}, {error:error.message});
+      return null;
+    }).finally(function () {
+      state.sourceSyncBusy = false;
+      if (state.identity && state.view === 'sources') renderWorkspace();
+    });
+  }
+  function publishOrganizationSources() {
+    if (state.sourceSyncBusy || !state.sources) return;
+    state.sourceSyncBusy = true;
+    closeModal();
+    renderWorkspace();
+    post('/api/local-config/data-sources/organization-sync/publish',{
+      expectedRevision:state.sources.registryRevision || '',
+      expectedOrganizationRevision:Number(state.sourceSync && state.sourceSync.organizationRevision || 0)
+    }).then(function (result) {
+      state.sources = result;
+      state.sourceSync = result.organizationSync || state.sourceSync;
+      showToast('本机数据源定义和采购员默认已加密发布到组织配置','发布完成');
+    }).catch(function (error) {
+      if (error.code === 'data_source_registry_revision_conflict') {
+        loadSourceSyncStatus(false);
+      }
+      showError(error);
+    }).finally(function () {
+      state.sourceSyncBusy = false;
+      if (state.identity && state.view === 'sources') renderWorkspace();
+    });
+  }
+  function loadSourceSyncStatus(autoPull) {
+    return api('/api/local-config/data-sources/organization-sync').then(function (sync) {
+      state.sourceSync = sync;
+      if (autoPull && sync.configured && state.sources
+          && !(state.sources.dataSources || []).length) {
+        return pullOrganizationSources(true);
+      }
+      return sync;
+    }).catch(function (error) {
+      state.sourceSync = {configured:false,inSync:false,error:error.message};
+      return null;
+    });
+  }
+  function renderSourceSyncConfirmation(mode) {
+    var publish = mode === 'publish';
+    var localCount = Number(state.sources && state.sources.dataSources && state.sources.dataSources.length || 0);
+    var organizationCount = Number(state.sourceSync && state.sourceSync.organizationDataSourceCount || 0);
+    var title = publish ? '发布本机配置到组织' : '同步组织配置到当前设备';
+    var copy = publish
+      ? '将用当前设备的 ' + localCount + ' 个数据源及采购员默认映射更新组织配置。表格标识会加密保存；本机环境映射不会上传。'
+      : '将组织配置中的 ' + organizationCount + ' 个数据源及采购员默认映射同步到当前设备。本机环境映射会保留；引用已删除数据源的无效映射将被移除。';
+    var action = publish ? 'confirm-publish-organization-sources' : 'confirm-sync-organization-sources';
+    modalRoot.innerHTML = '<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true" aria-label="' + esc(title) + '"><h2>' + esc(title) + '</h2><p>' + esc(copy) + '</p><div class="notice-strip team-default-help">' + icon('shield') + '<div><b>同步范围已隔离</b><p>组织范围：数据源定义、团队默认、采购员默认；设备范围：HubStudio containerCode 环境映射。</p></div></div><div class="modal-footer"><button class="button" data-action="modal-close">取消</button><button class="button primary" data-action="' + action + '">' + (publish ? '确认发布' : '确认同步') + '</button></div></section></div>';
+  }
   function loadWorkspaceData() {
     if (previewRole) {
       state.config = sampleConfig;
       state.lark = {managedInCloud:true};
       state.sources = sampleSources;
+      state.sourceSync = sampleSourceSync;
       state.members = sampleMembers;
       state.environments = sampleEnvironments;
       renderWorkspace();
@@ -722,7 +874,9 @@
       jobs.push(api('/api/local-config/data-sources/environment-options?limit=200').then(function (x) { state.environments = x.environments || []; }).catch(function () {}));
     }
     state.lark = {managedInCloud:true};
-    return Promise.allSettled(jobs).then(function () { renderWorkspace(); });
+    return Promise.allSettled(jobs).then(function () {
+      return loadSourceSyncStatus(true);
+    }).finally(function () { renderWorkspace(); });
   }
   function authenticated(identity) {
     state.identity = identity;
@@ -840,7 +994,7 @@
     var policyButton = source.scope === 'team' && editable ? '<button class="button" data-action="toggle-team-default:' + esc(source.id) + '">' + (teamDefault ? '取消团队默认' : '设为团队默认（兜底）') + '</button>' : '';
     var policyHelp = source.scope === 'team' ? '<div class="notice-strip team-default-help">' + icon('shield') + '<div><b>团队默认只对没有个人默认映射的采购员生效</b><p>设置后不会自动把胡康凯或其他已有个人表的采购员切换到团队表；请在“采购员默认映射”中逐人调整。</p></div></div>' : '';
     state.sourceDraft = {sourceId:sourceId,scope:source.scope};
-    modalRoot.innerHTML = '<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true"><h2>数据源详情</h2><p>敏感表格标识只保存在本机注册表，详情页仅回显不可复用的掩码摘要。</p><div class="modal-body"><div class="source-details"><div><span>类型</span><b>' + (source.scope === 'team' ? '团队协作表' : '个人速填表') + '</b></div><div><span>归属</span><b>' + esc(owner) + '</b></div><div><span>数据源编号</span><b>' + esc(safeId(source.id)) + '</b></div><div><span>工作表</span><b>' + esc(source.sheetName || '名称未记录') + '</b></div><div><span>读取范围</span><b>' + esc(source.cellRange || '—') + '</b></div><div><span>关联环境</span><b>' + Number(source.environmentCount || 0) + ' 个</b></div></div>' + field('source-label','显示名称',source.label,'1–120 个字符；仅修改本机显示名称','text',!editable) + '<label class="toggle-row"><div><b>启用此数据源</b><p>停用后不会用于采购员默认值或环境解析，现有映射仍保留。</p></div><input id="source-enabled" class="switch" type="checkbox"' + (source.enabled !== false ? ' checked' : '') + (editable ? '' : ' disabled') + '></label><div class="masked-config"><span>' + icon('lock') + '</span><div><b>飞书目标已安全保存</b><p>' + esc(source.targetMasked || 'https://*.feishu.cn/sheets/••••') + ' · 工作表 ' + esc(source.worksheetMasked || '••••') + '</p></div></div>' + policyHelp + '</div><div class="modal-footer"><button class="button" data-action="modal-close">关闭</button>' + (pending ? '<button class="button primary" data-action="claim-source:' + esc(source.id) + '">认领为我的个人表</button>' : '') + policyButton + (editable ? '<button class="button" data-action="source-reconfigure:' + esc(source.id) + '">更换表格/工作表</button><button class="button primary" data-action="save-source-metadata">保存修改</button>' : '') + '</div></section></div>';
+    modalRoot.innerHTML = '<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true"><h2>数据源详情</h2><p>表格标识由当前设备使用；发布组织配置后会加密同步，详情页始终只回显不可复用的掩码摘要。</p><div class="modal-body"><div class="source-details"><div><span>类型</span><b>' + (source.scope === 'team' ? '团队协作表' : '个人速填表') + '</b></div><div><span>归属</span><b>' + esc(owner) + '</b></div><div><span>数据源编号</span><b>' + esc(safeId(source.id)) + '</b></div><div><span>工作表</span><b>' + esc(source.sheetName || '名称未记录') + '</b></div><div><span>读取范围</span><b>' + esc(source.cellRange || '—') + '</b></div><div><span>关联环境</span><b>' + Number(source.environmentCount || 0) + ' 个</b></div></div>' + field('source-label','显示名称',source.label,'1–120 个字符；发布后同步到组织设备','text',!editable) + '<label class="toggle-row"><div><b>启用此数据源</b><p>停用后不会用于采购员默认值或环境解析，现有映射仍保留。</p></div><input id="source-enabled" class="switch" type="checkbox"' + (source.enabled !== false ? ' checked' : '') + (editable ? '' : ' disabled') + '></label><div class="masked-config"><span>' + icon('lock') + '</span><div><b>飞书目标已安全保存</b><p>' + esc(source.targetMasked || 'https://*.feishu.cn/sheets/••••') + ' · 工作表 ' + esc(source.worksheetMasked || '••••') + '</p></div></div>' + policyHelp + '</div><div class="modal-footer"><button class="button" data-action="modal-close">关闭</button>' + (pending ? '<button class="button primary" data-action="claim-source:' + esc(source.id) + '">认领为我的个人表</button>' : '') + policyButton + (editable ? '<button class="button" data-action="source-reconfigure:' + esc(source.id) + '">更换表格/工作表</button><button class="button primary" data-action="save-source-metadata">保存修改</button>' : '') + '</div></section></div>';
   }
   function closeModal() { modalRoot.innerHTML = ''; state.sourceDraft = null; state.taskDetailsOpen = false; }
   function inspectSource() {
@@ -876,7 +1030,7 @@
     var ownerSelect = document.getElementById('source-owner');
     var ownerMemberId = draft.scope === 'personal' && ownerSelect ? ownerSelect.value : '';
     post(path,{sourceId:draft.sourceId || '',memberId:ownerMemberId,validationId:draft.validation.validationId,setDefault:draft.scope === 'team',expectedRevision:state.sources && state.sources.registryRevision || ''}).then(function (result) {
-      state.sources = result; closeModal(); renderWorkspace(); showToast(replacing ? '数据源已替换，原有默认值与环境映射已保留' : (draft.scope === 'personal' ? '个人速填表已配置并设为该采购员默认' : '团队数据源已安全保存到本机注册表'));
+      acceptSourceMutation(result,true); closeModal(); renderWorkspace(); showToast(replacing ? '数据源已替换，原有默认值与环境映射已保留' : (draft.scope === 'personal' ? '个人速填表已配置并设为该采购员默认' : '团队数据源已保存；请发布本机更改完成组织同步'));
     }).catch(showError);
   }
   function saveSourceMetadata() {
@@ -887,12 +1041,12 @@
     var value = label.value.trim();
     if (!value || value.length > 120) return showError(new Error('显示名称必须为 1–120 个字符'));
     post('/api/local-config/data-sources/metadata',{sourceId:draft.sourceId,label:value,enabled:enabled.checked,expectedRevision:state.sources.registryRevision}).then(function (result) {
-      state.sources=result; closeModal(); renderWorkspace(); showToast('数据源名称与启用状态已保存');
+      acceptSourceMutation(result,true); closeModal(); renderWorkspace(); showToast('数据源名称与启用状态已保存');
     }).catch(function (error) { if (error.code === 'config_revision_conflict') loadWorkspaceData(); showError(error); });
   }
   function claimSource(sourceId) {
     post('/api/local-config/data-sources/claim-personal',{sourceId:sourceId,expectedRevision:state.sources.registryRevision}).then(function (result) {
-      state.sources=result; closeModal(); renderWorkspace(); showToast('旧个人速填表已认领，并设为你的默认数据源');
+      acceptSourceMutation(result,true); closeModal(); renderWorkspace(); showToast('旧个人速填表已认领，并设为你的默认数据源');
     }).catch(function (error) { if (error.code === 'config_revision_conflict') loadWorkspaceData(); showError(error); });
   }
   function revalidateSource(sourceId) {
@@ -904,7 +1058,7 @@
     var current = currentSources().teamDefaultDataSourceId;
     var path = current === sourceId ? '/api/local-config/data-sources/team-default/clear' : '/api/local-config/data-sources/team-default';
     post(path,{sourceId:sourceId,expectedRevision:state.sources.registryRevision}).then(function (result) {
-      state.sources=result; closeModal(); renderWorkspace(); showToast(current === sourceId ? '已取消团队默认数据源' : '已设为团队兜底；已有个人默认的采购员不会自动切换');
+      acceptSourceMutation(result,true); closeModal(); renderWorkspace(); showToast(current === sourceId ? '已取消团队默认数据源' : '已设为团队兜底；已有个人默认的采购员不会自动切换');
     }).catch(function (error) { if (error.code === 'config_revision_conflict') loadWorkspaceData(); showError(error); });
   }
 
@@ -919,7 +1073,7 @@
     if (!useTeamDefault) payload.sourceId = select.value;
     buttonNode.disabled = true;
     post(path,payload).then(function (result) {
-      state.sources=result; renderWorkspace(); showToast(useTeamDefault ? '已改用团队默认数据源' : '个人默认数据源已更新');
+      acceptSourceMutation(result,true); renderWorkspace(); showToast(useTeamDefault ? '已改用团队默认数据源' : '个人默认数据源已更新');
     }).catch(function (error) {
       if (error.code === 'config_revision_conflict') loadWorkspaceData();
       showError(error);
@@ -953,7 +1107,7 @@
     var sourceId = row.querySelector('.binding-source').value;
     var containerCode = row.getAttribute('data-container');
     if (!memberId || !sourceId) return;
-    post('/api/local-config/data-sources/environment-binding',{memberId:memberId,containerCode:containerCode,sourceId:sourceId,expectedRevision:state.sources.registryRevision}).then(function (x) { state.sources=x; renderWorkspace(); showToast('HubStudio 环境数据源映射已保存'); }).catch(showError);
+    post('/api/local-config/data-sources/environment-binding',{memberId:memberId,containerCode:containerCode,sourceId:sourceId,expectedRevision:state.sources.registryRevision}).then(function (x) { acceptSourceMutation(x,false); renderWorkspace(); showToast('HubStudio 环境数据源映射已保存到当前设备'); }).catch(showError);
   }
 
   document.addEventListener('click', function (event) {
@@ -979,7 +1133,7 @@
     else if (action === 'preview-auth-complete') { authenticated(previewIdentity(previewRole)); showToast('飞书授权成功：' + roleInfo().name + ' · ' + roleInfo().role); }
     else if (action === 'account-toggle') { state.accountOpen=!state.accountOpen; renderWorkspace(); }
     else if (action === 'auth-logout' || action === 'auth-switch') {
-      var done = function () { clearTimeout(cachePollTimer); state.hubCache=null; state.cacheSelection={}; state.cachePath=''; state.cacheProgressOpen=false; state.cacheClearExpectedBytes=0; state.cacheClearGroupNames=[]; modalRoot.innerHTML=''; state.identity=null; state.accountOpen=false; state.authMode='signedOut'; state.notice=action === 'auth-switch' ? '请使用新的飞书账号继续登录。' : '已安全退出当前账号。'; renderAuth(); };
+      var done = function () { clearTimeout(cachePollTimer); state.hubCache=null; state.cacheSelection={}; state.cachePath=''; state.cacheScanProgressOpen=false; state.cacheProgressOpen=false; state.cacheClearExpectedBytes=0; state.cacheClearGroupNames=[]; state.sourceSync=null; state.sourceSyncBusy=false; modalRoot.innerHTML=''; state.identity=null; state.accountOpen=false; state.authMode='signedOut'; state.notice=action === 'auth-switch' ? '请使用新的飞书账号继续登录。' : '已安全退出当前账号。'; renderAuth(); };
       if (previewRole) done(); else post('/api/auth/logout',{}).catch(showError).finally(done);
     }
     else if (action === 'refresh-status') loadStatus().then(function () { showToast('状态已刷新'); });
@@ -987,6 +1141,13 @@
     else if (action === 'go-settings') { state.view='settings'; renderWorkspace(); }
     else if (action === 'go-diagnostics') { state.view='diagnostics'; renderWorkspace(); }
     else if (action === 'task-details') openTaskDetails();
+    else if (action === 'sync-organization-sources') {
+      if ((state.sources && state.sources.dataSources || []).length) renderSourceSyncConfirmation('pull');
+      else pullOrganizationSources(false);
+    }
+    else if (action === 'publish-organization-sources') renderSourceSyncConfirmation('publish');
+    else if (action === 'confirm-sync-organization-sources') { closeModal(); pullOrganizationSources(false); }
+    else if (action === 'confirm-publish-organization-sources') publishOrganizationSources();
     else if (action === 'refresh-task-details') loadStatus(false).then(function () { showToast('本机任务明细已刷新'); });
     else if (action === 'repair-hub-core') openCoreRepairModal();
     else if (action === 'confirm-hub-core-repair') startCoreRepair(actionNode);
@@ -994,6 +1155,8 @@
     else if (action === 'clear-hub-cache') confirmHubCache();
     else if (action === 'cache-preflight-retry') retryHubCachePreflight(actionNode);
     else if (action === 'confirm-clear-hub-cache') clearHubCache();
+    else if (action === 'open-hub-cache-scan-progress') { state.cacheScanProgressOpen=true; renderHubCacheScanModal(); }
+    else if (action === 'cache-scan-background') { state.cacheScanProgressOpen=false; closeModal(); showToast('缓存检测将在后台继续，维护页面可随时查看状态','检测仍在进行'); }
     else if (action === 'open-hub-cache-progress') { state.cacheProgressOpen=true; renderHubCacheProgressModal(); }
     else if (action === 'cache-progress-background') { state.cacheProgressOpen=false; closeModal(); showToast('缓存清理将在后台继续，维护页面可随时查看进度','任务仍在进行'); }
     else if (action === 'cache-progress-close') { state.cacheProgressOpen=false; state.cacheClearExpectedBytes=0; state.cacheClearGroupNames=[]; closeModal(); }

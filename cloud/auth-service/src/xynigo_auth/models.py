@@ -1752,6 +1752,38 @@ class TenantFeishuIntegration(Base):
     )
 
 
+class TenantDataSourceRegistry(Base):
+    """Encrypted organization data sources; environment bindings stay local."""
+
+    __tablename__ = "tenant_data_source_registries"
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), primary_key=True
+    )
+    payload_ciphertext: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    source_executor_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("local_executors.id", ondelete="SET NULL")
+    )
+    updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("revision >= 1", name="ck_tenant_data_source_revision"),
+        CheckConstraint(
+            "length(content_hash) = 64", name="ck_tenant_data_source_hash"
+        ),
+    )
+
+
 class EnvironmentAccountPlanRequest(Base):
     """Exact idempotency replay for cloud environment-plan parse requests."""
 

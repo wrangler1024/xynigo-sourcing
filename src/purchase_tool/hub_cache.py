@@ -5,6 +5,7 @@ HubStudio's read-only settings database. Account databases are never opened.
 """
 import copy
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -37,6 +38,56 @@ class HubCacheError(RuntimeError):
     def __init__(self, code, message, status=409):
         self.code, self.status = code, status
         super().__init__(message)
+
+
+class RemainingTimeEstimator:
+    """Smooth byte throughput before exposing a deliberately approximate ETA."""
+
+    def __init__(self, now=None):
+        now = time.monotonic() if now is None else float(now)
+        self.started_at = now
+        self.sample_at = now
+        self.sample_completed = 0
+        self.last_progress_at = now
+        self.rate = None
+        self.samples = 0
+
+    def record(self, completed, now=None):
+        now = time.monotonic() if now is None else float(now)
+        completed = max(0, int(completed or 0))
+        delta_time = now - self.sample_at
+        delta = completed - self.sample_completed
+        if delta <= 0 or delta_time < .25:
+            return
+        instant_rate = delta / delta_time
+        self.rate = instant_rate if self.rate is None else (
+            .25 * instant_rate + .75 * self.rate)
+        self.samples += 1
+        self.sample_at = now
+        self.sample_completed = completed
+        self.last_progress_at = now
+
+    def snapshot(self, total, completed, now=None):
+        now = time.monotonic() if now is None else float(now)
+        total = max(0, int(total or 0))
+        completed = max(0, int(completed or 0))
+        result = {
+            'elapsedSeconds': max(0, int(now - self.started_at)),
+            'etaState': 'warming',
+            'estimatedRemainingSeconds': None,
+            'throughputBytesPerSecond': int(self.rate or 0),
+        }
+        if total and completed >= total:
+            result.update(etaState='complete', estimatedRemainingSeconds=0)
+        elif now - self.last_progress_at > 5:
+            result['etaState'] = 'unavailable'
+        elif total and self.samples >= 2 and self.rate and self.rate > 0:
+            result.update(
+                etaState='ready',
+                estimatedRemainingSeconds=max(
+                    1, int(math.ceil((total - completed) / self.rate))),
+            )
+        return result
 
 
 def linked(info):
@@ -268,12 +319,13 @@ def discover_roots(custom_path='', home=None, platform=None, environ=None,
     return roots, [str(p) for p in dict.fromkeys(installations) if p.exists()]
 
 
-def inspect_cache(roots):
+def inspect_cache(roots, progress=None):
     groups = {key: {'id': key, 'label': label, 'bytes': 0, 'fileCount': 0,
                     'directoryCount': 0} for key, (label, _) in KINDS.items()}
     targets, locations, warnings = [], [], []
     seen_roots, seen_targets = set(), set()
     profile_count = 0
+    cache_directory_count = 0
     for root, kind, cache_only in roots:
         root = Path(os.path.abspath(root))
         key = os.path.normcase(str(root))
@@ -281,6 +333,10 @@ def inspect_cache(roots):
             continue
         seen_roots.add(key)
         try:
+            if progress:
+                progress(phase='scanning', message='正在查找环境与客户端缓存',
+                         profileDirectoryCount=profile_count,
+                         cacheDirectoryCount=cache_directory_count)
             anchor_id = identity(root)
             candidates = []
             if kind == 'client':
@@ -310,6 +366,10 @@ def inspect_cache(roots):
                     continue
                 seen_targets.add(target_key)
                 try:
+                    if progress:
+                        progress(phase='measuring', message='正在统计缓存文件与大小',
+                                 profileDirectoryCount=profile_count,
+                                 cacheDirectoryCount=cache_directory_count)
                     target_id = identity(path)
                     size, count, errors = measure(path)
                     if errors:
@@ -318,6 +378,7 @@ def inspect_cache(roots):
                     groups[group]['bytes'] += size
                     groups[group]['fileCount'] += count
                     groups[group]['directoryCount'] += 1
+                    cache_directory_count += 1
                     cleanable += size
                 except OSError:
                     warnings.append('已跳过不可访问或包含链接的缓存目录')
@@ -332,6 +393,7 @@ def inspect_cache(roots):
     return {'groups': list(groups.values()), 'locations': locations,
             'cleanableBytes': sum(g['bytes'] for g in groups.values()),
             'profileDirectoryCount': profile_count,
+            'cacheDirectoryCount': cache_directory_count,
             'warnings': list(dict.fromkeys(warnings))}, targets
 
 
@@ -372,22 +434,39 @@ class HubCacheManager:
         self.lock = threading.RLock()
         self.targets = []
         self.scanned_at = 0
+        self.operation_started = 0
+        self.scan_progress_at = 0
+        self.eta = None
         self.state = {'state': 'idle', 'running': False, 'groups': [],
                       'locations': [], 'message': '点击检测，查看本机可清理的缓存',
                       'errorCode': '', 'scanId': ''}
 
     def snapshot(self):
         with self.lock:
-            return copy.deepcopy(self.state)
+            result = copy.deepcopy(self.state)
+            now = time.monotonic()
+            if result.get('running') and self.operation_started:
+                result['elapsedSeconds'] = max(
+                    0, int(now - self.operation_started))
+            if (result.get('state') == 'cleaning' and result.get('running')
+                    and self.eta is not None):
+                result.update(self.eta.snapshot(
+                    result.get('selectedBytes'), result.get('removedBytes'), now))
+            return result
 
     def scan(self, custom_path=''):
         with self.lock:
             self._idle()
             self.targets = []
             self.scanned_at = 0
+            self.operation_started = time.monotonic()
+            self.scan_progress_at = 0
+            self.eta = None
             self.state = {'state': 'scanning', 'running': True, 'groups': [],
                           'locations': [], 'scanId': '', 'errorCode': '',
-                          'message': '正在检测缓存大小…'}
+                          'phase': 'locating', 'elapsedSeconds': 0,
+                          'startedAt': time.strftime('%Y-%m-%d %H:%M:%S'),
+                          'message': '正在查找 HubStudio 缓存目录'}
             threading.Thread(target=self._scan, args=(custom_path,), daemon=True,
                              name='xynigo-hub-cache-scan').start()
         return self.snapshot()
@@ -395,16 +474,36 @@ class HubCacheManager:
     def _scan(self, custom_path):
         try:
             roots, installs = self.discover(custom_path)
-            report, targets = inspect_cache(roots)
+            self._scan_progress(
+                phase='scanning', message='正在查找环境与客户端缓存',
+                profileDirectoryCount=0, cacheDirectoryCount=0, force=True)
+            report, targets = inspect_cache(roots, progress=self._scan_progress)
             with self.lock:
+                elapsed = max(0, int(time.monotonic() - self.operation_started))
                 self.targets = targets
                 self.scanned_at = time.monotonic()
                 self.state.update(report, state='ready', running=False,
                                   installations=installs, scanId=secrets.token_hex(16),
                                   scannedAt=time.strftime('%Y-%m-%d %H:%M:%S'),
+                                  phase='complete', elapsedSeconds=elapsed,
+                                  durationSeconds=elapsed,
                                   message='检测完成，请选择要清理的缓存类别')
+                self.operation_started = 0
         except Exception as exc:
             self._failed(exc, '缓存检测失败，请检查目录访问权限')
+
+    def _scan_progress(self, phase, message, force=False, **details):
+        now = time.monotonic()
+        with self.lock:
+            if self.state.get('state') != 'scanning' or not self.state.get('running'):
+                return
+            phase_changed = phase != self.state.get('phase')
+            if not force and not phase_changed and now - self.scan_progress_at < .25:
+                return
+            self.scan_progress_at = now
+            self.state.update(details, phase=phase, message=message,
+                              elapsedSeconds=max(
+                                  0, int(now - self.operation_started)))
 
     def _idle(self):
         if self.state['running']:
@@ -444,6 +543,8 @@ class HubCacheManager:
             except Exception:
                 self.tasks.finish(task_id)
                 raise
+            self.operation_started = time.monotonic()
+            self.eta = RemainingTimeEstimator(self.operation_started)
             self.state.update(state='cleaning', running=True, errorCode='', scanId='',
                               removedBytes=0, removedFiles=0, skippedFiles=0,
                               selectedGroups=selected_ids,
@@ -451,6 +552,10 @@ class HubCacheManager:
                                                 for group in selected_ids),
                               selectedFileCount=sum(int(summaries.get(group, {}).get('fileCount') or 0)
                                                     for group in selected_ids),
+                              phase='cleaning', elapsedSeconds=0,
+                              etaState='warming', estimatedRemainingSeconds=None,
+                              throughputBytesPerSecond=0,
+                              startedAt=time.strftime('%Y-%m-%d %H:%M:%S'),
                               message='正在清理选中的缓存，请保持 HubStudio 关闭')
             threading.Thread(target=self._clear, args=(selected, task_id), daemon=True,
                              name='xynigo-hub-cache-clear').start()
@@ -487,16 +592,11 @@ class HubCacheManager:
                             count += 1
                             now = time.monotonic()
                             if count % 100 == 0 or now - last_progress >= .25:
-                                with self.lock:
-                                    self.state.update(removedBytes=removed,
-                                                      removedFiles=count,
-                                                      skippedFiles=len(errors))
+                                self._clear_progress(removed, count, len(errors), now)
                                 last_progress = now
                         except OSError:
                             errors.append(1)
-                    with self.lock:
-                        self.state.update(removedBytes=removed, removedFiles=count,
-                                          skippedFiles=len(errors))
+                    self._clear_progress(removed, count, len(errors))
                 except OSError:
                     errors.append(1)
         except Exception as exc:
@@ -504,18 +604,44 @@ class HubCacheManager:
         finally:
             self.tasks.finish(task_id)
             with self.lock:
+                now = time.monotonic()
+                if self.eta is not None:
+                    self.eta.record(removed, now)
+                elapsed = max(0, int(now - self.operation_started))
                 self.targets = []
                 self.scanned_at = 0
                 self.state.update(state='partial' if errors or stopped else 'complete',
                                   running=False, removedBytes=removed, removedFiles=count,
                                   skippedFiles=len(errors),
+                                  phase='complete', elapsedSeconds=elapsed,
+                                  durationSeconds=elapsed,
+                                  etaState='complete' if not errors and not stopped else 'unavailable',
+                                  estimatedRemainingSeconds=0 if not errors and not stopped else None,
                                   errorCode=getattr(stopped, 'code', '') if stopped else '',
                                   message=str(stopped) if isinstance(stopped, HubCacheError)
                                   else ('部分文件未能清理，请重新检测' if errors or stopped
                                         else '清理完成，可重新检测剩余缓存'))
+                self.operation_started = 0
+
+    def _clear_progress(self, removed, count, skipped, now=None):
+        now = time.monotonic() if now is None else now
+        with self.lock:
+            if self.eta is not None:
+                self.eta.record(removed, now)
+                estimate = self.eta.snapshot(
+                    self.state.get('selectedBytes'), removed, now)
+            else:
+                estimate = {}
+            self.state.update(estimate, removedBytes=removed,
+                              removedFiles=count, skippedFiles=skipped)
 
     def _failed(self, exc, message):
         with self.lock:
+            elapsed = max(0, int(time.monotonic() - self.operation_started)) \
+                if self.operation_started else 0
             self.state.update(state='failed', running=False,
+                              phase='failed', elapsedSeconds=elapsed,
+                              durationSeconds=elapsed,
                               errorCode=getattr(exc, 'code', 'hub_cache_failed'),
                               message=str(exc) if isinstance(exc, HubCacheError) else message)
+            self.operation_started = 0

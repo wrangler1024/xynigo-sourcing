@@ -62,6 +62,7 @@ class FakeCloudClient(object):
         self.procurement_workspace_requests = []
         self.buyer_account_requests = []
         self.operation_result_requests = []
+        self.data_source_registry_requests = []
         self.business_log_requests = []
         self.system_log_requests = []
         self.release_catalog_tokens = []
@@ -126,6 +127,19 @@ class FakeCloudClient(object):
         self.operation_result_requests.append(
             (path, token, method, payload, executor_credential))
         return {'ok': True, 'data': {'runId': 'synthetic-run'}}
+
+    def data_source_registry_request(
+            self, token, executor_credential, method='GET', payload=None):
+        self.data_source_registry_requests.append(
+            (token, executor_credential, method, payload))
+        return {
+            'configured': False,
+            'organizationRevision': 0,
+            'contentHash': '',
+            'visibility': 'all',
+            'registry': {'schemaVersion': 1, 'dataSources': [],
+                         'buyerProfiles': [], 'teamDefaultDataSourceId': ''},
+        }
 
     def business_log_request(self, path, token):
         self.business_log_requests.append((path, token))
@@ -447,6 +461,32 @@ class CloudAuthTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, 'executor_credential_invalid')
         self.assertEqual(store.load(), SESSION_TOKEN)
         self.assertEqual(service.session_token, SESSION_TOKEN)
+
+    def test_data_source_sync_keeps_bearer_and_device_credentials_local(self):
+        client = FakeCloudClient()
+        client.me_result = {
+            **IDENTITY,
+            'permissions': ['assistant.access', 'executor.config.write'],
+        }
+        service = LocalAuthService(
+            client=client, store=MemoryAuthSessionStore(SESSION_TOKEN))
+        registry = {
+            'schemaVersion': 1,
+            'dataSources': [],
+            'buyerProfiles': [],
+            'teamDefaultDataSourceId': '',
+        }
+
+        service.data_source_registry_request(DEVICE_CREDENTIAL)
+        service.data_source_registry_request(
+            DEVICE_CREDENTIAL, method='PUT', payload={
+                'expectedRevision': 0, 'registry': registry})
+
+        self.assertEqual(client.data_source_registry_requests, [
+            (SESSION_TOKEN, DEVICE_CREDENTIAL, 'GET', None),
+            (SESSION_TOKEN, DEVICE_CREDENTIAL, 'PUT', {
+                'expectedRevision': 0, 'registry': registry}),
+        ])
 
     def test_cloud_client_sends_device_proof_in_header_not_json(self):
         requests = []

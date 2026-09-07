@@ -38,6 +38,7 @@
 | `executor_pairing_codes` | 5 分钟有效、单次消费的设备配对码摘要 |
 | `executor_tasks` | 本地执行器配置任务、租约、状态和脱敏短期结果 |
 | `executor_task_events` | 任务领取、开始、进度、结束和不确定状态的追加事件 |
+| `tenant_data_source_registries` | 租户级采购助手数据源注册表、采购员默认映射与团队默认；敏感表格标识加密保存，HubStudio 环境映射仍留在设备本地 |
 
 `0003_purchase_request_foundation` 及上述三张采购表已于 2026-08-25 迁移到隔离测试实例。首次手工提交验收后，测试实例有 1 张主单、1 条明细和 1 条待处理 Outbox；飞书同步 Worker 尚未实现，`syncStatus=pending` 不代表 Base 已写入。
 
@@ -64,7 +65,7 @@ Web 采购中心 P0 读取与采购执行测试接口已部署到隔离测试实
 - 设备接口只接受独立 Bearer，并明确拒绝浏览器 Cookie。设备凭证可换取所属用户的短期本机执行会话，使数据库查重与结果回传不再依赖旧本机登录入口。代理链接、密码、Cookie、Token、飞书凭证和租约令牌不得进入普通设备状态或日志；业务任务中的敏感正文和结果必须加密存储。
 - Web 用户接口：`GET /v1/executors`、生成配对码、撤销、运行摘要、配置读写和任务查询/取消；对应权限为 `executor.device.read/pair/revoke` 与 `executor.config.read/write`。
 
-本地迁移 head 为 `0017_executor_workspace_rpc`。部署前必须先备份并验证 `alembic current == alembic heads`。
+当前迁移 head 为 `0031_data_source_registry_sync`。部署前必须先备份并验证 `alembic current == alembic heads`。
 
 ## 成员、角色与会话管理 API
 

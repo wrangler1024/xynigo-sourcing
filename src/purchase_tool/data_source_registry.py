@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import re
 import uuid
 
@@ -387,6 +388,113 @@ class DataSourceRegistry(object):
             'registryRevision': self.service.revision(current),
             'registry': copy.deepcopy(current),
         }
+
+    @staticmethod
+    def organization_registry(mapping):
+        normalized = normalize_registry(mapping)
+        return {
+            'schemaVersion': REGISTRY_SCHEMA_VERSION,
+            'dataSources': copy.deepcopy(normalized['dataSources']),
+            'buyerProfiles': copy.deepcopy(normalized['buyerProfiles']),
+            'teamDefaultDataSourceId': normalized['teamDefaultDataSourceId'],
+        }
+
+    def organization_snapshot(self, member_id=None, visibility='all'):
+        registry = self.organization_registry(self.service.load())
+        if str(visibility or 'all').strip().lower() == 'member':
+            member = _member_id(member_id)
+            registry['dataSources'] = [
+                item for item in registry['dataSources']
+                if item['scope'] == 'team' or item['ownerMemberId'] == member
+            ]
+            visible_ids = {item['id'] for item in registry['dataSources']}
+            registry['buyerProfiles'] = [
+                item for item in registry['buyerProfiles']
+                if item['memberId'] == member
+                and item['defaultDataSourceId'] in visible_ids
+            ]
+        raw = json.dumps(
+            registry, ensure_ascii=False, sort_keys=True,
+            separators=(',', ':')).encode('utf-8')
+        return {
+            'registry': registry,
+            'contentHash': hashlib.sha256(raw).hexdigest(),
+        }
+
+    def apply_organization_registry(
+            self, incoming, member_id, visibility='member',
+            expected_revision=None):
+        member = _member_id(member_id)
+        visibility = str(visibility or '').strip().lower()
+        if visibility not in {'all', 'member'}:
+            raise DataSourceRegistryError('组织数据源同步范围无效')
+        normalized_incoming = normalize_registry({
+            'schemaVersion': REGISTRY_SCHEMA_VERSION,
+            'dataSources': (
+                incoming.get('dataSources') if isinstance(incoming, dict)
+                else None),
+            'buyerProfiles': (
+                incoming.get('buyerProfiles') if isinstance(incoming, dict)
+                else None),
+            'environmentBindings': [],
+            'teamDefaultDataSourceId': (
+                incoming.get('teamDefaultDataSourceId')
+                if isinstance(incoming, dict) else ''),
+            'legacyMigration': {},
+        })
+        if visibility == 'member':
+            if any(
+                    item['scope'] == 'personal'
+                    and item['ownerMemberId'] not in {'', member}
+                    for item in normalized_incoming['dataSources']):
+                raise DataSourceRegistryError('组织数据源同步范围包含其他采购员')
+            if any(item['memberId'] != member
+                   for item in normalized_incoming['buyerProfiles']):
+                raise DataSourceRegistryError('组织采购员映射范围无效')
+
+        result_meta = {}
+
+        def update(current, _submitted):
+            if visibility == 'all':
+                sources = copy.deepcopy(normalized_incoming['dataSources'])
+                profiles = copy.deepcopy(normalized_incoming['buyerProfiles'])
+            else:
+                sources = [
+                    item for item in current['dataSources']
+                    if item['scope'] == 'personal'
+                    and item['ownerMemberId'] not in {'', member}
+                ] + copy.deepcopy(normalized_incoming['dataSources'])
+                profiles = [
+                    item for item in current['buyerProfiles']
+                    if item['memberId'] != member
+                ] + copy.deepcopy(normalized_incoming['buyerProfiles'])
+            source_index = {item['id']: item for item in sources}
+            retained_bindings = []
+            for binding in current['environmentBindings']:
+                source = source_index.get(binding['dataSourceId'])
+                if source is None:
+                    continue
+                if (source['scope'] == 'personal'
+                        and source['ownerMemberId'] != binding['memberId']):
+                    continue
+                retained_bindings.append(copy.deepcopy(binding))
+            result_meta['droppedEnvironmentBindingCount'] = (
+                len(current['environmentBindings']) - len(retained_bindings))
+            return normalize_registry({
+                'schemaVersion': REGISTRY_SCHEMA_VERSION,
+                'dataSources': sources,
+                'buyerProfiles': profiles,
+                'environmentBindings': retained_bindings,
+                'teamDefaultDataSourceId': normalized_incoming[
+                    'teamDefaultDataSourceId'],
+                'legacyMigration': current.get('legacyMigration') or {},
+            })
+
+        result = self.service.commit_patch(
+            {}, update, expected_revision=expected_revision,
+            source='organization_data_source_sync')
+        result.update(result_meta)
+        return result
 
     def public_snapshot(self, member_id, include_all=False):
         member = _member_id(member_id)

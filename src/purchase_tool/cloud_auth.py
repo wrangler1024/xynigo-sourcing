@@ -41,6 +41,7 @@ MAX_BUYER_ACCOUNT_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_OPERATION_RESULT_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_BUSINESS_LOG_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_SYSTEM_LOG_RESPONSE_BYTES = 4 * 1024 * 1024
+MAX_DATA_SOURCE_REGISTRY_RESPONSE_BYTES = 4 * 1024 * 1024
 ALLOWED_LOGIN_HOSTS = frozenset({'accounts.feishu.cn'})
 
 
@@ -529,6 +530,23 @@ class CloudAuthClient(object):
             executor_credential=executor_credential,
             max_response_bytes=MAX_OPERATION_RESULT_RESPONSE_BYTES,
             source='local_executor',
+        )
+
+    def data_source_registry_request(
+            self, session_token, executor_credential,
+            method='GET', payload=None):
+        method = str(method or 'GET').upper()
+        if method not in {'GET', 'PUT'}:
+            raise LocalAuthError(
+                'cloud_response_invalid', '组织数据源同步方法无效', 500)
+        return self._request(
+            '/v1/assistant/data-source-registry',
+            method=method,
+            payload=payload if method == 'PUT' else None,
+            token=session_token,
+            executor_credential=executor_credential,
+            max_response_bytes=MAX_DATA_SOURCE_REGISTRY_RESPONSE_BYTES,
+            source='local_executor_data_source_sync',
         )
 
     def feishu_read_request(
@@ -1152,6 +1170,46 @@ class LocalAuthService(object):
             if not isinstance(result.get('data'), dict):
                 raise LocalAuthError(
                     'cloud_response_invalid', '云端业务结果数据无效', 502)
+            return result
+
+    def data_source_registry_request(
+            self, executor_credential, method='GET', payload=None):
+        permission = (
+            'executor.config.write'
+            if str(method or 'GET').upper() == 'PUT'
+            else 'assistant.access')
+        with self.lock:
+            self.require(permission)
+            if not self.session_token:
+                raise LocalAuthError('authentication_required', status=401)
+            try:
+                result = self.client.data_source_registry_request(
+                    self.session_token,
+                    executor_credential,
+                    method=method,
+                    payload=payload,
+                )
+            except LocalAuthError as exc:
+                if (
+                    exc.status == 401
+                    and exc.code not in {
+                        'executor_authentication_required',
+                        'executor_credential_invalid',
+                        'executor_revoked',
+                    }
+                ):
+                    try:
+                        self.store.clear()
+                    except Exception:
+                        self.storage_error = ERROR_MESSAGES[
+                            'credential_store_failed']
+                    self.session_token = None
+                    self.identity = None
+                    self.last_verified = 0.0
+                raise
+            if not isinstance(result, dict):
+                raise LocalAuthError(
+                    'cloud_response_invalid', '组织数据源同步响应无效', 502)
             return result
 
     def feishu_read_request(self, path, query, permission):

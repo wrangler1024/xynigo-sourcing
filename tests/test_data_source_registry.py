@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import hashlib
 import json
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -328,6 +329,62 @@ class DataSourceRegistryTests(unittest.TestCase):
         with self.assertRaises(DataSourceMappingRequired):
             self.registry.resolve(MEMBER_A, container_code='container-009')
 
+    def test_organization_snapshot_excludes_device_environment_bindings(self):
+        created = self.registry.upsert_team({
+            'spreadsheetToken': 'SpreadsheetOrganizationTeam123',
+            'sheetId': 'sheet_organization_team',
+            'cellRange': 'A1:AQ',
+            'sheetName': '组织团队表',
+        }, set_default=True)
+        before = self.registry.organization_snapshot()
+        self.registry.bind_environment(
+            'container-local-only', MEMBER_A, created['dataSourceId'],
+            expected_revision=created['configRevision'])
+        after = self.registry.organization_snapshot()
+
+        self.assertEqual(before, after)
+        self.assertNotIn(
+            'container-local-only', json.dumps(after, ensure_ascii=False))
+
+    def test_organization_pull_replaces_shared_policy_but_preserves_valid_binding(self):
+        created = self.registry.upsert_team({
+            'spreadsheetToken': 'SpreadsheetOrganizationTeam123',
+            'sheetId': 'sheet_organization_team',
+            'cellRange': 'A1:AQ',
+            'sheetName': '组织团队表',
+        }, set_default=True)
+        bound = self.registry.bind_environment(
+            'container-local-only', MEMBER_A, created['dataSourceId'],
+            expected_revision=created['configRevision'])
+        organization = self.registry.organization_snapshot()['registry']
+        organization['dataSources'][0]['label'] = '组织统一团队表'
+
+        synced = self.registry.apply_organization_registry(
+            organization, MEMBER_A, visibility='all',
+            expected_revision=bound['configRevision'])
+        current = self.registry.snapshot()['registry']
+
+        self.assertEqual(synced['droppedEnvironmentBindingCount'], 0)
+        self.assertEqual(current['dataSources'][0]['label'], '组织统一团队表')
+        self.assertEqual(
+            current['environmentBindings'][0]['containerCode'],
+            'container-local-only')
+
+    def test_member_pull_cannot_import_another_members_personal_source(self):
+        source = self.registry.upsert_personal(MEMBER_B, {
+            'spreadsheetToken': 'SpreadsheetMemberBOnly123',
+            'sheetId': 'sheet_member_b_only',
+            'cellRange': 'A1:H',
+            'sheetName': '成员 B 表',
+        })
+        organization = self.registry.organization_snapshot()['registry']
+
+        with self.assertRaisesRegex(
+                DataSourceRegistryError, '其他采购员'):
+            self.registry.apply_organization_registry(
+                organization, MEMBER_A, visibility='member',
+                expected_revision=source['configRevision'])
+
     def test_clearing_personal_default_uses_only_explicit_team_policy(self):
         snapshot = self.registry.migrate_legacy(legacy_config())
         personal_id = next(
@@ -423,6 +480,22 @@ class FakeAuth(object):
     def __init__(self, member_id=MEMBER_A, roles=None):
         self.member_id = member_id
         self.roles = list(roles or ['operator'])
+        self.published = None
+        self.cloud = {
+            'configured': False,
+            'organizationRevision': 0,
+            'contentHash': '',
+            'visibility': 'all',
+            'updatedAt': None,
+            'sourceExecutorId': '',
+            'sourceExecutorName': '',
+            'registry': {
+                'schemaVersion': 1,
+                'dataSources': [],
+                'buyerProfiles': [],
+                'teamDefaultDataSourceId': '',
+            },
+        }
 
     def require(self, permission=None, role=None):
         del permission
@@ -435,6 +508,34 @@ class FakeAuth(object):
             'roles': list(self.roles),
             'permissions': [],
         }
+
+    def data_source_registry_request(
+            self, executor_credential, method='GET', payload=None):
+        if executor_credential != 'synthetic-executor-credential':
+            raise AssertionError('unexpected executor credential')
+        if method == 'PUT':
+            self.published = payload
+            registry = payload['registry']
+            raw = json.dumps(
+                registry, ensure_ascii=False, sort_keys=True,
+                separators=(',', ':')).encode('utf-8')
+            self.cloud = {
+                'configured': True,
+                'organizationRevision': int(
+                    payload.get('expectedRevision') or 0) + 1,
+                'contentHash': hashlib.sha256(raw).hexdigest(),
+                'visibility': 'all',
+                'updatedAt': '2026-09-07T12:00:00+00:00',
+                'sourceExecutorId': 'executor-test',
+                'sourceExecutorName': '测试设备',
+                'registry': registry,
+            }
+        return self.cloud
+
+
+class FakeCredentialStore(object):
+    def load(self):
+        return 'synthetic-executor-credential'
 
 
 class FakePurchaseAssistant(object):
@@ -519,6 +620,7 @@ class DataSourceRegistryRouteTests(unittest.TestCase):
             'data_sources': self.registry,
             'purchase_assistant': self.purchase_assistant,
             'hub': FakeHub(),
+            'executor_credential_store': FakeCredentialStore(),
         })()
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         self.thread = threading.Thread(
@@ -561,6 +663,65 @@ class DataSourceRegistryRouteTests(unittest.TestCase):
             claimed['buyerProfiles'][0]['memberId'], MEMBER_A)
         self.assertNotIn('SpreadsheetPersonal123', rendered)
         self.assertNotIn('spreadsheetToken', rendered)
+
+    def test_admin_can_publish_shared_registry_without_environment_bindings(self):
+        self.auth.roles = ['admin']
+        initial = self._request('/api/local-config/data-sources')
+        team_id = next(
+            item['id'] for item in initial['dataSources']
+            if item['scope'] == 'team')
+        bound = self._request(
+            '/api/local-config/data-sources/environment-binding', {
+                'memberId': MEMBER_A,
+                'containerCode': 'container-device-only',
+                'sourceId': team_id,
+                'expectedRevision': initial['registryRevision'],
+            })
+        published = self._request(
+            '/api/local-config/data-sources/organization-sync/publish', {
+                'expectedRevision': bound['registryRevision'],
+                'expectedOrganizationRevision': 0,
+            })
+
+        self.assertTrue(published['organizationSync']['inSync'])
+        self.assertEqual(
+            self.auth.published['registry'].get('environmentBindings'), None)
+        self.assertNotIn(
+            'container-device-only', json.dumps(self.auth.published))
+        self.assertNotIn(
+            'SpreadsheetTeam123', json.dumps(published, ensure_ascii=False))
+
+    def test_empty_device_can_pull_encrypted_organization_configuration(self):
+        organization = self.registry.organization_snapshot()
+        self.auth.cloud = {
+            'configured': True,
+            'organizationRevision': 4,
+            'contentHash': organization['contentHash'],
+            'visibility': 'all',
+            'updatedAt': '2026-09-07T12:00:00+00:00',
+            'sourceExecutorId': 'executor-source',
+            'sourceExecutorName': '已配置 Mac',
+            'registry': organization['registry'],
+        }
+        self.auth.roles = ['admin']
+        self.registry = DataSourceRegistry(
+            Path(self.tempdir.name) / 'pc-empty-bindings-v1.json')
+        main_module.STATE.data_sources = self.registry
+        initial = self._request('/api/local-config/data-sources')
+        status = self._request(
+            '/api/local-config/data-sources/organization-sync')
+        pulled = self._request(
+            '/api/local-config/data-sources/organization-sync/pull', {
+                'expectedRevision': initial['registryRevision'],
+            })
+        rendered = json.dumps(pulled, ensure_ascii=False)
+
+        self.assertTrue(status['configured'])
+        self.assertFalse(status['inSync'])
+        self.assertEqual(len(pulled['dataSources']), 2)
+        self.assertTrue(pulled['organizationSync']['inSync'])
+        self.assertEqual(pulled['environmentBindings'], [])
+        self.assertNotIn('SpreadsheetTeam123', rendered)
 
     def test_admin_can_view_edit_revalidate_and_replace_team_source(self):
         self.auth.roles = ['admin']

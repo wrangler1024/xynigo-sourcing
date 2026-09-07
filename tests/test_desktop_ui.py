@@ -20,9 +20,9 @@ class DesktopUIContractTests(unittest.TestCase):
 
     def test_ui_matches_reviewed_prototype_information_architecture(self):
         for label in (
-                '使用飞书授权登录', '状态总览', '本机设置',
-                '采购助手数据源', '诊断与维护', '数据源注册表',
-                '采购员默认映射', 'HubStudio 环境映射'):
+            '使用飞书授权登录', '状态总览', '本机设置',
+                '采购助手数据源', '诊断与维护', '当前设备数据源',
+                '采购员默认映射', '本机环境映射'):
             self.assertIn(label, self.javascript)
         self.assertIn('grid-template-columns: .9fr 1.1fr', self.css)
         self.assertIn('flex: 0 0 224px', self.css)
@@ -34,6 +34,7 @@ class DesktopUIContractTests(unittest.TestCase):
                 '/api/auth/start', '/api/auth/poll', '/api/auth/logout',
                 '/api/config',
                 '/api/local-config/data-sources',
+                '/api/local-config/data-sources/organization-sync',
                 '/api/hub-cache/preflight'):
             self.assertIn(path, self.javascript)
         rendered = self.html + self.css + self.javascript
@@ -84,6 +85,19 @@ class DesktopUIContractTests(unittest.TestCase):
         self.assertNotIn('已提交只读验证', self.javascript)
         self.assertIn('.buyer-default-control', self.css)
 
+    def test_data_source_hybrid_sync_keeps_environment_bindings_local(self):
+        rendered = self.javascript + self.css
+        for marker in (
+                'sourceSyncPanel', '当前设备已与组织配置同步',
+                '同步组织配置', '发布本机更改', '建立组织配置',
+                'organization-sync/pull', 'organization-sync/publish',
+                'expectedOrganizationRevision',
+                '数据源定义和采购员默认由组织加密同步',
+                'containerCode 环境映射仅保存在',
+                'renderSourceSyncConfirmation', '同步范围已隔离'):
+            self.assertIn(marker, rendered)
+        self.assertIn('.source-sync-panel', self.css)
+
     def test_configured_secrets_render_only_masked_recognition_hints(self):
         for marker in (
                 'targetMasked', 'worksheetMasked', 'hubApiKeyMasked',
@@ -121,6 +135,11 @@ class DesktopUIContractTests(unittest.TestCase):
                 'cache-progress-background', 'cache-progress-rescan',
                 'role="progressbar"', 'aria-valuenow',
                 'hub-cache-progress-track', 'hub-cache-spinner',
+                'renderHubCacheScanModal', '正在检测 HubStudio 缓存',
+                '已检测 ', 'cache-scan-background',
+                'open-hub-cache-scan-progress',
+                'hubCacheEtaLabel', '预计还需约 ',
+                '正在估算剩余时间', '剩余时间暂无法准确估算',
                 'hubCacheGlobalTaskNotice', 'global-task-notice',
                 '请先完全退出 HubStudio', '我已退出，重新检查',
                 'cache-preflight-retry', '请勿启动 HubStudio 或退出 Xynigo'):

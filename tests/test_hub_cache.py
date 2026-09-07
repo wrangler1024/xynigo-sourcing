@@ -16,8 +16,8 @@ import pytest
 from purchase_tool import main
 from purchase_tool.cloud_auth import LocalAuthError
 from purchase_tool.hub_cache import (
-    HubCacheError, HubCacheManager, configured_cache, discover_roots,
-    inspect_cache, require_hub_closed, single_link,
+    HubCacheError, HubCacheManager, RemainingTimeEstimator, configured_cache,
+    discover_roots, inspect_cache, require_hub_closed, single_link,
 )
 from purchase_tool.task_runtime import LocalTaskCoordinator, TaskConflict
 
@@ -86,6 +86,32 @@ def test_scan_is_read_only_and_deduplicates_roots(fixture):
     assert before == {p: p.read_bytes() for p in f.root.rglob('*') if p.is_file()}
 
 
+def test_scan_reports_safe_live_phases_without_paths(fixture):
+    events = []
+    report, _ = inspect_cache(
+        fixture.roots, progress=lambda **event: events.append(event))
+    assert report['cacheDirectoryCount'] == 4
+    assert {'scanning', 'measuring'} <= {
+        event['phase'] for event in events}
+    assert all(str(fixture.base) not in json.dumps(event) for event in events)
+
+
+def test_remaining_time_estimator_warms_up_smooths_and_degrades():
+    estimate = RemainingTimeEstimator(now=100)
+    assert estimate.snapshot(1000, 0, now=100)['etaState'] == 'warming'
+    stalled = RemainingTimeEstimator(now=100)
+    assert stalled.snapshot(1000, 0, now=106)['etaState'] == 'unavailable'
+    estimate.record(100, now=100.5)
+    assert estimate.snapshot(1000, 100, now=100.5)['etaState'] == 'warming'
+    estimate.record(300, now=101)
+    ready = estimate.snapshot(1000, 300, now=101)
+    assert ready['etaState'] == 'ready'
+    assert ready['estimatedRemainingSeconds'] == 3
+    assert ready['throughputBytesPerSecond'] == 250
+    assert estimate.snapshot(1000, 300, now=107)['etaState'] == 'unavailable'
+    assert estimate.snapshot(1000, 1000, now=107)['etaState'] == 'complete'
+
+
 def test_selected_cleanup_preserves_all_account_state_and_other_caches(fixture):
     f = fixture
     web_cache = f.profile / 'Default/Cache'
@@ -100,6 +126,9 @@ def test_selected_cleanup_preserves_all_account_state_and_other_caches(fixture):
     assert result['selectedFileCount'] == 1
     assert result['removedBytes'] == 128
     assert result['removedFiles'] == 1
+    assert result['durationSeconds'] >= 0
+    assert result['etaState'] == 'complete'
+    assert result['estimatedRemainingSeconds'] == 0
     assert not (f.profile / 'Default/Cache/Cache_Data/resource').exists()
     assert all(path.read_bytes() == data for path, data in protected.items())
     assert (f.root / 'Cache/client').exists()
@@ -340,7 +369,7 @@ def test_ui_selection_totals_and_path_escaping(tmp_path):
     javascript = (Path(__file__).resolve().parents[1] / 'src/purchase_tool/web/desktop.js').read_text(
         encoding='utf-8')
     javascript = javascript.replace('  initializeAuth();', '''
-  window.testCache = {state:state, panel:hubCachePanel, selected:cacheSelectedBytes, progress:renderHubCacheProgressModal, global:hubCacheGlobalTaskNotice, exitModal:renderHubCacheExitModal};
+  window.testCache = {state:state, panel:hubCachePanel, selected:cacheSelectedBytes, scan:renderHubCacheScanModal, progress:renderHubCacheProgressModal, global:hubCacheGlobalTaskNotice, exitModal:renderHubCacheExitModal, eta:hubCacheEtaLabel};
   // initializeAuth();''')
     script = '''
 const vm = require('node:vm');
@@ -349,7 +378,18 @@ const node = {innerHTML:'', className:''};
 const context = {URLSearchParams, location:{search:'',pathname:'/desktop/',origin:'http://127.0.0.1'},
 document:{getElementById:()=>node,addEventListener:()=>{}},window:{},setTimeout,clearTimeout};
 vm.runInNewContext(SOURCE, context);
-const {state,panel,selected,progress,global,exitModal} = context.window.testCache;
+const {state,panel,selected,scan,progress,global,exitModal,eta} = context.window.testCache;
+state.hubCache = {state:'scanning',running:true,message:'正在统计缓存文件与大小',elapsedSeconds:42,profileDirectoryCount:8,cacheDirectoryCount:20};
+state.cacheScanProgressOpen = true;
+let scanning = panel();
+assert.ok(scanning.includes('已检测 42 秒'));
+assert.ok(scanning.includes('查看检测进度'));
+assert.ok(global().includes('正在检测 HubStudio 缓存'));
+assert.ok(global().includes('已检测 42 秒'));
+scan();
+assert.ok(node.innerHTML.includes('检测不会删除任何数据'));
+assert.ok(node.innerHTML.includes('已发现 8 个环境目录'));
+assert.ok(node.innerHTML.includes('data-action="cache-scan-background"'));
 state.hubCache = {state:'ready',scanId:'test',cleanableBytes:3072,groups:[
 {id:'web',label:'网页资源缓存',bytes:1024},{id:'code',label:'脚本与渲染缓存',bytes:2048}],
 locations:[{path:'<script>unsafe</script>',cleanableBytes:3072}]};
@@ -359,12 +399,14 @@ let html = panel();
 assert.ok(html.includes('已选 1.0 KB'));
 assert.ok(html.includes('&lt;script&gt;unsafe&lt;/script&gt;'));
 assert.ok(!html.includes('<script>unsafe'));
-state.hubCache = {state:'cleaning',running:true,message:'正在清理选中的缓存',selectedBytes:3072,selectedFileCount:3,removedBytes:1024,removedFiles:1,groups:state.hubCache.groups};
+state.cacheScanProgressOpen = false;
+state.hubCache = {state:'cleaning',running:true,message:'正在清理选中的缓存',selectedBytes:3072,selectedFileCount:3,removedBytes:1024,removedFiles:1,etaState:'ready',estimatedRemainingSeconds:120,groups:state.hubCache.groups};
 let active = panel();
 assert.ok(active.includes('缓存清理正在后台进行'));
 assert.ok(active.includes('data-action="open-hub-cache-progress"'));
 assert.ok(active.includes('data-action="clear-hub-cache" disabled'));
 assert.ok(global().includes('正在清理 HubStudio 缓存'));
+assert.ok(global().includes('预计还需约 2 分钟'));
 assert.ok(global().includes('请勿启动 HubStudio 或退出 Xynigo'));
 assert.ok(global().includes('data-action="open-hub-cache-progress"'));
 exitModal('请退出 HubStudio');
@@ -377,11 +419,15 @@ assert.ok(node.innerHTML.includes('正在清理 HubStudio 缓存'));
 assert.ok(node.innerHTML.includes('role="progressbar"'));
 assert.ok(node.innerHTML.includes('aria-valuenow="33"'));
 assert.ok(node.innerHTML.includes('1.0 KB / 3.0 KB'));
+assert.ok(node.innerHTML.includes('预计还需约 2 分钟'));
 assert.ok(node.innerHTML.includes('data-action="cache-progress-background"'));
-state.hubCache.running = false; state.hubCache.state = 'complete'; state.hubCache.removedBytes = 3072; state.hubCache.removedFiles = 3;
+state.hubCache.etaState = 'unavailable';
+assert.equal(eta(state.hubCache),'剩余时间暂无法准确估算');
+state.hubCache.running = false; state.hubCache.state = 'complete'; state.hubCache.removedBytes = 3072; state.hubCache.removedFiles = 3; state.hubCache.durationSeconds = 7;
 progress();
 assert.ok(node.innerHTML.includes('缓存清理完成'));
 assert.ok(node.innerHTML.includes('aria-valuenow="100"'));
+assert.ok(node.innerHTML.includes('实际用时 7 秒'));
 assert.ok(node.innerHTML.includes('data-action="cache-progress-close"'));
 '''.replace('SOURCE', json.dumps(javascript))
     script_path = tmp_path / 'hub-cache-ui-test.js'

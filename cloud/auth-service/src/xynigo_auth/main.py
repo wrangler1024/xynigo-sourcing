@@ -62,6 +62,12 @@ from .checkout_contract import (
 from .checkout_service import ProcurementCheckoutService
 from .config import Settings
 from .database import Database
+from .data_source_registry_contract import DataSourceRegistryPublishBody
+from .data_source_registry_crypto import DataSourceRegistryCipher
+from .data_source_registry_service import (
+    TenantDataSourceRegistryError,
+    TenantDataSourceRegistryService,
+)
 from .feishu import (
     DirectoryClient,
     DirectoryProviderError,
@@ -418,6 +424,9 @@ def create_app(
         fallback_app_secret=settings.feishu_app_secret.get_secret_value(),
         transport=feishu_integration_transport,
     )
+    data_source_registry_service = TenantDataSourceRegistryService(
+        DataSourceRegistryCipher(buyer_credential_key)
+    )
     environment_plan_service = (
         CloudEnvironmentPlanService(
             cipher=EnvironmentPlanCipher(buyer_credential_key),
@@ -499,7 +508,7 @@ def create_app(
 
     app = FastAPI(
         title="Xynigo Auth Service",
-        version="0.17.6",
+        version="0.17.7",
         docs_url=None,
         redoc_url=None,
         lifespan=lifespan,
@@ -510,6 +519,7 @@ def create_app(
     app.state.directory_client = directory_client
     app.state.buyer_credential_cipher = buyer_credential_cipher
     app.state.executor_payload_cipher = executor_payload_cipher
+    app.state.data_source_registry_service = data_source_registry_service
     app.state.environment_plan_service = environment_plan_service
     app.state.operation_sync_worker = operation_sync_worker
     app.state.purchase_sync_worker = purchase_sync_worker
@@ -2110,6 +2120,124 @@ def create_app(
                 status_code=exc.status_code, detail={"code": exc.code}
             ) from exc
         return {"ok": True, "data": payload}
+
+    def require_data_source_sync_executor(
+        session: Session,
+        actor: AdminActor,
+        executor_credential: str | None,
+    ) -> LocalExecutor:
+        executor = executor_channel(session).authenticate(executor_credential)
+        if executor.tenant_id != actor.tenant.id:
+            raise ExecutorServiceError(
+                "executor_identity_mismatch", status_code=403
+            )
+        return executor
+
+    @app.get("/v1/assistant/data-source-registry")
+    def get_tenant_data_source_registry(
+        request: Request,
+        session: SessionDep,
+        executor_credential: Annotated[
+            str | None, Header(alias="X-Xynigo-Executor-Credential")
+        ] = None,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="assistant.data_source_registry.read",
+        )
+        require_data_source_sync_executor(session, actor, executor_credential)
+        include_all = bool(
+            _user_has_role(session, actor.user, ADMIN_ROLE)
+            or _user_has_role(session, actor.user, SUPER_ADMIN_ROLE)
+        )
+        try:
+            return data_source_registry_service.read(
+                session,
+                tenant_id=actor.tenant.id,
+                user_id=actor.user.id,
+                include_all=include_all,
+            )
+        except TenantDataSourceRegistryError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"code": exc.code, "message": str(exc)},
+            ) from exc
+
+    @app.put("/v1/assistant/data-source-registry")
+    def put_tenant_data_source_registry(
+        body: DataSourceRegistryPublishBody,
+        request: Request,
+        session: SessionDep,
+        executor_credential: Annotated[
+            str | None, Header(alias="X-Xynigo-Executor-Credential")
+        ] = None,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "assistant.data_source_registry.publish"
+        actor = authorize_request(
+            request,
+            session,
+            permission="executor.config.write",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        if not (
+            _user_has_role(session, actor.user, ADMIN_ROLE)
+            or _user_has_role(session, actor.user, SUPER_ADMIN_ROLE)
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "admin_required"},
+            )
+        executor = require_data_source_sync_executor(
+            session, actor, executor_credential
+        )
+        try:
+            result = data_source_registry_service.publish(
+                session,
+                tenant_id=actor.tenant.id,
+                user_id=actor.user.id,
+                executor_id=executor.id,
+                expected_revision=body.expectedRevision,
+                registry=body.registry,
+            )
+        except TenantDataSourceRegistryError as exc:
+            session.rollback()
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"code": exc.code, "message": str(exc)},
+            ) from exc
+        _add_audit(
+            session,
+            request_id=request.state.request_id,
+            action=action,
+            result="success",
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            business_object_type="tenant_data_source_registry",
+            business_object_id=str(actor.tenant.id),
+            change_summary={
+                "organizationRevision": result["organizationRevision"],
+                "dataSourceCount": len(result["registry"]["dataSources"]),
+                "buyerProfileCount": len(result["registry"]["buyerProfiles"]),
+            },
+            details={"sourceExecutorId": str(executor.id)},
+            **_request_log_context(request),
+        )
+        session.commit()
+        return result
 
     def normalized_view_key(view_key: str) -> str:
         normalized = str(view_key or "").strip().lower()

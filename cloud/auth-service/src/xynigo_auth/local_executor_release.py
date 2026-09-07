@@ -14,9 +14,9 @@ from urllib.parse import quote
 
 from . import __version__
 
-RELEASE_VERSION = "0.17.6"
+RELEASE_VERSION = "0.17.7"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-07T01:36:39Z"
+RELEASE_PUBLISHED_AT = "2026-09-07T03:45:01Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,8 +31,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.17.6-0c0a2ba784ba",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.6.exe",
+        "runtimeId": "0.17.7-b8431b1e34ac",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.7.exe",
         "sha256": "4198bd40bbf3e3391d0d0c406f76fd4948326811898861c4be6e43de3edf05de",
         "size": 15225480,
         "installMode": "standard_per_user",
@@ -50,8 +50,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.17.6-0c0a2ba784ba",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.6.pkg",
+        "runtimeId": "0.17.7-b8431b1e34ac",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.7.pkg",
         "sha256": "b3ef967194824bbb4ebf79584dbc35e56790f5677da3a1da2cd5756aaeb5d490",
         "size": 11561436,
         "installMode": "standard_system_application",
@@ -320,9 +320,10 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "修复添加个人速填表或团队数据源时，读取工作表误报飞书企业应用凭证尚未配置的问题。",
-            "数据源读取使用云端组织应用和当前登录权限，无需在员工电脑重新配置 App ID 或 App Secret。",
-            "修复 Mac 客户端输入框的 ⌘V 粘贴快捷键，补齐编辑菜单中的复制、剪切、全选、撤销和重做。",
-            "Windows 与 macOS 执行器同步升级；Mac 用户需安装完整客户端以更新原生菜单。",
+            "采购助手数据源支持加密组织同步：管理员在一台客户端发布后，其他电脑可拉取同一套团队表、个人速填表和采购员默认映射。",
+            "HubStudio 环境映射继续仅保存在当前电脑，跨设备同步不会覆盖本机 containerCode 绑定。",
+            "新设备本机无数据源时自动拉取组织配置；超级管理员可管理成员个人速填表，普通采购员只看到团队表和自己的个人表。",
+            "缓存检测增加等待状态、耗时和后台运行提示；缓存清理按实际吞吐显示预计剩余时间及完成耗时。",
+            "Windows 与 macOS 执行器同步升级，并新增云端迁移 0031_data_source_registry_sync。",
         ],
     }

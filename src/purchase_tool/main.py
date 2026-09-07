@@ -597,6 +597,40 @@ def public_local_config(cfg, hub_api_key_store=None):
     return result
 
 
+def data_source_sync_credential():
+    store = getattr(STATE, 'executor_credential_store', None)
+    credential = store.load() if store is not None else None
+    if not credential:
+        raise LocalAuthError(
+            'executor_authentication_required',
+            '当前设备尚未配对，不能同步组织数据源', 409)
+    return credential
+
+
+def public_data_source_sync(cloud, local_hash):
+    registry = cloud.get('registry') if isinstance(cloud, dict) else None
+    registry = registry if isinstance(registry, dict) else {}
+    sources = registry.get('dataSources') or []
+    profiles = registry.get('buyerProfiles') or []
+    configured = bool(cloud.get('configured')) if isinstance(cloud, dict) else False
+    cloud_hash = str(cloud.get('contentHash') or '') if isinstance(cloud, dict) else ''
+    return {
+        'configured': configured,
+        'organizationRevision': int(cloud.get('organizationRevision') or 0)
+        if isinstance(cloud, dict) else 0,
+        'organizationDataSourceCount': len(sources),
+        'organizationBuyerProfileCount': len(profiles),
+        'sourceExecutorId': str(cloud.get('sourceExecutorId') or '')
+        if isinstance(cloud, dict) else '',
+        'sourceExecutorName': str(cloud.get('sourceExecutorName') or '')[:128]
+        if isinstance(cloud, dict) else '',
+        'updatedAt': cloud.get('updatedAt') if isinstance(cloud, dict) else None,
+        'visibility': str(cloud.get('visibility') or 'member')
+        if isinstance(cloud, dict) else 'member',
+        'inSync': bool(configured and cloud_hash and cloud_hash == local_hash),
+    }
+
+
 def public_envbatch_preferences(cfg):
     """Return only non-secret preferences needed by environment creation."""
     public = public_config(cfg)
@@ -4124,6 +4158,14 @@ class Handler(BaseHTTPRequestHandler):
                     'admin', 'super_admin'})
                 self._json(STATE.data_sources.public_snapshot(
                     identity['user']['id'], include_all=include_all))
+            elif path == DATA_SOURCE_API_PREFIX + '/organization-sync':
+                identity = STATE.auth.require('assistant.access')
+                cloud = STATE.auth.data_source_registry_request(
+                    data_source_sync_credential(), method='GET')
+                local = STATE.data_sources.organization_snapshot(
+                    identity['user']['id'], visibility=cloud.get('visibility'))
+                self._json(public_data_source_sync(
+                    cloud, local['contentHash']))
             elif path == DATA_SOURCE_API_PREFIX + '/environment-options':
                 identity = STATE.auth.require()
                 if not set(identity.get('roles') or []) & {
@@ -5060,6 +5102,47 @@ class Handler(BaseHTTPRequestHandler):
                     'saved': True,
                     **STATE.data_sources.public_snapshot(
                         request_identity['user']['id'], include_all=True),
+                })
+            elif path == DATA_SOURCE_API_PREFIX + '/organization-sync/pull':
+                member_id = request_identity['user']['id']
+                cloud = STATE.auth.data_source_registry_request(
+                    data_source_sync_credential(), method='GET')
+                if not cloud.get('configured'):
+                    raise DataSourceRegistryError('组织尚未发布数据源配置')
+                STATE.data_sources.apply_organization_registry(
+                    cloud.get('registry'), member_id,
+                    visibility=cloud.get('visibility'),
+                    expected_revision=body.get('expectedRevision'))
+                include_all = bool(set(request_identity.get('roles') or []) & {
+                    'admin', 'super_admin'})
+                local = STATE.data_sources.organization_snapshot(
+                    member_id, visibility=cloud.get('visibility'))
+                self._json({
+                    'saved': True,
+                    **STATE.data_sources.public_snapshot(
+                        member_id, include_all=include_all),
+                    'organizationSync': public_data_source_sync(
+                        cloud, local['contentHash']),
+                })
+            elif path == DATA_SOURCE_API_PREFIX + '/organization-sync/publish':
+                if not set(request_identity.get('roles') or []) & {
+                        'admin', 'super_admin'}:
+                    raise LocalAuthError('permission_denied', status=403)
+                STATE.data_sources.service.assert_revision(
+                    body.get('expectedRevision'))
+                local = STATE.data_sources.organization_snapshot()
+                cloud = STATE.auth.data_source_registry_request(
+                    data_source_sync_credential(), method='PUT', payload={
+                        'expectedRevision': int(
+                            body.get('expectedOrganizationRevision') or 0),
+                        'registry': local['registry'],
+                    })
+                self._json({
+                    'saved': True,
+                    **STATE.data_sources.public_snapshot(
+                        request_identity['user']['id'], include_all=True),
+                    'organizationSync': public_data_source_sync(
+                        cloud, local['contentHash']),
                 })
             elif path == '/api/lark/config':
                 raise LocalAuthError(
