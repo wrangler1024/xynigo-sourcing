@@ -45,7 +45,7 @@ REQUIRED_HEADERS = (
     '产品图片网址', '客服备注', '产品图片',
 )
 
-# 新模板为 A:AQ 43 列。飞书直接导入按字段名映射：
+# 新模板为 A:AR 44 列（CURP 为可选收件字段）。飞书直接导入按字段名映射：
 # - 采购需求区：校验核心字段；
 # - 采购下单区：完全由采购自由增删、改名和调序，不参与校验；
 # - 系统追踪区：校验防重所需字段，并补齐导入操作人。
@@ -54,7 +54,7 @@ OUTPUT_HEADERS = (
     '采购状态', '优先级', '销售订单金额', '商品金额', '订单时间', '商品图片',
     '采购链接', '主规格', '次规格', '需求数量', '采购指导价',
     '收货人姓名', '收货人国家', '收货人州/省', '收货人城市',
-    '地址1', '地址2', '邮编', '收货人电话', '采购备注',
+    '地址1', '地址2', '邮编', '收货人电话', 'CURP', '采购备注',
     '下单批次', '买家号', '付款卡号', '采购订单号', '实际付款', '付款时间', '下单截图',
     '物流商', '物流单号', '物流截图', '跟单状态', '异常备注', '最近更新',
     '系统订单键', '导入操作人', '导入批次', '数据版本',
@@ -62,7 +62,7 @@ OUTPUT_HEADERS = (
 
 RECEIVER_HEADERS = (
     '收货人姓名', '收货人国家', '收货人州/省', '收货人城市',
-    '地址1', '地址2', '邮编', '收货人电话',
+    '地址1', '地址2', '邮编', '收货人电话', 'CURP',
 )
 
 LEGACY_OUTPUT_HEADERS_V1 = (
@@ -102,7 +102,7 @@ CORE_OUTPUT_HEADERS = DEMAND_REQUIRED_HEADERS + SYSTEM_REQUIRED_HEADERS
 
 OUTPUT_WIDTHS = (
     14, 12, 21, 15, 11, 18, 12, 10, 14, 14, 19, 10.5, 22, 14, 14, 10,
-    14, 18, 12, 14, 14, 30, 24, 10, 18, 34, 12, 16, 18, 20, 14, 19, 16,
+    14, 18, 12, 14, 14, 30, 24, 10, 18, 24, 34, 12, 16, 18, 20, 14, 19, 16,
     14, 20, 16, 12, 28, 19, 38, 18, 24, 12,
 )
 # 相邻订单使用高区分淡色：蓝 / 橙 / 绿 / 紫 / 黄 / 粉。
@@ -536,6 +536,9 @@ def parse_export_workbook(source):
     header_map = {}
     for column in range(1, worksheet.max_column + 1):
         name = _compact_text(worksheet.cell(1, column).value)
+        if name.casefold() == 'curp': name = 'CURP'
+        if name == 'CURP' and name in header_map:
+            raise ProcurementImportError('导出文件存在重复 CURP 列')
         if name and name not in header_map:
             header_map[name] = column
     missing = [name for name in REQUIRED_HEADERS if name not in header_map]
@@ -691,6 +694,13 @@ def _build_rows(groups):
     issues = []
     for group_index, ((order_no, package_no), source_rows) in enumerate(
             groups.items()):
+        curp_values = {str(row.values.get('CURP') or '').strip().upper()
+                       for row in source_rows if str(row.values.get('CURP') or '').strip()}
+        if len(curp_values) > 1:
+            issues.append({'level': 'error', 'orderNo': order_no,
+                           'packageNo': package_no, 'message': '同一订单存在不同 CURP，请核对后重新导入'})
+            continue
+        curp_value = next(iter(curp_values), '')
         try:
             xyp2 = _select_xyp2(source_rows)
             matches, match_warnings = _match_source_rows(source_rows, xyp2.items)
@@ -803,6 +813,7 @@ def _build_rows(groups):
                 ('地址2', _compact_text(values.get('地址2'))),
                 ('邮编', _compact_text(values.get('邮编'))),
                 ('收货人电话', _compact_text(values.get('收货人电话'))),
+                ('CURP', curp_value),
                 ('采购备注', _purchase_note(
                     source.values, item, xyp2.rounding_amount,
                     first_detail=not amount_written)),
@@ -929,6 +940,7 @@ def export_collaboration_workbook(plan):
 
 def _canonical_header(value):
     header = _compact_text(value)
+    if header.casefold() == 'curp': return 'CURP'
     return HEADER_ALIASES.get(header, header)
 
 

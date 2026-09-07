@@ -411,7 +411,7 @@
       var count = Number(source.environmentCount || bindings.filter(function (b) { return b.dataSourceId === source.id; }).length);
       var personal = source.scope === 'personal';
       var pending = personal && !source.ownerMemberId;
-      var actions = button('查看详情','source-details:'+source.id,'','ghost small') + (pending ? button('认领为我的','claim-source:'+source.id,'','small') : (sourceCanEdit(source) ? button('重新配置','source-reconfigure:'+source.id,'','ghost small') : '')) + button('重新验证','revalidate-source:'+source.id,'','ghost small');
+      var actions = button('查看详情','source-details:'+source.id,'','ghost small') + (pending ? button('认领为我的','claim-source:'+source.id,'','small') : (sourceCanEdit(source) ? button('重新配置','source-reconfigure:'+source.id,'','ghost small') : '')) + button('刷新表格字段','revalidate-source:'+source.id,'','ghost small');
       return '<article class="card source-card"><div class="source-head"><span class="source-icon ' + (personal ? '' : 'team') + '">' + icon(personal ? 'user' : 'users') + '</span><div><h3>' + esc(source.label) + '</h3><span class="pill ' + (personal ? '' : 'pill-blue') + '">' + (personal ? '个人' : '团队') + '</span><p>归属：' + (personal ? esc(source.ownerMemberId ? memberName(source.ownerMemberId) : '待认领') : '采购团队') + '</p></div></div><div class="source-details"><div><span>工作表</span><b>' + esc(source.sheetName || '名称未记录') + '</b></div><div><span>读取范围</span><b>' + esc(source.cellRange || '—') + '</b></div><div><span>关联环境</span><b>' + count + ' 个</b></div></div><div class="source-foot"><span class="source-state">' + icon(source.migrationState === 'ready' ? 'check' : 'alert') + '<span style="margin-left:5px">' + (source.migrationState === 'ready' ? (source.enabled === false ? '当前已停用' : '表头校验通过') : '等待确认归属') + '</span></span><span class="source-actions">' + actions + '</span></div></article>';
     }).join('') + '</div>';
   }
@@ -1050,8 +1050,9 @@
     }).catch(function (error) { if (error.code === 'config_revision_conflict') loadWorkspaceData(); showError(error); });
   }
   function revalidateSource(sourceId) {
-    post('/api/local-config/data-sources/revalidate',{sourceId:sourceId}).then(function (result) {
-      showToast((result.sheetName || sourceName(sourceId)) + ' 验证通过：' + Number(result.headerCount || 0) + ' 列，范围 ' + (result.cellRange || '已确认'));
+    post('/api/local-config/data-sources/revalidate',{sourceId:sourceId,applyRange:true,expectedRevision:state.sources.registryRevision}).then(function (result) {
+      acceptSourceMutation(result,true); renderWorkspace();
+      showToast((result.sheetName || sourceName(sourceId)) + ' 字段与读取范围已更新：' + Number(result.headerCount || 0) + ' 列，范围 ' + (result.cellRange || '已确认'));
     }).catch(showError);
   }
   function toggleTeamDefault(sourceId) {

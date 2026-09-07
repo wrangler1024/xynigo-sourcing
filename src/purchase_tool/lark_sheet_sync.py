@@ -430,7 +430,7 @@ class LarkCliSheetsGateway(object):
         }
         receiver_fields = [
             '收货人姓名', '收货人国家', '收货人州/省', '收货人城市',
-            '地址1', '地址2', '邮编', '收货人电话',
+            '地址1', '地址2', '邮编', '收货人电话', 'CURP',
         ]
         legacy_receiver_fields = ['收件人', '国家', '收件地址', '邮编', '电话']
         for index, value in enumerate(actual, start=1):
@@ -543,6 +543,23 @@ class LarkCliSheetsGateway(object):
             }))
             canonical.insert(operator_index, '导入操作人')
             actual.insert(operator_index, '导入操作人')
+
+        # Optional CURP expands the current eight-field receiver block without
+        # rewriting any existing row values (including manually entered CURP).
+        if 'CURP' not in canonical and all(name in canonical for name in receiver_fields[:-1]):
+            insert_at = canonical.index('收货人电话') + 1
+            column = _column_name(insert_at + 1)
+            operations.extend(({
+                'shortcut': '+dim-insert',
+                'input': {'sheet_name': str(sheet_name or '').strip(),
+                          'position': column, 'count': 1, 'inherit_style': 'before'},
+            }, {
+                'shortcut': '+cells-set',
+                'input': {'sheet_id': normalize_sheet_id(sheet_id),
+                          'range': '%s1' % column, 'cells': [[{'value': 'CURP'}]]},
+            }))
+            canonical.insert(insert_at, 'CURP')
+            actual.insert(insert_at, 'CURP')
 
         guide_index = canonical.index('采购指导价')
         receiver_block = canonical[

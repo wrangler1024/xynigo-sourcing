@@ -132,6 +132,20 @@ class FakeCliRunner:
 
 
 class LarkSheetSyncTests(unittest.TestCase):
+    def test_curp_upgrade_only_inserts_one_column_and_header(self):
+        from purchase_tool.procurement_import import OUTPUT_HEADERS
+        headers = tuple(name for name in OUTPUT_HEADERS if name != 'CURP')
+        runner = FakeCliRunner()
+        gateway = LarkCliSheetsGateway(runner=runner)
+        result = gateway.normalize_collaboration_headers('https://tenant.feishu.cn/sheets/SheetToken123', 'sheetA', '采购分单协作区', headers, last_row=2, rows=[(2, tuple('' for _ in headers))])
+        operations = runner.payloads[-1][1]
+        self.assertEqual(len(operations), 2)
+        self.assertEqual(operations[0]['shortcut'], '+dim-insert')
+        self.assertEqual(operations[0]['input']['position'], 'Z')
+        self.assertEqual(operations[0]['input']['inherit_style'], 'before')
+        self.assertEqual(operations[1]['input']['range'], 'Z1')
+        self.assertEqual(operations[1]['input']['cells'], [[{'value': 'CURP'}]])
+
     def test_accepts_only_official_ordinary_sheet_urls(self):
         reference = parse_lark_sheet_url(
             'https://tenant.feishu.cn/sheets/SheetToken123?from=copy#gid=1')

@@ -711,7 +711,10 @@ class FeishuSheetsGateway:
             "地址2",
             "邮编",
             "收货人电话",
+            "CURP",
         ]
+        if "CURP" not in canonical and all(name in canonical for name in receiver_fields[:-1]):
+            insert_column(canonical.index("收货人电话") + 1, "CURP")
         guide_index = canonical.index("采购指导价")
         if (
             canonical[guide_index + 1 : guide_index + 1 + len(receiver_fields)]

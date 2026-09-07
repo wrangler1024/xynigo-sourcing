@@ -25,7 +25,7 @@ FEISHU_COLLABORATION_HEADERS = (
     '采购状态', '优先级', '销售订单金额', '商品金额', '订单时间', '商品图片',
     '采购链接', '主规格', '次规格', '需求数量', '采购指导价',
     '收货人姓名', '收货人国家', '收货人州/省', '收货人城市',
-    '地址1', '地址2', '邮编', '收货人电话', '采购备注',
+    '地址1', '地址2', '邮编', '收货人电话', 'CURP', '采购备注',
     '下单批次', '买家号', '付款卡号', '采购订单号', '实际付款', '付款时间', '下单截图',
     '物流商', '物流单号', '物流截图', '跟单状态', '异常备注', '最近更新',
     '系统订单键', '导入操作人', '导入批次', '数据版本',
@@ -118,7 +118,7 @@ class FakeSheetGateway:
                              '商品金额')
         receiver_headers = [
             '收货人姓名', '收货人国家', '收货人州/省', '收货人城市',
-            '地址1', '地址2', '邮编', '收货人电话',
+            '地址1', '地址2', '邮编', '收货人电话', 'CURP',
         ]
         for value in receiver_headers:
             if value in canonical:
@@ -426,6 +426,42 @@ class ProcurementImportTests(unittest.TestCase):
         self.assertEqual(sorted(images), [2, 3])
         self.assertEqual(images[2], JPEG)
 
+    def test_optional_curp_import_and_conflicts(self):
+        workbook = load_workbook(BytesIO(source_workbook()))
+        sheet = workbook.active
+        column = sheet.max_column + 1
+        sheet.cell(1, column, 'curp')
+        for row in range(2, sheet.max_row + 1):
+            sheet.cell(row, column, '  testcurp0000000001  ')
+        stream = BytesIO(); workbook.save(stream)
+        service = ProcurementImportService()
+        result = service.parse('curp_test.xlsx', base64.b64encode(stream.getvalue()).decode('ascii'))
+        self.assertTrue(service.pending[result['planId']].rows)
+        self.assertTrue(all(row.values['CURP'] == 'TESTCURP0000000001' for row in service.pending[result['planId']].rows))
+        sheet.cell(3, column, 'TESTCURP0000000002')
+        stream = BytesIO(); workbook.save(stream)
+        with self.assertRaisesRegex(ProcurementImportError, '不同 CURP') as caught:
+            service.parse('curp_conflict.xlsx', base64.b64encode(stream.getvalue()).decode('ascii'))
+        self.assertNotIn('TESTCURP0000000001', str(caught.exception))
+
+    def test_reimport_does_not_erase_manually_filled_curp(self):
+        gateway = FakeSheetGateway()
+        service = ProcurementImportService(sheet_gateway=gateway, sleep_fn=lambda _seconds: None)
+        result = service.parse('curp_empty.xlsx', base64.b64encode(source_workbook()).decode('ascii'))
+        service.validate_target(result['planId'], 'https://tenant.feishu.cn/sheets/SheetToken123', 'sheetA')
+        first = wait_for_sync(service, service.start_sheet_sync(result['planId'], confirm_write=True)['jobId'])
+        self.assertEqual(first['state'], 'completed')
+        column = gateway.headers.index('CURP')
+        updated = []
+        for number, values in gateway.rows:
+            values = list(values); values[column] = 'TESTCURP0000000001'
+            updated.append((number, tuple(values)))
+        gateway.rows = tuple(updated)
+        second = wait_for_sync(service, service.start_sheet_sync(result['planId'], confirm_write=True)['jobId'])
+        self.assertEqual(second['state'], 'completed')
+        self.assertTrue(all(values[column] == 'TESTCURP0000000001' for _, values in gateway.rows))
+        self.assertEqual(second['rowsWritten'], 0)
+
     def test_generates_single_collaboration_sheet_and_prevents_amount_duplication(self):
         source = source_workbook()
         service = ProcurementImportService()
@@ -508,13 +544,13 @@ class ProcurementImportTests(unittest.TestCase):
         headers = [cell.value for cell in worksheet[1]]
         self.assertEqual(tuple(headers), OUTPUT_HEADERS)
         self.assertEqual(tuple(headers), FEISHU_COLLABORATION_HEADERS)
-        self.assertEqual(len(headers), 43)
+        self.assertEqual(len(headers), 44)
         self.assertEqual(headers[11], '商品图片')
-        self.assertEqual(headers[28], '付款卡号')
-        self.assertEqual(headers[29], '采购订单号')
-        self.assertEqual(headers[32], '下单截图')
-        self.assertEqual(headers[35], '物流截图')
-        self.assertEqual(headers[40], '导入操作人')
+        self.assertEqual(headers[29], '付款卡号')
+        self.assertEqual(headers[30], '采购订单号')
+        self.assertEqual(headers[33], '下单截图')
+        self.assertEqual(headers[36], '物流截图')
+        self.assertEqual(headers[41], '导入操作人')
         guide_index = headers.index('采购指导价')
         self.assertEqual(headers[guide_index + 1:guide_index + 9], [
             '收货人姓名', '收货人国家', '收货人州/省', '收货人城市',
@@ -588,7 +624,7 @@ class ProcurementImportTests(unittest.TestCase):
         self.assertEqual(validated['headerCount'], 32)
         self.assertEqual(validated['missingRecommendedColumns'],
                          ['收货人州/省', '收货人城市', '地址1', '地址2',
-                          '邮编', '收货人电话', '商品金额', '导入操作人'])
+                          '邮编', '收货人电话', 'CURP', '商品金额', '导入操作人'])
         with self.assertRaisesRegex(ProcurementImportError, '明确确认'):
             service.start_image_sync(result['planId'], confirm_write=False)
 
@@ -607,7 +643,7 @@ class ProcurementImportTests(unittest.TestCase):
         self.assertEqual(len(gateway.append_calls), 1)
         self.assertEqual(len(gateway.presentation_calls), 1)
         self.assertEqual(gateway.presentation_calls[0]['height'], 52)
-        self.assertEqual(gateway.presentation_calls[0]['lastColumn'], 'AN')
+        self.assertEqual(gateway.presentation_calls[0]['lastColumn'], 'AO')
         self.assertEqual(gateway.presentation_calls[0]['bands'], ({
             'start': 2, 'end': 3,
             'color': '#' + ORDER_GROUP_COLORS[0]},))

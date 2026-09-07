@@ -89,7 +89,7 @@ def validate_source_headers(values: Any) -> tuple[list[str], str]:
     """Validate only row 1 and derive the smallest stable read range."""
     if not isinstance(values, list) or not values or not isinstance(values[0], list):
         raise PurchaseAssistantError('目标工作表缺少第 1 行表头')
-    headers = [normalize(value) for value in values[0]]
+    headers = [('CURP' if normalize(value).casefold() == 'curp' else normalize(value)) for value in values[0]]
     while headers and not headers[-1]:
         headers.pop()
     if not headers or any(not header for header in headers):
@@ -108,7 +108,7 @@ def rows_from_values(values: Any) -> list[dict[str, str]]:
         return []
     if not isinstance(values[0], list):
         raise PurchaseAssistantError('飞书表格返回的表头格式异常')
-    headers = [normalize(value) for value in values[0]]
+    headers = [('CURP' if normalize(value).casefold() == 'curp' else normalize(value)) for value in values[0]]
     if not headers or any(not header for header in headers):
         raise PurchaseAssistantError('协作表表头为空或不完整')
     if len(set(headers)) != len(headers):
@@ -205,6 +205,20 @@ def search_tasks(tasks: Iterable[dict[str, Any]], query: str,
     return [item[2] for item in ranked[:maximum]], len(ranked)
 
 
+def recipient_curp(matched):
+    """Optional sensitive field: never add it to task summaries or errors."""
+    has_column = any(any(str(key).strip().casefold() == 'curp' for key in row)
+                     for row in matched)
+    values = {str(value or '').strip().upper()
+              for row in matched for key, value in row.items()
+              if str(key).strip().casefold() == 'curp' and str(value or '').strip()}
+    if len(values) > 1:
+        return {'curp': '', 'curpStatus': 'conflict'}
+    if values:
+        return {'curp': next(iter(values)), 'curpStatus': 'provided'}
+    return {'curp': '', 'curpStatus': 'empty' if has_column else 'missing_column'}
+
+
 def find_recipient(rows: Iterable[dict[str, str]],
                    requested_key: str) -> dict[str, str]:
     wanted = normalize(requested_key)
@@ -233,6 +247,7 @@ def find_recipient(rows: Iterable[dict[str, str]],
         'city': normalize(row.get('收货人城市')),
         'stateProvince': normalize(row.get('收货人州/省')),
         'postalCode': normalize(row.get('邮编')),
+        **recipient_curp(matched),
     }
 
 

@@ -3336,6 +3336,7 @@ class Handler(BaseHTTPRequestHandler):
                 'features': {
                     'taskSearch': True,
                     'recipientRead': True,
+                    'recipientCurp': True,
                     'sourceConfiguration': False,
                     'desktopManagedDataSources': True,
                     'memberScopedDataSources': True,
@@ -4970,10 +4971,22 @@ class Handler(BaseHTTPRequestHandler):
                 source = editable_data_source(
                     request_identity, body.get('sourceId'),
                     allow_unclaimed=True)
-                self._json({
-                    'ok': True,
-                    **STATE.purchase_assistant.revalidate_target(source),
-                })
+                checked = STATE.purchase_assistant.revalidate_target(source)
+                if body.get('applyRange') is True:
+                    STATE.data_sources.service.assert_revision(body.get('expectedRevision'))
+                    target = {**source, 'cellRange': checked['cellRange'],
+                              'sheetName': checked['sheetName']}
+                    STATE.data_sources.replace_source_target(
+                        source['id'], target,
+                        owner_member_id=source.get('ownerMemberId') or '',
+                        expected_revision=body.get('expectedRevision'))
+                    include_all = bool(set(request_identity.get('roles') or []) & {
+                        'admin', 'super_admin'})
+                    self._json({'ok': True, 'saved': True, **checked,
+                                **STATE.data_sources.public_snapshot(
+                                    request_identity['user']['id'], include_all=include_all)})
+                else:
+                    self._json({'ok': True, **checked})
             elif path == DATA_SOURCE_API_PREFIX + '/inspect':
                 member_id = request_identity['user']['id']
                 self._json({

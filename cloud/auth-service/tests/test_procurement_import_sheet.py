@@ -288,3 +288,20 @@ def test_cloud_sheet_gateway_translates_excel_date_format_for_feishu_v2() -> Non
     assert result == {"operations": 2, "rows": 2}
     assert style_body["data"][0]["style"]["formatter"] == "yyyy-MM-dd"
     assert style_body["data"][0]["ranges"] == ["sheetA!A29:A30"]
+
+
+def test_curp_upgrade_keeps_existing_rows_and_manual_identifiers_untouched():
+    from xynigo_auth.procurement_import_core import OUTPUT_HEADERS
+    class Probe(FeishuSheetsGateway):
+        def __init__(self): self.calls=[]
+        def _insert_columns(self, url, sheet, index, count): self.calls.append(('insert', index, count))
+        def _write_values(self, url, sheet, cell_range, values): self.calls.append(('write', cell_range, values))
+    gateway=Probe()
+    old=tuple(name for name in OUTPUT_HEADERS if name!='CURP')
+    gateway.normalize_collaboration_headers('https://tenant.feishu.cn/sheets/SheetToken123','sheetA','采购分单协作区',old,rows=[(2,['']*len(old))])
+    assert gateway.calls==[('insert',25,1),('write','Z1:Z1',[['CURP']])]
+    gateway.calls.clear()
+    current=['']*len(OUTPUT_HEADERS);current[25]='TESTCURP0000000001'
+    gateway.normalize_collaboration_headers('https://tenant.feishu.cn/sheets/SheetToken123','sheetA','采购分单协作区',OUTPUT_HEADERS,rows=[(2,current)])
+    assert gateway.calls==[]
+    assert current[25]=='TESTCURP0000000001'

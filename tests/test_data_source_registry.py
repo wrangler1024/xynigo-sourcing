@@ -723,6 +723,26 @@ class DataSourceRegistryRouteTests(unittest.TestCase):
         self.assertEqual(pulled['environmentBindings'], [])
         self.assertNotIn('SpreadsheetTeam123', rendered)
 
+    def test_refresh_fields_persists_expanded_range_and_keeps_team_mapping(self):
+        self.auth.roles = ['admin']
+        initial = self._request('/api/local-config/data-sources')
+        team = next(item for item in initial['dataSources'] if item['scope'] == 'team')
+        initial = self._request('/api/local-config/data-sources/team-default', {'sourceId': team['id'], 'expectedRevision': initial['registryRevision']})
+        self.purchase_assistant.revalidate_target = lambda target: {
+            'valid': True, 'sheetName': target.get('sheetName') or '测试工作表',
+            'cellRange': 'A1:AR', 'headerCount': 44, 'requiredFieldCount': 7}
+        read_only = self._request('/api/local-config/data-sources/revalidate', {'sourceId': team['id']})
+        unchanged = self._request('/api/local-config/data-sources')
+        self.assertEqual(unchanged['registryRevision'], initial['registryRevision'])
+        updated = self._request('/api/local-config/data-sources/revalidate', {
+            'sourceId': team['id'], 'applyRange': True, 'expectedRevision': initial['registryRevision']})
+        current = next(item for item in updated['dataSources'] if item['scope'] == 'team')
+        self.assertEqual(current['cellRange'], 'A1:AR')
+        self.assertTrue(updated['saved'])
+        self.assertNotEqual(updated['registryRevision'], initial['registryRevision'])
+        self.assertEqual(read_only['cellRange'], 'A1:AR')
+        self.assertEqual(self.registry.snapshot()['registry']['teamDefaultDataSourceId'], current['id'])
+
     def test_admin_can_view_edit_revalidate_and_replace_team_source(self):
         self.auth.roles = ['admin']
         initial = self._request('/api/local-config/data-sources')

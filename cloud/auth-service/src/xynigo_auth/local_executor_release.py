@@ -14,9 +14,9 @@ from urllib.parse import quote
 
 from . import __version__
 
-RELEASE_VERSION = "0.17.7"
+RELEASE_VERSION = "0.17.8"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-07T03:52:34Z"
+RELEASE_PUBLISHED_AT = "2026-09-07T08:09:30Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,10 +31,10 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.17.7-f00d382b7ab1",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.7.exe",
-        "sha256": "8a573eb5e57ae9b81a11caecbbda7f6d51821a4f3a4e5f6639d2d460c3c7d2ae",
-        "size": 15227232,
+        "runtimeId": "0.17.8-curp20260907",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.8.exe",
+        "sha256": "ee865e55b636e7a5f60a4baa88421ec18010cd01e5dca04ec6d81970e4695db7",
+        "size": 15227127,
         "installMode": "standard_per_user",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_silent_installer",
@@ -50,10 +50,10 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.17.7-f00d382b7ab1",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.7.pkg",
-        "sha256": "a47394c9b29707ca67af412120c1601d74910326eecdb7fa168b692703bfd5b6",
-        "size": 11570019,
+        "runtimeId": "0.17.8-curp20260907",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.8.pkg",
+        "sha256": "e29d15e2b3ee8d88345499b57e49a3fc44d5ac9400477be753c00ba42300a199",
+        "size": 11568953,
         "installMode": "standard_system_application",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_system_installer",
@@ -320,10 +320,9 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "采购助手数据源支持加密组织同步：管理员在一台客户端发布后，其他电脑可拉取同一套团队表、个人速填表和采购员默认映射。",
-            "HubStudio 环境映射继续仅保存在当前电脑，跨设备同步不会覆盖本机 containerCode 绑定。",
-            "新设备本机无数据源时自动拉取组织配置；超级管理员可管理成员个人速填表，普通采购员只看到团队表和自己的个人表。",
-            "缓存检测增加等待状态、耗时和后台运行提示；缓存清理按实际吞吐显示预计剩余时间及完成耗时。",
-            "Windows 与 macOS 执行器同步升级，并新增云端迁移 0031_data_source_registry_sync。",
+            "采购助手支持从个人速填表和团队协作表读取 CURP，仅在当前订单收件详情中返回，任务列表不包含证件值。",
+            "客户端数据源增加刷新表格字段，校验后保存最新读取范围，保留采购员默认值和环境映射。",
+            "导入模板增加可选 CURP，兼容旧文件；冲突值停止对应订单导入，重复导入保留人工补充值。",
+            "配合采购助手插件 v0.8.1，仅墨西哥站自动填写 CURP；墨西哥四位源邮编由插件补零，美国站继续使用八项地址字段和五位邮编。",
         ],
     }
