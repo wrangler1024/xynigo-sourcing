@@ -59,6 +59,17 @@ private struct DesktopCloudSummary: Decodable {
 
 private struct DesktopHubSummary: Decodable {
     let connected: Bool
+    let localApiConnected: Bool?
+    let automationAvailable: Bool?
+    let message: String?
+
+    var isLocalApiConnected: Bool {
+        localApiConnected ?? connected
+    }
+
+    var isAutomationAvailable: Bool {
+        automationAvailable ?? connected
+    }
 }
 
 private struct DesktopTaskSummary: Decodable {
@@ -683,7 +694,8 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
                 "生成时间：\(ISO8601DateFormatter().string(from: Date()))",
                 "运行时：\(runtimeID() ?? "不可用")",
                 "云端通道：\(status.map { cloudStatus($0.cloudChannel.status) } ?? "未连接")",
-                "HubStudio：\(status?.hubStudio.connected == true ? "已连接" : "未连接")",
+                "HubStudio Local API：\(status?.hubStudio.isLocalApiConnected == true ? "已连接" : "未连接")",
+                "HubStudio 自动化：\(status?.hubStudio.isAutomationAvailable == true ? "可用" : "受限")",
                 "活动任务数：\(status?.tasks.activeCount ?? 0)",
                 "设备配对：\(status?.executor.paired == true ? "已完成" : "未完成")",
                 "说明：本文件不包含凭证、飞书链接、业务明文或设备令牌。",
@@ -1079,10 +1091,20 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         startMenuItem?.title = "重新启动执行器"
         versionValue.stringValue = "v\(status.version)"
         versionNote.stringValue = clean(status.update.message) ?? "当前运行时已加载"
-        hubValue.stringValue = status.hubStudio.connected ? "已连接" : "未连接"
-        hubNote.stringValue = status.hubStudio.connected
-            ? "HubStudio Local API 可用"
-            : "请确认 HubStudio 已启动并登录"
+        let hubConnected = status.hubStudio.isLocalApiConnected
+        let hubReady = status.hubStudio.isAutomationAvailable
+        if hubReady {
+            hubValue.stringValue = "已连接"
+            hubNote.stringValue = "HubStudio Local API 和自动化能力均可用"
+        } else if hubConnected {
+            hubValue.stringValue = "已连接 · 能力受限"
+            hubNote.stringValue = clean(status.hubStudio.message)
+                ?? "HubStudio Local API 正常，自动化能力需要处理"
+        } else {
+            hubValue.stringValue = "未连接"
+            hubNote.stringValue = clean(status.hubStudio.message)
+                ?? "请确认 HubStudio 已启动并登录"
+        }
 
         if status.tasks.activeCount > 0 {
             taskValue.stringValue = "\(status.tasks.activeCount) 个运行中"
@@ -1111,9 +1133,13 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
             statusTitle.stringValue = status.tasks.activeCount > 0
                 ? "本地执行器正在执行任务"
                 : "Xynigo 桌面客户端在线"
-            statusDetail.stringValue = status.hubStudio.connected
-                ? "云端安全通道和 HubStudio 均已连接。"
-                : "云端通道正常；HubStudio 尚未连接。"
+            if hubReady {
+                statusDetail.stringValue = "云端安全通道、HubStudio Local API 和自动化能力均已就绪。"
+            } else if hubConnected {
+                statusDetail.stringValue = "云端通道和 HubStudio Local API 已连接；自动化能力需要处理。"
+            } else {
+                statusDetail.stringValue = "云端通道正常；HubStudio Local API 尚未连接。"
+            }
         case "not_paired":
             statusTitle.stringValue = "执行器已启动，等待设备配对"
             statusDetail.stringValue = "在云端工作台生成一次性配对码，然后在下方完成绑定。"

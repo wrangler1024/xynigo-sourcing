@@ -62,6 +62,27 @@ class DesktopUIContractTests(unittest.TestCase):
         self.assertIn("auth_failed: '云端认证请求失败'",
                       self.javascript)
 
+    def test_hub_status_separates_local_api_from_automation_capability(self):
+        for marker in (
+                'function hubPresentation(hub, port)',
+                'localApiConnected', 'automationAvailable',
+                "value:'Local API 已连接'",
+                'HubStudio 自动化能力受限',
+                '云端通道和 Local API 已连接；请处理下方 HubStudio 自动化能力异常'):
+            self.assertIn(marker, self.javascript)
+        self.assertNotIn(
+            "hubReady ? 'Local API 正常' : 'Local API 未连接'",
+            self.javascript,
+        )
+        mac_client = (
+            ROOT / 'packaging/macos/desktop_client.swift'
+        ).read_text(encoding='utf-8')
+        for marker in (
+                'localApiConnected', 'automationAvailable',
+                '已连接 · 能力受限',
+                'HubStudio Local API 已连接；自动化能力需要处理'):
+            self.assertIn(marker, mac_client)
+
     def test_existing_data_sources_have_real_management_actions(self):
         for marker in (
                 '查看详情', '认领为我的', '重新配置',

@@ -45,7 +45,7 @@
     localPort: 8765,
     executor: {running:true, paired:true, displayName:'采购电脑 · 上海办公室 03', platform:platform, architecture:platform === 'mac' ? 'arm64' : 'amd64'},
     cloudChannel: {status:'online', lastPollAt:new Date(Date.now() - 18000).toISOString(), phase:'polling'},
-    hubStudio: {connected:true, status:'ready'},
+    hubStudio: {connected:true, localApiConnected:true, automationAvailable:true, authenticated:true, apiVersion:'v1', status:'ready', reasonCode:'ok', message:'HubStudio Local API 已就绪'},
     tasks: {activeCount:1, safeParallel:true, items:[{
       kind:'query', label:'订单物流查询', state:'running',
       startedAt:new Date(Date.now() - 84000).toISOString(),
@@ -88,7 +88,7 @@
     {serialNumber:'4276',containerCode:'CN-80E5-71A3',containerName:'YH-MX-测试-01',groupName:'希音墨西哥采购'},
     {serialNumber:'4280',containerCode:'CN-114F-00D2',containerName:'待分配环境',groupName:'希音墨西哥采购'}
   ];
-  var emptyStatus = {version:'—',localPort:'—',executor:{running:false,paired:false,displayName:'这台采购电脑',architecture:'—'},cloudChannel:{status:'offline'},hubStudio:{connected:false},tasks:{activeCount:0,safeParallel:false,items:[]},update:{enabled:false,state:'disabled',message:'本机执行器尚未就绪'}};
+  var emptyStatus = {version:'—',localPort:'—',executor:{running:false,paired:false,displayName:'这台采购电脑',architecture:'—'},cloudChannel:{status:'offline'},hubStudio:{connected:false,localApiConnected:false,automationAvailable:false,status:'offline'},tasks:{activeCount:0,safeParallel:false,items:[]},update:{enabled:false,state:'disabled',message:'本机执行器尚未就绪'}};
   var emptySources = {registryRevision:'',teamDefaultDataSourceId:'',counts:{dataSourceCount:0,buyerProfileCount:0,environmentBindingCount:0,mappingConflictCount:0},dataSources:[],buyerProfiles:[],environmentBindings:[]};
   function currentStatus() { return state.status || (previewRole ? sampleStatus : emptyStatus); }
   function currentConfig() { return state.config || (previewRole ? sampleConfig : {hubPort:6873,concurrency:2,envCreateWorkers:5,verifySampleCount:1,safeParallelTasks:true,queryBrowserMode:'headless',queryAllowOpenEnvironment:false,configRevision:''}); }
@@ -319,22 +319,72 @@
       detail:relativeTime(channel.lastPollAt)
     };
   }
+  function hubPresentation(hub, port) {
+    hub = hub || {};
+    var localApiConnected = hub.localApiConnected == null
+      ? !!hub.connected
+      : !!hub.localApiConnected;
+    var automationAvailable = hub.automationAvailable == null
+      ? !!hub.connected
+      : !!hub.automationAvailable;
+    var apiVersion = hub.apiVersion || 'v1';
+    var endpointDetail = apiVersion + ' · 端口 ' + (port || '6873');
+    if (automationAvailable) {
+      return {
+        localApiConnected:true,
+        automationAvailable:true,
+        value:'Local API 正常',
+        detail:endpointDetail + (hub.authenticated === false ? '' : ' · 已认证')
+      };
+    }
+    if (localApiConnected) {
+      return {
+        localApiConnected:true,
+        automationAvailable:false,
+        value:'Local API 已连接',
+        detail:endpointDetail + (hub.authenticated ? ' · 已认证' : '') + ' · ' + (hub.message || 'HubStudio 自动化能力受限')
+      };
+    }
+    if (hub.clientRunning) {
+      return {
+        localApiConnected:false,
+        automationAvailable:false,
+        value:'Local API 未连接',
+        detail:endpointDetail + ' · ' + (hub.message || '请检查 Local API 设置')
+      };
+    }
+    return {
+      localApiConnected:false,
+      automationAvailable:false,
+      value:'HubStudio 未运行',
+      detail:hub.message || '请启动 HubStudio 客户端'
+    };
+  }
   function renderOverview() {
     var s = currentStatus();
     var paired = !!(s.executor && s.executor.paired);
     var cloudOnline = !!(s.cloudChannel && s.cloudChannel.status === 'online');
-    var hubReady = !!(s.hubStudio && s.hubStudio.connected);
+    var hub = hubPresentation(s.hubStudio, state.config && state.config.hubPort);
     var activeCount = Number(s.tasks && s.tasks.activeCount || 0);
     var update = s.update || {};
-    var healthy = paired && cloudOnline && hubReady;
+    var healthy = paired && cloudOnline && hub.automationAvailable;
     var cloud = cloudPresentation(s.cloudChannel, paired);
     var cloudValue = cloud.value;
     var cloudDetail = cloud.detail;
+    var healthDetail = healthy
+      ? '云端任务通道和 HubStudio Local API 均已就绪，当前没有需要处理的异常。'
+      : (!paired
+        ? '请先完成当前设备配对。'
+        : (!cloudOnline
+          ? '本地执行器已运行；云端安全通道正在恢复。'
+          : (hub.localApiConnected
+            ? '云端通道和 Local API 已连接；请处理下方 HubStudio 自动化能力异常。'
+            : '云端通道已连接；请检查本机 HubStudio Local API。')));
     var actions = button('刷新状态','refresh-status','refresh') + button('打开云端工作台','open-cloud','arrow','primary');
     var pair = paired ? '' : '<section class="pair-strip">' + icon('alert') + '<div><b>这台电脑尚未配对</b><div style="font-size:10px;color:#92400e;margin-top:3px">在云端生成 8 位一次性配对码后完成绑定。</div></div><input id="pair-code" class="input" placeholder="ABCD-EFGH" maxlength="9"><button class="button primary" data-action="pair-device">配对这台电脑</button></section>';
     return header('overview',actions) + '<div class="content stack">' + pair +
-      '<section class="health-banner"><span class="health-check">' + icon(healthy ? 'check' : 'alert') + '</span><div class="health-copy"><h2>' + (healthy ? '本地执行器运行正常' : '本地执行器需要处理') + '</h2><p>' + (healthy ? '云端任务通道和 HubStudio Local API 均已就绪，当前没有需要处理的异常。' : '请根据下方状态卡完成配对或检查本机连接。') + '</p></div><span class="pill">最近检查 ' + nowTime() + '</span></section>' +
-      '<section class="status-grid">' + statusCard('云端通道',cloudValue,cloudDetail,'cloud','',cloudOnline) + statusCard('HubStudio',hubReady ? 'Local API 正常' : 'Local API 未连接','v1 · 端口 ' + esc((state.config && state.config.hubPort) || '6873') + (hubReady ? ' · 已认证' : ' · 请检查'),'gauge','blue',hubReady) + statusCard('本机任务',activeCount ? activeCount + ' 个运行中' : '当前空闲',(s.tasks && s.tasks.safeParallel ? '安全并行已开启' : '安全并行未开启') + ' · 点击查看明细','activity','green',true,'task-details') + statusCard('执行器版本','v' + esc(s.version || update.currentVersion || '—'),esc(update.message || '当前运行时已加载'),'shield','amber',update.state !== 'failed') + '</section>' +
+      '<section class="health-banner"><span class="health-check">' + icon(healthy ? 'check' : 'alert') + '</span><div class="health-copy"><h2>' + (healthy ? '本地执行器运行正常' : '本地执行器需要处理') + '</h2><p>' + healthDetail + '</p></div><span class="pill">最近检查 ' + nowTime() + '</span></section>' +
+      '<section class="status-grid">' + statusCard('云端通道',cloudValue,cloudDetail,'cloud','',cloudOnline) + statusCard('HubStudio',hub.value,hub.detail,'gauge','blue',hub.automationAvailable) + statusCard('本机任务',activeCount ? activeCount + ' 个运行中' : '当前空闲',(s.tasks && s.tasks.safeParallel ? '安全并行已开启' : '安全并行未开启') + ' · 点击查看明细','activity','green',true,'task-details') + statusCard('执行器版本','v' + esc(s.version || update.currentVersion || '—'),esc(update.message || '当前运行时已加载'),'shield','amber',update.state !== 'failed') + '</section>' +
       '<section class="overview-bottom"><article class="card device-card"><div class="device-head"><div><p class="eyebrow">Paired Device</p><h2>' + esc((s.executor && s.executor.displayName) || '这台采购电脑') + '</h2><p class="device-copy">' + (platform === 'mac' ? 'macOS · ' + esc((s.executor && s.executor.architecture) || 'Apple Silicon') + ' · 登录钥匙串' : 'Windows · ' + esc((s.executor && s.executor.architecture) || 'x86_64') + ' · 当前用户 DPAPI') + '</p></div><span class="device-icon">' + icon('monitor') + '</span></div><div class="device-meta"><div><span>设备状态</span><b>' + (paired ? '已配对' : '待配对') + '</b></div><div><span>本地端口</span><b>' + esc(s.localPort || '—') + '</b></div><div><span>配置版本</span><b>rev · ' + safeId((state.config && state.config.configRevision) || '读取中') + '</b></div></div></article>' +
       '<article class="card quick-card"><div class="quick-title">✦ 快捷操作</div><div class="quick-grid">' + button('本机设置','go-settings','sliders','dark') + button('日志目录','open-logs','folder','dark') + button('重启执行器','restart-executor','power','dark') + button('检查更新','go-diagnostics','refresh','dark') + '</div></article></section></div>';
   }
@@ -361,7 +411,7 @@
       '<section class="card section-card">' + sectionTitle('monitor','物流查询高级设置','统一控制此电脑执行的全部物流查询','本机生效') + '<div class="section-body field-grid">' +
       '<div class="field"><label for="cfg-query-browser-mode">物流查询浏览器模式</label><select class="select" id="cfg-query-browser-mode"' + (locked ? ' disabled' : '') + '><option value="headless"' + (cfg.queryBrowserMode !== 'visible' ? ' selected' : '') + '>无头模式（推荐）</option><option value="visible"' + (cfg.queryBrowserMode === 'visible' ? ' selected' : '') + '>可见调试模式</option></select><small>物流查询统一使用本机设置；网页不再临时覆盖。可见模式会打开 HubStudio 窗口并限制为单并发。</small></div>' +
       '<label class="toggle-row"><div><b>允许连接已打开环境（只读）</b><p>仅连接已有调试端口并使用独立查询标签页；不会启动或关闭环境，也不会关闭原有标签页。</p></div><input id="cfg-query-allow-open" class="switch" type="checkbox"' + (cfg.queryAllowOpenEnvironment === true ? ' checked' : '') + (locked ? ' disabled' : '') + '></label></div></section>' +
-      '<section class="card section-card">' + sectionTitle('monitor','HubStudio 连接','连接本机 Local API，仅回显不可复用的掩码摘要',secureStore) + '<div class="section-body stack"><div class="connection-box"><span class="connection-check">' + icon(cfg.hubApiKeyConfigured ? 'check' : 'alert') + '</span><div><b>' + (cfg.hubApiKeyConfigured ? 'API Key 已安全保存' : 'API Key 尚未配置') + '</b><span>' + (cfg.hubApiKeyConfigured ? ('当前值 ' + esc(cfg.hubApiKeyMasked || '••••')) : '输入后保存到系统安全存储') + ' · ' + ((state.status && state.status.hubStudio && state.status.hubStudio.connected) ? 'Local API v1 认证成功' : '等待本机 Local API 连接') + '</span></div>' + button('测试连接','test-hub','play','small',locked) + '</div>' + field('cfg-hub-key','覆盖 HubStudio Local API Key','','留空保持现状；保存到 ' + secureStore + '。','password',locked,cfg.hubApiKeyConfigured ? ('当前 ' + (cfg.hubApiKeyMasked || '••••') + '；输入新 Key 后覆盖') : '输入 HubStudio Local API Key') + '</div></section>' + cloudIntegrationCard + '</div>';
+      '<section class="card section-card">' + sectionTitle('monitor','HubStudio 连接','连接本机 Local API，仅回显不可复用的掩码摘要',secureStore) + '<div class="section-body stack"><div class="connection-box"><span class="connection-check">' + icon(cfg.hubApiKeyConfigured ? 'check' : 'alert') + '</span><div><b>' + (cfg.hubApiKeyConfigured ? 'API Key 已安全保存' : 'API Key 尚未配置') + '</b><span>' + (cfg.hubApiKeyConfigured ? ('当前值 ' + esc(cfg.hubApiKeyMasked || '••••')) : '输入后保存到系统安全存储') + ' · ' + ((state.status && state.status.hubStudio && state.status.hubStudio.authenticated) ? 'Local API v1 认证成功' : ((state.status && state.status.hubStudio && state.status.hubStudio.localApiConnected) ? 'Local API 已连接，等待认证' : '等待本机 Local API 连接')) + '</span></div>' + button('测试连接','test-hub','play','small',locked) + '</div>' + field('cfg-hub-key','覆盖 HubStudio Local API Key','','留空保持现状；保存到 ' + secureStore + '。','password',locked,cfg.hubApiKeyConfigured ? ('当前 ' + (cfg.hubApiKeyMasked || '••••') + '；输入新 Key 后覆盖') : '输入 HubStudio Local API Key') + '</div></section>' + cloudIntegrationCard + '</div>';
   }
 
   function sourceCounts() {
@@ -729,13 +779,14 @@
     var sourceCount = ds.counts && ds.counts.dataSourceCount || (ds.dataSources || []).length;
     var bindingCount = ds.counts && ds.counts.environmentBindingCount || (ds.environmentBindings || []).length;
     var coreRepair = s.hubStudio && s.hubStudio.coreRepair || {};
+    var hub = hubPresentation(s.hubStudio, state.config && state.config.hubPort);
     var activeCount = Number(s.tasks && s.tasks.activeCount || 0);
     var actions = button('运行完整诊断','run-diagnostics','play','primary');
     return header('diagnostics',actions) + '<div class="content diagnostic-layout"><section class="card section-card">' + sectionTitle('shield','连接与配置检查','只读检测，不会修改配置或启动 HubStudio 环境',nowTime() + ' 检查') +
       diagnosticRow('monitor','本机配置文件','schema v2 · revision ' + safeId(state.config && state.config.configRevision) + ' · 文件权限正常',!!state.config) +
       diagnosticRow('lock','安全凭证存储','HubStudio Key 与设备凭证由系统安全存储托管；企业集成凭证不下发本机',true) +
       diagnosticRow('cloud','云端出站通道',(s.cloudChannel && s.cloudChannel.status === 'online' ? 'TLS 正常 · ' : '正在重连 · ') + relativeTime(s.cloudChannel && s.cloudChannel.lastPollAt),s.cloudChannel && s.cloudChannel.status === 'online') +
-      diagnosticRow('gauge','HubStudio Local API',(s.hubStudio && s.hubStudio.connected ? '客户端运行中 · v1 已认证' : '当前未连接') + ' · 端口 ' + ((state.config && state.config.hubPort) || '6873'),s.hubStudio && s.hubStudio.connected) +
+      diagnosticRow('gauge','HubStudio Local API',hub.value + ' · ' + hub.detail,hub.localApiConnected) +
       diagnosticRow('database','飞书只读访问',sourceCount + ' 个数据源已登记 · 由云端授权代理执行',!!(s.cloudChannel && s.cloudChannel.status === 'online')) +
       diagnosticRow('route','环境映射完整性',bindingCount + ' 个已映射 · 0 个冲突',true) + coreRepairPanel(coreRepair, activeCount, roleInfo().admin) + '</section>' +
       '<div class="side-stack"><section class="card section-card">' + sectionTitle('download','软件更新','下载安装、校验、安装与重启状态实时同步','') + '<div class="section-body update-section">' + updatePanel(update,s.tasks && s.tasks.activeCount) + '</div></section>' +

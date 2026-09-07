@@ -991,6 +991,21 @@ def public_error(exc):
     return scrub_text(exc)[:300]
 
 
+def hub_status_layers(capability):
+    """Separate loopback connectivity from end-to-end automation readiness."""
+    source = capability if isinstance(capability, dict) else {}
+    automation_available = bool(source.get('available'))
+    local_api_connected = bool(
+        automation_available or source.get('localApiEnabled'))
+    return {
+        'localApiConnected': local_api_connected,
+        'automationAvailable': automation_available,
+        'status': (
+            'ready' if automation_available else
+            'limited' if local_api_connected else 'offline'),
+    }
+
+
 class HubStatusCache(object):
     """Cache connection state so independent UI polls cannot flood HubStudio."""
 
@@ -1561,7 +1576,15 @@ class AppState(object):
                 'message': ('' if legacy_ok else
                             'HubStudio 自动化暂不可用'),
             }
-        hub_ok = bool(hub_capability.get('available'))
+        hub_layers = hub_status_layers(hub_capability)
+        hub_ok = hub_layers['automationAvailable']
+        # ``available`` means every HubStudio automation prerequisite is
+        # ready.  It is deliberately stricter than Local API connectivity:
+        # a missing browser core or a capacity limit can make automation
+        # unavailable while the authenticated loopback API still responds.
+        # Keep the legacy ``connected`` field for older launchers and expose
+        # the two layers explicitly for the current status center.
+        local_api_connected = hub_layers['localApiConnected']
         raw_core_repair = (
             self.hub_core_repair.snapshot()
             if hasattr(self, 'hub_core_repair') else {
@@ -1626,7 +1649,9 @@ class AppState(object):
             },
             'hubStudio': {
                 'connected': bool(hub_ok),
-                'status': 'ready' if hub_ok else 'offline',
+                'localApiConnected': local_api_connected,
+                'automationAvailable': bool(hub_ok),
+                'status': hub_layers['status'],
                 'available': bool(hub_capability.get('available')),
                 'clientRunning': bool(
                     hub_capability.get('clientRunning')),
@@ -3958,8 +3983,22 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/auth/status':
                 self._json(STATE.auth.status(force=True))
             elif path == '/api/hub-status':
-                ok, err = STATE.hub_status(force=True)
-                self._json({'connected': ok, 'error': err})
+                capability = STATE.hub_capabilities(force=True)
+                hub_layers = hub_status_layers(capability)
+                automation_available = hub_layers['automationAvailable']
+                self._json({
+                    # Keep the legacy field tied to task readiness. Current
+                    # clients use the explicit layered fields below.
+                    'connected': automation_available,
+                    'localApiConnected': hub_layers['localApiConnected'],
+                    'automationAvailable': automation_available,
+                    'status': hub_layers['status'],
+                    'reasonCode': str(
+                        capability.get('reasonCode') or ''),
+                    'error': (
+                        '' if automation_available else
+                        str(capability.get('message') or '')),
+                })
             elif path == '/api/hub-core-repair/status':
                 self._json(STATE.hub_core_repair.snapshot())
             elif path == '/api/hub-cache/status':

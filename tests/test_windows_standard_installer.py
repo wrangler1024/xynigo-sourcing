@@ -362,6 +362,84 @@ class WindowsStandardInstallerArtifactTests(unittest.TestCase):
 
 
 class LocalExecutorStatusContractTests(unittest.TestCase):
+    def test_hub_status_layers_cover_ready_limited_and_offline(self):
+        self.assertEqual(main_module.hub_status_layers({
+            'available': True,
+            'localApiEnabled': True,
+        }), {
+            'localApiConnected': True,
+            'automationAvailable': True,
+            'status': 'ready',
+        })
+        self.assertEqual(main_module.hub_status_layers({
+            'available': False,
+            'localApiEnabled': True,
+            'authenticated': False,
+        }), {
+            'localApiConnected': True,
+            'automationAvailable': False,
+            'status': 'limited',
+        })
+        self.assertEqual(main_module.hub_status_layers({
+            'available': False,
+            'localApiEnabled': False,
+        }), {
+            'localApiConnected': False,
+            'automationAvailable': False,
+            'status': 'offline',
+        })
+
+    def test_status_separates_local_api_connection_from_automation_limit(self):
+        state = main_module.AppState.__new__(main_module.AppState)
+        state.tasks = SimpleNamespace(snapshot=lambda: {
+            'safeParallel': True,
+            'tasks': [],
+        })
+        state._hub_status = SimpleNamespace(cached_snapshot=lambda: {
+            'available': False,
+            'clientRunning': True,
+            'localApiEnabled': True,
+            'authenticated': True,
+            'apiVersion': 'v1',
+            'endpoint': 'http://127.0.0.1:6873/api/v1',
+            'reasonCode': 'hubstudio_browser_core_missing',
+            'message': 'HubStudio Chrome 150 浏览器内核不存在',
+            'requiredCore': {'browserType': 'chrome', 'version': '150'},
+        })
+        state.hub_core_repair = SimpleNamespace(snapshot=lambda: {
+            'state': 'required',
+            'running': False,
+            'browserType': 'chrome',
+            'coreVersion': '150',
+            'message': '检测到 HubStudio 浏览器内核缺失',
+            'errorCode': 'hubstudio_browser_core_missing',
+            'repairAvailable': True,
+            'auditState': 'not_started',
+        })
+        state.updates = SimpleNamespace(snapshot=lambda: {
+            'enabled': True,
+            'state': 'current',
+        })
+        with patch.object(
+                main_module.ExecutorChannelStateStore, 'load', return_value={
+                    'executorId': 'executor-internal-id',
+                    'displayName': '采购电脑',
+                    'platform': 'windows',
+                    'architecture': 'x86_64',
+                    'status': 'online',
+                }):
+            payload = state.local_executor_status()
+
+        hub = payload['hubStudio']
+        self.assertFalse(hub['connected'])  # Legacy automation-ready field.
+        self.assertTrue(hub['localApiConnected'])
+        self.assertFalse(hub['automationAvailable'])
+        self.assertEqual(hub['status'], 'limited')
+        self.assertTrue(hub['authenticated'])
+        self.assertEqual(
+            hub['reasonCode'], 'hubstudio_browser_core_missing')
+        self.assertEqual(hub['requiredCore']['version'], '150')
+
     def test_status_center_contract_is_safe_without_cloud_user_session(self):
         state = main_module.AppState.__new__(main_module.AppState)
         state.tasks = SimpleNamespace(snapshot=lambda: {
