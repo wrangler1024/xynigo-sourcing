@@ -328,7 +328,8 @@ class PurchaseAssistantSheetProvider(object):
         now = time.monotonic()
         if self._token and now < self._token_expires_at:
             return self._token
-        credentials = self.credential_getter()
+        credentials = (self.credential_getter()
+                       if callable(self.credential_getter) else None)
         app_id = normalize(getattr(credentials, 'app_id', ''))
         app_secret = normalize(getattr(credentials, 'app_secret', ''))
         if not app_id or not app_secret:
@@ -571,8 +572,8 @@ class PurchaseAssistantService(object):
         }
 
     def inspect_source(self, spreadsheet_url, owner_key=''):
-        if not callable(self.credential_getter):
-            raise PurchaseAssistantError('小犀代采飞书企业应用凭证尚未配置')
+        # The provider resolves authentication for its transport. Cloud-managed
+        # reads intentionally have no local credential getter.
         token = parse_spreadsheet_url(spreadsheet_url)
         api_base = normalize(
             self.source_config.get('purchaseAssistantApiBase')

@@ -11,6 +11,30 @@ private let desktopPairPattern = try! NSRegularExpression(
     options: [.caseInsensitive]
 )
 
+private func makeDesktopEditMenu() -> NSMenu {
+    let menu = NSMenu(title: "编辑")
+    menu.autoenablesItems = true
+
+    func add(_ title: String, _ action: Selector, _ key: String,
+             modifiers: NSEvent.ModifierFlags = [.command]) {
+        let item = menu.addItem(withTitle: title, action: action, keyEquivalent: key)
+        item.keyEquivalentModifierMask = modifiers
+        // Route to the focused WKWebView/NSText responder, not the app delegate.
+        // AppKit needs these menu commands to dispatch standard editing shortcuts.
+        item.target = nil
+    }
+
+    add("撤销", Selector(("undo:")), "z")
+    add("重做", Selector(("redo:")), "z", modifiers: [.command, .shift])
+    menu.addItem(.separator())
+    add("剪切", #selector(NSText.cut(_:)), "x")
+    add("复制", #selector(NSText.copy(_:)), "c")
+    add("粘贴", #selector(NSText.paste(_:)), "v")
+    menu.addItem(.separator())
+    add("全选", #selector(NSText.selectAll(_:)), "a")
+    return menu
+}
+
 private struct DesktopStatus: Decodable {
     let schemaVersion: Int
     let version: String
@@ -313,6 +337,9 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         appMenu.addItem(withTitle: "退出 Xynigo", action: #selector(quitApplication), keyEquivalent: "q")
         for item in appMenu.items { item.target = self }
         appItem.submenu = appMenu
+        let editItem = NSMenuItem()
+        editItem.submenu = makeDesktopEditMenu()
+        mainMenu.addItem(editItem)
         NSApplication.shared.mainMenu = mainMenu
     }
 

@@ -142,6 +142,67 @@ class FakeTransport(object):
 
 
 class PurchaseAssistantUnitTests(unittest.TestCase):
+    def test_cloud_source_setup_without_local_credentials(self):
+        calls = []
+        upstream = FakeTransport()
+
+        def cloud_request(path, query, permission):
+            calls.append((path, query, permission))
+            return upstream.request_json('GET', 'https://open.feishu.cn' + path)
+
+        # Match AppState: the cloud transport replaces the local credential getter.
+        service = PurchaseAssistantService.from_runtime_config(
+            {}, transport_factory=lambda: CloudFeishuTransport(
+                cloud_request, 'assistant.access'))
+        inspected = service.inspect_source(
+            'https://tenant.feishu.cn/sheets/SpreadsheetPersonal123',
+            owner_key=MEMBER_A)
+        self.assertEqual(len(inspected['sheets']), 1)
+        checked = service.validate_source(
+            inspected['inspectionId'], inspected['sheets'][0]['selectionId'],
+            owner_key=MEMBER_A)
+        target = service.consume_validated_target(
+            checked['validationId'], owner_key=MEMBER_A)
+        self.assertEqual(target['sheetId'], 'sheet_test')
+        self.assertEqual(target['cellRange'], 'A1:Q')
+        self.assertTrue(service.revalidate_target(target)['valid'])
+        self.assertEqual(len(calls), 4)
+        self.assertTrue(all(call[2] == 'assistant.access' for call in calls))
+        self.assertTrue(all(call[0].startswith('/open-apis/sheets/')
+                            for call in calls))
+        public_result = json.dumps([inspected, checked], ensure_ascii=False)
+        self.assertNotIn('SpreadsheetPersonal123', public_result)
+        self.assertNotIn('sheet_test', public_result)
+
+    def test_cloud_source_setup_preserves_proxy_errors(self):
+        for message in ('组织尚未配置飞书企业应用，请联系超级管理员',
+                        '登录已失效，请重新登录'):
+            with self.subTest(message=message):
+                def cloud_request(_path, _query, _permission):
+                    raise RuntimeError(message)
+
+                service = PurchaseAssistantService.from_runtime_config(
+                    {}, transport_factory=lambda: CloudFeishuTransport(
+                        cloud_request, 'assistant.access'))
+                with self.assertRaisesRegex(PurchaseAssistantError, message):
+                    service.inspect_source(
+                        'https://tenant.feishu.cn/sheets/SpreadsheetPersonal123',
+                        owner_key=MEMBER_A)
+                self.assertEqual(service._inspections, {})
+
+    def test_direct_source_setup_requires_local_credentials_before_network(self):
+        for getter in (None, lambda: None):
+            with self.subTest(getter=getter):
+                transport = FakeTransport()
+                service = PurchaseAssistantService.from_runtime_config(
+                    {}, credential_getter=getter,
+                    transport_factory=lambda: transport)
+                with self.assertRaisesRegex(PurchaseAssistantError, '凭证尚未配置'):
+                    service.inspect_source(
+                        'https://tenant.feishu.cn/sheets/SpreadsheetPersonal123',
+                        owner_key=MEMBER_A)
+                self.assertEqual(transport.calls, [])
+
     def test_cloud_managed_provider_never_reads_local_secret_and_clears_legacy_after_success(self):
         calls = []
         cleared = []
