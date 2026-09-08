@@ -4700,6 +4700,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/assistant/procurement-import/image-sync':
                 self._json(STATE.procurement_import.start_image_sync(
                     body.get('planId'),
+                    fill_order_background=body.get('fillOrderBackground', True),
                     confirm_write=bool(body.get('confirmWrite')),
                     operator_name=(
                         ((request_identity or {}).get('user') or {}).get(
@@ -4707,6 +4708,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/assistant/procurement-import/sheet-sync':
                 self._json(STATE.procurement_import.start_sheet_sync(
                     body.get('planId'),
+                    fill_order_background=body.get('fillOrderBackground', True),
                     confirm_write=bool(body.get('confirmWrite')),
                     operator_name=(
                         ((request_identity or {}).get('user') or {}).get(

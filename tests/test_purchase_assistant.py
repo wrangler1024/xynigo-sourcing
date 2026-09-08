@@ -263,7 +263,8 @@ class PurchaseAssistantUnitTests(unittest.TestCase):
         self.assertEqual(search_tasks(tasks, ''), ([], 0))
         matched, total = search_tasks(tasks, 'ORDER-DEMO-001')
         self.assertEqual(total, 1)
-        self.assertEqual(matched[0]['taskKey'],
+        self.assertRegex(matched[0]['taskKey'], r'^PT1-[0-9a-f]{64}$')
+        self.assertEqual(matched[0]['sourceOrderKey'],
                          'demo|ORDER-DEMO-001|PACKAGE-DEMO-001')
         self.assertNotIn('recipientName', matched[0])
         self.assertNotIn('收货人电话', matched[0])
@@ -624,6 +625,39 @@ class PurchaseAssistantHttpTests(unittest.TestCase):
             })
         self.assertEqual(status, 403)
         self.assertEqual(payload['code'], 'origin_forbidden')
+
+    def test_split_children_are_independent_through_extension_http_contract(self):
+        self.service.provider.rows = [sample_row(**{
+            '销售订单号': 'ORDER-DEMO-001-%d' % suffix,
+            '__row_number': str(20 + suffix), '主规格': color,
+            '地址1': 'Synthetic child address %d' % suffix,
+        }) for suffix, color in [(1, 'Black'), (2, 'White')]]
+        headers = {'Origin': EXTENSION_ORIGIN,
+                   'X-Xynigo-Client': 'chrome-extension',
+                   'Authorization': 'Bearer ' + self._pair()}
+        keys = []
+        for suffix in (1, 2):
+            order_no = 'ORDER-DEMO-001-%d' % suffix
+            status, _headers, listed = self._get(
+                '/api/purchase-assistant/v1/tasks?query=' + order_no, headers)
+            self.assertEqual(status, 200)
+            self.assertEqual(listed['total'], 1)
+            task = listed['tasks'][0]
+            self.assertEqual(task['salesOrderNo'], order_no)
+            keys.append(task['taskKey'])
+            self.assertNotIn('addressLine1', task)
+            status, response_headers, detail = self._get(
+                '/api/purchase-assistant/v1/tasks/%s/recipient' % quote(task['taskKey'], safe=''), headers)
+            self.assertEqual(status, 200)
+            self.assertEqual(response_headers['Cache-Control'], 'no-store')
+            self.assertEqual(detail['recipient']['addressLine1'], 'Synthetic child address %d' % suffix)
+        self.assertNotEqual(keys[0], keys[1])
+        status, _headers, blocked = self._get(
+            '/api/purchase-assistant/v1/tasks/%s/recipient' % quote(
+                self.service.provider.rows[0]['系统订单键'], safe=''), headers)
+        self.assertEqual(status, 422)
+        self.assertNotIn('recipient', blocked)
+        self.assertIn('重新搜索', blocked['error'])
 
     def test_extension_session_still_requires_current_feishu_login(self):
         from purchase_tool.cloud_auth import LocalAuthError

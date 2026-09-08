@@ -30,6 +30,7 @@ from .procurement_import_crypto import (
     ProcurementImportCipherError,
 )
 from .procurement_import_sheet import FeishuSheetsGateway, LarkSheetSyncError
+from .procurement_import_preferences import touch_target
 
 logger = logging.getLogger(__name__)
 NONTERMINAL_STATES = frozenset(
@@ -404,6 +405,7 @@ class CloudProcurementImportService:
         actor_name: str,
         plan_id: object,
         confirm_write: bool,
+        fill_order_background: bool = True,
     ) -> dict[str, Any]:
         if not confirm_write:
             raise CloudProcurementImportError(
@@ -448,6 +450,11 @@ class CloudProcurementImportService:
         )
         if running is not None:
             return dict(running.progress)
+        previous = session.scalar(select(ProcurementImportJob).where(
+            ProcurementImportJob.tenant_id == tenant_id,
+            ProcurementImportJob.target_key_hash == target_key_hash,
+        ).order_by(ProcurementImportJob.created_at.desc()).limit(1))
+        retry = dict(previous.progress or {}) if previous and previous.state in {'failed', 'partial'} else {}
         identifier = uuid.uuid4()
         progress = ImageSyncJob(
             job_id=str(identifier),
@@ -456,6 +463,8 @@ class CloudProcurementImportService:
             import_batch=plan.import_batch,
             target_key=target_key_hash,
             rows_total=len(plan.rows),
+            fill_order_background=retry.get('fillOrderBackground', fill_order_background),
+            background_plan_indices=retry.get('backgroundPlanIndices'),
         ).public()
         job = ProcurementImportJob(
             id=identifier,
@@ -656,6 +665,7 @@ class ProcurementImportWorker:
                     )
                     return
                 initial_progress = dict(job.progress or {})
+                tenant_id, actor_user_id = job.tenant_id, job.created_by_user_id
             core = _PersistentCoreService(
                 gateway=self.service.gateway,
                 callback=lambda progress: self._persist(job_id, progress),
@@ -669,11 +679,22 @@ class ProcurementImportWorker:
                 import_batch=plan.import_batch,
                 target_key=str(initial_progress.get("targetKey") or ""),
                 rows_total=len(plan.rows),
+                fill_order_background=initial_progress.get('fillOrderBackground', True),
+                background_plan_indices=initial_progress.get('backgroundPlanIndices'),
             )
             core.sync_jobs[str(job_id)] = core_job
             core._run_sheet_sync(str(job_id), plan, plan.target)
             final = core.sync_jobs[str(job_id)].public()
             self._persist(job_id, final)
+            if final['state'] == 'completed':
+                try:
+                    with self.service.session_factory() as session:
+                        touch_target(session, tenant_id, actor_user_id, plan.target.url, plan.target.sheet_id)
+                        session.commit()
+                except Exception:
+                    # A preference failure must not turn a completed import
+                    # into a failed business task or expose target details.
+                    logger.warning('Could not update procurement destination usage time')
         except CloudProcurementImportError as exc:
             self._fail(job_id, exc.code, str(exc))
         except Exception:

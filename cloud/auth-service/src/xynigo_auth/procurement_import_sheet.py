@@ -376,8 +376,15 @@ class FeishuSheetsGateway:
             )
         if not sheets:
             raise LarkSheetSyncError("该飞书电子表格没有可用工作表")
+        # Display metadata is optional; worksheet access remains authoritative.
+        try:
+            metadata = self._request("GET", f"/open-apis/sheets/v3/spreadsheets/{token}")
+            title = str((metadata.get("spreadsheet") or {}).get("title") or "")
+        except LarkSheetSyncError:
+            title = ""
         return {
             "url": reference.url,
+            "spreadsheetName": title,
             "spreadsheetToken": reference.spreadsheet_token,
             "revision": data.get("revision"),
             "sheets": sheets,

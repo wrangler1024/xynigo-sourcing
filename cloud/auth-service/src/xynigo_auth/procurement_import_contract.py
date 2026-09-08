@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -30,3 +32,11 @@ class ProcurementImportTargetValidateBody(ProcurementImportTargetInspectBody):
 class ProcurementImportSyncBody(StrictBody):
     planId: str = Field(min_length=1, max_length=64)
     confirmWrite: bool
+    fillOrderBackground: bool = Field(default=True, strict=True)
+
+
+class ProcurementImportPreferenceBody(StrictBody):
+    action: Literal['color', 'remove']
+    spreadsheetUrl: str = Field(min_length=1, max_length=1024)
+    sheetId: str = Field(min_length=1, max_length=128)
+    fillOrderBackground: bool = Field(default=True, strict=True)

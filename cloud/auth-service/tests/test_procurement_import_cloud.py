@@ -7,6 +7,7 @@ import time
 from io import BytesIO
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from openpyxl import Workbook, load_workbook
 from sqlalchemy import select
@@ -373,6 +374,85 @@ def test_cloud_parser_copy_matches_the_canonical_local_source() -> None:
     assert (
         root / "cloud/auth-service/src/xynigo_auth/procurement_import_xlsx.py"
     ).read_bytes() == (root / "src/purchase_tool/xlsx_cell_images.py").read_bytes()
+
+
+@pytest.mark.parametrize('same_batch', [False, True])
+def test_cloud_reimport_skips_purchaser_children_without_overwriting(tmp_path, same_batch):
+    workbook = load_workbook(BytesIO(source_workbook()))
+    sheet = workbook.active
+    original = [cell.value for cell in sheet[2]]
+    payload = json.loads(original[19].split('[XYP2]')[1].split('[/XYP2]')[0])
+    second = list(payload['i'][0])
+    second[0], second[1], second[2], second[4] = (
+        'SOURCE-02', '422790138', 'SYNTHETIC-SKU-02', 'Negro')
+    payload['i'].append(second)
+    remark = '[XYP2]' + json.dumps(payload) + '[/XYP2]'
+    sheet.delete_rows(2)
+    for index, item in enumerate(payload['i']):
+        row = list(original)
+        row[14], row[15], row[16], row[19] = (
+            'ERP-SKU-%02d' % index, item[0] + ':' + item[4] + '-M', 75, remark)
+        sheet.append(row)
+    stream = BytesIO()
+    workbook.save(stream)
+    content = base64.b64encode(stream.getvalue()).decode('ascii')
+    gateway = FakeCloudSheetGateway()
+    app, _database, _oauth = build_test_app(
+        tmp_path, procurement_import_enabled=True, procurement_import_gateway=gateway)
+    headers = {'X-Xynigo-Web-CSRF': 'same-origin'}
+
+    def import_workbook(client, filename):
+        response = client.post('/v1/assistant/procurement-import/parse', headers=headers,
+                               json={'filename': filename, 'contentBase64': content})
+        assert response.status_code == 201, response.text
+        plan = response.json()
+        assert plan['detailCount'] == 2
+        response = client.post('/v1/assistant/procurement-import/target/validate',
+                               headers=headers, json={
+                                   'planId': plan['planId'],
+                                   'spreadsheetUrl': 'https://tenant.feishu.cn/sheets/SheetToken123',
+                                   'sheetId': 'sheetA'})
+        assert response.status_code == 200, response.text
+        response = client.post('/v1/assistant/procurement-import/sheet-sync',
+                               headers=headers,
+                               json={'planId': plan['planId'], 'confirmWrite': True})
+        assert response.status_code == 202, response.text
+        job_id = response.json()['jobId']
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            response = client.get('/v1/assistant/procurement-import/sheet-sync/status',
+                                  params={'jobId': job_id})
+            assert response.status_code == 200, response.text
+            status = response.json()
+            if status['state'] in {'completed', 'partial', 'failed'}:
+                assert status['state'] == 'completed', status
+                return plan, status
+            time.sleep(0.05)
+        raise AssertionError('synthetic cloud import did not complete')
+
+    with TestClient(app) as client:
+        login(client)
+        original_plan, status = import_workbook(client, 'synthetic_original.xlsx')
+        assert status['rowsWritten'] == 2
+        with gateway.lock:
+            edited = []
+            for index, (number, raw) in enumerate(gateway.rows):
+                values = dict(zip(gateway.headers, raw))
+                values['销售订单号'] += '-%d' % (index + 1)
+                values.update({'采购员': '合成采购员', '采购状态': '已下单',
+                               '采购订单号': 'SYNTH-PURCHASE-%d' % index})
+                edited.append((number, tuple(values[name] for name in gateway.headers)))
+                gateway.links[number] = 'https://example.com/purchaser-link'
+                gateway.backgrounds[number] = '#ABCDEF'
+            gateway.rows = tuple(edited)
+        before = (gateway.rows, dict(gateway.links), dict(gateway.backgrounds))
+        filename = 'synthetic_original.xlsx' if same_batch else 'synthetic_reexport.xlsx'
+        new_plan, status = import_workbook(client, filename)
+        assert (new_plan['importBatch'] == original_plan['importBatch']) == same_batch
+        assert status['rowsWritten'] == 0
+        assert status['rowsExisting'] == 2
+        assert status['rowsStyled'] == status['linksWritten'] == status['written'] == 0
+        assert (gateway.rows, gateway.links, gateway.backgrounds) == before
 
 
 def _invalid_remark_batch(*, all_invalid=False):

@@ -1071,7 +1071,7 @@ class ProcurementImportTests(unittest.TestCase):
         self.assertIn('正在重新校验工作表核心字段和跨批次重复状态', html)
         self.assertIn(
             '导入完成：新追加 ${status.rowsWritten} 行，已存在 '
-            '${status.rowsExisting} 行；新设底色', html)
+            '${status.rowsExisting} 行；', html)
         self.assertIn("'/api/assistant/procurement-import/image'", main)
         self.assertIn(
             "'/api/assistant/procurement-import/parse': 'assistant.access'",

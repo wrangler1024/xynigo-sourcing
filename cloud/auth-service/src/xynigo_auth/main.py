@@ -139,6 +139,7 @@ from .operation_contract import (
 )
 from .operation_service import OperationResultService, OperationRunService
 from .procurement_import_contract import (
+    ProcurementImportPreferenceBody,
     Xyp2ParseBody,
     ProcurementImportParseBody,
     ProcurementImportSyncBody,
@@ -146,6 +147,7 @@ from .procurement_import_contract import (
     ProcurementImportTargetValidateBody,
 )
 from .procurement_import_crypto import ProcurementImportCipher
+from .procurement_import_preferences import read_preferences, remember_target, update_preference
 from .procurement_import_core import ProcurementImportError, decode_xyp2_remark
 from .procurement_import_service import (
     CloudProcurementImportError,
@@ -512,7 +514,7 @@ def create_app(
 
     app = FastAPI(
         title="Xynigo Auth Service",
-        version="0.17.11",
+        version="0.17.12",
         docs_url=None,
         redoc_url=None,
         lifespan=lifespan,
@@ -3201,6 +3203,30 @@ def create_app(
             },
         )
 
+    @app.get("/v1/assistant/procurement-import/preferences")
+    def get_procurement_import_preferences(
+        request: Request, session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request, session, permission="assistant.access", session_token=session_token,
+            authorization=authorization, audit_action="assistant.procurement_import.preferences_read")
+        return read_preferences(session, actor.tenant.id, actor.user.id)
+
+    @app.post("/v1/assistant/procurement-import/preferences")
+    def set_procurement_import_preferences(
+        request: Request, body: ProcurementImportPreferenceBody, session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request, session, permission="assistant.access", session_token=session_token,
+            authorization=authorization, audit_action="assistant.procurement_import.preferences_write")
+        result = update_preference(session, actor.tenant.id, actor.user.id, body)
+        session.commit()
+        return result
+
     @app.post("/v1/assistant/procurement-import/target/inspect")
     def inspect_procurement_import_target(
         request: Request,
@@ -3277,6 +3303,8 @@ def create_app(
                 exc=exc,
                 object_id=body.planId,
             )
+        result['preferences'] = remember_target(
+            session, actor.tenant.id, actor.user.id, result['target'])
         _add_audit(
             session,
             request_id=request.state.request_id,
@@ -3330,6 +3358,7 @@ def create_app(
                 actor_name=actor.user.display_name,
                 plan_id=body.planId,
                 confirm_write=body.confirmWrite,
+                fill_order_background=body.fillOrderBackground,
             )
         except CloudProcurementImportError as exc:
             procurement_import_failure(

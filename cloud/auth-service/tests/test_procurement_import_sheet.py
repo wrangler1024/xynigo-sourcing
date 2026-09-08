@@ -24,6 +24,8 @@ def test_cloud_sheet_gateway_uses_tenant_identity_and_official_endpoints() -> No
                 json={"code": 0, "tenant_access_token": "tenant-token", "expire": 7200},
             )
         assert request.headers["authorization"] == "Bearer tenant-token"
+        if request.url.path.endswith("/spreadsheets/SheetToken123"):
+            return httpx.Response(200, json={"code":0,"data":{"spreadsheet":{"title":"合成采购协作表"}}})
         if request.url.path.endswith("/sheets/query"):
             return httpx.Response(
                 200,
@@ -181,6 +183,8 @@ def test_cloud_sheet_gateway_never_blindly_retries_row_append_on_90204() -> None
                 200,
                 json={"code": 0, "tenant_access_token": "tenant-token", "expire": 7200},
             )
+        if request.url.path.endswith("/spreadsheets/SheetToken123"):
+            return httpx.Response(200, json={"code":0,"data":{"spreadsheet":{"title":"合成采购协作表"}}})
         if request.url.path.endswith("/sheets/query"):
             return httpx.Response(
                 200,
@@ -241,6 +245,8 @@ def test_cloud_sheet_gateway_translates_excel_date_format_for_feishu_v2() -> Non
                 200,
                 json={"code": 0, "tenant_access_token": "tenant-token", "expire": 7200},
             )
+        if request.url.path.endswith("/spreadsheets/SheetToken123"):
+            return httpx.Response(200, json={"code":0,"data":{"spreadsheet":{"title":"合成采购协作表"}}})
         if request.url.path.endswith("/sheets/query"):
             return httpx.Response(
                 200,

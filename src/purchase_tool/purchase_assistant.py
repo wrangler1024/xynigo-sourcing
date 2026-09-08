@@ -2,6 +2,7 @@
 """Read-only SHEIN purchase-assistant service hosted by Xynigo executor."""
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import secrets
@@ -130,13 +131,30 @@ def rows_from_values(values: Any) -> list[dict[str, str]]:
     return rows
 
 
-def task_key(row: dict[str, str]) -> str:
+def source_order_key(row: dict[str, str]) -> str:
+    """Original order identity retained by the Sheet and import deduplication."""
     explicit = normalize(row.get('系统订单键'))
     if explicit:
         return explicit
     sales_order = normalize(row.get('销售订单号'))
     package = normalize(row.get('包裹号'))
     return sales_order + '|' + package if sales_order else ''
+
+
+def task_key(row: dict[str, str]) -> str:
+    """Stable procurement identity, independent of siblings and row positions.
+
+    The source key belongs to the original order. Purchasers can give its
+    details distinct sales numbers without changing that key. Use structured
+    fields rather than stripping suffixes or concatenating ambiguous delimiters.
+    """
+    source = source_order_key(row)
+    if not source:
+        return ''
+    identity = [source, normalize(row.get('店铺')),
+                normalize(row.get('销售订单号')), normalize(row.get('包裹号'))]
+    payload = json.dumps(identity, ensure_ascii=False, separators=(',', ':'))
+    return 'PT1-' + hashlib.sha256(payload.encode('utf-8')).hexdigest()
 
 
 def site_code(country: str) -> str:
@@ -158,6 +176,7 @@ def rows_to_tasks(rows: Iterable[dict[str, str]]) -> list[dict[str, Any]]:
         specs = [normalize(row.get('主规格')), normalize(row.get('次规格'))]
         task = {
             'taskKey': key,
+            'sourceOrderKey': source_order_key(row),
             'salesOrderNo': normalize(row.get('销售订单号')),
             'packageNo': normalize(row.get('包裹号')),
             'store': normalize(row.get('店铺')),
@@ -194,6 +213,7 @@ def search_tasks(tasks: Iterable[dict[str, Any]], query: str,
             normalize(task.get('packageNo')),
             normalize(task.get('store')),
             normalize(task.get('taskKey')),
+            normalize(task.get('sourceOrderKey')),
         ]
         folded = [value.casefold() for value in values if value]
         if not any(wanted in value for value in folded):
@@ -222,8 +242,17 @@ def recipient_curp(matched):
 def find_recipient(rows: Iterable[dict[str, str]],
                    requested_key: str) -> dict[str, str]:
     wanted = normalize(requested_key)
+    rows = list(rows)
     matched = [row for row in rows if task_key(row) == wanted]
-    if not matched:
+    if wanted and not matched:
+        # An old selected card can still name the original order key. Honor it
+        # only when it resolves to exactly one current procurement task.
+        legacy = [row for row in rows if source_order_key(row) == wanted]
+        if len({task_key(row) for row in legacy}) > 1:
+            raise PurchaseAssistantError(
+                '原任务对应多个采购子单，请重新搜索并选择具体子订单')
+        matched = legacy
+    if not wanted or not matched:
         raise PurchaseAssistantError('未找到对应的采购任务')
     signatures = {
         tuple(normalize(row.get(field)) for field in RECIPIENT_FIELDS)

@@ -28,7 +28,7 @@ import zipfile
 
 from .procurement_import_xlsx import embed_cell_images
 from .procurement_import_sheet import FeishuSheetsGateway as LarkCliSheetsGateway, LarkSheetSyncError
-from .system_order_key import create_system_order_key
+from .system_order_key import create_system_order_key, is_system_order_key
 
 
 MAX_XLSX_BYTES = 20 * 1024 * 1024
@@ -267,6 +267,8 @@ class ImageSyncJob:
     rows_written: int = 0
     rows_existing: int = 0
     rows_styled: int = 0
+    fill_order_background: bool = True
+    background_plan_indices: object = None
     links_written: int = 0
     total: int = 0
     processed: int = 0
@@ -290,6 +292,8 @@ class ImageSyncJob:
             'rowsWritten': self.rows_written,
             'rowsExisting': self.rows_existing,
             'rowsStyled': self.rows_styled,
+            'fillOrderBackground': self.fill_order_background,
+            'backgroundPlanIndices': self.background_plan_indices,
             'linksWritten': self.links_written,
             'total': self.total,
             'processed': self.processed,
@@ -1237,21 +1241,59 @@ def _background_bands(items):
     return result
 
 
-def _row_system_order_key(values):
-    """Canonicalize legacy Sheet rows without requiring an in-place migration."""
+def _parent_order_numbers(order_no):
+    """Yield possible ancestors; a suffix alone never proves a split order."""
+    while True:
+        match = re.fullmatch(r'(.+)-[0-9]+', order_no)
+        if not match:
+            return
+        order_no = match.group(1)
+        yield order_no
+
+
+def _row_import_identity(values):
+    """Resolve the immutable source identity without rewriting purchaser cells.
+
+    The saved key belongs to the original export. A purchaser may append child
+    suffixes to the visible sales number, but only a matching saved key proves
+    the original number. Preserve pre-OK1 keys through an in-memory conversion.
+    """
     store_name = _compact_text(values.get('店铺'))
     order_no = _compact_text(values.get('销售订单号'))
     package_no = _compact_text(values.get('包裹号'))
+    saved_key = _compact_text(values.get('系统订单键'))
+    if saved_key:
+        if is_system_order_key(saved_key):
+            saved_key = saved_key.upper()
+        else:
+            legacy_parts = saved_key.split('|')
+            if len(legacy_parts) != 3 or not all(legacy_parts):
+                raise ProcurementImportError('系统订单键格式无效，已停止导入')
+            saved_key = create_system_order_key(*legacy_parts)
+        if store_name and order_no and package_no:
+            # Check the complete number first: source orders may legitimately
+            # end in digits. Never blindly remove their suffixes.
+            if create_system_order_key(store_name, order_no, package_no) == saved_key:
+                return saved_key, order_no
+            for parent_no in _parent_order_numbers(order_no):
+                if create_system_order_key(store_name, parent_no, package_no) == saved_key:
+                    return saved_key, parent_no
+        raise ProcurementImportError(
+            '系统订单键与店铺、包裹号或销售订单号不一致，无法确认原始订单，已停止导入')
     if store_name and order_no and package_no:
-        return create_system_order_key(store_name, order_no, package_no)
-    return _compact_text(values.get('系统订单键'))
+        return create_system_order_key(store_name, order_no, package_no), order_no
+    return '', order_no
 
 
-def _sync_signature(values):
+def _row_system_order_key(values):
+    return _row_import_identity(values)[0]
+
+
+def _sync_signature(values, identity=None):
     """Stable line identity using cells that survive Excel → Sheet paste."""
-    return (_row_system_order_key(values),) + tuple(
+    return (identity or _row_import_identity(values)) + tuple(
         _compact_text(values.get(name)) for name in (
-        '销售订单号', '包裹号',
+        '包裹号',
         '主规格', '次规格', '需求数量', '采购指导价', '采购备注',
         '导入批次', '数据版本',
     ))
@@ -1259,9 +1301,9 @@ def _sync_signature(values):
 
 def _business_signature(values):
     """Stable line identity shared by the same order across import batches."""
-    return (_row_system_order_key(values),) + tuple(
+    return _row_import_identity(values) + tuple(
         _compact_text(values.get(name)) for name in (
-        '销售订单号', '包裹号',
+        '包裹号',
         '主规格', '次规格', '需求数量', '采购指导价', '采购备注',
         '数据版本',
     ))
@@ -1432,6 +1474,7 @@ class ProcurementImportService(object):
             'planId': plan.plan_id,
             'importBatch': plan.import_batch,
             'spreadsheetUrl': info['url'],
+            'spreadsheetName': info.get('spreadsheetName') or info.get('title') or '',
             'revision': info.get('revision'),
             'sheets': info['sheets'],
         }
@@ -1484,6 +1527,7 @@ class ProcurementImportService(object):
             'detailCount': len(plan.rows),
             'target': {
                 'spreadsheetUrl': target.url,
+                'spreadsheetName': info.get('spreadsheetName') or info.get('title') or '',
                 'sheetId': target.sheet_id,
                 'sheetName': target.sheet_name,
                 'revision': target.revision,
@@ -1602,6 +1646,8 @@ class ProcurementImportService(object):
         current_queues = defaultdict(deque)
         current_counts = Counter()
         historical_by_order = defaultdict(list)
+        expected_order_keys = {_row_system_order_key(row.values) for row in plan.rows}
+        split_order_keys = set()
         for row_number, raw_values in table.rows:
             padded = list(raw_values[:len(headers)])
             padded.extend([''] * (len(headers) - len(padded)))
@@ -1610,9 +1656,24 @@ class ProcurementImportService(object):
                 for header, value in zip(headers, padded)
             }
             batch = _compact_text(values.get('导入批次'))
-            order_key = _row_system_order_key(values)
+            try:
+                identity = _row_import_identity(values)
+                order_key, original_no = identity
+                if (not _compact_text(values.get('系统订单键'))
+                        and order_key not in expected_order_keys
+                        and any(create_system_order_key(
+                            values.get('店铺'), parent_no, values.get('包裹号'))
+                            in expected_order_keys
+                            for parent_no in _parent_order_numbers(original_no))):
+                    raise ProcurementImportError(
+                        '疑似采购子单缺少系统订单键，无法确认原始订单，已停止导入')
+            except ProcurementImportError as exc:
+                raise ProcurementImportError(
+                    '目标表第 %d 行：%s' % (int(row_number), exc)) from exc
+            if original_no != _compact_text(values.get('销售订单号')):
+                split_order_keys.add(order_key)
             if batch == plan.import_batch:
-                signature = _sync_signature(values)
+                signature = _sync_signature(values, identity)
                 current_queues[signature].append(int(row_number))
                 current_counts[signature] += 1
             elif order_key:
@@ -1630,7 +1691,7 @@ class ProcurementImportService(object):
 
         target_queues = defaultdict(deque)
         target_counts = Counter()
-        historical_row_numbers = set()
+        preserved_row_numbers = set()
         plan_by_order = defaultdict(list)
         unmatched_by_order = defaultdict(list)
         matched_count_by_order = Counter()
@@ -1639,8 +1700,10 @@ class ProcurementImportService(object):
             plan_by_order[order_key].append((index, row))
             signature = _sync_signature(row.values)
             if current_queues[signature]:
-                target_queues[signature].append(
-                    current_queues[signature].popleft())
+                row_number = current_queues[signature].popleft()
+                target_queues[signature].append(row_number)
+                if order_key in split_order_keys:
+                    preserved_row_numbers.add(row_number)
                 target_counts[signature] += 1
                 matched_count_by_order[order_key] += 1
             else:
@@ -1655,7 +1718,9 @@ class ProcurementImportService(object):
                 # A partially written current batch may resume only when there
                 # is no older copy of the same order. Mixing both sources is
                 # ambiguous and could silently preserve a duplicate detail.
-                if unmatched and historical:
+                # Once a purchaser has split an order, missing details are a
+                # business conflict, not evidence of an interrupted upload.
+                if unmatched and (historical or order_key in split_order_keys):
                     conflicting_orders += 1
                     continue
                 missing_rows.extend(row for _index, row in unmatched)
@@ -1681,7 +1746,7 @@ class ProcurementImportService(object):
                 historical_row = historical_queues[
                     _business_signature(row.values)].popleft()
                 target_queues[signature].append(historical_row)
-                historical_row_numbers.add(historical_row)
+                preserved_row_numbers.add(historical_row)
                 target_counts[signature] += 1
         if conflicting_orders:
             raise ProcurementImportError(
@@ -1689,11 +1754,11 @@ class ProcurementImportService(object):
                 '采购协作导入不支持修改已导入订单，已停止写入；'
                 '采购任务认领前修改请走独立修订流程' % conflicting_orders)
         return (table, headers, target_queues, target_counts,
-                expected_counts, missing_rows, historical_row_numbers)
+                expected_counts, missing_rows, preserved_row_numbers)
 
     def _prepare_image_sync(self, plan, target):
         _table, headers, target_queues, target_counts, expected_counts, \
-            missing_rows, historical_rows = self._target_batch_state(
+            missing_rows, preserved_rows = self._target_batch_state(
                 plan, target)
         if missing_rows or target_counts != expected_counts:
             raise ProcurementImportError(
@@ -1704,10 +1769,9 @@ class ProcurementImportService(object):
         for index, row in enumerate(plan.rows):
             signature = _sync_signature(row.values)
             row_number = target_queues[signature].popleft()
-            # A cross-batch match proves that the order already exists.  This
-            # import path must not use the new file to alter any historical
-            # business row, link, image or purchaser task color.
-            if row_number in historical_rows:
+            # Historical orders and manually split same-batch orders belong
+            # to procurement now. Do not change their links, images or colors.
+            if row_number in preserved_rows:
                 continue
             matched.append({
                 'planIndex': index,
@@ -1742,15 +1806,23 @@ class ProcurementImportService(object):
             self._job_update(job_id, rows_styled=0, links_written=0)
             return
         row_numbers = [item['rowNumber'] for item in matched]
-        try:
-            backgrounds = self.sheet_gateway.row_backgrounds(
-                target.url, target.sheet_id, row_numbers)
-        except LarkSheetSyncError as exc:
-            raise ProcurementImportError(str(exc)) from exc
+        job = self._job_update(job_id)
+        eligible = set(job.background_plan_indices or [])
+        color_rows = [item['rowNumber'] for item in matched
+                      if job.fill_order_background and item['planIndex'] in eligible]
+        backgrounds = {}
+        if color_rows:
+            try:
+                backgrounds = self.sheet_gateway.row_backgrounds(
+                    target.url, target.sheet_id, color_rows)
+            except LarkSheetSyncError as exc:
+                raise ProcurementImportError(str(exc)) from exc
         style_items = []
         expected_colors = {}
         for item in matched:
             number = int(item['rowNumber'])
+            if number not in backgrounds:
+                continue
             current = str(backgrounds.get(number) or '').upper()
             desired = SHEET_ORDER_GROUP_COLORS[
                 item['row'].order_group_index % len(SHEET_ORDER_GROUP_COLORS)]
@@ -1870,7 +1942,9 @@ class ProcurementImportService(object):
         raise last_error or ProcurementImportError('飞书数据写后回读失败')
 
     def start_sheet_sync(self, plan_id, confirm_write=False,
-                         operator_name=''):
+                         operator_name='', fill_order_background=True):
+        if not isinstance(fill_order_background, bool):
+            raise ProcurementImportError('订单背景色设置必须为开启或关闭')
         if not confirm_write:
             raise ProcurementImportError(
                 '导入前必须明确确认规范协作表、追加本批采购数据并补齐订单商品图')
@@ -1896,6 +1970,9 @@ class ProcurementImportService(object):
                                 'writing_links', 'writing_images'}), None)
             if running:
                 return running.public()
+            previous = next((job for job in reversed(list(self.sync_jobs.values()))
+                             if job.target_key == target_key), None)
+            retry = previous if previous and previous.state in {'failed', 'partial'} else None
             job_id = hashlib.sha256(
                 ('%s:%s' % (plan.plan_id, time.time_ns())).encode('utf-8')
             ).hexdigest()
@@ -1904,6 +1981,9 @@ class ProcurementImportService(object):
                 target_name=plan.target.sheet_name,
                 import_batch=plan.import_batch,
                 target_key=target_key,
+                fill_order_background=(retry.fill_order_background if retry
+                                       else fill_order_background),
+                background_plan_indices=(retry.background_plan_indices if retry else None),
                 rows_total=len(plan.rows))
             self.sync_jobs[job_id] = job
         threading.Thread(
@@ -1913,10 +1993,10 @@ class ProcurementImportService(object):
 
     # 保留旧本机调用名，避免服务热更新期间旧页面瞬时报错。
     def start_image_sync(self, plan_id, confirm_write=False,
-                         operator_name=''):
+                         operator_name='', fill_order_background=True):
         return self.start_sheet_sync(
             plan_id, confirm_write=confirm_write,
-            operator_name=operator_name)
+            operator_name=operator_name, fill_order_background=fill_order_background)
 
     def _job_update(self, job_id, **changes):
         with self.lock:
@@ -1937,6 +2017,12 @@ class ProcurementImportService(object):
             _table, headers, _queues, _counts, _expected, missing_rows, \
                 _historical = \
                 self._target_batch_state(plan, target)
+            if self._job_update(job_id).background_plan_indices is None:
+                missing_ids = {id(row) for row in missing_rows}
+                # Persist eligible source indices before append, so a failed
+                # job can finish its own formatting without repainting history.
+                self._job_update(job_id, background_plan_indices=[
+                    index for index, row in enumerate(plan.rows) if id(row) in missing_ids])
             self._append_missing_rows(
                 job_id, plan, target, missing_rows, headers)
             matched, headers, image_column = self._prepare_image_sync(

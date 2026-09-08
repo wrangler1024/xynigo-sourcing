@@ -274,6 +274,7 @@ class LarkCliSheetsGateway(object):
         return {
             'url': reference.url,
             'spreadsheetToken': reference.spreadsheet_token,
+            'spreadsheetName': str(data.get('title') or data.get('name') or ''),
             'revision': data.get('revision'),
             'sheets': sheets,
         }
