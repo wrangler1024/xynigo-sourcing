@@ -14,9 +14,9 @@ from urllib.parse import quote
 
 from . import __version__
 
-RELEASE_VERSION = "0.17.8"
+RELEASE_VERSION = "0.17.9"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-07T08:45:01Z"
+RELEASE_PUBLISHED_AT = "2026-09-08T03:57:58Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,8 +31,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.17.8-654620be50c1",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.8.exe",
+        "runtimeId": "0.17.9-pending-build",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.9.exe",
         "sha256": "6b1b18735d6da3069850e06f1b67d2fe3a37f2082005a9261bb8a8e9b97900ef",
         "size": 15226723,
         "installMode": "standard_per_user",
@@ -50,8 +50,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.17.8-654620be50c1",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.8.pkg",
+        "runtimeId": "0.17.9-pending-build",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.9.pkg",
         "sha256": "cdd372b14fc9d43d7986f9441e0ce3c22699df3a73b93be06561fd378e377102",
         "size": 11569690,
         "installMode": "standard_system_application",
@@ -320,9 +320,11 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "采购助手支持从个人速填表和团队协作表读取 CURP，仅在当前订单收件详情中返回，任务列表不包含证件值。",
-            "客户端数据源增加刷新表格字段，校验后保存最新读取范围，保留采购员默认值和环境映射。",
-            "导入模板增加可选 CURP，兼容旧文件；冲突值停止对应订单导入，重复导入保留人工补充值。",
-            "配合采购助手插件 v0.8.1，仅墨西哥站自动填写 CURP；墨西哥四位源邮编由插件补零，美国站继续使用八项地址字段和五位邮编。",
+            "采购中心新增导入分单首项入口，采用双卡片、三步流程和统一字号，沿用真实解析、校验、下载及确认导入流程。",
+            "采购件数按整批明细统计；处理中锁定文件与目标表，重新校验清除旧完成状态，进度读取失败可安全重试。",
+            "同一来源 SKU 按完整颜色与尺码匹配，保留明细金额和数量，歧义规格停止导入并提示核对。",
+            "物流查询新增脱敏云端诊断与关联日志，可按查询、执行和任务定位上报拒绝及环境关闭异常。",
+            "单行重查只上报本轮环境；持续协议拒绝在本机清理后明确报告失败，并保留首次关闭错误码。",
+            "云端会话定期续期，区分 HubStudio API 连通性与浏览器能力，减少长时间工作后的会话中断与状态误判。",
         ],
     }

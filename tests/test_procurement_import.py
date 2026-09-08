@@ -404,7 +404,104 @@ def aggregated_source_workbook():
     return buffer.getvalue()
 
 
+def shared_sku_workbook(specs=('Black-L', 'Gray-L'), reverse_items=False,
+                        purchase_specs=(('Negro', 'L'), ('Gris', 'L'))):
+    """Synthetic multi-variant order: source product ID is shared by colors."""
+    workbook = load_workbook(BytesIO(source_workbook()))
+    sheet = workbook.active
+    payload = json.loads(xyp2_text().split('[XYP2]')[1].split('[/XYP2]')[0])
+    for item, (color, size) in zip(payload['i'], purchase_specs):
+        item[0] = 'SHARED-SOURCE'
+        item[4:6] = [color, size]
+        item[9] = 2 if len(specs) == 4 else 1
+    if reverse_items:
+        payload['i'].reverse()
+    remark = '[XYP2]' + json.dumps(payload) + '[/XYP2]'
+    template = [cell.value for cell in sheet[2]]
+    sheet.delete_rows(2, sheet.max_row)
+    for index, spec in enumerate(specs):
+        values = list(template)
+        values[5] = sum(110 if 'black' in value.casefold() else 220
+                        for value in specs)
+        values[15:18] = ['ERP-TEST-%d' % index, 'Synthetic product',
+                         'SHARED-SOURCE:' + spec]
+        values[18] = 110 if 'black' in spec.casefold() else 220
+        values[20] = ('https://img.ltwebstatic.com/test/black.jpg'
+                      if 'black' in spec.casefold() else
+                      'https://img.ltwebstatic.com/test/gray.jpg')
+        values[21] = remark
+        sheet.append(values)
+    stream = BytesIO()
+    workbook.save(stream)
+    return stream.getvalue()
+
+
 class ProcurementImportTests(unittest.TestCase):
+    def test_shared_source_sku_matches_color_and_size_independent_of_order(self):
+        for specs in [('Black-L', 'Gray-L'), ('Gray-L', 'Black-L')]:
+            for reverse_items in (False, True):
+                with self.subTest(specs=specs, reverse_items=reverse_items):
+                    service = ProcurementImportService()
+                    result = service.parse('shared_sku.xlsx', base64.b64encode(
+                        shared_sku_workbook(specs, reverse_items)).decode('ascii'))
+                    self.assertEqual(result['sourceRows'], 2)
+                    self.assertEqual(result['orderCount'], 1)
+                    self.assertEqual(result['detailCount'], 2)
+                    self.assertEqual(result['issues'], [])
+                    rows = service.pending[result['planId']].rows
+                    by_color = {row.values['主规格']: row for row in rows}
+                    for color, amount, filename in [
+                            ('Negro', 110, 'black.jpg'), ('Gris', 220, 'gray.jpg')]:
+                        self.assertEqual(by_color[color].item_sales_amount, amount)
+                        self.assertTrue(by_color[color].order_image_url.endswith(filename))
+                    self.assertIsNone(rows[1].values['销售订单金额'])
+
+    def test_shared_source_sku_aggregates_only_matching_variants(self):
+        service = ProcurementImportService()
+        result = service.parse('shared_sku_aggregated.xlsx', base64.b64encode(
+            shared_sku_workbook(('Black-L', 'Gray-L', 'Gray-L', 'Black-L'))
+        ).decode('ascii'))
+        self.assertEqual(result['issues'], [])
+        self.assertEqual([row['quantity'] for row in result['preview']], [2, 2])
+        self.assertEqual([row['itemSalesAmount'] for row in result['preview']], [220, 440])
+
+    def test_shared_source_sku_checks_full_size_not_substrings(self):
+        service = ProcurementImportService()
+        result = service.parse('shared_sku_sizes.xlsx', base64.b64encode(
+            shared_sku_workbook(('Black-XL', 'Black-L'),
+                                purchase_specs=(('Negro', 'L'), ('Negro', 'XL')))
+        ).decode('ascii'))
+        rows = service.pending[result['planId']].rows
+        self.assertIn('SHARED-SOURCE:Black-L', rows[0].values['采购备注'])
+        self.assertNotIn('Black-XL', rows[0].values['采购备注'])
+        self.assertIn('SHARED-SOURCE:Black-XL', rows[1].values['采购备注'])
+        self.assertEqual(result['issues'], [])
+
+    def test_shared_source_sku_normalizes_equivalent_labels_and_spacing(self):
+        service = ProcurementImportService()
+        result = service.parse('shared_sku_labels.xlsx', base64.b64encode(
+            shared_sku_workbook(('  bLaCk – ｌ  ', ' GREY - L '))
+        ).decode('ascii'))
+        self.assertEqual(result['issues'], [])
+        self.assertEqual([row['itemSalesAmount'] for row in result['preview']], [110, 220])
+
+    def test_shared_source_sku_does_not_guess_missing_or_conflicting_specs(self):
+        cases = [
+            (('', 'Gray-L'), (('Negro', 'L'), ('Gris', 'L'))),
+            (('Dark Gray-L', 'Black-L'), (('Gris', 'L'), ('Negro', 'L'))),
+            (('Black-M', 'Gray-L'), (('Negro', 'L'), ('Gris', 'L'))),
+            (('Black-1/2', 'Gray-L'), (('Negro', '1-2'), ('Gris', 'L'))),
+            (('Black-L', 'Gray-L'), (('Negro', 'L'), ('Black', 'L'))),
+        ]
+        for specs, purchase_specs in cases:
+            with self.subTest(specs=specs, purchase_specs=purchase_specs):
+                service = ProcurementImportService()
+                with self.assertRaisesRegex(ProcurementImportError, '同时匹配多个'):
+                    service.parse('ambiguous.xlsx', base64.b64encode(
+                        shared_sku_workbook(specs, purchase_specs=purchase_specs)
+                    ).decode('ascii'))
+                self.assertEqual(service.pending, {})
+
     def test_parses_compact_xyp2_and_rebuilds_precise_links(self):
         parsed = parse_xyp2_remark('普通备注 ' + xyp2_text())
         self.assertEqual(parsed.site, 'MX')
@@ -415,6 +512,32 @@ class ProcurementImportTests(unittest.TestCase):
         self.assertIn('goods_id=422790137', parsed.items[0].purchase_link)
         self.assertIn('skucode=I8mmn32aip2g7d', parsed.items[0].purchase_link)
         self.assertIn('#xv=1&p=Multicolor&s=M', parsed.items[0].purchase_link)
+
+    def test_quantity_count_covers_rows_outside_the_preview(self):
+        source = load_workbook(BytesIO(source_workbook()))
+        values = list(source.active.values)
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(values[0])
+        # 30 单、60 条明细，第二个规格每单采购 2 件。
+        for index in range(30):
+            remark = json.loads(xyp2_text()[6:-7])
+            remark['i'][1][9] = 2
+            for variant, original in enumerate(values[1:]):
+                row = list(original)
+                row[1] = 'SYNTH-ORDER-%03d' % index
+                row[2] = 'SYNTH-PACKAGE-%03d' % index
+                row[19] = 1 if variant == 0 else 2
+                row[21] = '[XYP2]%s[/XYP2]' % json.dumps(remark)
+                sheet.append(row)
+        stream = BytesIO()
+        workbook.save(stream)
+        result = ProcurementImportService().parse(
+            'synthetic_batch.xlsx', base64.b64encode(stream.getvalue()).decode('ascii'))
+        self.assertEqual(result['detailCount'], 60)
+        self.assertEqual(result['quantityCount'], 90)
+        self.assertEqual(len(result['preview']), 50)
+        self.assertEqual(sum(row['quantity'] for row in result['preview']), 75)
 
     def test_rejects_truncated_legacy_remark_with_actionable_message(self):
         with self.assertRaisesRegex(

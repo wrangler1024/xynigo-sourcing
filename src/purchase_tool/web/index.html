@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Xynigo Sourcing v0.17.8</title>
+<title>Xynigo Sourcing v0.17.9</title>
 <link rel="icon" type="image/png" sizes="260x260" href="/xynigo-x.png?v=6">
 <link rel="icon" type="image/x-icon" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256" href="/favicon.ico?v=6">
 <link rel="shortcut icon" href="/favicon.ico?v=6">
@@ -1431,6 +1431,103 @@
     .auth-card { padding: 28px 22px 24px; border-radius: 20px; }
     .auth-card h1 { font-size: 21px; }
   }
+
+  /* 采购中心导入分单页面 */
+/* 采购中心导入分单：已确认布局与统一字号，仅作用于导入面板。 */
+body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
+#procurementImportPanel{color:#182c42;font-size:var(--if-font-body);max-width:1600px;width:100%;margin:0 auto;--if-border:#e0e7ee;--if-font-title:15px;--if-font-body:11px;--if-font-control:12px;--if-font-meta:10px;--if-font-metric:22px}
+#procurementImportPanel [hidden]{display:none!important}
+#procurementImportPanel h1,#procurementImportPanel h2,#procurementImportPanel p{margin:0}
+#procurementImportPanel svg{flex-shrink:0;vertical-align:middle}
+#procurementImportPanel .if-heading{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:28px}
+#procurementImportPanel .if-eyebrow{font-size:var(--if-font-meta);letter-spacing:normal;color:#8a97a6;margin-bottom:7px}
+#procurementImportPanel h1{font-size:var(--if-font-title);line-height:1.5;font-weight:900;letter-spacing:normal}
+#procurementImportPanel .if-heading p{margin-top:9px;font-size:var(--if-font-body);color:#718095}
+#procurementImportPanel .if-heading>button{margin-top:14px;color:#52677d}
+#procurementImportPanel .if-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:36px;padding:0 14px;border:1px solid #dfe7ee;border-radius:7px;background:#fff;color:#344d64;font-weight:800;font-size:var(--if-font-control);line-height:1.3;white-space:nowrap;cursor:pointer;box-shadow:none}
+#procurementImportPanel .if-btn svg{width:16px;height:16px}
+#procurementImportPanel .if-btn:hover{background:#f1f7f7;border-color:#bdd5d6}
+#procurementImportPanel .if-btn:disabled{opacity:.45;cursor:not-allowed}
+#procurementImportPanel .if-btn:focus-visible,#procurementImportPanel input:focus-visible,#procurementImportPanel select:focus-visible,#procurementImportPanel summary:focus-visible{outline:2px solid #0e9f9d;outline-offset:3px}
+#procurementImportPanel .if-primary{font-weight:600;background:#087f81;color:#fff;border-color:#087f81}
+#procurementImportPanel .if-primary:hover{background:#086e70}
+#procurementImportPanel .if-secondary{background:#f5f7fa}
+#procurementImportPanel .if-text-btn{border-color:transparent;background:transparent;color:#07818a;padding:0 8px}
+#procurementImportPanel .if-flow{display:flex;align-items:center;max-width:820px;list-style:none;margin:0 0 28px;padding:0;gap:0}
+#procurementImportPanel .if-flow li{display:flex;align-items:center;flex:1;gap:10px;color:#8a98a8;font-size:var(--if-font-body);white-space:nowrap}
+#procurementImportPanel .if-step-circle{display:grid;place-items:center;background:#e9edf2;width:25px;height:25px;border-radius:50%;font-size:var(--if-font-body);flex:none;font-weight:600}
+#procurementImportPanel .if-flow i{height:1px;background:#dce4eb;flex:1;margin:0 25px 0 15px}
+#procurementImportPanel .if-flow .complete{color:#158179}
+#procurementImportPanel .if-flow .complete .if-step-circle{background:#deefeb}
+#procurementImportPanel .if-flow .current{color:#233e56;font-weight:600}
+#procurementImportPanel .if-flow .current .if-step-circle{background:#153f54;color:white;box-shadow:0 0 0 4px #e6edf1}
+#procurementImportPanel .if-setup-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px}
+#procurementImportPanel .if-card{background:#fff;border:1px solid var(--if-border);border-radius:10px;box-shadow:0 2px 3px #1b385904;min-width:0;overflow:hidden}
+#procurementImportPanel .if-source-card,#procurementImportPanel .if-target-card{padding:26px;display:flex;flex-direction:column}
+#procurementImportPanel .if-card-heading{display:flex;gap:11px;align-items:center;margin-bottom:21px}
+#procurementImportPanel .if-heading-icon{display:grid;place-items:center;background:#e6f5ef;color:#178673;border-radius:8px;width:40px;height:40px;flex:none}
+#procurementImportPanel .if-heading-icon.if-blue{background:#eaf0fa;color:#6083b0}
+#procurementImportPanel h2{font-size:var(--if-font-title);font-weight:900;line-height:1.5}
+#procurementImportPanel .if-card-heading p,#procurementImportPanel .if-preview-heading p{font-size:var(--if-font-body);color:#8a96a5;margin-top:3px}
+#procurementImportPanel .if-badge{display:inline-flex;font-size:var(--if-font-meta);font-weight:900;padding:4px 8px;border-radius:5px;white-space:nowrap;background:#f1f4f7;color:#788695;margin-left:auto}
+#procurementImportPanel .if-badge.green{background:#e8f5ed;color:#2b886a}
+#procurementImportPanel .if-badge.amber{background:#fff0d8;color:#9e611f}
+#procurementImportPanel .if-file-box{display:flex;align-items:center;gap:13px;background:#fafcfd;border:1px dashed #cad7e2;border-radius:8px;min-height:80px;padding:14px}
+#procurementImportPanel .if-file-icon{color:#168375;position:relative;display:grid;place-items:center;padding-bottom:10px;flex:none}
+#procurementImportPanel .if-file-icon svg{width:27px;height:27px}
+#procurementImportPanel .if-file-icon small{font-size:var(--if-font-body);font-weight:600;position:absolute;bottom:0}
+#procurementImportPanel .if-file-info{min-width:0;flex:1}
+#procurementImportPanel .if-file-info b{font-size:var(--if-font-control);display:block;font-weight:500;overflow-wrap:anywhere}
+#procurementImportPanel .if-file-info span{display:block;color:#8b97a6;font-size:var(--if-font-body);margin-top:5px}
+#procurementImportPanel .if-card-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:17px;min-height:36px}
+#procurementImportPanel .if-subtle{display:flex;align-items:center;gap:6px;font-size:var(--if-font-body);color:#789087}
+#procurementImportPanel .if-subtle svg{width:16px;height:16px}
+#procurementImportPanel .if-target-fields{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(0,1fr);gap:12px;flex:1;align-content:center}
+#procurementImportPanel .if-target-fields label{display:block;font-weight:800;font-size:var(--if-font-body);color:#738297;margin-bottom:7px}
+#procurementImportPanel .if-target-fields input,#procurementImportPanel .if-target-fields select{height:40px;width:100%;min-width:0;padding:0 12px;font-size:var(--if-font-body);background:#fff;border:1px solid #dce4eb;border-radius:8px;color:#344d64;box-shadow:none;text-overflow:ellipsis}
+#procurementImportPanel .if-button-group{display:flex;gap:4px;align-items:center}
+#procurementImportPanel .if-metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));margin:25px 0 20px;background:#fff;border:1px solid var(--if-border);border-radius:10px;padding:22px 0}
+#procurementImportPanel .if-metrics>div{border-right:1px solid #e8edf2;padding:0 24px;display:flex;align-items:center;justify-content:space-between;gap:14px}
+#procurementImportPanel .if-metrics>div:last-child{border:0}
+#procurementImportPanel .if-metrics span{font-size:var(--if-font-meta);font-weight:850;color:#758395}
+#procurementImportPanel .if-metrics strong{font-size:var(--if-font-metric);font-weight:700;font-variant-numeric:tabular-nums;line-height:1.3;white-space:nowrap}
+#procurementImportPanel .if-metrics b{font-weight:700}
+#procurementImportPanel .if-metrics small{font-size:var(--if-font-meta);font-weight:400;color:#8f9bab;margin-left:8px}
+#procurementImportPanel .if-metric-success strong{color:#248270}
+#procurementImportPanel .if-match-notice{display:flex;align-items:center;gap:10px;border-radius:7px;padding:13px 15px;font-size:var(--if-font-body);margin-bottom:18px;color:#4c766c;background:#edf6f2;border:1px solid #dcece4}
+#procurementImportPanel .if-match-notice svg{color:#308b77;width:18px;height:18px}
+#procurementImportPanel .if-match-notice b{font-weight:600;margin-right:12px}
+#procurementImportPanel .resource-state{margin:16px 0;font-size:var(--if-font-body);padding:12px 15px;line-height:1.7;border-radius:7px}
+#procurementImportPanel .if-preview-heading{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:19px 22px}
+#procurementImportPanel .if-preview-heading h2 span{font-size:var(--if-font-body);color:#91a0ad;font-weight:400;margin-left:10px}
+#procurementImportPanel .if-preview-heading button{font-size:var(--if-font-control);color:#597084}
+#procurementImportPanel .if-table-wrap{overflow-x:auto}
+#procurementImportPanel .if-table-wrap table{min-width:900px;width:100%;font-size:var(--if-font-body);border-collapse:collapse}
+#procurementImportPanel .if-table-wrap th{height:44px;background:#f6f8fb;color:#77869a;font-weight:900;font-size:var(--if-font-meta);border-top:1px solid #e6ecf1;border-bottom:1px solid #e6ecf1;padding:0 18px;white-space:nowrap}
+#procurementImportPanel .if-table-wrap td{height:76px;padding:12px 18px;border-bottom:1px solid #edf1f5;vertical-align:middle}
+#procurementImportPanel .if-table-wrap tbody tr{background:#fff}
+#procurementImportPanel .if-table-wrap tbody tr:hover{background:#f7fbfc}
+#procurementImportPanel .procurement-import-order-start:not(:first-child){border-top:2px solid #e4ebf1}
+#procurementImportPanel .procurement-import-stack b{font-size:var(--if-font-body);color:#3d5972;font-weight:500}
+#procurementImportPanel .procurement-import-stack small{font-size:var(--if-font-meta);color:#91a0ae}
+#procurementImportPanel .if-table-footer{display:flex;justify-content:space-between;align-items:center;padding:12px 20px;color:#91a0af;font-size:var(--if-font-body)}
+#procurementImportPanel .if-table-footer>span:first-child{display:flex;align-items:center;gap:6px}
+#procurementImportPanel .if-table-footer svg{width:14px;height:14px}
+#procurementImportPanel .if-rules{font-size:var(--if-font-body);color:#8190a2;line-height:1.8;padding:14px 2px 22px}
+#procurementImportPanel .if-rules summary{display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none}
+#procurementImportPanel .if-rules summary::-webkit-details-marker{display:none}
+#procurementImportPanel .if-rules summary span{color:#087f81;margin-left:8px}
+#procurementImportPanel .if-rules p{padding:10px 22px 0}
+#procurementImportPanel .if-rules svg{width:15px;height:15px}
+#procurementImportPanel .if-action-footer{background:#fff;display:flex;align-items:center;justify-content:space-between;gap:20px;padding:17px 22px;position:sticky;bottom:-36px;z-index:10;border:1px solid #dfe6ed;border-radius:9px;box-shadow:0 -3px 14px #304b6506}
+#procurementImportPanel .if-footer-content{flex:1;min-width:0}
+#procurementImportPanel .if-footer-copy b{font-size:var(--if-font-control);font-weight:800}
+#procurementImportPanel .if-footer-copy small{display:block;font-size:var(--if-font-body);color:#93a0ae;margin-top:4px}
+#procurementImportPanel .if-import-button{min-height:42px;padding:0 20px}
+@media(max-width:1200px){#procurementImportPanel .if-source-card,#procurementImportPanel .if-target-card{padding:20px}#procurementImportPanel .if-setup-grid{gap:18px}#procurementImportPanel .if-card-actions{flex-wrap:wrap}#procurementImportPanel .if-metrics>div{padding:0 16px}}
+@media(max-width:1000px){#procurementImportPanel .if-setup-grid{grid-template-columns:1fr}#procurementImportPanel .if-metrics>div{display:block}#procurementImportPanel .if-metrics strong{display:block;margin-top:5px}}
+@media(max-width:600px){#procurementImportPanel .if-heading{gap:8px}#procurementImportPanel .if-heading>button{font-size:var(--if-font-control);padding:0 9px}#procurementImportPanel .if-flow li{font-size:var(--if-font-body);gap:6px}#procurementImportPanel .if-flow i{margin:0 8px}#procurementImportPanel .if-target-fields{grid-template-columns:1fr}#procurementImportPanel .if-metrics>div{padding:0 8px}#procurementImportPanel .if-metrics small{display:none}#procurementImportPanel .if-preview-heading{flex-wrap:wrap;padding:16px}#procurementImportPanel .if-action-footer{bottom:-24px;padding:14px;flex-wrap:wrap}#procurementImportPanel .if-match-notice{align-items:flex-start}#procurementImportPanel .if-match-notice b{display:block;margin-bottom:3px}#procurementImportPanel .if-rules summary{flex-wrap:wrap}}
+
 </style>
 </head>
 <body class="auth-locked">
@@ -1482,6 +1579,7 @@
         <button class="secondary-tab" data-parent="workbench" data-planned="业务概览" disabled hidden>业务概览<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="workbench" data-planned="我的待办" disabled hidden>我的待办<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="workbench" data-planned="连接状态" disabled hidden>连接状态<span class="secondary-status planned">规划</span></button>
+        <button class="secondary-tab" data-parent="procurement" data-module="procurementimport" hidden>导入分单<span class="secondary-status">飞书协作表</span></button>
         <button class="secondary-tab" data-parent="procurement" data-module="procurementorders" hidden>采购任务<span class="secondary-status">云端</span></button>
         <button class="secondary-tab" data-parent="procurement" data-module="procurementexecution" hidden>采购执行<span class="secondary-status">测试</span></button>
         <button class="secondary-tab" data-parent="procurement" data-planned="异常协同" disabled hidden>异常协同<span class="secondary-status planned">规划</span></button>
@@ -1500,7 +1598,6 @@
         <button class="secondary-tab" data-parent="resources" data-module="envbatch" hidden>环境创建<span class="secondary-status">现有</span></button>
         <button class="secondary-tab" data-parent="resources" data-module="storemanagement" hidden>店铺管理<span class="secondary-status">新增</span></button>
         <button class="secondary-tab" data-parent="resources" data-module="proxymanagement" hidden>代理IP<span class="secondary-status">新增</span></button>
-        <button class="secondary-tab" data-parent="assistant" data-module="procurementimport" hidden>采购协作导入<span class="secondary-status">试用</span></button>
         <button class="secondary-tab" data-parent="analytics" data-planned="采购效率" disabled hidden>采购效率<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="analytics" data-planned="履约质量" disabled hidden>履约质量<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="analytics" data-planned="资源健康" disabled hidden>资源健康<span class="secondary-status planned">规划</span></button>
@@ -1603,7 +1700,7 @@
           <div class="hero-kicker">XYNIGO SOURCING WORKSPACE</div>
           <h1>让小犀帮你把每一单稳稳带回来，<span class="hero-call">Xyni, GO!</span></h1>
           <p id="moduleSummary">批量查询订单与物流状态，异常任务集中处理，结果一键导出。</p>
-          <div class="hero-meta"><span class="hero-chip">累计修复测试 v0.17.8</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
+          <div class="hero-meta"><span class="hero-chip">累计修复测试 v0.17.9</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
         </div>
         <div class="hero-lockup" role="img" aria-label="小犀与 Xynigo 完整品牌一体图形">
           <img src="xynigo-logo.png" alt="">
@@ -1703,61 +1800,43 @@
     </section>
   </div>
 
-  <div class="module-panel hidden" id="procurementImportPanel">
-    <section class="card">
-      <div class="card-title table-title-row">
-        <div class="table-title-copy"><span>采购协作导入</span><span class="legend">店小秘产品行导出 · XYP2 解析 · 单张共享协作表</span></div>
-        <button class="btn primary" id="btnProcurementImportDownload" type="button" disabled>下载采购共享协作表</button>
-      </div>
-      <div class="procurement-import-grid">
-        <div class="procurement-import-upload">
-          <b>选择店小秘订单导出文件</b>
-          <p class="hint">模板需包含“产品图片网址、客服备注、产品图片”，客服备注必须保留完整 <span class="mono">[XYP2]...[/XYP2]</span>。</p>
-          <input id="procurementImportFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
-          <div class="action-row" style="margin-top:14px"><button class="btn primary" id="btnProcurementImportParse" type="button">解析并生成</button><span class="hint">只在当前运行环境短时处理，不写店小秘或采购事实库；云端计划加密保存并到期自动清除。</span></div>
-        </div>
-        <div class="procurement-import-rules">
-          <b>共享表兼容规则</b>
-          <div>采购需求区按标准列序写入，前五列固定为“分单日期 / 采购员 / 销售订单号 / 店铺 / 运营”；采购下单区可自由增删、改名和排序，不参与导入校验。</div>
-          <div>包裹号为采购单位，完整收货信息紧随采购指导价；订单金额只写首条明细，商品金额逐条计算，分单日期按北京时间写为日期类型。</div>
-          <div>系统追踪区仅用于幂等防重；同订单使用淡色分组，商品图、采购链接和紧凑行高自动处理，已有数据与图片会跳过。</div>
-          <div>重复导入只用于查重和中断续传：已导入订单保持原样，不能在这里修改；采购任务认领前修改属于独立修订流程。</div>
-        </div>
-      </div>
-      <div class="resource-state" id="procurementImportState">请选择使用最新版店小秘提单助手写入 XYP2 后导出的 xlsx。</div>
-      <div class="procurement-import-stats" id="procurementImportStats" hidden>
-        <div class="procurement-import-stat"><b id="procurementImportSourceRows">0</b><span>导出产品行</span></div>
-        <div class="procurement-import-stat"><b id="procurementImportOrders">0</b><span>采购单</span></div>
-        <div class="procurement-import-stat"><b id="procurementImportDetails">0</b><span>采购明细</span></div>
-        <div class="procurement-import-stat"><b id="procurementImportOrderImages">0</b><span>订单商品图</span></div>
-        <div class="procurement-import-stat"><b id="procurementImportIssueCount">0</b><span>需关注</span></div>
-      </div>
-      <div class="procurement-import-issues" id="procurementImportIssueList"></div>
+  <div class="module-panel hidden import-first-layout" id="procurementImportPanel">
+    <div class="if-heading"><div><div class="if-eyebrow">采购中心 / 导入分单</div><h1>导入分单</h1><p>核对订单与采购规格，导入本批飞书协作表。</p></div><button class="if-btn" id="btnProcurementImportReset" type="button"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-refresh-cw" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path><path d="M8 16H3v5"></path></svg>重新开始</button></div>
+    <ol class="if-flow" aria-label="导入步骤">
+      <li data-import-step="0"><span class="if-step-circle">1</span><span>解析订单文件</span><i></i></li>
+      <li data-import-step="1"><span class="if-step-circle">2</span><span>校验目标表格</span><i></i></li>
+      <li data-import-step="2"><span class="if-step-circle">3</span><span>确认并导入</span></li>
+    </ol>
+    <div class="if-setup-grid">
+      <section class="if-card if-source-card">
+        <div class="if-card-heading"><span class="if-heading-icon"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-file-spreadsheet" aria-hidden="true"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"></path><path d="M14 2v5a1 1 0 0 0 1 1h5"></path><path d="M8 13h2"></path><path d="M14 13h2"></path><path d="M8 17h2"></path><path d="M14 17h2"></path></svg></span><div><h2>订单文件</h2><p>店小秘产品行导出 · .xlsx</p></div><span class="if-badge" id="procurementImportFileBadge">待解析</span></div>
+        <div class="if-file-box"><span class="if-file-icon"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-file-spreadsheet" aria-hidden="true"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"></path><path d="M14 2v5a1 1 0 0 0 1 1h5"></path><path d="M8 13h2"></path><path d="M14 13h2"></path><path d="M8 17h2"></path><path d="M14 17h2"></path></svg><small>XLSX</small></span><div class="if-file-info"><b id="procurementImportFileName">请选择店小秘订单文件</b><span id="procurementImportFileMeta">支持 .xlsx 文件</span></div><button class="if-btn if-text-btn" id="btnProcurementImportChooseFile" type="button">选择文件</button><input id="procurementImportFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden></div>
+        <div class="if-card-actions"><span class="if-subtle" id="procurementImportSourceHint"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check-check" aria-hidden="true"><path d="M18 6 7 17l-5-5"></path><path d="m22 10-7.5 7.5L13 16"></path></svg>请保留完整 XYP2 采购备注</span><button class="if-btn if-secondary" id="btnProcurementImportParse" type="button"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-refresh-cw" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path><path d="M8 16H3v5"></path></svg>解析并生成</button></div>
+      </section>
+      <section class="if-card if-target-card" id="procurementImportTargetCard">
+        <div class="if-card-heading"><span class="if-heading-icon if-blue"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-link2 lucide-link-2" aria-hidden="true"><path d="M9 17H7A5 5 0 0 1 7 7h2"></path><path d="M15 7h2a5 5 0 1 1 0 10h-2"></path><line x1="8" x2="16" y1="12" y2="12"></line></svg></span><div><h2>目标飞书协作表</h2><p>按本批订单选择表格与工作表</p></div><span class="if-badge" id="procurementImportTargetBadge">待校验</span></div>
+        <div class="if-target-fields"><div><label for="procurementImportTargetUrl">飞书协作表</label><input id="procurementImportTargetUrl" type="url" autocomplete="off" placeholder="粘贴飞书共享表格链接"></div><div><label for="procurementImportTargetSheet">工作表</label><select id="procurementImportTargetSheet" disabled><option value="">先读取工作簿</option></select></div></div>
+        <div class="if-card-actions"><span class="if-subtle" id="procurementImportTargetHint"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-shield-check" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path><path d="m9 12 2 2 4-4"></path></svg>确认字段后再导入</span><div class="if-button-group"><button class="if-btn if-text-btn" id="btnProcurementImportInspectTarget" type="button" disabled>读取工作表</button><button class="if-btn if-primary" id="btnProcurementImportValidateTarget" type="button" disabled><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-list-checks" aria-hidden="true"><path d="M13 5h8"></path><path d="M13 12h8"></path><path d="M13 19h8"></path><path d="m3 17 2 2 4-4"></path><path d="m3 7 2 2 4-4"></path></svg>校验核心字段</button></div></div>
+      </section>
+    </div>
+    <div class="if-metrics" id="procurementImportStats" hidden>
+      <div><span>导出产品行</span><strong><b id="procurementImportSourceRows">0</b><small>行</small></strong></div>
+      <div><span>采购单</span><strong><b id="procurementImportOrders">0</b><small>单</small></strong></div>
+      <div><span>采购明细</span><strong><b id="procurementImportDetails">0</b><small>条</small></strong></div>
+      <div><span>采购件数</span><strong><b id="procurementImportQuantity">0</b><small>件</small></strong></div>
+      <div class="if-metric-success"><span>需关注</span><strong><b id="procurementImportIssueCount">0</b><small>项</small></strong></div>
+    </div>
+    <div class="if-match-notice" id="procurementImportMatchNotice" hidden><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-shield-check" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path><path d="m9 12 2 2 4-4"></path></svg><span><b>规格匹配通过</b>已按完整采购规格匹配，金额、数量随对应明细保留。</span></div>
+    <div class="resource-state" id="procurementImportState">请选择使用最新版店小秘提单助手写入 XYP2 后导出的 xlsx。</div>
+    <div class="procurement-import-issues" id="procurementImportIssueList"></div>
+    <div class="resource-state" id="procurementImportTargetState" hidden>先解析文件，再粘贴本批要使用的普通飞书共享表格链接。</div>
+    <section class="if-card if-preview-card">
+      <div class="if-preview-heading"><div><h2>解析预览 <span id="procurementImportPreviewCount">尚未解析</span></h2><p>按销售订单分组 · 金额随对应明细保留</p></div><button class="if-btn" id="btnProcurementImportDownload" type="button" disabled><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-arrow-down-to-line" aria-hidden="true"><path d="M12 17V3"></path><path d="m6 11 6 6 6-6"></path><path d="M19 21H5"></path></svg>下载采购共享协作表</button></div>
+      <div class="if-table-wrap"><table><thead><tr><th>销售订单 / 包裹号</th><th>店铺 / 运营</th><th>商品金额</th><th>采购规格</th><th>数量</th><th>指导价</th><th>订单商品图</th></tr></thead><tbody id="procurementImportTbody"><tr><td colspan="7" class="empty-tip">尚未解析文件</td></tr></tbody></table></div>
+      <div class="if-table-footer"><span><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-shield-check" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path><path d="m9 12 2 2 4-4"></path></svg>预览隐藏收件信息</span><span>商品图片 <b id="procurementImportOrderImages">0</b></span></div>
     </section>
-    <section class="card" id="procurementImportTargetCard">
-      <div class="card-title table-title-row">
-        <div class="table-title-copy"><span>绑定本批飞书协作表并直接导入</span><span class="legend">普通飞书电子表格 · 每批动态选择 · 按字段名映射、规范表头分区、追加数据并补齐订单商品图</span></div>
-      </div>
-      <div class="procurement-import-target-grid">
-        <div class="field"><label for="procurementImportTargetUrl">飞书共享表格链接</label><input id="procurementImportTargetUrl" type="url" autocomplete="off" placeholder="https://企业域名.feishu.cn/sheets/..."></div>
-        <div class="field"><label for="procurementImportTargetSheet">工作表</label><select id="procurementImportTargetSheet" disabled><option value="">先读取工作簿</option></select></div>
-        <div class="procurement-import-target-actions"><button class="btn" id="btnProcurementImportInspectTarget" type="button" disabled>读取工作表</button><button class="btn" id="btnProcurementImportValidateTarget" type="button" disabled>校验核心字段</button></div>
-      </div>
-      <div class="resource-state" id="procurementImportTargetState">先解析文件，再粘贴本批要使用的普通飞书共享表格链接。目标表不会固定，可随采购批次更换。</div>
-      <div class="procurement-import-sync-bar" id="procurementImportSyncBar">
-        <div class="procurement-import-sync-copy"><b>接口直接导入，无需人工复制粘贴</b><span>确认后会将旧“分单时间”规范为北京时间“分单日期”，安全取消已被“导入批次”覆盖的“分单批次”，固定前五列，并把“包裹号 / 采购状态 / 优先级”紧随其后；同时规范金额与完整收货信息。不改动采购下单区自定义字段，不会覆盖已有单元格；历史订单只查重并整单跳过，不会借本次导入修改。</span><div class="procurement-import-sync-progress" id="procurementImportSyncProgress" role="status" aria-live="polite" hidden></div></div>
-        <button class="btn primary" id="btnProcurementImportSyncImages" type="button" disabled>导入数据并补齐图片</button>
-      </div>
-    </section>
-    <section class="card table-card">
-      <div class="card-title table-title-row"><div class="table-title-copy"><span>解析预览</span><span class="legend">最多展示前 50 条；收件信息仅写入下载文件，不在预览中显示</span></div></div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>销售订单 / 包裹号</th><th>店铺 / 运营</th><th>商品金额</th><th>采购规格</th><th>数量</th><th>指导价</th><th>订单商品图</th></tr></thead>
-          <tbody id="procurementImportTbody"><tr><td colspan="7" class="empty-tip">尚未解析文件</td></tr></tbody>
-        </table>
-      </div>
-    </section>
+    <details class="if-rules"><summary><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-circle-question-mark" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><path d="M12 17h.01"></path></svg>历史订单整单跳过；导入至飞书协作表，不创建采购任务。<span>查看导入规则</span></summary><p>接口直接导入，无需人工复制粘贴，不会覆盖已有单元格。采购需求区按标准列序写入，前五列固定为“分单日期 / 采购员 / 销售订单号 / 店铺 / 运营”；采购下单区可自由增删、改名和排序，不参与导入校验。</p><p>订单金额只写首条明细，商品金额逐条计算；完整收件信息紧随采购指导价。同订单按淡色分组，商品图与采购链接自动处理。系统追踪区仅用于幂等防重。已导入订单保持原样，不能在这里修改；采购任务认领前修改属于独立修订流程。</p></details>
+    <footer class="if-action-footer" id="procurementImportSyncBar"><div class="if-footer-content"><div class="if-footer-copy"><b id="procurementImportFooterSummary">请先解析本批订单</b><small id="procurementImportFooterHint">完成目标飞书协作表校验后可导入</small></div><div class="procurement-import-sync-progress" id="procurementImportSyncProgress" role="status" aria-live="polite" hidden></div></div><button class="if-btn if-primary if-import-button" id="btnProcurementImportSyncImages" type="button" disabled><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-folder-input" aria-hidden="true"><path d="M2 9V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-1"></path><path d="M2 13h10"></path><path d="m9 16 3-3-3-3"></path></svg>导入数据并补齐图片</button></footer>
   </div>
 
   <div class="module-panel hidden" id="procurementPanel">
@@ -2352,7 +2431,7 @@
         <div class="field"><label>事件类型</label><input class="env-text" id="systemLogEventType" type="text" maxlength="160" placeholder="如 http.request.failed"></div>
         <div class="field"><label>HTTP 状态码</label><input class="env-text" id="systemLogStatusCode" type="number" min="100" max="599" placeholder="如 500"></div>
         <div class="field"><label>requestId / traceId</label><input class="env-text" id="systemLogRequestId" type="text" maxlength="64" placeholder="定位一次跨组件请求"></div>
-        <div class="field"><label>关键词</label><input class="env-text" id="systemLogKeyword" type="search" maxlength="255" placeholder="消息、路由、错误码或指纹"></div>
+        <div class="field"><label>关键词 / 查询 ID</label><input class="env-text" id="systemLogKeyword" type="search" maxlength="255" placeholder="查询 ID、任务 ID、消息或错误码"></div>
       </div>
       <div class="business-log-toolbar">
         <span class="business-log-scope" id="systemLogScope">尚未读取系统日志</span>
@@ -3038,9 +3117,9 @@ const PRIMARY_MODULES = {
     planning: '工作台业务概览与统一待办将在后续阶段接入真实数据。'
   },
   procurement: {
-    label: '采购中心', hint: '提单 · 分配 · 执行', defaultModule: 'procurementorders',
-    requiredPermission: 'procurement.access',
-    summary: '集中查看运营正式提交的采购任务、流转状态和同步情况。',
+    label: '采购中心', hint: '提单 · 分配 · 执行', defaultModule: 'procurementimport',
+    requiredPermissionsAny: ['procurement.access', 'assistant.access'],
+    summary: '导入店小秘订单至飞书协作表，或处理运营正式提交的采购任务。',
     planning: '采购执行回填和异常协同将在状态规则确认后分阶段接入。'
   },
   fulfillment: {
@@ -3064,10 +3143,11 @@ const PRIMARY_MODULES = {
     summary: '统一管理买家号、店铺、代理 IP、HubStudio 环境与飞书台账。'
   },
   assistant: {
-    label: '小犀助手', hint: '业务效率工具', defaultModule: 'procurementimport',
+    label: '小犀助手', hint: '业务效率工具', defaultModule: null,
     requiredPermission: 'assistant.access',
-    summary: '把店小秘 XYP2 订单导出转换为采购团队可继续协作的单张共享表。',
-    planning: '采购协作导入已接入；其他效率工具按实际业务需求逐步补充。'
+    summary: '业务效率工具入口。',
+    planningTitle: '小犀助手',
+    planning: '采购协作导入已移至“采购中心 → 导入分单”。后续业务效率工具将在这里提供。'
   },
   analytics: {
     label: '数据分析', hint: '效率 · 履约 · 健康', defaultModule: null,
@@ -3102,9 +3182,9 @@ const FEATURE_MODULES = {
     summary: '批量查询订单与物流状态，异常任务集中处理，结果一键导出。'
   },
   procurementimport: {
-    label: '采购协作导入', primary: 'assistant',
+    label: '导入分单', primary: 'procurement',
     requiredPermission: 'assistant.access',
-    summary: '解析店小秘产品行导出与 XYP2 备注，生成含图片的一张采购共享协作表。'
+    summary: '解析店小秘 Excel 与 XYP2 备注，导入至所选飞书协作表；此入口不创建采购任务。'
   },
   buyerlib: {
     label: '买家号库', primary: 'resources',
@@ -3184,8 +3264,13 @@ const PERMISSION_MENU_GROUPS = [
     id: 'procurement', label: '采购中心', secondary: [
       {
         id: 'moduleentry', label: '模块入口', badge: '已接入',
-        note: '控制采购中心一级入口可见；采购任务工作台还需运营采购单读取权限。',
+        note: '控制采购中心一级入口可见；采购任务还需读取权限。已有导入分单权限的成员也可进入采购中心。',
         codes: ['procurement.access']
+      },
+      {
+        id: 'procurementimport', label: '导入分单', badge: '共享权限',
+        note: '导入至飞书协作表，不创建采购任务。沿用现有小犀助手权限；与小犀助手入口共用授权。',
+        codes: ['assistant.access']
       },
       {
         id: 'request', label: '运营采购单',
@@ -3266,8 +3351,8 @@ const PERMISSION_MENU_GROUPS = [
   {
     id: 'assistant', label: '小犀助手', secondary: [
       {
-        id: 'moduleentry', label: '采购协作导入', badge: '试用',
-        note: '解析店小秘 xlsx 与 XYP2，预览和下载不执行外部写入；飞书导入仍需二次确认。',
+        id: 'moduleentry', label: '模块入口', badge: '共享权限',
+        note: '保留小犀助手菜单；目前与采购中心的导入分单共用授权。',
         codes: ['assistant.access']
       }
     ]
@@ -3566,7 +3651,7 @@ async function cloudFetchJson(path, opts={}) {
   const headers = new Headers(opts.headers || {});
   headers.set('Accept', 'application/json');
   headers.set('X-Xynigo-Source', 'cloud_web_workspace');
-  headers.set('X-Xynigo-Client-Version', '0.17.8-cloud-web');
+  headers.set('X-Xynigo-Client-Version', '0.17.9-cloud-web');
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     headers.set('X-Xynigo-Web-CSRF', 'same-origin');
   }
@@ -4501,6 +4586,9 @@ function hasPrimaryAccess(primary) {
   const info = PRIMARY_MODULES[primary];
   if (!info || !authIdentity) return false;
   if (info.requiredRole && !hasRole(info.requiredRole)) return false;
+  if (Array.isArray(info.requiredPermissionsAny)) {
+    return info.requiredPermissionsAny.some(hasPermission);
+  }
   return hasPermission(info.requiredPermission);
 }
 
@@ -8811,6 +8899,7 @@ function renderSystemLogDetail(data) {
   const actor = data.actor || {};
   const http = data.http || {};
   const error = data.error || {};
+  const context = data.details || {};
   $('systemLogDetailTitle').textContent = `系统日志详情｜${data.eventType || '系统事件'}`;
   $('systemLogDetailBody').innerHTML =
     businessLogDetailField('发生时间', businessLogDateTime(data.operationTime)) +
@@ -8823,6 +8912,12 @@ function renderSystemLogDetail(data) {
     businessLogDetailField('异常类型 / 错误码', `${error.type || '—'} / ${error.code || '—'}`, true) +
     businessLogDetailField('错误指纹', error.fingerprint, true) +
     businessLogDetailField('来源 / 客户端版本', `${data.source || '—'} / ${data.clientVersion || '—'}`, true) +
+    (context.queryId ? businessLogDetailField('业务查询 ID', context.queryId, true) : '') +
+    (context.runId ? businessLogDetailField('本次执行 ID', context.runId, true) : '') +
+    (context.taskId ? businessLogDetailField('执行器任务 ID', context.taskId, true) : '') +
+    (context.rejectionReason ? businessLogDetailField('上报拒绝原因', context.rejectionReason, true) : '') +
+    (Number.isInteger(context.submittedRowCount)
+      ? businessLogDetailField('上报范围', `任务允许 ${context.expectedRowCount} 行，本次上报 ${context.submittedRowCount} 行`, true) : '') +
     businessLogDetailField('requestId', data.requestId, true) +
     businessLogDetailField('traceId', data.traceId, true) +
     businessLogDetailField('到期时间', businessLogDateTime(data.expiresAt), true) +
@@ -10144,6 +10239,120 @@ function bytesToBase64(bytes) {
   return btoa(binary);
 }
 
+let procurementImportSummary = null;
+let procurementImportPendingAction = '';
+let procurementImportLastSyncStatus = null;
+let procurementImportSyncReadFailed = false;
+
+function procurementImportQuantityCount(result) {
+  if (typeof result.quantityCount === 'number'
+      && Number.isFinite(result.quantityCount) && result.quantityCount >= 0) {
+    return result.quantityCount;
+  }
+  // 兼容旧接口时，只能在预览完整覆盖本批数据时求和。
+  const preview = Array.isArray(result.preview) ? result.preview : [];
+  if (preview.length !== Number(result.detailCount)) return null;
+  return preview.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+}
+
+function procurementImportIsRunning() {
+  return !!procurementImportLastSyncStatus
+    && procurementImportRunningStates.includes(procurementImportLastSyncStatus.state);
+}
+
+function renderProcurementImportLayout() {
+  const parsed = !!procurementImportPlanId && !!procurementImportSummary;
+  const validated = procurementImportTargetValidated;
+  const running = procurementImportIsRunning();
+  const busy = !!procurementImportPendingAction || running;
+  const completed = procurementImportLastSyncStatus?.state === 'completed';
+  const summary = parsed ? procurementImportSummary : {};
+  const file = $('procurementImportFile').files[0];
+  $('procurementImportFileName').textContent = file?.name || '请选择店小秘订单文件';
+  $('procurementImportFileMeta').textContent = file
+    ? `已选择文件${parsed ? ` · ${summary.sourceRows} 行产品数据` : ''} · ${(file.size / 1024).toFixed(1)} KB`
+    : '支持 .xlsx 文件 · 最大 20 MB';
+  $('btnProcurementImportChooseFile').textContent = file ? '更换' : '选择文件';
+  const parseFailed = $('procurementImportState').classList.contains('bad');
+  const fileBadge = $('procurementImportFileBadge');
+  fileBadge.textContent = procurementImportPendingAction === 'parse' ? '解析中'
+    : parsed ? '已解析' : parseFailed ? '解析失败' : '待解析';
+  fileBadge.className = 'if-badge' + (parsed ? ' green' : parseFailed ? ' amber' : '');
+  const badTarget = $('procurementImportTargetState').classList.contains('bad');
+  const targetBadge = $('procurementImportTargetBadge');
+  targetBadge.textContent = procurementImportPendingAction === 'validate' ? '校验中'
+    : procurementImportPendingAction === 'inspect' ? '读取中'
+    : validated ? '校验通过' : badTarget ? '需处理' : '待校验';
+  targetBadge.className = 'if-badge' + (validated ? ' green' : badTarget ? ' amber' : '');
+  $('procurementImportSourceHint').lastChild.textContent = parsed
+    ? (summary.issueCount ? '解析完成，请核对需关注项' : '已包含完整 XYP2 采购备注')
+    : '请保留完整 XYP2 采购备注';
+  $('procurementImportTargetHint').lastChild.textContent = validated
+    ? '核心字段匹配，自定义列保留' : '确认字段后再导入';
+  $('procurementImportQuantity').textContent = parsed && summary.quantityCount == null
+    ? '—' : String(summary.quantityCount || 0);
+  $('procurementImportPreviewCount').textContent = parsed
+    ? `${summary.detailCount} 条明细${summary.detailCount > 50 ? ' · 预览前 50 条' : ''}` : '尚未解析';
+  $('procurementImportMatchNotice').hidden = !parsed || summary.issueCount > 0;
+  $('procurementImportState').hidden = parsed && $('procurementImportState').classList.contains('ok');
+  $('procurementImportTargetState').hidden = !validated && !badTarget && !running
+    && !['inspect', 'validate'].includes(procurementImportPendingAction);
+  const step = completed ? 3 : validated ? 2 : parsed ? 1 : 0;
+  document.querySelectorAll('[data-import-step]').forEach((item, index) => {
+    item.classList.toggle('complete', index < step);
+    item.classList.toggle('current', index === step);
+    if (index === step) item.setAttribute('aria-current', 'step');
+    else item.removeAttribute('aria-current');
+    item.querySelector('.if-step-circle').textContent = index < step ? '✓' : String(index + 1);
+  });
+  $('procurementImportFooterSummary').textContent = completed ? '本批导入已完成'
+    : parsed ? `本批 ${summary.orderCount} 单 / ${summary.detailCount} 条明细` : '请先解析本批订单';
+  $('procurementImportFooterHint').textContent = procurementImportSyncReadFailed
+    ? '暂未读到最新进度，请重试查询本批导入状态'
+    : running ? '正在导入数据和图片，请稍候'
+    : completed ? '已有数据和图片会自动跳过，可再次校验本批导入'
+    : validated ? '已完成目标表校验，可确认导入' : '请先校验目标飞书协作表';
+  for (const id of ['btnProcurementImportReset', 'btnProcurementImportChooseFile',
+      'procurementImportFile', 'procurementImportTargetUrl', 'btnProcurementImportParse']) {
+    $(id).disabled = busy;
+  }
+  $('procurementImportTargetSheet').disabled = busy || !parsed
+    || $('procurementImportTargetSheet').options.length <= 1;
+  $('btnProcurementImportInspectTarget').disabled = busy || !parsed;
+  $('btnProcurementImportValidateTarget').disabled = busy || !parsed
+    || !$('procurementImportTargetSheet').value;
+  $('btnProcurementImportDownload').disabled = !parsed;
+  $('btnProcurementImportSyncImages').disabled = !!procurementImportPendingAction
+    || !validated || (running && !procurementImportSyncReadFailed);
+}
+
+async function runProcurementImportAction(action, handler) {
+  if (procurementImportPendingAction
+      || (procurementImportIsRunning() && !(action === 'sync' && procurementImportSyncReadFailed))) return;
+  procurementImportPendingAction = action;
+  renderProcurementImportLayout();
+  try { await handler(); }
+  finally { procurementImportPendingAction = ''; renderProcurementImportLayout(); }
+}
+
+function initializeProcurementImportLayout() {
+  $('btnProcurementImportChooseFile').onclick = () => $('procurementImportFile').click();
+  $('btnProcurementImportReset').onclick = () => {
+    if (procurementImportPendingAction || procurementImportIsRunning()) return;
+    $('procurementImportFile').value = '';
+    $('procurementImportTargetUrl').value = '';
+    resetProcurementImport('请选择店小秘导出的 xlsx，开始新一批导入。');
+  };
+  for (const [id, action] of Object.entries({
+    btnProcurementImportParse:'parse', btnProcurementImportInspectTarget:'inspect',
+    btnProcurementImportValidateTarget:'validate', btnProcurementImportSyncImages:'sync'
+  })) {
+    const handler = $(id).onclick;
+    $(id).onclick = () => runProcurementImportAction(action, handler);
+  }
+  renderProcurementImportLayout();
+}
+
 function stopProcurementImportSyncPolling() {
   if (procurementImportSyncTimer) clearTimeout(procurementImportSyncTimer);
   procurementImportSyncTimer = null;
@@ -10151,6 +10360,8 @@ function stopProcurementImportSyncPolling() {
 
 function invalidateProcurementImportTarget(message, clearSheets=false) {
   stopProcurementImportSyncPolling();
+  procurementImportLastSyncStatus = null;
+  procurementImportSyncReadFailed = false;
   procurementImportTargetValidated = false;
   $('btnProcurementImportValidateTarget').disabled = true;
   $('btnProcurementImportSyncImages').disabled = true;
@@ -10165,10 +10376,12 @@ function invalidateProcurementImportTarget(message, clearSheets=false) {
   }
   $('procurementImportTargetState').className = 'resource-state';
   $('procurementImportTargetState').textContent = message;
+  renderProcurementImportLayout();
 }
 
 function resetProcurementImport(message='文件已变化，请重新解析') {
   procurementImportPlanId = null;
+  procurementImportSummary = null;
   $('btnProcurementImportDownload').disabled = true;
   $('btnProcurementImportInspectTarget').disabled = true;
   $('procurementImportStats').hidden = true;
@@ -10180,7 +10393,7 @@ function resetProcurementImport(message='文件已变化，请重新解析') {
     '先解析文件，再读取本批要使用的普通飞书共享表格。', true);
 }
 
-$('procurementImportFile').onchange = () => resetProcurementImport('已选择文件，点击“解析并生成”开始本机处理。');
+$('procurementImportFile').onchange = () => resetProcurementImport('已选择文件，点击“解析并生成”开始处理。');
 
 $('btnProcurementImportParse').onclick = async () => {
   const file = $('procurementImportFile').files[0];
@@ -10190,6 +10403,7 @@ $('btnProcurementImportParse').onclick = async () => {
   const button = $('btnProcurementImportParse');
   button.disabled = true;
   procurementImportPlanId = null;
+  procurementImportSummary = null;
   $('btnProcurementImportDownload').disabled = true;
   $('btnProcurementImportInspectTarget').disabled = true;
   invalidateProcurementImportTarget('正在生成本批唯一标识，完成后再绑定飞书目标表。', true);
@@ -10208,6 +10422,11 @@ $('btnProcurementImportParse').onclick = async () => {
       })
     });
     procurementImportPlanId = result.planId;
+    procurementImportSummary = {
+      sourceRows:Number(result.sourceRows || 0), orderCount:Number(result.orderCount || 0),
+      detailCount:Number(result.detailCount || 0), quantityCount:procurementImportQuantityCount(result),
+      issueCount:Number(result.warningCount || 0) + Number(result.errorCount || 0)
+    };
     $('btnProcurementImportDownload').disabled = false;
     $('btnProcurementImportInspectTarget').disabled = false;
     $('procurementImportStats').hidden = false;
@@ -10268,13 +10487,14 @@ $('procurementImportTargetUrl').oninput = () => {
 };
 
 $('procurementImportTargetSheet').onchange = () => {
-  procurementImportTargetValidated = false;
+  invalidateProcurementImportTarget('工作表已变化，请重新校验核心字段。');
   $('btnProcurementImportSyncImages').disabled = true;
   $('btnProcurementImportValidateTarget').disabled = !$('procurementImportTargetSheet').value;
   $('procurementImportTargetState').className = 'resource-state';
   $('procurementImportTargetState').textContent = $('procurementImportTargetSheet').value
     ? '工作表已选择，请校验采购需求区和系统追踪区；采购下单区不校验。'
     : '请选择本批采购数据所在工作表。';
+  renderProcurementImportLayout();
 };
 
 $('btnProcurementImportInspectTarget').onclick = async () => {
@@ -10315,14 +10535,14 @@ $('btnProcurementImportValidateTarget').onclick = async () => {
   button.disabled = true;
   procurementImportTargetValidated = false;
   $('btnProcurementImportSyncImages').disabled = true;
-  $('procurementImportTargetState').className = 'resource-state';
-  $('procurementImportTargetState').textContent = '正在只读校验采购需求区和系统追踪区；采购下单区不参与校验…';
+  invalidateProcurementImportTarget('正在只读校验采购需求区和系统追踪区；采购下单区不参与校验…');
   try {
     const result = await api('/api/assistant/procurement-import/target/validate', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({planId:procurementImportPlanId, spreadsheetUrl, sheetId})
     });
     procurementImportTargetValidated = Boolean(result.valid);
+    if (!procurementImportTargetValidated) throw new Error('目标工作表未通过核心字段校验');
     $('btnProcurementImportSyncImages').disabled = !procurementImportTargetValidated;
     $('procurementImportTargetState').className = 'resource-state ok';
     const upgradeMissing = Array.isArray(result.missingRecommendedColumns) ? result.missingRecommendedColumns : [];
@@ -10411,6 +10631,8 @@ function updateProcurementImportMetric(progress, name, value) {
 }
 
 function renderProcurementImportSyncStatus(status) {
+  procurementImportLastSyncStatus = status;
+  procurementImportSyncReadFailed = false;
   const progress = $('procurementImportSyncProgress');
   const syncBar = $('procurementImportSyncBar');
   progress.hidden = false;
@@ -10447,6 +10669,7 @@ function renderProcurementImportSyncStatus(status) {
       procurementImportRunningCopy[status.state] || '导入处理中…');
     $('btnProcurementImportSyncImages').disabled = true;
     $('btnProcurementImportSyncImages').textContent = '导入进行中…';
+    renderProcurementImportLayout();
     return false;
   }
   $('btnProcurementImportSyncImages').disabled = !procurementImportTargetValidated;
@@ -10462,6 +10685,7 @@ function renderProcurementImportSyncStatus(status) {
       : '可安全重试，已存在数据和图片会自动跳过。';
     $('procurementImportTargetState').textContent = `${status.error || '导入未完成'}。已追加 ${status.rowsWritten || 0} 行、新补图 ${status.written || 0} 张，失败 ${status.failed || 0} 张；${nextStep}`;
   }
+  renderProcurementImportLayout();
   return true;
 }
 
@@ -10473,10 +10697,12 @@ async function pollProcurementImportSync(jobId) {
       procurementImportSyncTimer = setTimeout(() => pollProcurementImportSync(jobId), 900);
     }
   } catch (err) {
+    procurementImportSyncReadFailed = true;
     $('procurementImportTargetState').className = 'resource-state bad';
     $('procurementImportTargetState').textContent = '读取导入进度失败：' + err.message;
     $('btnProcurementImportSyncImages').disabled = !procurementImportTargetValidated;
     $('btnProcurementImportSyncImages').textContent = '重试导入数据/图片';
+    renderProcurementImportLayout();
   }
 }
 
@@ -12786,6 +13012,7 @@ document.addEventListener('click', event => {
   toast(CLOUD_EXECUTOR_OFFLINE_MESSAGE);
 });
 
+initializeProcurementImportLayout();
 initializeAuth();
 </script>
 </body>

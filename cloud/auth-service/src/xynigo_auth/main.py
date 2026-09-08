@@ -110,6 +110,7 @@ from .local_executor_release import (
 )
 from .integration_contract import FeishuIntegrationWriteBody, FeishuReadProxyBody
 from .logistics_export import build_logistics_workbook_export
+from .executor_diagnostics import executor_context, logistics_diagnostics
 from .models import (
     EnvironmentWorkspacePreference,
     LocalExecutor,
@@ -508,7 +509,7 @@ def create_app(
 
     app = FastAPI(
         title="Xynigo Auth Service",
-        version="0.17.8",
+        version="0.17.9",
         docs_url=None,
         redoc_url=None,
         lifespan=lifespan,
@@ -563,7 +564,13 @@ def create_app(
         request.state.tenant_id = executor.tenant_id
         request.state.actor_name = executor.display_name
         request.state.log_source = "local_executor_device"
+        request.state.client_version = executor.client_version
         return service, executor
+
+    def bind_executor_task_context(request, session, service, executor, task_id, body):
+        # Never attach another device's task or business identifiers to a log.
+        task = service._device_task(executor=executor, task_id=task_id)
+        request.state.executor_context = executor_context(session, executor, task, body)
 
     def bind_request_identity(request: Request, *, user: User, tenant: Tenant) -> None:
         request.state.tenant_id = tenant.id
@@ -588,7 +595,26 @@ def create_app(
         ):
             return
         is_error = status_code >= 500 or exception is not None
-        level = "error" if is_error else "warning" if status_code >= 400 else "info"
+        context = dict(getattr(request.state, "executor_context", {}))
+        rejection_reason = getattr(request.state, "executor_diagnostic_reason", None)
+        if rejection_reason:
+            context["rejectionReason"] = rejection_reason
+        counts_mismatch = context.get("resultCountsConsistent") is False
+        cleanup_pending = context.get("phase") == "logistics.waiting_cleanup"
+        business_warning = counts_mismatch or cleanup_pending
+        level = "error" if is_error else "warning" if status_code >= 400 or business_warning else "info"
+        error_code = None
+        message = "HTTP request completed"
+        if exception:
+            error_code, message = "unhandled_exception", "Unhandled application exception"
+        elif status_code >= 400:
+            error_code = getattr(request.state, "executor_error_code", None) or f"http_{status_code}"
+            if context:
+                message = "执行器请求被拒绝：" + (rejection_reason or error_code)
+        elif counts_mismatch:
+            error_code, message = "executor_result_count_mismatch", "执行器结束统计与任务范围不一致"
+        elif cleanup_pending:
+            error_code, message = "hubstudio_browser_cleanup_pending", "环境关闭状态未确认，等待清理"
         try:
             with database.session_factory() as system_log_session:
                 service = SystemLogService(system_log_session)
@@ -602,7 +628,7 @@ def create_app(
                     component="http_api",
                     environment=settings.environment,
                     event_type="http.request.failed" if is_error else "http.request.completed",
-                    message="Unhandled application exception" if exception else "HTTP request completed",
+                    message=message,
                     request_id=request.state.request_id,
                     trace_id=request.state.trace_id,
                     retention_days=settings.system_log_retention_days,
@@ -613,12 +639,8 @@ def create_app(
                     status_code=status_code,
                     duration_ms=duration_ms,
                     exception_type=type(exception).__name__ if exception else None,
-                    error_code="unhandled_exception"
-                    if exception
-                    else f"http_{status_code}"
-                    if status_code >= 400
-                    else None,
-                    details={"handled": exception is None},
+                    error_code=error_code,
+                    details={"handled": exception is None, **context},
                 )
                 system_log_session.flush()
                 prune_now = time.monotonic()
@@ -748,6 +770,20 @@ def create_app(
         request: Request,
         exc: RequestValidationError,
     ) -> JSONResponse:
+        request.state.executor_error_code = "validation_failed"
+        request.state.executor_diagnostic_reason = "request_schema_invalid"
+        # Body validation runs before the endpoint. Recover only authenticated,
+        # device-owned task context, without reading or logging the raw body.
+        if request.url.path.startswith("/v1/executor-channel/tasks/"):
+            try:
+                target_id = uuid.UUID(str(request.path_params.get("task_id", "")))
+                with database.session_factory() as diagnostic_session:
+                    service, executor = authenticated_executor(
+                        request, diagnostic_session, request.headers.get("Authorization"))
+                    bind_executor_task_context(request, diagnostic_session, service,
+                                               executor, target_id, None)
+            except (ValueError, ExecutorServiceError):
+                pass
         action, business_object_id = _validation_log_target(
             request.method, request.url.path
         )
@@ -798,6 +834,8 @@ def create_app(
         request: Request,
         exc: ExecutorServiceError,
     ) -> JSONResponse:
+        request.state.executor_error_code = exc.code
+        request.state.executor_diagnostic_reason = exc.diagnostic_reason
         return JSONResponse(
             status_code=exc.status_code,
             content={
@@ -1311,6 +1349,48 @@ def create_app(
         payload = _identity_payload(session, user, tenant)
         session.commit()
         return payload
+
+    @app.post("/v1/auth/session/refresh")
+    def refresh_bearer_session(
+        request: Request,
+        session: SessionDep,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> JSONResponse:
+        """Renew an active plugin session using the existing bounded lifetime."""
+        if request.headers.get("Cookie"):
+            raise HTTPException(
+                status_code=401, detail={"code": "session_refresh_bearer_required"}
+            )
+        raw_token = _request_session_token(None, authorization)
+        record, user, tenant = _authenticated_identity(session, raw_token)
+        bind_request_identity(request, user=user, tenant=tenant)
+        now = utcnow()
+        absolute_expiry = as_utc(record.created_at) + timedelta(
+            seconds=settings.session_absolute_ttl_seconds
+        )
+        if absolute_expiry <= now or as_utc(record.expires_at) <= now:
+            raise HTTPException(status_code=401, detail={"code": "session_invalid"})
+        record.expires_at = min(as_utc(record.expires_at), absolute_expiry)
+        renewed = _slide_session_expiry(record, settings=settings, now=now) is not None
+        record.last_seen_at = now
+        expires_at = as_utc(record.expires_at)
+        refresh_after = (
+            expires_at if expires_at >= absolute_expiry
+            else expires_at - timedelta(seconds=settings.session_refresh_threshold_seconds)
+        )
+        if renewed:
+            _add_audit(
+                session, request_id=request.state.request_id,
+                action="auth.session.refresh", result="success",
+                tenant_id=tenant.id, actor_user_id=user.id,
+            )
+        session.commit()
+        return JSONResponse(
+            {"renewed": renewed, "sessionExpiresAt": expires_at.isoformat(),
+             "sessionAbsoluteExpiresAt": absolute_expiry.isoformat(),
+             "sessionRefreshAfter": refresh_after.isoformat()},
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.post("/v1/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
     def logout(
@@ -2738,6 +2818,7 @@ def create_app(
         authorization: Annotated[str | None, Header()] = None,
     ) -> dict[str, object]:
         service, executor = authenticated_executor(request, session, authorization)
+        bind_executor_task_context(request, session, service, executor, task_id, body)
         task = service.start_task(
             executor=executor,
             task_id=task_id,
@@ -2755,6 +2836,7 @@ def create_app(
         authorization: Annotated[str | None, Header()] = None,
     ) -> dict[str, object]:
         service, executor = authenticated_executor(request, session, authorization)
+        bind_executor_task_context(request, session, service, executor, task_id, body)
         task = service.renew_lease(
             executor=executor,
             task_id=task_id,
@@ -2771,6 +2853,7 @@ def create_app(
         authorization: Annotated[str | None, Header()] = None,
     ) -> dict[str, object]:
         service, executor = authenticated_executor(request, session, authorization)
+        bind_executor_task_context(request, session, service, executor, task_id, body)
         task = service.progress(
             executor=executor,
             task_id=task_id,
@@ -2788,6 +2871,7 @@ def create_app(
         authorization: Annotated[str | None, Header()] = None,
     ) -> dict[str, object]:
         service, executor = authenticated_executor(request, session, authorization)
+        bind_executor_task_context(request, session, service, executor, task_id, body)
         task = service.finish(
             executor=executor,
             task_id=task_id,
@@ -4243,6 +4327,7 @@ def create_app(
                 "force": body.force,
                 "site": body.site,
                 "environmentSerials": list(body.environmentSerials),
+                "diagnosticsVersion": 1,
             }
             if cached_inventory is not None:
                 task_payload["environmentIndex"] = cached_inventory["rows"]
@@ -4436,6 +4521,28 @@ def create_app(
                 request, session, actor, action, exc, business_object_id=str(run_id)
             )
         return {"ok": True, "data": service.logistics_snapshot(run)}
+
+    @app.get("/v1/operation-runs/logistics-query/{run_id}/diagnostics")
+    def get_logistics_run_diagnostics(
+        run_id: uuid.UUID, request: Request, session: SessionDep,
+        page: Annotated[int, Query(ge=1, le=100_000)] = 1,
+        page_size: Annotated[int, Query(alias="pageSize", ge=1, le=200)] = 50,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request, session, permission="system.runtime_log.read",
+            session_token=session_token, authorization=authorization,
+            audit_action="system_log.logistics_diagnostics.read",
+        )
+        try:
+            run = OperationRunService(session).get_logistics_run(
+                tenant_id=actor.tenant.id, run_id=run_id)
+        except PurchaseServiceError as exc:
+            purchase_error(request, session, actor, "system_log.logistics_diagnostics.read",
+                           exc, business_object_id=str(run_id))
+        return {"ok": True, "data": logistics_diagnostics(
+            session, run, page=page, page_size=page_size)}
 
     @app.get(
         "/v1/operation-runs/logistics-query/{run_id}/screenshots/{environment_serial}"
@@ -5603,6 +5710,9 @@ def create_app(
             str | None, Query(alias="requestId", max_length=64)
         ] = None,
         keyword: Annotated[str | None, Query(max_length=255)] = None,
+        task_id: Annotated[uuid.UUID | None, Query(alias="taskId")] = None,
+        run_id: Annotated[uuid.UUID | None, Query(alias="runId")] = None,
+        query_id: Annotated[uuid.UUID | None, Query(alias="queryId")] = None,
         page: Annotated[int, Query(ge=1, le=100_000)] = 1,
         page_size: Annotated[int, Query(alias="pageSize", ge=1, le=200)] = 50,
         session_token: Annotated[
@@ -5641,6 +5751,9 @@ def create_app(
             status_code=status_code,
             request_id=request_id,
             keyword=keyword,
+            task_id=task_id,
+            run_id=run_id,
+            query_id=query_id,
             page=page,
             page_size=page_size,
         )

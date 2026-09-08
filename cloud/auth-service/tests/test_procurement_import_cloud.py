@@ -188,6 +188,50 @@ def login(client: TestClient) -> None:
     assert response.status_code == 303
 
 
+def test_cloud_parse_shared_source_sku_preserves_variant_amounts(tmp_path) -> None:
+    workbook = load_workbook(BytesIO(source_workbook()))
+    worksheet = workbook.active
+    values = [cell.value for cell in worksheet[2]]
+    payload = json.loads(values[19].split('[XYP2]')[1].split('[/XYP2]')[0])
+    black = list(payload['i'][0])
+    black[0], black[4], black[5] = 'SHARED-SOURCE', 'Negro', 'L'
+    gray = list(black)
+    gray[1:3], gray[4] = ['422790138', 'TEST-GRAY-SKU'], 'Gris'
+    payload['i'] = [black, gray]
+    remark = '[XYP2]' + json.dumps(payload) + '[/XYP2]'
+    worksheet.delete_rows(2)
+    # Deliberately reverse exported row order relative to the XYP2 details.
+    for spec, amount in [('Gray-L', 220), ('Black-L', 110)]:
+        row = list(values)
+        row[4], row[15], row[16], row[19] = 330, 'SHARED-SOURCE:' + spec, amount, remark
+        worksheet.append(row)
+    stream = BytesIO()
+    workbook.save(stream)
+    gateway = FakeCloudSheetGateway()
+    app, _database, _oauth = build_test_app(
+        tmp_path, procurement_import_enabled=True,
+        procurement_import_gateway=gateway,
+    )
+    with TestClient(app) as client:
+        login(client)
+        response = client.post(
+            '/v1/assistant/procurement-import/parse',
+            headers={'X-Xynigo-Web-CSRF': 'same-origin'},
+            json={'filename': 'shared_sku_cloud.xlsx',
+                  'contentBase64': base64.b64encode(stream.getvalue()).decode('ascii')},
+        )
+        assert response.status_code == 201, response.text
+        plan = response.json()
+        assert plan['runtime'] == 'cloud'
+        assert plan['sourceRows'] == 2
+        assert plan['orderCount'] == 1
+        assert plan['detailCount'] == 2
+        assert plan['issues'] == []
+        assert [(row['mainSpec'], row['secondarySpec'], row['itemSalesAmount'])
+                for row in plan['preview']] == [('Negro', 'L', 110), ('Gris', 'L', 220)]
+        assert gateway.rows == ()
+
+
 def test_cloud_parse_validate_export_and_durable_worker(tmp_path) -> None:
     gateway = FakeCloudSheetGateway()
     app, database, _oauth = build_test_app(
@@ -211,6 +255,7 @@ def test_cloud_parse_validate_export_and_durable_worker(tmp_path) -> None:
         assert plan["runtime"] == "cloud"
         assert plan["orderCount"] == 1
         assert plan["detailCount"] == 1
+        assert plan["quantityCount"] == 1
         assert plan["preview"][0]["orderNo"] == "GSH-CLOUD-TEST-001"
 
         with database.session_factory() as session:

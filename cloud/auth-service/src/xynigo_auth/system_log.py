@@ -270,11 +270,18 @@ class SystemLogService:
         event_type: str | None = None,
         status_code: int | None = None,
         request_id: str | None = None,
+        task_id: uuid.UUID | None = None,
+        run_id: uuid.UUID | None = None,
+        query_id: uuid.UUID | None = None,
         keyword: str | None = None,
         page: int = 1,
         page_size: int = 50,
+        include_details: bool = False,
     ) -> dict[str, Any]:
         filters = [SystemLogEvent.tenant_id == tenant_id]
+        for key, value in (("taskId", task_id), ("runId", run_id), ("queryId", query_id)):
+            if value is not None:
+                filters.append(SystemLogEvent.details[key].as_string() == str(value))
         if started_at is not None:
             filters.append(SystemLogEvent.created_at >= started_at)
         if ended_at is not None:
@@ -301,6 +308,14 @@ class SystemLogService:
             )
         if keyword:
             pattern = f"%{keyword.strip()}%"
+            identifiers = []
+            try:
+                lookup_id = str(uuid.UUID(keyword.strip()))
+            except ValueError:
+                pass
+            else:
+                identifiers = [SystemLogEvent.details[key].as_string() == lookup_id
+                               for key in ("taskId", "runId", "queryId")]
             filters.append(
                 or_(
                     SystemLogEvent.message.ilike(pattern),
@@ -308,6 +323,7 @@ class SystemLogService:
                     SystemLogEvent.route.ilike(pattern),
                     SystemLogEvent.error_code.ilike(pattern),
                     SystemLogEvent.fingerprint.ilike(pattern),
+                    *identifiers,
                 )
             )
         total = int(
@@ -328,7 +344,7 @@ class SystemLogService:
             "page": page,
             "pageSize": page_size,
             "total": total,
-            "items": [self.serialize(record, include_details=False) for record in records],
+            "items": [self.serialize(record, include_details=include_details) for record in records],
         }
 
     def get_event(

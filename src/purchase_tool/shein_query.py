@@ -606,6 +606,8 @@ class QueryOrchestrator(object):
         self._start_lock = threading.Lock()
         self._active_browser_codes = set()
         self._pending_close_codes = set()
+        self._close_diagnostics = {}
+        self._environment_serial_by_code = {}
         self._resource_constrained = False
         self._runtime_state = 'idle'
         self._runtime_message = ''
@@ -676,6 +678,15 @@ class QueryOrchestrator(object):
                 'recoveryCount': self._recovery_count,
                 'healthyLifecycleCount': self._healthy_lifecycle_count,
                 'pendingCloseCount': len(self._pending_close_codes),
+                'diagnostics': {
+                    'schemaVersion': 1,
+                    'resourceConstrained': self._resource_constrained,
+                    'effectiveConcurrency': (
+                        1 if self.browser_mode == 'visible' or self._resource_constrained
+                        else self.concurrency),
+                    'pendingCloseCount': len(self._pending_close_codes),
+                    'closeChecks': [dict(item) for item in self._close_diagnostics.values()],
+                },
                 'rows': [dict(r) for r in self.rows],
             }
 
@@ -962,6 +973,8 @@ class QueryOrchestrator(object):
             self._recovery_attempt = 0
             self._recovery_count = recovery_count
             self._healthy_lifecycle_count = 0
+            self._close_diagnostics = {}
+            self._environment_serial_by_code = {}
             if fresh:
                 self._reset_screenshots()
                 self.rows = [self._blank_row(s, site) for s in serials]
@@ -1046,8 +1059,14 @@ class QueryOrchestrator(object):
                     lifecycle = self._browser_lifecycle_status(
                         code, timeout=5.0)
                     if lifecycle['state'] in {'closed', 'absent'}:
+                        self._record_close_diagnostic(code, state=lifecycle['state'], confirmed=True)
                         confirmed.add(code)
-            except HubApiError:
+                    elif lifecycle['state'] in {'open', 'opening', 'closing', 'unknown'}:
+                        self._record_close_diagnostic(code, state=lifecycle['state'])
+            except HubApiError as exc:
+                reason, api_code = self._close_error_codes(exc)
+                self._record_close_diagnostic(code, statusErrorCode=reason,
+                                              statusApiCode=api_code)
                 self._set_runtime_recovery(
                     'reconnecting_hub',
                     '正在恢复 Local API，以确认上一环境已经关闭')
@@ -1065,6 +1084,29 @@ class QueryOrchestrator(object):
             time.sleep(BROWSER_CLOSE_POLL_SECONDS)
         return False
 
+    def _record_close_diagnostic(self, code, **fields):
+        """Only allow structured codes/counters, never exception text or URLs."""
+        with self.lock:
+            serial = self._environment_serial_by_code.get(str(code), '')
+            if not re.fullmatch(r'[0-9]{1,20}', serial):
+                return
+            previous = self._close_diagnostics.pop(serial, {})
+            previous.update(fields, environmentSerial=serial)
+            self._close_diagnostics[serial] = previous
+            while len(self._close_diagnostics) > 20:
+                discard = next((key for key, value in self._close_diagnostics.items()
+                                if value.get('confirmed')), next(iter(self._close_diagnostics)))
+                self._close_diagnostics.pop(discard)
+
+    @staticmethod
+    def _close_error_codes(error):
+        reason = str(getattr(error, 'reason_code', '') or '')
+        api = str(getattr(error, 'api_code', '') or '')
+        return (
+            reason if re.fullmatch(r'hubstudio_[a-z_]{1,118}', reason) else '',
+            api if re.fullmatch(r'-?[0-9]{1,10}|E[0-9]{6}', api) else '',
+        )
+
     def _stop_browser_and_confirm(self, code):
         """关闭本批环境，并确认 HubStudio 不再报告为打开状态。"""
         code = str(code)
@@ -1072,14 +1114,24 @@ class QueryOrchestrator(object):
         stop_sent = False
         confirmed = False
         last_error = None
+        began_at = time.time()
+        stop_attempts = status_checks = 0
+        last_state = 'unknown'
+        stop_error_code = stop_api_code = status_error_code = status_api_code = ''
+        first_error_operation = first_error_code = first_api_code = ''
         try:
             while time.time() < deadline:
                 if not stop_sent:
                     try:
+                        stop_attempts += 1
                         self.hub.browser_stop(code)
                         stop_sent = True
                     except HubApiError as exc:
                         last_error = exc
+                        stop_error_code, stop_api_code = self._close_error_codes(exc)
+                        if not first_error_operation:
+                            first_error_operation = 'browser_stop'
+                            first_error_code, first_api_code = stop_error_code, stop_api_code
                         if (exc.reason_code in {
                                 'hubstudio_local_api_unreachable',
                                 'hubstudio_local_api_timeout'}
@@ -1096,18 +1148,35 @@ class QueryOrchestrator(object):
                             break
                 if stop_sent:
                     try:
+                        status_checks += 1
                         lifecycle = self._browser_lifecycle_status(
                             code, timeout=5.0)
+                        last_state = lifecycle['state']
                         if lifecycle['state'] in {'closed', 'absent'}:
                             confirmed = True
                             break
                     except HubApiError as exc:
                         last_error = exc
+                        status_error_code, status_api_code = self._close_error_codes(exc)
+                        if not first_error_operation:
+                            first_error_operation = 'browser_status'
+                            first_error_code, first_api_code = status_error_code, status_api_code
                 if self.stop_event.is_set() and not self.fatal_error_code:
                     # 用户停止仍要尽量完成当前关闭，但不额外拖满 30 秒。
                     break
                 time.sleep(BROWSER_CLOSE_POLL_SECONDS)
         finally:
+            self._record_close_diagnostic(
+                code, state=last_state if last_state in {
+                    'open', 'opening', 'closing', 'closed', 'absent'} else 'unknown',
+                confirmed=confirmed, stopSent=stop_sent,
+                stopAttempts=stop_attempts, statusChecks=status_checks,
+                elapsedMs=min(86400000, max(0, int((time.time() - began_at) * 1000))),
+                stopErrorCode=stop_error_code, stopApiCode=stop_api_code,
+                statusErrorCode=status_error_code, statusApiCode=status_api_code,
+                firstErrorOperation=first_error_operation,
+                firstErrorCode=first_error_code, firstApiCode=first_api_code,
+            )
             with self._browser_state:
                 self._active_browser_codes.discard(code)
                 if confirmed:
@@ -1689,6 +1758,8 @@ class QueryOrchestrator(object):
             self._update(row, state='fail', error='未找到该环境序号')
             return
         code = str(env.get('containerCode'))
+        with self.lock:
+            self._environment_serial_by_code[code] = str(serial)
         env_name = env.get('containerName') or ''
         self._update(row, envName=env_name,
                      state='running')

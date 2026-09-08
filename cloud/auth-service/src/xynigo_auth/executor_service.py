@@ -29,6 +29,7 @@ from .executor_payload_crypto import (
     ExecutorPayloadCipher,
     ExecutorPayloadCipherError,
 )
+from .executor_diagnostics import validate_diagnostics
 from .models import (
     EnvironmentCreationResult,
     EnvironmentCreationRun,
@@ -169,9 +170,11 @@ def _safe_nonnegative_int(value: Any) -> int | None:
 
 
 class ExecutorServiceError(RuntimeError):
-    def __init__(self, code: str, *, status_code: int = 400):
+    def __init__(self, code: str, *, status_code: int = 400,
+                 diagnostic_reason: str | None = None):
         self.code = code
         self.status_code = status_code
+        self.diagnostic_reason = diagnostic_reason
         super().__init__(code)
 
 
@@ -1982,11 +1985,12 @@ class ExecutorChannelService:
             stale.screenshot_content_type = None
             stale.screenshot_sha256 = None
             stale.screenshot_size = None
-        if not set(snapshot).issubset({"rows", "screenshots"}) \
+        if not set(snapshot).issubset({"rows", "screenshots", "diagnostics"}) \
                 or "rows" not in snapshot \
                 or not isinstance(snapshot.get("rows"), list) \
                 or not isinstance(snapshot.get("screenshots", []), list):
-            raise ExecutorServiceError("executor_progress_snapshot_invalid", status_code=422)
+            raise ExecutorServiceError("executor_progress_snapshot_invalid", status_code=422,
+                                       diagnostic_reason="snapshot_shape_invalid")
         try:
             rows = [LogisticsRunProgressItem.model_validate(item) for item in snapshot["rows"]]
             screenshots = [
@@ -1994,15 +1998,30 @@ class ExecutorChannelService:
                 for item in snapshot.get("screenshots", [])
             ]
         except ValidationError as exc:
-            raise ExecutorServiceError("executor_progress_snapshot_invalid", status_code=422) from exc
+            raise ExecutorServiceError("executor_progress_snapshot_invalid", status_code=422,
+                                       diagnostic_reason="row_or_screenshot_schema_invalid") from exc
         serials = [row.environmentSerial for row in rows]
         screenshot_serials = [item.environmentSerial for item in screenshots]
-        if (
-            len(serials) != len(set(serials)) or len(rows) > run.total_count
-            or len(screenshot_serials) != len(set(screenshot_serials))
-            or not set(screenshot_serials).issubset(set(serials))
-        ):
-            raise ExecutorServiceError("executor_progress_snapshot_invalid", status_code=422)
+        allowed_serials = set((run.request_summary or {}).get("environmentSerials") or [])
+        invalid_reason = (
+            "row_count_exceeds_task" if len(rows) > run.total_count else
+            "duplicate_environment_serial" if len(serials) != len(set(serials)) else
+            "environment_outside_task" if allowed_serials and not set(serials).issubset(allowed_serials) else
+            "screenshot_scope_invalid" if (
+                len(screenshot_serials) != len(set(screenshot_serials))
+                or not set(screenshot_serials).issubset(set(serials))) else None
+        )
+        if invalid_reason:
+            raise ExecutorServiceError("executor_progress_snapshot_invalid", status_code=422,
+                                       diagnostic_reason=invalid_reason)
+        if "diagnostics" in snapshot:
+            try:
+                diagnostics = validate_diagnostics(snapshot["diagnostics"], allowed_serials)
+            except (ValidationError, ValueError) as exc:
+                raise ExecutorServiceError("executor_progress_snapshot_invalid", status_code=422,
+                                           diagnostic_reason="diagnostics_schema_or_scope_invalid") from exc
+            run.request_summary = {**(run.request_summary or {}), "runtimeDiagnostics": diagnostics,
+                                   "runtimeDiagnosticsAt": now.isoformat()}
         existing = {
             row.environment_serial: row
             for row in self.session.scalars(

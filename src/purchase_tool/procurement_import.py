@@ -17,6 +17,7 @@ import posixpath
 import re
 import threading
 import time
+import unicodedata
 from urllib.parse import urlencode, urlparse
 from xml.etree import ElementTree
 import zipfile
@@ -607,6 +608,31 @@ def _select_xyp2(source_rows):
     return parsed[0][1]
 
 
+# Only explicit equivalent labels are accepted; unknown translations and
+# modifiers (e.g. Dark Gray versus Gray) must not become fuzzy matches.
+_VARIANT_LABEL_ALIASES = {'negro': 'black', 'gris': 'gray', 'grey': 'gray'}
+
+
+def _variant_spec_key(value):
+    normalized = unicodedata.normalize('NFKC', _text(value)).casefold().strip()
+    parts = re.split(r'\s*[-‐‑–—]\s*', normalized)
+    return tuple(_VARIANT_LABEL_ALIASES.get(part, part)
+                 for part in (' '.join(part.split()) for part in parts) if part)
+
+
+def _variant_candidates(source_row, xyp2_items, candidates):
+    # DXM exports "source SKU:color-size". Compare the entire variant, not
+    # substrings or row order, to keep sizes, amounts and images together.
+    spec = re.split(r'[:：]', _compact_text(source_row.values.get('产品规格')),
+                    maxsplit=1)[-1]
+    source_key = _variant_spec_key(spec)
+    if not source_key:
+        return []
+    return [index for index in candidates
+            if source_key == (_variant_spec_key(xyp2_items[index].main_spec)
+                              + _variant_spec_key(xyp2_items[index].secondary_spec))]
+
+
 def _match_source_rows(source_rows, xyp2_items):
     assignments = [[] for _item in xyp2_items]
     unmatched_source_rows = []
@@ -629,9 +655,12 @@ def _match_source_rows(source_rows, xyp2_items):
             continue
         best_score = max(score for score, _index in scored)
         candidates = [index for score, index in scored if score == best_score]
+        if len(candidates) > 1:
+            candidates = _variant_candidates(source_row, xyp2_items, candidates)
         if len(candidates) != 1:
             raise ProcurementImportError(
-                '店小秘第 %d 行同时匹配多个 XYP2 采购明细，请核对来源 SKU' %
+                '店小秘第 %d 行同时匹配多个 XYP2 采购明细，且无法按完整规格唯一对应；'
+                '请核对来源 SKU、颜色和尺码' %
                 source_row.row_number)
         assignments[candidates[0]].append(source_row)
 
@@ -1185,6 +1214,7 @@ class ProcurementImportService(object):
             'sourceRows': plan.source_rows,
             'orderCount': plan.order_count,
             'detailCount': len(rows),
+            'quantityCount': sum(row.values['需求数量'] for row in rows),
             'importBatch': import_batch,
             'orderImageCount': sum(bool(row.order_image) for row in rows),
             'warningCount': warnings,

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Release contract tests for Xynigo Sourcing v0.17.8 candidate."""
+"""Release contract tests for Xynigo Sourcing v0.17.9 candidate."""
 
 from pathlib import Path
 import hashlib
@@ -15,21 +15,21 @@ from purchase_tool import __version__
 class ReleaseV0170Tests(unittest.TestCase):
     def test_version_and_packaging_are_aligned(self):
         root = Path(__file__).resolve().parents[1]
-        self.assertEqual(__version__, '0.17.8')
+        self.assertEqual(__version__, '0.17.9')
         pyproject = (root / 'pyproject.toml').read_text(encoding='utf-8')
-        self.assertIn('version = "0.17.8"', pyproject)
+        self.assertIn('version = "0.17.9"', pyproject)
         cloud_project = (root / 'cloud' / 'auth-service' /
                          'pyproject.toml').read_text(encoding='utf-8')
-        self.assertIn('version = "0.17.8"', cloud_project)
+        self.assertIn('version = "0.17.9"', cloud_project)
         cloud_init = (root / 'cloud' / 'auth-service' / 'src' /
                       'xynigo_auth' / '__init__.py').read_text(
                           encoding='utf-8')
-        self.assertIn('__version__ = "0.17.8"', cloud_init)
+        self.assertIn('__version__ = "0.17.9"', cloud_init)
         cloud_main = (root / 'cloud' / 'auth-service' / 'src' /
                       'xynigo_auth' / 'main.py').read_text(encoding='utf-8')
-        self.assertIn('version="0.17.8"', cloud_main)
-        self.assertTrue((root / 'release' / 'v0.17.8.zh-CN.json').is_file())
-        self.assertTrue((root / 'release' / 'v0.17.8.zh-CN.md').is_file())
+        self.assertIn('version="0.17.9"', cloud_main)
+        self.assertTrue((root / 'release' / 'v0.17.9.zh-CN.json').is_file())
+        self.assertTrue((root / 'release' / 'v0.17.9.zh-CN.md').is_file())
         script = (root / '组装Windows绿色包.sh').read_text(encoding='utf-8')
         self.assertIn('v${VERSION}${BUILD_SUFFIX}.zip', script)
         self.assertIn('rm -f "$ZIP"', script)
@@ -69,19 +69,19 @@ class ReleaseV0170Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp = Path(temp_dir)
             asset = temp / 'Xynigo_Sourcing_test.zip'
-            asset.write_bytes(b'xynigo-v0.17.8-test-package')
+            asset.write_bytes(b'xynigo-v0.17.9-test-package')
             manifest = temp / 'latest.json'
             sha_file = temp / 'SHA256SUMS.txt'
             subprocess.run(
                 [
                     sys.executable,
                     str(root / 'scripts' / 'update_release_assets.py'),
-                    '--version', '0.17.8',
+                    '--version', '0.17.9',
                     '--channel', 'test',
                     '--platform', 'macos-arm64',
                     '--asset', str(asset),
                     '--notes', str(root / 'release' /
-                                   'v0.17.8.zh-CN.json'),
+                                   'v0.17.9.zh-CN.json'),
                     '--manifest', str(manifest),
                     '--sha-file', str(sha_file),
                 ],
@@ -93,7 +93,7 @@ class ReleaseV0170Tests(unittest.TestCase):
             digest = hashlib.sha256(asset.read_bytes()).hexdigest()
             self.assertEqual(payload['schemaVersion'], 2)
             self.assertEqual(payload['channel'], 'test')
-            self.assertEqual(payload['version'], '0.17.8')
+            self.assertEqual(payload['version'], '0.17.9')
             self.assertEqual(payload['platforms']['macos-arm64']['sha256'],
                              digest)
             self.assertEqual(
@@ -111,11 +111,11 @@ class ReleaseV0170Tests(unittest.TestCase):
             command = [
                 sys.executable,
                 str(root / 'scripts' / 'update_release_assets.py'),
-                '--version', '0.17.8',
+                '--version', '0.17.9',
                 '--channel', 'test',
                 '--platform', 'macos-arm64',
                 '--asset', str(asset),
-                '--notes', str(root / 'release' / 'v0.17.8.zh-CN.json'),
+                '--notes', str(root / 'release' / 'v0.17.9.zh-CN.json'),
                 '--manifest', str(manifest),
                 '--sha-file', str(sha_file),
             ]
@@ -227,8 +227,8 @@ class ReleaseV0170Tests(unittest.TestCase):
         self.assertIn("cfg.proxySource === 'custom'", html)
         self.assertIn('系统模板固定带表头', html)
         self.assertNotIn('https://proxy.example.test', html)
-        self.assertIn('Xynigo Sourcing v0.17.8', html)
-        self.assertIn('累计修复测试 v0.17.8', html)
+        self.assertIn('Xynigo Sourcing v0.17.9', html)
+        self.assertIn('累计修复测试 v0.17.9', html)
         self.assertIn('测试环境 · 数据隔离', html)
         self.assertNotIn('本机数据不出站', html)
         self.assertIn('Xyni, GO!', html)
@@ -283,7 +283,7 @@ class ReleaseV0170Tests(unittest.TestCase):
                 ('operations', '运营任务'), ('finance', '应付管理')):
             self.assertIn('data-parent="%s" data-planned="%s"' % (parent, label), html)
         self.assertIn(
-            'data-parent="assistant" data-module="procurementimport"', html)
+            'data-parent="procurement" data-module="procurementimport"', html)
         self.assertIn("defaultModule: 'procurementimport'", html)
         self.assertIn('id="procurementImportPanel"', html)
         self.assertIn("$('secondaryTabs').hidden = visibleSecondaryCount === 0", html)
@@ -398,7 +398,6 @@ class ReleaseV0170Tests(unittest.TestCase):
             self.assertIn("label: '%s'" % primary, html)
         for primary, permission in (
                 ('工作台', 'workbench.access'),
-                ('采购中心', 'procurement.access'),
                 ('运营中心', 'operations.access'),
                 ('财务中心', 'finance.access'),
                 ('小犀助手', 'assistant.access'),
@@ -406,6 +405,8 @@ class ReleaseV0170Tests(unittest.TestCase):
             self.assertIn("label: '%s'" % primary, html)
             self.assertIn("requiredPermission: '%s'" % permission, html)
             self.assertIn("codes: ['%s']" % permission, html)
+        self.assertIn("requiredPermissionsAny: ['procurement.access', 'assistant.access']", html)
+        self.assertIn("codes: ['procurement.access']", html)
         self.assertIn("label: '订单物流查询'", html)
         self.assertIn("label: '买家号库'", html)
         self.assertIn("label: '店铺管理'", html)
@@ -417,7 +418,7 @@ class ReleaseV0170Tests(unittest.TestCase):
                 'procurement.execution.manage'):
             self.assertIn(permission, html)
         # 采购中心 P0：真实概览/筛选列表/分页/按需详情。
-        self.assertIn("defaultModule: 'procurementorders'", html)
+        self.assertIn("defaultModule: 'procurementimport'", html)
         self.assertIn("label: '采购任务', primary: 'procurement'", html)
         self.assertIn('id="procurementPanel"', html)
         self.assertIn('id="procurementExecutionPanel"', html)

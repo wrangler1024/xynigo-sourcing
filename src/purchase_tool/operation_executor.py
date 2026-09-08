@@ -416,6 +416,7 @@ class LocalOperationExecutor(object):
         total = len(serials)
         stop_sent = False
         previous = None
+        final_progress_rejected = False
         reported_screenshots = set()
         snapshot = {'running': True, 'rows': []}
         rows = []
@@ -427,7 +428,9 @@ class LocalOperationExecutor(object):
                 except OperationExecutionError:
                     pass
                 stop_sent = True
-            rows = self._logistics_rows(snapshot)
+            selected_serials = set(serials)
+            rows = [row for row in self._logistics_rows(snapshot)
+                    if row['environmentSerial'] in selected_serials]
             completed = sum(
                 row['status'] in LOGISTICS_TERMINAL_STATES for row in rows)
             current = min(total, completed)
@@ -449,11 +452,35 @@ class LocalOperationExecutor(object):
                 'total': total,
                 'snapshot': {'rows': rows},
             }
+            if payload.get('diagnosticsVersion') == 1 and isinstance(snapshot.get('diagnostics'), dict):
+                diagnostic = snapshot['diagnostics']
+                # The local orchestrator emits no vendor messages or credentials.
+                # Keep the closed schema and this task's environment boundary.
+                event['snapshot']['diagnostics'] = {
+                    key: diagnostic[key] for key in (
+                        'schemaVersion', 'resourceConstrained', 'effectiveConcurrency',
+                        'pendingCloseCount', 'closeChecks') if key in diagnostic}
+                event['snapshot']['diagnostics']['closeChecks'] = [
+                    {key: value for key, value in item.items() if key in {
+                        'environmentSerial', 'state', 'confirmed', 'stopSent',
+                        'stopAttempts', 'statusChecks', 'elapsedMs',
+                        'stopErrorCode', 'stopApiCode', 'statusErrorCode', 'statusApiCode',
+                        'firstErrorOperation', 'firstErrorCode', 'firstApiCode'}}
+                    for item in diagnostic.get('closeChecks', [])
+                    if isinstance(item, dict) and item.get('environmentSerial') in selected_serials][:20]
             serialized = json.dumps(
                 event, ensure_ascii=False, sort_keys=True,
                 separators=(',', ':'))
             if serialized != previous:
-                self._safe_report(report, **event)
+                try:
+                    report(**event)
+                    final_progress_rejected = False
+                except Exception as exc:
+                    # Finish local cleanup before reporting a persistent protocol
+                    # failure. Never abort a live browser in response to HTTP 422.
+                    if getattr(exc, 'code', '') in {
+                            'executor_progress_snapshot_invalid', 'validation_failed'}:
+                        final_progress_rejected = True
                 previous = serialized
             for row in rows:
                 serial = str(row.get('environmentSerial') or '')
@@ -465,14 +492,15 @@ class LocalOperationExecutor(object):
                     continue
                 attachment_event = dict(event)
                 attachment_event['snapshot'] = {
-                    'rows': rows,
-                    'screenshots': [attachment],
-                }
+                    **event['snapshot'], 'screenshots': [attachment]}
                 if self._safe_report(report, **attachment_event):
                     reported_screenshots.add(serial)
             if not bool(snapshot.get('running')):
                 break
             self.sleep(self.poll_interval)
+        if final_progress_rejected:
+            snapshot = dict(snapshot, fatalErrorCode='executor_progress_rejected',
+                            fatalError='服务器拒绝了任务进度，请按查询 ID 查看云端诊断记录')
         summary = self._logistics_summary(total, rows, snapshot)
         return self._terminal_result('logistics', summary)
 
