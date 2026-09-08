@@ -760,7 +760,10 @@ def _select_xyp2(source_rows):
 
 # Only explicit equivalent labels are accepted; unknown translations and
 # modifiers (e.g. Dark Gray versus Gray) must not become fuzzy matches.
-_VARIANT_LABEL_ALIASES = {'negro': 'black', 'gris': 'gray', 'grey': 'gray'}
+_VARIANT_LABEL_ALIASES = {
+    'negro': 'black', 'gris': 'gray', 'grey': 'gray',
+    'rosa fucsia': 'fuchsia pink', 'albaricoque': 'apricot',
+}
 
 
 def _variant_spec_key(value):

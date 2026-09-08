@@ -465,6 +465,46 @@ class ProcurementImportTests(unittest.TestCase):
         self.assertEqual([row['quantity'] for row in result['preview']], [2, 2])
         self.assertEqual([row['itemSalesAmount'] for row in result['preview']], [220, 440])
 
+    def test_shared_source_sku_matches_fuchsia_and_apricot_across_languages(self):
+        purchase_specs = (('Rosa Fucsia', 'L'), ('Albaricoque', 'L'))
+        variants = {
+            'Fuchsia Pink-L': ('Rosa Fucsia', 110, 'fuchsia.jpg', 38.53),
+            'Apricot-L': ('Albaricoque', 220, 'apricot.jpg', 50.03),
+        }
+        for specs in (tuple(variants), tuple(reversed(variants))):
+            for reverse_items in (False, True):
+                with self.subTest(specs=specs, reverse_items=reverse_items):
+                    workbook = load_workbook(BytesIO(shared_sku_workbook(
+                        specs, reverse_items, purchase_specs)))
+                    sheet = workbook.active
+                    columns = {cell.value: cell.column for cell in sheet[1]}
+                    for row_number, spec in enumerate(specs, start=2):
+                        _color, amount, image_name, _guide = variants[spec]
+                        sheet.cell(row_number, columns['订单金额'], 330)
+                        sheet.cell(row_number, columns['产品售价'], amount)
+                        sheet.cell(row_number, columns['产品图片网址'],
+                                   'https://img.ltwebstatic.com/test/' + image_name)
+                    source = BytesIO()
+                    workbook.save(source)
+                    service = ProcurementImportService()
+                    result = service.parse('translated_colors.xlsx',
+                        base64.b64encode(source.getvalue()).decode('ascii'))
+                    self.assertTrue(result['canImport'])
+                    self.assertEqual(result['successOrderCount'], 1)
+                    self.assertEqual(result['failedOrderCount'], 0)
+                    self.assertEqual(result['detailCount'], 2)
+                    self.assertEqual(result['quantityCount'], 2)
+                    self.assertEqual(result['issues'], [])
+                    rows = service.pending[result['planId']].rows
+                    by_color = {row.values['主规格']: row for row in rows}
+                    for spec, (color, amount, image_name, guide) in variants.items():
+                        row = by_color[color]
+                        self.assertEqual(row.item_sales_amount, amount)
+                        self.assertTrue(row.order_image_url.endswith(image_name))
+                        self.assertEqual(row.values['采购指导价'], guide)
+                        self.assertEqual(row.values['次规格'], 'L')
+                        self.assertIn('SHARED-SOURCE:' + spec, row.values['采购备注'])
+
     def test_shared_source_sku_checks_full_size_not_substrings(self):
         service = ProcurementImportService()
         result = service.parse('shared_sku_sizes.xlsx', base64.b64encode(
@@ -492,6 +532,13 @@ class ProcurementImportTests(unittest.TestCase):
             (('Black-M', 'Gray-L'), (('Negro', 'L'), ('Gris', 'L'))),
             (('Black-1/2', 'Gray-L'), (('Negro', '1-2'), ('Gris', 'L'))),
             (('Black-L', 'Gray-L'), (('Negro', 'L'), ('Black', 'L'))),
+            (('Pink-L', 'Apricot-L'), (('Rosa Fucsia', 'L'), ('Albaricoque', 'L'))),
+            (('Fuchsia Pink-L', 'Dark Apricot-L'),
+             (('Rosa Fucsia', 'L'), ('Albaricoque', 'L'))),
+            (('Fuchsia Pink-XL', 'Apricot-L'),
+             (('Rosa Fucsia', 'L'), ('Albaricoque', 'L'))),
+            (('Fuchsia Pink-L', 'Apricot-L'),
+             (('Rosa Fucsia', 'L'), ('Fuchsia Pink', 'L'))),
         ]
         for specs, purchase_specs in cases:
             with self.subTest(specs=specs, purchase_specs=purchase_specs):
