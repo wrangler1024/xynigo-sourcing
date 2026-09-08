@@ -78,17 +78,17 @@ class Xyp2ParserTests(unittest.TestCase):
     def test_real_ui_handlers_and_copy_formats(self):
         root = Path(__file__).resolve().parents[1]
         result = subprocess.run(['node', 'tests/fixtures/xyp2_parser_ui.cjs'], cwd=root,
-                                capture_output=True, text=True, timeout=30)
+                                capture_output=True, text=True, encoding='utf-8', timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_navigation_and_local_cloud_routes_are_connected(self):
         root = Path(__file__).resolve().parents[1]
-        html = (root / 'src/purchase_tool/web/index.html').read_text()
+        html = (root / 'src/purchase_tool/web/index.html').read_text(encoding='utf-8')
         secondary = html[html.index('id="secondaryTabs"'):html.index('<div class="nav-spacer">')]
         self.assertIn('data-parent="assistant" data-module="xyp2parser"', secondary)
         self.assertIn("defaultModule: 'xyp2parser'", html)
         self.assertIn("$('xyp2ParserPanel').classList.toggle('hidden', module !== 'xyp2parser')", html)
         self.assertIn("cloudFetchJson('/v1/assistant/xyp2/parse', opts)", html)
-        main = (root / 'src/purchase_tool/main.py').read_text()
+        main = (root / 'src/purchase_tool/main.py').read_text(encoding='utf-8')
         self.assertIn("'/api/assistant/xyp2/parse': 'assistant.access'", main)
-        self.assertEqual(html, (root / 'cloud/auth-service/src/xynigo_auth/web/index.html').read_text())
+        self.assertEqual(html, (root / 'cloud/auth-service/src/xynigo_auth/web/index.html').read_text(encoding='utf-8'))
