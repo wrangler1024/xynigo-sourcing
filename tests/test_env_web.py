@@ -752,7 +752,7 @@ class EnvWebJobTests(unittest.TestCase):
         }
         job = EnvBatchJob(lambda: hub, lambda: cfg)
         parsed = job.parse(
-            'vendor.xlsx', base64.b64encode(source_bytes()).decode('ascii'))
+            'vendor.xlsx', base64.b64encode(source_bytes()).decode('ascii'), site='US')
         preview = job.preview(
             parsed['planId'], '1:新刚', '20260819', site='US')
         self.assertRegex(

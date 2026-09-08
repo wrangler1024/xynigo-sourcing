@@ -95,6 +95,57 @@ def validate_accounts_site(accounts, site, *, allow_mixed=False):
         details.append('、'.join(('Cookie仅%s站、与所选%s站不一致 %d 行' % (detected, site, count) for (detected, count) in sorted(detected_counts.items()))))
     raise EnvBatchError('Cookie 站点校验失败：共 %d 行数据异常（%s），行号 %s；整批拒收' % (len(issue_rows), '；'.join(details), _format_row_ranges(issue_rows)))
 
+def validate_purchase_tag(value):
+    """Validate the exact HubStudio group name without guessing a fallback."""
+    raw_tag = str(value or '')
+    if any((char in raw_tag for char in ('\r', '\n', '\t'))):
+        raise EnvBatchError('采购分组不能包含换行或制表符')
+    tag = raw_tag.strip()
+    if not tag:
+        raise EnvBatchError('请先在设置中填写采购分组')
+    if len(tag) > 12:
+        raise EnvBatchError('采购分组不能超过 12 个字符')
+    return tag
+
+def validate_purchase_group_site(value, site):
+    """Reject a group that explicitly names the opposite purchase site."""
+    tag = validate_purchase_tag(value)
+    site = normalize_env_site(site)
+    mx_named = bool(re.search('墨西哥|(?<![A-Za-z0-9])MX(?![A-Za-z0-9])', tag, re.I))
+    us_named = bool(re.search('美国|(?<![A-Za-z0-9])US(?![A-Za-z0-9])', tag, re.I))
+    if site == 'US' and mx_named:
+        raise EnvBatchError('美国站不能使用墨西哥采购分组，请重新选择')
+    if site == 'MX' and us_named:
+        raise EnvBatchError('墨西哥站不能使用美国采购分组，请重新选择')
+    return tag
+
+def environment_site_review(filename, site, mixed_site_cookie_count):
+    """Describe ambiguous account-site evidence without exposing credentials.
+
+    Filenames are hints, never a source of account identity. Accept common
+    vendor names such as MX-20 / 20MX, but not English words such as music.
+    """
+    filename = str(filename or '').replace('\\', '/').rsplit('/', 1)[-1]
+    site = normalize_env_site(site)
+    hints = []
+    for (candidate, pattern) in (('MX', '墨西哥|(?<![A-Za-z])MX(?![A-Za-z])'), ('US', '美国|(?<![A-Za-z])US(?![A-Za-z])')):
+        if re.search(pattern, filename, re.I):
+            hints.append(candidate)
+    conflict = any((hint != site for hint in hints))
+    return {'filename': filename, 'filenameSiteHints': hints, 'filenameSiteConflict': conflict, 'siteConfirmationRequired': bool(mixed_site_cookie_count or conflict)}
+
+def require_environment_site_confirmation(filename, site, mixed_site_cookie_count, confirmed_site=None, confirm_filename_site_mismatch=False):
+    """Fail before any environment write unless ambiguous evidence is reviewed."""
+    site = normalize_env_site(site)
+    review = environment_site_review(filename, site, mixed_site_cookie_count)
+    if confirmed_site is not None and confirmed_site != site:
+        raise EnvBatchError('确认的账号站点与建环境站点不一致，请切换站点并重新上传文件')
+    if review['siteConfirmationRequired'] and confirmed_site != site:
+        raise EnvBatchError('本批账号站点尚未确认，请核对账号来源并明确确认 MX 或 US 站点')
+    if review['filenameSiteConflict'] and confirm_filename_site_mismatch is not True:
+        raise EnvBatchError('文件名包含与所选站点冲突的标记，请更正站点或单独确认文件名有误')
+    return review
+
 @dataclass
 class BuyerAccount:
     row_number: int

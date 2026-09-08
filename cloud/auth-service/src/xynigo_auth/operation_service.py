@@ -61,8 +61,14 @@ def _payload_hash(
         | LogisticsQueryRunCreateBody
     ),
 ) -> str:
+    payload = body.model_dump(mode="json")
+    # Preserve replay hashes of requests created before site confirmation existed.
+    if payload.get("confirmedSite") is None:
+        payload.pop("confirmedSite", None)
+    if not payload.get("confirmFilenameSiteMismatch"):
+        payload.pop("confirmFilenameSiteMismatch", None)
     canonical = json.dumps(
-        body.model_dump(mode="json"),
+        payload,
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
@@ -192,6 +198,8 @@ class OperationRunService:
             request_summary={
                 "mode": body.mode,
                 "cloudPlanId": body.cloudPlanId,
+                "confirmedSite": body.confirmedSite,
+                "confirmFilenameSiteMismatch": body.confirmFilenameSiteMismatch,
                 "buyerLabel": body.buyerLabel,
                 "verifySampleCount": body.verifySampleCount,
                 "assignments": [

@@ -100,7 +100,7 @@ class LocalOperationExecutor(object):
             'cloudPlanId': cloud_plan_id,
             'site': site,
             'accounts': accounts,
-            'filename': '云端加密解析计划.xlsx',
+            'filename': payload.get('filename') or '云端加密解析计划.xlsx',
         })
         if str(imported.get('cloudPlanId') or '').strip() != cloud_plan_id:
             raise OperationExecutionError(
@@ -120,6 +120,8 @@ class LocalOperationExecutor(object):
             'site': site,
             'environmentGroup': group,
             'includeInventorySnapshot': True,
+            'confirmedSite': payload.get('confirmedSite'),
+            'confirmFilenameSiteMismatch': payload.get('confirmFilenameSiteMismatch', False),
         })
         rows = result.get('rows')
         if (result.get('valid') is not True
@@ -262,7 +264,7 @@ class LocalOperationExecutor(object):
                     'cloudPlanId': cloud_plan_id,
                     'site': site,
                     'accounts': plan_accounts,
-                    'filename': '云端加密解析计划.xlsx',
+                    'filename': payload.get('filename') or '云端加密解析计划.xlsx',
                 })
                 returned_cloud_plan_id = str(
                     imported.get('cloudPlanId') or '').strip()
@@ -279,6 +281,8 @@ class LocalOperationExecutor(object):
             stop_path = '/api/envbatch/stop'
             start_body = {
                 'planId': local_plan_id,
+                'confirmedSite': payload.get('confirmedSite'),
+                'confirmFilenameSiteMismatch': payload.get('confirmFilenameSiteMismatch', False),
                 'assignment': assignment,
                 'purchaseDate': purchase_date,
                 'verifySampleCount': verify_count,

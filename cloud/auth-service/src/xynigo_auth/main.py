@@ -514,7 +514,7 @@ def create_app(
 
     app = FastAPI(
         title="Xynigo Auth Service",
-        version="0.17.12",
+        version="0.17.13",
         docs_url=None,
         redoc_url=None,
         lifespan=lifespan,
@@ -2595,6 +2595,8 @@ def create_app(
                 site=body.site,
                 environment_group=body.environmentGroup,
                 total_count=body.totalCount,
+                confirmed_site=body.confirmedSite,
+                confirm_filename_site_mismatch=body.confirmFilenameSiteMismatch,
             )
         except CloudEnvironmentPlanError as exc:
             session.rollback()
@@ -2709,6 +2711,9 @@ def create_app(
                 "taskId": str(preview_run.root_run_id or preview_run.id),
                 "cloudPlanId": cloud_plan_id,
                 "planAccounts": plan_accounts,
+                "filename": _record.filename,
+                "confirmedSite": body.confirmedSite,
+                "confirmFilenameSiteMismatch": body.confirmFilenameSiteMismatch,
                 "site": body.site,
                 "purchaseDate": body.purchaseDate,
                 "environmentGroup": body.environmentGroup,
@@ -3723,6 +3728,8 @@ def create_app(
                             site=body.site,
                             environment_group=body.environmentGroup,
                             total_count=body.totalCount,
+                            confirmed_site=body.confirmedSite,
+                            confirm_filename_site_mismatch=body.confirmFilenameSiteMismatch,
                         )
                     )
                 except CloudEnvironmentPlanError as exc:
@@ -3805,6 +3812,9 @@ def create_app(
             }
             if plan_accounts is not None:
                 task_payload["planAccounts"] = plan_accounts
+                task_payload["filename"] = plan_record.filename
+                task_payload["confirmedSite"] = body.confirmedSite
+                task_payload["confirmFilenameSiteMismatch"] = body.confirmFilenameSiteMismatch
                 task_payload["cleanupBlockedAccountRefs"] = cleanup_blocked_refs
                 task_payload["plannedEnvironmentNames"] = planned_environment_names
             task = channel.create_config_task(
@@ -4114,6 +4124,8 @@ def create_app(
                                 site=parent.site,
                                 environment_group=parent.environment_group,
                                 account_refs=set(body.accountRefs),
+                                confirmed_site=body.confirmedSite,
+                                confirm_filename_site_mismatch=body.confirmFilenameSiteMismatch,
                             )
                         )
                     except CloudEnvironmentPlanError as exc:
@@ -4182,6 +4194,9 @@ def create_app(
                     "mode": "bound",
                     "cloudPlanId": body.cloudPlanId,
                     "planAccounts": takeover_plan_accounts,
+                    "filename": takeover_plan_record.filename,
+                    "confirmedSite": body.confirmedSite,
+                    "confirmFilenameSiteMismatch": body.confirmFilenameSiteMismatch,
                     "verifySampleCount": verify_count,
                     "assignments": takeover_assignments,
                     "plannedEnvironmentNames": takeover_planned_names,

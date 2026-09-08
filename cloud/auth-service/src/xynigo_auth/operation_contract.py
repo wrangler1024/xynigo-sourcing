@@ -11,6 +11,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StrictBool,
     field_validator,
     model_validator,
 )
@@ -47,7 +48,12 @@ class PurchaserAllocationSummary(BaseModel):
         return normalized
 
 
-class EnvironmentCreationRunCreateBody(BaseModel):
+class EnvironmentSiteConfirmationBody(BaseModel):
+    confirmedSite: Literal["US", "MX"] | None = None
+    confirmFilenameSiteMismatch: StrictBool = False
+
+
+class EnvironmentCreationRunCreateBody(EnvironmentSiteConfirmationBody):
     """Safe cloud request for a durable environment-creation Run."""
 
     model_config = ConfigDict(extra="forbid")
@@ -96,7 +102,7 @@ class EnvironmentCreationRunCreateBody(BaseModel):
         return self
 
 
-class EnvironmentRetryRunCreateBody(BaseModel):
+class EnvironmentRetryRunCreateBody(EnvironmentSiteConfirmationBody):
     model_config = ConfigDict(extra="forbid")
 
     idempotencyKey: str = Field(min_length=8, max_length=128, pattern=SAFE_KEY_RE)
@@ -196,6 +202,10 @@ class EnvironmentPlanParseResult(BaseModel):
     count: int = Field(ge=1, le=2000)
     cookieCount: int = Field(ge=0, le=2000)
     mixedSiteCookieCount: int = Field(default=0, ge=0, le=2000)
+    filename: str | None = Field(default=None, max_length=255)
+    filenameSiteHints: list[Literal["US", "MX"]] = Field(default_factory=list, max_length=2)
+    filenameSiteConflict: bool = False
+    siteConfirmationRequired: bool = False
     passwordKindCount: int = Field(ge=0, le=2000)
     duplicateCount: int = Field(ge=0, le=2000)
     issueCount: int = Field(ge=0, le=2000)
@@ -221,7 +231,7 @@ class EnvironmentPlanParseResult(BaseModel):
         return self
 
 
-class EnvironmentPlanDryRunBody(BaseModel):
+class EnvironmentPlanDryRunBody(EnvironmentSiteConfirmationBody):
     """Schedule an encrypted, read-only preview on one local executor."""
 
     model_config = ConfigDict(extra="forbid")

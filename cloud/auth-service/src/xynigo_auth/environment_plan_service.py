@@ -19,11 +19,14 @@ from sqlalchemy.orm import Session
 from .environment_plan_core import (
     EnvBatchError,
     count_mixed_site_accounts,
+    environment_site_review,
+    require_environment_site_confirmation,
     deserialize_buyer_accounts,
     normalize_env_site,
     parse_vendor_workbook,
     serialize_buyer_accounts,
     validate_accounts_site,
+    validate_purchase_group_site,
 )
 from .environment_plan_crypto import EnvironmentPlanCipher, EnvironmentPlanCipherError
 from .models import EnvironmentAccountPlan, EnvironmentAccountPlanRequest
@@ -202,6 +205,9 @@ class CloudEnvironmentPlanService:
             "count": record.account_count,
             "cookieCount": record.cookie_count,
             "mixedSiteCookieCount": record.mixed_site_cookie_count,
+            **environment_site_review(
+                record.filename, record.site, record.mixed_site_cookie_count
+            ),
             "passwordKindCount": record.password_kind_count,
             "duplicateCount": 0,
             "issueCount": 0,
@@ -377,13 +383,20 @@ class CloudEnvironmentPlanService:
     ) -> dict[str, Any]:
         source = _decode_upload(content_base64)
         normalized_site = normalize_env_site(site)
-        normalized_group = str(environment_group or "").strip()
+        try:
+            normalized_group = validate_purchase_group_site(environment_group, normalized_site)
+        except EnvBatchError as exc:
+            raise CloudEnvironmentPlanError("environment_plan_group_site_mismatch", str(exc)) from exc
+        # A renamed workbook has different site evidence and must not inherit
+        # the filename warnings of an earlier, byte-identical upload.
         source_hash = hashlib.sha256(
             source
             + b"\0"
             + normalized_site.encode("ascii")
             + b"\0"
             + normalized_group.encode("utf-8")
+            + b"\0"
+            + filename.encode("utf-8")
         ).hexdigest()
         replay = self._idempotency_replay(
             session,
@@ -542,6 +555,8 @@ class CloudEnvironmentPlanService:
         site: str,
         environment_group: str,
         total_count: int,
+        confirmed_site: str | None = None,
+        confirm_filename_site_mismatch: bool = False,
     ) -> tuple[EnvironmentAccountPlan, list[dict[str, Any]]]:
         record = self._record(
             session,
@@ -564,8 +579,20 @@ class CloudEnvironmentPlanService:
                 "站点、分组或账号数量已变化，请重新上传 xlsx",
                 status=409,
             )
+        self._require_site_confirmation(record, confirmed_site, confirm_filename_site_mismatch)
         accounts = self._accounts(record)
         return record, serialize_buyer_accounts(accounts)
+
+    @staticmethod
+    def _require_site_confirmation(record, confirmed_site, confirm_filename_site_mismatch):
+        try:
+            validate_purchase_group_site(record.environment_group, record.site)
+            require_environment_site_confirmation(
+                record.filename, record.site, record.mixed_site_cookie_count,
+                confirmed_site, confirm_filename_site_mismatch,
+            )
+        except EnvBatchError as exc:
+            raise CloudEnvironmentPlanError("environment_site_confirmation_required", str(exc)) from exc
 
     def load_for_takeover(
         self,
@@ -577,6 +604,8 @@ class CloudEnvironmentPlanService:
         site: str,
         environment_group: str,
         account_refs: set[str],
+        confirmed_site: str | None = None,
+        confirm_filename_site_mismatch: bool = False,
     ) -> tuple[EnvironmentAccountPlan, list[dict[str, Any]]]:
         """Load only failed accounts from a fresh admin-owned plan.
 
@@ -616,6 +645,7 @@ class CloudEnvironmentPlanService:
                 "接管文件的站点或分组与原批次不一致",
                 status=409,
             )
+        self._require_site_confirmation(record, confirmed_site, confirm_filename_site_mismatch)
         serialized = serialize_buyer_accounts(self._accounts(record))
         selected: list[dict[str, Any]] = []
         seen: set[str] = set()

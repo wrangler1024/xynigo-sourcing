@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Xynigo Sourcing v0.17.12</title>
+<title>Xynigo Sourcing v0.17.13</title>
 <link rel="icon" type="image/png" sizes="260x260" href="/xynigo-x.png?v=6">
 <link rel="icon" type="image/x-icon" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256" href="/favicon.ico?v=6">
 <link rel="shortcut icon" href="/favicon.ico?v=6">
@@ -1525,9 +1525,9 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
 #procurementImportPanel .if-footer-copy small{display:block;font-size:var(--if-font-body);color:#93a0ae;margin-top:4px}
 #procurementImportPanel .if-file-box.is-dragging{border-color:#078487;background:#eaf7f5;box-shadow:0 0 0 2px #07848714}
 #procurementImportPanel .if-history-row{display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:12px}
-#procurementImportPanel .if-history-row[hidden]{display:none}
 #procurementImportPanel .if-history-row label{white-space:nowrap;color:#8191a5}
 #procurementImportPanel .if-history-row select{min-width:0;flex:1;border:1px solid #dce5ee;border-radius:6px;padding:6px 8px;background:#fff;color:#22384e;font:inherit}
+#procurementImportPanel .if-history-row select:disabled{color:#8191a5;background:#f6f8fb;cursor:default}
 #procurementImportPanel .if-footer-actions{display:flex;align-items:center;gap:24px;flex-shrink:0}
 #procurementImportPanel .if-color-setting{display:flex;align-items:center;gap:8px;font-size:12px;white-space:nowrap;position:relative}
 #procurementImportPanel .if-switch{width:32px;height:18px;padding:0;border:0;border-radius:20px;background:#c5ced8;cursor:pointer;position:relative;transition:background .15s;flex:none}
@@ -1546,24 +1546,49 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
 @media(max-width:600px){#procurementImportPanel .if-heading{gap:8px}#procurementImportPanel .if-heading>button{font-size:var(--if-font-control);padding:0 9px}#procurementImportPanel .if-flow li{font-size:var(--if-font-body);gap:6px}#procurementImportPanel .if-flow i{margin:0 8px}#procurementImportPanel .if-target-fields{grid-template-columns:1fr}#procurementImportPanel .if-metrics>div{padding:0 8px}#procurementImportPanel .if-metrics small{display:none}#procurementImportPanel .if-preview-heading{flex-wrap:wrap;padding:16px}#procurementImportPanel .if-action-footer{bottom:-24px;padding:14px;flex-wrap:wrap}#procurementImportPanel .if-match-notice{align-items:flex-start}#procurementImportPanel .if-match-notice b{display:block;margin-bottom:3px}#procurementImportPanel .if-rules summary{flex-wrap:wrap}}
 
 
-  #xyp2ParserPanel .xyp2-parser-grid { display:grid; grid-template-columns:minmax(290px,.85fr) minmax(0,1.65fr); gap:16px; align-items:start; }
-  #xyp2ParserPanel .card, #xyp2ParserPanel .field { min-width:0; }
-  #xyp2ParserPanel textarea { width:100%; box-sizing:border-box; resize:vertical; border:1px solid var(--line); border-radius:10px; padding:12px; color:var(--navy-900); background:#fafcfd; font:12px/1.65 ui-monospace,monospace; overflow-wrap:anywhere; }
-  #xyp2ParserInput { min-height:260px; }
-  #xyp2ParserPanel .xyp2-table-wrap a { color:var(--primary); font-weight:600; }
+  #xyp2ParserPanel .card { min-width:0; padding:18px 20px; margin-bottom:14px; }
+  #xyp2ParserPanel .xyp2-heading { display:flex; align-items:baseline; flex-wrap:wrap; gap:8px 16px; margin-bottom:14px; }
+  #xyp2ParserPanel .xyp2-heading p { color:var(--navy-500); font-size:12px; font-weight:400; line-height:1.6; }
+  #xyp2ParserPanel textarea { display:block; width:100%; box-sizing:border-box; resize:vertical; border:1px solid var(--line); border-radius:10px; padding:10px 12px; color:var(--navy-900); background:#fafcfd; font:12px/1.65 ui-monospace,monospace; overflow-wrap:anywhere; }
+  #xyp2ParserInput { min-height:104px; }
   #xyp2ParserPanel textarea:focus { outline:2px solid var(--rhino-500); outline-offset:1px; }
-  #xyp2ParserPanel .xyp2-input-meta { display:flex; justify-content:space-between; gap:8px; margin:8px 0 14px; color:var(--navy-500); font-size:11px; }
-  #xyp2ParserPanel .xyp2-summary { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-bottom:14px; }
-  #xyp2ParserPanel .xyp2-summary>div { background:#f6fafb; border:1px solid var(--line); border-radius:10px; padding:12px; }
-  #xyp2ParserPanel .xyp2-summary span { display:block; color:var(--navy-500); font-size:11px; margin-bottom:5px; }
-  #xyp2ParserPanel .xyp2-summary b { font-size:16px; color:var(--navy-900); overflow-wrap:anywhere; }
+  #xyp2ParserPanel .xyp2-input-meta { display:flex; align-items:baseline; justify-content:space-between; flex-wrap:wrap; gap:6px 12px; margin-bottom:8px; color:var(--navy-500); font-size:11px; }
+  #xyp2ParserPanel .xyp2-input-meta label { color:var(--navy-700); font-size:12px; font-weight:700; }
+  #xyp2ParserPanel .xyp2-input-footer { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px 16px; margin-top:10px; }
+  #xyp2ParserState { flex:1; min-width:180px; margin:0; padding:0; border:0; background:transparent; font-size:12px; line-height:1.6; overflow-wrap:anywhere; }
+  #xyp2ParserPanel .xyp2-input-footer .table-actions { margin-left:auto; }
+  #xyp2ParserPanel .xyp2-output-heading { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px 16px; margin-bottom:12px; }
+  #xyp2ParserPanel .xyp2-copy-actions { margin:0; gap:8px; flex-wrap:wrap; }
+  #xyp2ParserPanel .xyp2-copy-actions .btn { padding:8px 12px; }
+  #xyp2ParserEmpty { margin:0; padding:18px; text-align:center; }
+  #xyp2ParserPanel .xyp2-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin-bottom:12px; }
+  #xyp2ParserPanel .xyp2-summary>div { background:#f6fafb; border:1px solid var(--line); border-radius:10px; padding:10px 12px; }
+  #xyp2ParserPanel .xyp2-summary span { display:block; color:var(--navy-500); font-size:11px; margin-bottom:4px; }
+  #xyp2ParserPanel .xyp2-summary b { font-size:15px; color:var(--navy-900); overflow-wrap:anywhere; }
   #xyp2ParserPanel .xyp2-table-wrap table { min-width:570px; }
-  #xyp2ParserPanel .xyp2-copy-actions { margin:16px 0 10px; flex-wrap:wrap; }
-  #xyp2ParserPanel .xyp2-details { margin-top:14px; color:var(--navy-700); font-size:12px; line-height:1.7; }
-  #xyp2ParserPanel .xyp2-details summary { cursor:pointer; }
-  #xyp2ParserPanel .xyp2-detail-item { padding:10px 0; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }
-  #xyp2CopyFallback { margin-top:14px; font-size:12px; line-height:1.7; color:var(--amber); }
-  @media (max-width:1100px) { #xyp2ParserPanel .xyp2-parser-grid { grid-template-columns:1fr; } }
+  #xyp2ParserPanel .xyp2-table-wrap a { color:var(--primary); font-weight:600; }
+  #xyp2ParserPanel .xyp2-help { margin:8px 0 0; color:var(--navy-500); font-size:11px; line-height:1.7; }
+  #xyp2ParserPanel .xyp2-details, #xyp2ParserPanel .xyp2-usage { margin-top:10px; color:var(--navy-700); font-size:12px; line-height:1.7; }
+  #xyp2ParserPanel summary { cursor:pointer; }
+  #xyp2ParserPanel .xyp2-usage { padding-top:10px; border-top:1px solid var(--line); }
+  #xyp2ParserPanel .xyp2-usage summary span { margin-left:8px; color:var(--navy-500); font-size:11px; }
+  #xyp2ParserPanel .xyp2-detail-item { padding:8px 0; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }
+  #xyp2CopyFallback { margin-top:12px; font-size:12px; line-height:1.7; color:var(--amber); }
+  #xyp2ParserPanel:not(.hidden) ~ .vi-note { display:none; }
+  @media (max-width:700px) {
+    #xyp2ParserPanel .card { padding:16px; }
+    #xyp2ParserPanel .xyp2-summary { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    #xyp2ParserPanel .xyp2-copy-actions { width:100%; gap:6px; }
+    #xyp2ParserPanel .xyp2-copy-actions .btn { flex:1; padding:8px 6px; font-size:11px; }
+    #xyp2ParserPanel .xyp2-usage summary span { display:block; margin:4px 0 0; }
+  }
+
+.env-site-review{margin-top:12px;padding:14px;border:1px solid #e5b76b;border-radius:8px;background:#fffaf0;font-size:13px;color:#5b4930}
+.env-site-review p{margin:6px 0;line-height:1.6;overflow-wrap:anywhere}
+.env-site-review .input-row{align-items:flex-end;gap:12px;margin-top:12px}
+.env-site-review .field{flex:1;min-width:180px}
+.env-site-review .site-conflict{color:#a33328;font-weight:600}
+.env-site-review.reviewed{border-color:#8bc7b8;background:#f2faf7}
 </style>
 </head>
 <body class="auth-locked">
@@ -1737,7 +1762,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
           <div class="hero-kicker">XYNIGO SOURCING WORKSPACE</div>
           <h1>让小犀帮你把每一单稳稳带回来，<span class="hero-call">Xyni, GO!</span></h1>
           <p id="moduleSummary">集中查看采购待办、履约风险与本地执行状态。</p>
-          <div class="hero-meta"><span class="hero-chip">累计修复测试 v0.17.12</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
+          <div class="hero-meta"><span class="hero-chip">累计修复测试 v0.17.13</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
         </div>
         <div class="hero-lockup" role="img" aria-label="小犀与 Xynigo 完整品牌一体图形">
           <img src="xynigo-logo.png" alt="">
@@ -1852,7 +1877,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
       </section>
       <section class="if-card if-target-card" id="procurementImportTargetCard">
         <div class="if-card-heading"><span class="if-heading-icon if-blue"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-link2 lucide-link-2" aria-hidden="true"><path d="M9 17H7A5 5 0 0 1 7 7h2"></path><path d="M15 7h2a5 5 0 1 1 0 10h-2"></path><line x1="8" x2="16" y1="12" y2="12"></line></svg></span><div><h2>目标飞书协作表</h2><p>按本批订单选择表格与工作表</p></div><span class="if-badge" id="procurementImportTargetBadge">待校验</span></div>
-        <div class="if-history-row" id="procurementImportHistoryRow" hidden><label for="procurementImportHistory">最近使用</label><select id="procurementImportHistory"><option value="">使用其他链接</option></select><button class="if-btn if-text-btn" id="btnProcurementImportForgetTarget" type="button">移除记录</button></div>
+        <div class="if-history-row" id="procurementImportHistoryRow"><label for="procurementImportHistory">最近使用</label><select id="procurementImportHistory" disabled><option value="">暂无最近使用</option></select><button class="if-btn if-text-btn" id="btnProcurementImportForgetTarget" type="button" disabled>移除记录</button></div>
         <div class="if-target-fields"><div><label for="procurementImportTargetUrl">飞书协作表</label><input id="procurementImportTargetUrl" type="url" autocomplete="off" placeholder="粘贴飞书共享表格链接"></div><div><label for="procurementImportTargetSheet">工作表</label><select id="procurementImportTargetSheet" disabled><option value="">先读取工作簿</option></select></div></div>
         <div class="if-card-actions"><span class="if-subtle" id="procurementImportTargetHint"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-shield-check" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path><path d="m9 12 2 2 4-4"></path></svg>确认字段后再导入</span><div class="if-button-group"><button class="if-btn if-text-btn" id="btnProcurementImportInspectTarget" type="button" disabled>读取工作表</button><button class="if-btn if-primary" id="btnProcurementImportValidateTarget" type="button" disabled><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-list-checks" aria-hidden="true"><path d="M13 5h8"></path><path d="M13 12h8"></path><path d="M13 19h8"></path><path d="m3 17 2 2 4-4"></path><path d="m3 7 2 2 4-4"></path></svg>校验核心字段</button></div></div>
       </section>
@@ -1886,40 +1911,45 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
   </div>
 
   <div class="module-panel hidden" id="xyp2ParserPanel">
-    <section class="card">
-      <div class="card-title">XYP2解析器 <span class="legend">小犀助手</span></div>
-      <div class="credential-note">粘贴店小秘 XYP2 备注，转换为可读采购清单，支持复制到采购协同表。</div>
-    </section>
-    <div class="xyp2-parser-grid">
-      <section class="card">
-        <div class="card-title">店小秘客服备注</div>
-        <div class="field"><label for="xyp2ParserInput">完整备注或 XYP2 内容</label>
-          <textarea id="xyp2ParserInput" rows="13" maxlength="20000" spellcheck="false" autocomplete="off" placeholder="粘贴包含 [XYP2]…[/XYP2] 的客服备注，可保留前后的普通文字。"></textarea>
-        </div>
-        <div class="xyp2-input-meta"><span>每次解析一个采购单</span><span id="xyp2ParserInputCount">0 / 20,000 字符</span></div>
-        <div class="table-actions"><button class="btn primary" id="btnXyp2Parse" type="button">解析采购清单</button><button class="btn" id="btnXyp2Clear" type="button">清空</button></div>
+    <section class="card xyp2-input-card">
+      <div class="card-title xyp2-heading">
+        <div>XYP2解析器 <span class="legend">小犀助手</span></div>
+        <p>粘贴店小秘 XYP2 备注，生成可复制的采购清单。</p>
+      </div>
+      <div class="xyp2-input-meta">
+        <label for="xyp2ParserInput">店小秘客服备注 <span class="legend">每次解析一个采购单</span></label>
+        <span id="xyp2ParserInputCount">0 / 20,000 字符</span>
+      </div>
+      <textarea id="xyp2ParserInput" rows="4" maxlength="20000" spellcheck="false" autocomplete="off" placeholder="粘贴包含 [XYP2]…[/XYP2] 的客服备注，可保留前后的普通文字。"></textarea>
+      <div class="xyp2-input-footer">
         <div class="resource-state" id="xyp2ParserState" role="status" aria-live="polite">等待粘贴备注。</div>
-      </section>
-      <section class="card">
-        <div class="card-title">采购清单 <span class="legend">核对规格、数量和指导价</span></div>
-        <div class="resource-state" id="xyp2ParserEmpty">解析后显示采购明细和精准采购链接。</div>
-        <div id="xyp2ParserResult" hidden>
-          <div class="xyp2-summary" id="xyp2ParserSummary"></div>
-          <div class="resource-state warn" id="xyp2ParserWarnings" hidden></div>
-          <div class="table-wrap xyp2-table-wrap"><table><thead><tr><th>来源 SKU</th><th>主规格</th><th>次规格</th><th>数量</th><th>采购指导单价</th><th>采购链接</th></tr></thead><tbody id="xyp2ParserRows"></tbody></table></div>
-          <div class="credential-note">指导价合计按“指导单价 × 数量”计算，不含运费、税费或凑单金额，供采购参考。</div>
-          <details class="xyp2-details"><summary>查看编码和价格详情</summary><div id="xyp2ParserDetails"></div></details>
-        </div>
+        <div class="table-actions"><button class="btn primary" id="btnXyp2Parse" type="button">解析采购清单</button><button class="btn" id="btnXyp2Clear" type="button">清空</button></div>
+      </div>
+    </section>
+    <section class="card xyp2-result-card">
+      <div class="card-title xyp2-output-heading">
+        <div>采购清单 <span class="legend">核对规格、数量和指导价</span></div>
         <div class="table-actions xyp2-copy-actions">
           <button class="btn primary" id="btnXyp2CopySheet" type="button" disabled>复制到协同表</button>
           <button class="btn" id="btnXyp2CopyList" type="button" disabled>复制采购清单</button>
           <button class="btn" id="btnXyp2CopyLinks" type="button" disabled>复制采购链接</button>
         </div>
-        <div class="credential-note">粘贴到标准协同表“采购链接”列的预留起始明细行，依次填写：采购链接 / 主规格 / 次规格 / 需求数量 / 采购指导价。复制内容不含表头。</div>
-        <div class="credential-note">本工具用于补充已有订单的采购信息。完整分单请使用“采购中心 → 导入分单”，执行订单校验和去重。</div>
-        <div id="xyp2CopyFallback" hidden><label for="xyp2CopyText">浏览器未允许自动复制，请在下方按 Ctrl/Cmd+C 复制。</label><textarea id="xyp2CopyText" rows="5" readonly spellcheck="false"></textarea></div>
-      </section>
-    </div>
+      </div>
+      <div class="resource-state" id="xyp2ParserEmpty">粘贴备注并解析后，这里显示采购明细和精准采购链接。</div>
+      <div id="xyp2ParserResult" hidden>
+        <div class="xyp2-summary" id="xyp2ParserSummary"></div>
+        <div class="resource-state warn" id="xyp2ParserWarnings" hidden></div>
+        <div class="table-wrap xyp2-table-wrap"><table><thead><tr><th>来源 SKU</th><th>主规格</th><th>次规格</th><th>数量</th><th>采购指导单价</th><th>采购链接</th></tr></thead><tbody id="xyp2ParserRows"></tbody></table></div>
+        <p class="xyp2-help">指导价合计按“指导单价 × 数量”计算，不含运费、税费或凑单金额，供采购参考。</p>
+        <details class="xyp2-details"><summary>查看编码和价格详情</summary><div id="xyp2ParserDetails"></div></details>
+      </div>
+      <details class="xyp2-usage">
+        <summary>协同表粘贴说明 <span>仅补充已有订单；完整分单请用“采购中心 → 导入分单”</span></summary>
+        <p class="xyp2-help">粘贴到标准协同表“采购链接”列的预留起始明细行，依次填写：采购链接 / 主规格 / 次规格 / 需求数量 / 采购指导价。复制内容不含表头。</p>
+        <p class="xyp2-help">本工具用于补充已有订单的采购信息。完整分单请使用“采购中心 → 导入分单”，执行订单校验和去重。</p>
+      </details>
+      <div id="xyp2CopyFallback" hidden><label for="xyp2CopyText">浏览器未允许自动复制，请在下方按 Ctrl/Cmd+C 复制。</label><textarea id="xyp2CopyText" rows="5" readonly spellcheck="false"></textarea></div>
+    </section>
   </div>
 
   <div class="module-panel hidden" id="procurementPanel">
@@ -2270,6 +2300,23 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         <div class="hint">文件只传给本机 127.0.0.1 服务并在内存解析；页面收到脱敏计划后立即清空文件内容。真实凭证文件必须放在项目目录外。</div>
         <div style="margin-top:8px"><a class="btn-mini" href="/api/envbatch/template" style="text-decoration:none;display:inline-block;padding:6px 12px">📥 下载填写模板</a></div>
         <div class="stat-grid" id="envStats"><div class="stat-chip"><b>—</b>尚未解析</div></div>
+        <div id="envSiteReview" class="env-site-review hidden" aria-labelledby="envSiteReviewTitle">
+          <b id="envSiteReviewTitle">请确认本批账号实际站点</b>
+          <p id="envSiteReviewSummary"></p>
+          <p id="envFilenameConflict" class="site-conflict" role="alert"></p>
+          <div class="input-row">
+            <div class="field">
+              <label for="envConfirmedSite">本批账号实际站点（依据账号采购来源核对）</label>
+              <select id="envConfirmedSite">
+                <option value="">请选择，默认不确认</option>
+                <option value="MX">墨西哥站 · MX</option>
+                <option value="US">美国站 · US</option>
+              </select>
+            </div>
+            <button class="btn" id="btnEnvConfirmSite" type="button" disabled>确认本批账号站点</button>
+          </div>
+          <p id="envSiteReviewStatus" aria-live="polite"></p>
+        </div>
         <div class="reg-plan" id="envPlan">尚未选择文件</div>
       </div>
     </section>
@@ -3743,7 +3790,7 @@ async function cloudFetchJson(path, opts={}) {
   const headers = new Headers(opts.headers || {});
   headers.set('Accept', 'application/json');
   headers.set('X-Xynigo-Source', 'cloud_web_workspace');
-  headers.set('X-Xynigo-Client-Version', '0.17.12-cloud-web');
+  headers.set('X-Xynigo-Client-Version', '0.17.13-cloud-web');
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     headers.set('X-Xynigo-Web-CSRF', 'same-origin');
   }
@@ -4233,6 +4280,89 @@ function hasEnvironmentPlan() {
   return CLOUD_WEB_MODE ? !!envCloudPlanId : !!envLocalPlanId;
 }
 
+// The acknowledgment belongs to this exact upload, plan, site and group.
+let envSiteReviewState = null;
+let envSiteConfirmation = null;
+function environmentSiteReviewKey() {
+  return JSON.stringify([envUploadRevision,
+    CLOUD_WEB_MODE ? envCloudPlanId : envLocalPlanId,
+    $('envSite').value, $('envSiteGroup').value,
+    envSiteReviewState && envSiteReviewState.filename]);
+}
+function resetEnvironmentSiteReview() {
+  envSiteReviewState = null;
+  envSiteConfirmation = null;
+  $('envConfirmedSite').value = '';
+  $('envSiteReview').classList.add('hidden');
+}
+function setEnvironmentSiteReview(result, filename='') {
+  resetEnvironmentSiteReview();
+  envSiteReviewState = {
+    filename:String(result.filename || filename || ''),
+    mixedCount:Number(result.mixedSiteCookieCount || 0),
+    filenameHints:Array.isArray(result.filenameSiteHints) ? result.filenameSiteHints : [],
+    filenameConflict:result.filenameSiteConflict === true,
+    required:!!result.siteConfirmationRequired || Number(result.mixedSiteCookieCount || 0) > 0
+      || result.filenameSiteConflict === true,
+  };
+  renderEnvironmentSiteReview();
+}
+function environmentSiteReviewReady() {
+  if (!envSiteReviewState) return false;
+  return !envSiteReviewState.required || !!(envSiteConfirmation
+    && envSiteConfirmation.key === environmentSiteReviewKey()
+    && envSiteConfirmation.confirmedSite === $('envSite').value);
+}
+function environmentSiteConfirmationPayload() {
+  if (!environmentSiteReviewReady()) throw new Error('请先核对并确认本批账号实际站点');
+  if (!envSiteReviewState.required) return {};
+  return {confirmedSite:envSiteConfirmation.confirmedSite,
+    confirmFilenameSiteMismatch:envSiteConfirmation.confirmFilenameSiteMismatch};
+}
+function renderEnvironmentSiteReview() {
+  const review = envSiteReviewState;
+  const visible = envMode === 'bound' && hasEnvironmentPlan() && review && review.required;
+  $('envSiteReview').classList.toggle('hidden', !visible);
+  const mixedLabel = $('envMixedCookieLabel');
+  if (mixedLabel) mixedLabel.textContent = review && review.mixedCount
+    ? (environmentSiteReviewReady() ? '混合登录态（已确认）' : '混合登录态（需确认）')
+    : '混合登录态';
+  if (!visible) return;
+  const site = $('envSite').value;
+  const siteLabel = site === 'MX' ? '墨西哥站 MX' : '美国站 US';
+  const busy = envPreviewRunning || envSubmitting || envRunning || backupRunning;
+  const ready = environmentSiteReviewReady();
+  $('envSiteReview').classList.toggle('reviewed', ready);
+  $('envSiteReviewTitle').textContent = ready ? '本批账号站点已确认' : '请确认本批账号实际站点';
+  $('envSiteReviewSummary').textContent = `文件：${review.filename}；当前选择：${siteLabel} / ${$('envSiteGroup').value}。`
+    + (review.mixedCount ? `${review.mixedCount} 行 Cookie 同时含 MX 和 US 登录域，无法据此确定账号应使用的站点。` : '请依据账号采购来源核对站点。');
+  $('envFilenameConflict').textContent = review.filenameConflict
+    ? `文件名包含 ${review.filenameHints.join(' / ')} 站点标记，与当前 ${siteLabel} 不一致。请切换站点重新上传；若仅文件名有误，须单独确认后继续。` : '';
+  const selected = $('envConfirmedSite').value;
+  $('envConfirmedSite').disabled = busy;
+  $('btnEnvConfirmSite').disabled = busy || !selected || selected !== site || ready;
+  $('btnEnvConfirmSite').textContent = ready ? `已确认：${siteLabel}` : `确认本批账号用于${siteLabel}`;
+  $('envSiteReviewStatus').textContent = ready
+    ? `已确认本批用于${siteLabel}。更换文件、站点或分组后需重新确认。`
+    : selected && selected !== site
+    ? '账号实际站点与创建参数不一致，请先修改上方“建环境站点”，再重新上传文件。'
+    : '确认前暂停干跑预览和正式执行；混合 Cookie 将保留原文。';
+}
+$('envConfirmedSite').onchange = () => {
+  envSiteConfirmation = null;
+  updateEnvButtons();
+};
+$('btnEnvConfirmSite').onclick = () => {
+  if (envPreviewRunning || envSubmitting || envRunning || backupRunning || !hasEnvironmentPlan()) return;
+  const selected = $('envConfirmedSite').value;
+  if (!envSiteReviewState || !selected || selected !== $('envSite').value) return;
+  if (envSiteReviewState.filenameConflict && !confirm(
+    `文件“${envSiteReviewState.filename}”包含 ${envSiteReviewState.filenameHints.join(' / ')} 标记，当前选择为 ${selected}。\n\n请确认：已核对账号采购来源，实际应使用 ${selected} 站，文件名的站点标记有误。取消后可切换站点或更正文件名重新上传。`)) return;
+  envSiteConfirmation = {key:environmentSiteReviewKey(), confirmedSite:selected,
+    confirmFilenameSiteMismatch:envSiteReviewState.filenameConflict};
+  updateEnvButtons();
+};
+
 function cloudPlanExpiryTime(value) {
   const timestamp = Date.parse(String(value || ''));
   if (!Number.isFinite(timestamp)) return '计划过期时间';
@@ -4260,9 +4390,10 @@ async function restoreLatestCloudEnvironmentPlan() {
     envAccountCount = Number(result.count || 0);
     envCloudPlanPreview = Array.isArray(result.preview) ? result.preview : [];
     if (!envCloudPlanId || envAccountCount < 1) return false;
+    setEnvironmentSiteReview(result);
     if (!applyAssignmentTemplate(envImportBuyerPlan)) splitEnvEvenly(envDefaultSplit);
     const mixed = Number(result.mixedSiteCookieCount || 0);
-    $('envStats').innerHTML = `<div class="stat-chip blue"><b>${envAccountCount}</b>账号总数</div><div class="stat-chip ok"><b>${result.cookieCount}/${envAccountCount}</b>Cookie 覆盖</div><div class="stat-chip ${mixed ? 'warn' : 'ok'}"><b>${mixed}</b>混合登录态（允许）</div><div class="stat-chip"><b>${result.passwordKindCount}</b>密码种类</div><div class="stat-chip ok"><b>0</b>文件内重复</div><div class="stat-chip ok"><b>0</b>格式问题</div><div class="stat-chip"><b>${result.orderCount}</b>单号已提取</div>`;
+    $('envStats').innerHTML = `<div class="stat-chip blue"><b>${envAccountCount}</b>账号总数</div><div class="stat-chip ok"><b>${result.cookieCount}/${envAccountCount}</b>Cookie 覆盖</div><div class="stat-chip ${mixed ? 'warn' : 'ok'}"><b>${mixed}</b><span id="envMixedCookieLabel">混合登录态（需确认）</span></div><div class="stat-chip"><b>${result.passwordKindCount}</b>密码种类</div><div class="stat-chip ok"><b>0</b>文件内重复</div><div class="stat-chip ok"><b>0</b>格式问题</div><div class="stat-chip"><b>${result.orderCount}</b>单号已提取</div>`;
     $('envPlan').textContent = `已恢复 ${cloudPlanExpiryTime(result.expiresAt)} 前有效的云端加密解析计划：${envAccountCount} 行。无需重新上传文件；正式执行前仍会实时复核 HubStudio。`;
     refreshAssignUi();
     return true;
@@ -7532,8 +7663,9 @@ function refreshAssignUi() {
 }
 
 function updateEnvButtons() {
+  renderEnvironmentSiteReview();
   const boundReady = envMode === 'bound' && hasEnvironmentPlan() &&
-    envAssignedTotal() === envAccountCount && envAccountCount > 0;
+    envAssignedTotal() === envAccountCount && envAccountCount > 0 && environmentSiteReviewReady();
   const backupReady = envMode === 'backup' && envBackup.count >= 1 && envBackup.count <= envBackupMax;
   const ready = envPreflightReady && (boundReady || backupReady);
   const busy = envPreviewRunning || envSubmitting || envRunning || backupRunning;
@@ -10529,10 +10661,13 @@ function procurementImportCurrentTarget() {
 function renderProcurementImportHistory() {
   const selected = procurementImportHistoryKey(procurementImportCurrentTarget());
   const select = $('procurementImportHistory');
-  select.innerHTML = '<option value="">使用其他链接</option>' + procurementImportHistory.map(item =>
+  const placeholder = procurementImportHistory.length ? '使用其他链接' : '暂无最近使用';
+  select.innerHTML = `<option value="">${placeholder}</option>` + procurementImportHistory.map(item =>
     `<option value="${esc(procurementImportHistoryKey(item))}">${esc(item.spreadsheetName || '飞书协作表')} / ${esc(item.sheetName)}</option>`).join('');
   select.value = procurementImportHistory.some(item => procurementImportHistoryKey(item) === selected) ? selected : '';
-  $('procurementImportHistoryRow').hidden = !procurementImportHistory.length;
+  // Reserve the row from first paint; the first saved target updates in place.
+  $('procurementImportHistoryRow').hidden = false;
+  select.disabled = !procurementImportHistory.length || !!procurementImportPendingAction || procurementImportIsRunning();
   $('btnProcurementImportForgetTarget').disabled = !!procurementImportPendingAction || procurementImportIsRunning() || !select.value;
 }
 
@@ -10830,7 +10965,7 @@ function renderProcurementImportLayout() {
   $('procurementImportTargetSheet').disabled = busy || !parsed;
   $('procurementImportFillBackground').disabled = busy || ['failed', 'partial'].includes(procurementImportLastSyncStatus?.state);
   $('procurementImportFillBackground').setAttribute('aria-checked', String(procurementImportFillBackground));
-  $('procurementImportHistory').disabled = busy;
+  $('procurementImportHistory').disabled = busy || !procurementImportHistory.length;
   $('btnProcurementImportForgetTarget').disabled = busy || !$('procurementImportHistory').value;
   $('btnProcurementImportInspectTarget').disabled = busy || !parsed;
   $('btnProcurementImportValidateTarget').disabled = busy || !parsed || blocked
@@ -11479,6 +11614,7 @@ $('btnBuyerImportCommit').onclick = async () => {
 };
 
 $('envFile').onchange = async e => {
+  resetEnvironmentSiteReview();
   const uploadRevision = ++envUploadRevision;
   envCloudPlanId = null;
   envLocalPlanId = null;
@@ -11516,13 +11652,14 @@ $('envFile').onchange = async e => {
     if (CLOUD_WEB_MODE) envCloudPlanId = result.cloudPlanId;
     else envLocalPlanId = result.planId;
     envAccountCount = result.count;
+    setEnvironmentSiteReview(result, file.name);
     envCloudPlanPreview = Array.isArray(result.preview) ? result.preview : [];
     const mixedSiteCookieCount = Number(result.mixedSiteCookieCount || 0);
     if (!applyAssignmentTemplate(envImportBuyerPlan)) splitEnvEvenly(envDefaultSplit);
     refreshAssignUi();
-    $('envStats').innerHTML = `<div class="stat-chip blue"><b>${result.count}</b>账号总数</div><div class="stat-chip ok"><b>${result.cookieCount}/${result.count}</b>Cookie 覆盖</div><div class="stat-chip ${mixedSiteCookieCount ? 'warn' : 'ok'}"><b>${mixedSiteCookieCount}</b>混合登录态（允许）</div><div class="stat-chip"><b>${result.passwordKindCount}</b>密码种类</div><div class="stat-chip ok"><b>${result.duplicateCount}</b>文件内重复</div><div class="stat-chip ok"><b>${result.issueCount}</b>格式问题</div><div class="stat-chip"><b>${result.orderCount}</b>单号已提取</div>`;
+    $('envStats').innerHTML = `<div class="stat-chip blue"><b>${result.count}</b>账号总数</div><div class="stat-chip ok"><b>${result.cookieCount}/${result.count}</b>Cookie 覆盖</div><div class="stat-chip ${mixedSiteCookieCount ? 'warn' : 'ok'}"><b>${mixedSiteCookieCount}</b><span id="envMixedCookieLabel">混合登录态（需确认）</span></div><div class="stat-chip"><b>${result.passwordKindCount}</b>密码种类</div><div class="stat-chip ok"><b>${result.duplicateCount}</b>文件内重复</div><div class="stat-chip ok"><b>${result.issueCount}</b>格式问题</div><div class="stat-chip"><b>${result.orderCount}</b>单号已提取</div>`;
     const mixedNotice = mixedSiteCookieCount
-      ? `\n\n⚠ 临时兼容：${mixedSiteCookieCount} 行同时包含墨西哥与美国登录域，将按当前选择的 ${$('envSite').value} 站建环境并原样写入 Cookie。`
+      ? `\n\n⚠ ${mixedSiteCookieCount} 行同时包含墨西哥与美国登录域，须先明确确认本批账号的实际站点，确认后保留原 Cookie。`
       : '';
     const reuseNotice = CLOUD_WEB_MODE && result.reused
       ? `检测到相同文件，已复用 ${cloudPlanExpiryTime(result.expiresAt)} 前有效的解析计划。\n\n`
@@ -11532,7 +11669,7 @@ $('envFile').onchange = async e => {
     toast(result.reused
       ? `检测到相同文件，已复用 ${cloudPlanExpiryTime(result.expiresAt)} 前有效的解析计划`
       : mixedSiteCookieCount
-      ? `校验通过：${result.count} 行，其中 ${mixedSiteCookieCount} 行混合登录态已临时允许`
+      ? `格式校验通过：${result.count} 行，其中 ${mixedSiteCookieCount} 行混合登录态待确认站点`
       : `号商名单校验通过：${result.count} 行`);
   } catch (err) {
     if (uploadRevision !== envUploadRevision) return;
@@ -11557,6 +11694,7 @@ $('btnEnvPreview').onclick = async () => {
     return;
   }
   if (!hasEnvironmentPlan()) { toast('请先选择并解析 xlsx'); return; }
+  if (!environmentSiteReviewReady()) { toast('请先核对并确认本批账号实际站点'); return; }
   if (CLOUD_WEB_MODE) {
     envPreviewRunning = true;
     updateEnvModeTabs();
@@ -11576,6 +11714,7 @@ $('btnEnvPreview').onclick = async () => {
         purchaseDate:envPurchaseDate(),
         environmentGroup:$('envSiteGroup').value,
         totalCount:envAccountCount, assignments,
+        ...environmentSiteConfirmationPayload(),
       };
       idempotencyKey = workspaceMutationKey('env-preview', requestBody);
       const created = await cloudFetchJson(
@@ -11643,7 +11782,8 @@ $('btnEnvPreview').onclick = async () => {
       body:JSON.stringify({
         planId:envLocalPlanId, assignment:composeAssignmentSpec(),
         purchaseDate:envPurchaseDate(), site:$('envSite').value,
-        environmentGroup:$('envSiteGroup').value
+        environmentGroup:$('envSiteGroup').value,
+        ...environmentSiteConfirmationPayload()
       })
     });
     $('envPreviewText').textContent = `干跑通过，共 ${result.count} 行：\n` + result.rows.slice(0, 8).map(x => `${x.emailMasked} → ${x.envName}${x.recoveredExisting ? '（已存在，续跑将跳过）' : ''}`).join('\n') + (result.count > 8 ? `\n…… 其余 ${result.count - 8} 行已省略` : '');
@@ -11719,6 +11859,7 @@ $('btnEnvStart').onclick = async () => {
     return;
   }
   if (!hasEnvironmentPlan()) { toast('请先选择并解析 xlsx'); return; }
+  if (!environmentSiteReviewReady()) { toast('请先核对并确认本批账号实际站点'); return; }
   const assignment = composeAssignmentSpec();
   const writeLarkLedger = false;
   if (!confirm(`将按${siteName}处理 ${envAccountCount} 个账号：创建环境、导入 Cookie、绑定账号并写备注。\n\n本次确认只授权 HubStudio 写入，是否继续？`)) return;
@@ -11734,7 +11875,7 @@ $('btnEnvStart').onclick = async () => {
   const payload = {planId:envLocalPlanId, assignment,
     purchaseDate:envPurchaseDate(),
     confirmWrite:true, site, environmentGroup:$('envSiteGroup').value,
-    writeLarkLedger, confirmLarkWrite};
+    writeLarkLedger, confirmLarkWrite, ...environmentSiteConfirmationPayload()};
   const idempotencyPayload = CLOUD_WEB_MODE
     ? {...payload, planId:undefined, cloudPlanId:envCloudPlanId}
     : payload;
@@ -11756,6 +11897,7 @@ $('btnEnvStart').onclick = async () => {
           idempotencyKey, executorId:executor.id, mode:'bound', site,
           purchaseDate:payload.purchaseDate, environmentGroup:payload.environmentGroup,
           cloudPlanId:envCloudPlanId, totalCount:envAccountCount,
+          ...environmentSiteConfirmationPayload(),
           assignments,
         })
       });
@@ -11906,6 +12048,7 @@ async function cloudEnvironmentRetryRoute() {
     takeover:true,
     executorId:String(executor.id),
     cloudPlanId:String(envCloudPlanId),
+    ...environmentSiteConfirmationPayload(),
   };
 }
 
@@ -12309,6 +12452,7 @@ async function loadEnvGroups(options={}) {
 }
 
 function invalidateEnvironmentPlan(message) {
+  resetEnvironmentSiteReview();
   envUploadRevision += 1;
   $('envFile').value = '';
   if (!hasEnvironmentPlan() && !envAccountCount) return;

@@ -69,6 +69,8 @@ from .env_batch import (BACKUP_MAX_COUNT, BACKUP_REMARK, BUYER_CODES,
                         batch_fingerprint, build_batch_plan,
                         build_environment_inventory_snapshot,
                         count_mixed_site_accounts,
+                        environment_site_review,
+                        require_environment_site_confirmation,
                         deserialize_buyer_accounts,
                         envbatch_preflight,
                         mapping_workbook_bytes, normalize_backup_type,
@@ -2263,6 +2265,7 @@ class EnvBatchJob(object):
             'count': len(accounts),
             'cookieCount': sum(bool(item.cookie_text) for item in accounts),
             'mixedSiteCookieCount': mixed_site_cookie_count,
+            **environment_site_review(filename, site, mixed_site_cookie_count),
             'passwordKindCount': len({item.password for item in accounts}),
             'duplicateCount': 0,
             'issueCount': 0,
@@ -2275,7 +2278,8 @@ class EnvBatchJob(object):
         }
 
     def preview(self, plan_id, assignment, purchase_date, site='MX',
-                environment_group=None, include_inventory_snapshot=False):
+                environment_group=None, include_inventory_snapshot=False,
+                confirmed_site=None, confirm_filename_site_mismatch=False):
         with self.lock:
             self._clean_pending()
             pending = self.pending.get(plan_id)
@@ -2283,6 +2287,8 @@ class EnvBatchJob(object):
             raise ValueError('解析计划已过期，请重新选择 xlsx')
         parse_assignment(assignment, len(pending['accounts']))
         runtime = self._runtime_config(site, environment_group)
+        self._require_site_review(pending, runtime['site'], confirmed_site,
+                                  confirm_filename_site_mismatch)
         hub = self.hub_getter()
         require_envbatch_ready(
             hub, runtime['purchaseTag'], runtime['proxyLink'],
@@ -2302,6 +2308,14 @@ class EnvBatchJob(object):
         if include_inventory_snapshot:
             return rows, build_environment_inventory_snapshot(all_existing)
         return rows
+
+    @staticmethod
+    def _require_site_review(pending, site, confirmed_site, confirm_filename_site_mismatch):
+        if pending['site'] != site:
+            raise ValueError('创建站点与解析计划不一致，请重新选择 xlsx 并确认账号站点')
+        require_environment_site_confirmation(
+            pending['filename'], site, count_mixed_site_accounts(pending['accounts']),
+            confirmed_site, confirm_filename_site_mismatch)
 
     @staticmethod
     def _safe_error(exc, accounts, extra_secrets=()):
@@ -2427,7 +2441,8 @@ class EnvBatchJob(object):
               write_lark_ledger=False, confirm_lark_write=False,
               reserve_resources=None, on_finished=None,
               cleanup_blocked_account_refs=None, defer_preflight=False,
-              planned_environment_names=None, trust_cloud_inventory=False):
+              planned_environment_names=None, trust_cloud_inventory=False,
+              confirmed_site=None, confirm_filename_site_mismatch=False):
         if not confirm_write:
             raise ValueError('正式执行必须二次确认 HubStudio 写入')
         if write_lark_ledger and not confirm_lark_write:
@@ -2467,7 +2482,9 @@ class EnvBatchJob(object):
         else:
             planned_name_map = None
         runtime = self._runtime_config(site, environment_group)
-        # 正式执行同步复核：允许混合登录态，纯错站仍在消费计划前拒收。
+        self._require_site_review(pending, runtime['site'], confirmed_site,
+                                  confirm_filename_site_mismatch)
+        # 纯错站仍在消费计划前拒收；混合登录态须先明确确认。
         validate_accounts_site(
             pending['accounts'], runtime['site'], allow_mixed=True)
         hub = self.hub_getter()
@@ -4741,7 +4758,9 @@ class Handler(BaseHTTPRequestHandler):
                     site=body.get('site') or 'MX',
                     environment_group=body.get('environmentGroup'),
                     include_inventory_snapshot=bool(
-                        body.get('includeInventorySnapshot')))
+                        body.get('includeInventorySnapshot')),
+                    confirmed_site=body.get('confirmedSite'),
+                    confirm_filename_site_mismatch=body.get('confirmFilenameSiteMismatch', False))
                 if isinstance(preview, tuple):
                     rows, inventory_snapshot = preview
                 else:
@@ -4778,6 +4797,8 @@ class Handler(BaseHTTPRequestHandler):
                         confirm_write=bool(body.get('confirmWrite')),
                         site=body.get('site') or 'MX',
                         environment_group=body.get('environmentGroup'),
+                        confirmed_site=body.get('confirmedSite'),
+                        confirm_filename_site_mismatch=body.get('confirmFilenameSiteMismatch', False),
                         write_lark_ledger=bool(body.get('writeLarkLedger')),
                         confirm_lark_write=bool(body.get('confirmLarkWrite')),
                         reserve_resources=lambda resources:

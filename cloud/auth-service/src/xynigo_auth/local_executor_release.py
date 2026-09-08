@@ -14,9 +14,9 @@ from urllib.parse import quote
 
 from . import __version__
 
-RELEASE_VERSION = "0.17.12"
+RELEASE_VERSION = "0.17.13"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-08T10:29:21Z"
+RELEASE_PUBLISHED_AT = "2026-09-08T11:55:59Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,8 +31,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.17.12-e17841e6bd00",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.12.exe",
+        "runtimeId": "0.17.13-e17841e6bd00",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.13.exe",
         "sha256": "552c8bd5fc55c481eecd51f8d90eeff12da731e42789f06c41df9c2683bd7fb7",
         "size": 15252155,
         "installMode": "standard_per_user",
@@ -50,8 +50,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.17.12-e17841e6bd00",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.12.pkg",
+        "runtimeId": "0.17.13-e17841e6bd00",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.13.pkg",
         "sha256": "a318517063c343c3a99c82ace50be4bb7dab59e4e18745dad24a562723761881",
         "size": 11599028,
         "installMode": "standard_system_application",
@@ -320,10 +320,9 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "修复采购手动添加 -1、-2 等子单号后重复导入的问题；保留原始母单键去重，不覆盖采购执行数据。",
-            "修复采购助手只能查询第一个子单的问题；各子单独立搜索和读取收件信息，旧母单标识存在歧义时要求重新选择。采购电脑需更新执行器。",
-            "导入分单新增订单背景色滑动开关，关闭后仍正常处理数据、行高、链接和图片；失败重试沿用原设置，历史记录不重新配色。",
-            "云端按账号记住最近 5 个已校验的目标协作表和工作表；更换文件保留选择，解析后自动重新校验，确认后才导入。",
-            "订单文件支持拖入单个 .xlsx（最大 20 MB）；无效输入保留原文件，忙碌期间禁止替换，并优化窄屏操作栏。",
+            "买家号建环境遇到 MX/US 混合 Cookie 时，必须重新选择并明确确认本批账号实际站点；更换文件、站点或分组后重新确认。",
+            "文件名包含与所选站点冲突的 MX、US、墨西哥或美国标记时明确提示，须修正选择或单独确认文件名有误；云端与本地执行入口共同校验，纯错站和站点分组冲突仍直接阻断。",
+            "XYP2 解析器改为上方备注输入、下方全宽采购清单，收紧输入区，将复制按钮并入清单标题栏，折叠长说明，解析页面不再展示品牌介绍卡片。",
+            "导入分单的最近使用行从首屏保留，无记录时显示暂无最近使用；首次保存和移除最后一条记录均原位更新，避免目标表输入区跳动。",
         ],
     }

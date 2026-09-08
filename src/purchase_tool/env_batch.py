@@ -250,6 +250,44 @@ def validate_purchase_group_site(value, site):
     return tag
 
 
+def environment_site_review(filename, site, mixed_site_cookie_count):
+    """Describe ambiguous account-site evidence without exposing credentials.
+
+    Filenames are hints, never a source of account identity. Accept common
+    vendor names such as MX-20 / 20MX, but not English words such as music.
+    """
+    filename = str(filename or '').replace('\\', '/').rsplit('/', 1)[-1]
+    site = normalize_env_site(site)
+    hints = []
+    for candidate, pattern in (
+            ('MX', r'墨西哥|(?<![A-Za-z])MX(?![A-Za-z])'),
+            ('US', r'美国|(?<![A-Za-z])US(?![A-Za-z])')):
+        if re.search(pattern, filename, re.I):
+            hints.append(candidate)
+    conflict = any(hint != site for hint in hints)
+    return {
+        'filename': filename,
+        'filenameSiteHints': hints,
+        'filenameSiteConflict': conflict,
+        'siteConfirmationRequired': bool(mixed_site_cookie_count or conflict),
+    }
+
+
+def require_environment_site_confirmation(
+        filename, site, mixed_site_cookie_count, confirmed_site=None,
+        confirm_filename_site_mismatch=False):
+    """Fail before any environment write unless ambiguous evidence is reviewed."""
+    site = normalize_env_site(site)
+    review = environment_site_review(filename, site, mixed_site_cookie_count)
+    if confirmed_site is not None and confirmed_site != site:
+        raise EnvBatchError('确认的账号站点与建环境站点不一致，请切换站点并重新上传文件')
+    if review['siteConfirmationRequired'] and confirmed_site != site:
+        raise EnvBatchError('本批账号站点尚未确认，请核对账号来源并明确确认 MX 或 US 站点')
+    if review['filenameSiteConflict'] and confirm_filename_site_mismatch is not True:
+        raise EnvBatchError('文件名包含与所选站点冲突的标记，请更正站点或单独确认文件名有误')
+    return review
+
+
 # 内置默认动态代理提取链接（Jeff 2026-08-20 决策：前期写死，降低同事端配置成本；
 # 运行时可在设置页用自定义链接覆盖，清除配置即回落到本默认值）。
 DEFAULT_PROXY_LINK = (

@@ -233,6 +233,9 @@ def test_bound_environment_task_hydrates_encrypted_cloud_plan_before_start():
             'purchaseDate': '20260901',
             'environmentGroup': 'MX采购',
             'cloudPlanId': 'cloud-plan-0001',
+            'filename': 'US-20.xlsx',
+            'confirmedSite': 'MX',
+            'confirmFilenameSiteMismatch': True,
             'planAccounts': [account],
             'totalCount': 1,
             'verifySampleCount': 0,
@@ -249,6 +252,9 @@ def test_bound_environment_task_hydrates_encrypted_cloud_plan_before_start():
     assert rpc.calls[0]['path'] == '/api/envbatch/cloud-plan'
     assert rpc.calls[0]['body']['cloudPlanId'] == 'cloud-plan-0001'
     assert rpc.calls[0]['body']['accounts'] == [account]
+    assert rpc.calls[0]['body']['filename'] == 'US-20.xlsx'
+    assert rpc.calls[1]['body']['confirmedSite'] == 'MX'
+    assert rpc.calls[1]['body']['confirmFilenameSiteMismatch'] is True
     assert rpc.calls[1]['path'] == '/api/envbatch/start'
     assert rpc.calls[1]['body']['planId'] == 'local-hydrated-plan-0001'
     assert rpc.calls[1]['body']['plannedEnvironmentNames'] == [{

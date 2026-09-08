@@ -418,8 +418,8 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             "filename:file.name, contentBase64, site:selectedSite",
             "站点已变更，请重新选择 xlsx",
             "mixedSiteCookieCount",
-            "混合登录态（允许）",
-            "将按当前选择的",
+            "混合登录态（需确认）",
+            "须先明确确认本批账号的实际站点",
         ):
             self.assertIn(marker, html)
 
