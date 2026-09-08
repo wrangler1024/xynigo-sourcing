@@ -16,7 +16,7 @@ from . import __version__
 
 RELEASE_VERSION = "0.17.12"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-08T07:14:24Z"
+RELEASE_PUBLISHED_AT = "2026-09-08T10:29:21Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,10 +31,10 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.17.12-dff008c87f7e",
+        "runtimeId": "0.17.12-e17841e6bd00",
         "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.12.exe",
-        "sha256": "04332a4a2de6e678d83345cc4c3c65e981602bba9a8a1433798a6ff883f2dc44",
-        "size": 15241123,
+        "sha256": "552c8bd5fc55c481eecd51f8d90eeff12da731e42789f06c41df9c2683bd7fb7",
+        "size": 15252155,
         "installMode": "standard_per_user",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_silent_installer",
@@ -50,10 +50,10 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.17.12-dff008c87f7e",
+        "runtimeId": "0.17.12-e17841e6bd00",
         "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.12.pkg",
-        "sha256": "92336ef7b60d4e407ed1991f436c8263b4b8ab5cf25b2ac06cb0d6e05a320574",
-        "size": 11592948,
+        "sha256": "a318517063c343c3a99c82ace50be4bb7dab59e4e18745dad24a562723761881",
+        "size": 11599028,
         "installMode": "standard_system_application",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_system_installer",
@@ -320,8 +320,10 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "修复同一来源商品的英文颜色 Fuchsia Pink、Apricot 与西语 Rosa Fucsia、Albaricoque 未识别为等价规格导致整单解析失败的问题。",
-            "继续按完整颜色和尺码唯一匹配，模糊颜色、尺码不一致和重复候选仍阻止导入，避免金额与图片错配。",
-            "新增源文件行序及 XYP2 明细顺序交叉回归，核对数量、指导价、商品金额和图片保持对应。",
+            "修复采购手动添加 -1、-2 等子单号后重复导入的问题；保留原始母单键去重，不覆盖采购执行数据。",
+            "修复采购助手只能查询第一个子单的问题；各子单独立搜索和读取收件信息，旧母单标识存在歧义时要求重新选择。采购电脑需更新执行器。",
+            "导入分单新增订单背景色滑动开关，关闭后仍正常处理数据、行高、链接和图片；失败重试沿用原设置，历史记录不重新配色。",
+            "云端按账号记住最近 5 个已校验的目标协作表和工作表；更换文件保留选择，解析后自动重新校验，确认后才导入。",
+            "订单文件支持拖入单个 .xlsx（最大 20 MB）；无效输入保留原文件，忙碌期间禁止替换，并优化窄屏操作栏。",
         ],
     }
