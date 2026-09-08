@@ -12,9 +12,11 @@ import base64
 from collections import Counter, OrderedDict, defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 import hashlib
 from io import BytesIO
 import json
+import math
 import posixpath
 import re
 import threading
@@ -33,6 +35,7 @@ MAX_XLSX_BYTES = 20 * 1024 * 1024
 PLAN_TTL_SECONDS = 30 * 60
 XYP2_OPEN = '[XYP2]'
 XYP2_CLOSE = '[/XYP2]'
+MAX_XYP2_REMARK_CHARS = 20_000
 SITE_HOSTS = {'mx': 'www.shein.com.mx', 'us': 'us.shein.com'}
 BEIJING_TIMEZONE = timezone(timedelta(hours=8))
 IMAGE_HOST_RE = re.compile(r'(^|\.)ltwebstatic\.com$', re.I)
@@ -134,7 +137,54 @@ SHEET_FORMATS = {
 
 
 class ProcurementImportError(ValueError):
-    pass
+    def __init__(self, message, *, code='invalid_order_data', row_numbers=(),
+                 field_name='', issues=None, diagnostics=None):
+        super().__init__(message)
+        self.code = code
+        self.row_numbers = list(row_numbers)
+        self.field_name = field_name
+        self.issues = list(issues or [])
+        self.diagnostics = diagnostics
+
+
+def _issue(source_rows, message, *, code, level='error', row_numbers=None,
+           field_name=''):
+    first = source_rows[0].values if source_rows else {}
+    return {
+        'level': level, 'code': code,
+        'orderNo': _compact_text(first.get('订单号')),
+        'packageNo': _compact_text(first.get('包裹号')),
+        'rowNumbers': list(row_numbers if row_numbers is not None else
+                           [row.row_number for row in source_rows]),
+        'field': field_name, 'message': message,
+    }
+
+
+def _import_diagnostics(rows, issues, source_rows):
+    success = {(row.values['销售订单号'], row.values['包裹号']) for row in rows}
+    failed = {(item.get('orderNo', ''), item.get('packageNo', ''))
+              for item in issues if item['level'] == 'error'
+              and (item.get('orderNo') or item.get('packageNo'))}
+    errors = sum(item['level'] == 'error' for item in issues)
+    return {
+        'sourceRows': source_rows, 'totalOrderCount': len(success | failed),
+        'orderCountKnown': bool(source_rows) and not any(
+            item.get('code') == 'order_identity_missing' for item in issues),
+        'orderCount': len(success), 'successOrderCount': len(success),
+        'failedOrderCount': len(failed), 'detailCount': len(rows),
+        'quantityCount': sum(row.values['需求数量'] for row in rows),
+        'errorCount': errors,
+        'warningCount': sum(item['level'] == 'warning' for item in issues),
+        'canImport': bool(rows) and not errors, 'issues': list(issues),
+    }
+
+
+def require_importable(plan):
+    if not plan.rows or any(item['level'] == 'error' for item in plan.issues):
+        raise ProcurementImportError(
+            '本批存在阻断错误，已停止导入；请下载完整错误清单，修正后重新解析',
+            code='procurement_import_blocked',
+            diagnostics=_import_diagnostics(plan.rows, plan.issues, plan.source_rows))
 
 
 @dataclass
@@ -161,6 +211,7 @@ class ParsedXyp2:
     rounding_amount: float
     items: list
     source_text: str
+    block_count: int = 1
 
 
 @dataclass
@@ -278,9 +329,9 @@ def _number(value, field_name, row_number, allow_empty=False):
     except (TypeError, ValueError) as exc:
         raise ProcurementImportError(
             '第 %d 行“%s”不是有效数字' % (row_number, field_name)) from exc
-    if result < 0:
+    if not math.isfinite(result) or result < 0:
         raise ProcurementImportError(
-            '第 %d 行“%s”不能小于 0' % (row_number, field_name))
+            '第 %d 行“%s”必须是有限的非负数字，不能小于 0' % (row_number, field_name))
     return result
 
 
@@ -362,7 +413,7 @@ def _purchase_link(hostname, mall_code, item, currency):
         hostname, _compact_text(goods_id), urlencode(query), urlencode(fragment))
 
 
-def parse_xyp2_remark(value):
+def _parse_xyp2_block(value):
     source = _text(value)
     start = source.find(XYP2_OPEN)
     end = source.find(XYP2_CLOSE, start + len(XYP2_OPEN)) if start >= 0 else -1
@@ -419,6 +470,80 @@ def parse_xyp2_remark(value):
     return ParsedXyp2(
         site=site_code.upper(), currency=currency, mall_code=mall_code,
         rounding_amount=rounding, items=items, source_text=source_text)
+
+
+def _xyp2_signature(parsed):
+    return json.dumps([
+        parsed.site, parsed.currency, parsed.mall_code, parsed.rounding_amount,
+        [vars(item) for item in parsed.items],
+    ], sort_keys=True, ensure_ascii=False)
+
+
+def parse_xyp2_remark(value):
+    source = _text(value)
+    blocks = re.findall(r'\[XYP2\].*?\[/XYP2\]', source, re.S)
+    if not blocks:
+        return _parse_xyp2_block(source)
+    remaining = re.sub(r'\[XYP2\].*?\[/XYP2\]', '', source, flags=re.S)
+    if XYP2_OPEN in remaining or XYP2_CLOSE in remaining:
+        raise ProcurementImportError('备注中混有不完整的 XYP2 标记', code='xyp2_invalid')
+    parsed = [_parse_xyp2_block(block) for block in blocks]
+    if len({_xyp2_signature(item) for item in parsed}) != 1:
+        raise ProcurementImportError(
+            '同一备注单元格包含不同 XYP2 内容，请保留核对后的唯一版本',
+            code='xyp2_conflict')
+    parsed[0].block_count = len(parsed)
+    return parsed[0]
+
+
+def decode_xyp2_remark(value):
+    """Read-only presentation of the same XYP2 contract used by imports."""
+    if not isinstance(value, str) or not value.strip():
+        raise ProcurementImportError('请粘贴包含 XYP2 的店小秘客服备注', code='xyp2_empty')
+    if len(value) > MAX_XYP2_REMARK_CHARS:
+        raise ProcurementImportError('备注不能超过 20,000 个字符，请仅保留本单相关备注', code='xyp2_too_large')
+    try:
+        parsed = parse_xyp2_remark(value)
+    except ProcurementImportError as exc:
+        if isinstance(exc.__cause__, json.JSONDecodeError):
+            error = exc.__cause__
+            raise ProcurementImportError(
+                'XYP2 JSON 第 %d 行、第 %d 列格式错误，请核对原备注是否完整' % (error.lineno, error.colno),
+                code='xyp2_json_invalid') from exc
+        raise
+    quantity = sum(item.purchase_qty for item in parsed.items)
+    if quantity > 9_007_199_254_740_991:
+        raise ProcurementImportError('采购数量超出页面可准确表示的范围，请核对数量', code='xyp2_number_range')
+    total = sum((Decimal(str(item.guide_price)) * item.purchase_qty
+                 for item in parsed.items), Decimal('0'))
+    if total > Decimal('90071992547409.91'):
+        raise ProcurementImportError('采购金额超出可计算范围，请核对指导价和数量', code='xyp2_number_range')
+    total_number = float(round(total, 2))
+    warnings = []
+    if parsed.block_count > 1:
+        warnings.append('备注重复包含 %d 份相同 XYP2，已按一份解析。' % parsed.block_count)
+    missing_specs = [str(index) for index, item in enumerate(parsed.items, 1)
+                     if not item.main_spec or not item.secondary_spec]
+    if missing_specs:
+        warnings.append('第 %s 条明细有规格未提供，请核对商品页面。' % '、'.join(missing_specs))
+    return {
+        'site': parsed.site,
+        'siteName': {'MX': '墨西哥站', 'US': '美国站'}[parsed.site],
+        'currency': parsed.currency, 'detailCount': len(parsed.items),
+        'quantityCount': quantity, 'guideTotal': total_number,
+        'roundingAmount': (parsed.rounding_amount if 'r' in json.loads(
+            parsed.source_text[len(XYP2_OPEN):-len(XYP2_CLOSE)]) else None),
+        'warnings': warnings,
+        'items': [{
+            'index': index, 'sellerSku': item.seller_sku,
+            'mainSpec': item.main_spec, 'secondarySpec': item.secondary_spec,
+            'quantity': item.purchase_qty, 'guidePrice': item.guide_price,
+            'purchaseLink': item.purchase_link,
+            'goodsId': item.goods_id, 'skuCode': item.sku_code,
+            'mainAttr': item.main_attr, 'originalPrice': item.original_price,
+            'couponRate': item.coupon_rate,
+        } for index, item in enumerate(parsed.items, 1)],
+    }
 
 
 def _row_match_keys(values):
@@ -538,14 +663,18 @@ def parse_export_workbook(source):
     for column in range(1, worksheet.max_column + 1):
         name = _compact_text(worksheet.cell(1, column).value)
         if name.casefold() == 'curp': name = 'CURP'
-        if name == 'CURP' and name in header_map:
-            raise ProcurementImportError('导出文件存在重复 CURP 列')
+        if name in set(REQUIRED_HEADERS) | {'CURP'} and name in header_map:
+            message = '导出文件存在重复 %s 列' % name
+            raise ProcurementImportError(message, issues=[_issue(
+                [], message, code='duplicate_header', row_numbers=[1], field_name=name)])
         if name and name not in header_map:
             header_map[name] = column
     missing = [name for name in REQUIRED_HEADERS if name not in header_map]
     if missing:
-        raise ProcurementImportError(
-            '店小秘导出模板缺少字段：%s' % '、'.join(missing))
+        message = '店小秘导出模板缺少字段：%s' % '、'.join(missing)
+        raise ProcurementImportError(message, issues=[_issue(
+            [], message, code='missing_header', row_numbers=[1],
+            field_name='、'.join(missing))])
     source_images = _source_image_map(source, worksheet.title)
     groups = OrderedDict()
     for row_number in range(2, worksheet.max_row + 1):
@@ -555,11 +684,10 @@ def parse_export_workbook(source):
         }
         order_no = _compact_text(values.get('订单号'))
         package_no = _compact_text(values.get('包裹号'))
-        if not order_no and not package_no:
+        if (not order_no and not package_no and not any(
+                _compact_text(values.get(name)) for name in
+                ('SKU', '产品名称', '产品规格', '单个产品数量'))):
             continue
-        if not order_no or not package_no:
-            raise ProcurementImportError(
-                '第 %d 行订单号或包裹号为空' % row_number)
         source_row = SourceRow(
             row_number=row_number, values=values,
             match_keys=_row_match_keys(values),
@@ -595,19 +723,39 @@ def _image_mime(data):
 
 def _select_xyp2(source_rows):
     parsed = []
-    errors = []
+    missing = []
+    issues = []
     for row in source_rows:
         remark = row.values.get('客服备注')
         try:
-            parsed.append((row.row_number, parse_xyp2_remark(remark)))
+            item = parse_xyp2_remark(remark)
+            parsed.append((row.row_number, item))
+            if item.block_count > 1:
+                issues.append(_issue([row], '同一单元格重复包含相同 XYP2，已按一份解析',
+                                     code='xyp2_duplicate', level='warning', field_name='客服备注'))
         except ProcurementImportError as exc:
-            errors.append((row.row_number, str(exc)))
-    if not parsed:
-        raise ProcurementImportError(errors[0][1] if errors else '未找到完整 XYP2')
-    canonical = {item.source_text for _row, item in parsed}
+            issue = _issue([row], str(exc), code=(
+                exc.code if exc.code != 'invalid_order_data' else 'xyp2_invalid'),
+                field_name='客服备注')
+            if not any(marker in _text(remark) for marker in
+                       (XYP2_OPEN, XYP2_CLOSE, '[XYNIGO_PURCHASE_V1]')):
+                missing.append(issue)
+            else:
+                issues.append(issue)
+    for item in missing:
+        if parsed:
+            item.update(level='warning', code='xyp2_inherited',
+                        message='该产品行没有 XYP2，使用同一订单其他产品行的有效备注')
+        issues.append(item)
+    canonical = {_xyp2_signature(item) for _row, item in parsed}
     if len(canonical) > 1:
-        raise ProcurementImportError('同一采购单的产品行包含不同 XYP2 内容，请重新导出')
-    return parsed[0][1]
+        issues.append(_issue(source_rows, '同一采购单的产品行包含不同 XYP2 内容，请重新导出',
+                             code='xyp2_conflict', field_name='客服备注'))
+    errors = [item for item in issues if item['level'] == 'error']
+    if errors or not parsed:
+        raise ProcurementImportError(errors[0]['message'] if errors else '未找到完整 XYP2',
+                                     issues=issues)
+    return parsed[0][1], issues
 
 
 # Only explicit equivalent labels are accepted; unknown translations and
@@ -663,35 +811,18 @@ def _match_source_rows(source_rows, xyp2_items):
             raise ProcurementImportError(
                 '店小秘第 %d 行同时匹配多个 XYP2 采购明细，且无法按完整规格唯一对应；'
                 '请核对来源 SKU、颜色和尺码' %
-                source_row.row_number)
+                source_row.row_number, code='source_match_failed',
+                row_numbers=[source_row.row_number], field_name='SKU / 产品规格')
         assignments[candidates[0]].append(source_row)
 
     unmatched_items = [
         index for index, sources in enumerate(assignments) if not sources]
-    if unmatched_items and unmatched_source_rows:
-        if len(unmatched_items) == 1:
-            index = unmatched_items[0]
-            assignments[index].extend(unmatched_source_rows)
-            warnings.append(
-                'XYP2 来源 SKU %s 未精确匹配，已关联剩余 %d 个产品行' %
-                (xyp2_items[index].seller_sku, len(unmatched_source_rows)))
-            unmatched_source_rows = []
-        elif len(unmatched_items) == len(unmatched_source_rows):
-            for index, source_row in zip(unmatched_items, unmatched_source_rows):
-                assignments[index].append(source_row)
-                warnings.append(
-                    'XYP2 来源 SKU %s 未精确匹配，已按产品行顺序关联第 %d 行' %
-                    (xyp2_items[index].seller_sku, source_row.row_number))
-            unmatched_source_rows = []
-        else:
-            raise ProcurementImportError(
-                'XYP2 来源 SKU %s 无法唯一匹配店小秘产品行' %
-                xyp2_items[unmatched_items[0]].seller_sku)
-    if unmatched_items and any(not assignments[index] for index in unmatched_items):
-        index = next(index for index in unmatched_items if not assignments[index])
+    if unmatched_source_rows or unmatched_items:
         raise ProcurementImportError(
-            'XYP2 来源 SKU %s 无法匹配店小秘产品行' %
-            xyp2_items[index].seller_sku)
+            '采购明细未精确匹配店小秘产品行，无法唯一确认来源 SKU 和完整规格；请核对后重新导出',
+            code='source_match_failed',
+            row_numbers=[row.row_number for row in unmatched_source_rows] or
+                        [row.row_number for row in source_rows], field_name='SKU / 产品规格')
     matched = [
         (item, tuple(assignments[index]))
         for index, item in enumerate(xyp2_items)
@@ -723,27 +854,47 @@ def _build_rows(groups):
     issues = []
     for group_index, ((order_no, package_no), source_rows) in enumerate(
             groups.items()):
+        order_issue_start = len(issues)
+        for source in source_rows:
+            if not order_no or not package_no:
+                issues.append(_issue([source], '第 %d 行订单号或包裹号为空' % source.row_number,
+                                     code='order_identity_missing', field_name='订单号 / 包裹号'))
+            for name, optional in [('订单金额', source is not source_rows[0]), ('产品售价', True), ('单个产品数量', False)]:
+                try:
+                    if name == '单个产品数量':
+                        _positive_int(source.values.get(name), name, source.row_number)
+                    else:
+                        _number(source.values.get(name), name, source.row_number, allow_empty=optional)
+                except ProcurementImportError as exc:
+                    issues.append(_issue([source], str(exc), code='invalid_number', field_name=name))
+        for name in ('店铺账号', '订单金额', '币种缩写'):
+            values_seen = {_compact_text(row.values.get(name)) for row in source_rows
+                           if _compact_text(row.values.get(name))}
+            if name == '订单金额':
+                values_seen = {_safe_optional_number(value.replace(',', '')) for value in values_seen}
+            if len(values_seen) > 1:
+                issues.append(_issue(source_rows, '同一订单存在不同 %s，请核对后重新导入' % name,
+                                     code='order_data_conflict', field_name=name))
         curp_values = {str(row.values.get('CURP') or '').strip().upper()
                        for row in source_rows if str(row.values.get('CURP') or '').strip()}
         if len(curp_values) > 1:
-            issues.append({'level': 'error', 'orderNo': order_no,
-                           'packageNo': package_no, 'message': '同一订单存在不同 CURP，请核对后重新导入'})
-            continue
+            issues.append(_issue(source_rows, '同一订单存在不同 CURP，请核对后重新导入',
+                                 code='order_data_conflict', field_name='CURP'))
         curp_value = next(iter(curp_values), '')
         try:
-            xyp2 = _select_xyp2(source_rows)
+            xyp2, remark_issues = _select_xyp2(source_rows)
+            issues.extend(remark_issues)
             matches, match_warnings = _match_source_rows(source_rows, xyp2.items)
         except ProcurementImportError as exc:
-            issues.append({
-                'level': 'error', 'orderNo': order_no,
-                'packageNo': package_no, 'message': str(exc),
-            })
+            issues.extend(exc.issues or [_issue(source_rows, str(exc),
+                code=exc.code, row_numbers=exc.row_numbers or
+                [int(n) for n in re.findall(r'第\s*(\d+)\s*行', str(exc))] or None,
+                field_name=exc.field_name)])
+            continue
+        if any(item['level'] == 'error' for item in issues[order_issue_start:]):
             continue
         for message in match_warnings:
-            issues.append({
-                'level': 'warning', 'orderNo': order_no,
-                'packageNo': package_no, 'message': message,
-            })
+            issues.append(_issue(source_rows, message, code='source_match_warning', level='warning'))
         represented_rows = {
             source.row_number
             for _item, matched_sources in matches
@@ -751,20 +902,14 @@ def _build_rows(groups):
         }
         for source in source_rows:
             if source.row_number not in represented_rows:
-                issues.append({
-                    'level': 'warning', 'orderNo': order_no,
-                    'packageNo': package_no,
-                    'message': '店小秘第 %d 行未能归入任何 XYP2 采购明细' % source.row_number,
-                })
+                issues.append(_issue([source], '店小秘第 %d 行未能归入任何 XYP2 采购明细' % source.row_number,
+                                     code='source_match_failed'))
         first = source_rows[0]
         values = first.values
         try:
             sales_amount = _number(values.get('订单金额'), '订单金额', first.row_number)
         except ProcurementImportError as exc:
-            issues.append({
-                'level': 'error', 'orderNo': order_no,
-                'packageNo': package_no, 'message': str(exc),
-            })
+            issues.append(_issue([first], str(exc), code='invalid_number', field_name='订单金额'))
             continue
         store_name, operator_name = _parse_store_assignment(values.get('店铺账号'))
         country = _site_code(
@@ -787,22 +932,18 @@ def _build_rows(groups):
                         None if sales_unit_price is None
                         else sales_unit_price * source_qty)
             except ProcurementImportError as exc:
-                issues.append({
-                    'level': 'error', 'orderNo': order_no,
-                    'packageNo': package_no, 'message': str(exc),
-                })
+                issues.append(_issue(matched_sources, str(exc), code='invalid_number',
+                                     field_name='产品售价 / 单个产品数量'))
                 continue
             if exported_qty != item.purchase_qty:
-                issues.append({
-                    'level': 'warning', 'orderNo': order_no,
-                    'packageNo': package_no,
-                    'message': ('店小秘第 %s 行合计销售数量 %d 与 XYP2 采购数量 %d '
+                issues.append(_issue(matched_sources,
+                    ('店小秘第 %s 行合计销售数量 %d 与 XYP2 采购数量 %d '
                                 '不一致；需求数量采用 XYP2，商品金额仍按店小秘'
                                 '销售行计算') % (
                                     '、'.join(str(matched.row_number)
                                              for matched in matched_sources),
                                     exported_qty, item.purchase_qty),
-                })
+                    code='quantity_mismatch', level='warning', field_name='单个产品数量'))
             item_sales_amount = (
                 round(sum(source_amounts), 2)
                 if source_amounts and all(
@@ -864,6 +1005,10 @@ def _build_rows(groups):
                 item_sales_amount=item_sales_amount,
                 order_group_index=group_index))
             amount_written = True
+    # 解析先完成整单核验，任何明细错误都不得留下半单待写入数据。
+    failed = {(item['orderNo'], item['packageNo']) for item in issues if item['level'] == 'error'}
+    rows = [row for row in rows
+            if (row.values['销售订单号'], row.values['包裹号']) not in failed]
     return rows, issues
 
 
@@ -1166,6 +1311,15 @@ class ProcurementImportService(object):
         return plan
 
     def parse(self, filename, content_base64):
+        try:
+            return self._parse(filename, content_base64)
+        except ProcurementImportError as exc:
+            if exc.diagnostics is None:
+                issues = exc.issues or [_issue([], str(exc), code='invalid_file')]
+                exc.diagnostics = _import_diagnostics([], issues, 0)
+            raise
+
+    def _parse(self, filename, content_base64):
         name = _compact_text(filename)
         if not name.lower().endswith('.xlsx'):
             raise ProcurementImportError('仅支持店小秘导出的 xlsx 文件')
@@ -1178,11 +1332,12 @@ class ProcurementImportService(object):
             raise ProcurementImportError('xlsx 文件为空或超过 20MB')
         groups = parse_export_workbook(source)
         rows, issues = _build_rows(groups)
+        diagnostics = _import_diagnostics(rows, issues, sum(len(group) for group in groups.values()))
         if not rows:
             first_error = next(
                 (item['message'] for item in issues if item['level'] == 'error'),
                 '没有生成有效采购明细')
-            raise ProcurementImportError(first_error)
+            raise ProcurementImportError(first_error, diagnostics=diagnostics)
         plan_id = hashlib.sha256(
             source + str(time.time_ns()).encode('ascii')).hexdigest()
         batch_stem = posixpath.splitext(posixpath.basename(name))[0]
@@ -1212,6 +1367,7 @@ class ProcurementImportService(object):
         warnings = sum(item['level'] == 'warning' for item in issues)
         errors = sum(item['level'] == 'error' for item in issues)
         return {
+            **diagnostics,
             'planId': plan_id,
             'sourceRows': plan.source_rows,
             'orderCount': plan.order_count,
@@ -1221,7 +1377,7 @@ class ProcurementImportService(object):
             'orderImageCount': sum(bool(row.order_image) for row in rows),
             'warningCount': warnings,
             'errorCount': errors,
-            'issues': issues[:100],
+            'issues': issues,
             'preview': [{
                 'imageIndex': index,
                 'orderNo': row.values['销售订单号'],
@@ -1255,6 +1411,7 @@ class ProcurementImportService(object):
 
     def export(self, plan_id):
         plan = self._require_plan(plan_id)
+        require_importable(plan)
         stamp = time.strftime('%Y%m%d_%H%M')
         return (
             export_collaboration_workbook(plan),
@@ -1278,6 +1435,7 @@ class ProcurementImportService(object):
 
     def validate_target(self, plan_id, spreadsheet_url, sheet_id):
         plan = self._require_plan(plan_id)
+        require_importable(plan)
         try:
             info = self.sheet_gateway.inspect(spreadsheet_url)
             selected = next((
@@ -1716,6 +1874,7 @@ class ProcurementImportService(object):
         plan = self._require_plan(plan_id)
         if not plan.target:
             raise ProcurementImportError('请先读取工作表并通过核心采购字段校验')
+        require_importable(plan)
         actor = _compact_text(operator_name)
         if actor:
             for row in plan.rows:
@@ -1768,6 +1927,7 @@ class ProcurementImportService(object):
     def _run_sheet_sync(self, job_id, plan, target):
         self._job_update(job_id, state='validating')
         try:
+            require_importable(plan)
             target = self._refresh_target(target)
             target = self._normalize_target_structure(job_id, target)
             self._job_update(job_id, target_name=target.sheet_name)

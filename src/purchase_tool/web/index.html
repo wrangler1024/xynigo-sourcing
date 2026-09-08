@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Xynigo Sourcing v0.17.9</title>
+<title>Xynigo Sourcing v0.17.10</title>
 <link rel="icon" type="image/png" sizes="260x260" href="/xynigo-x.png?v=6">
 <link rel="icon" type="image/x-icon" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256" href="/favicon.ico?v=6">
 <link rel="shortcut icon" href="/favicon.ico?v=6">
@@ -1528,6 +1528,25 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
 @media(max-width:1000px){#procurementImportPanel .if-setup-grid{grid-template-columns:1fr}#procurementImportPanel .if-metrics>div{display:block}#procurementImportPanel .if-metrics strong{display:block;margin-top:5px}}
 @media(max-width:600px){#procurementImportPanel .if-heading{gap:8px}#procurementImportPanel .if-heading>button{font-size:var(--if-font-control);padding:0 9px}#procurementImportPanel .if-flow li{font-size:var(--if-font-body);gap:6px}#procurementImportPanel .if-flow i{margin:0 8px}#procurementImportPanel .if-target-fields{grid-template-columns:1fr}#procurementImportPanel .if-metrics>div{padding:0 8px}#procurementImportPanel .if-metrics small{display:none}#procurementImportPanel .if-preview-heading{flex-wrap:wrap;padding:16px}#procurementImportPanel .if-action-footer{bottom:-24px;padding:14px;flex-wrap:wrap}#procurementImportPanel .if-match-notice{align-items:flex-start}#procurementImportPanel .if-match-notice b{display:block;margin-bottom:3px}#procurementImportPanel .if-rules summary{flex-wrap:wrap}}
 
+
+  #xyp2ParserPanel .xyp2-parser-grid { display:grid; grid-template-columns:minmax(290px,.85fr) minmax(0,1.65fr); gap:16px; align-items:start; }
+  #xyp2ParserPanel .card, #xyp2ParserPanel .field { min-width:0; }
+  #xyp2ParserPanel textarea { width:100%; box-sizing:border-box; resize:vertical; border:1px solid var(--line); border-radius:10px; padding:12px; color:var(--navy-900); background:#fafcfd; font:12px/1.65 ui-monospace,monospace; overflow-wrap:anywhere; }
+  #xyp2ParserInput { min-height:260px; }
+  #xyp2ParserPanel .xyp2-table-wrap a { color:var(--primary); font-weight:600; }
+  #xyp2ParserPanel textarea:focus { outline:2px solid var(--rhino-500); outline-offset:1px; }
+  #xyp2ParserPanel .xyp2-input-meta { display:flex; justify-content:space-between; gap:8px; margin:8px 0 14px; color:var(--navy-500); font-size:11px; }
+  #xyp2ParserPanel .xyp2-summary { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-bottom:14px; }
+  #xyp2ParserPanel .xyp2-summary>div { background:#f6fafb; border:1px solid var(--line); border-radius:10px; padding:12px; }
+  #xyp2ParserPanel .xyp2-summary span { display:block; color:var(--navy-500); font-size:11px; margin-bottom:5px; }
+  #xyp2ParserPanel .xyp2-summary b { font-size:16px; color:var(--navy-900); overflow-wrap:anywhere; }
+  #xyp2ParserPanel .xyp2-table-wrap table { min-width:570px; }
+  #xyp2ParserPanel .xyp2-copy-actions { margin:16px 0 10px; flex-wrap:wrap; }
+  #xyp2ParserPanel .xyp2-details { margin-top:14px; color:var(--navy-700); font-size:12px; line-height:1.7; }
+  #xyp2ParserPanel .xyp2-details summary { cursor:pointer; }
+  #xyp2ParserPanel .xyp2-detail-item { padding:10px 0; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }
+  #xyp2CopyFallback { margin-top:14px; font-size:12px; line-height:1.7; color:var(--amber); }
+  @media (max-width:1100px) { #xyp2ParserPanel .xyp2-parser-grid { grid-template-columns:1fr; } }
 </style>
 </head>
 <body class="auth-locked">
@@ -1563,7 +1582,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
 
     <nav class="module-tabs" aria-label="一级功能模块">
       <div class="nav-label">XYNIGO SOURCING</div>
-      <button class="module-tab" data-primary="workbench" title="工作台">
+      <button class="module-tab active" data-primary="workbench" title="工作台">
         <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v10h14V10M9 20v-6h6v6"/></svg></span>
         <span class="nav-text"><b>工作台</b><small>概览 · 待办 · 连接</small></span>
       </button>
@@ -1571,11 +1590,11 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 3h12v18H6zM9 7h6M9 11h6M9 15h3"/><path d="m15 17 2 2 4-5"/></svg></span>
         <span class="nav-text"><b>采购中心</b><small>提单 · 分配 · 执行</small></span>
       </button>
-      <button class="module-tab active" data-primary="fulfillment" title="履约追踪">
+      <button class="module-tab" data-primary="fulfillment" title="履约追踪">
         <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m7.5 4.3 9 5.1"/><path d="M21 8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l3 1.7"/><path d="M12 22V12M3.3 7 12 12l8.7-5"/><circle cx="18.5" cy="15.5" r="2.5"/><path d="m20.3 17.3 1.7 1.7"/></svg></span>
         <span class="nav-text"><b>履约追踪</b><small>查询 · 跟踪 · 导出</small></span>
       </button>
-      <div class="secondary-tabs" id="secondaryTabs" role="navigation" aria-label="履约追踪二级功能">
+      <div class="secondary-tabs" id="secondaryTabs" role="navigation" aria-label="工作台二级功能" hidden>
         <button class="secondary-tab" data-parent="workbench" data-planned="业务概览" disabled hidden>业务概览<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="workbench" data-planned="我的待办" disabled hidden>我的待办<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="workbench" data-planned="连接状态" disabled hidden>连接状态<span class="secondary-status planned">规划</span></button>
@@ -1598,6 +1617,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         <button class="secondary-tab" data-parent="resources" data-module="envbatch" hidden>环境创建<span class="secondary-status">现有</span></button>
         <button class="secondary-tab" data-parent="resources" data-module="storemanagement" hidden>店铺管理<span class="secondary-status">新增</span></button>
         <button class="secondary-tab" data-parent="resources" data-module="proxymanagement" hidden>代理IP<span class="secondary-status">新增</span></button>
+        <button class="secondary-tab" data-parent="assistant" data-module="xyp2parser" hidden>XYP2解析器<span class="secondary-status">采购清单</span></button>
         <button class="secondary-tab" data-parent="analytics" data-planned="采购效率" disabled hidden>采购效率<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="analytics" data-planned="履约质量" disabled hidden>履约质量<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="analytics" data-planned="资源健康" disabled hidden>资源健康<span class="secondary-status planned">规划</span></button>
@@ -1699,19 +1719,19 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         <div class="hero-copy">
           <div class="hero-kicker">XYNIGO SOURCING WORKSPACE</div>
           <h1>让小犀帮你把每一单稳稳带回来，<span class="hero-call">Xyni, GO!</span></h1>
-          <p id="moduleSummary">批量查询订单与物流状态，异常任务集中处理，结果一键导出。</p>
-          <div class="hero-meta"><span class="hero-chip">累计修复测试 v0.17.9</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
+          <p id="moduleSummary">集中查看采购待办、履约风险与本地执行状态。</p>
+          <div class="hero-meta"><span class="hero-chip">累计修复测试 v0.17.10</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
         </div>
         <div class="hero-lockup" role="img" aria-label="小犀与 Xynigo 完整品牌一体图形">
           <img src="xynigo-logo.png" alt="">
         </div>
       </section>
 
-  <div class="module-panel planning-panel hidden" id="planningPanel">
+  <div class="module-panel planning-panel" id="planningPanel">
     <section class="card planning-card">
       <div class="planning-icon" aria-hidden="true">＋</div>
-      <h2 id="planningTitle">模块入口已迁移</h2>
-      <p id="planningDescription">本轮只迁移新系统导航与视觉外壳，未接入演示数据。现有正式功能保持原 API 与操作流程。</p>
+      <h2 id="planningTitle">工作台</h2>
+      <p id="planningDescription">工作台业务概览与统一待办将在后续阶段接入真实数据。</p>
       <span class="planning-note">功能规划中 · 不影响现有模块</span>
     </section>
   </div>
@@ -1828,6 +1848,14 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
     </div>
     <div class="if-match-notice" id="procurementImportMatchNotice" hidden><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-shield-check" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path><path d="m9 12 2 2 4-4"></path></svg><span><b>规格匹配通过</b>已按完整采购规格匹配，金额、数量随对应明细保留。</span></div>
     <div class="resource-state" id="procurementImportState">请选择使用最新版店小秘提单助手写入 XYP2 后导出的 xlsx。</div>
+    <div class="resource-state" id="procurementImportValidationSummary" hidden></div>
+    <div class="if-card-actions" id="procurementImportIssueActions" hidden>
+      <span id="procurementImportIssuePage"></span><div class="if-button-group">
+        <button class="if-btn" id="btnProcurementImportIssuePrevious" type="button">上一页</button>
+        <button class="if-btn" id="btnProcurementImportIssueNext" type="button">下一页</button>
+        <button class="if-btn" id="btnProcurementImportDownloadIssues" type="button">下载完整错误清单</button>
+      </div>
+    </div>
     <div class="procurement-import-issues" id="procurementImportIssueList"></div>
     <div class="resource-state" id="procurementImportTargetState" hidden>先解析文件，再粘贴本批要使用的普通飞书共享表格链接。</div>
     <section class="if-card if-preview-card">
@@ -1837,6 +1865,43 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
     </section>
     <details class="if-rules"><summary><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-circle-question-mark" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><path d="M12 17h.01"></path></svg>历史订单整单跳过；导入至飞书协作表，不创建采购任务。<span>查看导入规则</span></summary><p>接口直接导入，无需人工复制粘贴，不会覆盖已有单元格。采购需求区按标准列序写入，前五列固定为“分单日期 / 采购员 / 销售订单号 / 店铺 / 运营”；采购下单区可自由增删、改名和排序，不参与导入校验。</p><p>订单金额只写首条明细，商品金额逐条计算；完整收件信息紧随采购指导价。同订单按淡色分组，商品图与采购链接自动处理。系统追踪区仅用于幂等防重。已导入订单保持原样，不能在这里修改；采购任务认领前修改属于独立修订流程。</p></details>
     <footer class="if-action-footer" id="procurementImportSyncBar"><div class="if-footer-content"><div class="if-footer-copy"><b id="procurementImportFooterSummary">请先解析本批订单</b><small id="procurementImportFooterHint">完成目标飞书协作表校验后可导入</small></div><div class="procurement-import-sync-progress" id="procurementImportSyncProgress" role="status" aria-live="polite" hidden></div></div><button class="if-btn if-primary if-import-button" id="btnProcurementImportSyncImages" type="button" disabled><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-folder-input" aria-hidden="true"><path d="M2 9V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-1"></path><path d="M2 13h10"></path><path d="m9 16 3-3-3-3"></path></svg>导入数据并补齐图片</button></footer>
+  </div>
+
+  <div class="module-panel hidden" id="xyp2ParserPanel">
+    <section class="card">
+      <div class="card-title">XYP2解析器 <span class="legend">小犀助手</span></div>
+      <div class="credential-note">粘贴店小秘 XYP2 备注，转换为可读采购清单，支持复制到采购协同表。</div>
+    </section>
+    <div class="xyp2-parser-grid">
+      <section class="card">
+        <div class="card-title">店小秘客服备注</div>
+        <div class="field"><label for="xyp2ParserInput">完整备注或 XYP2 内容</label>
+          <textarea id="xyp2ParserInput" rows="13" maxlength="20000" spellcheck="false" autocomplete="off" placeholder="粘贴包含 [XYP2]…[/XYP2] 的客服备注，可保留前后的普通文字。"></textarea>
+        </div>
+        <div class="xyp2-input-meta"><span>每次解析一个采购单</span><span id="xyp2ParserInputCount">0 / 20,000 字符</span></div>
+        <div class="table-actions"><button class="btn primary" id="btnXyp2Parse" type="button">解析采购清单</button><button class="btn" id="btnXyp2Clear" type="button">清空</button></div>
+        <div class="resource-state" id="xyp2ParserState" role="status" aria-live="polite">等待粘贴备注。</div>
+      </section>
+      <section class="card">
+        <div class="card-title">采购清单 <span class="legend">核对规格、数量和指导价</span></div>
+        <div class="resource-state" id="xyp2ParserEmpty">解析后显示采购明细和精准采购链接。</div>
+        <div id="xyp2ParserResult" hidden>
+          <div class="xyp2-summary" id="xyp2ParserSummary"></div>
+          <div class="resource-state warn" id="xyp2ParserWarnings" hidden></div>
+          <div class="table-wrap xyp2-table-wrap"><table><thead><tr><th>来源 SKU</th><th>主规格</th><th>次规格</th><th>数量</th><th>采购指导单价</th><th>采购链接</th></tr></thead><tbody id="xyp2ParserRows"></tbody></table></div>
+          <div class="credential-note">指导价合计按“指导单价 × 数量”计算，不含运费、税费或凑单金额，供采购参考。</div>
+          <details class="xyp2-details"><summary>查看编码和价格详情</summary><div id="xyp2ParserDetails"></div></details>
+        </div>
+        <div class="table-actions xyp2-copy-actions">
+          <button class="btn primary" id="btnXyp2CopySheet" type="button" disabled>复制到协同表</button>
+          <button class="btn" id="btnXyp2CopyList" type="button" disabled>复制采购清单</button>
+          <button class="btn" id="btnXyp2CopyLinks" type="button" disabled>复制采购链接</button>
+        </div>
+        <div class="credential-note">粘贴到标准协同表“采购链接”列的预留起始明细行，依次填写：采购链接 / 主规格 / 次规格 / 需求数量 / 采购指导价。复制内容不含表头。</div>
+        <div class="credential-note">本工具用于补充已有订单的采购信息。完整分单请使用“采购中心 → 导入分单”，执行订单校验和去重。</div>
+        <div id="xyp2CopyFallback" hidden><label for="xyp2CopyText">浏览器未允许自动复制，请在下方按 Ctrl/Cmd+C 复制。</label><textarea id="xyp2CopyText" rows="5" readonly spellcheck="false"></textarea></div>
+      </section>
+    </div>
   </div>
 
   <div class="module-panel hidden" id="procurementPanel">
@@ -1941,7 +2006,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
     </section>
   </div>
 
-  <div class="module-panel" id="queryPanel">
+  <div class="module-panel hidden" id="queryPanel">
   <section class="runtime-selection-notice" id="runtimeSelectionNotice" hidden>
     <span class="runtime-status-dot warn" aria-hidden="true"></span>
     <div class="runtime-selection-notice-copy"><b id="runtimeSelectionTitle">开始前请选择执行设备</b><span id="runtimeSelectionDescription">查询和采购任务只会发送到你明确选择的电脑。</span></div>
@@ -3112,6 +3177,7 @@ function envGroupCompatibleWithSite(groupName, site) {
 const PRIMARY_MODULES = {
   workbench: {
     label: '工作台', hint: '概览 · 待办 · 连接', defaultModule: null,
+    planningTitle: '工作台',
     requiredPermission: 'workbench.access',
     summary: '集中查看采购待办、履约风险与本地执行状态。',
     planning: '工作台业务概览与统一待办将在后续阶段接入真实数据。'
@@ -3143,9 +3209,9 @@ const PRIMARY_MODULES = {
     summary: '统一管理买家号、店铺、代理 IP、HubStudio 环境与飞书台账。'
   },
   assistant: {
-    label: '小犀助手', hint: '业务效率工具', defaultModule: null,
+    label: '小犀助手', hint: '业务效率工具', defaultModule: 'xyp2parser',
     requiredPermission: 'assistant.access',
-    summary: '业务效率工具入口。',
+    summary: '将 XYP2 备注转换为采购清单，核对规格、数量与指导价。',
     planningTitle: '小犀助手',
     planning: '采购协作导入已移至“采购中心 → 导入分单”。后续业务效率工具将在这里提供。'
   },
@@ -3164,16 +3230,19 @@ const FEATURE_MODULES = {
   procurementorders: {
     label: '采购任务', primary: 'procurement',
     requiredPermission: 'procurement.request.read',
+    requiredPermissionsAll: ['procurement.access'],
     summary: '集中查看运营提交的采购单、明细流转与同步状态；收件信息仅在详情中按需加载。'
   },
   procurementexecution: {
     label: '采购执行', primary: 'procurement',
     requiredPermission: 'procurement.request.read',
+    requiredPermissionsAll: ['procurement.access'],
     summary: '只展示当前采购员已认领的采购单；分批方案在实际结算确认优惠券后确定。'
   },
   procurementorderdetail: {
     label: '采购单执行详情', primary: 'procurement',
     requiredPermission: 'procurement.request.read',
+    requiredPermissionsAll: ['procurement.access'],
     summary: '在独立采购单工作区查看收件信息、采购备注、采购批次与跟单环境。'
   },
   query: {
@@ -3185,6 +3254,10 @@ const FEATURE_MODULES = {
     label: '导入分单', primary: 'procurement',
     requiredPermission: 'assistant.access',
     summary: '解析店小秘 Excel 与 XYP2 备注，导入至所选飞书协作表；此入口不创建采购任务。'
+  },
+  xyp2parser: {
+    label: 'XYP2解析器', primary: 'assistant', requiredPermission: 'assistant.access',
+    summary: '解析店小秘 XYP2 备注，查看采购清单并复制到协同表。'
   },
   buyerlib: {
     label: '买家号库', primary: 'resources',
@@ -3274,7 +3347,7 @@ const PERMISSION_MENU_GROUPS = [
       },
       {
         id: 'request', label: '运营采购单',
-        note: 'Web 工作台查看、插件保存草稿和正式提交分开授权。',
+        note: '普通运营仅授予这三项即可使用提单插件；Web 采购任务还需采购中心访问权限。仅提单权限限制为本人订单。',
         codes: ['procurement.request.read', 'procurement.request.save',
           'procurement.request.submit']
       },
@@ -3351,8 +3424,8 @@ const PERMISSION_MENU_GROUPS = [
   {
     id: 'assistant', label: '小犀助手', secondary: [
       {
-        id: 'moduleentry', label: '模块入口', badge: '共享权限',
-        note: '保留小犀助手菜单；目前与采购中心的导入分单共用授权。',
+        id: 'xyp2parser', label: 'XYP2解析器', badge: '共享权限',
+        note: '解析采购备注；与采购中心的导入分单共用授权。',
         codes: ['assistant.access']
       }
     ]
@@ -3412,8 +3485,8 @@ const LOCAL_DESKTOP_SETTINGS_VIEW = (
   ['127.0.0.1', 'localhost', '::1'].includes(location.hostname)
   && new URLSearchParams(location.search).get('view') === 'localsettings'
 );
-let activePrimary = LOCAL_DESKTOP_SETTINGS_VIEW ? 'system' : 'fulfillment';
-let activeModule = LOCAL_DESKTOP_SETTINGS_VIEW ? 'localsettings' : 'query';
+let activePrimary = LOCAL_DESKTOP_SETTINGS_VIEW ? 'system' : 'workbench';
+let activeModule = LOCAL_DESKTOP_SETTINGS_VIEW ? 'localsettings' : '';
 let queryProgressLoaded = false;
 let queryPollInFlight = false;
 let querySubmitting = false;
@@ -3432,7 +3505,7 @@ let environmentHistoryNextCursor = '';
 let environmentHistoryCursorStack = [];
 let groupLoadInFlight = null;
 const MAX_OPEN_FEATURE_TABS = 10;
-let openFeatureTabs = ['query'];
+let openFeatureTabs = [];
 if (LOCAL_DESKTOP_SETTINGS_VIEW) openFeatureTabs = ['localsettings'];
 let localSettingsPageLoaded = false;
 let localSettingsConfigRevision = '';
@@ -3643,6 +3716,7 @@ function cloudApiError(payload, status) {
     || detail && detail.message || `请求失败 HTTP ${status}`);
   error.code = code;
   error.status = status;
+  error.diagnostics = payload?.diagnostics || detail?.diagnostics;
   return error;
 }
 
@@ -3651,7 +3725,7 @@ async function cloudFetchJson(path, opts={}) {
   const headers = new Headers(opts.headers || {});
   headers.set('Accept', 'application/json');
   headers.set('X-Xynigo-Source', 'cloud_web_workspace');
-  headers.set('X-Xynigo-Client-Version', '0.17.9-cloud-web');
+  headers.set('X-Xynigo-Client-Version', '0.17.10-cloud-web');
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     headers.set('X-Xynigo-Web-CSRF', 'same-origin');
   }
@@ -4491,6 +4565,9 @@ async function cloudWebApi(path, opts={}) {
     const mapped = cloudAdminTarget(path, opts);
     return cloudFetchJson(mapped.target, mapped.opts);
   }
+  if (path === '/api/assistant/xyp2/parse') {
+    return cloudFetchJson('/v1/assistant/xyp2/parse', opts);
+  }
   if (path === '/api/assistant/procurement-import'
       || path.startsWith('/api/assistant/procurement-import/')) {
     return cloudFetchJson(procurementImportResourcePath(path), opts);
@@ -4525,6 +4602,7 @@ async function api(path, opts) {
     const error = new Error(j.error || ('请求失败 HTTP ' + res.status));
     error.code = j.code || (j.detail && j.detail.code) || '';
     error.status = res.status;
+    error.diagnostics = j.diagnostics || j.detail?.diagnostics;
     if (res.status === 401 && !path.startsWith('/api/auth/')) lockWorkspace(error.message);
     throw error;
   }
@@ -4571,20 +4649,29 @@ function hasPermission(permission) {
     && authIdentity.permissions.includes(permission));
 }
 
+function isPluginOnlyIdentity(identity) {
+  if (identity?.workspaceAccess === false) return true;
+  const permissions = identity?.permissions || [];
+  const pluginPermissions = ['procurement.request.read', 'procurement.request.save', 'procurement.request.submit'];
+  return permissions.length > 0 && permissions.every(code => pluginPermissions.includes(code));
+}
+
 function hasFeatureAccess(module) {
   const info = FEATURE_MODULES[module];
-  if (!info || !authIdentity) return false;
+  if (!info || !authIdentity || isPluginOnlyIdentity(authIdentity)) return false;
   if (info.cloudOnly && !CLOUD_WEB_MODE) return false;
   if (info.localOnly && CLOUD_WEB_MODE) return false;
   if (info.requiredRole && !hasRole(info.requiredRole)) return false;
   if (Array.isArray(info.requiredPermissionsAny)
       && !info.requiredPermissionsAny.some(hasPermission)) return false;
+  if (Array.isArray(info.requiredPermissionsAll)
+      && !info.requiredPermissionsAll.every(hasPermission)) return false;
   return hasPermission(info.requiredPermission);
 }
 
 function hasPrimaryAccess(primary) {
   const info = PRIMARY_MODULES[primary];
-  if (!info || !authIdentity) return false;
+  if (!info || !authIdentity || isPluginOnlyIdentity(authIdentity)) return false;
   if (info.requiredRole && !hasRole(info.requiredRole)) return false;
   if (Array.isArray(info.requiredPermissionsAny)) {
     return info.requiredPermissionsAny.some(hasPermission);
@@ -4612,7 +4699,7 @@ function applyPermissionVisibility() {
   $('btnProxyCheckFiltered').hidden = !hasPermission('resource.ip.test');
   $('btnProxyCheckStop').hidden = !hasPermission('resource.ip.test');
   openFeatureTabs = openFeatureTabs.filter(hasFeatureAccess);
-  if (!openFeatureTabs.length) {
+  if (!openFeatureTabs.length && !hasPrimaryAccess('workbench')) {
     const firstAllowed = Object.keys(FEATURE_MODULES).find(hasFeatureAccess);
     if (firstAllowed) openFeatureTabs = [firstAllowed];
   }
@@ -4650,6 +4737,10 @@ function renderAuthenticatedUser(identity) {
 async function initializeAuthenticatedWorkspace(identity) {
   closeAuthLoginWindow();
   authIdentity = identity;
+  if (isPluginOnlyIdentity(identity)) {
+    lockWorkspace('当前账号仅开通提单插件，请在店小秘提单插件中登录使用；Xynigo 系统内测需单独授权。');
+    return;
+  }
   authReady = true;
   applyPermissionVisibility();
   renderAuthenticatedUser(identity);
@@ -4661,7 +4752,9 @@ async function initializeAuthenticatedWorkspace(identity) {
     setHubStatus(false);
     loadLocalExecutorDevices(false);
   }
-  if (activeModule && hasFeatureAccess(activeModule)) {
+  if (!LOCAL_DESKTOP_SETTINGS_VIEW && !activeModule && hasPrimaryAccess('workbench')) {
+    setPrimaryModule('workbench');
+  } else if (activeModule && hasFeatureAccess(activeModule)) {
     activateFeatureTab(activeModule);
   } else {
     const firstAllowed = openFeatureTabs[0];
@@ -4679,6 +4772,10 @@ async function refreshCloudSession() {
   if (!CLOUD_WEB_MODE || !authReady || document.visibilityState === 'hidden') return;
   try {
     const status = await cloudFetchJson('/v1/auth/web/status');
+    if (status.identity && isPluginOnlyIdentity(status.identity)) {
+      lockWorkspace('当前账号仅开通提单插件，系统测试权限已收回。');
+      return;
+    }
     if (!status.authenticated) lockWorkspace('登录会话已达到安全期限，请重新使用飞书登录。');
   } catch (_) {
     // A temporary network failure must not clear a still-valid workspace.
@@ -9874,6 +9971,7 @@ function setFeaturePanel(module) {
   $('procurementExecutionPanel').classList.toggle('hidden', module !== 'procurementexecution');
   $('procurementOrderDetailPanel').classList.toggle('hidden', module !== 'procurementorderdetail');
   $('procurementImportPanel').classList.toggle('hidden', module !== 'procurementimport');
+  $('xyp2ParserPanel').classList.toggle('hidden', module !== 'xyp2parser');
   $('buyerLibraryPanel').classList.toggle('hidden', module !== 'buyerlib');
   $('vendorImportPanel').classList.toggle('hidden', module !== 'vendorimport');
   $('registerPanel').classList.toggle('hidden', module !== 'register');
@@ -10113,6 +10211,7 @@ function setPlannedPrimary(primary) {
   $('procurementExecutionPanel').classList.add('hidden');
   $('procurementOrderDetailPanel').classList.add('hidden');
   $('procurementImportPanel').classList.add('hidden');
+  $('xyp2ParserPanel').classList.add('hidden');
   $('buyerLibraryPanel').classList.add('hidden');
   $('vendorImportPanel').classList.add('hidden');
   $('registerPanel').classList.add('hidden');
@@ -10239,10 +10338,213 @@ function bytesToBase64(bytes) {
   return btoa(binary);
 }
 
+let xyp2ParserResult = null;
+let xyp2ParserRevision = 0;
+let xyp2ParserPending = false;
+
+function xyp2Price(value) {
+  return Number(value).toLocaleString('zh-CN', {minimumFractionDigits:2, maximumFractionDigits:10});
+}
+
+function renderXyp2Parser() {
+  const result = xyp2ParserResult;
+  $('xyp2ParserInputCount').textContent = `${$('xyp2ParserInput').value.length.toLocaleString('zh-CN')} / 20,000 字符`;
+  $('btnXyp2Parse').disabled = xyp2ParserPending || !$('xyp2ParserInput').value.trim();
+  $('btnXyp2Parse').textContent = xyp2ParserPending ? '解析中…' : '解析采购清单';
+  for (const id of ['btnXyp2CopySheet', 'btnXyp2CopyList', 'btnXyp2CopyLinks']) $(id).disabled = !result;
+  $('xyp2ParserResult').hidden = !result;
+  $('xyp2ParserEmpty').hidden = !!result;
+  $('xyp2ParserRows').innerHTML = '';
+  $('xyp2ParserSummary').innerHTML = '';
+  $('xyp2ParserDetails').innerHTML = '';
+  $('xyp2ParserWarnings').hidden = true;
+  if (!result) return;
+  const metrics = [['采购站点 / 币种', `${result.siteName} / ${result.currency}`],
+    ['采购明细', `${result.detailCount} 条`], ['采购件数', `${result.quantityCount} 件`],
+    ['指导价合计', `${result.currency} ${xyp2Price(result.guideTotal)}`]];
+  $('xyp2ParserSummary').innerHTML = metrics.map(([name, value]) => `<div><span>${esc(name)}</span><b>${esc(value)}</b></div>`).join('');
+  $('xyp2ParserRows').innerHTML = result.items.map(item => `<tr>
+    <td class="mono">${esc(item.sellerSku)}</td><td>${esc(item.mainSpec || '未提供')}</td>
+    <td>${esc(item.secondarySpec || '未提供')}</td><td>${esc(item.quantity)}</td>
+    <td>${esc(result.currency)} ${esc(xyp2Price(item.guidePrice))}</td>
+    <td><a href="${esc(item.purchaseLink)}" target="_blank" rel="noopener noreferrer">打开采购链接</a></td></tr>`).join('');
+  $('xyp2ParserDetails').innerHTML = result.items.map(item => `<div class="xyp2-detail-item">
+    <b>明细 ${esc(item.index)} · ${esc(item.sellerSku)}</b><br>
+    商品 ID：${esc(item.goodsId)} · 型号编码：${esc(item.skuCode)} · 主属性编码：${esc(item.mainAttr || '未提供')}<br>
+    备注原价：${item.originalPrice == null ? '未提供' : esc(result.currency + ' ' + xyp2Price(item.originalPrice))}
+    · 优惠比例：${item.couponRate == null ? '未提供' : esc(Number((item.couponRate * 100).toFixed(4)) + '%')}
+    </div>`).join('') + `<div class="xyp2-detail-item">备注凑单金额：${result.roundingAmount == null ? '未提供' : esc(result.currency + ' ' + xyp2Price(result.roundingAmount))}（未计入指导价合计）<br>商品名称、图片、销售订单号、包裹号及收件信息：XYP2 未提供。</div>`;
+  if (result.warnings?.length) {
+    $('xyp2ParserWarnings').hidden = false;
+    $('xyp2ParserWarnings').textContent = result.warnings.join(' ');
+  }
+}
+
+function invalidateXyp2Parser() {
+  xyp2ParserRevision++;
+  xyp2ParserPending = false;
+  xyp2ParserResult = null;
+  $('xyp2CopyFallback').hidden = true;
+  $('xyp2CopyText').value = '';
+  $('xyp2ParserState').className = 'resource-state';
+  $('xyp2ParserState').textContent = $('xyp2ParserInput').value.trim() ? '备注已更新，请点击解析。' : '等待粘贴备注。';
+  renderXyp2Parser();
+}
+
+function xyp2ClipboardText(result, kind) {
+  if (kind === 'links') return result.items.map(item => item.purchaseLink).join('\n');
+  if (kind === 'sheet') {
+    const cell = value => {
+      let text = String(value ?? '').replace(/[\t\r\n]+/g, ' ');
+      // Keep a five-column TSV shape and prevent spreadsheet formula execution.
+      if (/^\s*[=+@-]/.test(text)) text = "'" + text;
+      return text;
+    };
+    return result.items.map(item => [item.purchaseLink, item.mainSpec, item.secondarySpec,
+      item.quantity, item.guidePrice].map(cell).join('\t')).join('\n');
+  }
+  return ['采购清单', `站点：${result.siteName}｜币种：${result.currency}`,
+    `共 ${result.detailCount} 条明细 / ${result.quantityCount} 件`, '',
+    ...result.items.flatMap(item => [`${item.index}. 来源 SKU：${item.sellerSku}`,
+      `规格：${item.mainSpec || '未提供'} / ${item.secondarySpec || '未提供'}`,
+      `数量：${item.quantity}｜采购指导单价：${result.currency} ${xyp2Price(item.guidePrice)}`,
+      `采购链接：${item.purchaseLink}`, '']),
+    `指导价合计：${result.currency} ${xyp2Price(result.guideTotal)}`,
+    '以上为采购参考金额，不含运费、税费或凑单金额。',
+    ...(result.warnings || []).map(warning => '注意：' + warning)].join('\n');
+}
+
+async function copyXyp2ParserResult(kind) {
+  const result = xyp2ParserResult;
+  if (!result) { toast('请先解析当前备注'); return; }
+  const text = xyp2ClipboardText(result, kind);
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
+    await navigator.clipboard.writeText(text);
+    if (xyp2ParserResult !== result) return;
+    $('xyp2CopyFallback').hidden = true;
+    toast(kind === 'sheet' ? '已复制 5 列，请从协同表“采购链接”列的预留行开始粘贴' : '已复制');
+  } catch (error) {
+    if (xyp2ParserResult !== result) return;
+    $('xyp2CopyText').value = text;
+    $('xyp2CopyFallback').hidden = false;
+    $('xyp2CopyText').focus();
+    $('xyp2CopyText').select();
+    toast('自动复制未完成，请按 Ctrl/Cmd+C 复制已选内容');
+  }
+}
+
+$('xyp2ParserInput').oninput = invalidateXyp2Parser;
+$('btnXyp2Clear').onclick = () => { $('xyp2ParserInput').value = ''; invalidateXyp2Parser(); $('xyp2ParserInput').focus(); };
+$('btnXyp2Parse').onclick = async () => {
+  if (xyp2ParserPending) return;
+  const remark = $('xyp2ParserInput').value;
+  invalidateXyp2Parser();
+  if (!remark.trim()) return;
+  const revision = xyp2ParserRevision;
+  if (remark.length > 20000) {
+    $('xyp2ParserState').className = 'resource-state bad';
+    $('xyp2ParserState').textContent = '备注不能超过 20,000 个字符。';
+    return;
+  }
+  xyp2ParserPending = true;
+  $('xyp2ParserState').textContent = '正在校验 XYP2 并生成采购清单…';
+  renderXyp2Parser();
+  try {
+    const result = await api('/api/assistant/xyp2/parse', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({remark})
+    });
+    if (revision !== xyp2ParserRevision) return;
+    if (!Array.isArray(result.items) || !result.items.length || !result.items.every(item => {
+      try { const url = new URL(item.purchaseLink); return url.protocol === 'https:'
+        && ['www.shein.com.mx', 'us.shein.com'].includes(url.hostname)
+        && !url.username && !url.password && !url.port; } catch { return false; }
+    })) throw new Error('解析结果不完整，请重新解析');
+    xyp2ParserResult = result;
+    $('xyp2ParserState').className = 'resource-state ' + (result.warnings?.length ? 'warn' : 'ok');
+    $('xyp2ParserState').textContent = `已解析 ${result.detailCount} 条采购明细，共 ${result.quantityCount} 件。请核对后复制。`;
+  } catch (error) {
+    if (revision !== xyp2ParserRevision) return;
+    $('xyp2ParserState').className = 'resource-state bad';
+    $('xyp2ParserState').textContent = '解析失败：' + error.message;
+  } finally {
+    if (revision === xyp2ParserRevision) { xyp2ParserPending = false; renderXyp2Parser(); }
+  }
+};
+$('btnXyp2CopySheet').onclick = () => copyXyp2ParserResult('sheet');
+$('btnXyp2CopyList').onclick = () => copyXyp2ParserResult('list');
+$('btnXyp2CopyLinks').onclick = () => copyXyp2ParserResult('links');
+renderXyp2Parser();
+
 let procurementImportSummary = null;
+let procurementImportIssues = [];
+let procurementImportIssuePage = 0;
 let procurementImportPendingAction = '';
 let procurementImportLastSyncStatus = null;
 let procurementImportSyncReadFailed = false;
+
+function procurementImportBlocked() {
+  return !!procurementImportSummary && (procurementImportSummary.errorCount > 0
+    || procurementImportSummary.canImport === false);
+}
+
+function renderProcurementImportIssues() {
+  const pages = Math.max(1, Math.ceil(procurementImportIssues.length / 50));
+  procurementImportIssuePage = Math.min(procurementImportIssuePage, pages - 1);
+  $('procurementImportIssueActions').hidden = !procurementImportIssues.length;
+  $('procurementImportIssuePage').textContent = `共 ${procurementImportIssues.length} 项 · 第 ${procurementImportIssuePage + 1}/${pages} 页`;
+  $('btnProcurementImportIssuePrevious').disabled = procurementImportIssuePage === 0;
+  $('btnProcurementImportIssueNext').disabled = procurementImportIssuePage >= pages - 1;
+  $('procurementImportIssueList').innerHTML = procurementImportIssues
+    .slice(procurementImportIssuePage * 50, (procurementImportIssuePage + 1) * 50)
+    .map(item => `<div class="procurement-import-issue ${item.level === 'error' ? 'error' : ''}">
+      <b>${item.level === 'error' ? '阻断错误' : '警告'}</b> · 订单 ${esc(item.orderNo || '无法识别')}
+      · 包裹 ${esc(item.packageNo || '无法识别')} · Excel 行 ${esc((item.rowNumbers || []).join('、') || '文件级')}
+      ${item.field ? ` · ${esc(item.field)}` : ''} · ${esc(item.message)}</div>`).join('');
+}
+
+function procurementImportIssuesCsv() {
+  const cell = value => {
+    let text = String(value ?? '');
+    if (/^\s*[=+@-]/.test(text) || /^[\t\r\n]/.test(text)) text = "'" + text;
+    return '"' + text.replace(/"/g, '""') + '"';
+  };
+  return '\uFEFF' + [['级别', '订单号', '包裹号', 'Excel行号', '字段', '错误码', '说明'],
+    ...procurementImportIssues.map(item => [item.level === 'error' ? '阻断错误' : '警告',
+      item.orderNo, item.packageNo, (item.rowNumbers || []).join('、'), item.field, item.code, item.message])]
+    .map(row => row.map(cell).join(',')).join('\r\n');
+}
+
+function setProcurementImportDiagnostics(result) {
+  const errors = Number(result.errorCount || 0), warnings = Number(result.warningCount || 0);
+  procurementImportSummary = {
+    sourceRows:Number(result.sourceRows || 0), orderCount:Number(result.orderCount || 0),
+    successOrderCount:Number(result.successOrderCount ?? result.orderCount ?? 0),
+    failedOrderCount:Number(result.failedOrderCount || 0),
+    totalOrderCount:Number(result.totalOrderCount ?? result.orderCount ?? 0),
+    orderCountKnown:result.orderCountKnown !== false,
+    detailCount:Number(result.detailCount || 0), quantityCount:procurementImportQuantityCount(result),
+    errorCount:errors, warningCount:warnings, issueCount:errors + warnings,
+    canImport:result.canImport !== false && errors === 0
+  };
+  procurementImportIssues = Array.isArray(result.issues) ? result.issues : [];
+  procurementImportIssuePage = 0;
+  renderProcurementImportIssues();
+  $('procurementImportStats').hidden = false;
+  $('procurementImportSourceRows').textContent = result.sourceRows || 0;
+  $('procurementImportOrders').textContent = result.orderCount || 0;
+  $('procurementImportDetails').textContent = result.detailCount || 0;
+  $('procurementImportIssueCount').textContent = errors + warnings;
+}
+
+$('btnProcurementImportIssuePrevious').onclick = () => { procurementImportIssuePage--; renderProcurementImportIssues(); };
+$('btnProcurementImportIssueNext').onclick = () => { procurementImportIssuePage++; renderProcurementImportIssues(); };
+$('btnProcurementImportDownloadIssues').onclick = () => {
+  const url = URL.createObjectURL(new Blob([procurementImportIssuesCsv()], {type:'text/csv;charset=utf-8'}));
+  const link = document.createElement('a');
+  link.href = url; link.download = '导入分单_完整错误清单.csv'; link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
 
 function procurementImportQuantityCount(result) {
   if (typeof result.quantityCount === 'number'
@@ -10262,11 +10564,19 @@ function procurementImportIsRunning() {
 
 function renderProcurementImportLayout() {
   const parsed = !!procurementImportPlanId && !!procurementImportSummary;
+  const blocked = procurementImportBlocked();
   const validated = procurementImportTargetValidated;
   const running = procurementImportIsRunning();
   const busy = !!procurementImportPendingAction || running;
   const completed = procurementImportLastSyncStatus?.state === 'completed';
-  const summary = parsed ? procurementImportSummary : {};
+  const summary = procurementImportSummary || {};
+  $('procurementImportValidationSummary').hidden = !procurementImportSummary;
+  $('procurementImportValidationSummary').className = 'resource-state ' + (blocked ? 'bad' : summary.issueCount ? 'warn' : 'ok');
+  $('procurementImportValidationSummary').textContent = `订单校验：共 ${summary.totalOrderCount || 0} 单，通过 ${summary.successOrderCount || 0} 单，失败 ${summary.failedOrderCount || 0} 单；阻断错误 ${summary.errorCount || 0} 项，警告 ${summary.warningCount || 0} 项。`
+    + (blocked ? '本批已禁止导入，请修正错误后重新解析。' : '通过校验不代表已写入飞书。');
+  if (summary.orderCountKnown === false) {
+    $('procurementImportValidationSummary').textContent = `文件或订单身份不完整，订单总数暂无法确认；已识别通过 ${summary.successOrderCount || 0} 单，阻断错误 ${summary.errorCount || 0} 项。本批禁止导入，请查看完整错误清单。`;
+  }
   const file = $('procurementImportFile').files[0];
   $('procurementImportFileName').textContent = file?.name || '请选择店小秘订单文件';
   $('procurementImportFileMeta').textContent = file
@@ -10276,8 +10586,8 @@ function renderProcurementImportLayout() {
   const parseFailed = $('procurementImportState').classList.contains('bad');
   const fileBadge = $('procurementImportFileBadge');
   fileBadge.textContent = procurementImportPendingAction === 'parse' ? '解析中'
-    : parsed ? '已解析' : parseFailed ? '解析失败' : '待解析';
-  fileBadge.className = 'if-badge' + (parsed ? ' green' : parseFailed ? ' amber' : '');
+    : blocked ? '需修正' : parsed ? '已解析' : parseFailed ? '解析失败' : '待解析';
+  fileBadge.className = 'if-badge' + (blocked ? ' amber' : parsed ? ' green' : parseFailed ? ' amber' : '');
   const badTarget = $('procurementImportTargetState').classList.contains('bad');
   const targetBadge = $('procurementImportTargetBadge');
   targetBadge.textContent = procurementImportPendingAction === 'validate' ? '校验中'
@@ -10285,7 +10595,7 @@ function renderProcurementImportLayout() {
     : validated ? '校验通过' : badTarget ? '需处理' : '待校验';
   targetBadge.className = 'if-badge' + (validated ? ' green' : badTarget ? ' amber' : '');
   $('procurementImportSourceHint').lastChild.textContent = parsed
-    ? (summary.issueCount ? '解析完成，请核对需关注项' : '已包含完整 XYP2 采购备注')
+    ? (blocked ? '存在阻断错误，请修正后重新解析' : summary.issueCount ? '解析完成，请核对需关注项' : '已包含完整 XYP2 采购备注')
     : '请保留完整 XYP2 采购备注';
   $('procurementImportTargetHint').lastChild.textContent = validated
     ? '核心字段匹配，自定义列保留' : '确认字段后再导入';
@@ -10306,11 +10616,13 @@ function renderProcurementImportLayout() {
     item.querySelector('.if-step-circle').textContent = index < step ? '✓' : String(index + 1);
   });
   $('procurementImportFooterSummary').textContent = completed ? '本批导入已完成'
+    : blocked ? `校验通过 ${summary.successOrderCount} 单，失败 ${summary.failedOrderCount} 单，本批禁止导入`
     : parsed ? `本批 ${summary.orderCount} 单 / ${summary.detailCount} 条明细` : '请先解析本批订单';
   $('procurementImportFooterHint').textContent = procurementImportSyncReadFailed
     ? '暂未读到最新进度，请重试查询本批导入状态'
     : running ? '正在导入数据和图片，请稍候'
     : completed ? '已有数据和图片会自动跳过，可再次校验本批导入'
+    : blocked ? '下载完整错误清单，修正店小秘导出文件后重新解析'
     : validated ? '已完成目标表校验，可确认导入' : '请先校验目标飞书协作表';
   for (const id of ['btnProcurementImportReset', 'btnProcurementImportChooseFile',
       'procurementImportFile', 'procurementImportTargetUrl', 'btnProcurementImportParse']) {
@@ -10319,11 +10631,11 @@ function renderProcurementImportLayout() {
   $('procurementImportTargetSheet').disabled = busy || !parsed
     || $('procurementImportTargetSheet').options.length <= 1;
   $('btnProcurementImportInspectTarget').disabled = busy || !parsed;
-  $('btnProcurementImportValidateTarget').disabled = busy || !parsed
+  $('btnProcurementImportValidateTarget').disabled = busy || !parsed || blocked
     || !$('procurementImportTargetSheet').value;
-  $('btnProcurementImportDownload').disabled = !parsed;
+  $('btnProcurementImportDownload').disabled = !parsed || blocked;
   $('btnProcurementImportSyncImages').disabled = !!procurementImportPendingAction
-    || !validated || (running && !procurementImportSyncReadFailed);
+    || blocked || !validated || (running && !procurementImportSyncReadFailed);
 }
 
 async function runProcurementImportAction(action, handler) {
@@ -10382,6 +10694,9 @@ function invalidateProcurementImportTarget(message, clearSheets=false) {
 function resetProcurementImport(message='文件已变化，请重新解析') {
   procurementImportPlanId = null;
   procurementImportSummary = null;
+  procurementImportIssues = [];
+  procurementImportIssuePage = 0;
+  renderProcurementImportIssues();
   $('btnProcurementImportDownload').disabled = true;
   $('btnProcurementImportInspectTarget').disabled = true;
   $('procurementImportStats').hidden = true;
@@ -10404,6 +10719,9 @@ $('btnProcurementImportParse').onclick = async () => {
   button.disabled = true;
   procurementImportPlanId = null;
   procurementImportSummary = null;
+  procurementImportIssues = [];
+  procurementImportIssuePage = 0;
+  renderProcurementImportIssues();
   $('btnProcurementImportDownload').disabled = true;
   $('btnProcurementImportInspectTarget').disabled = true;
   invalidateProcurementImportTarget('正在生成本批唯一标识，完成后再绑定飞书目标表。', true);
@@ -10422,11 +10740,7 @@ $('btnProcurementImportParse').onclick = async () => {
       })
     });
     procurementImportPlanId = result.planId;
-    procurementImportSummary = {
-      sourceRows:Number(result.sourceRows || 0), orderCount:Number(result.orderCount || 0),
-      detailCount:Number(result.detailCount || 0), quantityCount:procurementImportQuantityCount(result),
-      issueCount:Number(result.warningCount || 0) + Number(result.errorCount || 0)
-    };
+    setProcurementImportDiagnostics(result);
     $('btnProcurementImportDownload').disabled = false;
     $('btnProcurementImportInspectTarget').disabled = false;
     $('procurementImportStats').hidden = false;
@@ -10459,16 +10773,19 @@ $('btnProcurementImportParse').onclick = async () => {
         if (wrapper) wrapper.outerHTML = '<span class="procurement-import-thumb-empty">图片预览失败</span>';
       };
     });
-    const issues = result.issues || [];
-    $('procurementImportIssueList').innerHTML = issues.slice(0, 20).map(item => `<div class="procurement-import-issue ${item.level === 'error' ? 'error' : ''}">${item.orderNo ? `<span class="mono">${esc(item.orderNo)}</span> · ` : ''}${esc(item.message)}</div>`).join('');
     $('procurementImportState').className = `resource-state ${(result.errorCount || result.warningCount) ? 'warn' : 'ok'}`;
     $('procurementImportState').textContent = `解析完成：${result.orderCount} 单、${result.detailCount} 条采购明细。稳定导入批次 ${result.importBatch}；订单金额已按每单首行防重复，可直接通过飞书接口写入。`;
     $('procurementImportTargetState').className = 'resource-state';
     $('procurementImportTargetState').textContent = '解析完成。粘贴本批要使用的普通飞书共享表格链接，读取工作簿并选择工作表。';
-    toast('采购协作表已生成，可下载');
+    if (procurementImportBlocked()) {
+      $('procurementImportState').className = 'resource-state bad';
+      $('procurementImportState').textContent = `订单校验结束：通过 ${result.successOrderCount} 单、失败 ${result.failedOrderCount} 单。本批已禁止导入，请修正完整错误清单中的阻断错误。`;
+      toast('存在阻断错误，本批禁止导入');
+    } else { toast('采购协作表已生成，可下载'); }
   } catch (err) {
     $('procurementImportState').className = 'resource-state bad';
     $('procurementImportState').textContent = '解析失败：' + err.message;
+    if (err.diagnostics) setProcurementImportDiagnostics(err.diagnostics);
     $('procurementImportTbody').innerHTML = '<tr><td colspan="7" class="empty-tip">请按提示修正导出模板或 XYP2 备注后重试</td></tr>';
   } finally {
     button.disabled = false;
@@ -10707,6 +11024,7 @@ async function pollProcurementImportSync(jobId) {
 }
 
 $('btnProcurementImportSyncImages').onclick = async () => {
+  if (procurementImportBlocked()) { toast('本批存在阻断错误，请修正后重新解析'); return; }
   if (!procurementImportPlanId || !procurementImportTargetValidated) {
     toast('请先通过目标工作表表头校验'); return;
   }

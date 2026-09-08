@@ -139,12 +139,14 @@ from .operation_contract import (
 )
 from .operation_service import OperationResultService, OperationRunService
 from .procurement_import_contract import (
+    Xyp2ParseBody,
     ProcurementImportParseBody,
     ProcurementImportSyncBody,
     ProcurementImportTargetInspectBody,
     ProcurementImportTargetValidateBody,
 )
 from .procurement_import_crypto import ProcurementImportCipher
+from .procurement_import_core import ProcurementImportError, decode_xyp2_remark
 from .procurement_import_service import (
     CloudProcurementImportError,
     CloudProcurementImportService,
@@ -157,6 +159,7 @@ from .procurement_import_sheet import FeishuSheetsGateway
 from .purchase_contract import PurchaseDraft
 from .purchase_service import PurchaseOrderService, PurchaseServiceError
 from .security import hash_token, pkce_challenge, random_url_token
+from .plugin_access import PLUGIN_ONLY_MESSAGE, PLUGIN_PURCHASE_PATHS, is_plugin_only
 from .system_log import (
     SYSTEM_ERROR_CATEGORY,
     SYSTEM_RUNTIME_CATEGORY,
@@ -509,7 +512,7 @@ def create_app(
 
     app = FastAPI(
         title="Xynigo Auth Service",
-        version="0.17.9",
+        version="0.17.10",
         docs_url=None,
         redoc_url=None,
         lifespan=lifespan,
@@ -1214,6 +1217,18 @@ def create_app(
                 status_code=status.HTTP_303_SEE_OTHER,
             )
 
+        if is_plugin_only(_permission_code_set(session, user)):
+            _add_audit(
+                session, request_id=request.state.request_id,
+                action="auth.login", result="denied",
+                tenant_id=tenant.id, actor_user_id=user.id,
+                details={"reason": "plugin_only_access"},
+            )
+            session.commit()
+            raise HTTPException(status_code=403, detail={
+                "code": "plugin_only_access", "message": PLUGIN_ONLY_MESSAGE,
+            })
+
         raw_session_token = random_url_token(48)
         session.add(
             SessionRecord(
@@ -1428,7 +1443,10 @@ def create_app(
         session_record, user, tenant = _authenticated_identity(session, raw_token)
         bind_request_identity(request, user=user, tenant=tenant)
         _ensure_system_catalog(session, tenant=tenant)
-        if permission not in _permission_code_set(session, user):
+        permissions = _permission_code_set(session, user)
+        plugin_denied = is_plugin_only(permissions) and request.url.path not in PLUGIN_PURCHASE_PATHS
+        workspace_denied = request.url.path.startswith('/v1/procurement/') and 'procurement.access' not in permissions
+        if permission not in permissions or plugin_denied or workspace_denied:
             _add_audit(
                 session,
                 request_id=request.state.request_id,
@@ -1442,7 +1460,9 @@ def create_app(
                 **_request_log_context(request),
             )
             session.commit()
-            raise HTTPException(status_code=403, detail={"code": "permission_denied"})
+            raise HTTPException(status_code=403, detail=(
+                {"code": "plugin_only_access", "message": PLUGIN_ONLY_MESSAGE}
+                if plugin_denied else {"code": "permission_denied"}))
         session_record.last_seen_at = utcnow()
         return AdminActor(session_record=session_record, user=user, tenant=tenant)
 
@@ -2949,6 +2969,26 @@ def create_app(
         session.commit()
         return {"ok": True, "data": result}
 
+    @app.post("/v1/assistant/xyp2/parse")
+    def parse_xyp2_tool(
+        request: Request,
+        body: Xyp2ParseBody,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        authorize_request(
+            request, session, permission="assistant.access",
+            session_token=session_token, authorization=authorization,
+            audit_action="assistant.xyp2.parse",
+        )
+        # No import plan, procurement record, or raw-remark audit payload.
+        try:
+            return decode_xyp2_remark(body.remark)
+        except ProcurementImportError as exc:
+            raise HTTPException(status_code=422,
+                                detail={"code": exc.code, "message": str(exc)}) from exc
+
     def require_procurement_import_runtime() -> CloudProcurementImportService:
         if procurement_import_service is None:
             raise HTTPException(
@@ -2997,7 +3037,8 @@ def create_app(
         session.commit()
         raise HTTPException(
             status_code=exc.status,
-            detail={"code": exc.code, "message": str(exc)},
+            detail={"code": exc.code, "message": str(exc),
+                    **({"diagnostics": exc.diagnostics} if exc.diagnostics is not None else {})},
         )
 
     @app.post(
@@ -4766,6 +4807,7 @@ def create_app(
                 tenant_id=actor.tenant.id,
                 actor_user_id=actor.user.id,
                 draft=body,
+                own_only=is_plugin_only(_permission_code_set(session, actor.user)),
             )
         except PurchaseServiceError as exc:
             purchase_error(
@@ -4821,6 +4863,7 @@ def create_app(
                 tenant_id=actor.tenant.id,
                 actor_user_id=actor.user.id,
                 draft=body,
+                own_only=is_plugin_only(_permission_code_set(session, actor.user)),
             )
         except PurchaseServiceError as exc:
             purchase_error(
@@ -4878,6 +4921,8 @@ def create_app(
             result = PurchaseOrderService(session).get(
                 tenant_id=actor.tenant.id,
                 order_key=body.orderKey,
+                actor_user_id=actor.user.id,
+                own_only=is_plugin_only(_permission_code_set(session, actor.user)),
             )
         except PurchaseServiceError as exc:
             purchase_error(request, session, actor, action, exc)
@@ -7216,6 +7261,7 @@ def _identity_payload(session: Session, user: User, tenant: Tenant) -> dict[str,
         "tenant": {"id": str(tenant.id), "name": tenant.name},
         "roles": role_codes,
         "permissions": permission_codes,
+        "workspaceAccess": not is_plugin_only(permission_codes),
     }
 
 

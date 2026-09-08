@@ -40,6 +40,7 @@ function node(id) {
 }
 const steps = [node('step0'), node('step1'), node('step2')];
 const calls = [];
+let parseDiagnostics = null;
 let valid = true, confirm = false, parseFailure = false, pollFailure = false, completed = false;
 const summary = { planId: 'synthetic-plan', sourceRows: 60, orderCount: 30,
   detailCount: 60, quantityCount: 120, orderImageCount: 0, warningCount: 0, errorCount: 0,
@@ -55,7 +56,7 @@ const context = vm.createContext({
   esc: value => String(value ?? ''), procurementMoney: value => String(value ?? ''), toast() {},
   async api(path, options = {}) {
     calls.push({ path, body: JSON.parse(options.body || '{}') });
-    if (path.endsWith('/parse')) { if (parseFailure) throw new Error('synthetic invalid file'); return summary; }
+    if (path.endsWith('/parse')) { if (parseFailure) { const error = new Error('synthetic invalid file'); error.diagnostics = parseDiagnostics; throw error; } return summary; }
     if (path.endsWith('/target/inspect')) return { sheets: [{ sheetId: 'safe', sheetName: '合成协作表', columnCount: 44 }] };
     if (path.endsWith('/target/validate')) return { valid, target: { sheetName: '合成协作表' }, headerCount: 44, detailCount: 60 };
     if (path.includes('/sheet-sync/status')) {
@@ -138,5 +139,58 @@ const chooseFile = () => { node('procurementImportFile').files = [file]; node('p
   assert.equal(node('procurementImportState').hidden, false);
   assert.equal(node('procurementImportMatchNotice').hidden, true);
   assert.equal(node('btnProcurementImportParse').disabled, false);
+  parseFailure = false;
+  Object.assign(summary, {sourceRows: 248, totalOrderCount: 124, successOrderCount: 1,
+    orderCount: 1, failedOrderCount: 123, detailCount: 2, quantityCount: 2,
+    errorCount: 123, warningCount: 0, canImport: false,
+    issues: Array.from({length: 123}, (_, index) => ({level:'error', code:'xyp2_invalid',
+      orderNo: index ? 'SYNTH-' + index : '=SUM(1)', packageNo:'PKG-' + index,
+      rowNumbers:[index + 2], field:'客服备注', message:'XYP2 格式错误'}))});
+  chooseFile();
+  await node('btnProcurementImportParse').onclick();
+  assert.equal(node('procurementImportFileBadge').textContent, '需修正');
+  assert.match(node('procurementImportValidationSummary').textContent, /通过 1 单，失败 123 单/);
+  assert.equal(node('btnProcurementImportDownload').disabled, true);
+  assert.equal(node('btnProcurementImportSyncImages').disabled, true);
+  assert.equal(node('procurementImportIssueActions').hidden, false);
+  assert.match(node('procurementImportIssueList').innerHTML, /Excel 行 2/);
+  node('btnProcurementImportIssueNext').onclick();
+  node('btnProcurementImportIssueNext').onclick();
+  assert.match(node('procurementImportIssueList').innerHTML, /SYNTH-122/);
+  const csv = run('procurementImportIssuesCsv()');
+  assert.equal(csv.split('\r\n').length, 124, 'download must include every issue');
+  assert.ok(csv.includes("\"'=SUM(1)\""), 'CSV must escape spreadsheet formulas');
+  const writesBeforeBlockedClick = calls.filter(call => call.path.endsWith('/sheet-sync')).length;
+  run('procurementImportTargetValidated = true');
+  await node('btnProcurementImportSyncImages').onclick();
+  assert.equal(calls.filter(call => call.path.endsWith('/sheet-sync')).length, writesBeforeBlockedClick);
+
+  parseFailure = true;
+  parseDiagnostics = {...summary, orderCount:0, successOrderCount:0, detailCount:0,
+    totalOrderCount:123, failedOrderCount:123, quantityCount:0};
+  chooseFile();
+  await node('btnProcurementImportParse').onclick();
+  assert.equal(run('procurementImportPlanId'), null);
+  assert.equal(node('procurementImportStats').hidden, false);
+  assert.equal(node('procurementImportIssueActions').hidden, false);
+  assert.equal(node('btnProcurementImportSyncImages').disabled, true);
+  assert.match(node('procurementImportValidationSummary').textContent, /通过 0 单，失败 123 单/);
+
+  parseFailure = false;
+  Object.assign(summary, {orderCount:1, successOrderCount:1, failedOrderCount:0, totalOrderCount:1,
+    detailCount:2, errorCount:0, warningCount:1, canImport:true,
+    issues:[{level:'warning', code:'quantity_mismatch', orderNo:'SYNTH-GOOD', packageNo:'PKG-GOOD',
+      rowNumbers:[2], field:'单个产品数量', message:'数量差异'}]});
+  chooseFile();
+  await node('btnProcurementImportParse').onclick();
+  assert.equal(node('procurementImportFileBadge').textContent, '已解析');
+  assert.equal(node('btnProcurementImportDownload').disabled, false);
+  node('procurementImportTargetUrl').value = 'https://tenant.feishu.cn/sheets/synthetic';
+  await node('btnProcurementImportInspectTarget').onclick();
+  node('procurementImportTargetSheet').value = 'safe';
+  valid = true;
+  await node('btnProcurementImportValidateTarget').onclick();
+  assert.equal(node('btnProcurementImportSyncImages').disabled, false, 'corrected input with warnings can proceed');
+  assert.equal(run('procurementImportIssues.length'), 1, 'old failures must be cleared');
   console.log('PASS: real import handlers, full counts, validation and confirmation gates, pending/running locks, polling recovery, reset and parse failures.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

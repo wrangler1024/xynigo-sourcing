@@ -13,7 +13,7 @@ from sqlalchemy import select
 from test_auth_flow import build_test_app, start_login
 
 from xynigo_auth.models import AuditEvent, ProcurementImportJob, ProcurementImportPlan
-from xynigo_auth.procurement_import_core import OUTPUT_HEADERS
+from xynigo_auth.procurement_import_core import OUTPUT_HEADERS, CollaborationSheetTarget
 from xynigo_auth.procurement_import_sheet import SheetTable
 
 
@@ -373,3 +373,87 @@ def test_cloud_parser_copy_matches_the_canonical_local_source() -> None:
     assert (
         root / "cloud/auth-service/src/xynigo_auth/procurement_import_xlsx.py"
     ).read_bytes() == (root / "src/purchase_tool/xlsx_cell_images.py").read_bytes()
+
+
+def _invalid_remark_batch(*, all_invalid=False):
+    original = load_workbook(BytesIO(source_workbook()))
+    values = list(original.active.values)
+    headers = list(values[0])
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = 'order_'
+    worksheet.append(headers)
+    for index in range(121):
+        row = list(values[1])
+        row[headers.index('订单号')] = 'SYNTH-ERR-%03d' % index
+        row[headers.index('包裹号')] = 'SYNTH-PKG-%03d' % index
+        if index or all_invalid:
+            row[headers.index('客服备注')] = '[XYP2]{broken}[/XYP2]'
+        worksheet.append(row)
+    stream = BytesIO()
+    workbook.save(stream)
+    return base64.b64encode(stream.getvalue()).decode('ascii')
+
+
+def test_cloud_preserves_all_diagnostics_and_blocks_legacy_validated_error_plan(tmp_path):
+    gateway = FakeCloudSheetGateway()
+    app, database, _ = build_test_app(tmp_path, procurement_import_enabled=True,
+                                      procurement_import_gateway=gateway)
+    headers = {'X-Xynigo-Web-CSRF': 'same-origin'}
+    with TestClient(app) as client:
+        login(client)
+        parsed = client.post('/v1/assistant/procurement-import/parse', headers=headers,
+            json={'filename': 'synthetic.xlsx', 'contentBase64': _invalid_remark_batch()})
+        assert parsed.status_code == 201, parsed.text
+        result = parsed.json()
+        assert result['canImport'] is False
+        assert result['totalOrderCount'] == 121
+        assert result['successOrderCount'] == 1
+        assert result['failedOrderCount'] == 120
+        assert len(result['issues']) == 120
+        assert result['issues'][-1]['rowNumbers'] == [122]
+        validated = client.post('/v1/assistant/procurement-import/target/validate', headers=headers,
+            json={'planId': result['planId'], 'sheetId': 'sheetA',
+                  'spreadsheetUrl': 'https://tenant.feishu.cn/sheets/SheetToken123'})
+        assert validated.status_code == 422
+        exported = client.get('/v1/assistant/procurement-import/export', params={'planId': result['planId']})
+        assert exported.status_code == 422
+        runtime = app.state.procurement_import_service
+        with database.session_factory() as session:
+            stored = session.scalar(select(ProcurementImportPlan))
+            plan = runtime._load_plan(stored)
+            assert len(plan.issues) == 120
+            plan.target = CollaborationSheetTarget(
+                'https://tenant.feishu.cn/sheets/SheetToken123', 'sheetA', '合成工作表', 1)
+            runtime._save_plan(stored, plan, status='validated')
+            session.commit()
+        started = client.post('/v1/assistant/procurement-import/sheet-sync', headers=headers,
+                              json={'planId': result['planId'], 'confirmWrite': True})
+        assert started.status_code == 422, started.text
+        assert started.json()['detail']['code'] == 'procurement_import_blocked'
+        assert len(started.json()['detail']['diagnostics']['issues']) == 120
+        with database.session_factory() as session:
+            assert session.scalar(select(ProcurementImportJob)) is None
+        assert gateway.rows == ()
+
+
+def test_cloud_all_failed_returns_complete_located_diagnostics_without_plan(tmp_path):
+    gateway = FakeCloudSheetGateway()
+    app, database, _ = build_test_app(tmp_path, procurement_import_enabled=True,
+                                      procurement_import_gateway=gateway)
+    with TestClient(app) as client:
+        login(client)
+        response = client.post('/v1/assistant/procurement-import/parse',
+            headers={'X-Xynigo-Web-CSRF': 'same-origin'},
+            json={'filename': 'synthetic.xlsx',
+                  'contentBase64': _invalid_remark_batch(all_invalid=True)})
+        assert response.status_code == 422, response.text
+        diagnostics = response.json()['detail']['diagnostics']
+        assert diagnostics['failedOrderCount'] == diagnostics['totalOrderCount'] == 121
+        assert diagnostics['successOrderCount'] == 0
+        assert len(diagnostics['issues']) == 121
+        assert diagnostics['issues'][-1]['packageNo'] == 'SYNTH-PKG-120'
+        assert diagnostics['issues'][-1]['rowNumbers'] == [122]
+        with database.session_factory() as session:
+            assert session.scalar(select(ProcurementImportPlan)) is None
+        assert gateway.rows == ()

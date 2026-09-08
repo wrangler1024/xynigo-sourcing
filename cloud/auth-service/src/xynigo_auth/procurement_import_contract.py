@@ -14,6 +14,10 @@ class ProcurementImportParseBody(StrictBody):
     contentBase64: str = Field(min_length=1, max_length=30_000_000)
 
 
+class Xyp2ParseBody(StrictBody):
+    remark: str = Field(strict=True, min_length=1, max_length=20_000)
+
+
 class ProcurementImportTargetInspectBody(StrictBody):
     planId: str = Field(min_length=1, max_length=64)
     spreadsheetUrl: str = Field(min_length=1, max_length=1024)

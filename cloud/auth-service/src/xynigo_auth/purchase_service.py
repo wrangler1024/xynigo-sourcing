@@ -95,6 +95,7 @@ class PurchaseOrderService:
         tenant_id: uuid.UUID,
         actor_user_id: uuid.UUID,
         draft: PurchaseDraft,
+        own_only: bool = False,
     ) -> dict[str, object]:
         """幂等保存草稿。已正式提交的单不能被不同内容覆盖。"""
         now = self.clock()
@@ -104,6 +105,8 @@ class PurchaseOrderService:
             system_order_key_value=draft.systemOrderKey,
             lock=True,
         )
+        if own_only:
+            self._assert_owned_order(record, actor_user_id)
         target_hash = draft_content_hash(draft)
         if record is not None and record.submission_status == "submitted":
             if record.content_hash != target_hash:
@@ -163,6 +166,7 @@ class PurchaseOrderService:
         tenant_id: uuid.UUID,
         actor_user_id: uuid.UUID,
         draft: PurchaseDraft,
+        own_only: bool = False,
     ) -> dict[str, object]:
         """正式提交：先走更严校验，成功后明细进入可认领状态，并写飞书同步 outbox。"""
         try:
@@ -178,6 +182,8 @@ class PurchaseOrderService:
             system_order_key_value=draft.systemOrderKey,
             lock=True,
         )
+        if own_only:
+            self._assert_owned_order(record, actor_user_id)
         revised = False
         if record is not None and record.submission_status == "submitted":
             if record.content_hash != target_hash:
@@ -234,7 +240,13 @@ class PurchaseOrderService:
         self.session.flush()
         return self._payload(record, unchanged=False, revised=revised)
 
-    def get(self, *, tenant_id: uuid.UUID, order_key: str) -> dict[str, object]:
+    @staticmethod
+    def _assert_owned_order(record, actor_user_id):
+        if record is not None and (record.submitted_by_user_id or record.created_by_user_id) != actor_user_id:
+            raise PurchaseServiceError("purchase_order_not_found", "采购单不存在或不属于当前成员", 404)
+
+    def get(self, *, tenant_id: uuid.UUID, order_key: str,
+            actor_user_id: uuid.UUID | None = None, own_only: bool = False) -> dict[str, object]:
         """按业务键读取一张采购单（租户内）。"""
         normalized = str(order_key or "").strip()
         if not normalized or len(normalized) > 800:
@@ -242,6 +254,8 @@ class PurchaseOrderService:
         record = self._find_order(tenant_id, normalized, lock=False)
         if record is None:
             raise PurchaseServiceError("purchase_order_not_found", "采购单不存在", 404)
+        if own_only:
+            self._assert_owned_order(record, actor_user_id)
         return self._payload(record, unchanged=True)
 
     def workspace_overview(

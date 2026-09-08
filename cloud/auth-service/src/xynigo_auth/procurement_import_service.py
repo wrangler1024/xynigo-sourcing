@@ -23,6 +23,7 @@ from .procurement_import_core import (
     ImportPlan,
     ProcurementImportError,
     ProcurementImportService,
+    require_importable,
 )
 from .procurement_import_crypto import (
     ProcurementImportCipher,
@@ -56,9 +57,11 @@ def _as_aware(value: datetime) -> datetime:
 
 
 class CloudProcurementImportError(RuntimeError):
-    def __init__(self, code: str, message: str, *, status: int = 422) -> None:
+    def __init__(self, code: str, message: str, *, status: int = 422,
+                 diagnostics: dict[str, Any] | None = None) -> None:
         self.code = code
         self.status = status
+        self.diagnostics = diagnostics
         super().__init__(message)
 
 
@@ -297,7 +300,8 @@ class CloudProcurementImportService:
             source_plan = core.pending[result["planId"]]
         except ProcurementImportError as exc:
             raise CloudProcurementImportError(
-                "procurement_import_parse_failed", str(exc), status=422
+                "procurement_import_parse_failed", str(exc), status=422,
+                diagnostics=exc.diagnostics,
             ) from exc
         identifier = uuid.uuid4()
         source_plan.plan_id = str(identifier)
@@ -415,6 +419,13 @@ class CloudProcurementImportService:
                 "请先读取工作表并通过核心采购字段校验",
                 status=409,
             )
+        try:
+            require_importable(plan)
+        except ProcurementImportError as exc:
+            raise CloudProcurementImportError(
+                "procurement_import_blocked", str(exc), status=422,
+                diagnostics=exc.diagnostics,
+            ) from exc
         actor = " ".join(str(actor_name or "").split())[:100]
         if actor:
             for row in plan.rows:

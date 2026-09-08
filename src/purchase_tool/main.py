@@ -103,7 +103,8 @@ from .lark_runtime import build_buyer_ledger_service
 from .local_config_service import (
     LocalConfigRevisionConflict, LocalConfigService)
 from .operation_result_sync import OperationResultSyncQueue
-from .procurement_import import ProcurementImportService
+from .procurement_import import (
+    ProcurementImportService, ProcurementImportError, decode_xyp2_remark)
 from .purchase_assistant import (
     PurchaseAssistantError, PurchaseAssistantService)
 from .redaction import scrub_text
@@ -289,6 +290,7 @@ AUTH_PERMISSION_BY_PATH = {
     '/api/extension/pair/approve': 'operations.access',
     '/api/procurement/claims': 'procurement.execution.manage',
     '/api/assistant/procurement-import/parse': 'assistant.access',
+    '/api/assistant/xyp2/parse': 'assistant.access',
     '/api/assistant/procurement-import/image': 'assistant.access',
     '/api/assistant/procurement-import/export': 'assistant.access',
     '/api/assistant/procurement-import/target/inspect': 'assistant.access',
@@ -4285,7 +4287,9 @@ class Handler(BaseHTTPRequestHandler):
         except DataSourceRegistryError as e:
             self._json({'error': str(e), 'code': e.code}, 409)
         except ValueError as e:
-            self._json({'error': str(e)}, 400)
+            self._json({'error': str(e), **(
+                {'diagnostics': e.diagnostics, 'code': e.code}
+                if isinstance(e, ProcurementImportError) else {})}, 400)
         except Exception as e:
             self._json({'error': public_error(e)}, 500)
 
@@ -4681,6 +4685,8 @@ class Handler(BaseHTTPRequestHandler):
                     body.get('planId'),
                     confirm_write=bool(body.get('confirmWrite')))
                 self._json({'saved': True, **result})
+            elif path == '/api/assistant/xyp2/parse':
+                self._json(decode_xyp2_remark(body.get('remark')))
             elif path == '/api/assistant/procurement-import/parse':
                 self._json(STATE.procurement_import.parse(
                     body.get('filename'), body.get('contentBase64')))
@@ -5272,7 +5278,9 @@ class Handler(BaseHTTPRequestHandler):
         except RuntimeError as e:
             self._json({'error': str(e)}, 409)
         except ValueError as e:
-            self._json({'error': str(e)}, 400)
+            self._json({'error': str(e), **(
+                {'diagnostics': e.diagnostics, 'code': e.code}
+                if isinstance(e, ProcurementImportError) else {})}, 400)
         except ConnectionError as e:
             self._json({'error': 'HubStudio 未连接：%s' % e}, 503)
         except Exception as e:

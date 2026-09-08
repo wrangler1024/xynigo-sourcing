@@ -14,9 +14,9 @@ from urllib.parse import quote
 
 from . import __version__
 
-RELEASE_VERSION = "0.17.9"
+RELEASE_VERSION = "0.17.10"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-08T04:01:05Z"
+RELEASE_PUBLISHED_AT = "2026-09-08T06:01:21Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,8 +31,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.17.9-227eec1061d0",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.9.exe",
+        "runtimeId": "0.17.10-pending-build",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.10.exe",
         "sha256": "badd6bb9e0f91a4399e67ea1527703e065166bf75e8fca29d7f40d5c7dcdbced",
         "size": 15234005,
         "installMode": "standard_per_user",
@@ -50,8 +50,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.17.9-227eec1061d0",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.9.pkg",
+        "runtimeId": "0.17.10-pending-build",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.10.pkg",
         "sha256": "c3a7cbcec730b5898d3cb0bdc4bffb6c1c701139247db92baa28ca76a147dddd",
         "size": 11581869,
         "installMode": "standard_system_application",
@@ -320,11 +320,11 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "采购中心新增导入分单首项入口，采用双卡片、三步流程和统一字号，沿用真实解析、校验、下载及确认导入流程。",
-            "采购件数按整批明细统计；处理中锁定文件与目标表，重新校验清除旧完成状态，进度读取失败可安全重试。",
-            "同一来源 SKU 按完整颜色与尺码匹配，保留明细金额和数量，歧义规格停止导入并提示核对。",
-            "物流查询新增脱敏云端诊断与关联日志，可按查询、执行和任务定位上报拒绝及环境关闭异常。",
-            "单行重查只上报本轮环境；持续协议拒绝在本机清理后明确报告失败，并保留首次关闭错误码。",
-            "云端会话定期续期，区分 HubStudio API 连通性与浏览器能力，减少长时间工作后的会话中断与状态误判。",
+            "登录后优先进入工作台，取消默认打开物流查询页签；保留模块权限校验和桌面设置专用入口。",
+            "导入分单按订单号和包裹号整单校验，任一明细存在阻断错误时整单排除，本批停止写入，避免半单导入。",
+            "明确展示校验通过与失败订单数；完整错误清单可分页查看和下载，包含订单号、包裹号、Excel 行号及修复定位。",
+            "XYP2 重复备注按内容核对，损坏或冲突备注阻断导入；无法精确匹配 SKU 和规格时不再按行序猜配。",
+            "小犀助手新增 XYP2 解析器，可解析采购规格和指导价、复制采购清单或协同表明细，不写入业务数据。",
+            "仅有提单权限的运营账号限制为插件使用，保护本人采购单，阻止网页工作台和其他成员订单访问；主管测试权限独立配置。",
         ],
     }
