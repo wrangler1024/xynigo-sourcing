@@ -84,7 +84,7 @@ def test_reimport_skips_manual_children_and_preserves_procurement(same_batch, ke
 @pytest.mark.parametrize('same_batch', [False, True])
 @pytest.mark.parametrize('changes', [
     {'需求数量': 99}, {'主规格': 'Different'}, {'次规格': 'XXL'},
-    {'采购指导价': 999}, {'采购备注': 'Different'},
+    {'采购指导价': 999}, {'采购链接': 'https://www.shein.com.mx/x-p-9999999.html#sku=changed'},
     {'店铺': '另一测试店铺'}, {'包裹号': 'OTHER-SYNTH-PACKAGE'},
     {'销售订单号': 'UNRELATED-SYNTH-ORDER'},
 ])
@@ -94,6 +94,17 @@ def test_manual_children_with_real_conflicts_block_all_order_writes(same_batch, 
     before = gateway.rows
     failed = sync(service, plan)
     assert failed['state'] == 'failed', failed
+    assert_no_order_writes(gateway, before)
+
+
+@pytest.mark.parametrize('same_batch', [False, True])
+def test_manual_child_notes_are_preserved_without_order_writes(same_batch):
+    service, gateway, plan = split_order_case(same_batch=same_batch)
+    edit_row(gateway, 0, {'采购备注': '没货，采购现场反馈'})
+    before = gateway.rows
+    completed = sync(service, plan)
+    assert completed['state'] == 'completed'
+    assert completed['rowsExisting'] == 2
     assert_no_order_writes(gateway, before)
 
 
