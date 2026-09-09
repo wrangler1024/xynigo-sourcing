@@ -16,7 +16,7 @@ from . import __version__
 
 RELEASE_VERSION = "0.17.15"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-09T03:17:23Z"
+RELEASE_PUBLISHED_AT = "2026-09-09T10:04:03Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,10 +31,10 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.17.15-4b83fe768db0",
+        "runtimeId": "0.17.15-835b7d5a9e04",
         "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.15.exe",
-        "sha256": "0db2b3dac217d84521c15c07376b930651fa2ada7a30c76d488be579152bbe56",
-        "size": 15282820,
+        "sha256": "8a33e2687ec593f7cf2409cb1ba687f519994c8fb8690321bf1b53dd373946b0",
+        "size": 15292726,
         "installMode": "standard_per_user",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_silent_installer",
@@ -50,10 +50,10 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.17.15-4b83fe768db0",
+        "runtimeId": "0.17.15-835b7d5a9e04",
         "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.15.pkg",
-        "sha256": "c7e770603a3f34c79fe56e4efd494bcc6812a8574945fdaf0ddf43820267c3cb",
-        "size": 11597268,
+        "sha256": "be1146aef9ef4b4e73b7ddeebaf1d85c57d52934ac2d947c1d14ea0cb6b56d1b",
+        "size": 11600704,
         "installMode": "standard_system_application",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_system_installer",
@@ -320,9 +320,10 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "建环境任务中断后显示结果待核对，按已确认完成数量统计，不再把已创建但未完成绑号的环境误报为完成。",
-            "创建历史新增载入原批次和核对续跑：原创建人在原采购电脑重新上传原文件，保留原采购员分配及环境名，核对已有环境后继续完成。",
-            "恢复前重新读取 HubStudio 全量环境，已完成的不重复创建；环境身份冲突或绑号结果不明确时保留环境并提示人工核对。",
-            "任务受理、执行或结果回传期间阻止退出和重启；客户端重新打开时使用身份校验接管旧会话，状态无法确认时不强制结束执行器。",
+            "导入分单以 XYP2 采购备注的链接、规格和数量为准，销售 SKU、颜色或尺码差异不再阻断整单。",
+            "提单助手自动绑定销售来源；手工明细可选择来源或额外采购，拆购共享图片且销售商品金额只计一次。",
+            "历史 SKU 数量尾缀按明确来源兼容；无法关联的商品金额和图片可留空导入，并允许按整单选择只导入通过的订单。",
+            "飞书协作表保留完整采购 URL 纯文本，回读验证实际值，便于复制完整采购参数。",
+            "登录策略沿用既有自动续期和到期规则；运营重复登录问题继续收集版本、时间和浏览器重启情况。",
         ],
     }
