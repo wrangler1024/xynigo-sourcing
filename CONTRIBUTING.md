@@ -53,7 +53,17 @@ python cloud/auth-service/deploy/sync_environment_plan_core.py
 
 ### 当前可执行的一致性检查
 
-修改阶段同步并检查 diff，将权威源与输出一起提交。评审阶段在该提交的干净独立 worktree 中，使用 Python 3.12 运行受影响生成器，再检查：
+修改阶段同步并检查 diff，将权威源与输出一起提交。评审阶段先在专用独立 worktree 中，将 `XYNIGO_REVIEW_SHA` 设置为评审交接中的完整候选提交 SHA；不要在开发者使用中的目录切换检出。执行下面检查，任一步失败即停止：
+
+```bash
+: "${XYNIGO_REVIEW_SHA:?请先设置评审交接中的完整候选提交SHA}"
+test -z "$(git status --porcelain)" || exit 1
+git switch --detach "$XYNIGO_REVIEW_SHA" || exit 1
+test "$(git rev-parse HEAD)" = "$XYNIGO_REVIEW_SHA" || exit 1
+git log -1 --format='%H %s'
+```
+
+确认输出与交接中的候选相同后，使用 Python 3.12 运行上方受影响生成器，再检查：
 
 ```bash
 git diff --exit-code -- cloud/auth-service/src/xynigo_auth
