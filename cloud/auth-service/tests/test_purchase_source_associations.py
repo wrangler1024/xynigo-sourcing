@@ -6,7 +6,7 @@ import pytest
 from test_purchase_api import authenticated_client, sample_draft
 from xynigo_auth.purchase_contract import PurchaseDraft, canonical_draft_dict, validate_formal_submit
 
-FIXTURE = json.loads((Path(__file__).parent / 'fixtures/source_associations.json').read_text())
+FIXTURE = json.loads((Path(__file__).parent / 'fixtures/source_associations.json').read_text(encoding='utf-8'))
 
 
 def test_extension_draft_and_submit_preserve_confirmed_sources_and_changed_purchase_quantities(tmp_path):

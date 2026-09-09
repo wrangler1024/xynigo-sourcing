@@ -11,7 +11,7 @@ from openpyxl import Workbook, load_workbook
 from purchase_tool.procurement_import import ProcurementImportService, create_sales_source_key
 from test_procurement_import import FakeSheetGateway, source_workbook, add_test_drawings, wait_for_sync
 
-FIXTURE = json.loads((Path(__file__).parent / 'fixtures/source_associations.json').read_text())
+FIXTURE = json.loads((Path(__file__).parent / 'fixtures/source_associations.json').read_text(encoding='utf-8'))
 
 
 def association_workbook(change=None, reverse=False):
