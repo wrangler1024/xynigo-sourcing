@@ -11,11 +11,11 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
-from .models import ProcurementImportJob, ProcurementImportPlan
+from .models import ProcurementImportJob, ProcurementImportPlan, User
 from .procurement_import_core import (
     CollaborationRow,
     CollaborationSheetTarget,
@@ -166,6 +166,9 @@ def _safe_progress(progress: dict[str, Any]) -> dict[str, Any]:
     result["errors"] = []
     result["error"] = str(result.get("error") or "")[:300]
     result["targetName"] = str(result.get("targetName") or "")[:100]
+    # The collaboration-sheet URL is the one the operator pasted for this
+    # import; it is kept so history can reopen the target later.
+    result["targetUrl"] = str(result.get("targetUrl") or "")[:1024]
     return result
 
 
@@ -521,6 +524,226 @@ class CloudProcurementImportService:
             )
         return dict(job.progress)
 
+    def history_item(
+        self,
+        job: ProcurementImportJob,
+        plan: ProcurementImportPlan | None,
+        actor_name: str,
+    ) -> dict[str, Any]:
+        progress = dict(job.progress or {})
+        started = job.started_at
+        finished = job.finished_at
+        duration = (
+            int((finished - started).total_seconds())
+            if started is not None and finished is not None and finished >= started
+            else None
+        )
+        return {
+            "jobId": str(job.id),
+            "state": str(job.state),
+            "createdAt": _as_aware(job.created_at).isoformat(),
+            "startedAt": _as_aware(started).isoformat() if started else None,
+            "finishedAt": _as_aware(finished).isoformat() if finished else None,
+            "durationSec": duration,
+            "actorUserId": str(job.created_by_user_id),
+            "actorDisplayName": actor_name,
+            "filename": plan.filename if plan is not None else "",
+            "importBatch": plan.import_batch if plan is not None else "",
+            "sourceRowCount": plan.source_row_count if plan is not None else 0,
+            "orderCount": plan.order_count if plan is not None else 0,
+            "detailCount": plan.detail_count if plan is not None else 0,
+            "imageCount": plan.image_count if plan is not None else 0,
+            "targetName": str(progress.get("targetName") or ""),
+            "targetUrl": str(progress.get("targetUrl") or ""),
+            "rowsTotal": int(progress.get("rowsTotal") or 0),
+            "rowsWritten": int(progress.get("rowsWritten") or 0),
+            "rowsExisting": int(progress.get("rowsExisting") or 0),
+            "total": int(progress.get("total") or 0),
+            "processed": int(progress.get("processed") or 0),
+            "written": int(progress.get("written") or 0),
+            "skippedExisting": int(progress.get("skippedExisting") or 0),
+            "missingSource": int(progress.get("missingSource") or 0),
+            "skippedUnmatched": int(progress.get("skippedUnmatched") or 0),
+            "failed": int(progress.get("failed") or 0),
+            "error": str(progress.get("error") or ""),
+        }
+
+    @staticmethod
+    def _history_scope(
+        tenant_id: uuid.UUID,
+        *,
+        actor_user_id: uuid.UUID,
+        include_all_users: bool,
+        filter_actor_user_id: uuid.UUID | None,
+    ) -> list[Any]:
+        conditions = [ProcurementImportJob.tenant_id == tenant_id]
+        if include_all_users:
+            if filter_actor_user_id is not None:
+                conditions.append(
+                    ProcurementImportJob.created_by_user_id == filter_actor_user_id
+                )
+        else:
+            conditions.append(
+                ProcurementImportJob.created_by_user_id == actor_user_id
+            )
+        return conditions
+
+    def history(
+        self,
+        session: Session,
+        *,
+        tenant_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        limit: int,
+        cursor: object = None,
+        status: str | None = None,
+        include_all_users: bool = False,
+        filter_actor_user_id: uuid.UUID | None = None,
+    ) -> dict[str, Any]:
+        statement = (
+            select(
+                ProcurementImportJob,
+                ProcurementImportPlan,
+                User.display_name,
+                User.status,
+            )
+            .join(
+                ProcurementImportPlan,
+                ProcurementImportPlan.id == ProcurementImportJob.plan_id,
+                isouter=True,
+            )
+            .join(User, User.id == ProcurementImportJob.created_by_user_id)
+            .where(
+                ProcurementImportJob.tenant_id == tenant_id,
+                *self._history_scope(
+                    tenant_id,
+                    actor_user_id=actor_user_id,
+                    include_all_users=include_all_users,
+                    filter_actor_user_id=filter_actor_user_id,
+                ),
+            )
+        )
+        if status == "running":
+            statement = statement.where(ProcurementImportJob.state.in_(NONTERMINAL_STATES))
+        elif status is not None:
+            if status not in TERMINAL_STATES:
+                raise CloudProcurementImportError(
+                    "procurement_import_history_status_invalid",
+                    "导入历史筛选状态无效",
+                )
+            statement = statement.where(ProcurementImportJob.state == status)
+        if cursor is not None:
+            cursor_uuid = self._parse_uuid(
+                cursor, code="procurement_import_history_cursor_invalid"
+            )
+            # The cursor must pass the same visibility scope as the list:
+            # probing foreign job UUIDs must not leak membership either.
+            cursor_job = session.scalar(
+                select(ProcurementImportJob).where(
+                    ProcurementImportJob.id == cursor_uuid,
+                    *self._history_scope(
+                        tenant_id,
+                        actor_user_id=actor_user_id,
+                        include_all_users=include_all_users,
+                        filter_actor_user_id=filter_actor_user_id,
+                    ),
+                )
+            )
+            if cursor_job is None:
+                raise CloudProcurementImportError(
+                    "procurement_import_history_cursor_invalid",
+                    "导入历史游标无效",
+                )
+            statement = statement.where(
+                or_(
+                    ProcurementImportJob.created_at < cursor_job.created_at,
+                    and_(
+                        ProcurementImportJob.created_at == cursor_job.created_at,
+                        ProcurementImportJob.id < cursor_job.id,
+                    ),
+                )
+            )
+        result_rows = list(
+            session.execute(
+                statement.order_by(
+                    ProcurementImportJob.created_at.desc(),
+                    ProcurementImportJob.id.desc(),
+                ).limit(limit + 1)
+            )
+        )
+        has_more = len(result_rows) > limit
+        page = result_rows[:limit]
+        items = [
+            self.history_item(job, plan, display_name or "未知用户")
+            for job, plan, display_name, _user_status in page
+        ]
+        actors = []
+        if include_all_users:
+            actors = [
+                {
+                    "userId": str(user_id),
+                    "displayName": display_name,
+                    "status": user_status,
+                }
+                for user_id, display_name, user_status in session.execute(
+                    select(User.id, User.display_name, User.status)
+                    .join(
+                        ProcurementImportJob,
+                        ProcurementImportJob.created_by_user_id == User.id,
+                    )
+                    .where(
+                        User.tenant_id == tenant_id,
+                        ProcurementImportJob.tenant_id == tenant_id,
+                    )
+                    .distinct()
+                    .order_by(User.display_name, User.id)
+                )
+            ]
+        return {
+            "items": items,
+            "nextCursor": str(page[-1][0].id) if has_more and page else None,
+            "hasMore": has_more,
+            "actors": actors,
+        }
+
+    def history_detail(
+        self,
+        session: Session,
+        *,
+        tenant_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        job_id: object,
+        allow_tenant_scope: bool = False,
+    ) -> dict[str, Any]:
+        identifier = self._parse_uuid(
+            job_id, code="procurement_import_history_job_invalid"
+        )
+        job = session.scalar(
+            select(ProcurementImportJob).where(
+                ProcurementImportJob.id == identifier,
+                ProcurementImportJob.tenant_id == tenant_id,
+            )
+        )
+        if job is None:
+            raise CloudProcurementImportError(
+                "procurement_import_history_job_not_found",
+                "导入历史记录不存在或不属于当前组织",
+                status=404,
+            )
+        if not allow_tenant_scope and job.created_by_user_id != actor_user_id:
+            raise CloudProcurementImportError(
+                "procurement_import_history_forbidden",
+                "只能查看本人创建的导入历史",
+                status=403,
+            )
+        plan = session.get(ProcurementImportPlan, job.plan_id)
+        actor = session.get(User, job.created_by_user_id)
+        item = self.history_item(
+            job, plan, actor.display_name if actor else "未知用户"
+        )
+        item["own"] = job.created_by_user_id == actor_user_id
+        return item
+
 
 class _PersistentCoreService(ProcurementImportService):
     def __init__(self, *, gateway: FeishuSheetsGateway, callback) -> None:
@@ -681,6 +904,7 @@ class ProcurementImportWorker:
                 plan_id=plan.plan_id,
                 state="validating",
                 target_name=plan.target.sheet_name,
+                target_url=plan.target.url,
                 import_batch=plan.import_batch,
                 target_key=str(initial_progress.get("targetKey") or ""),
                 rows_total=len(plan.rows),

@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>导入历史 · 静态原型 · Xynigo Sourcing v0.17.17</title>
+<style>
+  /* ===== 以下样式逐条提取自 src/purchase_tool/web/index.html（v0.17.17），未改动 ===== */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  :root {
+    --primary: #2563eb; --primary-dark: #1d4ed8;
+    --green: #16a34a; --green-bg: #f0fdf4;
+    --red: #dc2626; --red-bg: #fef2f2;
+    --amber: #d97706; --amber-bg: #fffbeb;
+    --blue: #2563eb; --blue-bg: #eff6ff;
+    --gray: #6b7280; --gray-bg: #f3f4f6; --border: #e5e7eb;
+  }
+  body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif; background: #f5f7fa; color: #1f2937; font-size: 14px; }
+  .hint { font-size: 12px; color: var(--gray); line-height: 1.6; }
+  .btn { border: 1px solid var(--border); background: #fff; color: #1f2937; padding: 9px 18px; border-radius: 8px; font-size: 14px; cursor: pointer; transition: all .15s; white-space: nowrap; }
+  .btn:hover:not(:disabled) { background: var(--gray-bg); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 600; }
+  .btn.primary:hover:not(:disabled) { background: var(--primary-dark); }
+  select { width: 220px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 14px; background: #fff; outline: none; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; padding: 9px 10px; background: #f9fafb; color: var(--gray); font-weight: 600; border-bottom: 1px solid var(--border); white-space: nowrap; position: sticky; top: 0; }
+  td { padding: 9px 10px; border-bottom: 1px solid #f3f4f6; white-space: nowrap; vertical-align: middle; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
+  .btn-mini { border: 1px solid var(--border); background: #fff; color: var(--primary); padding: 3px 10px; font-size: 12px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
+  .btn-mini:hover { background: var(--blue-bg); border-color: var(--primary); }
+  .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid rgba(37,99,235,.25); border-top-color: var(--blue); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .empty-tip { text-align: center; color: #9ca3af; padding: 36px 0; font-size: 13px; }
+  .modal-mask { display: none; position: fixed; inset: 0; background: rgba(17,24,39,.4); z-index: 100; align-items: center; justify-content: center; }
+  .modal-mask.show { display: flex; }
+  .image-modal-close { width: 34px; height: 34px; padding: 0; border: 0; border-radius: 8px; background: var(--gray-bg); color: #374151; font-size: 24px; line-height: 1; cursor: pointer; }
+  .image-modal-close:hover { background: #e5e7eb; }
+  .toast { position: fixed; left: 50%; bottom: 36px; transform: translateX(-50%) translateY(20px); background: #111827; color: #fff; padding: 10px 20px; border-radius: 8px; font-size: 13px; opacity: 0; pointer-events: none; transition: all .25s; z-index: 200; max-width: 80vw; }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .module-panel { display: flex; flex-direction: column; gap: 16px; }
+  .module-panel.hidden { display: none; }
+
+  /* Xynigo VI · v0.6 */
+  :root {
+    --navy-950: #082548; --navy-900: #0b315e; --navy-700: #315372;
+    --navy-500: #6e879d; --rhino-600: #1698a0; --rhino-500: #20aeb3;
+    --tech-blue: #4e8ba9; --tech-blue-dark: #356f91;
+    --action-gradient: linear-gradient(135deg,#1698a0 0%,#4e8ba9 100%);
+    --rhino-100: #e8f8f7; --parcel-500: #f2b747; --parcel-100: #fff6de;
+    --coral-500: #ff694a; --coral-100: #fff0eb; --green-500: #34b783;
+    --green-100: #eaf8f2; --surface: #fff; --canvas: #f4f7fa;
+    --line: #e5ebf0; --shadow: 0 12px 34px rgba(8,37,72,.08);
+    --primary: var(--rhino-600); --primary-dark: #117f86;
+    --green: #16815b; --green-bg: var(--green-100);
+    --red: #c8472e; --red-bg: var(--coral-100);
+    --amber: #9a650d; --amber-bg: var(--parcel-100);
+    --blue: #2768c8; --blue-bg: #edf4ff;
+    --gray: var(--navy-500); --gray-bg: #eef2f6; --border: var(--line);
+  }
+  html, body { min-height: 100%; }
+  body {
+    background: var(--canvas); color: var(--navy-950); font-size: 14px;
+    font-family: Inter, ui-rounded, "SF Pro Rounded", "PingFang SC", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  button, input, textarea, select { font: inherit; }
+  .app-shell { min-height: 100vh; height: 100vh; overflow: hidden; display: grid; grid-template-columns: 220px minmax(0,1fr); transition: grid-template-columns .24s ease; }
+  .sidebar {
+    position: sticky; top: 0; height: 100vh; padding: 18px 14px; z-index: 30;
+    display: flex; flex-direction: column; background: var(--surface); border-right: 1px solid var(--line);
+    transition: padding .24s ease;
+  }
+  .brand-card { padding: 2px 8px 14px; border-bottom: 1px solid var(--line); }
+  .brand-art { width: 118px; height: 38px; overflow: hidden; position: relative; }
+  .brand-meta { display: flex; align-items: center; }
+  .product-type { color: var(--navy-700); font-size: 12px; font-weight: 800; }
+  .module-tabs {
+    min-height: 0; margin-top: 20px; padding-right: 2px; overflow-x: hidden; overflow-y: auto;
+    display: flex; flex: 1 1 auto; flex-direction: column; gap: 5px; scrollbar-width: thin;
+  }
+  .nav-label { padding: 0 12px 8px; color: #93a4b3; font-size: 11px; font-weight: 800; letter-spacing: .14em; }
+  .module-tab {
+    width: 100%; margin: 0; padding: 11px 12px; border: 0; border-radius: 12px;
+    display: flex; align-items: center; gap: 11px; background: transparent; color: var(--navy-700);
+    text-align: left; font-size: 14px; font-weight: 800; cursor: pointer;
+  }
+  .module-tab:hover { background: #f5f8fa; }
+  .module-tab.active { color: var(--navy-950); border: 0; background: #eef7f7; box-shadow: none; }
+  .nav-icon { flex: 0 0 auto; width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; color: var(--navy-900); background: #eef2f6; }
+  .nav-icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+  .module-tab.active .nav-icon { color: #fff; background: var(--action-gradient); box-shadow: none; }
+  .nav-text { display: flex; flex-direction: column; gap: 2px; }
+  .nav-text b { font-size: 13px; }
+  .nav-text small { color: #8ca0b0; font-size: 10px; font-weight: 600; }
+  .secondary-tabs {
+    min-width: 0; margin: -1px 0 4px 43px; padding: 2px 0 3px 10px;
+    display: flex; flex-direction: column; gap: 2px; border-left: 1px solid #d7e4e9;
+  }
+  .secondary-tab {
+    width: 100%; min-height: 31px; padding: 6px 7px 6px 9px; border: 0; border-radius: 8px;
+    display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    background: transparent; color: var(--navy-700); text-align: left;
+    font-size: 11px; font-weight: 750; cursor: pointer; white-space: nowrap;
+  }
+  .secondary-tab:hover:not(:disabled) { background: #f5f9fa; color: var(--navy-950); }
+  .secondary-tab.active { background: var(--rhino-100); color: #126f74; }
+  .secondary-status { padding: 2px 5px; border-radius: 999px; background: #eef2f6; color: var(--navy-500); font-size: 9px; font-weight: 900; }
+  .secondary-tab.active .secondary-status { background: rgba(255,255,255,.72); color: var(--rhino-600); }
+  .side-footer { display: flex; justify-content: space-between; margin-top: 12px; padding: 0 5px; color: #8da0b0; font-size: 11px; }
+  .workspace { position: relative; min-width: 0; min-height: 0; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+  .topbar {
+    position: relative; z-index: 20; height: 70px; flex: 0 0 70px; padding: 0 28px;
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    background: rgba(255,255,255,.94); border-bottom: 1px solid var(--line); backdrop-filter: blur(12px);
+  }
+  .resource-state { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 11px; background: #f8fafb; color: var(--navy-500); font-size: 11px; line-height: 1.6; }
+  .resource-state.ok { border-color: #bce5d2; background: var(--green-100); color: var(--green); }
+  .resource-state.bad { border-color: #ffd2c7; background: var(--coral-100); color: var(--coral-500); }
+  .resource-state.warn { border-color: #f2ddb2; background: var(--parcel-100); color: var(--amber); }
+  .query-history-modal { width:min(1180px,calc(100vw - 36px)); max-height:calc(100vh - 36px); padding:0; overflow:hidden; }
+  .query-history-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; padding:18px 20px 14px; border-bottom:1px solid var(--line); }
+  .query-history-head h3 { margin:0; color:var(--navy-950); font-size:17px; }
+  .query-history-head p { margin-top:5px; }
+  .query-history-body { max-height:calc(100vh - 120px); padding:16px 20px 20px; overflow:auto; }
+  .query-history-toolbar { display:flex; align-items:flex-end; gap:10px; margin-bottom:14px; flex-wrap:wrap; }
+  .query-history-toolbar .field { min-width:155px; }
+  .query-history-toolbar select { width:100%; }
+  .query-history-toolbar .field label { display:block; font-size:11px; color:var(--navy-500); margin-bottom:6px; }
+  .query-history-table { min-width:840px; }
+  .query-history-table td { height:52px; }
+  .query-history-pagination { display:flex; align-items:center; justify-content:flex-end; gap:10px; margin-top:14px; }
+  .query-history-detail-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; flex-wrap:wrap; }
+  .query-history-detail-meta { display:flex; gap:8px 16px; flex-wrap:wrap; color:var(--navy-500); font-size:11px; }
+  .query-history-empty { padding:42px 16px; color:var(--navy-500); text-align:center; }
+  .query-history-status { display:inline-flex; align-items:center; padding:3px 8px; border-radius:999px; background:var(--gray-bg); color:var(--navy-700); font-size:11px; font-weight:800; }
+  .query-history-status.ok { background:var(--green-bg); color:var(--green); }
+  .query-history-status.bad { background:var(--red-bg); color:var(--red); }
+  .query-history-status.running { background:var(--blue-bg); color:var(--blue); }
+  .date-time-stack { min-width:82px; height:26px; display:inline-grid; align-content:center; gap:1px; white-space:nowrap; line-height:1; }
+  .date-time-stack span:first-child { font-size:10px; }
+  .date-time-stack span:last-child { color:var(--navy-500); font-size:9px; }
+  .stable-id-button { padding:3px 7px; border:1px solid var(--line); border-radius:7px; background:#f8fafb; color:var(--rhino-600); font:700 10px/1.2 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; cursor:pointer; white-space:nowrap; }
+  .stable-id-button:hover, .stable-id-button:focus-visible { border-color:var(--rhino-500); background:var(--rhino-100); }
+  .business-summary { display:grid; grid-template-columns:repeat(6,minmax(112px,1fr)); gap:9px; padding:0 19px 14px; }
+  .business-stat { border:1px solid var(--line); border-radius:12px; padding:10px 12px; background:#fbfcfd; }
+  .business-stat b { display:block; color:var(--navy-950); font-size:18px; }
+  .business-stat span { color:var(--navy-500); font-size:10px; }
+  .business-stat.shipped { background:#f0f7ff; }
+  .business-stat.packing { background:#fff8e8; }
+  .business-stat.review { background:#fff2ee; }
+  .modal { background: #fff; border-radius: 12px; padding: 22px 24px; width: 420px; max-width: calc(100vw - 40px); box-shadow: 0 20px 50px rgba(0,0,0,.18); }
+  .query-history-modal.modal { padding:0; width:min(1180px,calc(100vw - 36px)); max-height:calc(100vh - 36px); overflow:hidden; }
+  .modal h3 { font-size: 15px; margin-bottom: 16px; }
+  .query-history-head h3 { margin:0; }
+
+  /* 采购中心导入分单页面（逐条提取自 index.html） */
+  .import-first-layout main>.hero{display:none}
+  #procurementImportPanel{color:#182c42;font-size:var(--if-font-body);max-width:1600px;width:100%;margin:0 auto;--if-border:#e0e7ee;--if-font-title:15px;--if-font-body:11px;--if-font-control:12px;--if-font-meta:10px;--if-font-metric:22px}
+  #procurementImportPanel [hidden]{display:none!important}
+  #procurementImportPanel h1,#procurementImportPanel h2,#procurementImportPanel p{margin:0}
+  #procurementImportPanel svg{flex-shrink:0;vertical-align:middle}
+  #procurementImportPanel .if-heading{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:28px}
+  #procurementImportPanel .if-eyebrow{font-size:var(--if-font-meta);letter-spacing:normal;color:#8a97a6;margin-bottom:7px}
+  #procurementImportPanel h1{font-size:var(--if-font-title);line-height:1.5;font-weight:900;letter-spacing:normal}
+  #procurementImportPanel .if-heading p{margin-top:9px;font-size:var(--if-font-body);color:#718095}
+  #procurementImportPanel .if-heading-actions{display:flex;gap:8px;align-items:center;flex-shrink:0;margin-top:8px}
+  #procurementImportPanel .if-heading>button{margin-top:14px;color:#52677d}
+  #procurementImportPanel .if-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:36px;padding:0 14px;border:1px solid #dfe7ee;border-radius:7px;background:#fff;color:#344d64;font-weight:800;font-size:var(--if-font-control);line-height:1.3;white-space:nowrap;cursor:pointer;box-shadow:none}
+  #procurementImportPanel .if-btn svg{width:16px;height:16px}
+  #procurementImportPanel .if-btn:hover{background:#f1f7f7;border-color:#bdd5d6}
+  #procurementImportPanel .if-btn:disabled{opacity:.45;cursor:not-allowed}
+  #procurementImportPanel .if-btn:focus-visible,#procurementImportPanel input:focus-visible,#procurementImportPanel select:focus-visible,#procurementImportPanel summary:focus-visible{outline:2px solid #0e9f9d;outline-offset:3px}
+  #procurementImportPanel .if-primary{font-weight:600;background:#087f81;color:#fff;border-color:#087f81}
+  #procurementImportPanel .if-primary:hover{background:#086e70}
+  #procurementImportPanel .if-secondary{background:#f5f7fa}
+  #procurementImportPanel .if-text-btn{border-color:transparent;background:transparent;color:#07818a;padding:0 8px}
+  #procurementImportPanel .if-flow{display:flex;align-items:center;max-width:820px;list-style:none;margin:0 0 28px;padding:0;gap:0}
+  #procurementImportPanel .if-flow li{display:flex;align-items:center;flex:1;gap:10px;color:#8a98a8;font-size:var(--if-font-body);white-space:nowrap}
+  #procurementImportPanel .if-step-circle{display:grid;place-items:center;background:#e9edf2;width:25px;height:25px;border-radius:50%;font-size:var(--if-font-body);flex:none;font-weight:600}
+  #procurementImportPanel .if-flow i{height:1px;background:#dce4eb;flex:1;margin:0 25px 0 15px}
+  #procurementImportPanel .if-flow .complete{color:#158179}
+  #procurementImportPanel .if-flow .complete .if-step-circle{background:#deefeb}
+  #procurementImportPanel .if-flow .current{color:#233e56;font-weight:600}
+  #procurementImportPanel .if-flow .current .if-step-circle{background:#153f54;color:white;box-shadow:0 0 0 4px #e6edf1}
+  #procurementImportPanel .if-setup-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px}
+  #procurementImportPanel .if-card{background:#fff;border:1px solid var(--if-border);border-radius:10px;box-shadow:0 2px 3px #1b385904;min-width:0;overflow:hidden}
+  #procurementImportPanel .if-source-card,#procurementImportPanel .if-target-card{padding:26px;display:flex;flex-direction:column}
+  #procurementImportPanel .if-card-heading{display:flex;gap:11px;align-items:center;margin-bottom:21px}
+  #procurementImportPanel .if-heading-icon{display:grid;place-items:center;background:#e6f5ef;color:#178673;border-radius:8px;width:40px;height:40px;flex:none}
+  #procurementImportPanel .if-heading-icon.if-blue{background:#eaf0fa;color:#6083b0}
+  #procurementImportPanel h2{font-size:var(--if-font-title);font-weight:900;line-height:1.5}
+  #procurementImportPanel .if-card-heading p,#procurementImportPanel .if-preview-heading p{font-size:var(--if-font-body);color:#8a96a5;margin-top:3px}
+  #procurementImportPanel .if-badge{display:inline-flex;font-size:var(--if-font-meta);font-weight:900;padding:4px 8px;border-radius:5px;white-space:nowrap;background:#f1f4f7;color:#788695;margin-left:auto}
+  #procurementImportPanel .if-badge.green{background:#e8f5ed;color:#2b886a}
+  #procurementImportPanel .if-badge.amber{background:#fff0d8;color:#9e611f}
+  #procurementImportPanel .if-file-box{display:flex;align-items:center;gap:13px;background:#fafcfd;border:1px dashed #cad7e2;border-radius:8px;min-height:80px;padding:14px}
+  #procurementImportPanel .if-file-icon{color:#168375;position:relative;display:grid;place-items:center;padding-bottom:10px;flex:none}
+  #procurementImportPanel .if-file-icon svg{width:27px;height:27px}
+  #procurementImportPanel .if-file-icon small{font-size:var(--if-font-body);font-weight:600;position:absolute;bottom:0}
+  #procurementImportPanel .if-file-info{min-width:0;flex:1}
+  #procurementImportPanel .if-file-info b{font-size:var(--if-font-control);display:block;font-weight:500;overflow-wrap:anywhere}
+  #procurementImportPanel .if-file-info span{display:block;color:#8b97a6;font-size:var(--if-font-body);margin-top:5px}
+  #procurementImportPanel .if-card-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:17px;min-height:36px}
+  #procurementImportPanel .if-subtle{display:flex;align-items:center;gap:6px;font-size:var(--if-font-body);color:#789087}
+  #procurementImportPanel .if-subtle svg{width:16px;height:16px}
+  #procurementImportPanel .if-target-fields{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(0,1fr);gap:12px;flex:1;align-content:center}
+  #procurementImportPanel .if-target-fields label{display:block;font-weight:800;font-size:var(--if-font-body);color:#738297;margin-bottom:7px}
+  #procurementImportPanel .if-target-fields input,#procurementImportPanel .if-target-fields select{height:40px;width:100%;min-width:0;padding:0 12px;font-size:var(--if-font-body);background:#fff;border:1px solid #dce4eb;border-radius:8px;color:#344d64;box-shadow:none;text-overflow:ellipsis}
+  #procurementImportPanel .if-button-group{display:flex;gap:4px;align-items:center}
+  #procurementImportPanel .if-metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));margin:25px 0 20px;background:#fff;border:1px solid var(--if-border);border-radius:10px;padding:22px 0}
+  #procurementImportPanel .if-metrics>div{border-right:1px solid #e8edf2;padding:0 24px;display:flex;align-items:center;justify-content:space-between;gap:14px}
+  #procurementImportPanel .if-metrics>div:last-child{border:0}
+  #procurementImportPanel .if-metrics span{font-size:var(--if-font-meta);font-weight:850;color:#758395}
+  #procurementImportPanel .if-metrics strong{font-size:var(--if-font-metric);font-weight:700;font-variant-numeric:tabular-nums;line-height:1.3;white-space:nowrap}
+  #procurementImportPanel .if-metrics b{font-weight:700}
+  #procurementImportPanel .if-metrics small{font-size:var(--if-font-meta);font-weight:400;color:#8f9bab;margin-left:8px}
+  #procurementImportPanel .if-metric-success strong{color:#248270}
+  #procurementImportPanel .if-match-notice{display:flex;align-items:center;gap:10px;border-radius:7px;padding:13px 15px;font-size:var(--if-font-body);margin-bottom:18px;color:#4c766c;background:#edf6f2;border:1px solid #dcece4}
+  #procurementImportPanel .if-match-notice svg{color:#308b77;width:18px;height:18px}
+  #procurementImportPanel .if-match-notice b{font-weight:600;margin-right:12px}
+  #procurementImportPanel .resource-state{margin:16px 0;font-size:var(--if-font-body);padding:12px 15px;line-height:1.7;border-radius:7px}
+  #procurementImportPanel .if-preview-heading{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:19px 22px}
+  #procurementImportPanel .if-preview-heading h2 span{font-size:var(--if-font-body);color:#91a0ad;font-weight:400;margin-left:10px}
+  #procurementImportPanel .if-preview-heading button{font-size:var(--if-font-control);color:#597084}
+  #procurementImportPanel .if-table-wrap{overflow-x:auto}
+  #procurementImportPanel .if-table-wrap table{min-width:900px;width:100%;font-size:var(--if-font-body);border-collapse:collapse}
+  #procurementImportPanel .if-table-wrap th{height:44px;background:#f6f8fb;color:#77869a;font-weight:900;font-size:var(--if-font-meta);border-top:1px solid #e6ecf1;border-bottom:1px solid #e6ecf1;padding:0 18px;white-space:nowrap}
+  #procurementImportPanel .if-table-wrap td{height:76px;padding:12px 18px;border-bottom:1px solid #edf1f5;vertical-align:middle}
+  #procurementImportPanel .if-table-wrap tbody tr{background:#fff}
+  #procurementImportPanel .if-table-wrap tbody tr:hover{background:#f7fbfc}
+  #procurementImportPanel .if-table-footer{display:flex;justify-content:space-between;align-items:center;padding:12px 20px;color:#91a0af;font-size:var(--if-font-body)}
+  #procurementImportPanel .if-table-footer>span:first-child{display:flex;align-items:center;gap:6px}
+  #procurementImportPanel .if-table-footer svg{width:14px;height:14px}
+  #procurementImportPanel .if-rules{font-size:var(--if-font-body);color:#8190a2;line-height:1.8;padding:14px 2px 22px}
+  #procurementImportPanel .if-rules summary{display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none}
+  #procurementImportPanel .if-rules summary::-webkit-details-marker{display:none}
+  #procurementImportPanel .if-rules summary span{color:#087f81;margin-left:8px}
+  #procurementImportPanel .if-rules p{padding:10px 22px 0}
+  #procurementImportPanel .if-rules svg{width:15px;height:15px}
+  #procurementImportPanel .if-action-footer{background:#fff;display:flex;align-items:center;justify-content:space-between;gap:20px;padding:17px 22px;position:sticky;bottom:0;z-index:10;border:1px solid #dfe6ed;border-radius:9px;box-shadow:0 -3px 14px #304b6506}
+  #procurementImportPanel .if-footer-content{flex:1;min-width:0}
+  #procurementImportPanel .if-footer-copy b{font-size:var(--if-font-control);font-weight:800}
+  #procurementImportPanel .if-footer-copy small{display:block;font-size:var(--if-font-body);color:#93a0ae;margin-top:4px}
+  #procurementImportPanel .if-history-row{display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:12px}
+  #procurementImportPanel .if-history-row label{white-space:nowrap;color:#8191a5}
+  #procurementImportPanel .if-history-row select{min-width:0;flex:1;border:1px solid #dce5ee;border-radius:6px;padding:6px 8px;background:#fff;color:#22384e;font:inherit}
+  #procurementImportPanel .if-footer-actions{display:flex;align-items:center;gap:24px;flex-shrink:0}
+  #procurementImportPanel .if-color-setting{display:flex;align-items:center;gap:8px;font-size:12px;white-space:nowrap;position:relative}
+  #procurementImportPanel .if-switch{width:32px;height:18px;padding:0;border:0;border-radius:20px;background:#c5ced8;cursor:pointer;position:relative;transition:background .15s;flex:none}
+  #procurementImportPanel .if-switch:before{content:"";position:absolute;width:14px;height:14px;top:2px;left:2px;border-radius:50%;background:#fff;box-shadow:0 1px 3px #0002;transition:transform .15s}
+  #procurementImportPanel .if-switch[aria-checked="true"]{background:#078487}
+  #procurementImportPanel .if-switch[aria-checked="true"]:before{transform:translateX(14px)}
+  #procurementImportPanel .if-import-button{min-height:42px;padding:0 20px}
+  #procurementImportPanel .empty-tip{text-align:center;color:#9ca3af;padding:36px 0;font-size:13px}
+
+  /* ===== 原型专用样式（仅本文件，非产品代码） ===== */
+  .workspace-scroll { flex:1; min-height:0; overflow:auto; padding:24px 28px 28px; }
+  .proto-banner { position:sticky; top:0; z-index:300; display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding:10px 18px; background:#fffbeb; border-bottom:1px dashed #f2ddb2; color:#9a650d; font-size:12px; }
+  .proto-banner b { font-weight:800; }
+  .proto-banner .proto-spacer { flex:1; }
+  .proto-banner label { display:flex; align-items:center; gap:5px; cursor:pointer; user-select:none; }
+  .proto-banner .btn-mini { border-color:#e8d5a4; color:#9a650d; }
+  .proto-banner .btn-mini:hover { background:#fff6de; border-color:#d9b96a; }
+  .import-history-detail-summary { padding:0 0 14px; }
+  .import-history-detail-summary .business-summary { padding:0; grid-template-columns:repeat(auto-fit,minmax(104px,1fr)); }
+  .import-history-detail-note { margin-top:2px; }
+  .import-history-detail-note.resource-state { margin:0 0 12px; }
+  .query-history-detail-divider { height:1px; background:var(--line); margin:0 0 14px; }
+</style>
+</head>
+<body>
+
+<!-- 原型说明条：非产品 UI，仅用于演示操作 -->
+<div class="proto-banner">
+  <b>静态原型</b><span>导入历史 · 仅用于界面与交互确认 · 表格数据均为虚构演示</span>
+  <span class="proto-spacer"></span>
+  <label><input type="checkbox" id="protoAdminView"> 以管理员视角查看（显示“导入用户”筛选）</label>
+  <button class="btn-mini" type="button" id="protoOpenHistory">直接打开导入历史</button>
+</div>
+
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="brand-card">
+      <div class="brand-art" role="img" aria-label="Xynigo 品牌字标">
+        <svg viewBox="0 0 240 76" width="118" height="38" aria-hidden="true"><text x="0" y="52" font-family="Inter,ui-rounded,'SF Pro Rounded',sans-serif" font-size="44" font-weight="900" fill="#082548">Xynigo</text><circle cx="212" cy="38" r="16" fill="#1698a0"/></svg>
+      </div>
+      <div class="brand-meta"><span class="product-type">跨境采购协同系统</span></div>
+    </div>
+    <nav class="module-tabs" aria-label="一级功能模块">
+      <div class="nav-label">XYNIGO SOURCING</div>
+      <button class="module-tab" type="button" title="工作台">
+        <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v10h14V10M9 20v-6h6v6"/></svg></span>
+        <span class="nav-text"><b>工作台</b><small>概览 · 待办 · 连接</small></span>
+      </button>
+      <button class="module-tab active" type="button" title="采购中心">
+        <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 3h12v18H6zM9 7h6M9 11h6M9 15h3"/><path d="m15 17 2 2 4-5"/></svg></span>
+        <span class="nav-text"><b>采购中心</b><small>提单 · 分配 · 执行</small></span>
+      </button>
+      <div class="secondary-tabs" role="navigation" aria-label="采购中心二级功能">
+        <button class="secondary-tab active" type="button">导入分单<span class="secondary-status">飞书协作表</span></button>
+        <button class="secondary-tab" type="button">采购任务<span class="secondary-status">云端</span></button>
+        <button class="secondary-tab" type="button">采购执行<span class="secondary-status">测试</span></button>
+      </div>
+      <button class="module-tab" type="button" title="履约追踪">
+        <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m7.5 4.3 9 5.1"/><path d="M21 8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l3 1.7"/><path d="M12 22V12M3.3 7 12 12l8.7-5"/><circle cx="18.5" cy="15.5" r="2.5"/><path d="m20.3 17.3 1.7 1.7"/></svg></span>
+        <span class="nav-text"><b>履约追踪</b><small>查询 · 跟踪 · 导出</small></span>
+      </button>
+    </nav>
+    <div class="side-footer"><span>v0.17.17</span><span>云端工作台</span></div>
+  </aside>
+
+  <div class="workspace">
+    <div class="topbar">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-size:15px;font-weight:900;color:var(--navy-950);">导入分单</span>
+        <span class="hint">按采购备注生成明细，导入本批飞书协作表</span>
+      </div>
+      <div class="hint">当前用户：胡康凯（演示）</div>
+    </div>
+    <div class="workspace-scroll">
+
+      <div class="module-panel" id="procurementImportPanel">
+        <div class="if-heading">
+          <div>
+            <div class="if-eyebrow">采购中心 / 导入分单</div>
+            <h1>导入分单</h1>
+            <p>按采购备注生成明细，导入本批飞书协作表。</p>
+          </div>
+          <div class="if-heading-actions">
+            <!-- 新增入口：导入历史（与“查询历史/创建历史”按钮同级语义） -->
+            <button class="if-btn" id="btnProcurementImportHistory" type="button"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-history" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path><path d="M12 7v5l4 2"></path></svg>导入历史</button>
+            <button class="if-btn" type="button"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-refresh-cw" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path><path d="M8 16H3v5"></path></svg>重新开始</button>
+          </div>
+        </div>
+        <ol class="if-flow" aria-label="导入步骤">
+          <li class="complete" data-import-step="0"><span class="if-step-circle">1</span><span>解析订单文件</span><i></i></li>
+          <li class="complete" data-import-step="1"><span class="if-step-circle">2</span><span>校验目标表格</span><i></i></li>
+          <li class="current" data-import-step="2"><span class="if-step-circle">3</span><span>确认并导入</span></li>
+        </ol>
+        <div class="if-setup-grid">
+          <section class="if-card if-source-card">
+            <div class="if-card-heading"><span class="if-heading-icon"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"></path><path d="M14 2v5a1 1 0 0 0 1 1h5"></path><path d="M8 13h2"></path><path d="M14 13h2"></path><path d="M8 17h2"></path><path d="M14 17h2"></path></svg></span><div><h2>订单文件</h2><p>店小秘产品行导出 · .xlsx</p></div><span class="if-badge green" id="procurementImportFileBadge">已解析</span></div>
+            <div class="if-file-box" id="procurementImportFileDrop"><span class="if-file-icon"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"></path><path d="M14 2v5a1 1 0 0 0 1 1h5"></path></svg><small>XLSX</small></span><div class="if-file-info"><b id="procurementImportFileName">店小秘导出_0909墨西哥补货.xlsx</b><span id="procurementImportFileMeta">23 行产品 · 18 个采购单 · 已生成 23 条明细</span></div><button class="if-btn if-text-btn" type="button">选择文件</button></div>
+            <label class="if-subtle" style="display:flex;gap:8px;align-items:flex-start;margin:12px 0"><input type="checkbox">仅导入校验通过的订单；失败订单保留在错误清单，补齐后可重新导入。</label>
+            <div class="if-card-actions"><span class="if-subtle"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 7 17l-5-5"></path><path d="m22 10-7.5 7.5L13 16"></path></svg>请保留完整 XYP2 采购备注</span><button class="if-btn if-secondary" type="button">解析并生成</button></div>
+          </section>
+          <section class="if-card if-target-card" id="procurementImportTargetCard">
+            <div class="if-card-heading"><span class="if-heading-icon if-blue"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 17H7A5 5 0 0 1 7 7h2"></path><path d="M15 7h2a5 5 0 1 1 0 10h-2"></path><line x1="8" x2="16" y1="12" y2="12"></line></svg></span><div><h2>目标飞书协作表</h2><p>按本批订单选择表格与工作表</p></div><span class="if-badge green" id="procurementImportTargetBadge">已校验</span></div>
+            <div class="if-history-row" id="procurementImportHistoryRow"><label for="procurementImportHistory">最近使用</label><select id="procurementImportHistory"><option value="">墨西哥站-9月第一批采购协作表（演示）</option><option value="">美国站-9月采购协作表（演示）</option></select><button class="if-btn if-text-btn" type="button">移除记录</button></div>
+            <div class="if-target-fields"><div><label for="procurementImportTargetUrl">飞书协作表</label><input id="procurementImportTargetUrl" type="url" autocomplete="off" value="https://example.feishu.cn/base/（演示链接）"></div><div><label for="procurementImportTargetSheet">工作表</label><select id="procurementImportTargetSheet"><option value="">9月第一批（演示）</option></select></div></div>
+            <div class="if-card-actions"><span class="if-subtle"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path><path d="m9 12 2 2 4-4"></path></svg>确认字段后再导入</span><div class="if-button-group"><button class="if-btn if-text-btn" type="button">读取工作表</button><button class="if-btn if-primary" type="button">校验核心字段</button></div></div>
+          </section>
+        </div>
+        <div class="if-metrics" id="procurementImportStats">
+          <div><span>导出产品行</span><strong><b>23</b><small>行</small></strong></div>
+          <div><span>采购单</span><strong><b>18</b><small>单</small></strong></div>
+          <div><span>采购明细</span><strong><b>23</b><small>条</small></strong></div>
+          <div><span>采购件数</span><strong><b>41</b><small>件</small></strong></div>
+          <div class="if-metric-success"><span>需关注</span><strong><b>0</b><small>项</small></strong></div>
+        </div>
+        <div class="if-match-notice"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path><path d="m9 12 2 2 4-4"></path></svg><span><b>采购备注已解析</b>采购链接、规格和数量以 XYP2 备注为准；销售明细仅用于关联商品金额和订单图片。</span></div>
+        <section class="if-card if-preview-card">
+          <div class="if-preview-heading"><div><h2>解析预览 <span>23 条明细 · 18 个采购单</span></h2><p>按销售订单分组 · 金额随对应明细保留</p></div><button class="if-btn" type="button">下载采购共享协作表</button></div>
+          <div class="if-table-wrap"><table><thead><tr><th>销售订单 / 包裹号</th><th>店铺 / 运营</th><th>商品金额</th><th>采购规格</th><th>数量</th><th>指导价</th><th>订单商品图</th></tr></thead><tbody><tr><td colspan="7" class="empty-tip">（原型演示：此处为已解析的明细预览表）</td></tr></tbody></table></div>
+          <div class="if-table-footer"><span>预览隐藏收件信息</span><span>商品图片 <b>22</b></span></div>
+        </section>
+        <details class="if-rules"><summary><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><path d="M12 17h.01"></path></svg>历史订单整单跳过；导入至飞书协作表，不创建采购任务。<span>查看导入规则</span></summary><p>接口直接导入，无需人工复制粘贴，不会覆盖已有单元格。采购需求区按标准列序写入，前五列固定为“分单日期 / 采购员 / 销售订单号 / 店铺 / 运营”；采购下单区可自由增删、改名和排序，不参与导入校验。</p><p>订单金额只写首条明细，商品金额逐条计算；完整收件信息紧随采购指导价。同订单按淡色分组，商品图与采购链接自动处理。系统追踪区仅用于幂等防重。已导入订单保持原样，不能在这里修改；采购任务认领前修改属于独立修订流程。</p></details>
+        <footer class="if-action-footer" id="procurementImportSyncBar">
+          <div class="if-footer-content"><div class="if-footer-copy"><b id="procurementImportFooterSummary">校验通过，可导入 18 个采购单</b><small id="procurementImportFooterHint">已存在订单会整单跳过，不会覆盖已有单元格</small></div></div>
+          <div class="if-footer-actions">
+            <div class="if-color-setting"><span id="procurementImportBackgroundLabel">订单背景色</span><button id="procurementImportFillBackground" type="button" class="if-switch" role="switch" aria-checked="true" aria-labelledby="procurementImportBackgroundLabel"></button></div>
+            <button class="if-btn if-primary if-import-button" id="btnProcurementImportSyncImages" type="button"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-1"></path><path d="M2 13h10"></path><path d="m9 16 3-3-3-3"></path></svg>导入数据并补齐图片</button>
+          </div>
+        </footer>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ===== 新增：导入历史弹窗（结构完全对齐 queryHistoryMask / environmentHistoryMask） ===== -->
+<div class="modal-mask" id="importHistoryMask" aria-hidden="true">
+  <div class="modal query-history-modal" role="dialog" aria-modal="true" aria-labelledby="importHistoryTitle">
+    <div class="query-history-head">
+      <div><h3 id="importHistoryTitle">导入历史</h3><p class="hint">每次“导入数据并补齐图片”按稳定任务 ID 汇总；历史结果保存在云端，页面刷新后仍可追溯。</p></div>
+      <button class="image-modal-close" id="btnImportHistoryClose" type="button" aria-label="关闭导入历史">×</button>
+    </div>
+    <div class="query-history-body">
+      <div id="importHistoryListView">
+        <div class="query-history-toolbar">
+          <div class="field"><label for="importHistoryStatus">任务状态</label><select id="importHistoryStatus"><option value="">全部状态</option><option value="running">执行中</option><option value="completed">已完成</option><option value="partial">部分完成</option><option value="failed">失败</option></select></div>
+          <div class="field" id="importHistoryActorField" hidden><label for="importHistoryActor">导入用户</label><select id="importHistoryActor"><option value="">全部用户</option></select></div>
+          <button class="btn" id="btnImportHistoryRefresh" type="button">刷新</button>
+        </div>
+        <div class="table-wrap"><table class="query-history-table" style="min-width:1080px"><thead><tr><th>导入 ID</th><th>导入时间</th><th>导入用户</th><th>订单文件</th><th>目标协作表</th><th>采购单</th><th>新增明细</th><th>跳过已存在</th><th>失败</th><th>状态</th><th>耗时</th><th>操作</th></tr></thead><tbody id="importHistoryBody"><tr><td colspan="12" class="query-history-empty">正在读取导入历史…</td></tr></tbody></table></div>
+        <div class="query-history-pagination"><span class="hint" id="importHistoryPageText">第 1 页</span><button class="btn" id="btnImportHistoryPrev" type="button" disabled>上一页</button><button class="btn" id="btnImportHistoryNext" type="button" disabled>下一页</button></div>
+      </div>
+      <div id="importHistoryDetailView" hidden>
+        <div class="query-history-detail-head">
+          <div><button class="btn" id="btnImportHistoryBack" type="button">← 返回历史列表</button><div class="query-history-detail-meta" id="importHistoryDetailMeta"></div></div>
+          <div class="table-actions"><button class="btn" id="btnImportHistoryOpenTarget" type="button">打开目标协作表</button><button class="btn primary" id="btnImportHistoryReupload" type="button">重新上传文件补导</button></div>
+        </div>
+        <div class="import-history-detail-summary"><div class="business-summary" id="importHistoryDetailStats"></div></div>
+        <div class="import-history-detail-note" id="importHistoryDetailNote"></div>
+        <div class="query-history-detail-divider"></div>
+        <div class="query-history-detail-table" style="max-height:none"><table style="min-width:0"><thead><tr><th>执行阶段</th><th>结果</th><th>说明</th></tr></thead><tbody id="importHistoryStageBody"></tbody></table></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="protoToast"></div>
+
+<script>
+/* ===== 原型演示脚本：数据虚构，仅模拟交互 ===== */
+const $ = id => document.getElementById(id);
+const IMPORT_HISTORY_STATUS = {
+  queued:['等待执行',''], validating:['执行中','running'], writing_rows:['执行中','running'],
+  writing_images:['执行中','running'], completed:['已完成','ok'], partial:['部分完成','bad'], failed:['失败','bad']
+};
+
+const MOCK_HISTORY = [
+  { jobId:'9f2c41a7-6b1d-4c88-9e02-7a55d1c3e910', startedAt:'2026-09-09 14:32:07', durationSec:102,
+    actor:'胡康凯', filename:'店小秘导出_0909墨西哥补货.xlsx', targetName:'墨西哥站-9月第一批采购协作表 / 9月第一批',
+    importBatch:'IMP-20260909-001', sourceRows:23, orders:18, details:23, images:22, written:23, skipped:0, failed:0,
+    state:'completed', topError:'', finishNote:'本批 18 个采购单全部写入完成；商品图 22 张全部补齐。' },
+  { jobId:'c38a02bd-91f4-4b7a-a4d6-2f8e55b7c621', startedAt:'2026-09-08 18:05:41', durationSec:76,
+    actor:'李志恒', filename:'店小秘导出_0908补货.xlsx', targetName:'墨西哥站-9月采购协作表 / 9月第二批',
+    importBatch:'IMP-20260908-003', sourceRows:16, orders:12, details:15, images:14, written:11, skipped:2, failed:2,
+    state:'partial', topError:'2 个订单明细写入时目标行被占用，未能完成写入',
+    finishNote:'逐行错误清单不随历史保留；重新上传同一文件即可自动跳过已写入订单，仅补写缺失明细。' },
+  { jobId:'7d10e5f3-3a92-4c11-b8e4-90aa6d24f835', startedAt:'2026-09-08 10:14:22', durationSec:58,
+    actor:'胡康凯', filename:'店小秘导出_0907美国批.xlsx', targetName:'美国站-9月采购协作表 / 9月第一批',
+    importBatch:'IMP-20260908-001', sourceRows:11, orders:9, details:11, images:11, written:11, skipped:0, failed:0,
+    state:'completed', topError:'', finishNote:'本批 9 个采购单全部写入完成。' },
+  { jobId:'51b9c7e2-8d43-4f60-92ab-c4e18f07d546', startedAt:'2026-09-07 16:47:55', durationSec:3,
+    actor:'王康德', filename:'店小秘导出_0907异常.xlsx', targetName:'—',
+    importBatch:'IMP-20260907-002', sourceRows:0, orders:0, details:0, images:0, written:0, skipped:0, failed:0,
+    state:'failed', topError:'目标工作表未通过校验：缺少系统追踪区，请改用系统规范过的协作表',
+    finishNote:'校验未通过，本批未写入任何数据。' },
+  { jobId:'e2a6d904-57c8-4b3e-8f19-3b7c60d2a481', startedAt:'2026-09-09 15:02:18', durationSec:0,
+    actor:'李志恒', filename:'店小秘导出_0909美国补货.xlsx', targetName:'美国站-9月采购协作表 / 9月第二批',
+    importBatch:'IMP-20260909-002', sourceRows:9, orders:7, details:9, images:8, written:5, skipped:0, failed:0,
+    state:'writing_images', topError:'', finishNote:'' }
+];
+
+let importHistoryPage = 1, importHistoryDetail = null;
+
+function toast(message) {
+  const el = $('protoToast');
+  el.textContent = message;
+  el.classList.add('show');
+  clearTimeout(el._timer);
+  el._timer = setTimeout(() => el.classList.remove('show'), 2200);
+}
+function esc(value) { return String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])); }
+function formatTime(value) { return String(value || '—'); }
+function timeStack(value) {
+  const match = String(value || '').match(/^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2}:\d{2})$/);
+  if (!match) return esc(value || '—');
+  return `<span class="date-time-stack"><span>${esc(match[1])}</span><span>${esc(match[2])}</span></span>`;
+}
+function formatDuration(seconds) {
+  const value = Math.max(0, Number(seconds || 0));
+  if (!value) return '—';
+  const minutes = Math.floor(value / 60), rest = Math.floor(value % 60);
+  return minutes ? `${minutes}分${rest}秒` : `${rest}秒`;
+}
+
+function filteredItems() {
+  const status = $('importHistoryStatus').value;
+  const actor = $('importHistoryActor').value;
+  return MOCK_HISTORY.filter(item => (!status || item.state === status || (status === 'running' && ['queued','validating','writing_rows','writing_images'].includes(item.state))) && (!actor || item.actor === actor));
+}
+function renderHistory(items) {
+  if (!items.length) {
+    $('importHistoryBody').innerHTML = '<tr><td colspan="12" class="query-history-empty">暂无符合条件的导入历史</td></tr>';
+    return;
+  }
+  $('importHistoryBody').innerHTML = items.map(item => {
+    const status = IMPORT_HISTORY_STATUS[item.state] || [item.state, ''];
+    return `<tr>`
+      + `<td><button class="stable-id-button" type="button" data-copy-id="${esc(item.jobId)}" title="复制完整任务 ID">${esc(item.jobId.slice(0,8))}</button></td>`
+      + `<td>${timeStack(item.startedAt)}</td><td>${esc(item.actor)}</td>`
+      + `<td style="max-width:190px;overflow:hidden;text-overflow:ellipsis" title="${esc(item.filename)}">${esc(item.filename)}</td>`
+      + `<td style="max-width:170px;overflow:hidden;text-overflow:ellipsis" title="${esc(item.targetName)}">${esc(item.targetName)}</td>`
+      + `<td>${item.orders}</td><td>${item.written}</td><td>${item.skipped}</td><td>${item.failed}</td>`
+      + `<td><span class="query-history-status ${status[1]}">${esc(status[0])}</span></td>`
+      + `<td>${esc(formatDuration(item.durationSec))}</td>`
+      + `<td><button class="btn-mini" type="button" data-import-history-view="${esc(item.jobId)}">查看明细</button></td>`
+      + `</tr>`;
+  }).join('');
+}
+function loadHistory({reset=false}={}) {
+  if (reset) { importHistoryPage = 1; }
+  $('btnImportHistoryRefresh').disabled = true;
+  $('importHistoryBody').innerHTML = '<tr><td colspan="12" class="query-history-empty"><span class="spinner"></span>正在读取导入历史…</td></tr>';
+  setTimeout(() => {
+    const items = filteredItems();
+    const perPage = 4, pages = Math.max(1, Math.ceil(items.length / perPage));
+    importHistoryPage = Math.min(importHistoryPage, pages);
+    renderHistory(items.slice((importHistoryPage - 1) * perPage, importHistoryPage * perPage));
+    $('importHistoryPageText').textContent = `第 ${importHistoryPage} 页 · 共 ${items.length} 条`;
+    $('btnImportHistoryPrev').disabled = importHistoryPage <= 1;
+    $('btnImportHistoryNext').disabled = importHistoryPage >= pages;
+    $('btnImportHistoryRefresh').disabled = false;
+  }, 350);
+}
+function statCell(label, value, cls='') { return `<div class="business-stat ${cls}"><span>${esc(label)}</span><b>${esc(value)}</b></div>`; }
+function openDetail(jobId) {
+  const item = MOCK_HISTORY.find(row => row.jobId === jobId);
+  if (!item) return;
+  importHistoryDetail = item;
+  $('importHistoryListView').hidden = true;
+  $('importHistoryDetailView').hidden = false;
+  const status = IMPORT_HISTORY_STATUS[item.state] || [item.state, ''];
+  $('importHistoryDetailMeta').innerHTML =
+    `<span>导入 ID <button class="stable-id-button" type="button" data-copy-id="${esc(item.jobId)}">${esc(item.jobId.slice(0,8))}</button></span>`
+    + `<span>${esc(item.actor)}</span><span>${esc(item.filename)}</span>`
+    + `<span>目标表：${esc(item.targetName)}</span><span>导入批次 ${esc(item.importBatch)}</span>`
+    + `<span><span class="query-history-status ${status[1]}">${esc(status[0])}</span></span>`
+    + `<span>耗时 ${esc(formatDuration(item.durationSec))}</span>`;
+  $('importHistoryDetailStats').innerHTML =
+    statCell('导出产品行', item.sourceRows)
+    + statCell('采购单', item.orders)
+    + statCell('采购明细', item.details)
+    + statCell('商品图', item.images)
+    + statCell('新增写入', item.written, item.written ? 'shipped' : '')
+    + statCell('跳过已存在', item.skipped, item.skipped ? 'packing' : '')
+    + statCell('失败', item.failed, item.failed ? 'review' : '');
+  const stages = stageRows(item);
+  $('importHistoryStageBody').innerHTML = stages.map(row =>
+    `<tr><td>${esc(row[0])}</td><td><span class="query-history-status ${row[1]}">${esc(row[2])}</span></td><td style="white-space:normal">${esc(row[3])}</td></tr>`).join('');
+  const note = $('importHistoryDetailNote');
+  $('btnImportHistoryOpenTarget').hidden = !item.targetName || item.targetName === '—';
+  if (item.state === 'completed') {
+    note.className = 'import-history-detail-note resource-state ok';
+    note.textContent = item.finishNote + ' 已导入订单保持原样；如需补充新订单，重新上传文件即可，系统自动跳过已存在订单。';
+    $('btnImportHistoryReupload').hidden = true;
+  } else if (item.state === 'partial') {
+    note.className = 'import-history-detail-note resource-state warn';
+    note.textContent = '部分订单未完成写入：' + item.topError + '。' + item.finishNote;
+    $('btnImportHistoryReupload').hidden = false;
+  } else if (item.state === 'failed') {
+    note.className = 'import-history-detail-note resource-state bad';
+    note.textContent = '本次导入未写入任何数据。失败原因：' + item.topError + '。';
+    $('btnImportHistoryReupload').hidden = false;
+  } else {
+    note.className = 'import-history-detail-note resource-state';
+    note.textContent = '本批正在云端执行，完成后历史将自动更新，无需重新导入。';
+    $('btnImportHistoryReupload').hidden = true;
+  }
+}
+function stageRows(item) {
+  const done = ['已完成','ok'], skip = ['保持原样',''], bad = ['未完成','bad'], wait = ['等待执行',''], run = ['执行中','running'];
+  const running = ['queued','validating','writing_rows','writing_images'].includes(item.state);
+  if (item.state === 'failed') {
+    return [['解析订单文件','ok','已完成','成功解析 xlsx 并生成明细（本批 0 条）'],
+      ['校验核心字段','bad','未通过',item.topError],
+      ['写入明细 / 链接 / 图片',wait,'未执行','校验未通过，未写入任何数据']];
+  }
+  if (running) {
+    const at = item.state;
+    return [['解析订单文件',done[1],'已完成','成功解析 xlsx 并生成明细'],
+      ['校验核心字段',done[1],'已完成','目标协作表字段与追踪区校验通过'],
+      ['写入明细',at === 'writing_rows' ? run[1] : done[1],at === 'writing_rows' ? '执行中' : '已完成',`已写入 ${item.written} / ${item.details} 条明细`],
+      ['写入采购链接与商品图',at === 'writing_images' ? run[1] : wait,at === 'writing_images' ? '执行中' : '等待执行','导入完成后自动补齐']];
+  }
+  return [['解析订单文件',done[1],'已完成','成功解析 xlsx 并生成明细'],
+    ['校验核心字段',done[1],'已完成','目标协作表字段与追踪区校验通过'],
+    ['写入明细',item.failed ? bad[1] : done[1],item.failed ? '部分失败' : '已完成',`新增 ${item.written} 条 · 跳过已存在 ${item.skipped} 条` + (item.failed ? ` · 失败 ${item.failed} 条` : '')],
+    ['写入采购链接',item.failed ? bad[1] : done[1],item.failed ? '部分失败' : '已完成','采购链接按明细逐条写入'],
+    ['写入商品图',item.failed ? bad[1] : done[1],item.failed ? '部分失败' : '已完成',`商品图 ${item.images} 张`],
+    ['历史订单',skip[1],'保持原样','已存在订单整单跳过，不覆盖已有单元格']];
+}
+function openHistory() {
+  $('importHistoryMask').classList.add('show');
+  $('importHistoryMask').setAttribute('aria-hidden','false');
+  $('importHistoryListView').hidden = false;
+  $('importHistoryDetailView').hidden = true;
+  $('importHistoryActorField').hidden = !$('protoAdminView').checked;
+  $('importHistoryActor').innerHTML = '<option value="">全部用户</option><option value="胡康凯">胡康凯</option><option value="李志恒">李志恒</option><option value="王康德">王康德</option>';
+  loadHistory({reset:true});
+}
+function closeHistory() {
+  $('importHistoryMask').classList.remove('show');
+  $('importHistoryMask').setAttribute('aria-hidden','true');
+}
+
+$('btnProcurementImportHistory').addEventListener('click', openHistory);
+$('protoOpenHistory').addEventListener('click', openHistory);
+$('btnImportHistoryClose').addEventListener('click', closeHistory);
+$('importHistoryMask').addEventListener('click', event => { if (event.target === $('importHistoryMask')) closeHistory(); });
+$('btnImportHistoryRefresh').addEventListener('click', () => loadHistory({reset:true}));
+$('importHistoryStatus').addEventListener('change', () => loadHistory({reset:true}));
+$('importHistoryActor').addEventListener('change', () => loadHistory({reset:true}));
+$('btnImportHistoryPrev').addEventListener('click', () => { importHistoryPage--; loadHistory(); });
+$('btnImportHistoryNext').addEventListener('click', () => { importHistoryPage++; loadHistory(); });
+$('btnImportHistoryBack').addEventListener('click', () => {
+  $('importHistoryDetailView').hidden = true;
+  $('importHistoryListView').hidden = false;
+  importHistoryDetail = null;
+});
+$('importHistoryBody').addEventListener('click', event => {
+  const copy = event.target.closest('[data-copy-id]');
+  if (copy) { navigator.clipboard?.writeText(copy.dataset.copyId); toast('已复制完整导入 ID'); return; }
+  const view = event.target.closest('[data-import-history-view]');
+  if (view) openDetail(view.dataset.importHistoryView);
+});
+$('btnImportHistoryOpenTarget').addEventListener('click', () => toast('原型演示：将打开目标协作表（复用“最近使用”目标）'));
+$('btnImportHistoryReupload').addEventListener('click', () => { closeHistory(); toast('原型演示：回到导入流程，重新上传同一文件即可幂等补导'); });
+$('protoAdminView').addEventListener('change', () => { $('importHistoryActorField').hidden = !$('protoAdminView').checked; });
+document.addEventListener('keydown', event => { if (event.key === 'Escape' && $('importHistoryMask').classList.contains('show')) closeHistory(); });
+/* 原型快捷入口：#open 直开列表；#open-detail 或 #open-detail=N 直开明细（N 为记录序号，默认 1=部分完成示例） */
+if (location.hash.startsWith('#open-detail')) {
+  const idx = Number(location.hash.split('=')[1] || 1);
+  openHistory(); setTimeout(() => openDetail(MOCK_HISTORY[idx].jobId), 500);
+} else if (location.hash === '#open') { openHistory(); }
+</script>
+</body>
+</html>

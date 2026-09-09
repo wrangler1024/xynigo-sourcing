@@ -282,6 +282,7 @@ class ImageSyncJob:
     plan_id: str
     state: str = 'queued'
     target_name: str = ''
+    target_url: str = ''
     import_batch: str = ''
     target_key: str = ''
     rows_total: int = 0
@@ -309,6 +310,7 @@ class ImageSyncJob:
             'planId': self.plan_id,
             'state': self.state,
             'targetName': self.target_name,
+            'targetUrl': self.target_url,
             'importBatch': self.import_batch,
             'rowsTotal': self.rows_total,
             'rowsWritten': self.rows_written,
@@ -2074,6 +2076,7 @@ class ProcurementImportService(object):
             job = ImageSyncJob(
                 job_id=job_id, plan_id=plan.plan_id,
                 target_name=plan.target.sheet_name,
+                target_url=plan.target.url,
                 import_batch=plan.import_batch,
                 target_key=target_key,
                 fill_order_background=(retry.fill_order_background if retry
@@ -2108,7 +2111,8 @@ class ProcurementImportService(object):
             require_importable(plan)
             target = self._refresh_target(target)
             target = self._normalize_target_structure(job_id, target)
-            self._job_update(job_id, target_name=target.sheet_name)
+            self._job_update(job_id, target_name=target.sheet_name,
+                             target_url=target.url)
             _table, headers, _queues, _counts, _expected, missing_rows, \
                 _historical = \
                 self._target_batch_state(plan, target)

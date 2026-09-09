@@ -167,6 +167,11 @@
   .query-history-detail-table { max-height:50vh; overflow:auto; border:1px solid var(--line); border-radius:10px; }
   .query-history-detail-table table { min-width:1120px; }
   .query-history-empty { padding:42px 16px; color:var(--navy-500); text-align:center; }
+  .import-history-detail-summary { padding:0 0 14px; }
+  .import-history-detail-summary .business-summary { padding:0; grid-template-columns:repeat(auto-fit,minmax(104px,1fr)); }
+  .import-history-detail-note { margin-top:2px; }
+  .import-history-detail-note.resource-state { margin:0 0 12px; }
+  .query-history-detail-divider { height:1px; background:var(--line); margin:0 0 14px; }
   @media (max-width: 900px) { .business-summary { grid-template-columns:repeat(2,minmax(120px,1fr)); } }
   .image-modal { width: min(1100px, calc(100vw - 40px)); padding: 16px; }
   .image-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
@@ -1444,6 +1449,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
 #procurementImportPanel h1{font-size:var(--if-font-title);line-height:1.5;font-weight:900;letter-spacing:normal}
 #procurementImportPanel .if-heading p{margin-top:9px;font-size:var(--if-font-body);color:#718095}
 #procurementImportPanel .if-heading>button{margin-top:14px;color:#52677d}
+#procurementImportPanel .if-heading-actions{display:flex;gap:8px;align-items:center;flex-shrink:0;margin-top:14px;color:#52677d}
 #procurementImportPanel .if-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:36px;padding:0 14px;border:1px solid #dfe7ee;border-radius:7px;background:#fff;color:#344d64;font-weight:800;font-size:var(--if-font-control);line-height:1.3;white-space:nowrap;cursor:pointer;box-shadow:none}
 #procurementImportPanel .if-btn svg{width:16px;height:16px}
 #procurementImportPanel .if-btn:hover{background:#f1f7f7;border-color:#bdd5d6}
@@ -1543,7 +1549,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
 #procurementImportPanel .if-import-button{min-height:42px;padding:0 20px}
 @media(max-width:1200px){#procurementImportPanel .if-source-card,#procurementImportPanel .if-target-card{padding:20px}#procurementImportPanel .if-setup-grid{gap:18px}#procurementImportPanel .if-card-actions{flex-wrap:wrap}#procurementImportPanel .if-metrics>div{padding:0 16px}}
 @media(max-width:1000px){#procurementImportPanel .if-setup-grid{grid-template-columns:1fr}#procurementImportPanel .if-metrics>div{display:block}#procurementImportPanel .if-metrics strong{display:block;margin-top:5px}}
-@media(max-width:600px){#procurementImportPanel .if-heading{gap:8px}#procurementImportPanel .if-heading>button{font-size:var(--if-font-control);padding:0 9px}#procurementImportPanel .if-flow li{font-size:var(--if-font-body);gap:6px}#procurementImportPanel .if-flow i{margin:0 8px}#procurementImportPanel .if-target-fields{grid-template-columns:1fr}#procurementImportPanel .if-metrics>div{padding:0 8px}#procurementImportPanel .if-metrics small{display:none}#procurementImportPanel .if-preview-heading{flex-wrap:wrap;padding:16px}#procurementImportPanel .if-action-footer{bottom:-24px;padding:14px;flex-wrap:wrap}#procurementImportPanel .if-match-notice{align-items:flex-start}#procurementImportPanel .if-match-notice b{display:block;margin-bottom:3px}#procurementImportPanel .if-rules summary{flex-wrap:wrap}}
+@media(max-width:600px){#procurementImportPanel .if-heading{gap:8px}#procurementImportPanel .if-heading>button{font-size:var(--if-font-control);padding:0 9px}#procurementImportPanel .if-heading-actions{margin-top:8px}#procurementImportPanel .if-flow li{font-size:var(--if-font-body);gap:6px}#procurementImportPanel .if-flow i{margin:0 8px}#procurementImportPanel .if-target-fields{grid-template-columns:1fr}#procurementImportPanel .if-metrics>div{padding:0 8px}#procurementImportPanel .if-metrics small{display:none}#procurementImportPanel .if-preview-heading{flex-wrap:wrap;padding:16px}#procurementImportPanel .if-action-footer{bottom:-24px;padding:14px;flex-wrap:wrap}#procurementImportPanel .if-match-notice{align-items:flex-start}#procurementImportPanel .if-match-notice b{display:block;margin-bottom:3px}#procurementImportPanel .if-rules summary{flex-wrap:wrap}}
 
 
   #xyp2ParserPanel .card { min-width:0; padding:18px 20px; margin-bottom:14px; }
@@ -1863,7 +1869,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
   </div>
 
   <div class="module-panel hidden import-first-layout" id="procurementImportPanel">
-    <div class="if-heading"><div><div class="if-eyebrow">采购中心 / 导入分单</div><h1>导入分单</h1><p>按采购备注生成明细，导入本批飞书协作表。</p></div><button class="if-btn" id="btnProcurementImportReset" type="button"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-refresh-cw" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path><path d="M8 16H3v5"></path></svg>重新开始</button></div>
+    <div class="if-heading"><div><div class="if-eyebrow">采购中心 / 导入分单</div><h1>导入分单</h1><p>按采购备注生成明细，导入本批飞书协作表。</p></div><div class="if-heading-actions"><button class="if-btn" id="btnProcurementImportHistory" type="button" hidden><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-history" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path><path d="M12 7v5l4 2"></path></svg>导入历史</button><button class="if-btn" id="btnProcurementImportReset" type="button"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-refresh-cw" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path><path d="M8 16H3v5"></path></svg>重新开始</button></div></div>
     <ol class="if-flow" aria-label="导入步骤">
       <li data-import-step="0"><span class="if-step-circle">1</span><span>解析订单文件</span><i></i></li>
       <li data-import-step="1"><span class="if-step-circle">2</span><span>校验目标表格</span><i></i></li>
@@ -3013,6 +3019,36 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
       <div id="environmentHistoryDetailView" hidden>
         <div class="query-history-detail-head"><div><button class="btn" id="btnEnvironmentHistoryBack" type="button">← 返回历史列表</button><div class="query-history-detail-meta" id="environmentHistoryDetailMeta"></div></div></div>
         <div class="query-history-detail-table"><table style="min-width:1050px"><thead><tr><th>买家号（脱敏）</th><th>采购员</th><th>环境名</th><th>Hub 序号</th><th>状态</th><th>恢复已有</th><th>当前步骤</th><th>异常摘要</th><th>更新时间</th></tr></thead><tbody id="environmentHistoryResultBody"></tbody></table></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-mask" id="importHistoryMask" aria-hidden="true">
+  <div class="modal query-history-modal" role="dialog" aria-modal="true" aria-labelledby="importHistoryTitle">
+    <div class="query-history-head">
+      <div><h3 id="importHistoryTitle">导入历史</h3><p class="hint">每次“导入数据并补齐图片”按稳定任务 ID 汇总；历史结果保存在云端，页面刷新后仍可追溯。</p></div>
+      <button class="image-modal-close" id="btnImportHistoryClose" type="button" aria-label="关闭导入历史">×</button>
+    </div>
+    <div class="query-history-body">
+      <div id="importHistoryListView">
+        <div class="query-history-toolbar">
+          <div class="field"><label for="importHistoryStatus">任务状态</label><select id="importHistoryStatus"><option value="">全部状态</option><option value="running">执行中</option><option value="completed">已完成</option><option value="partial">部分完成</option><option value="failed">失败</option></select></div>
+          <div class="field" id="importHistoryActorField" hidden><label for="importHistoryActor">导入用户</label><select id="importHistoryActor"><option value="">全部用户</option></select></div>
+          <button class="btn" id="btnImportHistoryRefresh" type="button">刷新</button>
+        </div>
+        <div class="table-wrap"><table class="query-history-table" style="min-width:1080px"><thead><tr><th>导入 ID</th><th>导入时间</th><th>导入用户</th><th>订单文件</th><th>目标协作表</th><th>采购单</th><th>新增明细</th><th>跳过已存在</th><th>图片失败</th><th>状态</th><th>耗时</th><th>操作</th></tr></thead><tbody id="importHistoryBody"><tr><td colspan="12" class="query-history-empty">正在读取导入历史…</td></tr></tbody></table></div>
+        <div class="query-history-pagination"><span class="hint" id="importHistoryPageText">第 1 页</span><button class="btn" id="btnImportHistoryPrev" type="button" disabled>上一页</button><button class="btn" id="btnImportHistoryNext" type="button" disabled>下一页</button></div>
+      </div>
+      <div id="importHistoryDetailView" hidden>
+        <div class="query-history-detail-head">
+          <div><button class="btn" id="btnImportHistoryBack" type="button">← 返回历史列表</button><div class="query-history-detail-meta" id="importHistoryDetailMeta"></div></div>
+          <div class="table-actions"><button class="btn" id="btnImportHistoryOpenTarget" type="button" hidden>打开目标协作表</button><button class="btn primary" id="btnImportHistoryReupload" type="button" hidden>重新上传文件补导</button></div>
+        </div>
+        <div class="import-history-detail-summary"><div class="business-summary" id="importHistoryDetailStats"></div></div>
+        <div class="import-history-detail-note" id="importHistoryDetailNote"></div>
+        <div class="query-history-detail-divider"></div>
+        <div class="query-history-detail-table" id="importHistoryStageCard"><table style="min-width:0"><thead><tr><th style="width:22%">执行阶段</th><th style="width:16%">结果</th><th>说明</th></tr></thead><tbody id="importHistoryStageBody"></tbody></table></div>
       </div>
     </div>
   </div>
@@ -4848,6 +4884,8 @@ function applyPermissionVisibility() {
   $('btnQueryHistory').hidden = !CLOUD_WEB_MODE || !hasPermission('fulfillment.order.read');
   $('btnEnvironmentHistory').hidden = !CLOUD_WEB_MODE
     || !hasPermission('resource.environment.create');
+  $('btnProcurementImportHistory').hidden = !CLOUD_WEB_MODE
+    || !hasPermission('assistant.access');
   $('queryExportSplit').hidden = !hasPermission('fulfillment.order.export');
   $('btnHistoryExportQuick').hidden = !hasPermission('fulfillment.order.export');
   $('btnHistoryExportFull').hidden = !hasPermission('fulfillment.order.export');
@@ -8815,6 +8853,268 @@ $('environmentHistoryBody').onclick = event => {
 $('environmentHistoryDetailMeta').onclick = event => {
   const button = event.target.closest('[data-copy-id]');
   if (button) copyStableId(button.dataset.copyId);
+};
+
+/* ---------- 导入历史（采购协作导入） ---------- */
+const IMPORT_HISTORY_RUNNING_STATES = ['queued', 'validating', 'normalizing_headers',
+  'formatting_headers', 'writing_rows', 'verifying_rows', 'formatting_rows',
+  'writing_links', 'writing_images'];
+const IMPORT_HISTORY_STATUS = Object.assign({}, QUERY_HISTORY_STATUS, {
+  partial: ['部分完成', 'bad'],
+  // Non-terminal write stages must never leak raw state names to users.
+  validating: ['执行中', 'running'], normalizing_headers: ['执行中', 'running'],
+  formatting_headers: ['执行中', 'running'], writing_rows: ['执行中', 'running'],
+  verifying_rows: ['执行中', 'running'], formatting_rows: ['执行中', 'running'],
+  writing_links: ['执行中', 'running'], writing_images: ['执行中', 'running']
+});
+let importHistoryPage = 1, importHistoryCursor = '', importHistoryNextCursor = '';
+let importHistoryCursorStack = [], importHistoryLoading = false;
+
+function importHistoryStateLabel(item) {
+  const state = String(item.state || '');
+  return IMPORT_HISTORY_STATUS[state] || [state || '未知', ''];
+}
+
+function renderImportHistoryItems(items) {
+  if (!items.length) {
+    $('importHistoryBody').innerHTML = '<tr><td colspan="12" class="query-history-empty">暂无符合条件的导入历史</td></tr>';
+    return;
+  }
+  $('importHistoryBody').innerHTML = items.map(item => {
+    const status = importHistoryStateLabel(item);
+    const jobId = esc(item.jobId || '');
+    return `<tr>`
+      + `<td><button class="stable-id-button" type="button" data-copy-id="${jobId}" title="复制完整任务 ID">${esc(String(item.jobId || '').slice(0, 8))}</button></td>`
+      + `<td>${dateTimeStack(formatQueryHistoryTime(item.startedAt || item.createdAt))}</td>`
+      + `<td>${esc(item.actorDisplayName || '未知用户')}</td>`
+      + `<td style="max-width:190px;overflow:hidden;text-overflow:ellipsis" title="${esc(item.filename || '')}">${esc(item.filename || '—')}</td>`
+      + `<td style="max-width:170px;overflow:hidden;text-overflow:ellipsis" title="${esc(item.targetName || '')}">${esc(item.targetName || '—')}</td>`
+      + `<td>${Number(item.orderCount || 0)}</td><td>${Number(item.rowsWritten || 0)}</td>`
+      + `<td>${Number(item.rowsExisting || 0)}</td><td>${Number(item.failed || 0)}</td>`
+      + `<td><span class="query-history-status ${status[1]}">${esc(status[0])}</span></td>`
+      + `<td>${esc(formatQueryHistoryDuration(item.durationSec))}</td>`
+      + `<td><button class="btn-mini" type="button" data-import-history-view="${jobId}">查看明细</button></td>`
+      + `</tr>`;
+  }).join('');
+}
+
+async function loadImportHistory({reset = false} = {}) {
+  if (!CLOUD_WEB_MODE || importHistoryLoading) return;
+  if (reset) {
+    importHistoryPage = 1; importHistoryCursor = '';
+    importHistoryNextCursor = ''; importHistoryCursorStack = [];
+  }
+  importHistoryLoading = true;
+  $('btnImportHistoryRefresh').disabled = true;
+  $('importHistoryBody').innerHTML = '<tr><td colspan="12" class="query-history-empty"><span class="spinner"></span>正在读取导入历史…</td></tr>';
+  try {
+    const query = new URLSearchParams({limit: '20'});
+    if (importHistoryCursor) query.set('cursor', importHistoryCursor);
+    if ($('importHistoryStatus').value) query.set('status', $('importHistoryStatus').value);
+    if ($('importHistoryActor').value) query.set('userId', $('importHistoryActor').value);
+    const payload = await api('/api/assistant/procurement-import/history?' + query.toString());
+    const data = payload.data || {};
+    const actors = Array.isArray(data.actors) ? data.actors : [];
+    const selectedActor = $('importHistoryActor').value;
+    $('importHistoryActorField').hidden = !hasRole('admin') && !hasRole('super_admin');
+    $('importHistoryActor').innerHTML = '<option value="">全部用户</option>' + actors.map(actor =>
+      `<option value="${esc(actor.userId)}">${esc(actor.displayName || '未知用户')}${actor.status === 'disabled' ? '（已停用）' : ''}</option>`).join('');
+    $('importHistoryActor').value = actors.some(actor => actor.userId === selectedActor) ? selectedActor : '';
+    renderImportHistoryItems(Array.isArray(data.items) ? data.items : []);
+    importHistoryNextCursor = String(data.nextCursor || '');
+    $('importHistoryPageText').textContent = `第 ${importHistoryPage} 页`;
+    $('btnImportHistoryPrev').disabled = importHistoryPage <= 1;
+    $('btnImportHistoryNext').disabled = !importHistoryNextCursor;
+  } catch (error) {
+    $('importHistoryBody').innerHTML = `<tr><td colspan="12" class="query-history-empty">历史记录读取失败：${esc(error.message)}</td></tr>`;
+    $('btnImportHistoryNext').disabled = true;
+  } finally {
+    importHistoryLoading = false;
+    $('btnImportHistoryRefresh').disabled = false;
+  }
+}
+
+function importHistoryStatCell(label, value, cls = '') {
+  return `<div class="business-stat ${cls}"><span>${esc(label)}</span><b>${Number(value || 0)}</b></div>`;
+}
+
+function importHistoryStages(detail) {
+  const ok = ['已完成', 'ok'], bad = ['未通过', 'bad'], part = ['部分失败', 'bad'];
+  const wait = ['未执行', ''], run = ['执行中', 'running'], keep = ['保持原样', ''];
+  const state = String(detail.state || '');
+  const running = IMPORT_HISTORY_RUNNING_STATES.includes(state);
+  const rowsWritten = Number(detail.rowsWritten || 0), rowsExisting = Number(detail.rowsExisting || 0);
+  const planKnown = Number(detail.orderCount || 0) > 0 || Number(detail.sourceRowCount || 0) > 0;
+  const validatePending = state === 'queued' || state === 'validating';
+  const validateFailed = state === 'failed' && !rowsWritten && !Number(detail.failed || 0);
+  const appendActive = ['writing_rows', 'verifying_rows', 'formatting_rows', 'writing_links'].includes(state);
+  const writeDone = ['writing_rows', 'verifying_rows', 'formatting_rows', 'writing_links', 'writing_images',
+    'completed', 'partial'].includes(state);
+  const imageStage = state === 'writing_images' ? run
+    : state === 'completed' ? ok
+    : state === 'partial' ? part
+    : state === 'failed' ? (rowsWritten || Number(detail.failed || 0) ? bad : wait)
+    : wait;
+  const imageNote = state === 'completed' ? `商品图 ${Number(detail.written || 0)} 张写入完成`
+    : state === 'partial' ? `商品图部分未补齐：${esc(detail.error || '部分订单商品图片未补齐')}`
+    : state === 'writing_images' ? `正在写入商品图 ${Number(detail.written || 0) + Number(detail.failed || 0)}/${Number(detail.total || 0)}`
+    : validateFailed ? '校验未通过，未执行写入'
+    : state === 'failed' ? '执行中断，已写入内容保持原样'
+    : '明细写入完成后自动处理';
+  return [
+    ['解析订单文件', planKnown ? ok : run, planKnown
+      ? `采购单 ${Number(detail.orderCount || 0)} · 明细 ${Number(detail.detailCount || 0)}`
+      : '正在解析 xlsx'],
+    ['校验核心字段', validatePending ? run : validateFailed ? bad : ok, validateFailed
+      ? esc(detail.error || '目标工作表未通过校验')
+      : '目标协作表字段与追踪区校验'],
+    ['写入明细', appendActive ? run : writeDone ? ok : wait, writeDone || appendActive
+      ? `新增 ${rowsWritten} 条 · 跳过已存在 ${rowsExisting} 条`
+      : '校验通过后按标准列序追加明细'],
+    ['写入采购链接与商品图', imageStage[1] ? imageStage : wait, imageNote],
+    ['历史订单', keep, rowsExisting
+      ? `本次 ${rowsExisting} 条已存在，整单跳过且不覆盖已有单元格`
+      : '已存在订单整单跳过，不覆盖已有单元格'],
+  ];
+}
+
+function openImportHistoryDetail(jobId) {
+  $('importHistoryListView').hidden = true;
+  $('importHistoryDetailView').hidden = false;
+  $('importHistoryDetailMeta').innerHTML = '<span><span class="spinner"></span>正在读取执行明细…</span>';
+  $('importHistoryDetailStats').innerHTML = '';
+  $('importHistoryDetailNote').hidden = true;
+  $('importHistoryStageBody').innerHTML = '<tr><td colspan="3" class="query-history-empty">正在读取执行明细…</td></tr>';
+  $('btnImportHistoryOpenTarget').hidden = true;
+  $('btnImportHistoryReupload').hidden = true;
+  $('btnImportHistoryOpenTarget').dataset.targetUrl = '';
+  $('btnImportHistoryReupload').dataset.targetUrl = '';
+  (async () => {
+    try {
+      const payload = await api('/api/assistant/procurement-import/history/' + encodeURIComponent(jobId));
+      const detail = payload.data || {};
+      const status = importHistoryStateLabel(detail);
+      $('importHistoryDetailMeta').innerHTML =
+        `<span>导入 ID <button class="stable-id-button" type="button" data-copy-id="${esc(detail.jobId || jobId)}">${esc(String(detail.jobId || jobId).slice(0, 8))}</button></span>`
+        + `<span>${esc(detail.actorDisplayName || '未知用户')}</span>`
+        + `<span>${esc(detail.filename || '—')}</span>`
+        + `<span>目标表：${esc(detail.targetName || '—')}</span>`
+        + `<span>导入批次 ${esc(detail.importBatch || '—')}</span>`
+        + `<span><span class="query-history-status ${status[1]}">${esc(status[0])}</span></span>`
+        + `<span>耗时 ${esc(formatQueryHistoryDuration(detail.durationSec))}</span>`;
+      $('importHistoryDetailStats').innerHTML =
+        importHistoryStatCell('导出产品行', detail.sourceRowCount)
+        + importHistoryStatCell('采购单', detail.orderCount)
+        + importHistoryStatCell('采购明细', detail.detailCount)
+        + importHistoryStatCell('商品图', detail.imageCount)
+        + importHistoryStatCell('新增写入', detail.rowsWritten, Number(detail.rowsWritten || 0) ? 'shipped' : '')
+        + importHistoryStatCell('跳过已存在', detail.rowsExisting, Number(detail.rowsExisting || 0) ? 'packing' : '')
+        + importHistoryStatCell('图片失败', detail.failed, Number(detail.failed || 0) ? 'review' : '');
+      const note = $('importHistoryDetailNote');
+      note.hidden = false;
+      const state = String(detail.state || '');
+      if (state === 'completed') {
+        note.className = 'import-history-detail-note resource-state ok';
+        note.textContent = '本批已全部写入协作表；已导入订单保持原样。如需补充新订单，请重新上传文件，系统自动跳过已存在订单。';
+      } else if (state === 'partial') {
+        note.className = 'import-history-detail-note resource-state warn';
+        note.textContent = `部分订单未完成写入：${detail.error || '部分订单商品图片未补齐'}。逐行错误清单不随历史保留；请重新上传同一订单文件，系统会自动跳过已写入订单，仅补写缺失明细。`;
+      } else if (state === 'failed') {
+        note.className = 'import-history-detail-note resource-state bad';
+        note.textContent = `本次导入未完成。失败原因：${detail.error || '未知错误'}。`;
+      } else {
+        note.className = 'import-history-detail-note resource-state';
+        note.textContent = '本批正在云端执行，完成后历史会自动更新；刷新列表可查看最新进度。';
+      }
+      const targetUrl = String(detail.targetUrl || '');
+      const recentTarget = targetUrl ? null
+        : (Array.isArray(procurementImportHistory) ? procurementImportHistory : [])
+          .find(item => item && detail.targetName && item.sheetName === detail.targetName);
+      const resolvedUrl = targetUrl || String(recentTarget && recentTarget.spreadsheetUrl || '');
+      // 打开/补导是本人后续动作；管理员查同事记录只做追溯阅读。
+      const ownRecord = detail.own === true;
+      $('btnImportHistoryOpenTarget').hidden = !resolvedUrl;
+      $('btnImportHistoryOpenTarget').dataset.targetUrl = resolvedUrl;
+      $('btnImportHistoryReupload').hidden
+        = !(ownRecord && (state === 'partial' || state === 'failed'));
+      $('btnImportHistoryReupload').dataset.targetUrl = resolvedUrl;
+      const stages = importHistoryStages(detail);
+      $('importHistoryStageBody').innerHTML = stages.map(row =>
+        `<tr><td>${esc(row[0])}</td><td><span class="query-history-status ${row[1][1]}">${esc(row[1][0])}</span></td><td style="white-space:normal">${row[2]}</td></tr>`).join('');
+    } catch (error) {
+      $('importHistoryDetailMeta').textContent = '执行明细读取失败';
+      $('importHistoryDetailNote').hidden = false;
+      $('importHistoryDetailNote').className = 'import-history-detail-note resource-state bad';
+      $('importHistoryDetailNote').textContent = `执行明细读取失败：${error.message}`;
+      $('importHistoryStageBody').innerHTML = '<tr><td colspan="3" class="query-history-empty">执行明细读取失败</td></tr>';
+    }
+  })();
+}
+
+function openImportHistory() {
+  if (!CLOUD_WEB_MODE) { toast('导入历史请在 Xynigo 云端工作台查看'); return; }
+  $('importHistoryMask').classList.add('show');
+  $('importHistoryMask').setAttribute('aria-hidden', 'false');
+  $('importHistoryListView').hidden = false;
+  $('importHistoryDetailView').hidden = true;
+  loadImportHistory({reset: true});
+}
+
+function closeImportHistory() {
+  $('importHistoryMask').classList.remove('show');
+  $('importHistoryMask').setAttribute('aria-hidden', 'true');
+}
+
+$('btnProcurementImportHistory').onclick = openImportHistory;
+$('btnImportHistoryClose').onclick = closeImportHistory;
+$('importHistoryMask').onclick = event => {
+  if (event.target === $('importHistoryMask')) closeImportHistory();
+};
+$('btnImportHistoryRefresh').onclick = () => loadImportHistory({reset: true});
+$('importHistoryStatus').onchange = () => loadImportHistory({reset: true});
+$('importHistoryActor').onchange = () => loadImportHistory({reset: true});
+$('btnImportHistoryPrev').onclick = () => {
+  if (importHistoryLoading || importHistoryPage <= 1) return;
+  importHistoryCursor = importHistoryCursorStack.pop() || '';
+  importHistoryPage -= 1;
+  loadImportHistory();
+};
+$('btnImportHistoryNext').onclick = () => {
+  if (!importHistoryNextCursor || importHistoryLoading) return;
+  importHistoryCursorStack.push(importHistoryCursor);
+  importHistoryCursor = importHistoryNextCursor;
+  importHistoryPage += 1;
+  loadImportHistory();
+};
+$('btnImportHistoryBack').onclick = () => {
+  $('importHistoryDetailView').hidden = true;
+  $('importHistoryListView').hidden = false;
+};
+$('importHistoryBody').onclick = event => {
+  const copyButton = event.target.closest('[data-copy-id]');
+  if (copyButton) { copyStableId(copyButton.dataset.copyId); return; }
+  const button = event.target.closest('[data-import-history-view]');
+  if (button) openImportHistoryDetail(button.dataset.importHistoryView);
+};
+$('importHistoryDetailMeta').onclick = event => {
+  const button = event.target.closest('[data-copy-id]');
+  if (button) copyStableId(button.dataset.copyId);
+};
+$('btnImportHistoryOpenTarget').onclick = event => {
+  const targetUrl = String(event.currentTarget.dataset.targetUrl || '');
+  if (targetUrl) {
+    window.open(targetUrl, '_blank', 'noopener');
+    return;
+  }
+  toast('未找到目标协作表链接；请在导入页粘贴链接打开');
+};
+$('btnImportHistoryReupload').onclick = event => {
+  const targetUrl = String(event.currentTarget.dataset.targetUrl || '');
+  if (targetUrl) $('procurementImportTargetUrl').value = targetUrl;
+  closeImportHistory();
+  toast(targetUrl
+    ? '已带回目标表；请选择同一订单文件重新导入，系统会自动跳过已写入订单，仅补写缺失明细'
+    : '请在导入页重新粘贴目标表并选择同一订单文件；系统会自动跳过已写入订单，仅补写缺失明细');
 };
 $('queryHistoryResultBody').onclick = event => {
   const errorButton = event.target.closest('[data-query-error]');

@@ -3426,6 +3426,105 @@ def create_app(
         session.commit()
         return result
 
+    @app.get("/v1/assistant/procurement-import/history")
+    def list_procurement_import_history(
+        request: Request,
+        session: SessionDep,
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+        cursor: Annotated[uuid.UUID | None, Query()] = None,
+        history_status: Annotated[
+            Literal["running", "completed", "partial", "failed"] | None,
+            Query(alias="status"),
+        ] = None,
+        history_user_id: Annotated[
+            uuid.UUID | None, Query(alias="userId")
+        ] = None,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "assistant.procurement_import.history_list"
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        history_admin = _user_has_role(session, actor.user, ADMIN_ROLE) or _user_has_role(
+            session, actor.user, SUPER_ADMIN_ROLE
+        )
+        if history_user_id is not None and not history_admin \
+                and history_user_id != actor.user.id:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "procurement_import_history_user_filter_forbidden"},
+            )
+        runtime = require_procurement_import_runtime()
+        try:
+            data = runtime.history(
+                session,
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                limit=limit,
+                cursor=cursor,
+                status=history_status,
+                include_all_users=history_admin,
+                filter_actor_user_id=history_user_id,
+            )
+        except CloudProcurementImportError as exc:
+            procurement_import_failure(
+                request,
+                session,
+                actor,
+                action=action,
+                exc=exc,
+                object_id=None,
+            )
+        session.commit()
+        return {"ok": True, "data": data}
+
+    @app.get("/v1/assistant/procurement-import/history/{job_id}")
+    def get_procurement_import_history(
+        job_id: uuid.UUID,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "assistant.procurement_import.history_read"
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        history_admin = _user_has_role(session, actor.user, ADMIN_ROLE) or _user_has_role(
+            session, actor.user, SUPER_ADMIN_ROLE
+        )
+        runtime = require_procurement_import_runtime()
+        try:
+            data = runtime.history_detail(
+                session,
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                job_id=job_id,
+                allow_tenant_scope=history_admin,
+            )
+        except CloudProcurementImportError as exc:
+            procurement_import_failure(
+                request,
+                session,
+                actor,
+                action=action,
+                exc=exc,
+                object_id=str(job_id),
+            )
+        session.commit()
+        return {"ok": True, "data": data}
+
     @app.get("/v1/resources/buyer-accounts")
     def list_buyer_accounts(
         request: Request,

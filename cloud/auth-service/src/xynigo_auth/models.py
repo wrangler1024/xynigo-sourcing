@@ -1869,6 +1869,12 @@ class ProcurementImportJob(Base):
             "target_key_hash",
         ),
         Index(
+            "ix_procurement_import_job_tenant_created",
+            "tenant_id",
+            "created_at",
+            "id",
+        ),
+        Index(
             "uq_procurement_import_job_active_target",
             "tenant_id",
             "target_key_hash",
