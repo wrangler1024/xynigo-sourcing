@@ -80,6 +80,7 @@ def _plan_payload(plan: ImportPlan) -> dict[str, Any]:
         "version": 1,
         "filename": str(plan.filename),
         "issues": list(plan.issues),
+        "allowPartial": plan.allow_partial,
         "sourceRows": int(plan.source_rows),
         "orderCount": int(plan.order_count),
         "importBatch": str(plan.import_batch),
@@ -96,6 +97,7 @@ def _plan_payload(plan: ImportPlan) -> dict[str, Any]:
                 "salesCurrency": str(row.sales_currency or ""),
                 "itemSalesAmount": row.item_sales_amount,
                 "orderGroupIndex": int(row.order_group_index),
+                "sourceUnmatched": row.source_unmatched,
             }
             for row in plan.rows
         ],
@@ -123,6 +125,7 @@ def _plan_from_payload(plan_id: object, payload: dict[str, Any]) -> ImportPlan:
                     sales_currency=str(item.get("salesCurrency") or ""),
                     item_sales_amount=item.get("itemSalesAmount"),
                     order_group_index=int(item.get("orderGroupIndex") or 0),
+                    source_unmatched=item.get("sourceUnmatched") is True,
                 )
             )
         plan = ImportPlan(
@@ -134,6 +137,7 @@ def _plan_from_payload(plan_id: object, payload: dict[str, Any]) -> ImportPlan:
             order_count=int(payload.get("orderCount") or 0),
             import_batch=str(payload["importBatch"]),
             created_at=float(payload.get("createdAt") or time.time()),
+            allow_partial=payload.get("allowPartial") is True,
         )
         target = payload.get("target")
         if isinstance(target, dict):
@@ -277,6 +281,7 @@ class CloudProcurementImportService:
         actor_user_id: uuid.UUID,
         filename: str,
         content_base64: str,
+        allow_partial: bool = False,
     ) -> dict[str, Any]:
         self.expire_plans(session)
         active_count = int(
@@ -297,7 +302,7 @@ class CloudProcurementImportService:
             )
         try:
             core = self._core()
-            result = core.parse(filename, content_base64)
+            result = core.parse(filename, content_base64, allow_partial=allow_partial)
             source_plan = core.pending[result["planId"]]
         except ProcurementImportError as exc:
             raise CloudProcurementImportError(

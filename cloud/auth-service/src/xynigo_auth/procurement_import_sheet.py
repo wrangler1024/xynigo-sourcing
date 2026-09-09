@@ -206,7 +206,6 @@ class FeishuSheetsGateway:
         self._new_rows: set[tuple[str, str, int]] = set()
         self._background_cache: dict[tuple[str, str, int], str] = {}
         self._image_cache: set[tuple[str, str, int, str]] = set()
-        self._link_cache: dict[tuple[str, str, int, str], str] = {}
         if not self.app_id or not self.app_secret:
             raise LarkSheetSyncError("云端飞书应用凭证未配置")
 
@@ -1001,6 +1000,7 @@ class FeishuSheetsGateway:
     def hyperlink_presence(
         self, url: object, sheet_id: object, expected_links: object, column: str = "N"
     ) -> dict[int, bool]:
+        """Verify actual plain URL cells, retaining the gateway's legacy name."""
         links = {
             int(row): str(link or "").strip()
             for row, link in dict(expected_links or {}).items()
@@ -1008,21 +1008,19 @@ class FeishuSheetsGateway:
         }
         if not links:
             return {}
-        reference = parse_lark_sheet_url(url)
         sheet = normalize_sheet_id(sheet_id)
         raw = self._raw_column_values(url, sheet, str(column).upper(), sorted(links))
-        result = {}
-        for row, link in links.items():
-            cached = self._link_cache.get(
-                (reference.spreadsheet_token, sheet, row, str(column).upper())
-            )
-            result[row] = cached == link or _cell_contains_link(raw.get(row), link)
-        return result
+        return {
+            row: (_plain_cell(raw.get(row)) == link
+                  and not _cell_contains_link(raw.get(row)))
+            for row, link in links.items()
+        }
 
     def set_hyperlinks(
         self, url: object, sheet_id: object, links: object, column: str = "N"
     ) -> dict[str, object]:
-        reference = parse_lark_sheet_url(url)
+        """Explicit text segments prevent Feishu from auto-linking URL strings."""
+        parse_lark_sheet_url(url)
         sheet = normalize_sheet_id(sheet_id)
         ranges = []
         for row, link in links or ():
@@ -1034,13 +1032,10 @@ class FeishuSheetsGateway:
                 {
                     "range": f"{sheet}!{str(column).upper()}{number}:{str(column).upper()}{number}",
                     "values": [
-                        [{"text": "打开采购链接", "link": target, "type": "url"}]
+                        [{"text": target, "type": "text"}]
                     ],
                 }
             )
-            self._link_cache[
-                (reference.spreadsheet_token, sheet, number, str(column).upper())
-            ] = target
         for offset in range(0, len(ranges), 100):
             self._write_value_ranges(url, ranges[offset : offset + 100])
         return {"operations": (len(ranges) + 99) // 100, "skipped": not ranges}

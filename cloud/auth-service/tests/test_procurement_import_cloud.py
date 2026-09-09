@@ -537,3 +537,113 @@ def test_cloud_all_failed_returns_complete_located_diagnostics_without_plan(tmp_
         with database.session_factory() as session:
             assert session.scalar(select(ProcurementImportPlan)) is None
         assert gateway.rows == ()
+
+
+def test_explicit_partial_plan_survives_storage_and_reimport_only_adds_new_orders(tmp_path):
+    gateway = FakeCloudSheetGateway()
+    app, database, _ = build_test_app(tmp_path, procurement_import_enabled=True,
+                                      procurement_import_gateway=gateway)
+    headers = {'X-Xynigo-Web-CSRF': 'same-origin'}
+    with TestClient(app) as client:
+        login(client)
+        for valid_orders in (1, 2):
+            workbook = load_workbook(BytesIO(base64.b64decode(_invalid_remark_batch())))
+            sheet = workbook.active
+            remark_col = [cell.value for cell in sheet[1]].index('客服备注') + 1
+            if valid_orders == 2:
+                sheet.cell(3, remark_col).value = sheet.cell(2, remark_col).value
+            stream = BytesIO()
+            workbook.save(stream)
+            response = client.post('/v1/assistant/procurement-import/parse', headers=headers,
+                json={'filename': 'synthetic.xlsx',
+                      'contentBase64': base64.b64encode(stream.getvalue()).decode('ascii'),
+                      'allowPartial': True})
+            assert response.status_code == 201, response.text
+            result = response.json()
+            assert result['canImport'] is True
+            assert result['partialImportSelected'] is True
+            assert result['successOrderCount'] == valid_orders
+            assert len(result['issues']) == 121 - valid_orders
+            with database.session_factory() as session:
+                import uuid
+                record = session.get(ProcurementImportPlan, uuid.UUID(result['planId']))
+                plan = app.state.procurement_import_service._load_plan(record)
+                assert plan.allow_partial is True
+                assert len(plan.rows) == valid_orders
+                assert len(plan.issues) == 121 - valid_orders
+            validated = client.post('/v1/assistant/procurement-import/target/validate', headers=headers,
+                json={'planId': result['planId'], 'sheetId': 'sheetA',
+                      'spreadsheetUrl': 'https://tenant.feishu.cn/sheets/SheetToken123'})
+            assert validated.status_code == 200, validated.text
+            cancelled = client.post('/v1/assistant/procurement-import/sheet-sync', headers=headers,
+                json={'planId': result['planId'], 'confirmWrite': False})
+            assert cancelled.status_code == 409
+            assert len(gateway.rows) == valid_orders - 1
+            started = client.post('/v1/assistant/procurement-import/sheet-sync', headers=headers,
+                json={'planId': result['planId'], 'confirmWrite': True})
+            assert started.status_code == 202, started.text
+            deadline = time.time() + 5
+            while time.time() < deadline:
+                status = client.get('/v1/assistant/procurement-import/sheet-sync/status',
+                    params={'jobId': started.json()['jobId']}).json()
+                if status['state'] in {'completed', 'failed', 'partial'}:
+                    break
+                time.sleep(0.02)
+            assert status['state'] == 'completed', status
+            assert status['rowsWritten'] == 1
+            assert len(gateway.rows) == valid_orders
+            order_col = gateway.headers.index('销售订单号')
+            assert {row[order_col] for _, row in gateway.rows} == {
+                'SYNTH-ERR-%03d' % index for index in range(valid_orders)}
+
+
+def test_cloud_purchase_remark_is_authoritative_when_sales_specs_do_not_match(tmp_path):
+    class NoExistingImagesGateway(FakeCloudSheetGateway):
+        def image_presence(self, url, sheet_id, row_numbers, column='L'):
+            return {int(row): False for row in row_numbers}
+
+    workbook = load_workbook(BytesIO(source_workbook()))
+    sheet = workbook.active
+    columns = [cell.value for cell in sheet[1]]
+    sheet.cell(2, columns.index('SKU') + 1).value = 'UNRELATED-SALES-SKU'
+    sheet.cell(2, columns.index('产品规格') + 1).value = 'UNRELATED:White-XS'
+    stream = BytesIO()
+    workbook.save(stream)
+    app, _, _ = build_test_app(tmp_path, procurement_import_enabled=True,
+                               procurement_import_gateway=NoExistingImagesGateway())
+    with TestClient(app) as client:
+        login(client)
+        response = client.post('/v1/assistant/procurement-import/parse',
+            headers={'X-Xynigo-Web-CSRF': 'same-origin'},
+            json={'filename': 'synthetic.xlsx',
+                  'contentBase64': base64.b64encode(stream.getvalue()).decode('ascii')})
+        assert response.status_code == 201, response.text
+        result = response.json()
+        assert result['canImport'] is True
+        assert result['errorCount'] == 0
+        assert result['preview'][0]['itemSalesAmount'] is None
+        assert result['preview'][0]['orderImageReady'] is False
+        assert result['preview'][0]['sourceUnmatched'] is True
+        assert result['preview'][0]['mainSpec'] != 'White'
+        assert result['warningCount'] == 1
+        plan_id = result['planId']
+        validated = client.post('/v1/assistant/procurement-import/target/validate',
+            headers={'X-Xynigo-Web-CSRF': 'same-origin'},
+            json={'planId': plan_id, 'sheetId': 'sheetA',
+                  'spreadsheetUrl': 'https://tenant.feishu.cn/sheets/SheetToken123'})
+        assert validated.status_code == 200, validated.text
+        started = client.post('/v1/assistant/procurement-import/sheet-sync',
+            headers={'X-Xynigo-Web-CSRF': 'same-origin'},
+            json={'planId': plan_id, 'confirmWrite': True})
+        assert started.status_code == 202, started.text
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            status = client.get('/v1/assistant/procurement-import/sheet-sync/status',
+                params={'jobId': started.json()['jobId']}).json()
+            if status['state'] in {'completed', 'failed', 'partial'}:
+                break
+            time.sleep(0.02)
+        assert status['state'] == 'completed', status
+        assert status['skippedUnmatched'] == 1
+        assert status['rowsWritten'] == 1
+        assert status['failed'] == 0

@@ -12,6 +12,56 @@ from xynigo_auth.procurement_import_sheet import (
 )
 
 
+@pytest.mark.parametrize("apply_write", [True, False])
+def test_purchase_urls_are_plain_text_and_verified_from_server(apply_write: bool) -> None:
+    first = "https://example.com/item?a=1&b=2#sku=blue%2FL"
+    second = "https://example.com/second"
+    cells: dict[int, object] = {
+        2: {"text": first, "type": "url", "link": first},
+        3: {"text": second, "type": "text"},
+    }
+    writes = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = unquote(request.url.path)
+        if path.endswith("/tenant_access_token/internal"):
+            return httpx.Response(200, json={
+                "code": 0, "tenant_access_token": "synthetic-token", "expire": 7200,
+            })
+        if "/values/" in path:
+            assert path.endswith("sheetA!M2:M3")
+            return httpx.Response(200, json={"code": 0, "data": {
+                "valueRange": {"values": [[cells[2]], [cells[3]]]},
+            }})
+        if path.endswith("/values_batch_update"):
+            ranges = json.loads(request.content)["valueRanges"]
+            writes.extend(ranges)
+            assert ranges == [{
+                "range": "sheetA!M2:M2",
+                "values": [[{"text": first, "type": "text"}]],
+            }]
+            if apply_write:
+                cells[2] = ranges[0]["values"][0][0]
+            return httpx.Response(200, json={"code": 0, "data": {"revision": 8}})
+        raise AssertionError(f"unexpected request: {request.method} {path}")
+
+    gateway = FeishuSheetsGateway(
+        app_id="cli_test", app_secret="synthetic-secret",
+        transport=httpx.MockTransport(handler),
+    )
+    url = "https://tenant.feishu.cn/sheets/SheetToken123"
+    expected = {2: first, 3: second}
+    assert gateway.hyperlink_presence(url, "sheetA", expected, column="M") == {
+        2: False, 3: True,
+    }
+    gateway.set_hyperlinks(url, "sheetA", [(1, first), (2, first), (4, "")], column="M")
+    assert len(writes) == 1
+    # A successful write response alone must not hide an unchanged hyperlink.
+    assert gateway.hyperlink_presence(url, "sheetA", expected, column="M") == {
+        2: apply_write, 3: True,
+    }
+
+
 def test_cloud_sheet_gateway_uses_tenant_identity_and_official_endpoints() -> None:
     calls: list[tuple[str, str, object]] = []
 

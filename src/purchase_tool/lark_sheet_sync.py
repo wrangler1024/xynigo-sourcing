@@ -781,6 +781,7 @@ class LarkCliSheetsGateway(object):
 
     def hyperlink_presence(self, url, sheet_id, expected_links,
                            column='N'):
+        """Verify plain purchase URLs; keep the gateway method name compatible."""
         links = {
             int(row): str(link or '').strip()
             for row, link in dict(expected_links or {}).items()
@@ -798,12 +799,15 @@ class LarkCliSheetsGateway(object):
             raise LarkSheetSyncError('目标采购链接列读取不完整，已停止写入')
         cells = self._cell_map(data, numbers, lambda value: value)
         return {
-            row: _cell_contains_link(cells.get(row), links[row])
+            row: (isinstance(cells.get(row), dict)
+                  and cells[row].get('value') == links[row]
+                  and not cells[row].get('formula')
+                  and not _cell_contains_link(cells[row]))
             for row in numbers
         }
 
     def set_hyperlinks(self, url, sheet_id, links, column='N'):
-        """Turn system-owned purchase URLs into compact clickable labels."""
+        """Write complete purchase URLs as text, without click-to-open links."""
         items = [
             (int(row), str(link or '').strip()) for row, link in links or ()
             if int(row) >= 2 and str(link or '').strip()
@@ -814,7 +818,7 @@ class LarkCliSheetsGateway(object):
                 'sheet_id': normalize_sheet_id(sheet_id),
                 'range': '%s%d' % (column, row),
                 'cells': [[{'rich_text': [{
-                    'type': 'link', 'text': '打开采购链接', 'link': link,
+                    'type': 'text', 'text': link,
                 }]}]],
             } for row, link in items[offset:offset + 100]]
             with tempfile.TemporaryDirectory(

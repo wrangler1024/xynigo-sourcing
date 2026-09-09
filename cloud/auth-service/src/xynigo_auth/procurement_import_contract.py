@@ -14,6 +14,7 @@ class StrictBody(BaseModel):
 class ProcurementImportParseBody(StrictBody):
     filename: str = Field(min_length=1, max_length=255)
     contentBase64: str = Field(min_length=1, max_length=30_000_000)
+    allowPartial: bool = Field(default=False, strict=True)
 
 
 class Xyp2ParseBody(StrictBody):

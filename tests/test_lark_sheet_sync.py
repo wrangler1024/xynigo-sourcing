@@ -218,9 +218,12 @@ class LarkSheetSyncTests(unittest.TestCase):
         }
         self.assertEqual(
             gateway.hyperlink_presence(url, 'sheetA', links),
-            {7: True, 8: False})
+            {7: False, 8: True})
         gateway.set_hyperlinks(url, 'sheetA', [(7, links[7])])
         self.assertEqual(runner.calls[-1][0][2], '+cells-set')
+        written_cell = runner.payloads[-1][1][0]['cells'][0][0]
+        self.assertEqual(written_cell, {
+            'rich_text': [{'type': 'text', 'text': links[7]}]})
 
         normalized = gateway.normalize_collaboration_headers(
             url, 'sheetA', '采购分单协作区', [

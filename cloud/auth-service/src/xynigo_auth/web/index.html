@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Xynigo Sourcing v0.17.14</title>
+<title>Xynigo Sourcing v0.17.15</title>
 <link rel="icon" type="image/png" sizes="260x260" href="/xynigo-x.png?v=6">
 <link rel="icon" type="image/x-icon" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256" href="/favicon.ico?v=6">
 <link rel="shortcut icon" href="/favicon.ico?v=6">
@@ -1762,7 +1762,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
           <div class="hero-kicker">XYNIGO SOURCING WORKSPACE</div>
           <h1>让小犀帮你把每一单稳稳带回来，<span class="hero-call">Xyni, GO!</span></h1>
           <p id="moduleSummary">集中查看采购待办、履约风险与本地执行状态。</p>
-          <div class="hero-meta"><span class="hero-chip">累计修复测试 v0.17.14</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
+          <div class="hero-meta"><span class="hero-chip">累计修复测试 v0.17.15</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
         </div>
         <div class="hero-lockup" role="img" aria-label="小犀与 Xynigo 完整品牌一体图形">
           <img src="xynigo-logo.png" alt="">
@@ -1863,7 +1863,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
   </div>
 
   <div class="module-panel hidden import-first-layout" id="procurementImportPanel">
-    <div class="if-heading"><div><div class="if-eyebrow">采购中心 / 导入分单</div><h1>导入分单</h1><p>核对订单与采购规格，导入本批飞书协作表。</p></div><button class="if-btn" id="btnProcurementImportReset" type="button"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-refresh-cw" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path><path d="M8 16H3v5"></path></svg>重新开始</button></div>
+    <div class="if-heading"><div><div class="if-eyebrow">采购中心 / 导入分单</div><h1>导入分单</h1><p>按采购备注生成明细，导入本批飞书协作表。</p></div><button class="if-btn" id="btnProcurementImportReset" type="button"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-refresh-cw" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path><path d="M8 16H3v5"></path></svg>重新开始</button></div>
     <ol class="if-flow" aria-label="导入步骤">
       <li data-import-step="0"><span class="if-step-circle">1</span><span>解析订单文件</span><i></i></li>
       <li data-import-step="1"><span class="if-step-circle">2</span><span>校验目标表格</span><i></i></li>
@@ -1873,6 +1873,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
       <section class="if-card if-source-card">
         <div class="if-card-heading"><span class="if-heading-icon"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-file-spreadsheet" aria-hidden="true"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"></path><path d="M14 2v5a1 1 0 0 0 1 1h5"></path><path d="M8 13h2"></path><path d="M14 13h2"></path><path d="M8 17h2"></path><path d="M14 17h2"></path></svg></span><div><h2>订单文件</h2><p>店小秘产品行导出 · .xlsx</p></div><span class="if-badge" id="procurementImportFileBadge">待解析</span></div>
         <div class="if-file-box" id="procurementImportFileDrop"><span class="if-file-icon"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-file-spreadsheet" aria-hidden="true"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"></path><path d="M14 2v5a1 1 0 0 0 1 1h5"></path><path d="M8 13h2"></path><path d="M14 13h2"></path><path d="M8 17h2"></path><path d="M14 17h2"></path></svg><small>XLSX</small></span><div class="if-file-info"><b id="procurementImportFileName">拖拽店小秘订单文件到此处</b><span id="procurementImportFileMeta">支持 .xlsx 文件</span></div><button class="if-btn if-text-btn" id="btnProcurementImportChooseFile" type="button">选择文件</button><input id="procurementImportFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden></div>
+        <label class="if-subtle" style="display:flex;gap:8px;align-items:flex-start;margin:12px 0"><input id="procurementImportAllowPartial" type="checkbox">仅导入校验通过的订单；失败订单保留在错误清单，补齐后可重新导入。</label>
         <div class="if-card-actions"><span class="if-subtle" id="procurementImportSourceHint"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check-check" aria-hidden="true"><path d="M18 6 7 17l-5-5"></path><path d="m22 10-7.5 7.5L13 16"></path></svg>请保留完整 XYP2 采购备注</span><button class="if-btn if-secondary" id="btnProcurementImportParse" type="button"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-refresh-cw" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path><path d="M8 16H3v5"></path></svg>解析并生成</button></div>
       </section>
       <section class="if-card if-target-card" id="procurementImportTargetCard">
@@ -1889,7 +1890,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
       <div><span>采购件数</span><strong><b id="procurementImportQuantity">0</b><small>件</small></strong></div>
       <div class="if-metric-success"><span>需关注</span><strong><b id="procurementImportIssueCount">0</b><small>项</small></strong></div>
     </div>
-    <div class="if-match-notice" id="procurementImportMatchNotice" hidden><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-shield-check" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path><path d="m9 12 2 2 4-4"></path></svg><span><b>规格匹配通过</b>已按完整采购规格匹配，金额、数量随对应明细保留。</span></div>
+    <div class="if-match-notice" id="procurementImportMatchNotice" hidden><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-shield-check" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path><path d="m9 12 2 2 4-4"></path></svg><span><b>采购备注已解析</b>采购链接、规格和数量以 XYP2 备注为准；销售明细仅用于关联商品金额和订单图片。</span></div>
     <div class="resource-state" id="procurementImportState">请选择使用最新版店小秘提单助手写入 XYP2 后导出的 xlsx。</div>
     <div class="resource-state" id="procurementImportValidationSummary" hidden></div>
     <div class="if-card-actions" id="procurementImportIssueActions" hidden>
@@ -3792,7 +3793,7 @@ async function cloudFetchJson(path, opts={}) {
   const headers = new Headers(opts.headers || {});
   headers.set('Accept', 'application/json');
   headers.set('X-Xynigo-Source', 'cloud_web_workspace');
-  headers.set('X-Xynigo-Client-Version', '0.17.14-cloud-web');
+  headers.set('X-Xynigo-Client-Version', '0.17.15-cloud-web');
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     headers.set('X-Xynigo-Web-CSRF', 'same-origin');
   }
@@ -10715,6 +10716,7 @@ function resetProcurementImportAccount() {
   procurementImportPendingAction = '';
   procurementImportTargetActivity = '';
   procurementImportSelectedFile = null;
+  $('procurementImportAllowPartial').checked = false;
   procurementImportHistory = [];
   procurementImportHistoryOwner = '';
   procurementImportFillBackground = true;
@@ -10811,6 +10813,7 @@ function acceptProcurementImportFiles(files) {
   if (!error && (!file.size || file.size > 20 * 1024 * 1024)) error = '文件为空或超过 20 MB';
   if (error) { toast(error); return false; }
   procurementImportSelectedFile = file;
+  $('procurementImportAllowPartial').checked = false;
   resetProcurementImport('已选择文件，点击“解析并生成”开始处理。');
   return true;
 }
@@ -10844,8 +10847,7 @@ function installProcurementImportDrop() {
 }
 
 function procurementImportBlocked() {
-  return !!procurementImportSummary && (procurementImportSummary.errorCount > 0
-    || procurementImportSummary.canImport === false);
+  return !!procurementImportSummary && procurementImportSummary.canImport === false;
 }
 
 function renderProcurementImportIssues() {
@@ -10885,7 +10887,10 @@ function setProcurementImportDiagnostics(result) {
     orderCountKnown:result.orderCountKnown !== false,
     detailCount:Number(result.detailCount || 0), quantityCount:procurementImportQuantityCount(result),
     errorCount:errors, warningCount:warnings, issueCount:errors + warnings,
-    canImport:result.canImport !== false && errors === 0
+    canImportPassedOrders:result.canImportPassedOrders === true,
+    partialImportSelected:result.partialImportSelected === true,
+    canImport:(result.canImport === true && (errors === 0 || result.partialImportSelected === true))
+      || (result.canImport == null && errors === 0)
   };
   procurementImportIssues = Array.isArray(result.issues) ? result.issues : [];
   procurementImportIssuePage = 0;
@@ -10933,7 +10938,7 @@ function renderProcurementImportLayout() {
   $('procurementImportValidationSummary').hidden = !procurementImportSummary;
   $('procurementImportValidationSummary').className = 'resource-state ' + (blocked ? 'bad' : summary.issueCount ? 'warn' : 'ok');
   $('procurementImportValidationSummary').textContent = `订单校验：共 ${summary.totalOrderCount || 0} 单，通过 ${summary.successOrderCount || 0} 单，失败 ${summary.failedOrderCount || 0} 单；阻断错误 ${summary.errorCount || 0} 项，警告 ${summary.warningCount || 0} 项。`
-    + (blocked ? '本批已禁止导入，请修正错误后重新解析。' : '通过校验不代表已写入飞书。');
+    + (blocked ? (summary.canImportPassedOrders ? '可勾选“仅导入校验通过的订单”后重新解析，先处理通过的订单。' : '本批已禁止导入，请修正错误后重新解析。') : summary.partialImportSelected ? `本次仅准备导入 ${summary.successOrderCount} 单，另 ${summary.failedOrderCount} 单待处理；尚未写入飞书。` : '通过校验不代表已写入飞书。');
   if (summary.orderCountKnown === false) {
     $('procurementImportValidationSummary').textContent = `文件或订单身份不完整，订单总数暂无法确认；已识别通过 ${summary.successOrderCount || 0} 单，阻断错误 ${summary.errorCount || 0} 项。本批禁止导入，请查看完整错误清单。`;
   }
@@ -10976,8 +10981,9 @@ function renderProcurementImportLayout() {
     else item.removeAttribute('aria-current');
     item.querySelector('.if-step-circle').textContent = index < step ? '✓' : String(index + 1);
   });
-  $('procurementImportFooterSummary').textContent = completed ? '本批导入已完成'
+  $('procurementImportFooterSummary').textContent = completed ? (summary.partialImportSelected ? `已完成通过校验的 ${summary.successOrderCount} 单，另 ${summary.failedOrderCount} 单待处理` : '本批导入已完成')
     : blocked ? `校验通过 ${summary.successOrderCount} 单，失败 ${summary.failedOrderCount} 单，本批禁止导入`
+    : summary.partialImportSelected ? `本次导入 ${summary.orderCount} 单 / ${summary.detailCount} 条明细，另 ${summary.failedOrderCount} 单待处理`
     : parsed ? `本批 ${summary.orderCount} 单 / ${summary.detailCount} 条明细` : '请先解析本批订单';
   $('procurementImportFooterHint').textContent = procurementImportSyncReadFailed
     ? '暂未读到最新进度，请重试查询本批导入状态'
@@ -10987,7 +10993,7 @@ function renderProcurementImportLayout() {
     : validated ? '已完成目标表校验，可确认导入'
     : !parsed && $('procurementImportTargetSheet').value ? '已保留目标表，解析订单后自动校验' : '请先校验目标飞书协作表';
   for (const id of ['btnProcurementImportReset', 'btnProcurementImportChooseFile',
-      'procurementImportFile', 'procurementImportTargetUrl', 'btnProcurementImportParse']) {
+      'procurementImportFile', 'procurementImportAllowPartial', 'procurementImportTargetUrl', 'btnProcurementImportParse']) {
     $(id).disabled = busy;
   }
   $('procurementImportTargetSheet').disabled = busy || !parsed;
@@ -11049,6 +11055,7 @@ function initializeProcurementImportLayout() {
     if (procurementImportPendingAction || procurementImportIsRunning()) return;
     $('procurementImportFile').value = '';
     procurementImportSelectedFile = null;
+    $('procurementImportAllowPartial').checked = false;
     resetProcurementImport('请选择店小秘导出的 xlsx，开始新一批导入。');
   };
   for (const [id, action] of Object.entries({
@@ -11105,6 +11112,10 @@ function resetProcurementImport(message='文件已变化，请重新解析') {
     $('procurementImportTargetSheet').value ? '已保留目标选择，解析新订单后自动校验。' : '先解析文件，再读取本批要使用的普通飞书共享表格。');
 }
 
+$('procurementImportAllowPartial').onchange = () => {
+  resetProcurementImport('导入范围已变化，请重新解析并核对通过和失败的订单数。');
+};
+
 $('procurementImportFile').onchange = () => {
   const input = $('procurementImportFile');
   if (input.files.length && !acceptProcurementImportFiles(input.files)) input.value = '';
@@ -11137,7 +11148,8 @@ $('btnProcurementImportParse').onclick = async () => {
       method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
         filename:file.name,
-        contentBase64
+        contentBase64,
+        allowPartial:$('procurementImportAllowPartial').checked === true
       })
     });
     if (!procurementImportRequestCurrent(stamp)) return;
@@ -11156,6 +11168,7 @@ $('btnProcurementImportParse').onclick = async () => {
       const imageUrl = procurementImportResourcePath(`/api/assistant/procurement-import/image?planId=${encodeURIComponent(procurementImportPlanId)}&row=${encodeURIComponent(row.imageIndex)}`);
       const imagePreview = row.orderImageReady
         ? `<a class="procurement-import-thumb-link" href="${imageUrl}" target="_blank" rel="noopener" title="打开订单商品图片"><img class="procurement-import-thumb" src="${imageUrl}" alt="订单商品图" loading="lazy" data-procurement-preview-image></a>`
+        : row.sourceUnmatched ? '<span class="procurement-import-thumb-empty">未关联销售行<br>订单图片留空</span>'
         : '<span class="procurement-import-thumb-empty">仅图片网址<br>未内嵌</span>';
       const groupIndex = Number(row.orderGroupIndex || 0);
       const groupStart = previewIndex === 0 || Number(preview[previewIndex - 1].orderGroupIndex || 0) !== groupIndex;
@@ -11181,9 +11194,10 @@ $('btnProcurementImportParse').onclick = async () => {
     $('procurementImportTargetState').textContent = '解析完成。粘贴本批要使用的普通飞书共享表格链接，读取工作簿并选择工作表。';
     if (procurementImportBlocked()) {
       $('procurementImportState').className = 'resource-state bad';
-      $('procurementImportState').textContent = `订单校验结束：通过 ${result.successOrderCount} 单、失败 ${result.failedOrderCount} 单。本批已禁止导入，请修正完整错误清单中的阻断错误。`;
+      $('procurementImportState').textContent = `订单校验结束：通过 ${result.successOrderCount} 单、失败 ${result.failedOrderCount} 单。${result.canImportPassedOrders ? '可勾选“仅导入校验通过的订单”后重新解析。' : '本批已禁止导入，请修正完整错误清单中的阻断错误。'}`;
       toast('存在阻断错误，本批禁止导入');
     } else {
+      if (result.partialImportSelected) $('procurementImportState').textContent = `已准备 ${result.successOrderCount} 单、${result.detailCount} 条采购明细；另 ${result.failedOrderCount} 单未纳入导入，请下载完整错误清单后继续处理。`;
       toast('采购协作表已生成，可下载');
       if ($('procurementImportTargetUrl').value && $('procurementImportTargetSheet').value) {
         if (await inspectProcurementImportTarget(true)) await validateProcurementImportTarget();
@@ -11339,7 +11353,7 @@ const procurementImportRunningCopy = {
   writing_rows: '正在追加真正缺失的采购数据行…',
   verifying_rows: '数据已提交，正在回读数量和关键字段…',
   formatting_rows: '数据回读通过，正在处理本次格式设置和紧凑行高…',
-  writing_links: '正在检查并补齐可点击采购超链接…',
+  writing_links: '正在检查并补齐完整采购链接（纯文本）…',
   writing_images: '数据回读通过，正在检查并补齐订单商品图片…',
 };
 
@@ -11376,9 +11390,10 @@ function ensureProcurementImportProgressShell(progress) {
       <span class="procurement-import-sync-metric">新追加 <b data-sync-metric="rowsWritten">0</b></span>
       <span class="procurement-import-sync-metric">已存在 <b data-sync-metric="rowsExisting">0</b></span>
       <span class="procurement-import-sync-metric">新设底色 <b data-sync-metric="rowsStyled">0</b></span>
-      <span class="procurement-import-sync-metric">采购超链接 <b data-sync-metric="linksWritten">0</b></span>
+      <span class="procurement-import-sync-metric">采购链接（纯文本） <b data-sync-metric="linksWritten">0</b></span>
       <span class="procurement-import-sync-metric">图片进度 <b data-sync-metric="imageProgress">0/0</b></span>
       <span class="procurement-import-sync-metric">新补图 <b data-sync-metric="written">0</b></span>
+      <span class="procurement-import-sync-metric">未关联图片跳过 <b data-sync-metric="skippedUnmatched">0</b></span>
       <span class="procurement-import-sync-metric">失败 <b data-sync-metric="failed">0</b></span>
     </div>`;
 }
@@ -11426,6 +11441,7 @@ function renderProcurementImportSyncStatus(status) {
   updateProcurementImportMetric(progress, 'linksWritten', Number(status.linksWritten || 0));
   updateProcurementImportMetric(progress, 'imageProgress', `${Number(status.processed || 0)}/${Number(status.total || 0)}`);
   updateProcurementImportMetric(progress, 'written', Number(status.written || 0));
+  updateProcurementImportMetric(progress, 'skippedUnmatched', Number(status.skippedUnmatched || 0));
   updateProcurementImportMetric(progress, 'failed', Number(status.failed || 0));
   if (running) {
     $('procurementImportTargetState').className = 'resource-state';
@@ -11441,7 +11457,7 @@ function renderProcurementImportSyncStatus(status) {
   $('btnProcurementImportSyncImages').textContent = status.state === 'completed' ? '再次校验本批导入' : '续传未完成数据/图片';
   if (status.state === 'completed') {
     $('procurementImportTargetState').className = 'resource-state ok';
-    $('procurementImportTargetState').textContent = `导入完成：新追加 ${status.rowsWritten} 行，已存在 ${status.rowsExisting} 行；${status.fillOrderBackground === false ? '未启用订单背景色' : `新设底色 ${status.rowsStyled || 0} 行`}、采购超链接 ${status.linksWritten || 0} 个；新补图 ${status.written} 张，已有图片跳过 ${status.skippedExisting} 张。关键数据均已回读确认。`;
+    $('procurementImportTargetState').textContent = `导入完成：新追加 ${status.rowsWritten} 行，已存在 ${status.rowsExisting} 行；${status.fillOrderBackground === false ? '未启用订单背景色' : `新设底色 ${status.rowsStyled || 0} 行`}、采购链接（纯文本） ${status.linksWritten || 0} 个；新补图 ${status.written} 张，已有图片跳过 ${status.skippedExisting} 张${status.skippedUnmatched ? `，${status.skippedUnmatched} 条采购明细未关联销售行，订单图片留空` : ''}。关键数据均已回读确认。`;
   } else {
     $('procurementImportTargetState').className = status.state === 'partial' ? 'resource-state warn' : 'resource-state bad';
     const immutableConflict = String(status.error || '').includes('不支持修改已导入订单');
@@ -11480,7 +11496,7 @@ $('btnProcurementImportSyncImages').onclick = async () => {
     toast('请先通过目标工作表表头校验'); return;
   }
   const detailCount = Number($('procurementImportDetails').textContent || 0);
-  if (!window.confirm(`确认通过飞书接口规范本批协作表并导入 ${detailCount} 条采购数据？\n\n本次会把“分单时间”规范为北京时间“分单日期”，在确认旧“分单批次”已由系统“导入批次”等值覆盖后取消该列，并固定前五列为“分单日期 / 采购员 / 销售订单号 / 店铺 / 运营”；“包裹号 / 采购状态 / 优先级”紧随其后。同时规范“销售订单金额 / 商品金额”，将“平台订单号”规范为“采购订单号”，并将姓名、国家、州/省、城市、地址1、地址2、邮编、电话按顺序放在采购指导价后。历史合并地址会完整保留在地址1；采购下单区其余字段、顺序和已有数据均不改动。系统追踪区会补入“导入操作人”，自动记录本次导入的当前登录用户。\n\n随后追加本批真正缺失的数据，冻结首行和前五列，设置表头分区、采购超链接和订单商品图。订单背景色：${procurementImportFillBackground ? '开启（仅新增明细）' : '关闭'}。已导入订单只做查重并保持原样；本页面不支持修改历史订单，采购任务认领前修改属于独立修订流程。`)) return;
+  if (!window.confirm(`确认通过飞书接口规范本批协作表并导入 ${detailCount} 条采购数据？${procurementImportSummary?.partialImportSelected ? `\n\n本次仅导入校验通过的 ${procurementImportSummary.successOrderCount} 单；失败的 ${procurementImportSummary.failedOrderCount} 单不写入，请保留完整错误清单并继续处理。` : ''}\n\n本次会把“分单时间”规范为北京时间“分单日期”，在确认旧“分单批次”已由系统“导入批次”等值覆盖后取消该列，并固定前五列为“分单日期 / 采购员 / 销售订单号 / 店铺 / 运营”；“包裹号 / 采购状态 / 优先级”紧随其后。同时规范“销售订单金额 / 商品金额”，将“平台订单号”规范为“采购订单号”，并将姓名、国家、州/省、城市、地址1、地址2、邮编、电话按顺序放在采购指导价后。历史合并地址会完整保留在地址1；采购下单区其余字段、顺序和已有数据均不改动。系统追踪区会补入“导入操作人”，自动记录本次导入的当前登录用户。\n\n随后追加本批真正缺失的数据，冻结首行和前五列，设置表头分区、采购链接（纯文本）和订单商品图。订单背景色：${procurementImportFillBackground ? '开启（仅新增明细）' : '关闭'}。已导入订单只做查重并保持原样；本页面不支持修改历史订单，采购任务认领前修改属于独立修订流程。`)) return;
   const button = $('btnProcurementImportSyncImages');
   button.disabled = true;
   button.textContent = '启动导入…';

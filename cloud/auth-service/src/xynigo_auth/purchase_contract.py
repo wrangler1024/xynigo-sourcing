@@ -13,9 +13,9 @@ from datetime import datetime
 from typing import Any, Literal
 from urllib.parse import parse_qs, urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, model_serializer
 
-from .system_order_key import create_system_order_key, legacy_order_key
+from .system_order_key import create_system_order_key, legacy_order_key, create_sales_source_key
 
 
 PACKAGE_ID_RE = re.compile(r"^XMWU[A-Z0-9_-]+$")
@@ -79,6 +79,26 @@ class EstimatedMetrics(BaseModel):
         return value
 
 
+class SalesSourceReference(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    v: Literal[1]
+    mode: Literal['linked', 'extra', 'unconfirmed']
+    key: str = Field(default='', max_length=32)
+    orderKey: str = Field(pattern=r'^OK1-[0-9A-HJKMNP-TV-Z]{5}(?:-[0-9A-HJKMNP-TV-Z]{5}){3}$')
+    sku: str = Field(default='', max_length=300)
+    variant: str = Field(default='', max_length=500)
+    quantity: int = Field(ge=0, le=100000, strict=True)
+
+    @model_validator(mode='after')
+    def validate_reference(self):
+        if self.mode == 'linked' and (not self.sku or not self.quantity
+                or self.key != create_sales_source_key(self.sku, self.variant)):
+            raise ValueError('来源销售 SKU 与规格标识不一致')
+        if self.mode == 'extra' and (self.key or self.sku or self.variant or self.quantity):
+            raise ValueError('额外采购不应包含销售来源')
+        return self
+
+
 class PurchaseDraftLine(BaseModel):
     """草稿里的一条 SKU 明细。正式提交还要校验 SHEIN 链接与 goods_id/skucode 一致。"""
 
@@ -102,6 +122,16 @@ class PurchaseDraftLine(BaseModel):
     skuCode: str = Field(default="", max_length=300)
     mainAttr: str = Field(default="", max_length=300)
     mallCode: str = Field(default="", max_length=100)
+    sourceRef: SalesSourceReference | None = None
+    sourceAmountOwner: bool = Field(default=False, strict=True)
+
+    @model_serializer(mode='wrap')
+    def preserve_legacy_payload(self, handler):
+        data = handler(self)
+        if self.sourceRef is None:
+            data.pop('sourceRef', None)
+            data.pop('sourceAmountOwner', None)
+        return data
 
     @field_validator("originalPrice", "guidePrice", "purchaseQty", mode="before")
     @classmethod
@@ -273,6 +303,9 @@ class PurchaseDraft(BaseModel):
         if self.systemOrderKey and self.systemOrderKey != expected_system_order_key:
             raise ValueError("systemOrderKey does not match the order identity")
         self.systemOrderKey = expected_system_order_key
+        if any(item.sourceRef and item.sourceRef.mode != 'unconfirmed'
+               and item.sourceRef.orderKey != create_system_order_key('sales-scope-v1', self.platformOrderNo, self.packageId) for item in self.items):
+            raise ValueError('销售来源必须属于当前订单包裹')
         parsed_store, parsed_operator = parse_store_assignment(self.storeName)
         if self.storeBaseName and self.storeBaseName != parsed_store:
             raise ValueError("storeBaseName does not match storeName")
@@ -322,7 +355,7 @@ def line_key(order_key: str, line_no: int) -> str:
 
 
 def validate_formal_submit(draft: PurchaseDraft) -> None:
-    """正式提交比存草稿更严：收件人、SHEIN 链接、指导价、采购数量=销售数量。"""
+    """Validate purchasing inputs and confirmed sales references, preserving legacy clients."""
     if not draft.items:
         raise ValueError("采购单至少需要一条采购明细")
     if draft.schemaVersion >= 2 and (not draft.storeBaseName or not draft.operatorName):
@@ -338,6 +371,18 @@ def validate_formal_submit(draft: PurchaseDraft) -> None:
     missing = [label for label, value in required_recipient.items() if not value]
     if missing:
         raise ValueError("正式提交缺少" + "、".join(missing))
+    if any(item.sourceRef for item in draft.items):
+        owners: dict[str, int] = {}
+        for item in draft.items:
+            ref = item.sourceRef
+            if ref is None or ref.mode == 'unconfirmed':
+                raise ValueError('请选择来源销售明细或明确标记额外采购')
+            if ref.mode == 'extra' and item.sourceAmountOwner:
+                raise ValueError('额外采购不能占用销售金额')
+            if ref.mode == 'linked':
+                owners[ref.key] = owners.get(ref.key, 0) + int(item.sourceAmountOwner)
+        if any(count != 1 for count in owners.values()):
+            raise ValueError('每个来源销售金额必须有且仅有一条归属明细')
     for item in draft.items:
         prefix = f"第 {item.lineNo} 条采购明细"
         if not item.purchaseLink or not item.goodsId or not item.skuCode:
@@ -355,5 +400,7 @@ def validate_formal_submit(draft: PurchaseDraft) -> None:
             raise ValueError(prefix + "指导价必须大于 0")
         if not item.purchaseCurrency:
             raise ValueError(prefix + "缺少采购币种")
-        if item.purchaseQty is None or item.purchaseQty != item.salesQty:
+        if item.purchaseQty is None:
+            raise ValueError(prefix + "缺少采购数量")
+        if item.sourceRef is None and item.purchaseQty != item.salesQty:
             raise ValueError(prefix + "采购数量必须等于销售数量")

@@ -14,7 +14,7 @@ from urllib.parse import quote
 
 from . import __version__
 
-RELEASE_VERSION = "0.17.14"
+RELEASE_VERSION = "0.17.15"
 RELEASE_CHANNEL = "test"
 RELEASE_PUBLISHED_AT = "2026-09-09T03:17:23Z"
 
@@ -31,8 +31,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.17.14-4b83fe768db0",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.14.exe",
+        "runtimeId": "0.17.15-4b83fe768db0",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.15.exe",
         "sha256": "0db2b3dac217d84521c15c07376b930651fa2ada7a30c76d488be579152bbe56",
         "size": 15282820,
         "installMode": "standard_per_user",
@@ -50,8 +50,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.17.14-4b83fe768db0",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.14.pkg",
+        "runtimeId": "0.17.15-4b83fe768db0",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.15.pkg",
         "sha256": "c7e770603a3f34c79fe56e4efd494bcc6812a8574945fdaf0ddf43820267c3cb",
         "size": 11597268,
         "installMode": "standard_system_application",

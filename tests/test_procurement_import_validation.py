@@ -148,9 +148,13 @@ class ProcurementImportValidationTests(unittest.TestCase):
                 row[15] = 'UNKNOWN-SKU-%d' % variant
                 row[17] = 'UNKNOWN-SPEC-%d' % variant
         result = self.service.parse('synthetic.xlsx', synthetic_workbook(mutate=unmatched))
-        self.assertEqual(result['detailCount'], 4)
-        self.assertEqual(result['issues'][0]['code'], 'source_match_failed')
-        self.assertFalse(result['canImport'])
+        self.assertEqual(result['detailCount'], 6)
+        self.assertEqual(result['issues'][0]['code'], 'source_match_warning')
+        self.assertTrue(result['canImport'])
+        unmatched = [row for row in self.service.pending[result['planId']].rows
+                     if row.values['销售订单号'] == 'SYNTH-001']
+        self.assertTrue(all(row.item_sales_amount is None and not row.order_image
+                            and not row.order_image_url for row in unmatched))
 
     def test_invalid_numeric_rows_and_missing_identity_are_all_reported(self):
         def invalid(order, variant, row):

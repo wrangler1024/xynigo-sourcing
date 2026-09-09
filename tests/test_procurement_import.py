@@ -543,11 +543,21 @@ class ProcurementImportTests(unittest.TestCase):
         for specs, purchase_specs in cases:
             with self.subTest(specs=specs, purchase_specs=purchase_specs):
                 service = ProcurementImportService()
-                with self.assertRaisesRegex(ProcurementImportError, '同时匹配多个'):
-                    service.parse('ambiguous.xlsx', base64.b64encode(
-                        shared_sku_workbook(specs, purchase_specs=purchase_specs)
-                    ).decode('ascii'))
-                self.assertEqual(service.pending, {})
+                result = service.parse('ambiguous.xlsx', base64.b64encode(
+                    shared_sku_workbook(specs, purchase_specs=purchase_specs)
+                ).decode('ascii'))
+                self.assertTrue(result['canImport'])
+                self.assertEqual(result['errorCount'], 0)
+                rows = service.pending[result['planId']].rows
+                self.assertEqual([(row.values['主规格'], row.values['次规格'])
+                                  for row in rows], list(purchase_specs))
+                unresolved = [row for row in rows if row.item_sales_amount is None]
+                self.assertTrue(unresolved)
+                for row in unresolved:
+                    self.assertEqual(row.order_image, b'')
+                    self.assertEqual(row.order_image_url, '')
+                    self.assertIn('销售明细未唯一关联', row.values['采购备注'])
+                self.assertEqual(result['issues'][0]['code'], 'source_match_warning')
 
     def test_parses_compact_xyp2_and_rebuilds_precise_links(self):
         parsed = parse_xyp2_remark('普通备注 ' + xyp2_text())
@@ -721,6 +731,12 @@ class ProcurementImportTests(unittest.TestCase):
         self.assertEqual(headers[33], '下单截图')
         self.assertEqual(headers[36], '物流截图')
         self.assertEqual(headers[41], '导入操作人')
+        purchase_link_column = headers.index('采购链接') + 1
+        for row_number, planned in enumerate(plan.rows, start=2):
+            cell = worksheet.cell(row_number, purchase_link_column)
+            self.assertEqual(cell.value, planned.values['采购链接'])
+            self.assertIsNone(cell.hyperlink)
+            self.assertEqual(cell.number_format, '@')
         guide_index = headers.index('采购指导价')
         self.assertEqual(headers[guide_index + 1:guide_index + 9], [
             '收货人姓名', '收货人国家', '收货人州/省', '收货人城市',

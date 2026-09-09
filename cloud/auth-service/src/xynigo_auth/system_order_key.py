@@ -1,8 +1,18 @@
-"""Versioned, ASCII-only system order keys used across Xynigo services."""
+"""Versioned, ASCII-only system order keys shared by local import flows."""
 
 from __future__ import annotations
 
 import re
+import unicodedata
+
+
+def create_sales_source_key(sku: object, variant: object) -> str:
+    sku = unicodedata.normalize('NFKC', ' '.join(str(sku or '').split()))
+    if not sku:
+        return ''
+    variant = unicodedata.normalize('NFKC', ' '.join(str(variant or '').split()))
+    variant = '-'.join(' '.join(part.split()) for part in re.split(r'[-‐‑–—]', variant)).upper()
+    return create_system_order_key(sku, variant, 'sales-line-v1').replace('OK1-', 'SL1-', 1)
 
 
 SYSTEM_ORDER_KEY_VERSION = "OK1"
@@ -89,7 +99,7 @@ def create_system_order_key(
     forward = _fnv1a64(raw, _FNV_OFFSET_64).to_bytes(8, "big")
     reverse = _fnv1a64(raw[::-1], _FNV_SECOND_SEED).to_bytes(8, "big")
     payload = _crockford_base32(forward + reverse[:4])
-    if len(payload) != 20:
+    if len(payload) != 20:  # Defensive invariant: 12 input bytes encode to 20 chars.
         raise AssertionError("unexpected system order key payload length")
     return "%s-%s" % (
         SYSTEM_ORDER_KEY_VERSION,

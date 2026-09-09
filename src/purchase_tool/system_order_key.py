@@ -3,6 +3,16 @@
 from __future__ import annotations
 
 import re
+import unicodedata
+
+
+def create_sales_source_key(sku: object, variant: object) -> str:
+    sku = unicodedata.normalize('NFKC', ' '.join(str(sku or '').split()))
+    if not sku:
+        return ''
+    variant = unicodedata.normalize('NFKC', ' '.join(str(variant or '').split()))
+    variant = '-'.join(' '.join(part.split()) for part in re.split(r'[-‐‑–—]', variant)).upper()
+    return create_system_order_key(sku, variant, 'sales-line-v1').replace('OK1-', 'SL1-', 1)
 
 
 SYSTEM_ORDER_KEY_VERSION = "OK1"

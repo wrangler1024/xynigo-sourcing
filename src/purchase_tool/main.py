@@ -4725,7 +4725,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(decode_xyp2_remark(body.get('remark')))
             elif path == '/api/assistant/procurement-import/parse':
                 self._json(STATE.procurement_import.parse(
-                    body.get('filename'), body.get('contentBase64')))
+                    body.get('filename'), body.get('contentBase64'),
+                    allow_partial=body.get('allowPartial', False)))
             elif path == '/api/assistant/procurement-import/target/inspect':
                 self._json(STATE.procurement_import.inspect_target(
                     body.get('planId'), body.get('spreadsheetUrl')))

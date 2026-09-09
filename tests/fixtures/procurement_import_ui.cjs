@@ -47,6 +47,7 @@ let preferences = {targets:[]};
 let availableSheets = [{sheetId:'safe',sheetName:'合成协作表',columnCount:44}];
 let deferredValidate = null;
 let parseDiagnostics = null;
+let confirmationText = '';
 let valid = true, confirm = false, parseFailure = false, pollFailure = false, completed = false;
 const summary = { planId: 'synthetic-plan', sourceRows: 60, orderCount: 30,
   detailCount: 60, quantityCount: 120, orderImageCount: 0, warningCount: 0, errorCount: 0,
@@ -57,7 +58,7 @@ const summary = { planId: 'synthetic-plan', sourceRows: 60, orderCount: 30,
 const context = vm.createContext({
   $: node, document: { querySelectorAll: () => steps, addEventListener(type, fn) { documentEvents[type] = fn; } },
   authIdentity:{tenant:{id:'tenant-a'},user:{id:'user-a'}}, CLOUD_WEB_MODE:true,
-  localStorage:{getItem:key => savedStorage.get(key),setItem:(key,value) => savedStorage.set(key,value)}, window: { confirm: () => confirm },
+  localStorage:{getItem:key => savedStorage.get(key),setItem:(key,value) => savedStorage.set(key,value)}, window: { confirm: text => { confirmationText = text; return confirm; } },
   console, setTimeout: () => 1, clearTimeout() {}, Uint8Array,
   bytesToBase64: bytes => Buffer.from(bytes).toString('base64'),
   procurementImportResourcePath: path => path,
@@ -179,6 +180,29 @@ const chooseFile = () => { node('procurementImportFile').files = [file]; node('p
   run('procurementImportTargetValidated = true');
   await node('btnProcurementImportSyncImages').onclick();
   assert.equal(calls.filter(call => call.path.endsWith('/sheet-sync')).length, writesBeforeBlockedClick);
+
+  node('procurementImportAllowPartial').checked = true;
+  node('procurementImportAllowPartial').onchange();
+  assert.equal(run('procurementImportPlanId'), null, 'changing scope invalidates the old plan');
+  assert.equal(node('btnProcurementImportSyncImages').disabled, true);
+  Object.assign(summary, {canImport:true, canImportPassedOrders:true, partialImportSelected:true});
+  await node('btnProcurementImportParse').onclick();
+  assert.equal(calls.filter(call => call.path.endsWith('/parse')).at(-1).body.allowPartial, true);
+  assert.equal(node('btnProcurementImportDownload').disabled, false);
+  assert.match(node('procurementImportValidationSummary').textContent, /另 123 单待处理/);
+  assert.equal(run('procurementImportIssuesCsv()').split('\r\n').length, 124);
+  valid = true;
+  await node('btnProcurementImportInspectTarget').onclick();
+  node('procurementImportTargetSheet').value = 'safe';
+  await node('btnProcurementImportValidateTarget').onclick();
+  confirm = false;
+  await node('btnProcurementImportSyncImages').onclick();
+  assert.match(confirmationText, /失败的 123 单不写入/);
+  assert.equal(calls.filter(call => call.path.endsWith('/sheet-sync')).length, writesBeforeBlockedClick);
+  confirm = true;
+  Object.assign(summary, {canImport:false, canImportPassedOrders:false, partialImportSelected:false});
+  chooseFile();
+  assert.equal(node('procurementImportAllowPartial').checked, false, 'new files default to full validation');
 
   parseFailure = true;
   parseDiagnostics = {...summary, orderCount:0, successOrderCount:0, detailCount:0,

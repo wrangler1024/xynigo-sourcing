@@ -514,7 +514,7 @@ def create_app(
 
     app = FastAPI(
         title="Xynigo Auth Service",
-        version="0.17.14",
+        version="0.17.15",
         docs_url=None,
         redoc_url=None,
         lifespan=lifespan,
@@ -3078,6 +3078,7 @@ def create_app(
                 actor_user_id=actor.user.id,
                 filename=body.filename,
                 content_base64=body.contentBase64,
+                allow_partial=body.allowPartial,
             )
         except CloudProcurementImportError as exc:
             procurement_import_failure(
