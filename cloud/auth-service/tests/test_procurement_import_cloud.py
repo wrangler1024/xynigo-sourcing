@@ -258,6 +258,7 @@ def test_cloud_parse_validate_export_and_durable_worker(tmp_path) -> None:
         assert plan["detailCount"] == 1
         assert plan["quantityCount"] == 1
         assert plan["preview"][0]["orderNo"] == "GSH-CLOUD-TEST-001"
+        assert plan["preview"][0]["store"] == "测试店铺-测试运营（二组）$"
 
         with database.session_factory() as session:
             stored = session.scalar(select(ProcurementImportPlan))
@@ -295,6 +296,8 @@ def test_cloud_parse_validate_export_and_durable_worker(tmp_path) -> None:
         assert exported.status_code == 200, exported.text
         workbook = load_workbook(BytesIO(exported.content), data_only=False)
         assert workbook.active["C2"].value == "GSH-CLOUD-TEST-001"
+        assert workbook.active["D2"].value == "测试店铺-测试运营（二组）$"
+        assert workbook.active["E2"].value == "测试运营"
 
         started = client.post(
             "/v1/assistant/procurement-import/sheet-sync",
@@ -319,6 +322,7 @@ def test_cloud_parse_validate_export_and_durable_worker(tmp_path) -> None:
         assert status_payload["state"] == "completed", status_payload
         assert status_payload["rowsWritten"] == 1
         assert len(gateway.rows) == 1
+        assert gateway.rows[0][1][gateway.headers.index("店铺")] == "测试店铺-测试运营（二组）$"
         operator_index = gateway.headers.index("导入操作人")
         assert gateway.rows[0][1][operator_index] == "合成测试用户"
 

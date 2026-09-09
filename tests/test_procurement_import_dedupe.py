@@ -21,8 +21,10 @@ def split_order_case(*, same_batch=False, key_format='ok1', split=True):
     for index, row in enumerate(plan.rows):
         values = dict(row.values)
         if key_format == 'legacy':
+            # Pre-OK1 rows used the parsed store name, before full account
+            # names were retained in the visible store column.
             values['系统订单键'] = legacy_order_key(
-                values['店铺'], values['销售订单号'], values['包裹号'])
+                '测试店铺', values['销售订单号'], values['包裹号'])
         elif key_format == 'missing':
             values['系统订单键'] = ''
         if split:

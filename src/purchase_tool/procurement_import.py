@@ -986,7 +986,8 @@ def _build_rows(groups):
         except ProcurementImportError as exc:
             issues.append(_issue([first], str(exc), code='invalid_number', field_name='订单金额'))
             continue
-        store_name, operator_name = _parse_store_assignment(values.get('店铺账号'))
+        store_account_name = _text(values.get('店铺账号'))
+        store_name, operator_name = _parse_store_assignment(store_account_name)
         country = _site_code(
             values.get('收货人国家'), values.get('币种缩写'), xyp2.site)
         amount_written = False
@@ -1051,7 +1052,7 @@ def _build_rows(groups):
                     '本行计入销售商品金额' if item.source_amount_owner else '共用来源图片，商品金额不重复计入')
             row_values = OrderedDict((
                 ('分单日期', ''), ('采购员', ''),
-                ('销售订单号', order_no), ('店铺', store_name),
+                ('销售订单号', order_no), ('店铺', store_account_name),
                 ('运营', operator_name), ('包裹号', package_no),
                 ('采购状态', '待认领'), ('优先级', ''),
                 # 订单级金额只放在第一条明细，避免共享表 SUM 重复计算。
@@ -1338,6 +1339,10 @@ def _row_import_identity(values):
     the original number. Preserve pre-OK1 keys through an in-memory conversion.
     """
     store_name = _compact_text(values.get('店铺'))
+    # Display the complete exported account name, while retaining the original
+    # store-based key so re-imports still match rows written by older versions.
+    legacy_store_name, _operator_name = _parse_store_assignment(store_name)
+    store_candidates = tuple(dict.fromkeys((store_name, legacy_store_name)))
     order_no = _compact_text(values.get('销售订单号'))
     package_no = _compact_text(values.get('包裹号'))
     saved_key = _compact_text(values.get('系统订单键'))
@@ -1352,15 +1357,17 @@ def _row_import_identity(values):
         if store_name and order_no and package_no:
             # Check the complete number first: source orders may legitimately
             # end in digits. Never blindly remove their suffixes.
-            if create_system_order_key(store_name, order_no, package_no) == saved_key:
+            if any(create_system_order_key(candidate, order_no, package_no) == saved_key
+                   for candidate in store_candidates):
                 return saved_key, order_no
             for parent_no in _parent_order_numbers(order_no):
-                if create_system_order_key(store_name, parent_no, package_no) == saved_key:
+                if any(create_system_order_key(candidate, parent_no, package_no) == saved_key
+                       for candidate in store_candidates):
                     return saved_key, parent_no
         raise ProcurementImportError(
             '系统订单键与店铺、包裹号或销售订单号不一致，无法确认原始订单，已停止导入')
     if store_name and order_no and package_no:
-        return create_system_order_key(store_name, order_no, package_no), order_no
+        return create_system_order_key(legacy_store_name, order_no, package_no), order_no
     return '', order_no
 
 
@@ -1469,8 +1476,12 @@ class ProcurementImportService(object):
         plan_id = hashlib.sha256(
             source + str(time.time_ns()).encode('ascii')).hexdigest()
         batch_stem = posixpath.splitext(posixpath.basename(name))[0]
+        # Keeping the full account name is a display change. Preserve the
+        # previous batch identity so partially imported batches can resume.
         semantic_rows = [
-            [row.values.get(header) for header in OUTPUT_HEADERS
+            [_parse_store_assignment(row.values.get(header))[0]
+             if header == '店铺' else row.values.get(header)
+             for header in OUTPUT_HEADERS
              if header != '导入批次']
             for row in rows
         ]
@@ -1745,8 +1756,8 @@ class ProcurementImportService(object):
                 order_key, original_no = identity
                 if (not _compact_text(values.get('系统订单键'))
                         and order_key not in expected_order_keys
-                        and any(create_system_order_key(
-                            values.get('店铺'), parent_no, values.get('包裹号'))
+                        and any(_row_system_order_key(
+                            dict(values, **{'销售订单号': parent_no}))
                             in expected_order_keys
                             for parent_no in _parent_order_numbers(original_no))):
                     raise ProcurementImportError(

@@ -672,7 +672,7 @@ class ProcurementImportTests(unittest.TestCase):
             service.preview_image(result['planId'], '99')
 
         plan = service.pending[result['planId']]
-        self.assertEqual(plan.rows[0].values['店铺'], '测试店铺')
+        self.assertEqual(plan.rows[0].values['店铺'], '测试店铺-测试运营（二组）$')
         self.assertEqual(plan.rows[0].values['运营'], '测试运营')
         self.assertEqual(plan.rows[0].values['销售订单金额'], 300)
         self.assertIsNone(plan.rows[1].values['销售订单金额'])
