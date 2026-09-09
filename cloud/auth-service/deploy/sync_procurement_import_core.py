@@ -36,6 +36,8 @@ def sync() -> list[tuple[str, str]]:
         "procurement_import_core.py": parser_payload,
         "procurement_import_xlsx.py": xlsx_payload,
         "system_order_key.py": (LOCAL_ROOT / "system_order_key.py").read_bytes(),
+        "purchase_link_cell.py": (LOCAL_ROOT / "purchase_link_cell.py").read_bytes(),
+        "procurement_image_fetch.py": (LOCAL_ROOT / "procurement_image_fetch.py").read_bytes(),
     }
     result = []
     for filename, payload in outputs.items():

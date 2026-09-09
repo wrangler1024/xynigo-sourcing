@@ -20,6 +20,7 @@ import time
 from urllib.parse import urlparse
 
 from .redaction import scrub_text
+from .purchase_link_cell import purchase_url_cell_matches
 
 
 SHEET_TOKEN_RE = re.compile(r'^[A-Za-z0-9_-]{8,128}$')
@@ -781,7 +782,7 @@ class LarkCliSheetsGateway(object):
 
     def hyperlink_presence(self, url, sheet_id, expected_links,
                            column='N'):
-        """Verify plain purchase URLs; keep the gateway method name compatible."""
+        """Verify complete purchase URL text and any actual hyperlink targets."""
         links = {
             int(row): str(link or '').strip()
             for row, link in dict(expected_links or {}).items()
@@ -799,15 +800,12 @@ class LarkCliSheetsGateway(object):
             raise LarkSheetSyncError('目标采购链接列读取不完整，已停止写入')
         cells = self._cell_map(data, numbers, lambda value: value)
         return {
-            row: (isinstance(cells.get(row), dict)
-                  and cells[row].get('value') == links[row]
-                  and not cells[row].get('formula')
-                  and not _cell_contains_link(cells[row]))
+            row: purchase_url_cell_matches(cells.get(row), links[row])
             for row in numbers
         }
 
     def set_hyperlinks(self, url, sheet_id, links, column='N'):
-        """Write complete purchase URLs as text, without click-to-open links."""
+        """Write full URL text; the server may automatically make it clickable."""
         items = [
             (int(row), str(link or '').strip()) for row, link in links or ()
             if int(row) >= 2 and str(link or '').strip()

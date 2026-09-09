@@ -13,11 +13,11 @@ from xynigo_auth.procurement_import_sheet import (
 
 
 @pytest.mark.parametrize("apply_write", [True, False])
-def test_purchase_urls_are_plain_text_and_verified_from_server(apply_write: bool) -> None:
+def test_full_purchase_urls_are_verified_after_server_auto_linking(apply_write: bool) -> None:
     first = "https://example.com/item?a=1&b=2#sku=blue%2FL"
     second = "https://example.com/second"
     cells: dict[int, object] = {
-        2: {"text": first, "type": "url", "link": first},
+        2: [{"text": "打开采购链接", "type": "url", "link": first}],
         3: {"text": second, "type": "text"},
     }
     writes = []
@@ -41,7 +41,8 @@ def test_purchase_urls_are_plain_text_and_verified_from_server(apply_write: bool
                 "values": [[{"text": first, "type": "text"}]],
             }]
             if apply_write:
-                cells[2] = ranges[0]["values"][0][0]
+                cells[2] = [{"text": first, "type": "url", "link": first,
+                             "cellPosition": None}]
             return httpx.Response(200, json={"code": 0, "data": {"revision": 8}})
         raise AssertionError(f"unexpected request: {request.method} {path}")
 
@@ -56,7 +57,7 @@ def test_purchase_urls_are_plain_text_and_verified_from_server(apply_write: bool
     }
     gateway.set_hyperlinks(url, "sheetA", [(1, first), (2, first), (4, "")], column="M")
     assert len(writes) == 1
-    # A successful write response alone must not hide an unchanged hyperlink.
+    # A successful response does not prove an abbreviated label was replaced.
     assert gateway.hyperlink_presence(url, "sheetA", expected, column="M") == {
         2: apply_write, 3: True,
     }

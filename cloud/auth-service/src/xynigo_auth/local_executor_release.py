@@ -14,7 +14,7 @@ from urllib.parse import quote
 
 from . import __version__
 
-RELEASE_VERSION = "0.17.15"
+RELEASE_VERSION = "0.17.16"
 RELEASE_CHANNEL = "test"
 RELEASE_PUBLISHED_AT = "2026-09-09T10:04:03Z"
 
@@ -31,8 +31,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.17.15-835b7d5a9e04",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.15.exe",
+        "runtimeId": "0.17.16-835b7d5a9e04",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.16.exe",
         "sha256": "8a33e2687ec593f7cf2409cb1ba687f519994c8fb8690321bf1b53dd373946b0",
         "size": 15292726,
         "installMode": "standard_per_user",
@@ -50,8 +50,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.17.15-835b7d5a9e04",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.15.pkg",
+        "runtimeId": "0.17.16-835b7d5a9e04",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.16.pkg",
         "sha256": "be1146aef9ef4b4e73b7ddeebaf1d85c57d52934ac2d947c1d14ea0cb6b56d1b",
         "size": 11600704,
         "installMode": "standard_system_application",
@@ -320,10 +320,9 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "导入分单以 XYP2 采购备注的链接、规格和数量为准，销售 SKU、颜色或尺码差异不再阻断整单。",
-            "提单助手自动绑定销售来源；手工明细可选择来源或额外采购，拆购共享图片且销售商品金额只计一次。",
-            "历史 SKU 数量尾缀按明确来源兼容；无法关联的商品金额和图片可留空导入，并允许按整单选择只导入通过的订单。",
-            "飞书协作表保留完整采购 URL 纯文本，回读验证实际值，便于复制完整采购参数。",
-            "登录策略沿用既有自动续期和到期规则；运营重复登录问题继续收集版本、时间和浏览器重启情况。",
+            "修复采购链接完整正确但被飞书自动识别为超链接时，回读校验误报失败并阻断图片导入的问题。",
+            "缺少内嵌图片的已关联明细，可从原销售行的 SHEIN 图片网址补取；限制来源、大小及重定向，无法关联来源的明细仍留空。",
+            "人工采购备注变化不再触发历史采购明细冲突；完整采购链接、规格、数量和指导价变化仍保留拦截保护。",
+            "已追加明细可按原批次续传图片，已有行和图片自动跳过，人工备注与已有业务记录保持原样。",
         ],
     }

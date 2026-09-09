@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Xynigo Sourcing v0.17.15</title>
+<title>Xynigo Sourcing v0.17.16</title>
 <link rel="icon" type="image/png" sizes="260x260" href="/xynigo-x.png?v=6">
 <link rel="icon" type="image/x-icon" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256" href="/favicon.ico?v=6">
 <link rel="shortcut icon" href="/favicon.ico?v=6">
@@ -1762,7 +1762,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
           <div class="hero-kicker">XYNIGO SOURCING WORKSPACE</div>
           <h1>让小犀帮你把每一单稳稳带回来，<span class="hero-call">Xyni, GO!</span></h1>
           <p id="moduleSummary">集中查看采购待办、履约风险与本地执行状态。</p>
-          <div class="hero-meta"><span class="hero-chip">累计修复测试 v0.17.15</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
+          <div class="hero-meta"><span class="hero-chip">累计修复测试 v0.17.16</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
         </div>
         <div class="hero-lockup" role="img" aria-label="小犀与 Xynigo 完整品牌一体图形">
           <img src="xynigo-logo.png" alt="">
@@ -3793,7 +3793,7 @@ async function cloudFetchJson(path, opts={}) {
   const headers = new Headers(opts.headers || {});
   headers.set('Accept', 'application/json');
   headers.set('X-Xynigo-Source', 'cloud_web_workspace');
-  headers.set('X-Xynigo-Client-Version', '0.17.15-cloud-web');
+  headers.set('X-Xynigo-Client-Version', '0.17.16-cloud-web');
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     headers.set('X-Xynigo-Web-CSRF', 'same-origin');
   }
@@ -11353,7 +11353,7 @@ const procurementImportRunningCopy = {
   writing_rows: '正在追加真正缺失的采购数据行…',
   verifying_rows: '数据已提交，正在回读数量和关键字段…',
   formatting_rows: '数据回读通过，正在处理本次格式设置和紧凑行高…',
-  writing_links: '正在检查并补齐完整采购链接（纯文本）…',
+  writing_links: '正在检查并补齐完整采购链接（完整URL）…',
   writing_images: '数据回读通过，正在检查并补齐订单商品图片…',
 };
 
@@ -11390,7 +11390,7 @@ function ensureProcurementImportProgressShell(progress) {
       <span class="procurement-import-sync-metric">新追加 <b data-sync-metric="rowsWritten">0</b></span>
       <span class="procurement-import-sync-metric">已存在 <b data-sync-metric="rowsExisting">0</b></span>
       <span class="procurement-import-sync-metric">新设底色 <b data-sync-metric="rowsStyled">0</b></span>
-      <span class="procurement-import-sync-metric">采购链接（纯文本） <b data-sync-metric="linksWritten">0</b></span>
+      <span class="procurement-import-sync-metric">新补链接 <b data-sync-metric="linksWritten">0</b></span>
       <span class="procurement-import-sync-metric">图片进度 <b data-sync-metric="imageProgress">0/0</b></span>
       <span class="procurement-import-sync-metric">新补图 <b data-sync-metric="written">0</b></span>
       <span class="procurement-import-sync-metric">未关联图片跳过 <b data-sync-metric="skippedUnmatched">0</b></span>
@@ -11457,7 +11457,7 @@ function renderProcurementImportSyncStatus(status) {
   $('btnProcurementImportSyncImages').textContent = status.state === 'completed' ? '再次校验本批导入' : '续传未完成数据/图片';
   if (status.state === 'completed') {
     $('procurementImportTargetState').className = 'resource-state ok';
-    $('procurementImportTargetState').textContent = `导入完成：新追加 ${status.rowsWritten} 行，已存在 ${status.rowsExisting} 行；${status.fillOrderBackground === false ? '未启用订单背景色' : `新设底色 ${status.rowsStyled || 0} 行`}、采购链接（纯文本） ${status.linksWritten || 0} 个；新补图 ${status.written} 张，已有图片跳过 ${status.skippedExisting} 张${status.skippedUnmatched ? `，${status.skippedUnmatched} 条采购明细未关联销售行，订单图片留空` : ''}。关键数据均已回读确认。`;
+    $('procurementImportTargetState').textContent = `导入完成：新追加 ${status.rowsWritten} 行，已存在 ${status.rowsExisting} 行；${status.fillOrderBackground === false ? '未启用订单背景色' : `新设底色 ${status.rowsStyled || 0} 行`}、采购链接（完整URL） ${status.linksWritten || 0} 个；新补图 ${status.written} 张，已有图片跳过 ${status.skippedExisting} 张${status.skippedUnmatched ? `，${status.skippedUnmatched} 条采购明细未关联销售行，订单图片留空` : ''}。关键数据均已回读确认。`;
   } else {
     $('procurementImportTargetState').className = status.state === 'partial' ? 'resource-state warn' : 'resource-state bad';
     const immutableConflict = String(status.error || '').includes('不支持修改已导入订单');
@@ -11496,7 +11496,7 @@ $('btnProcurementImportSyncImages').onclick = async () => {
     toast('请先通过目标工作表表头校验'); return;
   }
   const detailCount = Number($('procurementImportDetails').textContent || 0);
-  if (!window.confirm(`确认通过飞书接口规范本批协作表并导入 ${detailCount} 条采购数据？${procurementImportSummary?.partialImportSelected ? `\n\n本次仅导入校验通过的 ${procurementImportSummary.successOrderCount} 单；失败的 ${procurementImportSummary.failedOrderCount} 单不写入，请保留完整错误清单并继续处理。` : ''}\n\n本次会把“分单时间”规范为北京时间“分单日期”，在确认旧“分单批次”已由系统“导入批次”等值覆盖后取消该列，并固定前五列为“分单日期 / 采购员 / 销售订单号 / 店铺 / 运营”；“包裹号 / 采购状态 / 优先级”紧随其后。同时规范“销售订单金额 / 商品金额”，将“平台订单号”规范为“采购订单号”，并将姓名、国家、州/省、城市、地址1、地址2、邮编、电话按顺序放在采购指导价后。历史合并地址会完整保留在地址1；采购下单区其余字段、顺序和已有数据均不改动。系统追踪区会补入“导入操作人”，自动记录本次导入的当前登录用户。\n\n随后追加本批真正缺失的数据，冻结首行和前五列，设置表头分区、采购链接（纯文本）和订单商品图。订单背景色：${procurementImportFillBackground ? '开启（仅新增明细）' : '关闭'}。已导入订单只做查重并保持原样；本页面不支持修改历史订单，采购任务认领前修改属于独立修订流程。`)) return;
+  if (!window.confirm(`确认通过飞书接口规范本批协作表并导入 ${detailCount} 条采购数据？${procurementImportSummary?.partialImportSelected ? `\n\n本次仅导入校验通过的 ${procurementImportSummary.successOrderCount} 单；失败的 ${procurementImportSummary.failedOrderCount} 单不写入，请保留完整错误清单并继续处理。` : ''}\n\n本次会把“分单时间”规范为北京时间“分单日期”，在确认旧“分单批次”已由系统“导入批次”等值覆盖后取消该列，并固定前五列为“分单日期 / 采购员 / 销售订单号 / 店铺 / 运营”；“包裹号 / 采购状态 / 优先级”紧随其后。同时规范“销售订单金额 / 商品金额”，将“平台订单号”规范为“采购订单号”，并将姓名、国家、州/省、城市、地址1、地址2、邮编、电话按顺序放在采购指导价后。历史合并地址会完整保留在地址1；采购下单区其余字段、顺序和已有数据均不改动。系统追踪区会补入“导入操作人”，自动记录本次导入的当前登录用户。\n\n随后追加本批真正缺失的数据，冻结首行和前五列，设置表头分区、采购链接（完整URL）和订单商品图。订单背景色：${procurementImportFillBackground ? '开启（仅新增明细）' : '关闭'}。已导入订单只做查重并保持原样；本页面不支持修改历史订单，采购任务认领前修改属于独立修订流程。`)) return;
   const button = $('btnProcurementImportSyncImages');
   button.disabled = true;
   button.textContent = '启动导入…';

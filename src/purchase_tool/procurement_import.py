@@ -27,6 +27,10 @@ import zipfile
 from .xlsx_cell_images import embed_cell_images
 from .lark_sheet_sync import LarkCliSheetsGateway, LarkSheetSyncError
 from .system_order_key import create_system_order_key, is_system_order_key, create_sales_source_key
+from .procurement_image_fetch import (
+    ProcurementImageError, fetch_procurement_image, image_content_type,
+    trusted_procurement_image_url,
+)
 
 
 MAX_XLSX_BYTES = 20 * 1024 * 1024
@@ -744,26 +748,14 @@ def parse_export_workbook(source):
 
 
 def _trusted_image_url(value):
-    source = _compact_text(value)
-    try:
-        parsed = urlparse(source)
-    except ValueError:
-        return ''
-    if parsed.scheme != 'https' or not IMAGE_HOST_RE.search(parsed.hostname or ''):
-        return ''
-    return source
+    return trusted_procurement_image_url(_compact_text(value))
 
 
 def _image_mime(data):
-    if data.startswith(b'\xff\xd8'):
-        return 'image/jpeg'
-    if data.startswith(b'\x89PNG\r\n\x1a\n'):
-        return 'image/png'
-    if data.startswith((b'GIF87a', b'GIF89a')):
-        return 'image/gif'
-    if data.startswith(b'RIFF') and data[8:12] == b'WEBP':
-        return 'image/webp'
-    raise ProcurementImportError('订单商品图片格式不受支持')
+    try:
+        return image_content_type(data)
+    except ProcurementImageError as exc:
+        raise ProcurementImportError(str(exc)) from None
 
 
 def _select_xyp2(source_rows):
@@ -1381,17 +1373,17 @@ def _sync_signature(values, identity=None):
     return (identity or _row_import_identity(values)) + tuple(
         _compact_text(values.get(name)) for name in (
         '包裹号',
-        '主规格', '次规格', '需求数量', '采购指导价', '采购备注',
+        '主规格', '次规格', '需求数量', '采购指导价', '采购链接',
         '导入批次', '数据版本',
     ))
 
 
 def _business_signature(values):
-    """Stable line identity shared by the same order across import batches."""
+    """Compare purchasing facts, preserving independently edited human notes."""
     return _row_import_identity(values) + tuple(
         _compact_text(values.get(name)) for name in (
         '包裹号',
-        '主规格', '次规格', '需求数量', '采购指导价', '采购备注',
+        '主规格', '次规格', '需求数量', '采购指导价', '采购链接',
         '数据版本',
     ))
 
@@ -1416,12 +1408,13 @@ def _exact_counter_multiple(actual, expected):
 class ProcurementImportService(object):
     """短时保存解析计划，并显式导入普通飞书采购协作表。"""
 
-    def __init__(self, sheet_gateway=None, sleep_fn=time.sleep):
+    def __init__(self, sheet_gateway=None, sleep_fn=time.sleep, image_fetcher=None):
         self.lock = threading.Lock()
         self.pending = {}
         self.sync_jobs = {}
         self.sheet_gateway = sheet_gateway or LarkCliSheetsGateway()
         self.sleep = sleep_fn
+        self.image_fetcher = image_fetcher or fetch_procurement_image
 
     def _clean_pending(self):
         now = time.time()
@@ -1887,7 +1880,7 @@ class ProcurementImportService(object):
 
     def _ensure_sheet_presentation(self, job_id, target, matched,
                                    target_headers):
-        """Apply compact grouping and plain purchase URLs with write-back checks.
+        """Apply compact grouping and complete purchase URLs with read-back checks.
 
         A non-default row background is treated as a purchaser's manual task
         color and is never replaced during an idempotent retry.  Row height and
@@ -2138,17 +2131,24 @@ class ProcurementImportService(object):
                         skipped_unmatched=job.skipped_unmatched + 1)
                     continue
                 if not row.order_image:
-                    error_item = {
-                        'rowNumber': item['rowNumber'],
-                        'orderNo': row.values['销售订单号'],
-                        'message': '源文件没有内嵌订单商品图片',
-                    }
-                    self._job_update(
-                        job_id, processed=job.processed + 1,
-                        missing_source=job.missing_source + 1,
-                        failed=job.failed + 1,
-                        errors=job.errors + [error_item])
-                    continue
+                    try:
+                        if not row.order_image_url:
+                            raise ProcurementImageError('源文件没有内嵌订单商品图片或可用图片网址')
+                        fetched_image = self.image_fetcher(row.order_image_url)
+                        _image_mime(fetched_image)
+                        row.order_image = fetched_image
+                    except (ProcurementImageError, ProcurementImportError) as exc:
+                        error_item = {
+                            'rowNumber': item['rowNumber'],
+                            'orderNo': row.values['销售订单号'],
+                            'message': str(exc),
+                        }
+                        self._job_update(
+                            job_id, processed=job.processed + 1,
+                            missing_source=job.missing_source + 1,
+                            failed=job.failed + 1,
+                            errors=job.errors + [error_item])
+                        continue
                 last_error = None
                 verified = False
                 for attempt in range(2):

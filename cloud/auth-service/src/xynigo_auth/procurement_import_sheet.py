@@ -19,6 +19,7 @@ from typing import Any
 from urllib.parse import quote, urlparse
 
 import httpx
+from .purchase_link_cell import purchase_url_cell_matches
 
 TOKEN_ENDPOINT = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
 OPEN_API_ORIGIN = "https://open.feishu.cn"
@@ -1000,7 +1001,7 @@ class FeishuSheetsGateway:
     def hyperlink_presence(
         self, url: object, sheet_id: object, expected_links: object, column: str = "N"
     ) -> dict[int, bool]:
-        """Verify actual plain URL cells, retaining the gateway's legacy name."""
+        """Verify full URL text and every actual target from server read-back."""
         links = {
             int(row): str(link or "").strip()
             for row, link in dict(expected_links or {}).items()
@@ -1011,15 +1012,14 @@ class FeishuSheetsGateway:
         sheet = normalize_sheet_id(sheet_id)
         raw = self._raw_column_values(url, sheet, str(column).upper(), sorted(links))
         return {
-            row: (_plain_cell(raw.get(row)) == link
-                  and not _cell_contains_link(raw.get(row)))
+            row: purchase_url_cell_matches(raw.get(row), link)
             for row, link in links.items()
         }
 
     def set_hyperlinks(
         self, url: object, sheet_id: object, links: object, column: str = "N"
     ) -> dict[str, object]:
-        """Explicit text segments prevent Feishu from auto-linking URL strings."""
+        """Write full URL text; Feishu may return it as an automatic URL segment."""
         parse_lark_sheet_url(url)
         sheet = normalize_sheet_id(sheet_id)
         ranges = []
