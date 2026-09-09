@@ -1,6 +1,12 @@
 # 开发与提交
 
-协作规则见 [AGENTS.md](AGENTS.md)。本次流程修订为 20260910 草案，待联合评审。命令均相对本仓根目录，明确标注切换目录的除外。
+协作规则见 [AGENTS.md](AGENTS.md)。本次流程修订已于 20260910 经 Jeff 确认定稿。命令均相对本仓根目录，明确标注切换目录的除外。
+
+## 源码核对基线
+
+本规约的较新工程事实以公开开发提交 [e10e8a271b3316194a1f6a29a49e65f9f9adcf3a](https://github.com/wrangler1024/xynigo-sourcing/tree/e10e8a271b3316194a1f6a29a49e65f9f9adcf3a) 为核对基线。规约从开发分支移植到 main 时只合并文档，未同时合并较新业务代码。本文生成清单及契约中的新增字段/测试对应此基线；其他检出以其候选 SHA 的生成器和源码为准，不为补齐文档清单手工新增生成副本。
+
+当前 main 的旧 CI 仍使用 unittest；核对基线的 CI 已使用 pytest。文档定稿没有实施 CI 升级，不能把不同分支的 CI 结果混用。下述显式安装 pytest 的本地入口兼容缺少 test extra 的旧检出；各平台 CI 配置仍核对实际候选。
 
 ## 工作区与提交
 
@@ -15,7 +21,7 @@
 在本仓独立虚拟环境中准备本机测试：
 
 ```bash
-python -m pip install -e '.[test]'
+python -m pip install -e . 'pytest>=8.3,<9'
 python -m pytest tests -q --tb=short
 ```
 
@@ -23,7 +29,7 @@ python -m pytest tests -q --tb=short
 
 ```bash
 python -m pip install --require-hashes -r requirements.lock
-python -m pip install -e '.[test]'
+python -m pip install -e . 'pytest>=8.3,<9'
 python -m pytest tests -q --tb=short
 ```
 
@@ -76,7 +82,7 @@ git ls-files --others --exclude-standard -- cloud/auth-service/src/xynigo_auth
 
 ### 待实施的机器门禁
 
-本次文档草案不增加命令能力。三个同步脚本后续统一增加只读 `--check`：共享生成逻辑、不写文件或创建目录、缺失或不一致时非零退出、报告差异路径与修复命令。CI 在任何生成或构建前执行；新增输出加入同一清单，不为每份复制品重复实现比较逻辑。AST 生成使用固定解释器版本，避免格式化差异。
+本次文档定稿不增加命令能力。三个同步脚本后续统一增加只读 `--check`：共享生成逻辑、不写文件或创建目录、缺失或不一致时非零退出、报告差异路径与修复命令。CI 在任何生成或构建前执行；新增输出加入同一清单，不为每份复制品重复实现比较逻辑。AST 生成使用固定解释器版本，避免格式化差异。
 
 验收至少覆盖正确、过期、缺失输出，以及检查前后工作区完全不变。生成一致性与行为回归分别验证，不能互相替代。
 
