@@ -204,6 +204,43 @@ class ExecutorChannelStateTests(unittest.TestCase):
 
 
 class ExecutorTaskApplicationTests(unittest.TestCase):
+    def test_failed_final_ack_keeps_shutdown_blocked_until_cloud_accepts(self):
+        from purchase_tool.task_runtime import TaskConflict
+        worker, client, _holder, coordinator = self.build_worker({})
+        def operation(*_args, **_kwargs):
+            self.assertTrue(coordinator.running())
+            return 'succeeded', 'environment_completed', {'runStatus': 'completed'}
+        worker.operation_task_executor = operation
+        real_finish = client.finish
+        def unavailable(*_args, **_kwargs):
+            raise LocalAuthError('cloud_unreachable', status=503)
+        client.finish = unavailable
+        with self.assertRaises(LocalAuthError):
+            worker._execute_task(DEVICE_CREDENTIAL, {
+                'id': 'synthetic-final-ack', 'type': 'environment.create-bound.v1',
+                'leaseToken': LEASE_TOKEN, 'payload': {}})
+        self.assertIsNotNone(worker.pending_finish)
+        self.assertTrue(coordinator.running())
+        with self.assertRaises(TaskConflict):
+            coordinator.begin_shutdown()
+        client.finish = real_finish
+        worker._flush_pending_finish(DEVICE_CREDENTIAL)
+        self.assertIsNone(worker.pending_finish)
+        self.assertFalse(coordinator.running())
+        coordinator.begin_shutdown()
+
+    def test_revoked_identity_does_not_pin_shutdown_after_local_work_finishes(self):
+        worker, client, _holder, coordinator = self.build_worker({})
+        worker.shutdown_hold = coordinator.hold_shutdown()
+        worker.pending_finish = (DEVICE_CREDENTIAL, 'completed-task', LEASE_TOKEN, 'succeeded', 'environment_completed', {})
+        def revoked(*_args, **_kwargs):
+            raise LocalAuthError('executor_revoked', status=401)
+        client.finish = revoked
+        with self.assertRaises(LocalAuthError):
+            worker._flush_pending_finish(DEVICE_CREDENTIAL)
+        self.assertIsNone(worker.pending_finish)
+        coordinator.begin_shutdown()
+
     def build_worker(self, config, operation_task_executor=None):
         client = FakeExecutorClient()
         state_store = ExecutorChannelStateStore(

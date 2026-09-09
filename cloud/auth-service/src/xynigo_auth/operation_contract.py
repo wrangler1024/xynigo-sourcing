@@ -106,7 +106,8 @@ class EnvironmentRetryRunCreateBody(EnvironmentSiteConfirmationBody):
     model_config = ConfigDict(extra="forbid")
 
     idempotencyKey: str = Field(min_length=8, max_length=128, pattern=SAFE_KEY_RE)
-    retryMode: Literal["single", "failed"]
+    retryMode: Literal["single", "failed", "interrupted"]
+    confirmOriginalStopped: StrictBool = False
     accountRefs: list[str] = Field(min_length=1, max_length=2000)
     takeover: bool = False
     executorId: uuid.UUID | None = None
@@ -136,6 +137,10 @@ class EnvironmentRetryRunCreateBody(EnvironmentSiteConfirmationBody):
         if self.retryMode == "single" and len(self.accountRefs) != 1:
             raise ValueError("single retry requires exactly one account")
         takeover_fields = self.executorId is not None or self.cloudPlanId is not None
+        if self.retryMode == "interrupted":
+            if self.takeover or not self.confirmOriginalStopped or self.executorId is None or not self.cloudPlanId:
+                raise ValueError("interrupted recovery requires original executor, fresh plan and stopped confirmation")
+            return self
         if self.takeover and (self.executorId is None or not self.cloudPlanId):
             raise ValueError("takeover requires executorId and cloudPlanId")
         if not self.takeover and takeover_fields:

@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import purchase_tool.main as main_module
 from purchase_tool.main import Handler
+from purchase_tool.task_runtime import LocalTaskCoordinator
 
 
 LAUNCHER_TOKEN = 'launcher-token-' + ('x' * 40)
@@ -46,6 +47,26 @@ class FakeUpdates:
 
 
 class LauncherUpdateControlTests(unittest.TestCase):
+    def test_shutdown_requires_idle_executor_and_cloud_ack(self):
+        tasks = LocalTaskCoordinator(lambda: True)
+        main_module.STATE.tasks = tasks
+        task = tasks.begin('env_batch')
+        hold = tasks.hold_shutdown()
+        for active in (True, False):
+            if not active:
+                tasks.finish(task)
+            with self.assertRaises(HTTPError) as caught:
+                self._post('/executor-control/shutdown')
+            self.assertEqual(caught.exception.code, 409)
+            payload = json.loads(caught.exception.read())
+            self.assertEqual(payload['code'], 'executor_tasks_active')
+            self.assertFalse(payload['stopping'])
+            self.assertTrue(self.thread.is_alive())
+        tasks.release_shutdown(hold)
+        self.assertEqual(self._post('/executor-control/shutdown'), (200, {'stopping': True}))
+        self.thread.join(timeout=2)
+        self.assertFalse(self.thread.is_alive())
+
     def setUp(self):
         self.original_state = main_module.STATE
         self.updates = FakeUpdates()

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Xynigo Sourcing v0.17.13</title>
+<title>Xynigo Sourcing v0.17.14</title>
 <link rel="icon" type="image/png" sizes="260x260" href="/xynigo-x.png?v=6">
 <link rel="icon" type="image/x-icon" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256" href="/favicon.ico?v=6">
 <link rel="shortcut icon" href="/favicon.ico?v=6">
@@ -1762,7 +1762,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
           <div class="hero-kicker">XYNIGO SOURCING WORKSPACE</div>
           <h1>让小犀帮你把每一单稳稳带回来，<span class="hero-call">Xyni, GO!</span></h1>
           <p id="moduleSummary">集中查看采购待办、履约风险与本地执行状态。</p>
-          <div class="hero-meta"><span class="hero-chip">累计修复测试 v0.17.13</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
+          <div class="hero-meta"><span class="hero-chip">累计修复测试 v0.17.14</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
         </div>
         <div class="hero-lockup" role="img" aria-label="小犀与 Xynigo 完整品牌一体图形">
           <img src="xynigo-logo.png" alt="">
@@ -2399,6 +2399,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
       <div id="envBoundExports">
         <div class="action-row" style="margin-top:12px">
           <button class="btn" id="btnEnvRetryFailed" disabled>🔄 批量重试失败项</button>
+          <button class="btn hidden" id="btnEnvResume" type="button">核对并续跑原批次</button>
           <button class="btn primary" id="btnEnvMapping" disabled>📥 导出绑定映射清单（不含凭证）</button>
           <button class="btn hidden" id="btnEnvTsv" disabled>旧表直贴已停用</button>
           <span class="hint">批量操作只重试当前 failed 行并从失败步骤续跑；绑定映射清单仅用于本地留档。</span>
@@ -3216,6 +3217,7 @@ let envMode = 'bound';                       // bound=绑号环境 / backup=备�
 let envBackup = { buyer: '', count: 10, type: '备用' };
 let backupRunning = false;
 let cloudEnvironmentRunId = '';
+let cloudEnvironmentRecovery = null;
 let cloudEnvironmentTaskId = '';
 let cloudEnvironmentExecutorId = '';
 let cloudLogisticsRunId = '';
@@ -3790,7 +3792,7 @@ async function cloudFetchJson(path, opts={}) {
   const headers = new Headers(opts.headers || {});
   headers.set('Accept', 'application/json');
   headers.set('X-Xynigo-Source', 'cloud_web_workspace');
-  headers.set('X-Xynigo-Client-Version', '0.17.13-cloud-web');
+  headers.set('X-Xynigo-Client-Version', '0.17.14-cloud-web');
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     headers.set('X-Xynigo-Web-CSRF', 'same-origin');
   }
@@ -4113,7 +4115,7 @@ function environmentIpProgressText(snap) {
 
 function cloudEnvironmentLegacySnapshot(run) {
   if (!run) return {running:false, rows:[], elapsedSec:0, hubConnected:false};
-  const rows = (run.rows || []).map(row => {
+  const rows = (run.recoveryRows || run.rows || []).map(row => {
     const status = String(row.status || 'queued');
     let state = status;
     if (status === 'queued') state = 'pending';
@@ -4143,7 +4145,7 @@ function cloudEnvironmentLegacySnapshot(run) {
     }));
   const phase = String(run.phase || '').replace(/^environment\./, '');
   const summary = {
-    total:Number(run.totalCount || rows.length),
+    total:Math.max(Number(run.totalCount || 0), rows.length),
     done:Number(run.successCount || rows.filter(row => row.state === 'done').length),
     failed:Number(run.failedCount || rows.filter(row => row.state === 'failed').length),
     stopped:rows.filter(row => row.state === 'stopped').length,
@@ -4163,6 +4165,9 @@ function cloudEnvironmentLegacySnapshot(run) {
   };
   return {
     runId:String(run.runId || ''), site:String(run.site || ''),
+    runStatus:String(run.status || ''), runMode:String(run.mode || ''),
+    purchaseDate:String(run.purchaseDate || ''),
+    statusMessage:String(run.errorSummary || resultMessages[String(run.resultCode || '')] || ''),
     executorId:String(run.executorId || ''),
     environmentGroup:String(run.environmentGroup || ''),
     running:!run.terminal, stopRequested:!!run.stopRequested,
@@ -7684,6 +7689,8 @@ function updateEnvButtons() {
     || !!envRetryAccountId || envRetryFailedSubmitting || envFailedCount < 1;
   $('btnEnvRetryFailed').textContent = envRetryFailedSubmitting
     ? '⏳ 正在提交批量重试…' : `🔄 批量重试失败项${envFailedCount ? `（${envFailedCount}）` : ''}`;
+  $('btnEnvResume').classList.toggle('hidden', !CLOUD_WEB_MODE || !cloudEnvironmentRecovery);
+  $('btnEnvResume').disabled = busy || envRetryFailedSubmitting;
   $('envWriteLedger').disabled = envMode !== 'bound' || !larkReady || busy;
   if (envMode !== 'bound') $('envWriteLedger').checked = false;
 }
@@ -7868,6 +7875,15 @@ function renderEnvExecutionState(snap, mode) {
       `当前完成 ${done}/${total || '—'}，已用 ${snap.elapsedSec || 0} 秒；页面每 1.5 秒自动刷新，请勿重复点击“正式执行”。`);
     return;
   }
+  const unsettled = Math.max(0, total - done - failed - stopped);
+  if (snap.runStatus === 'uncertain' || snap.phase === 'uncertain'
+      || (!snap.stopRequested && !snap.fatalError && unsettled > 0)) {
+    setEnvExecutionState('warning', `${taskName}执行中断，结果待核对`,
+      `已确认完成 ${done}/${total}，${unsettled} 行未确认完成${failed ? `，${failed} 行失败` : ''}。`
+      + (snap.statusMessage || '执行器任务未正常结束。')
+      + ' 请保留已有环境，从原批次上传原始文件后核对续跑，不要重新创建整批。');
+    return;
+  }
   if (snap.fatalError) {
     setEnvExecutionState(
       'failed', `${taskName}执行中断`,
@@ -7890,7 +7906,7 @@ function renderEnvExecutionState(snap, mode) {
     const partlyFailed = failed > 0;
     const kind = partlyFailed ? 'warning' : 'success';
     const recovered = Number(summary.recovered || 0);
-    const created = Number(summary.created || Math.max(0, done - recovered));
+    const created = Math.max(0, done - recovered);
     let title = `${taskName}已完成：新建 ${created}，恢复已有 ${recovered}`;
     let detail = '后台任务已经结束，结果将持久化到数据库并异步镜像到独立 Base。';
     if (partlyFailed) {
@@ -7913,6 +7929,14 @@ function renderEnvExecutionState(snap, mode) {
 function renderEnvBatch(snap) {
   const wasRunning = envRunning;
   envRunning = !!snap.running;
+  if (CLOUD_WEB_MODE) {
+    const recoverable = (snap.rows || []).filter(row => !['done','stopped','rolled_back'].includes(row.state)
+      && !['pending','deleting','deleted'].includes(row.cleanupStatus));
+    cloudEnvironmentRecovery = !snap.running && recoverable.length
+      && ['uncertain','failed','partial_failure'].includes(snap.runStatus)
+      && ['bound','retry_row','retry_failed'].includes(snap.runMode)
+      ? {...snap, accountRefs:recoverable.map(row => row.accountId)} : null;
+  }
   if (snap.executorId) cloudEnvironmentExecutorId = String(snap.executorId);
   envStopRequested = !!snap.stopRequested;
   envElapsedBase = Number(snap.elapsedSec || 0);
@@ -8478,7 +8502,9 @@ function renderEnvironmentHistoryItems(items) {
       + `<td>${dateTimeStack(formatQueryHistoryTime(item.createdAt))}</td><td>${esc(item.actorDisplayName || '未知用户')}</td><td>${esc(item.executorDisplayName || '—')}</td><td>${esc(item.site || '—')}</td><td>${esc(item.environmentGroup || '—')}</td><td>${esc(environmentHistoryType(item))}</td>`
       + `<td>${Number(item.plannedCount || 0)}</td><td>${Number(item.successCount || 0)}</td><td>${Number(item.recoveredCount || 0)}</td><td>${Number(item.failedCount || 0)}</td>`
       + `<td><span class="query-history-status ${status[1]}">${esc(status[0])}</span></td><td>${esc(formatQueryHistoryDuration(item.durationSec))}</td><td>${dateTimeStack(formatQueryHistoryTime(item.updatedAt))}</td>`
-      + `<td><button class="btn-mini" type="button" data-environment-history-view="${taskId}">查看明细</button></td></tr>`;
+      + `<td><button class="btn-mini" type="button" data-environment-history-view="${taskId}">查看明细</button>`
+      + (['uncertain','failed','partial_failure'].includes(item.status) && ['bound','retry_row','retry_failed'].includes(item.taskType)
+        ? `<button class="btn-mini" type="button" data-environment-history-resume="${esc(item.latestRunId || taskId)}">载入原批次</button>` : '') + '</td></tr>';
   }).join('');
 }
 
@@ -8780,6 +8806,8 @@ $('btnEnvironmentHistoryBack').onclick = () => {
 $('environmentHistoryBody').onclick = event => {
   const copyButton = event.target.closest('[data-copy-id]');
   if (copyButton) { copyStableId(copyButton.dataset.copyId); return; }
+  const resumeButton = event.target.closest('[data-environment-history-resume]');
+  if (resumeButton) { loadInterruptedEnvironment(resumeButton.dataset.environmentHistoryResume); return; }
   const button = event.target.closest('[data-environment-history-view]');
   if (button) openEnvironmentHistoryDetail(button.dataset.environmentHistoryView);
 };
@@ -12052,10 +12080,63 @@ async function cloudEnvironmentRetryRoute() {
   };
 }
 
+async function loadInterruptedEnvironment(runId) {
+  if (envRunning || backupRunning || envSubmitting) { toast('请先等待当前任务结束'); return; }
+  try {
+    const run = await cloudOperationSnapshot('environment', runId);
+    cloudEnvironmentRunId = String(run.runId || '');
+    cloudEnvironmentExecutorId = String(run.executorId || '');
+    envMode = 'bound';
+    envCloudPlanId = null; envLocalPlanId = null; envAccountCount = 0;
+    resetEnvironmentSiteReview();
+    $('envSite').value = run.site;
+    if (!Array.from($('envSiteGroup').options).some(o => o.value === run.environmentGroup)) {
+      $('envSiteGroup').add(new Option(run.environmentGroup, run.environmentGroup));
+    }
+    $('envSiteGroup').value = run.environmentGroup;
+    $('envDate').value = String(run.purchaseDate || '').replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3');
+    renderEnvBatch(await cloudEnvironmentSnapshotWithHistory(run));
+    closeEnvironmentHistory();
+    $('envPlan').textContent = '已载入原批次。请选择原采购电脑，重新上传原始 xlsx 并确认站点，再点击“核对并续跑原批次”。原分配和环境名称会保留。';
+    refreshAssignUi();
+  } catch (error) { toast(error.message); }
+}
+
+$('btnEnvResume').onclick = async () => {
+  if (!cloudEnvironmentRecovery || envSubmitting || envRunning || envRetryFailedSubmitting) return;
+  try {
+    const target = cloudEnvironmentRecovery;
+    if (!envCloudPlanId) throw new Error('请先按原站点和分组重新上传原始 xlsx，再核对续跑');
+    if ($('envSite').value !== target.site || $('envSiteGroup').value !== target.environmentGroup)
+      throw new Error('恢复必须使用原站点和分组，请重新上传原始文件');
+    const executor = await cloudFormalExecutor('environment.resume.v1');
+    if (String(executor.id) !== target.executorId) throw new Error('请先选择原采购电脑；中断核对续跑不能切换设备');
+    const proof = environmentSiteConfirmationPayload();
+    if (!confirm(`确认原采购电脑上的这笔建环境任务已经停止？\n\n将核对原批次剩余 ${target.accountRefs.length} 行：已完成的不重复创建，已存在环境先核对身份和步骤，绑号状态不确定的保留待人工核对。请保持执行器运行。`)) return;
+    const payload = {retryMode:'interrupted', accountRefs:target.accountRefs,
+      executorId:target.executorId, cloudPlanId:envCloudPlanId, confirmOriginalStopped:true, ...proof};
+    const idempotencyKey = workspaceMutationKey('env-resume:' + target.runId, payload);
+    envRetryFailedSubmitting = true;
+    beginEnvSubmission('正在提交原批次核对续跑', '保留原环境身份，核对完成前不会重复创建已有环境。');
+    const response = await cloudFetchJson(`/v1/operation-runs/environment-creation/${encodeURIComponent(target.runId)}/retry`, {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({...payload,idempotencyKey})});
+    clearWorkspaceMutationKey('env-resume:' + target.runId, idempotencyKey);
+    cloudEnvironmentRunId = String(response.data.runId);
+    envCloudPlanId = null; envLocalPlanId = null;
+    renderEnvBatch(await cloudEnvironmentSnapshotWithHistory(response.data));
+    envRunning = true;
+    setEnvExecutionState('running', '原批次核对续跑已受理', '请保持执行器运行，无法安全确认的行会保留原环境并显示具体原因。');
+    envProgressLoaded = false;
+    setTimeout(pollEnvBatch, 400);
+  } catch (error) { toast(error.message); }
+  finally { envRetryFailedSubmitting = false; finishEnvSubmission(); }
+};
+
 $('btnEnvRetryFailed').onclick = async () => {
   if (envPreviewRunning || envSubmitting || envRunning || envRetryFailedSubmitting
       || envRetryAccountId || envFailedCount < 1) return;
   const retryCount = envFailedCount;
+  const retryRefs = lastEnvironmentRows.filter(row => row.state === 'failed').map(row => String(row.accountId || ''));
   if (!confirm(`批量重试当前 ${retryCount} 个失败账号？\n\n系统只重试当前 failed 行，并从每行第一个未完成步骤继续；已完成步骤、已完成行和已停止行都不会重复执行。`)) return;
   const payload = {};
   const idempotencyKey = workspaceMutationKey('env-retry-failed', payload);

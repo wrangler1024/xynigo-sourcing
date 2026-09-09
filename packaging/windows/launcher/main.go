@@ -27,6 +27,7 @@ import (
 	"github.com/jchv/go-webview2/pkg/edge"
 	"github.com/lxn/walk"
 	. "github.com/lxn/walk/declarative"
+	"golang.org/x/sys/windows"
 )
 
 const (
@@ -201,7 +202,7 @@ func main() {
 	}
 	defer syscall.CloseHandle(mutex)
 
-	app := &launcherApp{root: root, launcherToken: randomToken()}
+	app := &launcherApp{root: root, launcherToken: loadOrCreateLauncherToken(root)}
 	if err := app.buildWindow(); err != nil {
 		appendStatusCenterLog(root, "launcher_window_failed: "+err.Error())
 		walk.MsgBox(nil, "Xynigo 启动失败", err.Error(), walk.MsgBoxIconError)
@@ -281,6 +282,42 @@ func startupCommand(args []string) string {
 		return "pair:" + args[1]
 	}
 	return "show"
+}
+
+// Persist the control identity for this Windows user, protected by DPAPI.
+// Reopening the launcher can then request an authenticated idle shutdown
+// instead of killing an orphan whose task state is unknown.
+func loadOrCreateLauncherToken(root string) string {
+	path := filepath.Join(root, "运行数据", "launcher-token.dpapi")
+	if encrypted, err := os.ReadFile(path); err == nil && len(encrypted) > 0 {
+		input := windows.DataBlob{Size: uint32(len(encrypted)), Data: &encrypted[0]}
+		var output windows.DataBlob
+		if windows.CryptUnprotectData(&input, nil, nil, 0, nil, windows.CRYPTPROTECT_UI_FORBIDDEN, &output) == nil {
+			defer windows.LocalFree(windows.Handle(uintptr(unsafe.Pointer(output.Data))))
+			token := string(unsafe.Slice(output.Data, int(output.Size)))
+			if len(token) >= 32 {
+				return token
+			}
+		}
+		// Do not overwrite damaged evidence or terminate a previous session.
+		appendStatusCenterLog(root, "launcher_control_identity_unavailable")
+		return randomToken()
+	}
+	token := randomToken()
+	data := []byte(token)
+	input := windows.DataBlob{Size: uint32(len(data)), Data: &data[0]}
+	var output windows.DataBlob
+	if windows.CryptProtectData(&input, nil, nil, 0, nil, windows.CRYPTPROTECT_UI_FORBIDDEN, &output) != nil {
+		return token
+	}
+	defer windows.LocalFree(windows.Handle(uintptr(unsafe.Pointer(output.Data))))
+	if os.MkdirAll(filepath.Dir(path), 0o700) == nil {
+		// The launcher process mutex excludes concurrent initialization.
+		if err := os.WriteFile(path, unsafe.Slice(output.Data, int(output.Size)), 0o600); err != nil {
+			appendStatusCenterLog(root, "launcher_control_identity_save_failed")
+		}
+	}
+	return token
 }
 
 func randomToken() string {
@@ -1658,12 +1695,16 @@ func lastOnlineText(value string) string {
 }
 
 func (app *launcherApp) ensureExecutor() {
-	if _, err := app.fetchStatus(); err == nil {
+	if status, err := app.fetchStatus(); err == nil {
 		app.mu.Lock()
 		managedByCurrentLauncher := app.child != nil
 		app.mu.Unlock()
 		if managedByCurrentLauncher {
 			appendStatusCenterLog(app.root, "status_detected_current_child")
+			return
+		}
+		if status.Tasks.ActiveCount > 0 {
+			appendStatusCenterLog(app.root, "orphan_takeover_deferred_active_tasks")
 			return
 		}
 		// A standard-package upgrade can replace the launcher while the old
@@ -1673,13 +1714,16 @@ func (app *launcherApp) ensureExecutor() {
 		port := statusPort(app.statusURL)
 		app.mu.Unlock()
 		appendStatusCenterLog(app.root, fmt.Sprintf("status_detected_orphan port=%d", port))
-		if err := terminateStatusListener(port); err != nil {
-			appendStatusCenterLog(app.root, "orphan_takeover_failed: "+err.Error())
-			app.showExecutorStartFailure()
+		if !app.stopExecutor() {
+			app.showShutdownBlocked()
+			return
+		}
+		time.Sleep(800 * time.Millisecond)
+		if _, err := app.fetchStatus(); err == nil {
+			appendStatusCenterLog(app.root, "orphan_takeover_waiting_for_shutdown")
 			return
 		}
 		appendStatusCenterLog(app.root, "orphan_takeover_succeeded")
-		time.Sleep(800 * time.Millisecond)
 	} else {
 		appendStatusCenterLog(app.root, "status_unavailable_start_current")
 	}
@@ -1780,23 +1824,6 @@ func tcpListenerPIDs(port int) ([]int, error) {
 	return result, nil
 }
 
-func terminateStatusListener(port int) error {
-	pids, err := tcpListenerPIDs(port)
-	if err != nil {
-		return errors.New("无法定位旧版本本地执行器")
-	}
-	if len(pids) == 0 {
-		return errors.New("旧版本本地执行器监听进程不存在")
-	}
-	for _, pid := range pids {
-		process, findErr := os.FindProcess(pid)
-		if findErr != nil || process.Kill() != nil {
-			return errors.New("无法结束旧版本本地执行器")
-		}
-	}
-	return nil
-}
-
 func (app *launcherApp) startExecutor() error {
 	app.mu.Lock()
 	defer app.mu.Unlock()
@@ -1854,6 +1881,7 @@ func (app *launcherApp) startExecutor() error {
 		app.mu.Lock()
 		if app.child == cmd {
 			app.child = nil
+			app.statusURL = ""
 		}
 		app.mu.Unlock()
 	}()
@@ -1890,7 +1918,10 @@ func resolveRuntime(root string) (string, string, error) {
 }
 
 func (app *launcherApp) restartExecutor() {
-	app.stopExecutor()
+	if !app.stopExecutor() {
+		app.showShutdownBlocked()
+		return
+	}
 	time.Sleep(600 * time.Millisecond)
 	if err := app.startExecutor(); err != nil {
 		app.mw.Synchronize(func() {
@@ -1903,37 +1934,54 @@ func (app *launcherApp) restartExecutor() {
 	})
 }
 
-func (app *launcherApp) stopExecutor() {
+func (app *launcherApp) showShutdownBlocked() {
+	app.mw.Synchronize(func() {
+		walk.MsgBox(app.mw, "暂不能退出或重启", "本机任务仍在执行、回传结果，或状态暂时无法确认。请保留执行器运行；采购助手连接异常时先点击插件“重新检测”。", walk.MsgBoxIconWarning)
+	})
+}
+
+func (app *launcherApp) stopExecutor() bool {
 	app.mu.Lock()
 	cmd := app.child
 	done := app.childDone
 	statusURL := app.statusURL
 	token := app.launcherToken
 	app.mu.Unlock()
-	if cmd == nil {
-		if port := statusPort(statusURL); port > 0 {
-			_ = terminateStatusListener(port)
-		}
-		return
+	if cmd == nil && statusURL == "" {
+		return true
 	}
+	// Require the executor's atomic idle/admission check. A stale UI snapshot,
+	// rejected shutdown or network timeout must never fall through to Kill.
+	accepted := false
 	if statusURL != "" {
 		controlURL := strings.Replace(statusURL, "/executor-status.json", "/executor-control/shutdown", 1)
 		request, _ := http.NewRequest(http.MethodPost, controlURL, bytes.NewReader(nil))
 		request.Header.Set("X-Xynigo-Launcher", token)
-		client := &http.Client{Timeout: 900 * time.Millisecond}
+		client := &http.Client{Timeout: 3 * time.Second}
 		if response, err := client.Do(request); err == nil {
-			io.Copy(io.Discard, response.Body)
+			var result struct {
+				Stopping bool `json:"stopping"`
+			}
+			accepted = response.StatusCode == http.StatusOK && json.NewDecoder(response.Body).Decode(&result) == nil && result.Stopping
 			response.Body.Close()
 		}
+	}
+	if !accepted {
+		appendStatusCenterLog(app.root, "executor_shutdown_blocked")
+		return false
+	}
+	if cmd == nil {
+		return true
 	}
 	if done != nil {
 		select {
 		case <-done:
-			return
+			return true
 		case <-time.After(5 * time.Second):
 		}
 	}
 	_ = cmd.Process.Kill()
+	return true
 }
 
 func (app *launcherApp) performPair(raw string) {
@@ -2065,10 +2113,13 @@ func (app *launcherApp) handleCommand(command string) {
 }
 
 func (app *launcherApp) exitApplication() {
+	if !app.stopExecutor() {
+		app.showShutdownBlocked()
+		return
+	}
 	app.mu.Lock()
 	app.exiting = true
 	app.mu.Unlock()
-	app.stopExecutor()
 	app.mw.Synchronize(func() {
 		app.mw.SetVisible(true)
 		app.mw.Close()

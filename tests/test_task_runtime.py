@@ -11,6 +11,27 @@ from purchase_tool.task_runtime import (
 
 
 class TaskCoordinatorTests(unittest.TestCase):
+    def test_shutdown_excludes_admission_and_waits_for_final_cloud_ack(self):
+        coordinator = LocalTaskCoordinator(lambda: True)
+        hold = coordinator.hold_shutdown()
+        with self.assertRaises(TaskConflict):
+            coordinator.begin_shutdown()
+        task = coordinator.begin('env_batch')
+        coordinator.finish(task)
+        self.assertTrue(coordinator.snapshot()['running'])
+        with self.assertRaises(TaskConflict):
+            coordinator.begin_shutdown()
+        coordinator.release_shutdown(hold)
+        task = coordinator.begin('query')
+        with self.assertRaises(TaskConflict):
+            coordinator.begin_shutdown()
+        coordinator.finish(task)
+        coordinator.begin_shutdown()
+        with self.assertRaises(TaskConflict):
+            coordinator.begin('env_batch')
+        with self.assertRaises(TaskConflict):
+            coordinator.hold_shutdown()
+
     def test_compatibility_mode_preserves_serial_execution(self):
         coordinator = LocalTaskCoordinator(lambda: False)
         query_id = coordinator.begin('query', {'code:100'})

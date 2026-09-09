@@ -1166,6 +1166,8 @@ class ExecutorChannelService:
                     attempt=task.attempt,
                     heartbeat_at=now,
                     completed_at=now,
+                    result_summary={"errorCode": "lease_expired_after_start",
+                                    "errorSummary": "执行器任务连接中断，结果待核对；请从原批次核对续跑"},
                 )
                 self._event(
                     task,

@@ -56,6 +56,28 @@ class LocalTaskCoordinator(object):
         self.safe_parallel_getter = safe_parallel_getter
         self.lock = threading.Lock()
         self.tasks = {}
+        self.shutdown_requested = False
+        self.shutdown_holds = set()
+
+    def hold_shutdown(self):
+        """Keep a cloud task alive through admission and final acknowledgement."""
+        with self.lock:
+            if self.shutdown_requested:
+                raise TaskConflict('执行器正在退出，请重新连接后再提交任务')
+            token = secrets.token_hex(12)
+            self.shutdown_holds.add(token)
+            return token
+
+    def release_shutdown(self, token):
+        with self.lock:
+            self.shutdown_holds.discard(token)
+
+    def begin_shutdown(self):
+        """Atomically exclude task admission before acknowledging shutdown."""
+        with self.lock:
+            if self.tasks or self.shutdown_holds:
+                raise TaskConflict('本机任务仍在执行或回传结果，请完成后再退出或重启；插件可使用重新检测')
+            self.shutdown_requested = True
 
     def _compatible(self, left, right):
         if left == right:
@@ -90,6 +112,8 @@ class LocalTaskCoordinator(object):
     def begin(self, kind, resources=()):
         resources = set(resources or ())
         with self.lock:
+            if self.shutdown_requested:
+                raise TaskConflict('执行器正在退出，请重新连接后再提交任务')
             for task in self.tasks.values():
                 if not self._compatible(kind, task['kind']):
                     raise TaskConflict(
@@ -132,14 +156,14 @@ class LocalTaskCoordinator(object):
 
     def running(self):
         with self.lock:
-            return bool(self.tasks)
+            return bool(self.tasks or self.shutdown_holds)
 
     def snapshot(self):
         with self.lock:
             now = time.time()
             return {
                 'safeParallel': bool(self.safe_parallel_getter()),
-                'running': bool(self.tasks),
+                'running': bool(self.tasks or self.shutdown_holds),
                 'tasks': [{
                     'taskId': item['taskId'],
                     'kind': item['kind'],
@@ -150,7 +174,11 @@ class LocalTaskCoordinator(object):
                         time.gmtime(item['startedAt'])),
                     'elapsedSec': int(max(0, now - item['startedAt'])),
                     'resourceCount': self._resource_count(item['resources']),
-                } for item in self.tasks.values()],
+                } for item in self.tasks.values()] + ([{
+                    'taskId': 'cloud-result-handoff', 'kind': 'operation',
+                    'label': '云端任务受理或结果回传', 'state': 'running',
+                    'startedAt': '', 'elapsedSec': 0, 'resourceCount': 0,
+                }] if self.shutdown_holds and not self.tasks else []),
             }
 
 

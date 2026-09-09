@@ -2,8 +2,20 @@
 import base64
 import hashlib
 import threading
+import pytest
 
 from purchase_tool.operation_executor import LocalOperationExecutor
+
+
+def test_incomplete_environment_result_cannot_report_completed():
+    rows = [{'status': 'success'}] * 79 + [{'status': 'running'}] * 2 + [{'status': 'queued'}] * 153
+    summary = LocalOperationExecutor._environment_summary({'running': False}, 234, rows)
+    assert summary['runStatus'] == 'uncertain'
+    assert summary['successCount'] == 79
+    assert summary['errorCode'] == 'environment_progress_incomplete'
+    outcome, code, result = LocalOperationExecutor._terminal_result('environment', summary)
+    assert outcome != 'succeeded'
+    assert result['runStatus'] == 'uncertain'
 
 
 def response(body, status=200):
@@ -199,7 +211,8 @@ def test_bound_environment_task_reports_rows_and_uses_explicit_group():
     assert events[-1]['snapshot']['rows'][0]['ipVerified'] is True
 
 
-def test_bound_environment_task_hydrates_encrypted_cloud_plan_before_start():
+@pytest.mark.parametrize('interrupted', [False, True])
+def test_bound_environment_task_hydrates_encrypted_cloud_plan_before_start(interrupted):
     rpc = CloudPlanRpc('/api/envbatch/progress', [{
         'running': False,
         'phase': 'completed',
@@ -225,6 +238,9 @@ def test_bound_environment_task_hydrates_encrypted_cloud_plan_before_start():
     }
     account_ref = hashlib.sha256(
         account['email'].strip().casefold().encode('utf-8')).hexdigest()
+    recovery = {'rows': [{'accountRef': account_ref,
+                         'environmentName': 'XG-MX-0901-101', 'environmentRef':'8001',
+                         'completedSteps':['env_created','cookie_imported','account_bound']}]} if interrupted else None
 
     outcome, code, _summary = executor.execute(
         'environment.create-bound.v1', {
@@ -245,6 +261,7 @@ def test_bound_environment_task_hydrates_encrypted_cloud_plan_before_start():
                 'environmentName': 'XG-MX-0901-101',
             }],
             'inventoryCacheFresh': True,
+            'resumeContext': recovery,
         }, lambda **_event: None)
 
     assert outcome == 'succeeded'
@@ -262,6 +279,7 @@ def test_bound_environment_task_hydrates_encrypted_cloud_plan_before_start():
         'environmentName': 'XG-MX-0901-101',
     }]
     assert rpc.calls[1]['body']['trustCloudInventory'] is True
+    assert rpc.calls[1]['body']['resumeContext'] == recovery
 
 
 def test_backup_environment_task_honors_cooperative_cancellation():

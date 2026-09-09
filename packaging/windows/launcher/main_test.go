@@ -3,10 +3,54 @@
 package main
 
 import (
+	"bytes"
+	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 )
+
+func TestLauncherControlIdentitySurvivesRestartAndIsEncrypted(t *testing.T) {
+	root := t.TempDir()
+	token := loadOrCreateLauncherToken(root)
+	if len(token) < 32 || loadOrCreateLauncherToken(root) != token {
+		t.Fatal("control identity did not survive reopening")
+	}
+	stored, err := os.ReadFile(filepath.Join(root, "运行数据", "launcher-token.dpapi"))
+	if err != nil || bytes.Contains(stored, []byte(token)) {
+		t.Fatal("control identity must be stored with Windows user encryption")
+	}
+}
+
+func TestShutdownRequiresExplicitIdleApproval(t *testing.T) {
+	for _, tc := range []struct {
+		status   int
+		body     string
+		accepted bool
+	}{
+		{409, `{"stopping":false}`, false},
+		{403, `{}`, false},
+		{200, `{"stopping":false}`, false},
+		{200, `invalid`, false},
+		{200, `{"stopping":true}`, true},
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != "POST" || r.Header.Get("X-Xynigo-Launcher") != "test-control" {
+				t.Error("shutdown must be authenticated")
+			}
+			w.WriteHeader(tc.status)
+			io.WriteString(w, tc.body)
+		}))
+		app := &launcherApp{root: t.TempDir(), launcherToken: "test-control", statusURL: server.URL + "/executor-status.json"}
+		if app.stopExecutor() != tc.accepted {
+			t.Errorf("unexpected shutdown result: %d %s", tc.status, tc.body)
+		}
+		server.Close()
+	}
+}
 
 func TestActiveTaskNoteUsesFirstTaskAndElapsedTime(t *testing.T) {
 	status := &localStatus{}

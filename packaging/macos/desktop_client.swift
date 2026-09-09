@@ -155,6 +155,7 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
     private var waitingForUpdateInstall = false
     private var orphanTakeoverInFlight = false
     private var quitting = false
+    private var shutdownInFlight = false
     private var pendingOpenSettings = false
     private lazy var launcherToken = loadOrCreateLauncherToken()
     private lazy var session: URLSession = {
@@ -202,13 +203,18 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        quitting = true
-        pollTimer?.invalidate()
-        webView?.configuration.userContentController.removeScriptMessageHandler(
-            forName: "xynigo"
-        )
-        stopManagedExecutor()
-        return .terminateNow
+        if quitting { return .terminateNow }
+        if shutdownInFlight { return .terminateCancel }
+        stopManagedExecutor { [weak self] accepted in
+            guard let self else { sender.reply(toApplicationShouldTerminate: false); return }
+            if accepted {
+                self.quitting = true
+                self.pollTimer?.invalidate()
+                self.webView?.configuration.userContentController.removeScriptMessageHandler(forName: "xynigo")
+            } else { self.showShutdownBlocked() }
+            sender.reply(toApplicationShouldTerminate: accepted)
+        }
+        return .terminateLater
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
@@ -815,85 +821,21 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         statusTitle.stringValue = "正在恢复执行器控制"
         statusDetail.stringValue = "检测到上一客户端会话，正在安全接管本机服务。"
         appendLauncherLog("orphan_takeover_started")
-        DispatchQueue.global(qos: .utility).async { [weak self] in
+        statusBaseURL = baseURL
+        stopManagedExecutor { [weak self] stopped in
             guard let self else { return }
-            let stopped = self.terminateOwnedListener(baseURL)
-            DispatchQueue.main.async {
-                self.orphanTakeoverInFlight = false
-                if stopped {
-                    self.appendLauncherLog("orphan_takeover_succeeded")
-                    self.statusBaseURL = nil
-                    self.controlledBaseURL = nil
-                    self.lastStatus = nil
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        self.startManagedExecutor()
-                    }
-                } else {
-                    self.appendLauncherLog("orphan_takeover_failed")
-                    self.apply(status, baseURL)
-                    self.statusDetail.stringValue =
-                        "无法安全接管上一会话；请退出客户端后重新打开。"
-                }
+            self.orphanTakeoverInFlight = false
+            if stopped {
+                self.appendLauncherLog("orphan_takeover_succeeded")
+                self.statusBaseURL = nil
+                self.controlledBaseURL = nil
+                self.lastStatus = nil
+                self.startManagedExecutor()
+            } else {
+                self.appendLauncherLog("orphan_takeover_deferred")
+                self.apply(status, baseURL)
+                self.statusDetail.stringValue = "暂时无法确认上一会话可安全退出，已保留后台任务；请等待任务结束后再恢复连接。"
             }
-        }
-    }
-
-    private func terminateOwnedListener(_ baseURL: URL) -> Bool {
-        guard let port = baseURL.port,
-              let resources = try? resourcesDirectory() else { return false }
-        let expectedRuntime = resources
-            .appendingPathComponent("runtime/xynigo-sourcing")
-            .resolvingSymlinksInPath().path
-        let pids = listenerPIDs(port)
-        guard !pids.isEmpty else { return false }
-        for pid in pids {
-            guard let command = commandOutput(
-                "/bin/ps", ["-p", String(pid), "-o", "command="]
-            )?.trimmingCharacters(in: .whitespacesAndNewlines),
-                command == expectedRuntime || command.hasPrefix(expectedRuntime + " ") else {
-                return false
-            }
-        }
-        for pid in pids { _ = Darwin.kill(pid, SIGTERM) }
-        for _ in 0..<30 {
-            if pids.allSatisfy({ Darwin.kill($0, 0) != 0 }) { return true }
-            Thread.sleep(forTimeInterval: 0.1)
-        }
-        for pid in pids where Darwin.kill(pid, 0) == 0 {
-            _ = Darwin.kill(pid, SIGKILL)
-        }
-        return true
-    }
-
-    private func listenerPIDs(_ port: Int) -> [Int32] {
-        guard let output = commandOutput(
-            "/usr/sbin/lsof",
-            ["-nP", "-t", "-iTCP:\(port)", "-sTCP:LISTEN"]
-        ) else { return [] }
-        return Array(Set(output.split(whereSeparator: \.isNewline).compactMap {
-            Int32($0.trimmingCharacters(in: .whitespacesAndNewlines))
-        })).sorted()
-    }
-
-    private func commandOutput(
-        _ executable: String,
-        _ arguments: [String]
-    ) -> String? {
-        let process = Process()
-        let pipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-            process.waitUntilExit()
-            guard process.terminationStatus == 0 else { return nil }
-            return String(
-                data: pipe.fileHandleForReading.readDataToEndOfFile(),
-                encoding: .utf8)
-        } catch {
-            return nil
         }
     }
 
@@ -938,6 +880,7 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
                     guard let self, let process else { return }
                     if self.childProcess === process {
                         self.childProcess = nil
+                        self.statusBaseURL = nil
                         self.controlledBaseURL = nil
                         try? self.childLogHandle?.close()
                         self.childLogHandle = nil
@@ -989,36 +932,53 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
             )
             return
         }
-        stopManagedExecutor()
-        statusBaseURL = nil
-        lastStatus = nil
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
-            self?.startManagedExecutor()
+        if shutdownInFlight { return }
+        stopManagedExecutor { [weak self] accepted in
+            guard let self else { return }
+            guard accepted else { self.showShutdownBlocked(); return }
+            self.statusBaseURL = nil
+            self.lastStatus = nil
+            self.startManagedExecutor()
         }
     }
 
-    private func stopManagedExecutor() {
+    private func showShutdownBlocked() {
+        showAlert("暂不能退出或重启", "本机任务仍在执行、回传结果，或状态暂时无法确认。请保留执行器运行；采购助手连接异常时先点击插件“重新检测”。", .warning)
+    }
+
+    private func stopManagedExecutor(completion: @escaping (Bool) -> Void) {
+        shutdownInFlight = true
         let process = childProcess
-        if quitting {
-            if let process, process.isRunning {
-                process.terminate()
-            } else if let baseURL = statusBaseURL {
-                _ = terminateOwnedListener(baseURL)
+        let finish: (Bool) -> Void = { [weak self] accepted in
+            DispatchQueue.main.async {
+                self?.shutdownInFlight = false
+                completion(accepted)
             }
+        }
+        guard let baseURL = statusBaseURL else {
+            finish(process?.isRunning != true)
             return
         }
-        if let baseURL = statusBaseURL {
-            var request = URLRequest(
-                url: baseURL.appendingPathComponent("executor-control/shutdown")
-            )
-            request.httpMethod = "POST"
-            request.setValue(launcherToken, forHTTPHeaderField: "X-Xynigo-Launcher")
-            session.dataTask(with: request).resume()
-        }
-        guard let process, process.isRunning else { return }
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1.2) { [weak process] in
-            if process?.isRunning == true { process?.terminate() }
-        }
+        var request = URLRequest(url: baseURL.appendingPathComponent("executor-control/shutdown"))
+        request.timeoutInterval = 3
+        request.httpMethod = "POST"
+        request.setValue(launcherToken, forHTTPHeaderField: "X-Xynigo-Launcher")
+        session.dataTask(with: request) { data, response, error in
+            let body = data.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
+            guard error == nil, (response as? HTTPURLResponse)?.statusCode == 200,
+                  body?["stopping"] as? Bool == true else {
+                finish(false); return
+            }
+            // Forced termination is permitted only after atomic idle approval.
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1.2) {
+                if process?.isRunning == true { process?.terminate() }
+                for _ in 0..<20 {
+                    if process?.isRunning != true { break }
+                    Thread.sleep(forTimeInterval: 0.1)
+                }
+                finish(process?.isRunning != true)
+            }
+        }.resume()
     }
 
     @objc private func refreshStatus() {

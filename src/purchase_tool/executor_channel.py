@@ -46,6 +46,7 @@ SUPPORTED_CAPABILITIES = (
     'environment.parse.v1',
     'environment.cloud-plan.v1',
     'environment.cloud-inventory.v1',
+    'environment.resume.v1',
     'environment.preview-bound.v1',
     'logistics.query.v1',
     'logistics.auto-site.v1',
@@ -390,6 +391,7 @@ class ExecutorChannelWorker(object):
         self.stop_event = threading.Event()
         self.thread = None
         self.pending_finish = None
+        self.shutdown_hold = None
 
     def start(self):
         if self.thread and self.thread.is_alive():
@@ -582,6 +584,20 @@ class ExecutorChannelWorker(object):
                 backoff = min(30.0, backoff * 2.0)
 
     def _execute_task(self, credential, task):
+        if task.get('type') in BUSINESS_TASK_TYPES:
+            self.shutdown_hold = self.task_coordinator.hold_shutdown()
+        try:
+            return self._execute_task_with_lease(credential, task)
+        finally:
+            if not self.pending_finish:
+                self._release_shutdown_hold()
+
+    def _release_shutdown_hold(self):
+        if self.shutdown_hold:
+            self.task_coordinator.release_shutdown(self.shutdown_hold)
+            self.shutdown_hold = None
+
+    def _execute_task_with_lease(self, credential, task):
         task_id = str(task.get('id') or '')
         task_type = str(task.get('type') or '')
         lease_token = _validated_token(task.get('leaseToken'))
@@ -788,6 +804,13 @@ class ExecutorChannelWorker(object):
                 credential, task_id, lease_token, outcome,
                 result_code, result_summary)
         except LocalAuthError as exc:
+            if exc.code in {'executor_revoked', 'executor_credential_invalid'}:
+                # The local work has finished, but this identity can no longer
+                # acknowledge it. Let the channel re-pair without pinning quit
+                # forever; the cloud keeps the interrupted run for reconciliation.
+                self.pending_finish = None
+                self._release_shutdown_hold()
+                raise
             if exc.code not in {
                 'executor_task_state_conflict',
                 'executor_task_finish_conflict',
@@ -799,8 +822,10 @@ class ExecutorChannelWorker(object):
             # same completion forever would block all future polls on this
             # executor, so discard only these explicit terminal conflicts.
             self.pending_finish = None
+            self._release_shutdown_hold()
             return
         self.pending_finish = None
+        self._release_shutdown_hold()
 
     def _wait(self, seconds):
         self.stop_event.wait(max(0.0, float(seconds)))

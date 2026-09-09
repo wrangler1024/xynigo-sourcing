@@ -293,6 +293,7 @@ class LocalOperationExecutor(object):
                 'plannedEnvironmentNames': planned_names,
                 'trustCloudInventory': bool(
                     payload.get('inventoryCacheFresh')),
+                'resumeContext': payload.get('resumeContext'),
                 'operationRunKey': run_key,
             }
             backup = False
@@ -852,7 +853,11 @@ class LocalOperationExecutor(object):
         ip_total = int(raw.get('ipTotal') or 0)
         fatal_code = scrub_text(snapshot.get('fatalErrorCode') or '')[:128]
         fatal = scrub_text(snapshot.get('fatalError') or '')[:300]
-        if fatal_code or fatal:
+        if not (fatal_code or fatal) and success + failed + stopped < total:
+            run_status = 'uncertain'
+            fatal_code = 'environment_progress_incomplete'
+            fatal = '本地任务已中断或结果不完整，请从原批次核对续跑'
+        elif fatal_code or fatal:
             run_status = 'failed'
         elif stopped:
             run_status = 'cancelled'
@@ -915,7 +920,7 @@ class LocalOperationExecutor(object):
     @staticmethod
     def _terminal_result(kind, summary):
         run_status = summary['runStatus']
-        outcome = 'failed' if run_status == 'failed' else 'succeeded'
+        outcome = 'failed' if run_status in {'failed', 'uncertain'} else 'succeeded'
         code = str(summary.get('errorCode') or '') or \
             '%s_%s' % (kind, run_status)
         return outcome, code, summary

@@ -17,7 +17,7 @@ for (const cloud of [false, true]) {
     envPreviewRunning:false,envSubmitting:false,envRunning:false,backupRunning:false,
     envAssignedTotal:()=>1,envAccountCount:1,envPreflightReady:true,envBackup:{count:1},envBackupMax:25,
     envStopSubmitting:false,envStopRequested:false,envRetryAccountId:'',envRetryFailedSubmitting:false,
-    envFailedCount:0,larkReady:true});
+    envFailedCount:0,larkReady:true,cloudEnvironmentRecovery:null});
   node('envSite').value='US';node('envSiteGroup').value='美国采购分组';
   vm.runInContext(html.slice(html.indexOf('function hasEnvironmentPlan()'),html.indexOf('function cloudPlanExpiryTime(')) +
     html.slice(html.indexOf('function updateEnvButtons()'),html.indexOf('function splitEnvEvenly(')),ctx);

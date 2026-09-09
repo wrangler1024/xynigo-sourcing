@@ -2442,7 +2442,8 @@ class EnvBatchJob(object):
               reserve_resources=None, on_finished=None,
               cleanup_blocked_account_refs=None, defer_preflight=False,
               planned_environment_names=None, trust_cloud_inventory=False,
-              confirmed_site=None, confirm_filename_site_mismatch=False):
+              confirmed_site=None, confirm_filename_site_mismatch=False,
+              resume_context=None):
         if not confirm_write:
             raise ValueError('正式执行必须二次确认 HubStudio 写入')
         if write_lark_ledger and not confirm_lark_write:
@@ -2481,6 +2482,15 @@ class EnvBatchJob(object):
                 raise ValueError('云端预占环境名数量无效')
         else:
             planned_name_map = None
+        if resume_context is not None:
+            if (not isinstance(resume_context, dict) or not planned_name_map
+                    or not isinstance(resume_context.get('rows'), list)
+                    or len(resume_context['rows']) != account_count
+                    or any(not isinstance(r, dict) or not r.get('accountRef')
+                           or r.get('environmentName') != planned_name_map.get(r['accountRef'])
+                           for r in resume_context['rows'])):
+                raise ValueError('中断恢复上下文无效')
+            trust_cloud_inventory = False
         runtime = self._runtime_config(site, environment_group)
         self._require_site_review(pending, runtime['site'], confirmed_site,
                                   confirm_filename_site_mismatch)
@@ -2562,6 +2572,8 @@ class EnvBatchJob(object):
             }
         source = pending['source']
         accounts = pending['accounts']
+        if not source:
+            source = json.dumps(sorted(a.account_id for a in accounts)).encode('utf-8')
         batch_id = batch_fingerprint(
             source, assignment, runtime['site'], purchase_date)
         pending['source'] = b''
@@ -2590,7 +2602,8 @@ class EnvBatchJob(object):
                     existing_envs=selected_existing,
                     all_existing_envs=all_existing,
                     planned_env_names=planned_name_map,
-                    trust_cloud_inventory=trust_cloud_inventory)
+                    trust_cloud_inventory=trust_cloud_inventory,
+                    resume_context=resume_context)
                 if reserve_resources and defer_preflight:
                     reserve_resources(environment_resources(runner.rows))
                 if write_lark_ledger and defer_preflight:
@@ -4320,6 +4333,12 @@ class Handler(BaseHTTPRequestHandler):
                 if not self._require_launcher_control():
                     return
             if path == '/executor-control/shutdown':
+                try:
+                    STATE.tasks.begin_shutdown()
+                except TaskConflict as exc:
+                    return self._json({'stopping': False,
+                                       'code': 'executor_tasks_active',
+                                       'error': str(exc)}, 409)
                 self._json({'stopping': True})
                 threading.Thread(
                     target=self.server.shutdown,
@@ -4770,6 +4789,8 @@ class Handler(BaseHTTPRequestHandler):
                     result['inventorySnapshot'] = inventory_snapshot
                 self._json(result)
             elif path == '/api/envbatch/start':
+                if body.get('resumeContext') is not None and not self._internal_executor_rpc_allowed():
+                    raise ValueError('中断恢复必须由原云端批次发起')
                 if body.get('writeLarkLedger'):
                     raise ValueError(
                         '测试版已停用旧买家号台账直写；建环境结果将写数据库并同步新 Base')
@@ -4811,7 +4832,8 @@ class Handler(BaseHTTPRequestHandler):
                         planned_environment_names=body.get(
                             'plannedEnvironmentNames'),
                         trust_cloud_inventory=bool(
-                            body.get('trustCloudInventory')))
+                            body.get('trustCloudInventory')),
+                        resume_context=body.get('resumeContext'))
                 except Exception:
                     STATE.tasks.finish(task_id)
                     raise

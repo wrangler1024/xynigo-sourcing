@@ -14,9 +14,9 @@ from urllib.parse import quote
 
 from . import __version__
 
-RELEASE_VERSION = "0.17.13"
+RELEASE_VERSION = "0.17.14"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-08T11:55:59Z"
+RELEASE_PUBLISHED_AT = "2026-09-09T03:17:23Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,8 +31,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.17.13-6d9dba77c2ca",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.13.exe",
+        "runtimeId": "0.17.14-6d9dba77c2ca",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.14.exe",
         "sha256": "81216c50bf69fd5d8380232bc24ab8f689e40988582a8ba5bf1fa9514d1089a2",
         "size": 15264730,
         "installMode": "standard_per_user",
@@ -50,8 +50,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.17.13-6d9dba77c2ca",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.13.pkg",
+        "runtimeId": "0.17.14-6d9dba77c2ca",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.14.pkg",
         "sha256": "9205c36fd2a5001439c0cd790a42d288ce6e279772f572d57d4af309c4525b6a",
         "size": 11600748,
         "installMode": "standard_system_application",
@@ -320,9 +320,9 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "买家号建环境遇到 MX/US 混合 Cookie 时，必须重新选择并明确确认本批账号实际站点；更换文件、站点或分组后重新确认。",
-            "文件名包含与所选站点冲突的 MX、US、墨西哥或美国标记时明确提示，须修正选择或单独确认文件名有误；云端与本地执行入口共同校验，纯错站和站点分组冲突仍直接阻断。",
-            "XYP2 解析器改为上方备注输入、下方全宽采购清单，收紧输入区，将复制按钮并入清单标题栏，折叠长说明，解析页面不再展示品牌介绍卡片。",
-            "导入分单的最近使用行从首屏保留，无记录时显示暂无最近使用；首次保存和移除最后一条记录均原位更新，避免目标表输入区跳动。",
+            "建环境任务中断后显示结果待核对，按已确认完成数量统计，不再把已创建但未完成绑号的环境误报为完成。",
+            "创建历史新增载入原批次和核对续跑：原创建人在原采购电脑重新上传原文件，保留原采购员分配及环境名，核对已有环境后继续完成。",
+            "恢复前重新读取 HubStudio 全量环境，已完成的不重复创建；环境身份冲突或绑号结果不明确时保留环境并提示人工核对。",
+            "任务受理、执行或结果回传期间阻止退出和重启；客户端重新打开时使用身份校验接管旧会话，状态无法确认时不强制结束执行器。",
         ],
     }

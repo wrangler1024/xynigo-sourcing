@@ -514,7 +514,7 @@ def create_app(
 
     app = FastAPI(
         title="Xynigo Auth Service",
-        version="0.17.13",
+        version="0.17.14",
         docs_url=None,
         redoc_url=None,
         lifespan=lifespan,
@@ -4083,6 +4083,7 @@ def create_app(
         takeover_planned_names = None
         takeover_assignments = None
         takeover_cleanup_blocked: list[str] = []
+        recovery_rows = None
         try:
             run, unchanged = runs.create_environment_retry_run(
                 tenant_id=actor.tenant.id,
@@ -4091,7 +4092,7 @@ def create_app(
                 body=body,
             )
             if not unchanged:
-                if body.takeover:
+                if body.takeover or body.retryMode == "interrupted":
                     if environment_plan_service is None:
                         raise PurchaseServiceError(
                             "environment_plan_cloud_disabled",
@@ -4108,10 +4109,13 @@ def create_app(
                         "environment.cloud-plan.v1",
                         "environment.cloud-inventory.v1",
                     }
+                    if body.retryMode == "interrupted":
+                        required.add("environment.resume.v1")
                     if not required.issubset(set(executor.capabilities or [])):
                         raise PurchaseServiceError(
                             "executor_capability_missing",
-                            "接管执行器版本过旧，请先升级",
+                            "原采购电脑的执行器版本过旧，请先升级"
+                            if body.retryMode == "interrupted" else "接管执行器版本过旧，请先升级",
                             409,
                         )
                     try:
@@ -4139,6 +4143,10 @@ def create_app(
                             allow_cleanup_failed=True,
                         )
                     )
+                    if body.retryMode == "interrupted":
+                        # Capture evidence before transferring inventory ownership
+                        # to the new attempt, including rows with no progress event.
+                        recovery_rows = runs.environment_recovery_rows(parent)
                     (
                         takeover_planned_names,
                         takeover_assignments,
@@ -4169,7 +4177,7 @@ def create_app(
                 executor_channel(session), actor, run)
             task_type = (
                 "environment.create-bound.v1"
-                if body.takeover
+                if body.takeover or body.retryMode == "interrupted"
                 else "environment.retry-row.v1"
                 if body.retryMode == "single"
                 else "environment.retry-failed.v1"
@@ -4189,7 +4197,7 @@ def create_app(
                 "purchaseDate": run.purchase_date,
                 "environmentGroup": run.environment_group,
             }
-            if body.takeover:
+            if body.takeover or body.retryMode == "interrupted":
                 task_payload.update({
                     "mode": "bound",
                     "cloudPlanId": body.cloudPlanId,
@@ -4205,6 +4213,19 @@ def create_app(
                         tenant_id=actor.tenant.id
                     )["fresh"],
                 })
+                if body.retryMode == "interrupted":
+                    selected = set(body.accountRefs)
+                    lineage = runs._environment_lineage(parent)
+                    task_payload["inventoryCacheFresh"] = False
+                    task_payload["cleanupBlockedAccountRefs"] = []
+                    task_payload["resumeContext"] = {
+                        "rows": [{key: row.get(key) for key in (
+                            "accountRef", "environmentName", "environmentRef",
+                            "completedSteps", "currentStep", "status")}
+                            for row in recovery_rows
+                            if row["accountRef"] in selected],
+                        "originalAssignments": (lineage[0].request_summary or {}).get("assignments", []),
+                    }
             task = executor_channel(session).create_config_task(
                 tenant_id=actor.tenant.id,
                 user_id=actor.user.id,

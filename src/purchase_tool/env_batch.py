@@ -1454,12 +1454,12 @@ class BatchEnvOrchestrator(_EnvironmentLookupMixin):
 
     def prepare(self, accounts, assignment_spec, existing_envs=None,
                 all_existing_envs=None, planned_env_names=None,
-                trust_cloud_inventory=False):
+                trust_cloud_inventory=False, resume_context=None):
         existing = (
             self.hub.env_list(self.purchase_tag)
             if existing_envs is None else list(existing_envs))
         all_existing = (
-            (list(existing) if planned_env_names and trust_cloud_inventory
+            (list(existing) if planned_env_names and trust_cloud_inventory and not resume_context
              else self.hub.env_list())
             if all_existing_envs is None else list(all_existing_envs))
         environment_index = self._set_environment_snapshot(
@@ -1468,12 +1468,83 @@ class BatchEnvOrchestrator(_EnvironmentLookupMixin):
         self.rows = build_batch_plan(
             accounts, assignment_spec, existing_envs=existing,
             site=self.site, purchase_date=self.purchase_date,
-            resume_state=saved, all_existing_envs=all_existing,
+            resume_state=None if resume_context else saved, all_existing_envs=all_existing,
             environment_index=environment_index,
             reject_existing_account_refs=self.reject_existing_account_refs,
             planned_env_names=planned_env_names)
+        if resume_context:
+            self._reconcile_interrupted(resume_context, all_existing, saved)
         self._persist()
         return self.rows
+
+    def _reconcile_interrupted(self, context, all_existing, saved):
+        """Adopt only this batch's exact identity; never replay unknown binding."""
+        expected = {item['accountRef']: item for item in context['rows']}
+        if len(expected) != len(self.rows) or set(expected) != {r.account.account_id for r in self.rows}:
+            raise EnvBatchError('中断恢复账号与原批次不一致')
+        checkpoints = {}
+        assignments = context.get('originalAssignments') or []
+        if assignments:
+            spec = ','.join('%s:%s' % (item['count'], item['purchaserLabel']) for item in assignments)
+            legacy_key = batch_fingerprint(b'', spec, self.site, self.purchase_date)
+            legacy = ResumeStateStore(legacy_key, self.state_store.state_dir if self.state_store else None).load()
+            checkpoints.update({r['accountId']: r for r in (legacy or {}).get('rows', [])})
+        checkpoints.update({r['accountId']: r for r in (saved or {}).get('rows', [])})
+        for row in self.rows:
+            original = expected[row.account.account_id]
+            if row.env_name != original['environmentName']:
+                raise EnvBatchError('恢复目标与原环境名冲突，已阻止本批写入')
+            matches = [e for e in all_existing if e.get('containerName') == row.env_name]
+            if len(matches) > 1:
+                raise EnvBatchError('恢复环境存在多个同名记录，已阻止本批写入')
+            checkpoint = checkpoints.get(row.account.account_id) or {}
+            if checkpoint.get('envName') != row.env_name:
+                checkpoint = {}
+            known_ref = str(original.get('environmentRef') or checkpoint.get('containerCode') or '')
+            live = matches[0] if matches else None
+            row.created_in_run = False  # Prior-attempt environments are never rollback targets.
+            row.cleanup_status = 'not_required'
+            reason = ''
+            if known_ref and (not live or str(live.get('containerCode') or '') != known_ref):
+                reason = '原环境 ID 缺失或已变化，禁止重建；请核对原环境'
+            elif live and live not in self._environment_index.selected_envs:
+                reason = '原环境已移到其他分组，请核对分组后再恢复'
+            elif live and row.state == 'done':
+                row.recovered_existing = True
+                continue
+            elif live:
+                row.container_code = str(live.get('containerCode') or '')
+                row.serial_number = live.get('serialNumber')
+                if str(live.get('remark') or '').strip():
+                    reason = '已存在环境的备注与原账号不符，请人工核对'
+                else:
+                    steps = set(original.get('completedSteps') or []) if original.get('environmentRef') == row.container_code else set()
+                    if checkpoint.get('containerCode') == row.container_code:
+                        steps.update(checkpoint.get('completedSteps') or [])
+                    if 'account_bound' not in steps:
+                        reason = '环境已存在但绑号结果无法确认，已保留原环境；请人工核对后再核对续跑'
+                    elif not callable(getattr(self.hub, 'browser_lifecycle_status', None)):
+                        reason = '无法确认原环境已关闭，请升级执行器后核对'
+                    elif self.hub.browser_lifecycle_status(row.container_code).get('state') not in {'closed', 'absent'}:
+                        reason = '原环境正在使用或关闭状态未知，请关闭并归档后再核对续跑'
+                    else:
+                        row.completed_steps = {'env_created', 'cookie_imported', 'account_bound'}
+                        row.state = 'account_bound'
+                        row.recovered_existing = True
+                        row.error = ''
+                        row.error_code = ''
+                        continue
+            else:
+                # Snapshot absence is checked again immediately before a resumed create.
+                row.completed_steps = set()
+                row.state = 'resume_pending'
+                row.container_code = ''
+                row.serial_number = None
+                continue
+            row.state = 'failed'
+            row.error_code = 'environment_resume_manual_review'
+            row.error_step = 'reconciling'
+            row.error = reason
 
     def _persist(self):
         with self._persist_lock:
@@ -1494,6 +1565,8 @@ class BatchEnvOrchestrator(_EnvironmentLookupMixin):
         self._persist()
 
     def _run_one(self, row):
+        if row.error_code == 'environment_resume_manual_review':
+            return
         if 'done' in row.completed_steps:
             row.state = 'done'
             return
@@ -1510,6 +1583,13 @@ class BatchEnvOrchestrator(_EnvironmentLookupMixin):
             return
         current_step = 'env_created'
         try:
+            if row.state == 'resume_pending' and self._remote_env_lookup(env_name=row.env_name) is not None:
+                row.error_code = 'environment_resume_manual_review'
+                row.error_step = 'reconciling'
+                row.error = '恢复检查后出现同名环境，已停止该行，禁止重复创建'
+                row.state = 'failed'
+                self._persist()
+                return
             verify_remote_name = row.state != 'pending'
             row.state = 'running'
             self._persist()

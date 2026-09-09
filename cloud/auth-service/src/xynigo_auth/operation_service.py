@@ -67,6 +67,8 @@ def _payload_hash(
         payload.pop("confirmedSite", None)
     if not payload.get("confirmFilenameSiteMismatch"):
         payload.pop("confirmFilenameSiteMismatch", None)
+    if not payload.get("confirmOriginalStopped"):
+        payload.pop("confirmOriginalStopped", None)
     canonical = json.dumps(
         payload,
         ensure_ascii=False,
@@ -487,11 +489,23 @@ class OperationRunService:
                 "备用或测试环境任务不支持跨设备接管",
                 409,
             )
-        failed_refs = self._effective_environment_failed_refs(
-            tenant_id=tenant_id, run=parent
-        )
+        interrupted = body.retryMode == "interrupted"
+        if interrupted:
+            if (parent.status not in {"uncertain", "failed", "partial_failure"}
+                    or parent.run_mode not in {"bound", "retry_row", "retry_failed"}
+                    or parent.actor_user_id != actor_user_id
+                    or body.executorId != parent.executor_id):
+                raise PurchaseServiceError("environment_resume_not_allowed",
+                    "请由原创建人在原采购电脑恢复已中断的绑号批次", 409)
+            failed_refs = {row["accountRef"] for row in self.environment_recovery_rows(parent)
+                           if row["status"] in {"queued", "running", "failed"}
+                           and row.get("cleanupStatus") not in {"pending", "deleting", "deleted"}}
+        else:
+            failed_refs = self._effective_environment_failed_refs(
+                tenant_id=tenant_id, run=parent)
         requested_refs = set(body.accountRefs)
-        if not requested_refs.issubset(failed_refs):
+        if (not requested_refs.issubset(failed_refs)
+                or (interrupted and requested_refs != failed_refs)):
             raise PurchaseServiceError(
                 "operation_retry_rows_changed",
                 "待重试行已变化，请刷新任务后重新选择",
@@ -526,6 +540,7 @@ class OperationRunService:
                 "retryMode": body.retryMode,
                 "accountRefs": list(body.accountRefs),
                 "takeover": bool(body.takeover),
+                "resumeInterrupted": interrupted,
                 "sourceExecutorId": (
                     str(parent.executor_id)
                     if body.takeover and parent.executor_id
@@ -588,6 +603,8 @@ class OperationRunService:
         planned: list[dict[str, str]] = []
         buyer_counts: dict[str, int] = {}
         buyer_order: list[str] = []
+        ancestors = ({item.id for item in self._environment_lineage(run) if item.id != run.id}
+                     if (run.request_summary or {}).get("resumeInterrupted") else None)
         for account in plan_accounts:
             account_ref = hashlib.sha256(
                 str(account.get("email") or "")
@@ -596,6 +613,10 @@ class OperationRunService:
                 .encode("utf-8")
             ).hexdigest()
             inventory = by_ref[account_ref]
+            if ancestors is not None:
+                if inventory.source_run_id not in ancestors:
+                    raise PurchaseServiceError("environment_resume_identity_conflict",
+                        "账号库存已关联其他批次，禁止接管或重复创建", 409)
             if (
                 inventory.source_order_ref
                 and str(inventory.source_order_ref).casefold()
@@ -2450,6 +2471,25 @@ class OperationRunService:
             return max(run.ip_total_count, sum(row.ip_verified is not None for row in rows))
         return None
 
+    def environment_recovery_rows(self, run):
+        """Include preallocated identities even when the first progress was lost."""
+        rows = {r["accountRef"]: dict(r) for r in self._effective_environment_rows(run)}
+        lineage_ids = [item.id for item in self._environment_lineage(run)]
+        for item in self.session.scalars(select(HubEnvironmentInventory).where(
+                HubEnvironmentInventory.tenant_id == run.tenant_id,
+                HubEnvironmentInventory.source_run_id.in_(lineage_ids))):
+            row = rows.setdefault(item.account_ref, {
+                "accountRef": item.account_ref, "accountLabel": "待重新上传核对",
+                "purchaserLabel": item.purchaser_label,
+                "environmentName": item.environment_name, "status": "queued",
+                "currentStep": "pending", "completedSteps": [],
+                "cleanupStatus": "not_required", "createdInRun": False,
+            })
+            if not row.get("environmentRef"):
+                row["environmentRef"] = item.environment_ref
+                row["environmentSerial"] = item.environment_serial
+        return list(rows.values())
+
     def environment_snapshot(
         self, run: EnvironmentCreationRun, *, unchanged: bool = False
     ) -> dict[str, object]:
@@ -2486,6 +2526,9 @@ class OperationRunService:
             "executorTaskId": str(run.executor_task_id) if run.executor_task_id else None,
             "parentRunId": str(run.parent_run_id) if run.parent_run_id else None,
             "mode": run.run_mode,
+            "recoveryRows": (self.environment_recovery_rows(run)
+                if run.status in {"uncertain", "failed", "partial_failure"}
+                and run.run_mode in {"bound", "retry_row", "retry_failed"} else None),
             "site": run.site,
             "purchaseDate": run.purchase_date,
             "environmentGroup": run.environment_group,

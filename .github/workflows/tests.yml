@@ -151,6 +151,35 @@ jobs:
           $orphanPid = $orphan.Id
 
           $launcher = Start-Process -FilePath "$installDir\Xynigo.exe" -ArgumentList "--background" -PassThru
+          # An unrelated control identity must never cause a forced kill.
+          $blocked = $false
+          $statusLog = Join-Path $installDir '日志\状态中心.log'
+          for ($attempt = 0; $attempt -lt 20; $attempt++) {
+            if ((Test-Path $statusLog) -and ((Get-Content $statusLog -Raw) -match 'executor_shutdown_blocked')) {
+              $blocked = $true; break
+            }
+            Start-Sleep -Milliseconds 500
+          }
+          $orphan.Refresh()
+          if (-not $blocked -or $orphan.HasExited) { throw "unverified orphan was not safely preserved" }
+          Stop-Process -Id $launcher.Id -Force
+          Stop-Process -Id $orphan.Id -Force
+          $launcher.WaitForExit(); $orphan.WaitForExit()
+          # Reproduce a subsequent launch by the same Windows user. DPAPI
+          # preserves the control identity, and the executor approves only idle exit.
+          Add-Type -AssemblyName System.Security
+          $encrypted = [IO.File]::ReadAllBytes((Join-Path $installDir '运行数据\launcher-token.dpapi'))
+          $control = [Security.Cryptography.ProtectedData]::Unprotect($encrypted, $null, [Security.Cryptography.DataProtectionScope]::CurrentUser)
+          $env:XYNIGO_LAUNCHER_TOKEN = [Text.Encoding]::UTF8.GetString($control)
+          $orphan = Start-Process -FilePath $pythonw -ArgumentList $orphanArgs -PassThru
+          $orphanPid = $orphan.Id
+          for ($attempt = 0; $attempt -lt 20; $attempt++) {
+            try {
+              $status = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8765/executor-status.json' -TimeoutSec 1
+              if ($status.StatusCode -eq 200) { break }
+            } catch { Start-Sleep -Milliseconds 500 }
+          }
+          $launcher = Start-Process -FilePath "$installDir\Xynigo.exe" -ArgumentList "--background" -PassThru
           for ($attempt = 0; $attempt -lt 20; $attempt++) {
             $orphan.Refresh()
             if ($orphan.HasExited) { break }
