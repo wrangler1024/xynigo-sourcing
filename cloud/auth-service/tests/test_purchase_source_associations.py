@@ -28,6 +28,7 @@ def test_extension_draft_and_submit_preserve_confirmed_sources_and_changed_purch
         # Changing a procurement link preserves its sales relation and revises the same draft.
         draft['items'][2]['purchaseLink'] = draft['items'][2]['purchaseLink'].replace('BUY-SPLIT', 'BUY-CHANGED')
         draft['items'][2]['skuCode'] = 'BUY-CHANGED'
+        draft['expectedDraftRevision'] = submitted.json()['data']['draftRevision']
         revised = client.post('/v1/purchase-orders/submit', json=draft, headers=headers)
         assert revised.status_code == 200, revised.text
         assert revised.json()['data']['purchaseOrderId'] == submitted.json()['data']['purchaseOrderId']

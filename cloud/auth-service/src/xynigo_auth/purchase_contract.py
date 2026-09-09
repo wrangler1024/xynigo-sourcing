@@ -195,6 +195,8 @@ class PurchaseDraft(BaseModel):
     remarkStatus: Literal["not-generated"]
     purchaseStatus: Literal["draft-local"]
     submissionStatus: Literal["draft"]
+    # Request-only concurrency token; never changes the stored draft or hashes.
+    expectedDraftRevision: int | None = Field(default=None, ge=1, strict=True, exclude=True)
     createdAt: datetime
     updatedAt: datetime
 

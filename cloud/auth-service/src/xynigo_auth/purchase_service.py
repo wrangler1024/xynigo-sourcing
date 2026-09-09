@@ -183,13 +183,13 @@ class PurchaseOrderService:
             lock=True,
         )
         if own_only:
-            self._assert_owned_order(record, actor_user_id)
+            self._assert_owned_order(record, actor_user_id, allow_submitted=True)
         revised = False
         if record is not None and record.submission_status == "submitted":
             if record.content_hash != target_hash:
                 self._assert_submitted_revision_allowed(
                     record=record,
-                    actor_user_id=actor_user_id,
+                    expected_revision=draft.expectedDraftRevision,
                 )
                 revised = True
             else:
@@ -232,8 +232,9 @@ class PurchaseOrderService:
 
         record.submission_status = "submitted"
         record.sync_status = "pending"
-        record.submitted_by_user_id = actor_user_id
-        record.submitted_at = now
+        if not revised:
+            record.submitted_by_user_id = actor_user_id
+            record.submitted_at = now
         record.updated_at = now
         self._reconcile_lines(record, draft, workflow_status="unclaimed", now=now)
         self._enqueue(record, "order.submitted", now)
@@ -241,7 +242,11 @@ class PurchaseOrderService:
         return self._payload(record, unchanged=False, revised=revised)
 
     @staticmethod
-    def _assert_owned_order(record, actor_user_id):
+    def _assert_owned_order(record, actor_user_id, *, allow_submitted=False):
+        # Exact-key access to submitted orders is shared within the tenant.
+        # Plugin-only members still cannot read or overwrite private drafts.
+        if allow_submitted and record is not None and record.submission_status == "submitted":
+            return
         if record is not None and (record.submitted_by_user_id or record.created_by_user_id) != actor_user_id:
             raise PurchaseServiceError("purchase_order_not_found", "采购单不存在或不属于当前成员", 404)
 
@@ -255,7 +260,7 @@ class PurchaseOrderService:
         if record is None:
             raise PurchaseServiceError("purchase_order_not_found", "采购单不存在", 404)
         if own_only:
-            self._assert_owned_order(record, actor_user_id)
+            self._assert_owned_order(record, actor_user_id, allow_submitted=True)
         return self._payload(record, unchanged=True)
 
     def workspace_overview(
@@ -1521,15 +1526,8 @@ class PurchaseOrderService:
         self,
         *,
         record: PurchaseOrder,
-        actor_user_id: uuid.UUID,
+        expected_revision: int | None,
     ) -> None:
-        owner_user_id = record.submitted_by_user_id or record.created_by_user_id
-        if owner_user_id is not None and owner_user_id != actor_user_id:
-            raise PurchaseServiceError(
-                "purchase_revision_forbidden",
-                "只能由原提交运营修改采购明细",
-                403,
-            )
         active_lines = list(
             self.session.scalars(
                 select(PurchaseOrderLine)
@@ -1553,6 +1551,18 @@ class PurchaseOrderService:
             raise PurchaseServiceError(
                 "purchase_order_in_progress",
                 "采购单已被认领或进入采购执行，不能直接修改，请先由采购退回任务",
+                409,
+            )
+        if expected_revision is None:
+            raise PurchaseServiceError(
+                "purchase_revision_required",
+                "采购单已提交，请重新打开采购明细读取最新版本；若使用旧版提单助手，请先更新",
+                409,
+            )
+        if expected_revision != record.draft_revision:
+            raise PurchaseServiceError(
+                "purchase_revision_conflict",
+                "采购明细已被其他窗口或账号修改，请重新打开采购明细，核对最新内容后再提交",
                 409,
             )
 
@@ -1598,6 +1608,11 @@ class PurchaseOrderService:
             user = self.session.get(User, record.submitted_by_user_id)
             if user is not None:
                 submitted_by = {"id": str(user.id), "name": user.display_name}
+        last_edited_by = None
+        if record.last_edited_by_user_id is not None:
+            user = self.session.get(User, record.last_edited_by_user_id)
+            if user is not None:
+                last_edited_by = {"id": str(user.id), "name": user.display_name}
         return {
             "purchaseOrderId": str(record.id),
             "orderKey": record.order_key,
@@ -1611,5 +1626,6 @@ class PurchaseOrderService:
             "savedAt": record.updated_at.isoformat(),
             "submittedAt": record.submitted_at.isoformat() if record.submitted_at else None,
             "submittedBy": submitted_by,
+            "lastEditedBy": last_edited_by,
             "draft": record.draft_payload,
         }

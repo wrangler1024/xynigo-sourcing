@@ -14,7 +14,7 @@ from urllib.parse import quote
 
 from . import __version__
 
-RELEASE_VERSION = "0.17.16"
+RELEASE_VERSION = "0.17.17"
 RELEASE_CHANNEL = "test"
 RELEASE_PUBLISHED_AT = "2026-09-09T10:50:28Z"
 
@@ -31,8 +31,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.17.16-2ec7583ccd4b",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.16.exe",
+        "runtimeId": "0.17.17-2ec7583ccd4b",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.17.exe",
         "sha256": "e31b029eed57335a8f1dd88338827c9d015d47266b24909d222089f5fe473fed",
         "size": 15291825,
         "installMode": "standard_per_user",
@@ -50,8 +50,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.17.16-2ec7583ccd4b",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.16.pkg",
+        "runtimeId": "0.17.17-2ec7583ccd4b",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.17.pkg",
         "sha256": "da1c5c51ef8a8d4bd1d78e7a8feab0483e785635e67cc318c4de402ec2e82185",
         "size": 11604064,
         "installMode": "standard_system_application",
@@ -320,9 +320,10 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "修复采购链接完整正确但被飞书自动识别为超链接时，回读校验误报失败并阻断图片导入的问题。",
-            "缺少内嵌图片的已关联明细，可从原销售行的 SHEIN 图片网址补取；限制来源、大小及重定向，无法关联来源的明细仍留空。",
-            "人工采购备注变化不再触发历史采购明细冲突；完整采购链接、规格、数量和指导价变化仍保留拦截保护。",
-            "已追加明细可按原批次续传图片，已有行和图片自动跳过，人工备注与已有业务记录保持原样。",
+            "支持同组织具备提单权限的多个账号读取并修订已提交采购明细，不再仅限原提交运营。",
+            "修订保留原提交人与首次提交时间，最近修改人与每次修订另行记录，操作仍受提单权限和组织范围约束。",
+            "修改时校验读取版本，其他窗口或账号已更新时拒绝旧版本覆盖；相同内容重试不新增修订。",
+            "已认领、已拆分或进入采购执行的订单保持保护；未提交草稿的插件访问范围保持不变。",
+            "修订需配套提单助手 v0.12.8；首次提单及相同内容重试继续兼容旧版插件。",
         ],
     }

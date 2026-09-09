@@ -306,6 +306,7 @@ def test_submit_sets_authenticated_actor_and_is_idempotent(tmp_path) -> None:
     changed = deepcopy(draft)
     changed["items"][0]["guidePrice"] = 19.0  # type: ignore[index]
     changed["guideTotalsByCurrency"] = {"USD": 19.0}
+    changed["expectedDraftRevision"] = data["draftRevision"]
     revised = client.post("/v1/purchase-orders/submit", json=changed, headers=headers)
     assert revised.status_code == 200
     assert revised.json()["data"]["unchanged"] is False
