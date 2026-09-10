@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import uuid
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -699,6 +700,30 @@ class OperationRunService:
         value = str(account.get("orderNo") or "").strip().casefold()
         return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
 
+    def _conflict_task_labels(
+        self, run_ids: Iterable[uuid.UUID | None]
+    ) -> list[str]:
+        """Stable 创建历史 task labels (root id prefixes) for conflict runs."""
+        wanted = {run_id for run_id in run_ids if run_id is not None}
+        if not wanted:
+            return []
+        roots = self.session.execute(
+            select(
+                EnvironmentCreationRun.id,
+                EnvironmentCreationRun.root_run_id,
+            ).where(EnvironmentCreationRun.id.in_(wanted))
+        ).all()
+        return sorted({str(root_id or run_id)[:8] for run_id, root_id in roots})
+
+    def _conflict_batch_hint(
+        self, run_ids: Iterable[uuid.UUID | None]
+    ) -> str:
+        labels = self._conflict_task_labels(run_ids)
+        if not labels:
+            return ""
+        shown = "、".join(labels[:3]) + (" 等" if len(labels) > 3 else "")
+        return f"（原批次任务 {shown}，可在创建历史搜索核对）"
+
     def environment_inventory_cache_status(
         self, *, tenant_id: uuid.UUID, now: datetime | None = None
     ) -> dict[str, Any]:
@@ -860,30 +885,38 @@ class OperationRunService:
             )
         ))
         by_order: dict[
-            str, dict[str, tuple[str, str, str | None]]
+            str, dict[str, tuple[str, str, str | None, uuid.UUID | None]]
         ] = {}
-        if any(
-            row.account_ref in account_orders
+        cross_order_conflicts = [
+            row for row in inventories
+            if row.account_ref in account_orders
             and row.source_order_ref
             and row.source_order_ref != account_orders[row.account_ref]
-            for row in inventories
-        ):
+        ]
+        if cross_order_conflicts:
             raise PurchaseServiceError(
                 "environment_account_already_bound",
-                "买家号已对应其他号商单号环境，请勿重复创建",
+                "买家号已对应其他号商单号环境，请勿重复创建"
+                + self._conflict_batch_hint(
+                    row.source_run_id for row in cross_order_conflicts
+                ),
                 409,
             )
-        if any(
-            (
+        pending_reservations = [
+            row for row in inventories
+            if (
                 row.source_order_ref in target_order_refs
                 or row.account_ref in account_orders
             )
             and row.state in {"reserved", "uncertain"}
-            for row in inventories
-        ):
+        ]
+        if pending_reservations:
             raise PurchaseServiceError(
                 "environment_account_already_bound",
-                "买家号环境仍在创建或状态待确认，请勿重复创建",
+                "买家号环境仍在创建或状态待确认，请勿重复创建"
+                + self._conflict_batch_hint(
+                    row.source_run_id for row in pending_reservations
+                ),
                 409,
             )
         known_names = [row.environment_name for row in observations]
@@ -892,7 +925,7 @@ class OperationRunService:
             if row.source_order_ref:
                 identity = row.environment_ref or "name:" + row.environment_name
                 by_order.setdefault(row.source_order_ref, {})[identity] = (
-                    row.environment_name, row.environment_group, row.site,
+                    row.environment_name, row.environment_group, row.site, None,
                 )
         for row in inventories:
             inventory_order_ref = (
@@ -903,6 +936,7 @@ class OperationRunService:
                 by_order.setdefault(inventory_order_ref, {}).setdefault(
                     identity, (
                     row.environment_name, row.environment_group, row.site,
+                    row.source_run_id,
                     )
                 )
 
@@ -943,19 +977,27 @@ class OperationRunService:
                 )
             recovered = False
             if candidates:
-                env_name, group, observed_site = next(
+                env_name, group, observed_site, conflict_run_id = next(
                     iter(candidates.values())
                 )
                 if group != environment_group:
                     raise PurchaseServiceError(
                         "environment_account_already_bound",
-                        "号商单号已存在于其他 HubStudio 分组，请勿重复创建",
+                        f"号商单号已存在于其他 HubStudio 分组"
+                        f"（环境 {env_name}），请勿重复创建"
+                        + self._conflict_batch_hint(
+                            [conflict_run_id] if conflict_run_id else []
+                        ),
                         409,
                     )
                 if observed_site and observed_site != site:
                     raise PurchaseServiceError(
                         "environment_account_already_bound",
-                        "号商单号已存在于其他站点环境，请勿重复创建",
+                        f"号商单号已存在于其他站点环境"
+                        f"（环境 {env_name}），请勿重复创建"
+                        + self._conflict_batch_hint(
+                            [conflict_run_id] if conflict_run_id else []
+                        ),
                         409,
                     )
                 recovered = True
@@ -1063,23 +1105,28 @@ class OperationRunService:
         if blocking:
             raise PurchaseServiceError(
                 "environment_account_already_bound",
-                "买家号或号商单号已存在 HubStudio 环境，请勿跨设备重复创建",
+                "买家号或号商单号已存在 HubStudio 环境，请勿跨设备重复创建"
+                + self._conflict_batch_hint(
+                    row.source_run_id for row in blocking
+                ),
                 409,
             )
         reusable = {
             row.account_ref: row for row in existing
             if row.account_ref in account_refs and row.state == "deleted"
         }
-        observed_orders = list(self.session.scalars(
-            select(HubEnvironmentObservation.source_order_ref).where(
+        observed_environments = list(self.session.scalars(
+            select(HubEnvironmentObservation.environment_name).where(
                 HubEnvironmentObservation.tenant_id == run.tenant_id,
                 HubEnvironmentObservation.source_order_ref.in_(order_refs),
             )
         ))
-        if observed_orders:
+        if observed_environments:
+            shown = "、".join(sorted(set(observed_environments))[:3])
             raise PurchaseServiceError(
                 "environment_account_already_bound",
-                "买家号或号商单号已存在 HubStudio 环境，请勿跨设备重复创建",
+                "买家号或号商单号已存在 HubStudio 环境，请勿跨设备重复创建"
+                f"（环境 {shown}）",
                 409,
             )
 

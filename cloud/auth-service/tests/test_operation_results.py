@@ -20,6 +20,7 @@ from xynigo_auth.models import (
     EnvironmentNameSequence,
     HubEnvironmentInventory,
     HubEnvironmentInventorySync,
+    HubEnvironmentObservation,
     LogisticsQueryResult,
     LogisticsQueryRun,
     OperationalSyncOutbox,
@@ -185,6 +186,8 @@ def test_cloud_inventory_allocates_monotonic_names_and_blocks_cross_device_dupli
                 assignments=[{"purchaserLabel": "新刚", "count": 2}],
             )
         assert duplicate.value.code == "environment_account_already_bound"
+        assert "原批次任务" in str(duplicate.value)
+        assert str(first.id)[:8] in str(duplicate.value)
 
         third = make_run("inventory-run-0003")
         next_names = service.reserve_environment_names(
@@ -217,6 +220,110 @@ def test_cloud_inventory_allocates_monotonic_names_and_blocks_cross_device_dupli
         ))
         assert len(uncertain) == 2
         assert {row.state for row in uncertain} == {"uncertain"}
+    client.close()
+
+
+def test_environment_conflict_errors_name_the_original_batch(tmp_path) -> None:
+    client, database, _headers = authenticated_client(tmp_path)
+    with database.session_factory() as session:
+        previous = session.scalar(select(EnvironmentCreationRun))
+        if previous is None:
+            from xynigo_auth.models import Tenant, User
+            tenant = session.scalar(select(Tenant))
+            user = session.scalar(select(User))
+            assert tenant is not None and user is not None
+            tenant_id, user_id = tenant.id, user.id
+        else:
+            tenant_id, user_id = previous.tenant_id, previous.actor_user_id
+
+        root_id = uuid.uuid4()
+        holder = EnvironmentCreationRun(
+            id=uuid.uuid4(), tenant_id=tenant_id, actor_user_id=user_id,
+            source_run_key="conflict-holder-0001", payload_hash=hashlib.sha256(
+                b"conflict-holder-0001"
+            ).hexdigest(), parent_run_id=root_id, root_run_id=root_id,
+            run_mode="bound", site="MX",
+            purchase_date="20260903", environment_group="MX采购",
+            status="completed", phase="completed", progress_completed=1,
+            progress_total=1, total_count=1, success_count=1,
+            failed_count=0, ip_ok_count=0, ip_total_count=0,
+            request_summary={}, source="cloud_web",
+        )
+        root = EnvironmentCreationRun(
+            id=root_id, tenant_id=tenant_id, actor_user_id=user_id,
+            source_run_key="conflict-root-0000", payload_hash=hashlib.sha256(
+                b"conflict-root-0000"
+            ).hexdigest(), root_run_id=root_id, run_mode="bound", site="MX",
+            purchase_date="20260903", environment_group="MX采购",
+            status="completed", phase="completed", progress_completed=1,
+            progress_total=1, total_count=1, success_count=1,
+            failed_count=0, ip_ok_count=0, ip_total_count=0,
+            request_summary={}, source="cloud_web",
+        )
+        session.add_all([root, holder])
+        session.add(HubEnvironmentInventory(
+            tenant_id=tenant_id,
+            account_ref=hashlib.sha256(b"holder1@example.test").hexdigest(),
+            source_order_ref="sha256:" + hashlib.sha256(
+                b"a9000001"
+            ).hexdigest(),
+            environment_name="XG-MX-260904-150-FXEF",
+            environment_ref="hub-9001", environment_serial="9001",
+            site="MX", environment_group="MX采购", purchaser_label="新刚",
+            state="active", source_run_id=holder.id,
+        ))
+        session.add(HubEnvironmentObservation(
+            tenant_id=tenant_id,
+            environment_key="hub-9002",
+            environment_name="ZH-MX-260904-051-AAAA",
+            environment_group="MX采购", site="MX",
+            source_order_ref="sha256:" + hashlib.sha256(
+                b"a9000002"
+            ).hexdigest(),
+            snapshot_revision="snap-0001",
+            last_observed_at=datetime.now(UTC),
+        ))
+        session.flush()
+
+        run = EnvironmentCreationRun(
+            id=uuid.uuid4(), tenant_id=tenant_id, actor_user_id=user_id,
+            source_run_key="conflict-resume-0002", payload_hash=hashlib.sha256(
+                b"conflict-resume-0002"
+            ).hexdigest(), run_mode="bound", site="MX",
+            purchase_date="20260903", environment_group="MX采购",
+            status="created", phase="created", progress_completed=0,
+            progress_total=1, total_count=1, success_count=0,
+            failed_count=0, ip_ok_count=0, ip_total_count=0,
+            request_summary={}, source="cloud_web",
+        )
+        session.add(run)
+        session.flush()
+        service = OperationRunService(session)
+
+        with pytest.raises(PurchaseServiceError) as blocked:
+            service.reserve_environment_names(
+                run=run,
+                plan_accounts=[{
+                    "email": "holder1@example.test", "orderNo": "a9000001",
+                }],
+                assignments=[{"purchaserLabel": "新刚", "count": 1}],
+            )
+        assert blocked.value.code == "environment_account_already_bound"
+        message = str(blocked.value)
+        assert "原批次任务" in message
+        assert str(root_id)[:8] in message
+        assert str(holder.id)[:8] not in message
+
+        with pytest.raises(PurchaseServiceError) as observed:
+            service.reserve_environment_names(
+                run=run,
+                plan_accounts=[{
+                    "email": "observer1@example.test", "orderNo": "a9000002",
+                }],
+                assignments=[{"purchaserLabel": "新刚", "count": 1}],
+            )
+        assert observed.value.code == "environment_account_already_bound"
+        assert "（环境 ZH-MX-260904-051-AAAA）" in str(observed.value)
     client.close()
 
 
