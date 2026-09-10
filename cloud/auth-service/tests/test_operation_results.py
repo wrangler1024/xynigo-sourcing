@@ -324,6 +324,56 @@ def test_environment_conflict_errors_name_the_original_batch(tmp_path) -> None:
             )
         assert observed.value.code == "environment_account_already_bound"
         assert "（环境 ZH-MX-260904-051-AAAA）" in str(observed.value)
+
+        # preview 异分组：观察行先占位时，inventory 的批次线索不得丢失。
+        session.add(HubEnvironmentObservation(
+            tenant_id=tenant_id,
+            environment_key="hub-9003",
+            environment_name="KD-MX-260904-201-BBBB",
+            environment_ref="hub-9003", environment_serial="9003",
+            environment_group="其他分组", site="MX",
+            source_order_ref="sha256:" + hashlib.sha256(
+                b"a9000003"
+            ).hexdigest(),
+            snapshot_revision="snap-0002",
+            last_observed_at=datetime.now(UTC),
+        ))
+        session.add(HubEnvironmentInventory(
+            tenant_id=tenant_id,
+            account_ref=hashlib.sha256(b"holder2@example.test").hexdigest(),
+            source_order_ref="sha256:" + hashlib.sha256(
+                b"a9000003"
+            ).hexdigest(),
+            environment_name="KD-MX-260904-201-BBBB",
+            environment_ref="hub-9003", environment_serial="9003",
+            site="MX", environment_group="其他分组", purchaser_label="康德",
+            state="active", source_run_id=holder.id,
+        ))
+        session.flush()
+        session.add(HubEnvironmentInventorySync(
+            tenant_id=tenant_id,
+            executor_id=None,
+            snapshot_revision="f" * 64,
+            environment_count=0,
+            completed_at=datetime.now(UTC),
+        ))
+        session.flush()
+        with pytest.raises(PurchaseServiceError) as preview_conflict:
+            service.preview_environment_names_from_cache(
+                tenant_id=tenant_id, site="MX", purchase_date="20260903",
+                environment_group="MX采购",
+                plan_accounts=[{
+                    "email": "holder2@example.test", "orderNo": "a9000003",
+                }],
+                assignments=[{"purchaserLabel": "康德", "count": 1}],
+            )
+        assert preview_conflict.value.code == "environment_account_already_bound"
+        preview_message = str(preview_conflict.value)
+        assert "其他 HubStudio 分组" in preview_message
+        assert "（环境 KD-MX-260904-201-BBBB）" in preview_message
+        assert "原批次任务" in preview_message
+        assert str(root_id)[:8] in preview_message
+        assert str(holder.id)[:8] not in preview_message
     client.close()
 
 

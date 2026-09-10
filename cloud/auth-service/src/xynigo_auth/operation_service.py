@@ -701,24 +701,31 @@ class OperationRunService:
         return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
 
     def _conflict_task_labels(
-        self, run_ids: Iterable[uuid.UUID | None]
+        self, tenant_id: uuid.UUID, run_ids: Iterable[uuid.UUID | None]
     ) -> list[str]:
         """Stable 创建历史 task labels (root id prefixes) for conflict runs."""
         wanted = {run_id for run_id in run_ids if run_id is not None}
         if not wanted:
             return []
-        roots = self.session.execute(
+        rows_ = self.session.execute(
             select(
                 EnvironmentCreationRun.id,
                 EnvironmentCreationRun.root_run_id,
-            ).where(EnvironmentCreationRun.id.in_(wanted))
+            ).where(
+                EnvironmentCreationRun.tenant_id == tenant_id,
+                EnvironmentCreationRun.id.in_(wanted),
+            )
         ).all()
-        return sorted({str(root_id or run_id)[:8] for run_id, root_id in roots})
+        labels = {str(root_id or run_id)[:8] for run_id, root_id in rows_}
+        if len(rows_) < len(wanted):
+            found = {run_id for run_id, _ in rows_}
+            labels.update(str(run_id)[:8] for run_id in wanted - found)
+        return sorted(labels)
 
     def _conflict_batch_hint(
-        self, run_ids: Iterable[uuid.UUID | None]
+        self, tenant_id: uuid.UUID, run_ids: Iterable[uuid.UUID | None]
     ) -> str:
-        labels = self._conflict_task_labels(run_ids)
+        labels = self._conflict_task_labels(tenant_id, run_ids)
         if not labels:
             return ""
         shown = "、".join(labels[:3]) + (" 等" if len(labels) > 3 else "")
@@ -898,7 +905,8 @@ class OperationRunService:
                 "environment_account_already_bound",
                 "买家号已对应其他号商单号环境，请勿重复创建"
                 + self._conflict_batch_hint(
-                    row.source_run_id for row in cross_order_conflicts
+                    tenant_id,
+                    (row.source_run_id for row in cross_order_conflicts)
                 ),
                 409,
             )
@@ -915,7 +923,8 @@ class OperationRunService:
                 "environment_account_already_bound",
                 "买家号环境仍在创建或状态待确认，请勿重复创建"
                 + self._conflict_batch_hint(
-                    row.source_run_id for row in pending_reservations
+                    tenant_id,
+                    (row.source_run_id for row in pending_reservations)
                 ),
                 409,
             )
@@ -933,12 +942,19 @@ class OperationRunService:
             )
             if inventory_order_ref and row.state == "active":
                 identity = row.environment_ref or "name:" + row.environment_name
-                by_order.setdefault(inventory_order_ref, {}).setdefault(
-                    identity, (
-                    row.environment_name, row.environment_group, row.site,
-                    row.source_run_id,
+                bucket = by_order.setdefault(inventory_order_ref, {})
+                existing = bucket.get(identity)
+                if existing is None:
+                    bucket[identity] = (
+                        row.environment_name, row.environment_group, row.site,
+                        row.source_run_id,
                     )
-                )
+                elif existing[3] is None and row.source_run_id is not None:
+                    # 观察行先占位时补回批次线索，不得让 None 挡住 inventory。
+                    bucket[identity] = (
+                        existing[0], existing[1], existing[2],
+                        row.source_run_id,
+                    )
 
         offsets: dict[str, int] = {}
         for buyer in buyers:
@@ -986,6 +1002,7 @@ class OperationRunService:
                         f"号商单号已存在于其他 HubStudio 分组"
                         f"（环境 {env_name}），请勿重复创建"
                         + self._conflict_batch_hint(
+                            tenant_id,
                             [conflict_run_id] if conflict_run_id else []
                         ),
                         409,
@@ -996,6 +1013,7 @@ class OperationRunService:
                         f"号商单号已存在于其他站点环境"
                         f"（环境 {env_name}），请勿重复创建"
                         + self._conflict_batch_hint(
+                            tenant_id,
                             [conflict_run_id] if conflict_run_id else []
                         ),
                         409,
@@ -1107,7 +1125,8 @@ class OperationRunService:
                 "environment_account_already_bound",
                 "买家号或号商单号已存在 HubStudio 环境，请勿跨设备重复创建"
                 + self._conflict_batch_hint(
-                    row.source_run_id for row in blocking
+                    run.tenant_id,
+                    (row.source_run_id for row in blocking)
                 ),
                 409,
             )

@@ -3820,7 +3820,7 @@ function cloudApiError(payload, status) {
   const genericMessage = known[code];
   const errorMessage = genericMessage && serverMessage
       && serverMessage !== code && serverMessage !== genericMessage
-    ? `${genericMessage}（原因：${serverMessage}）`
+    ? `${genericMessage}。具体原因：${serverMessage}`
     : (genericMessage || serverMessage || `请求失败 HTTP ${status}`);
   const error = new Error(errorMessage);
   error.code = code;
