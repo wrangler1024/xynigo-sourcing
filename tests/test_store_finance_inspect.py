@@ -56,6 +56,7 @@ class _FakeHub(object):
     def env_list(self):
         return [{
             'containerCode': s,
+            'serialNumber': '9' + s,  # 序号与环境 ID 是两套标识
             'containerName': '店铺' + s,
             'accounts': [{'accountName': 'GS' + s.zfill(4)}],
             'remark': 'x----' + m.otp_sms_url('a' * 32),
@@ -392,3 +393,20 @@ class LocalRouteMethodTests(unittest.TestCase):
         self.assertIn("path == '/api/store-finance/stop'", span)
         self.assertNotIn("path == '/api/store-finance/progress'", span)
         self.assertNotIn("path == '/api/store-finance/screenshot'", span)
+
+
+class SerialNumberInputTests(unittest.TestCase):
+    """粘贴 HubStudio 窗口序号（serialNumber）也应能定位环境并按 containerCode 开浏览器。"""
+
+    def test_serial_number_input_starts_browser_with_container_code(self):
+        hub = _FakeHub(['41'])
+        inspector = StoreFinanceInspector(hub, concurrency=2)
+        inspector.start_batch(['941'])  # 941 是序号，41 才是环境 ID
+        deadline = time.time() + 5
+        while time.time() < deadline and inspector.snapshot()['running']:
+            time.sleep(0.05)
+        snap = inspector.snapshot()
+        row = snap['rows'][0]
+        self.assertEqual(row['environmentSerial'], '941')  # 行键=用户输入
+        self.assertNotIn('环境序号未找到', row['errorSummary'] or '')
+        self.assertEqual(hub.started, ['41'])  # 浏览器用 containerCode 启动

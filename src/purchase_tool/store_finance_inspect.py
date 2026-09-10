@@ -154,9 +154,13 @@ class StoreFinanceInspector(object):
         try:
             env_index = {}
             for env in self.hub.env_list():
-                code = str(env.get('containerCode') or '')
-                if code in serials:
-                    env_index[code] = env
+                # 输入兼容：HubStudio 窗口序号（serialNumber）与环境 ID
+                # （containerCode）都可粘贴；行键保持用户输入原样。
+                for identifier in (env.get('serialNumber'),
+                                   env.get('containerCode')):
+                    key = str(identifier or '')
+                    if key and key in serials:
+                        env_index[key] = env
             with self._lock:
                 for serial in serials:
                     env = env_index.get(serial, {})
@@ -219,12 +223,15 @@ class StoreFinanceInspector(object):
         try:
             if not env:
                 raise RuntimeError(
-                    '环境序号未找到：请粘贴 HubStudio 环境序号（纯数字），'
+                    '环境序号未找到：请粘贴 HubStudio 环境序号或环境 ID，'
                     '而非店铺名')
-            opened_before = serial in self.hub.open_container_codes()
+            # 浏览器操作一律用环境 ID（containerCode）；serial 仅作行键展示。
+            container_code = str(env.get('containerCode') or '') or serial
+            opened_before = container_code in self.hub.open_container_codes()
             # 预置：原本未开的环境一律由巡检负责关闭（start 模糊失败也兜底）
             opened_by_me = not opened_before
-            data = self.hub.browser_start(serial, headless=headless) or {}
+            data = self.hub.browser_start(container_code,
+                                          headless=headless) or {}
             port = int(data.get('debuggingPort') or 0)
             if not port:
                 raise RuntimeError('start-browser 未返回调试端口')
@@ -280,7 +287,8 @@ class StoreFinanceInspector(object):
             # 谁开谁关：巡检前已开的环境保持打开（可能正被同事使用）
             if opened_by_me:
                 try:
-                    self.hub.browser_stop(serial)
+                    self.hub.browser_stop(
+                        str(env.get('containerCode') or '') or serial)
                 except Exception:
                     pass
 
