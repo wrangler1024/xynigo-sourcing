@@ -637,6 +637,12 @@
   }
   #storeFinancePanel .card-title .table-actions { margin-left: auto; }
   #storeFinancePanel .business-summary { display: grid; grid-template-columns: repeat(7, minmax(0,1fr)); }
+  #storeFinancePanel .if-switch{width:32px;height:18px;padding:0;border:0;border-radius:20px;background:#c5ced8;cursor:pointer;position:relative;transition:background .15s;flex:none}
+  #storeFinancePanel .if-switch:before{content:"";position:absolute;width:14px;height:14px;top:2px;left:2px;border-radius:50%;background:#fff;box-shadow:0 1px 3px #0002;transition:transform .15s}
+  #storeFinancePanel .if-switch[aria-checked="true"]{background:#078487}
+  #storeFinancePanel .if-switch[aria-checked="true"]:before{transform:translateX(14px)}
+  #storeFinancePanel .if-switch:focus-visible{outline:2px solid #078487;outline-offset:3px}
+  #storeFinancePanel .if-switch:disabled{opacity:.5;cursor:not-allowed}
   .procurement-state.ok { border-color: #bce5d2; background: var(--green-100); color: var(--green); }
   .procurement-state.bad { border-color: #ffd2c7; background: var(--coral-100); color: var(--coral-500); }
   .procurement-table-scroll { position: relative; }
@@ -2025,7 +2031,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap; margin-left:auto;">
           <span class="if-row" id="sfHeadlessRow">
             <span>无头模式</span>
-            <button class="if-switch" id="sfHeadless" role="switch" aria-checked="true" aria-labelledby="sfHeadlessRow"></button>
+            <button type="button" class="if-switch" id="sfHeadless" role="switch" aria-checked="true" aria-labelledby="sfHeadlessRow"></button>
             <span class="hint">不弹浏览器窗口，异常回退有头并截图</span>
           </span>
           <span class="if-row">并发
