@@ -624,6 +624,19 @@
     border-color: var(--rhino-500); box-shadow: 0 0 0 3px rgba(32,174,179,.12);
   }
   .procurement-state { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 11px; background: #f8fafb; color: var(--navy-500); font-size: 11px; line-height: 1.6; }
+
+  /* ===== 小犀助手 · 店铺结算查询 ===== */
+  #storeFinancePanel .sf-filter-bar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
+  #storeFinancePanel .sf-filter-bar input[type=search] {
+    width: 260px; min-height: 42px; padding: 8px 11px;
+    border: 1px solid #dbe4eb; border-radius: 12px; outline: none;
+    background: #fbfcfd; color: var(--navy-950); font: inherit;
+  }
+  #storeFinancePanel .sf-filter-bar input[type=search]:focus {
+    border-color: var(--rhino-500); box-shadow: 0 0 0 3px rgba(32,174,179,.12);
+  }
+  #storeFinancePanel .card-title .table-actions { margin-left: auto; }
+  #storeFinancePanel .business-summary { display: grid; grid-template-columns: repeat(7, minmax(0,1fr)); }
   .procurement-state.ok { border-color: #bce5d2; background: var(--green-100); color: var(--green); }
   .procurement-state.bad { border-color: #ffd2c7; background: var(--coral-100); color: var(--coral-500); }
   .procurement-table-scroll { position: relative; }
@@ -1966,8 +1979,8 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         <span class="legend">环境序号清单 · 勾选状态自动保存</span>
         <span class="resource-state" id="sfSelCount" style="margin-left:auto; margin-top:0">已选 0 家</span>
       </div>
-      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:12px;">
-        <input class="text-input" id="sfSearch" placeholder="筛选：店铺名 / GS 编号 / 环境序号" style="min-width:210px">
+      <div class="sf-filter-bar">
+        <input type="search" id="sfSearch" placeholder="筛选：店铺名 / GS 编号 / 环境序号">
         <button class="btn sm" id="sfPasteBtn">批量粘贴名单</button>
         <span style="flex:1"></span>
         <button class="btn sm" id="sfAll">全选</button>
@@ -2039,9 +2052,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
 
     <section class="card table-card">
       <div class="card-title" style="padding:17px 19px 0;">
-        <div>结算汇总 <span class="legend">MXN · 采集时刻快照</span>
-          <div class="sub" id="sfResultMeta">发起巡检后此处展示采集结果；结果按店铺名排序，视口上限 30 行。</div>
-        </div>
+        <div>结算汇总 <span class="legend">MXN · 采集时刻快照</span></div>
         <div class="table-actions">
           <button class="btn retry" id="sfRetryFail" disabled>补采失败</button>
           <button class="btn sm" id="sfClearResult">清空结果</button>
@@ -2076,7 +2087,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
               <th>采集时间</th><th>状态</th>
             </tr></thead>
             <tbody id="sfResRows">
-              <tr><td colspan="10" class="hint" style="text-align:center; padding:22px;">发起巡检后，此处按店铺逐行实时填充（同物流查询，视口内滚动）。</td></tr>
+              <tr><td colspan="10" class="hint" style="text-align:center; padding:22px;">发起巡检后，此处展示各店铺结算数据。</td></tr>
             </tbody>
             <tfoot><tr>
               <td colspan="2" id="sfSumLabel">合计</td>
