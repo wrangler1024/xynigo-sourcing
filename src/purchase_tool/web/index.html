@@ -628,9 +628,10 @@
   /* ===== 小犀助手 · 店铺结算查询 ===== */
   #storeFinancePanel .sf-filter-bar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
   #storeFinancePanel .sf-filter-bar input[type=search] {
-    width: 260px; min-height: 42px; padding: 8px 11px;
-    border: 1px solid #dbe4eb; border-radius: 12px; outline: none;
-    background: #fbfcfd; color: var(--navy-950); font: inherit;
+    width: 260px; padding: 8px 12px;
+    border: 1px solid var(--line); border-radius: 11px; outline: none;
+    background: #fff; color: var(--navy-950);
+    font-size: 12px; font-weight: 600;
   }
   #storeFinancePanel .sf-filter-bar input[type=search]:focus {
     border-color: var(--rhino-500); box-shadow: 0 0 0 3px rgba(32,174,179,.12);
@@ -645,6 +646,9 @@
   #storeFinancePanel .if-switch:disabled{opacity:.5;cursor:not-allowed}
   #storeFinancePanel .if-row{font-size:12px;font-weight:600;color:var(--navy-700)}
   #storeFinancePanel .xyp2-help{font-size:11px;color:var(--navy-500);margin-top:8px}
+  #storeFinancePanel .procurement-pagination-copy{font-size:11px;color:var(--navy-500)}
+  #storeFinancePanel .action-row .resource-state{margin-top:0;padding:8px 12px;font-size:11px;color:var(--navy-500)}
+  #storeFinancePanel .sf-filter-bar .hint{font-size:11px;color:var(--navy-500)}
   .procurement-state.ok { border-color: #bce5d2; background: var(--green-100); color: var(--green); }
   .procurement-state.bad { border-color: #ffd2c7; background: var(--coral-100); color: var(--coral-500); }
   .procurement-table-scroll { position: relative; }
