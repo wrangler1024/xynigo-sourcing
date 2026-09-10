@@ -4296,6 +4296,21 @@ class Handler(BaseHTTPRequestHandler):
                 if parsed.query:
                     cloud_path += '?' + parsed.query
                 self._json(STATE.auth.system_log_request(cloud_path))
+            elif path == '/api/store-finance/progress':
+                snap = STATE.store_finance.snapshot()
+                snap['hubConnected'] = STATE.hub_status()[0]
+                self._json(snap)
+            elif path == '/api/store-finance/screenshot':
+                serial = (query.get('serial') or [''])[0]
+                data = STATE.store_finance.screenshot_bytes(serial)
+                if not data:
+                    return self._json({'error': '截图不存在或已清理'}, 404)
+                self.send_response(200)
+                self.send_header('Content-Type', 'image/jpeg')
+                self.send_header('Cache-Control', 'no-store')
+                self.send_header('Content-Length', str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
             elif path.startswith('/api/procurement/'):
                 cloud_path = '/v1/procurement/' + path[len('/api/procurement/'):]
                 if parsed.query:
@@ -4574,23 +4589,8 @@ class Handler(BaseHTTPRequestHandler):
                     'visible' if browser_mode == 'visible' else 'headless',
                     concurrency=int(concurrency) if concurrency else None)
                 self._json(result)
-            elif path == '/api/store-finance/progress':
-                snap = STATE.store_finance.snapshot()
-                snap['hubConnected'] = STATE.hub_status()[0]
-                self._json(snap)
             elif path == '/api/store-finance/stop':
                 self._json(STATE.store_finance.request_stop())
-            elif path == '/api/store-finance/screenshot':
-                serial = (query.get('serial') or [''])[0]
-                data = STATE.store_finance.screenshot_bytes(serial)
-                if not data:
-                    return self._json({'error': '截图不存在或已清理'}, 404)
-                self.send_response(200)
-                self.send_header('Content-Type', 'image/jpeg')
-                self.send_header('Cache-Control', 'no-store')
-                self.send_header('Content-Length', str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
             elif path == '/api/stop':
                 STATE.orch.request_stop()
                 self._json({'stopped': True})

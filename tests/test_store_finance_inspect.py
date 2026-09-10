@@ -342,3 +342,53 @@ class ProjectionTests(unittest.TestCase):
         self.assertIsNone(ok['errorSummary'])
         self.assertIsNone(ok['screenshotSha256'])
 
+
+
+class MissingEnvironmentTests(unittest.TestCase):
+    """序号在 HubStudio 查不到（如误传店铺名）时必须出失败行而非崩线程。"""
+
+    def test_unknown_serial_produces_fail_row_with_clear_error(self):
+        hub = _FakeHub(['31'])  # 环境列表里只有 31
+        inspector = StoreFinanceInspector(hub, concurrency=2)
+        inspector.start_batch(['溪山'])  # 传的是店铺名，查不到环境
+        deadline = time.time() + 5
+        while time.time() < deadline and inspector.snapshot()['running']:
+            time.sleep(0.05)
+        snap = inspector.snapshot()
+        self.assertFalse(snap['running'])
+        row = snap['rows'][0]
+        self.assertEqual(row['status'], 'fail')
+        self.assertIn('环境序号未找到', row['errorSummary'])
+        self.assertEqual(row['gsCode'], '')
+        self.assertEqual(hub.started, [])  # 未误开任何浏览器
+
+    def test_base_row_tolerates_env_without_accounts(self):
+        hub = _FakeHub([])
+        inspector = StoreFinanceInspector(hub)
+        row = inspector._base_row('32', {'containerName': '无账号店'}, 'running')
+        self.assertEqual(row['gsCode'], '')
+        self.assertEqual(row['storeName'], '无账号店')
+
+
+class LocalRouteMethodTests(unittest.TestCase):
+    """执行器用 GET 调 progress/screenshot：路由必须挂在 do_GET 分发链里。"""
+
+    def _method_span(self, name):
+        import re as _re
+        source = open(
+            'src/purchase_tool/main.py', encoding='utf-8').read()
+        start = source.index('def %s(self):' % name)
+        nxt = _re.search(r'\n    def ', source[start + 1:])
+        return source[start:start + (nxt.start() if nxt else len(source))]
+
+    def test_progress_and_screenshot_routes_live_in_do_get(self):
+        span = self._method_span('do_GET')
+        self.assertIn("path == '/api/store-finance/progress'", span)
+        self.assertIn("path == '/api/store-finance/screenshot'", span)
+
+    def test_inspect_and_stop_routes_live_in_do_post(self):
+        span = self._method_span('do_POST')
+        self.assertIn("path == '/api/store-finance/inspect'", span)
+        self.assertIn("path == '/api/store-finance/stop'", span)
+        self.assertNotIn("path == '/api/store-finance/progress'", span)
+        self.assertNotIn("path == '/api/store-finance/screenshot'", span)

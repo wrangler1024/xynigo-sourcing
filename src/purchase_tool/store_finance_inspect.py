@@ -214,8 +214,13 @@ class StoreFinanceInspector(object):
         with self._lock:
             self._rows[serial] = row
         page = None
+        opened_before = False
         opened_by_me = False
         try:
+            if not env:
+                raise RuntimeError(
+                    '环境序号未找到：请粘贴 HubStudio 环境序号（纯数字），'
+                    '而非店铺名')
             opened_before = serial in self.hub.open_container_codes()
             # 预置：原本未开的环境一律由巡检负责关闭（start 模糊失败也兜底）
             opened_by_me = not opened_before
@@ -285,7 +290,7 @@ class StoreFinanceInspector(object):
         return {
             'environmentSerial': serial,
             'storeName': env.get('containerName') or serial,
-            'gsCode': (accounts[0].get('accountName') or ''),
+            'gsCode': (accounts[0].get('accountName') if accounts else ''),
             'status': status,
             'loginMode': login_mode,
             'inTransitAmount': None,
