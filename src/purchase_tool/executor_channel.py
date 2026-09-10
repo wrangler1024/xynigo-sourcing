@@ -50,6 +50,7 @@ SUPPORTED_CAPABILITIES = (
     'environment.preview-bound.v1',
     'logistics.query.v1',
     'logistics.auto-site.v1',
+    'store.finance.inspect.v1',
     'environment.create-bound.v1',
     'environment.create-backup.v1',
     'environment.retry-row.v1',

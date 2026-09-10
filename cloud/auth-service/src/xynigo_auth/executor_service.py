@@ -65,6 +65,7 @@ MAX_QUEUED_WORKSPACE_RPC_TASKS = 32
 BUSINESS_TASK_TYPES = frozenset(
     {
         "logistics.query.v1",
+        "store.finance.inspect.v1",
         "environment.create-bound.v1",
         "environment.create-backup.v1",
         "environment.retry-row.v1",
@@ -72,6 +73,8 @@ BUSINESS_TASK_TYPES = frozenset(
     }
 )
 MIN_SAFE_LOGISTICS_CLIENT_VERSION = (0, 13, 18)
+# 店铺结算巡检为全新任务类型，只有实现了该能力的执行器可领取。
+MIN_SAFE_STORE_FINANCE_CLIENT_VERSION = (0, 17, 18)
 BACKGROUND_TASK_TYPES = frozenset(
     {"config.read.v1", "workspace.rpc.v1", "workspace.snapshot.v1"}
 )
@@ -499,6 +502,14 @@ class ExecutorChannelService:
             task_type == "logistics.query.v1"
             and _client_version_tuple(executor.client_version)
             < MIN_SAFE_LOGISTICS_CLIENT_VERSION
+        ):
+            raise ExecutorServiceError(
+                "executor_upgrade_required", status_code=409
+            )
+        if (
+            task_type == "store.finance.inspect.v1"
+            and _client_version_tuple(executor.client_version)
+            < MIN_SAFE_STORE_FINANCE_CLIENT_VERSION
         ):
             raise ExecutorServiceError(
                 "executor_upgrade_required", status_code=409

@@ -114,6 +114,7 @@ from .resource_center import ResourceCenterService
 from .secure_store_transaction import SecureStoreTransaction
 from .shein_query import (
     QueryOrchestrator, normalize_browser_mode, normalize_query_site)
+from .store_finance_inspect import StoreFinanceInspector
 from .task_runtime import (HubRuntimeGate, LocalTaskCoordinator, TaskConflict,
                            environment_resources)
 from .updater import StandardInstallerUpdateClient, UpdateCoordinator
@@ -264,6 +265,10 @@ AUTH_PERMISSION_BY_PATH = {
     '/api/requery': 'fulfillment.order.read',
     '/api/requery-failed': 'fulfillment.order.read',
     '/api/screenshot': 'fulfillment.order.read',
+    '/api/store-finance/inspect': 'assistant.access',
+    '/api/store-finance/progress': 'assistant.access',
+    '/api/store-finance/stop': 'assistant.access',
+    '/api/store-finance/screenshot': 'assistant.access',
     '/api/export': 'fulfillment.order.export',
     '/api/buyer-library': 'resource.buyer.read',
     '/api/buyer-library/import/parse': 'resource.buyer.import',
@@ -1179,6 +1184,11 @@ class AppState(object):
         self.orch = QueryOrchestrator(
             self.hub, log_dir=LOG_DIR,
             concurrency=cfg.get('concurrency', 2))
+        self.store_finance = StoreFinanceInspector(
+            self.hub,
+            concurrency=cfg.get('concurrency', 2),
+            headless=bool(cfg.get('storeFinanceHeadless', True)),
+            log=lambda msg: print('[store-finance]', msg, flush=True))
         self.reg_job = RegistrationJob(lambda: self.hub)
         self.buyer_library = BuyerLibraryJob(
             lambda: DatabaseBuyerLibraryService(
@@ -4545,6 +4555,40 @@ class Handler(BaseHTTPRequestHandler):
                             'site': site, 'taskId': task_id,
                             'browserMode': browser_mode,
                             'allowOpenEnvironment': allow_open_environment})
+            elif path == '/api/store-finance/inspect':
+                serials = body.get('serials')
+                if (not isinstance(serials, list) or not serials
+                        or len(serials) > 300):
+                    raise ValueError('巡检任务缺少环境序号或超出上限')
+                clean = []
+                for item in serials:
+                    text = str(item or '').strip()
+                    if not text:
+                        raise ValueError('巡检任务环境序号无效')
+                    clean.append(text)
+                browser_mode = str(
+                    body.get('browserMode') or 'headless')
+                result = STATE.store_finance.start_batch(
+                    clean,
+                    'visible' if browser_mode == 'visible' else 'headless')
+                self._json(result)
+            elif path == '/api/store-finance/progress':
+                snap = STATE.store_finance.snapshot()
+                snap['hubConnected'] = STATE.hub_status()[0]
+                self._json(snap)
+            elif path == '/api/store-finance/stop':
+                self._json(STATE.store_finance.request_stop())
+            elif path == '/api/store-finance/screenshot':
+                serial = (query.get('serial') or [''])[0]
+                data = STATE.store_finance.screenshot_bytes(serial)
+                if not data:
+                    return self._json({'error': '截图不存在或已清理'}, 404)
+                self.send_response(200)
+                self.send_header('Content-Type', 'image/jpeg')
+                self.send_header('Cache-Control', 'no-store')
+                self.send_header('Content-Length', str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
             elif path == '/api/stop':
                 STATE.orch.request_stop()
                 self._json({'stopped': True})

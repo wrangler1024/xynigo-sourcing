@@ -2026,6 +2026,7 @@ class ExecutorTask(Base):
             "task_type IN ('config.read.v1', 'config.write.v1', "
             "'workspace.rpc.v1', 'workspace.snapshot.v1', "
             "'environment.parse.v1', 'logistics.query.v1', "
+            "'store.finance.inspect.v1', "
             "'environment.preview-bound.v1', "
             "'environment.create-bound.v1', 'environment.create-backup.v1', "
             "'environment.retry-row.v1', 'environment.retry-failed.v1')",
@@ -2121,4 +2122,136 @@ class PurchaseSyncOutbox(Base):
         ),
         CheckConstraint("attempt_count >= 0", name="ck_purchase_sync_attempt_count"),
         Index("ix_purchase_sync_pending", "status", "available_at"),
+    )
+
+
+class StoreFinanceInspectRun(Base):
+    """One store settlement inspection batch (read-only snapshot run)."""
+
+    __tablename__ = "store_finance_inspect_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    actor_user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    source_run_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    result_payload_hash: Mapped[str | None] = mapped_column(String(64))
+    executor_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("local_executors.id", ondelete="SET NULL")
+    )
+    executor_task_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("executor_tasks.id", ondelete="SET NULL")
+    )
+    query_mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    browser_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="headless")
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    phase: Mapped[str] = mapped_column(String(64), nullable=False, default="created")
+    progress_completed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    progress_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    stop_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    total_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    success_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    failed_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    request_summary: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    client_version: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "source_run_key", name="uq_store_finance_run_tenant_source"
+        ),
+        CheckConstraint(
+            "query_mode IN ('initial', 'failed_retry')",
+            name="ck_store_finance_run_mode",
+        ),
+        CheckConstraint(
+            "browser_mode IN ('headless', 'visible')",
+            name="ck_store_finance_run_browser",
+        ),
+        CheckConstraint(
+            "status IN ('created', 'queued', 'leased', 'running', "
+            "'completed', 'partial_failure', 'failed', 'cancelled', 'uncertain')",
+            name="ck_store_finance_run_status",
+        ),
+        CheckConstraint(
+            "total_count >= 0 AND success_count >= 0 AND failed_count >= 0 "
+            "AND progress_completed >= 0 AND progress_total >= 0 "
+            "AND progress_completed <= progress_total",
+            name="ck_store_finance_run_counts",
+        ),
+        Index("ix_store_finance_run_tenant_status", "tenant_id", "status", "updated_at"),
+        Index("ix_store_finance_run_tenant_completed", "tenant_id", "completed_at"),
+        Index("ix_store_finance_run_executor_task", "executor_task_id", unique=True),
+    )
+
+
+class StoreFinanceInspectResult(Base):
+    """One store's settlement snapshot inside an inspection run.
+
+    Amounts are MXN taken from the seller backend at collection time.
+    终态设计：v2 若升级为财务中心模块，直接复用本表聚合，不迁移。
+    """
+
+    __tablename__ = "store_finance_inspect_results"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("store_finance_inspect_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    environment_serial: Mapped[str] = mapped_column(String(64), nullable=False)
+    store_name: Mapped[str | None] = mapped_column(String(128))
+    gs_code: Mapped[str | None] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    login_mode: Mapped[str | None] = mapped_column(String(32))
+    in_transit_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    unsettled_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    next_settlement_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    next_settlement_date: Mapped[date | None] = mapped_column(Date)
+    completed_settlement_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    non_withdrawable_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    pending_settle_limit_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    last_payout_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    withdrawable_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    collected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    duration_seconds: Mapped[int | None] = mapped_column(Integer)
+    error_summary: Mapped[str | None] = mapped_column(Text)
+    screenshot_content: Mapped[bytes | None] = mapped_column(LargeBinary)
+    screenshot_sha256: Mapped[str | None] = mapped_column(String(64))
+    screenshot_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    execution_version: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id", "environment_serial", name="uq_store_finance_result_run_serial"
+        ),
+        CheckConstraint(
+            "status IN ('ok', 'fail', 'login', 'inuse', 'stopped', "
+            "'queued', 'running')",
+            name="ck_store_finance_result_status",
+        ),
+        Index(
+            "ix_store_finance_result_run_status", "run_id", "status"
+        ),
     )

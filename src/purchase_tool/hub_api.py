@@ -745,6 +745,17 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
         data = self._post('/group/list', {'current': 1, 'size': 100})
         return [g.get('tagName') for g in (data or []) if g.get('tagName')]
 
+    def account_list(self, account_name):
+        """按账号名（店铺 GS 编号）查环境绑定的账号信息。
+
+        返回条目含 accountName/accountPassword/domainName 等字段；
+        供店铺结算巡检的自动登录读取凭据，调用方不得落日志。
+        """
+        data = self._post('/account/list',
+                          {'accountName': str(account_name)}) or {}
+        return [dict(item) for item in data.get('list', [])
+                if isinstance(item, dict)]
+
     def env_list(self, tag_name=None, page_size=200):
         """取环境列表；带分组名则按分组过滤，自动翻页。"""
         page_size = max(1, min(200, int(page_size)))

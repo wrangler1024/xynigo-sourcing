@@ -857,3 +857,95 @@ class LogisticsQueryRunBody(BaseModel):
         if len(serials) != len(set(serials)):
             raise ValueError("environmentSerial must be unique in one run")
         return self
+
+
+class StoreFinanceResultItem(BaseModel):
+    """One store's settlement snapshot reported by the executor."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    environmentSerial: str = Field(min_length=1, max_length=64)
+    storeName: str = Field(default="", max_length=128)
+    gsCode: str = Field(default="", max_length=64)
+    status: Literal["ok", "fail", "login", "inuse", "stopped", "queued",
+                    "running"]
+    loginMode: Literal["reuse", "auto", "open_env"] | None = None
+    inTransitAmount: float | None = Field(default=None, ge=-100_000_000,
+                                          le=100_000_000)
+    unsettledAmount: float | None = Field(default=None, ge=-100_000_000,
+                                          le=100_000_000)
+    nextSettlementAmount: float | None = Field(default=None,
+                                               ge=-100_000_000,
+                                               le=100_000_000)
+    nextSettlementDate: str = Field(default="", max_length=20)
+    completedSettlementAmount: float | None = Field(default=None,
+                                                    ge=-100_000_000,
+                                                    le=100_000_000)
+    nonWithdrawableAmount: float | None = Field(default=None, ge=0,
+                                                le=100_000_000)
+    pendingSettleLimitAmount: float | None = Field(default=None, ge=0,
+                                                   le=100_000_000)
+    lastPayoutAmount: float | None = Field(default=None, ge=-100_000_000,
+                                           le=100_000_000)
+    withdrawableAmount: float | None = Field(default=None, ge=-100_000_000,
+                                             le=100_000_000)
+    collectedAt: datetime | None = None
+    durationSeconds: int | None = Field(default=None, ge=0, le=86_400_000)
+    errorSummary: str = Field(default="", max_length=300)
+    screenshotSha256: str = Field(default="", max_length=64)
+
+
+class StoreFinanceRunCreateBody(BaseModel):
+    """Safe cloud request for a durable store-finance inspection Run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    idempotencyKey: str = Field(min_length=8, max_length=128,
+                                pattern=SAFE_KEY_RE)
+    executorId: uuid.UUID
+    queryMode: Literal["initial", "failed_retry"] = "initial"
+    browserMode: Literal["headless", "visible"] = "headless"
+    environmentSerials: list[str] = Field(min_length=1, max_length=300)
+
+    @field_validator("environmentSerials")
+    @classmethod
+    def normalize_environment_serials(cls, value: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            text = str(item or "").strip()
+            if not text:
+                raise ValueError("environmentSerial 不能为空")
+            if text in seen:
+                continue
+            seen.add(text)
+            cleaned.append(text)
+        if not cleaned:
+            raise ValueError("environmentSerials 为空")
+        return cleaned
+
+
+class StoreFinanceRunBody(BaseModel):
+    """Executor completion payload for one inspection run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: Literal["local_executor"] = "local_executor"
+    runKey: str = Field(min_length=8, max_length=128, pattern=SAFE_KEY_RE)
+    queryMode: Literal["initial", "failed_retry"]
+    startedAt: datetime | None = None
+    completedAt: datetime
+    results: list[StoreFinanceResultItem] = Field(min_length=1,
+                                                  max_length=300)
+
+    @field_validator("startedAt", "completedAt")
+    @classmethod
+    def validate_timezone(cls, value: datetime | None) -> datetime | None:
+        return _timezone_required(value)
+
+    @model_validator(mode="after")
+    def unique_rows(self) -> "StoreFinanceRunBody":
+        serials = [item.environmentSerial for item in self.results]
+        if len(serials) != len(set(serials)):
+            raise ValueError("environmentSerial must be unique in one run")
+        return self

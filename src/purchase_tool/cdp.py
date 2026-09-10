@@ -211,6 +211,29 @@ class PageTarget(object):
             if delay:
                 time.sleep(delay)
 
+    def press_key(self, code, key, vk, modifiers=0):
+        """发送单个非文本按键（Tab/Enter/Backspace 等），不产生文本输入。
+
+        modifiers 为 CDP 位掩码：Alt=1 Ctrl=2 Meta/Command=4 Shift=8。
+        表单场景用于触发 blur commit（Tab）或原生全选删除（Meta+A + Backspace）。
+        """
+        down = {'type': 'keyDown', 'code': code, 'key': key,
+                'modifiers': modifiers,
+                'windowsVirtualKeyCode': vk, 'nativeVirtualKeyCode': vk}
+        self._send('Input.dispatchKeyEvent', down)
+        self._send('Input.dispatchKeyEvent',
+                   {'type': 'keyUp', 'code': code, 'key': key,
+                    'modifiers': modifiers,
+                    'windowsVirtualKeyCode': vk, 'nativeVirtualKeyCode': vk})
+
+    def js_evaluate(self, expression):
+        """执行只读/非敏感 UI 的 JS 表达式并返回值。
+
+        仅用于页面状态检测与非敏感 UI 操作（如切换 tab、关闭营销浮层）；
+        任何凭证或敏感值一律走 fill()，禁止拼进表达式。
+        """
+        return self._evaluate(expression)
+
     def focus_code_input(self):
         """聚焦当前页的验证码输入框，避开顶部搜索框。"""
         focused = self._evaluate(r'''

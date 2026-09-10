@@ -110,10 +110,12 @@ from .local_executor_release import (
 )
 from .integration_contract import FeishuIntegrationWriteBody, FeishuReadProxyBody
 from .logistics_export import build_logistics_workbook_export
+from .store_finance_export import build_store_finance_export
 from .executor_diagnostics import executor_context, logistics_diagnostics
 from .models import (
     EnvironmentWorkspacePreference,
     LocalExecutor,
+    StoreFinanceInspectRun,
     LocalLoginRequest,
     OAuthLoginAttempt,
     Permission,
@@ -135,9 +137,16 @@ from .operation_contract import (
     EnvironmentWorkspacePreferenceBody,
     LogisticsQueryRunBody,
     LogisticsQueryRunCreateBody,
+    StoreFinanceRunBody,
+    StoreFinanceRunCreateBody,
     WorkspaceViewPreferenceBody,
 )
-from .operation_service import OperationResultService, OperationRunService
+from .operation_service import (
+    OperationResultService,
+    OperationRunService,
+    ingest_store_finance_run,
+    store_finance_snapshot,
+)
 from .procurement_import_contract import (
     ProcurementImportPreferenceBody,
     Xyp2ParseBody,
@@ -4810,6 +4819,244 @@ def create_app(
             headers={
                 "Cache-Control": "private, no-store",
                 "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    @app.post(
+        "/v1/operation-runs/store-finance-inspect",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def create_store_finance_inspect_run(
+        request: Request,
+        body: StoreFinanceRunCreateBody,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "assistant.store_finance.run.create"
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        runs = OperationRunService(session)
+        try:
+            run, unchanged = runs.create_store_finance_run(
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                body=body,
+            )
+        except PurchaseServiceError as exc:
+            purchase_error(
+                request,
+                session,
+                actor,
+                action,
+                exc,
+                business_object_id=body.idempotencyKey,
+            )
+        if not unchanged:
+            executor_tasks = executor_channel(session)
+            task_payload = {
+                "runId": str(run.id),
+                "runKey": run.source_run_key,
+                "queryMode": body.queryMode,
+                "browserMode": body.browserMode,
+                "environmentSerials": list(body.environmentSerials),
+            }
+            task = executor_tasks.create_config_task(
+                tenant_id=actor.tenant.id,
+                user_id=actor.user.id,
+                executor_id=body.executorId,
+                task_type="store.finance.inspect.v1",
+                payload=task_payload,
+                idempotency_key=f"operation:{body.idempotencyKey}",
+                commit=False,
+            )
+            run.executor_task_id = task.id
+            run.status = "queued"
+            run.phase = "queued"
+            run.updated_at = utcnow()
+        result = store_finance_snapshot(session, run)
+        _add_audit(
+            session,
+            request_id=request.state.request_id,
+            action=action,
+            result="success",
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            business_object_type="store_finance_inspect_run",
+            business_object_id=str(run.id),
+            change_summary={
+                "status": run.status,
+                "totalCount": run.total_count,
+                "unchanged": unchanged,
+            },
+            **_request_log_context(request),
+        )
+        session.commit()
+        return {"ok": True, "data": result}
+
+    @app.put("/v1/operations/store-finance-inspect-runs")
+    def report_store_finance_inspect_run(
+        request: Request,
+        body: StoreFinanceRunBody,
+        session: SessionDep,
+        executor_credential: Annotated[
+            str | None, Header(alias="X-Xynigo-Executor-Credential")
+        ] = None,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "assistant.store_finance.run.report"
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        verified_executor = None
+        if executor_credential:
+            verified_executor = executor_channel(session).authenticate(
+                executor_credential
+            )
+            if (
+                verified_executor.tenant_id != actor.tenant.id
+                or verified_executor.owner_user_id != actor.user.id
+            ):
+                raise ExecutorServiceError(
+                    "executor_identity_mismatch", status_code=403
+                )
+        run = ingest_store_finance_run(
+            session,
+            tenant_id=actor.tenant.id,
+            body=body,
+            executor_id=(
+                verified_executor.id
+                if verified_executor is not None
+                else None
+            ),
+            client_version=getattr(
+                request.state, "client_version", None
+            ) or None,
+        )
+        _add_audit(
+            session,
+            request_id=request.state.request_id,
+            action="assistant.store_finance.run.report",
+            result="success",
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            business_object_type="store_finance_inspect_run",
+            business_object_id=str(run.id),
+            change_summary={"status": run.status,
+                            "successCount": run.success_count,
+                            "failedCount": run.failed_count},
+            **_request_log_context(request),
+        )
+        session.commit()
+        return {"ok": True, "data": store_finance_snapshot(session, run)}
+
+    @app.get("/v1/operation-runs/store-finance-inspect/latest")
+    def latest_store_finance_inspect_run(
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="assistant.store_finance.run.view",
+        )
+        run = session.scalar(
+            select(StoreFinanceInspectRun)
+            .where(StoreFinanceInspectRun.tenant_id == actor.tenant.id)
+            .order_by(StoreFinanceInspectRun.created_at.desc())
+            .limit(1)
+        )
+        if run is None:
+            return {"ok": True, "data": None}
+        return {"ok": True, "data": store_finance_snapshot(session, run)}
+
+    @app.get("/v1/operation-runs/store-finance-inspect/{run_id}")
+    def get_store_finance_inspect_run(
+        request: Request,
+        run_id: uuid.UUID,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="assistant.store_finance.run.view",
+        )
+        run = session.scalar(
+            select(StoreFinanceInspectRun).where(
+                StoreFinanceInspectRun.id == run_id,
+                StoreFinanceInspectRun.tenant_id == actor.tenant.id,
+            )
+        )
+        if run is None:
+            raise HTTPException(status_code=404, detail="巡检批次不存在")
+        return {"ok": True, "data": store_finance_snapshot(session, run)}
+
+    @app.get(
+        "/v1/operation-runs/store-finance-inspect/{run_id}/export"
+    )
+    def export_store_finance_inspect_run(
+        request: Request,
+        run_id: uuid.UUID,
+        session: SessionDep,
+        variant: str = "standard",
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> Response:
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="assistant.store_finance.run.export",
+        )
+        run = session.scalar(
+            select(StoreFinanceInspectRun).where(
+                StoreFinanceInspectRun.id == run_id,
+                StoreFinanceInspectRun.tenant_id == actor.tenant.id,
+            )
+        )
+        if run is None:
+            raise HTTPException(status_code=404, detail="巡检批次不存在")
+        terminal = {
+            "completed", "partial_failure", "failed", "cancelled", "uncertain",
+        }
+        if run.status not in terminal:
+            raise HTTPException(status_code=409, detail="巡检尚未完成，暂不可导出")
+        snapshot = store_finance_snapshot(session, run)
+        content, filename, mime = build_store_finance_export(
+            snapshot["rows"], variant=variant)
+        return Response(
+            content=content,
+            media_type=mime,
+            headers={
+                "Content-Disposition": (
+                    "attachment; filename*=UTF-8''"
+                    + quote(filename)
+                ),
+                "X-Xynigo-Row-Count": str(len(snapshot["rows"])),
             },
         )
 

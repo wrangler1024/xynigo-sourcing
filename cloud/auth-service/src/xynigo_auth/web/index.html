@@ -1666,6 +1666,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         <button class="secondary-tab" data-parent="resources" data-module="storemanagement" hidden>店铺管理<span class="secondary-status">新增</span></button>
         <button class="secondary-tab" data-parent="resources" data-module="proxymanagement" hidden>代理IP<span class="secondary-status">新增</span></button>
         <button class="secondary-tab" data-parent="assistant" data-module="xyp2parser" hidden>XYP2解析器<span class="secondary-status">采购清单</span></button>
+        <button class="secondary-tab" data-parent="assistant" data-module="storefinance" hidden>店铺结算查询<span class="secondary-status">新增</span></button>
         <button class="secondary-tab" data-parent="analytics" data-planned="采购效率" disabled hidden>采购效率<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="analytics" data-planned="履约质量" disabled hidden>履约质量<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="analytics" data-planned="资源健康" disabled hidden>资源健康<span class="secondary-status planned">规划</span></button>
@@ -1956,6 +1957,143 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         <p class="xyp2-help">本工具用于补充已有订单的采购信息。完整分单请使用“采购中心 → 导入分单”，执行订单校验和去重。</p>
       </details>
       <div id="xyp2CopyFallback" hidden><label for="xyp2CopyText">浏览器未允许自动复制，请在下方按 Ctrl/Cmd+C 复制。</label><textarea id="xyp2CopyText" rows="5" readonly spellcheck="false"></textarea></div>
+    </section>
+  </div>
+
+  <div class="module-panel hidden" id="storeFinancePanel">
+    <section class="card">
+      <div class="card-title">选择店铺
+        <span class="legend">环境序号清单 · 勾选状态自动保存</span>
+        <span class="resource-state" id="sfSelCount" style="margin-left:auto; margin-top:0">已选 0 家</span>
+      </div>
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:12px;">
+        <input class="text-input" id="sfSearch" placeholder="筛选：店铺名 / GS 编号 / 环境序号" style="min-width:210px">
+        <button class="btn sm" id="sfPasteBtn">批量粘贴名单</button>
+        <span style="flex:1"></span>
+        <button class="btn sm" id="sfAll">全选</button>
+        <button class="btn sm" id="sfNone">清空</button>
+      </div>
+      <div id="sfPastePanel" class="hidden" style="border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin-bottom:12px; background:#fbfdfe;">
+        <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+          <b style="font-size:12px">批量粘贴环境序号</b>
+          <span class="hint">每行一个，逗号/空格分隔亦可；可在资源中心店铺清单复制</span>
+        </div>
+        <textarea id="sfPasteArea" rows="4" spellcheck="false" placeholder="1746, 1775875785&#10;1788370711"
+          style="width:100%; margin-top:8px; border:1px solid var(--line); border-radius:11px; padding:9px 12px; font-size:12px; font-family:inherit; color:var(--navy-950); outline:none;"></textarea>
+        <div style="display:flex; justify-content:space-between; gap:10px; align-items:center; margin-top:8px; flex-wrap:wrap;">
+          <div class="resource-state" id="sfPasteState">粘贴后点击「添加并勾选」。清单会保存在本机，下次自动恢复。</div>
+          <div class="table-actions">
+            <button class="btn sm" id="sfPasteClose">收起</button>
+            <button class="btn sm primary" id="sfPasteAdd">添加并勾选</button>
+          </div>
+        </div>
+      </div>
+      <div class="table-scroll scroll-10">
+        <table id="sfShopTable">
+          <thead><tr>
+            <th style="width:34px"><input type="checkbox" id="sfChkHead" style="accent-color:var(--rhino-600)"></th>
+            <th>环境序号</th><th>备注</th><th>状态</th>
+          </tr></thead>
+          <tbody id="sfShopRows"><tr><td colspan="4" class="hint" style="text-align:center; padding:18px;">通过「批量粘贴名单」或「全选后手动录入」建立巡检清单；清单保存在本机浏览器。</td></tr></tbody>
+        </table>
+      </div>
+      <div class="procurement-pagination">
+        <span class="procurement-pagination-copy" id="sfPageInfo">视口上限 10 行，超出表内滚动 · 勾选状态自动保存</span>
+      </div>
+      <div style="margin-top:12px; display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center;">
+        <div class="resource-state" id="sfStartHint">请先建立并勾选巡检清单。</div>
+        <button class="btn sm" id="sfReset">清空清单</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-title">执行
+        <span class="legend" id="sfRunLegend">Run 待发起</span>
+        <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap; margin-left:auto;">
+          <span class="if-row" id="sfHeadlessRow">
+            <span>无头模式</span>
+            <button class="if-switch" id="sfHeadless" role="switch" aria-checked="true" aria-labelledby="sfHeadlessRow"></button>
+            <span class="hint">不弹浏览器窗口，异常回退有头并截图</span>
+          </span>
+          <span class="if-row">并发
+            <button class="chip active" data-sf-conc="2">2</button><button class="chip" data-sf-conc="3">3</button><button class="chip" data-sf-conc="5">5</button>
+          </span>
+        </div>
+      </div>
+
+      <div class="query-phase-banner" id="sfPhaseBanner" hidden>
+        <span class="spinner" id="sfPhaseSpin" hidden></span>
+        <span id="sfPhaseDescription">等待发起巡检。勾选店铺后点击「一键巡检」。</span>
+      </div>
+
+      <div class="action-row">
+        <button class="btn primary" id="sfStart">一键巡检</button>
+        <button class="btn danger" id="sfStop" disabled>停止</button>
+        <span class="resource-state" style="flex:1">全流程只读采集；登录态失效的店铺将自动登录。云端幂等防重：同一店铺不会被并行重复采集。</span>
+      </div>
+      <div class="progress-wrap">
+        <div class="progress"><div class="bar" id="sfBar"></div></div>
+        <span id="sfProgressText">未开始</span>
+      </div>
+    </section>
+
+    <section class="card table-card">
+      <div class="card-title" style="padding:17px 19px 0;">
+        <div>结算汇总 <span class="legend">MXN · 采集时刻快照</span>
+          <div class="sub" id="sfResultMeta">发起巡检后此处展示采集结果；结果按店铺名排序，视口上限 30 行。</div>
+        </div>
+        <div class="table-actions">
+          <button class="btn retry" id="sfRetryFail" disabled>补采失败</button>
+          <button class="btn sm" id="sfClearResult">清空结果</button>
+          <div class="export-split">
+            <button class="btn primary" id="sfExport" disabled>导出 Excel</button>
+            <button class="btn primary" id="sfExportMenuBtn" disabled>▾</button>
+            <div class="export-menu" id="sfExportMenu" hidden>
+              <button id="sfExportStd"><b>标准导出</b><small>按运营现有《店铺结算汇总表》六列格式，可直接发财务</small></button>
+              <button id="sfExportFull"><b>完整导出</b><small>含附加字段（最近打款、可提现、待结算限制）与异常说明</small></button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="business-summary" id="sfBizSummary" style="padding-top:4px;">
+        <div class="business-stat"><small>店铺数</small><b>—</b></div>
+        <div class="business-stat stat-ok"><small>成功</small><b>—</b></div>
+        <div class="business-stat stat-bad"><small>标记异常</small><b>—</b></div>
+        <div class="business-stat"><small>在途合计</small><b>—</b></div>
+        <div class="business-stat"><small>未结算合计</small><b>—</b></div>
+        <div class="business-stat"><small>下次结算合计</small><b>—</b></div>
+        <div class="business-stat"><small>已完成结算合计</small><b>—</b></div>
+      </div>
+
+      <div style="padding: 0 19px;">
+        <div class="table-scroll scroll-30">
+          <table id="sfResultTable">
+            <thead><tr>
+              <th>店铺</th><th>GS 编号</th>
+              <th class="num">在途订单金额</th><th class="num">累计未结算金额</th><th class="num">下次结算金额</th>
+              <th>下次结算日</th><th class="num">已完成结算收入</th><th class="num">不可提现金额</th>
+              <th>采集时间</th><th>状态</th>
+            </tr></thead>
+            <tbody id="sfResRows">
+              <tr><td colspan="10" class="hint" style="text-align:center; padding:22px;">发起巡检后，此处按店铺逐行实时填充（同物流查询，视口内滚动）。</td></tr>
+            </tbody>
+            <tfoot><tr>
+              <td colspan="2" id="sfSumLabel">合计</td>
+              <td class="num" id="sfSum1">—</td><td class="num" id="sfSum2">—</td><td class="num" id="sfSum3">—</td>
+              <td></td><td class="num" id="sfSum4">—</td><td class="num" id="sfSum5">—</td><td colspan="2"></td>
+            </tr></tfoot>
+          </table>
+        </div>
+      </div>
+
+      <div style="padding: 12px 19px 17px;">
+        <details class="details-box" id="sfErrBox" hidden>
+          <summary>异常与登录详情</summary>
+          <div style="margin-top:10px; display:flex; flex-direction:column; gap:10px;" id="sfErrList"></div>
+        </details>
+        <p class="xyp2-help">金额为采集时刻后台快照（实时变动）。「已完成结算收入」对应后台「本年度已结算金额」；「不可提现金额」来自「资金限制 → 详情」。标准导出与运营现有《店铺结算汇总表》格式一致，可直接发财务。</p>
+      </div>
     </section>
   </div>
 
@@ -3363,6 +3501,10 @@ const FEATURE_MODULES = {
     label: 'XYP2解析器', primary: 'assistant', requiredPermission: 'assistant.access',
     summary: '解析店小秘 XYP2 备注，查看采购清单并复制到协同表。'
   },
+  storefinance: {
+    label: '店铺结算查询', primary: 'assistant', requiredPermission: 'assistant.access',
+    summary: '批量自动登录采集 SHEIN 店铺后台结算与资金数据，导出《店铺结算汇总表》交财务。全程只读。'
+  },
   buyerlib: {
     label: '买家号库', primary: 'resources',
     requiredPermission: 'resource.buyer.read',
@@ -4028,6 +4170,291 @@ async function cloudFormalExecutor(capability, preferredId='') {
   }
   return selected;
 }
+
+/* ===== 小犀助手 · 店铺结算查询 ===== */
+const SF_STORE_KEY = 'storeFinanceShopList';
+const SF_SEL_KEY = 'storeFinanceSelection';
+const SF_STATE = { runId: null, timer: null, running: false, serials: [], selected: new Set(), lastRows: [] };
+
+function sfSaveList() {
+  try {
+    localStorage.setItem(SF_STORE_KEY, JSON.stringify(SF_STATE.serials));
+    localStorage.setItem(SF_SEL_KEY, JSON.stringify([...SF_STATE.selected]));
+  } catch (e) { /* 本机存储不可用时静默 */ }
+}
+function sfLoadList() {
+  try {
+    SF_STATE.serials = JSON.parse(localStorage.getItem(SF_STORE_KEY) || '[]');
+    SF_STATE.selected = new Set(JSON.parse(localStorage.getItem(SF_SEL_KEY) || '[]'));
+  } catch (e) { SF_STATE.serials = []; SF_STATE.selected = new Set(); }
+}
+function sfRenderShops() {
+  const kw = ($('sfSearch').value || '').trim().toLowerCase();
+  const rows = SF_STATE.serials.map(serial => {
+    const selected = SF_STATE.selected.has(serial);
+    const visible = !kw || serial.toLowerCase().includes(kw);
+    return { serial, selected, visible };
+  });
+  const visibleCount = rows.filter(r => r.visible).length;
+  if (!rows.length) {
+    $('sfShopRows').innerHTML = '<tr><td colspan="4" class="hint" style="text-align:center; padding:18px;">通过「批量粘贴名单」建立巡检清单；清单保存在本机浏览器。</td></tr>';
+    return;
+  }
+  $('sfShopRows').innerHTML = rows.map(r => `<tr data-serial="${r.serial}"${r.visible ? '' : ' style="display:none"'}>
+    <td><input type="checkbox" class="sf-sel" data-serial="${r.serial}"${r.selected ? ' checked' : ''} style="accent-color:var(--rhino-600)"></td>
+    <td style="font-weight:800; color:var(--navy-950)">${r.serial}</td>
+    <td class="hint">—</td>
+    <td><span class="pill ${r.selected ? 'ok' : 'run'}">${r.selected ? '已勾选' : '未勾选'}</span></td></tr>`).join('');
+  $('sfPageInfo').textContent = `共 ${rows.length} 家 · 视口内 ${visibleCount} 家可见 · 视口上限 10 行 · 勾选自动保存`;
+}
+function sfRefreshSel() {
+  const n = SF_STATE.selected.size;
+  $('sfSelCount').textContent = `已选 ${n} 家`;
+  $('sfStartHint').textContent = n
+    ? `已选 ${n} 家店铺，点击「一键巡检」开始；预计约 ${Math.max(2, Math.round(n * 0.5))} 分钟（并发 2）。`
+    : '请先建立并勾选巡检清单。';
+}
+function sfInit() {
+  if (!SF_STATE.serials.length) sfLoadList();
+  sfRenderShops();
+  sfRefreshSel();
+  if (!SF_STATE.timer) SF_STATE.timer = setInterval(sfPoll, 2500);
+}
+$('sfSearch').addEventListener('input', () => sfRenderShops());
+$('sfShopRows').addEventListener('change', e => {
+  if (!e.target.classList.contains('sf-sel')) return;
+  if (e.target.checked) SF_STATE.selected.add(e.target.dataset.serial);
+  else SF_STATE.selected.delete(e.target.dataset.serial);
+  sfSaveList(); sfRenderShops(); sfRefreshSel();
+});
+$('sfChkHead').addEventListener('change', e => {
+  if (e.target.checked) SF_STATE.serials.forEach(s => SF_STATE.selected.add(s));
+  else SF_STATE.selected.clear();
+  sfSaveList(); sfRenderShops(); sfRefreshSel();
+});
+$('sfAll').onclick = () => { SF_STATE.serials.forEach(s => SF_STATE.selected.add(s)); sfSaveList(); sfRenderShops(); sfRefreshSel(); };
+$('sfNone').onclick = () => { SF_STATE.selected.clear(); sfSaveList(); sfRenderShops(); sfRefreshSel(); };
+$('sfReset').onclick = () => { SF_STATE.serials = []; SF_STATE.selected.clear(); sfSaveList(); sfRenderShops(); sfRefreshSel(); };
+$('sfPasteBtn').onclick = () => { $('sfPastePanel').classList.toggle('hidden'); $('sfPasteArea').focus(); };
+$('sfPasteClose').onclick = () => $('sfPastePanel').classList.add('hidden');
+$('sfPasteAdd').onclick = () => {
+  const tokens = ($('sfPasteArea').value || '').split(/[\n,，、\s]+/).map(s => s.trim()).filter(Boolean);
+  if (!tokens.length) { $('sfPasteState').textContent = '请先粘贴环境序号。'; $('sfPasteState').className = 'resource-state warn'; return; }
+  const before = SF_STATE.serials.length;
+  tokens.forEach(t => { if (!SF_STATE.serials.includes(t)) SF_STATE.serials.push(t); SF_STATE.selected.add(t); });
+  sfSaveList(); sfRenderShops(); sfRefreshSel();
+  $('sfPasteState').className = 'resource-state ok';
+  $('sfPasteState').textContent = `已添加 ${SF_STATE.serials.length - before} 个新序号（重复自动跳过），共 ${SF_STATE.serials.length} 家。`;
+};
+document.querySelectorAll('[data-sf-conc]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('[data-sf-conc]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  });
+});
+$('sfHeadless').onclick = () => {
+  const on = $('sfHeadless').getAttribute('aria-checked') === 'true';
+  $('sfHeadless').setAttribute('aria-checked', String(!on));
+};
+function sfConc() {
+  const active = document.querySelector('[data-sf-conc].active');
+  return active ? Number(active.dataset.sfConc) : 2;
+}
+function sfSetPhase(text, spin) {
+  $('sfPhaseBanner').hidden = false;
+  $('sfPhaseSpin').hidden = !spin;
+  $('sfPhaseDescription').textContent = text;
+}
+function sfMoney(v) {
+  return v === null || v === undefined ? '' : Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function sfStatusPill(status, loginMode) {
+  if (status === 'ok') {
+    const mode = loginMode === 'open_env' ? '成功 · 复用已开环境（未关闭）'
+      : loginMode === 'auto' ? '成功 · 自动登录' : '成功 · 复用登录';
+    return `<span class="pill ok">${mode}</span>`;
+  }
+  const map = { fail: '失败', login: '失败 · 登录未完成', inuse: '失败 · 环境占用', stopped: '已停止', queued: '等待', running: '采集中' };
+  const cls = { fail: 'bad', login: 'bad', inuse: 'bad', stopped: 'warn', queued: 'run', running: 'run' }[status] || 'warn';
+  return `<span class="pill ${cls}">${map[status] || status}</span>`;
+}
+function sfTimeOf(row) {
+  const raw = row.collectedAt || '';
+  return raw ? raw.slice(11, 19) : '—';
+}
+function sfRenderRows(rows) {
+  if (!rows.length) {
+    $('sfResRows').innerHTML = '<tr><td colspan="10" class="hint" style="text-align:center; padding:22px;">暂无结果行。</td></tr>';
+    return;
+  }
+  $('sfResRows').innerHTML = rows.map(row => {
+    const bad = row.status !== 'ok';
+    const cells = bad
+      ? `<td colspan="5" class="hint">— 未采集${row.errorSummary ? '（' + row.errorSummary.slice(0, 60) + '）' : ''}—</td><td class="sub-text">—</td>`
+      : `<td class="num">${sfMoney(row.inTransitAmount)}</td><td class="num">${sfMoney(row.unsettledAmount)}</td><td class="num">${sfMoney(row.nextSettlementAmount)}</td>
+         <td class="sub-text">${row.nextSettlementDate || '—'}</td><td class="num">${sfMoney(row.completedSettlementAmount)}</td><td class="num">${sfMoney(row.nonWithdrawableAmount)}</td>`;
+    return `<tr data-serial="${row.environmentSerial}"${bad && row.status !== 'queued' && row.status !== 'running' ? ' class="tr-bad"' : (row.status === 'running' ? ' class="tr-run"' : '')}>
+      <td style="font-weight:800; color:var(--navy-950)">${row.storeName || row.environmentSerial}</td>
+      <td><span class="stable-id-button">${row.gsCode || row.environmentSerial}</span></td>
+      ${cells}
+      <td class="sub-text">${sfTimeOf(row)}</td>
+      <td>${sfStatusPill(row.status, row.loginMode)}</td></tr>`;
+  }).join('');
+}
+function sfRenderSummary(data) {
+  const stats = $('sfBizSummary').children;
+  stats[0].querySelector('b').textContent = data.totalCount ?? '—';
+  stats[1].querySelector('b').textContent = data.successCount ?? '—';
+  stats[2].querySelector('b').textContent = data.failedCount ?? '—';
+  const rows = data.rows || [];
+  const sums = { transit: 0, unsettled: 0, next: 0, done: 0 };
+  rows.filter(r => r.status === 'ok').forEach(r => {
+    sums.transit += r.inTransitAmount || 0;
+    sums.unsettled += r.unsettledAmount || 0;
+    sums.next += r.nextSettlementAmount || 0;
+    sums.done += r.completedSettlementAmount || 0;
+  });
+  const money = n => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  stats[3].querySelector('b').textContent = money(sums.transit);
+  stats[4].querySelector('b').textContent = money(sums.unsettled);
+  stats[5].querySelector('b').textContent = money(sums.next);
+  stats[6].querySelector('b').textContent = money(sums.done);
+  $('sfSum1').textContent = money(sums.transit);
+  $('sfSum2').textContent = money(sums.unsettled);
+  $('sfSum3').textContent = money(sums.next);
+  $('sfSum4').textContent = money(sums.done);
+  $('sfSum5').textContent = money(sums.transit * 0);
+  $('sfSumLabel').textContent = `合计（成功 ${data.successCount} / ${data.totalCount} 家）`;
+  const bad = (data.failedCount || 0);
+  $('sfRetryFail').disabled = !bad;
+  const failures = rows.filter(r => ['fail', 'login', 'inuse'].includes(r.status));
+  if (failures.length) {
+    $('sfErrBox').hidden = false;
+    $('sfErrList').innerHTML = failures.map(r => `
+      <div style="border:1px solid var(--line); border-radius:12px; padding:12px 14px; background:#fff;">
+        <div style="display:flex; justify-content:space-between; gap:8px; align-items:center;">
+          <b style="font-size:12px">${r.storeName || r.environmentSerial} <span class="stable-id-button">${r.gsCode || r.environmentSerial}</span></b>
+          <span class="pill bad">${sfStatusPill(r.status, r.loginMode).replace(/<\/?[^>]+(>|$)/g, '')}</span>
+        </div>
+        <p class="xyp2-help">${r.errorSummary || '详见执行器日志。'}<br>截图：异常页面（随 Run 附件保存，可在 Run 详情查看）。</p>
+      </div>`).join('');
+  } else $('sfErrBox').hidden = true;
+}
+async function sfStart() {
+  if (SF_STATE.running) return;
+  const serials = [...SF_STATE.selected];
+  if (!serials.length) { sfSetPhase('请先勾选巡检清单。', false); return; }
+  let executor;
+  try { executor = await cloudFormalExecutor('store.finance.inspect.v1'); }
+  catch (e) { sfSetPhase(e.message || '执行器不可用', false); return; }
+  const headless = $('sfHeadless').getAttribute('aria-checked') === 'true';
+  const body = {
+    idempotencyKey: 'sf-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+    executorId: executor.id,
+    queryMode: 'initial',
+    browserMode: headless ? 'headless' : 'visible',
+    environmentSerials: serials,
+  };
+  try {
+    const res = await cloudFetchJson('/v1/operation-runs/store-finance-inspect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    SF_STATE.runId = res.data.runId;
+    SF_STATE.running = true;
+    $('sfStart').disabled = true; $('sfStop').disabled = false;
+    $('sfRunLegend').textContent = 'Run ' + SF_STATE.runId.slice(0, 8);
+    sfSetPhase(`巡检运行中 · 无头${headless ? '开' : '关'} · 并发 ${sfConc()} · 共 ${serials.length} 家`, true);
+    sfPoll();
+  } catch (e) {
+    sfSetPhase('发起失败：' + (e.message || e), false);
+  }
+}
+async function sfPoll() {
+  if (!SF_STATE.runId) return;
+  try {
+    const res = await cloudFetchJson('/v1/operation-runs/store-finance-inspect/' + SF_STATE.runId);
+    const data = (res || {}).data || {};
+    sfRenderRows(data.rows || []);
+    sfRenderSummary(data);
+    $('sfProgressText').textContent = `${data.progressCompleted ?? 0} / ${data.progressTotal ?? 0}`;
+    $('sfBar').style.width = (data.progressTotal
+      ? Math.round((data.progressCompleted || 0) / data.progressTotal * 100) : 0) + '%';
+    const done = ['completed', 'partial_failure', 'failed', 'cancelled', 'uncertain'].includes(data.status);
+    if (done) {
+      const bad = data.failedCount || 0;
+      sfSetPhase(bad ? `巡检完成：成功 ${data.successCount} 家，标记 ${bad} 家。可「补采失败」或导出后人工处理。` : '巡检完成，全部成功。', false);
+      $('sfStart').disabled = false; $('sfStop').disabled = true;
+      $('sfExport').disabled = false; $('sfExportMenuBtn').disabled = false;
+      $('sfRetryFail').disabled = !bad;
+      SF_STATE.running = false;
+    } else {
+      sfSetPhase(`巡检运行中 · 已完成 ${data.progressCompleted ?? 0} / ${data.progressTotal ?? 0}`, true);
+    }
+  } catch (e) { /* 轮询失败静默重试 */ }
+}
+$('sfStart').onclick = sfStart;
+$('sfStop').onclick = async () => {
+  if (!SF_STATE.runId) return;
+  try { await cloudFetchJson('/v1/operation-runs/store-finance-inspect/' + SF_STATE.runId + '/cancel', { method: 'POST' }); } catch (e) {}
+  sfSetPhase('已请求停止；当前采集中店铺完成后终止，已完成数据保留。', false);
+};
+function sfFailedSerials() {
+  return sfLastRows().filter(r => ['fail', 'login', 'inuse'].includes(r.status)).map(r => r.environmentSerial);
+}
+function sfLastRows() { return SF_STATE.lastRows; }
+async function sfRetryFail() {
+  const serials = sfFailedSerials();
+  if (!serials.length || SF_STATE.running) return;
+  SF_STATE.selected = new Set(serials);
+  sfSaveList(); sfRenderShops(); sfRefreshSel();
+  sfStart();
+}
+$('sfRetryFail').onclick = sfRetryFail;
+$('sfClearResult').onclick = () => {
+  SF_STATE.runId = null; SF_STATE.lastRows = [];
+  $('sfResRows').innerHTML = '<tr><td colspan="10" class="hint" style="text-align:center; padding:22px;">已清空。</td></tr>';
+  $('sfPhaseBanner').hidden = true;
+  $('sfBar').style.width = '0%'; $('sfProgressText').textContent = '未开始';
+  $('sfExport').disabled = true; $('sfExportMenuBtn').disabled = true; $('sfRetryFail').disabled = true;
+};
+$('sfExportMenuBtn').onclick = e => { e.stopPropagation(); $('sfExportMenu').hidden = !$('sfExportMenu').hidden; };
+document.addEventListener('click', () => { const m = $('sfExportMenu'); if (m) m.hidden = true; });
+async function sfExport(variant) {
+  if (!SF_STATE.runId) return;
+  const hint = variant === 'full' ? '店铺结算汇总表_完整.csv' : '店铺结算汇总表.xlsx';
+  try {
+    const response = await fetch(
+      '/v1/operation-runs/store-finance-inspect/'
+        + encodeURIComponent(SF_STATE.runId) + '/export?variant=' + variant,
+      { credentials: 'same-origin',
+        headers: { 'Accept': 'application/octet-stream',
+                   'X-Xynigo-Source': 'cloud_web_workspace' } });
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    const blob = await response.blob();
+    const filename = workspaceDownloadName(
+      response.headers.get('Content-Disposition'), hint);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url; link.download = filename;
+    document.body.appendChild(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (e) { sfSetPhase('导出失败：' + (e.message || e), false); }
+}
+$('sfExport').onclick = () => sfExport('standard');
+$('sfExportStd').onclick = () => { $('sfExportMenu').hidden = true; sfExport('standard'); };
+$('sfExportFull').onclick = () => { $('sfExportMenu').hidden = true; sfExport('full'); };
+/* 轮询时缓存最近行给补采按钮 */
+const _sfPoll = sfPoll;
+sfPoll = async function () {
+  try {
+    const res = SF_STATE.runId
+      ? await cloudFetchJson('/v1/operation-runs/store-finance-inspect/' + SF_STATE.runId) : null;
+    if (res && res.data) SF_STATE.lastRows = res.data.rows || [];
+  } catch (e) {}
+  return _sfPoll();
+};
 
 function cloudRunElapsed(run) {
   const started = Date.parse(run && (run.startedAt || run.createdAt) || '');
@@ -10454,6 +10881,8 @@ function setFeaturePanel(module) {
     btn.classList.toggle('active', btn.dataset.module === module);
   });
   $('queryPanel').classList.toggle('hidden', module !== 'query');
+  $('storeFinancePanel').classList.toggle('hidden', module !== 'storefinance');
+  if (module === 'storefinance') sfInit();
   $('procurementPanel').classList.toggle('hidden', module !== 'procurementorders');
   $('procurementExecutionPanel').classList.toggle('hidden', module !== 'procurementexecution');
   $('procurementOrderDetailPanel').classList.toggle('hidden', module !== 'procurementorderdetail');

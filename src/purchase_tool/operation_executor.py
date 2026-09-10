@@ -21,10 +21,14 @@ from .redaction import scrub_text
 BUSINESS_TASK_TYPES = frozenset({
     'environment.preview-bound.v1',
     'logistics.query.v1',
+    'store.finance.inspect.v1',
     'environment.create-bound.v1',
     'environment.create-backup.v1',
     'environment.retry-row.v1',
     'environment.retry-failed.v1',
+})
+STORE_FINANCE_TERMINAL_STATES = frozenset({
+    'ok', 'fail', 'login', 'inuse', 'stopped',
 })
 ENVIRONMENT_TERMINAL_STATES = frozenset({
     'done', 'failed', 'stopped', 'rolled_back', 'cleanup_failed',
@@ -69,6 +73,9 @@ class LocalOperationExecutor(object):
         cancellation_event = cancellation_event or threading.Event()
         if task_type == 'logistics.query.v1':
             return self._execute_logistics(
+                payload, report, cancellation_event)
+        if task_type == 'store.finance.inspect.v1':
+            return self._execute_store_finance(
                 payload, report, cancellation_event)
         if task_type == 'environment.preview-bound.v1':
             return self._execute_environment_preview(
@@ -365,6 +372,140 @@ class LocalOperationExecutor(object):
             summary['ipOkCount'] = sum(bool(row['ipVerified']) for row in checked)
             summary['ipTotalCount'] = len(checked)
         return self._terminal_result('environment', summary)
+
+    def _execute_store_finance(self, payload, report, cancellation_event):
+        """店铺结算巡检：本地巡检服务跑批，轮询进度并增量上报。
+
+        与物流任务同构，但不复用其本地状态机——巡检的行状态由
+        StoreFinanceInspector 直接维护（含排队/采集中中间态）。
+        """
+        run_key = self._required_text(payload, 'runKey')
+        serials = payload.get('environmentSerials')
+        if (not isinstance(serials, list) or not serials
+                or any(not str(item or '').strip() for item in serials)):
+            raise OperationExecutionError(
+                'operation_payload_invalid', '巡检任务缺少环境序号')
+        serials = [str(item).strip() for item in serials]
+        if len(serials) > 300:
+            raise OperationExecutionError(
+                'operation_payload_invalid', '单批巡检店铺数量超出上限')
+        browser_mode = str(payload.get('browserMode') or 'headless')
+        start_body = {
+            'serials': serials,
+            'browserMode': browser_mode,
+            'operationRunKey': run_key,
+        }
+        self._request('POST', '/api/store-finance/inspect', start_body)
+        total = len(serials)
+        selected = set(serials)
+        stop_sent = False
+        previous = None
+        reported_screenshots = set()
+        rows = []
+        while True:
+            snapshot = self._request('GET', '/api/store-finance/progress')
+            if cancellation_event.is_set() and not stop_sent:
+                try:
+                    self._request('POST', '/api/store-finance/stop', {})
+                except OperationExecutionError:
+                    pass
+                stop_sent = True
+            rows = [row for row in (snapshot.get('rows') or [])
+                    if str(row.get('environmentSerial') or '') in selected]
+            completed = sum(
+                row.get('status') in STORE_FINANCE_TERMINAL_STATES
+                for row in rows)
+            phase = ('store_finance.running'
+                     if snapshot.get('running')
+                     else 'store_finance.completed')
+            event = {
+                'phase': phase,
+                'current': min(total, completed),
+                'total': total,
+                'snapshot': {'rows': rows},
+            }
+            serialized = json.dumps(
+                event, ensure_ascii=False, sort_keys=True,
+                separators=(',', ':'))
+            if serialized != previous:
+                try:
+                    report(**event)
+                except Exception:
+                    pass  # 进度上报失败不阻断批次，finish 携带最终快照
+                previous = serialized
+            for row in rows:
+                serial = str(row.get('environmentSerial') or '')
+                if (not serial or serial in reported_screenshots
+                        or row.get('screenshotStatus') != 'ok'):
+                    continue
+                attachment = self._store_finance_screenshot_attachment(serial)
+                if attachment is None:
+                    continue
+                attachment_event = dict(event)
+                attachment_event['snapshot'] = {
+                    **event['snapshot'], 'screenshots': [attachment]}
+                if self._safe_report(report, **attachment_event):
+                    reported_screenshots.add(serial)
+            if not bool(snapshot.get('running')):
+                break
+            self.sleep(self.poll_interval)
+        summary = self._store_finance_summary(total, rows)
+        return self._terminal_result('store_finance', summary)
+
+    def _store_finance_screenshot_attachment(self, serial):
+        result = self.rpc_executor({
+            'method': 'GET',
+            'path': '/api/store-finance/screenshot?serial='
+                    + quote(str(serial), safe=''),
+            'body': None,
+        })
+        if not isinstance(result, dict) or int(result.get('httpStatus') or 0) != 200:
+            return None
+        if result.get('responseType') != 'base64':
+            return None
+        encoded = str(result.get('bodyBase64') or '')
+        try:
+            content = base64.b64decode(encoded, validate=True)
+        except Exception:
+            return None
+        if not content or len(content) > 350 * 1024:
+            return None
+        return {
+            'environmentSerial': str(serial)[:64],
+            'contentType': 'image/jpeg',
+            'contentBase64': encoded,
+            'sha256': hashlib.sha256(content).hexdigest(),
+            'size': len(content),
+        }
+
+    @staticmethod
+    def _store_finance_summary(total, rows):
+        rows = rows or []
+        success = sum(row.get('status') == 'ok' for row in rows)
+        stopped = sum(row.get('status') == 'stopped' for row in rows)
+        failed = sum(
+            row.get('status') in ('fail', 'login', 'inuse')
+            for row in rows)
+        if stopped and not success and not failed:
+            run_status = 'cancelled'
+        elif failed and success:
+            run_status = 'partial_failure'
+        elif failed:
+            run_status = 'failed'
+        else:
+            run_status = 'completed'
+        return {
+            'runStatus': run_status,
+            'phase': 'store_finance.' + run_status,
+            'progressCompleted': min(total, success + failed + stopped),
+            'progressTotal': total,
+            'totalCount': total,
+            'successCount': success,
+            'failedCount': failed,
+            'stoppedCount': stopped,
+            'errorCode': '',
+            'errorSummary': '',
+        }
 
     def _execute_logistics(self, payload, report, cancellation_event):
         run_key = self._required_text(payload, 'runKey')
