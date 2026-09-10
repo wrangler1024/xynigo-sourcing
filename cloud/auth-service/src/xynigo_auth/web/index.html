@@ -3816,8 +3816,13 @@ function cloudApiError(payload, status) {
     operation_parent_run_active:'原物流查询仍在执行，请稍后重试',
     operation_run_active:'查询仍在执行，完成后才能导出'
   };
-  const error = new Error(known[code] || payload && payload.error
-    || detail && detail.message || `请求失败 HTTP ${status}`);
+  const serverMessage = String((detail && detail.message) || (payload && payload.error) || '');
+  const genericMessage = known[code];
+  const errorMessage = genericMessage && serverMessage
+      && serverMessage !== code && serverMessage !== genericMessage
+    ? `${genericMessage}（原因：${serverMessage}）`
+    : (genericMessage || serverMessage || `请求失败 HTTP ${status}`);
+  const error = new Error(errorMessage);
   error.code = code;
   error.status = status;
   error.diagnostics = payload?.diagnostics || detail?.diagnostics;
@@ -4213,6 +4218,7 @@ function cloudEnvironmentLegacySnapshot(run) {
     ipCheckTotal:run.ipCheckTotal ?? (run.terminal ? Number(run.ipTotalCount || checks.length) : null),
     fatalError:run.status === 'failed'
       ? String((rows.find(row => row.error) || {}).error
+        || run.errorSummary
         || resultMessages[String(run.resultCode || '')] || '任务执行失败') : '',
     mappingReady:false, tsvReady:false, resultReady:false,
     ledger:{enabled:false, running:false, rows:[]},
