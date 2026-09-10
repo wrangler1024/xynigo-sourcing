@@ -14,7 +14,7 @@ from urllib.parse import quote
 
 from . import __version__
 
-RELEASE_VERSION = "0.17.17"
+RELEASE_VERSION = "0.17.18"
 RELEASE_CHANNEL = "test"
 RELEASE_PUBLISHED_AT = "2026-09-09T11:26:28Z"
 
