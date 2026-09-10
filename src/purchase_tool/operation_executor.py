@@ -393,6 +393,8 @@ class LocalOperationExecutor(object):
         start_body = {
             'serials': serials,
             'browserMode': browser_mode,
+            'concurrency': max(1, min(5, int(payload.get('concurrency')
+                                              or 2))),
             'operationRunKey': run_key,
         }
         self._request('POST', '/api/store-finance/inspect', start_body)
@@ -422,7 +424,8 @@ class LocalOperationExecutor(object):
                 'phase': phase,
                 'current': min(total, completed),
                 'total': total,
-                'snapshot': {'rows': rows},
+                'snapshot': {'rows': self._store_finance_rows(
+                    {'rows': rows})},
             }
             serialized = json.dumps(
                 event, ensure_ascii=False, sort_keys=True,
@@ -477,6 +480,67 @@ class LocalOperationExecutor(object):
             'sha256': hashlib.sha256(content).hexdigest(),
             'size': len(content),
         }
+
+    _STORE_FINANCE_ROW_FIELDS = (
+        'environmentSerial', 'storeName', 'gsCode', 'status', 'loginMode',
+        'inTransitAmount', 'unsettledAmount', 'nextSettlementAmount',
+        'nextSettlementDate', 'completedSettlementAmount',
+        'nonWithdrawableAmount', 'pendingSettleLimitAmount',
+        'lastPayoutAmount', 'withdrawableAmount', 'collectedAt',
+        'durationSeconds', 'errorSummary', 'screenshotSha256',
+    )
+    _STORE_FINANCE_ROW_ALLOWED_STATUS = frozenset({
+        'ok', 'fail', 'login', 'inuse', 'stopped', 'queued', 'running',
+    })
+    _STORE_FINANCE_ROW_ALLOWED_LOGIN_MODES = frozenset({
+        'reuse', 'auto', 'open_env',
+    })
+    _STORE_FINANCE_TEXT_LIMITS = {
+        'environmentSerial': 64, 'storeName': 128, 'gsCode': 64,
+        'nextSettlementDate': 20,
+    }
+    _STORE_FINANCE_NULLABLE_TEXT = {
+        # None 保持 None（云端契约为可空，收成 "" 会 422 整份拒绝）
+        'errorSummary': 300, 'screenshotSha256': 64,
+    }
+
+    @classmethod
+    def _store_finance_rows(cls, snapshot):
+        """把巡检快照行投影成云端契约闭集。
+
+        丢弃执行器本地字段（screenshotStatus、cumulativeSettlementAmount、
+        fundLimitAmount 等云端契约没有的键）；可空字段（loginMode、
+        errorSummary、screenshotSha256）在 None 时保持 None——收成空串
+        会被云端 Literal/类型校验拒绝(422)，导致整份进度被弃。
+        """
+        rows = []
+        for raw in (snapshot.get('rows') or []):
+            row = {}
+            for field in cls._STORE_FINANCE_ROW_FIELDS:
+                value = raw.get(field)
+                if field == 'status':
+                    status = str(value or '').strip()
+                    row[field] = (status if status in
+                                  cls._STORE_FINANCE_ROW_ALLOWED_STATUS
+                                  else 'running')
+                elif field == 'loginMode':
+                    mode = str(value or '').strip()
+                    row[field] = (mode if mode in
+                                  cls._STORE_FINANCE_ROW_ALLOWED_LOGIN_MODES
+                                  else None)
+                elif field in cls._STORE_FINANCE_NULLABLE_TEXT:
+                    limit = cls._STORE_FINANCE_NULLABLE_TEXT[field]
+                    row[field] = (str(value).strip()[:limit]
+                                  if value is not None else None)
+                elif field == 'durationSeconds' and value is not None:
+                    row[field] = max(0, int(value))
+                elif field in cls._STORE_FINANCE_TEXT_LIMITS:
+                    limit = cls._STORE_FINANCE_TEXT_LIMITS[field]
+                    row[field] = str(value or '')[:limit]
+                else:
+                    row[field] = value
+            rows.append(row)
+        return rows
 
     @staticmethod
     def _store_finance_summary(total, rows):

@@ -217,3 +217,128 @@ class OccupiedEnvironmentTests(unittest.TestCase):
             time.sleep(0.05)
         snap = inspector.snapshot()
         self.assertEqual(snap['rows'][0]['status'], 'inuse')
+
+
+class ExecutorConcurrencyPassthroughTests(unittest.TestCase):
+    """必须改3回归：payload.concurrency 经 _execute_store_finance 透传到
+    /api/store-finance/inspect（UI 并发芯片 → 云端 → 执行器 → 信号量）。"""
+
+    def _executor_with_fake_local(self):
+        from purchase_tool.operation_executor import LocalOperationExecutor
+
+        calls = []
+
+        def rpc(call):
+            calls.append(call)
+            method, path = call['method'], call['path']
+            if method == 'POST' and path == '/api/store-finance/inspect':
+                return {'httpStatus': 200, 'responseType': 'json',
+                        'body': {'running': True, 'total': 1}}
+            if method == 'GET' and path == '/api/store-finance/progress':
+                # 第二次轮询即返回完成，结束执行循环
+                finished = sum(1 for c in calls
+                               if c['path'] == '/api/store-finance/progress'
+                               and c['method'] == 'GET') >= 2
+                return {'httpStatus': 200, 'responseType': 'json',
+                        'body': {'running': not finished, 'rows': [{
+                            'environmentSerial': '1746',
+                            'storeName': '山岚',
+                            'gsCode': 'GS2392643',
+                            'status': 'ok' if finished else 'running',
+                            'collectedAt': '2026-09-10T15:00:00+08:00',
+                            'screenshotStatus': '',
+                        }]}}
+            return {'httpStatus': 200, 'responseType': 'json', 'body': {}}
+
+        executor = LocalOperationExecutor(rpc, poll_interval=0.01,
+                                          sleep_fn=lambda _: time.sleep(0.01))
+        return executor, calls
+
+    def test_concurrency_reaches_local_inspect_endpoint(self):
+        executor, calls = self._executor_with_fake_local()
+        payload = {
+            'runKey': 'store-finance-conc-test-0001',
+            'environmentSerials': ['1746'],
+            'browserMode': 'headless',
+            'concurrency': 4,
+        }
+        outcome, code, summary = executor.execute(
+            'store.finance.inspect.v1', payload,
+            lambda **event: None,
+            cancellation_event=threading.Event())
+        inspect_calls = [c for c in calls
+                         if c['path'] == '/api/store-finance/inspect'
+                         and c['method'] == 'POST']
+        self.assertEqual(len(inspect_calls), 1)
+        self.assertEqual(inspect_calls[0]['body']['concurrency'], 4)
+        self.assertEqual(outcome, 'succeeded')
+
+    def test_concurrency_defaults_to_two_and_caps_at_five(self):
+        executor, calls = self._executor_with_fake_local()
+        executor.execute('store.finance.inspect.v1', {
+            'runKey': 'store-finance-conc-test-0002',
+            'environmentSerials': ['1746'],
+        }, lambda **event: None, cancellation_event=threading.Event())
+        inspect_calls = [c for c in calls
+                         if c['path'] == '/api/store-finance/inspect'
+                         and c['method'] == 'POST']
+        self.assertEqual(inspect_calls[0]['body']['concurrency'], 2)
+
+        # 超上限的值被夹到 5
+        executor, calls = self._executor_with_fake_local()
+        executor.execute('store.finance.inspect.v1', {
+            'runKey': 'store-finance-conc-test-0003',
+            'environmentSerials': ['1746'],
+            'concurrency': 99,
+        }, lambda **event: None, cancellation_event=threading.Event())
+        inspect_calls = [c for c in calls
+                         if c['path'] == '/api/store-finance/inspect'
+                         and c['method'] == 'POST']
+        self.assertEqual(inspect_calls[0]['body']['concurrency'], 5)
+
+
+class ProjectionTests(unittest.TestCase):
+    """三轮评审必须改1回归：投影不得把可空字段收成非法空串。"""
+
+    def test_projection_keeps_login_mode_none_for_pending_rows(self):
+        from purchase_tool.operation_executor import LocalOperationExecutor
+
+        snapshot = {'rows': [
+            {   # queued 行：无 loginMode / 无金额 / 无摘要
+                'environmentSerial': '1746',
+                'storeName': '山岚',
+                'gsCode': 'GS2392643',
+                'status': 'queued',
+                'screenshotStatus': '',
+            },
+            {   # ok 行：全字段 + 本地附加字段 + None 可空值
+                'environmentSerial': '1775875785',
+                'storeName': '花间',
+                'gsCode': 'GS5021497',
+                'status': 'ok',
+                'loginMode': 'auto',
+                'inTransitAmount': 2420.01,
+                'unsettledAmount': 9680.77,
+                'nextSettlementAmount': 4663.47,
+                'nextSettlementDate': '2026-09-15',
+                'completedSettlementAmount': 54216.44,
+                'nonWithdrawableAmount': 1934.51,
+                'collectedAt': '2026-09-10T14:25:00+08:00',
+                'durationSeconds': 70,
+                'errorSummary': None,
+                'screenshotSha256': None,
+                'screenshotStatus': '',
+                'cumulativeSettlementAmount': 54216.44,
+                'fundLimitAmount': 1934.51,
+            },
+        ]}
+        rows = LocalOperationExecutor._store_finance_rows(snapshot)
+        queued, ok = rows
+        self.assertIsNone(queued['loginMode'])       # 修复点：None 不收成 ''
+        self.assertEqual(queued['status'], 'queued')
+        self.assertNotIn('screenshotStatus', queued)
+        self.assertNotIn('cumulativeSettlementAmount', ok)
+        self.assertEqual(ok['loginMode'], 'auto')
+        self.assertIsNone(ok['errorSummary'])
+        self.assertIsNone(ok['screenshotSha256'])
+

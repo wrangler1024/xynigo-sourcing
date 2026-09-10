@@ -323,3 +323,198 @@ def test_store_finance_cancel_route_requests_stop(tmp_path) -> None:
         assert cancelled.status_code == 200, cancelled.text
         data = cancelled.json()["data"]
         assert data["stopRequested"] is True
+
+
+def test_store_finance_progress_accepts_production_snapshot_shape(tmp_path) -> None:
+    """必须改1回归（二轮）：执行器真实 snapshot 形状——行带 screenshotStatus、
+    采集附加金额字段、None 值；截图附件带 contentType+size——必须 200 且落库，
+    不允许 extra=forbid 触发 422 断流。"""
+    for web_client, device_client, ids, database in _e2e_setup(tmp_path):
+        executor_id = ids["executorId"]
+        credential = ids["credential"]
+        heartbeat(device_client, credential, capabilities=SF_CAPABILITIES,
+                  client_version="0.17.18")
+        created = web_client.post(
+            "/v1/operation-runs/store-finance-inspect",
+            json={
+                "idempotencyKey": "store-finance-e2e-00000003",
+                "executorId": executor_id,
+                "environmentSerials": ["1746"],
+            },
+            headers=CSRF,
+        )
+        assert created.status_code == 202, created.text
+        run_id = created.json()["data"]["runId"]
+        lease = heartbeat(device_client, credential,
+                          capabilities=SF_CAPABILITIES,
+                          client_version="0.17.18")["task"]
+        task_id = lease["id"]
+        lease_token = lease["leaseToken"]
+        device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/start",
+            json={"leaseToken": lease_token},
+            headers=device_headers(credential),
+        )
+
+        # 生产 snapshot 形状：StoreFinanceInspector.snapshot() 原样输出，
+        # 含 screenshotStatus / cumulativeSettlementAmount / fundLimitAmount /
+        # payoutInProgressAmount / errorSummary=None / screenshotSha256=None
+        production_row = {
+            "environmentSerial": "1746",
+            "storeName": "山岚",
+            "gsCode": "GS2392643",
+            "status": "ok",
+            "loginMode": "auto",
+            "inTransitAmount": 3031.29,
+            "unsettledAmount": 7286.45,
+            "nextSettlementAmount": 3080.5,
+            "nextSettlementDate": "2026-09-15",
+            "completedSettlementAmount": 37884.53,
+            "nonWithdrawableAmount": 237.05,
+            "pendingSettleLimitAmount": 0.0,
+            "lastPayoutAmount": 11426.0,
+            "withdrawableAmount": 0.0,
+            "cumulativeSettlementAmount": 37884.53,   # 本地附加字段
+            "fundLimitAmount": 237.05,                # 本地附加字段
+            "payoutInProgressAmount": 0.0,            # 本地附加字段
+            "collectedAt": "2026-09-10T14:20:00+08:00",
+            "durationSeconds": 95,
+            "errorSummary": None,                     # None 值
+            "screenshotSha256": None,                 # None 值
+            "screenshotStatus": "",                   # 本地附加字段
+        }
+        # 生产截图附件形状：带 contentType + size（物流同形）
+        production_attachment = {
+            "environmentSerial": "1746",
+            "contentBase64": base64.b64encode(JPEG).decode(),
+            "sha256": hashlib.sha256(JPEG).hexdigest(),
+            "contentType": "image/jpeg",
+            "size": len(JPEG),
+        }
+        progress = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/progress",
+            json={
+                "leaseToken": lease_token,
+                "phase": "store_finance.running",
+                "current": 1,
+                "total": 1,
+                "snapshot": {
+                    "rows": [production_row],
+                    "screenshots": [production_attachment],
+                },
+            },
+            headers=device_headers(credential),
+        )
+        # 修复前此处 422（screenshotStatus 等多余字段触发 extra_forbidden）
+        assert progress.status_code == 200, progress.text
+
+        finish = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/finish",
+            json={
+                "leaseToken": lease_token,
+                "outcome": "succeeded",
+                "resultCode": "store_finance_completed",
+                "resultSummary": {
+                    "runStatus": "completed",
+                    "phase": "store_finance.completed",
+                    "progressCompleted": 1,
+                    "progressTotal": 1,
+                    "successCount": 1,
+                    "failedCount": 0,
+                },
+            },
+            headers=device_headers(credential),
+        )
+        assert finish.status_code == 200, finish.text
+
+        final = web_client.get(
+            f"/v1/operation-runs/store-finance-inspect/{run_id}"
+        )
+        assert final.status_code == 200
+        data = final.json()["data"]
+        assert data["status"] == "completed"
+        assert len(data["rows"]) == 1
+        row = data["rows"][0]
+        assert row["storeName"] == "山岚"
+        assert row["inTransitAmount"] == 3031.29
+        assert row["nonWithdrawableAmount"] == 237.05
+
+        # 截图二进制已落库（带 contentType+size 的附件形状）
+        with database.session_factory() as session:
+            from sqlalchemy import select
+            from xynigo_auth.models import StoreFinanceInspectResult
+            stored = session.scalar(
+                select(StoreFinanceInspectResult).where(
+                    StoreFinanceInspectResult.run_id
+                    == uuid.UUID(run_id),
+                )
+            )
+            assert stored is not None
+            assert stored.screenshot_content == JPEG
+            assert stored.screenshot_expires_at is not None
+
+
+def test_store_finance_progress_mixed_queued_and_ok_rows(tmp_path) -> None:
+    """三轮评审必须改1回归：queued 行（无 loginMode）投影后 loginMode=None
+    必须通过校验，整份 progress 不得被拒；GET 能同时看到 queued 与 ok 行。"""
+    for web_client, device_client, ids, database in _e2e_setup(tmp_path):
+        heartbeat(device_client, ids["credential"],
+                  capabilities=SF_CAPABILITIES, client_version="0.17.18")
+        created = web_client.post(
+            "/v1/operation-runs/store-finance-inspect",
+            json={
+                "idempotencyKey": "store-finance-e2e-00000004",
+                "executorId": ids["executorId"],
+                "environmentSerials": ["1746", "1775875785"],
+            },
+            headers=CSRF,
+        )
+        assert created.status_code == 202, created.text
+        run_id = created.json()["data"]["runId"]
+        lease = heartbeat(device_client, ids["credential"],
+                          capabilities=SF_CAPABILITIES,
+                          client_version="0.17.18")["task"]
+        task_id, lease_token = lease["id"], lease["leaseToken"]
+        device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/start",
+            json={"leaseToken": lease_token},
+            headers=device_headers(ids["credential"]),
+        )
+        # 投影后的混合行：ok 行全字段、queued 行 loginMode=None 且仅闭集键
+        progress = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/progress",
+            json={
+                "leaseToken": lease_token,
+                "phase": "store_finance.running",
+                "current": 1,
+                "total": 2,
+                "snapshot": {"rows": [
+                    {"environmentSerial": "1746", "storeName": "山岚",
+                     "gsCode": "GS2392643", "status": "ok",
+                     "loginMode": "auto", "inTransitAmount": 3031.29,
+                     "unsettledAmount": 7286.45,
+                     "nextSettlementAmount": 3080.5,
+                     "nextSettlementDate": "2026-09-15",
+                     "completedSettlementAmount": 37884.53,
+                     "nonWithdrawableAmount": 237.05,
+                     "collectedAt": "2026-09-10T14:20:00+08:00",
+                     "durationSeconds": 95,
+                     "errorSummary": None, "screenshotSha256": None},
+                    {"environmentSerial": "1775875785",
+                     "storeName": "花间", "gsCode": "GS5021497",
+                     "status": "queued", "loginMode": None},
+                ]},
+            },
+            headers=device_headers(ids["credential"]),
+        )
+        # 修复前：queued 行 loginMode="" 触发 literal_error → 整份 422
+        assert progress.status_code == 200, progress.text
+
+        final = web_client.get(
+            f"/v1/operation-runs/store-finance-inspect/{run_id}"
+        )
+        assert final.status_code == 200
+        rows = {r["environmentSerial"]: r for r in final.json()["data"]["rows"]}
+        assert rows["1746"]["status"] == "ok"
+        assert rows["1775875785"]["status"] == "queued"
+        assert rows["1775875785"]["loginMode"] is None

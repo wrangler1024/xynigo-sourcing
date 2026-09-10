@@ -4292,8 +4292,8 @@ function sfRenderRows(rows) {
     const cells = bad
       ? `<td colspan="5" class="hint">— 未采集${row.errorSummary ? '（' + esc(row.errorSummary.slice(0, 60)) + '）' : ''}—</td><td class="sub-text">—</td>`
       : `<td class="num">${sfMoney(row.inTransitAmount)}</td><td class="num">${sfMoney(row.unsettledAmount)}</td><td class="num">${sfMoney(row.nextSettlementAmount)}</td>
-         <td class="sub-text">${row.nextSettlementDate || '—'}</td><td class="num">${sfMoney(row.completedSettlementAmount)}</td><td class="num">${sfMoney(row.nonWithdrawableAmount)}</td>`;
-    return `<tr data-serial="${row.environmentSerial}"${bad && row.status !== 'queued' && row.status !== 'running' ? ' class="tr-bad"' : (row.status === 'running' ? ' class="tr-run"' : '')}>
+         <td class="sub-text">${esc(row.nextSettlementDate || '—')}</td><td class="num">${sfMoney(row.completedSettlementAmount)}</td><td class="num">${sfMoney(row.nonWithdrawableAmount)}</td>`;
+    return `<tr data-serial="${esc(row.environmentSerial)}"${bad && row.status !== 'queued' && row.status !== 'running' ? ' class="tr-bad"' : (row.status === 'running' ? ' class="tr-run"' : '')}>
       <td style="font-weight:800; color:var(--navy-950)">${esc(row.storeName || row.environmentSerial)}</td>
       <td><span class="stable-id-button">${esc(row.gsCode || row.environmentSerial)}</span></td>
       ${cells}
@@ -4334,7 +4334,7 @@ function sfRenderSummary(data) {
     $('sfErrList').innerHTML = failures.map(r => `
       <div style="border:1px solid var(--line); border-radius:12px; padding:12px 14px; background:#fff;">
         <div style="display:flex; justify-content:space-between; gap:8px; align-items:center;">
-          <b style="font-size:12px">${r.storeName || r.environmentSerial} <span class="stable-id-button">${r.gsCode || r.environmentSerial}</span></b>
+          <b style="font-size:12px">${esc(r.storeName || r.environmentSerial)} <span class="stable-id-button">${esc(r.gsCode || r.environmentSerial)}</span></b>
           <span class="pill bad">${sfStatusPill(r.status, r.loginMode).replace(/<\/?[^>]+(>|$)/g, '')}</span>
         </div>
         <p class="xyp2-help">${esc(r.errorSummary || '详见执行器日志。')}<br>截图：异常页面（随 Run 附件保存，可在 Run 详情查看）。</p>

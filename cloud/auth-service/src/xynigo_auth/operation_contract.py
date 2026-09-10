@@ -927,9 +927,13 @@ class StoreFinanceRunCreateBody(BaseModel):
 
 
 class StoreFinanceProgressRow(BaseModel):
-    """One store row inside an inspection progress snapshot."""
+    """One store row inside an inspection progress snapshot.
 
-    model_config = ConfigDict(extra="forbid")
+    extra=ignore：执行器本地行可能携带云端没有的投影外字段（如
+    screenshotStatus、本地辅助金额），静默丢弃而非 422 断流。
+    """
+
+    model_config = ConfigDict(extra="ignore")
 
     environmentSerial: str = Field(min_length=1, max_length=64)
     storeName: str = Field(default="", max_length=128)
@@ -958,40 +962,21 @@ class StoreFinanceProgressRow(BaseModel):
                                              le=100_000_000)
     collectedAt: datetime | None = None
     durationSeconds: int | None = Field(default=None, ge=0, le=86_400_000)
-    errorSummary: str = Field(default="", max_length=300)
-    screenshotSha256: str = Field(default="", max_length=64)
+    errorSummary: str | None = Field(default=None, max_length=300)
+    screenshotSha256: str | None = Field(default=None, max_length=64)
 
 
 class StoreFinanceProgressScreenshot(BaseModel):
-    """Failure screenshot attachment for one store."""
+    """Failure screenshot attachment for one store.
 
-    model_config = ConfigDict(extra="forbid")
+    contentType/size 与物流截图附件同形，允许执行器按任一形状上报。
+    """
+
+    model_config = ConfigDict(extra="ignore")
 
     environmentSerial: str = Field(min_length=1, max_length=64)
     contentBase64: str = Field(min_length=1, max_length=700_000)
     sha256: str = Field(min_length=16, max_length=64)
+    contentType: str = Field(default="image/jpeg", max_length=64)
+    size: int | None = Field(default=None, ge=0)
 
-class StoreFinanceRunBody(BaseModel):
-    """Executor completion payload for one inspection run."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    source: Literal["local_executor"] = "local_executor"
-    runKey: str = Field(min_length=8, max_length=128, pattern=SAFE_KEY_RE)
-    queryMode: Literal["initial", "failed_retry"]
-    startedAt: datetime | None = None
-    completedAt: datetime
-    results: list[StoreFinanceResultItem] = Field(min_length=1,
-                                                  max_length=300)
-
-    @field_validator("startedAt", "completedAt")
-    @classmethod
-    def validate_timezone(cls, value: datetime | None) -> datetime | None:
-        return _timezone_required(value)
-
-    @model_validator(mode="after")
-    def unique_rows(self) -> "StoreFinanceRunBody":
-        serials = [item.environmentSerial for item in self.results]
-        if len(serials) != len(set(serials)):
-            raise ValueError("environmentSerial must be unique in one run")
-        return self
