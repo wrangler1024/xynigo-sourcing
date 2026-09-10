@@ -4568,9 +4568,11 @@ class Handler(BaseHTTPRequestHandler):
                     clean.append(text)
                 browser_mode = str(
                     body.get('browserMode') or 'headless')
+                concurrency = body.get('concurrency')
                 result = STATE.store_finance.start_batch(
                     clean,
-                    'visible' if browser_mode == 'visible' else 'headless')
+                    'visible' if browser_mode == 'visible' else 'headless',
+                    concurrency=int(concurrency) if concurrency else None)
                 self._json(result)
             elif path == '/api/store-finance/progress':
                 snap = STATE.store_finance.snapshot()

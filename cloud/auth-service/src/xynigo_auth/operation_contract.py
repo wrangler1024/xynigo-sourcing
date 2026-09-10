@@ -905,6 +905,7 @@ class StoreFinanceRunCreateBody(BaseModel):
     executorId: uuid.UUID
     queryMode: Literal["initial", "failed_retry"] = "initial"
     browserMode: Literal["headless", "visible"] = "headless"
+    concurrency: int = Field(default=2, ge=1, le=5)
     environmentSerials: list[str] = Field(min_length=1, max_length=300)
 
     @field_validator("environmentSerials")
@@ -924,6 +925,51 @@ class StoreFinanceRunCreateBody(BaseModel):
             raise ValueError("environmentSerials 为空")
         return cleaned
 
+
+class StoreFinanceProgressRow(BaseModel):
+    """One store row inside an inspection progress snapshot."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    environmentSerial: str = Field(min_length=1, max_length=64)
+    storeName: str = Field(default="", max_length=128)
+    gsCode: str = Field(default="", max_length=64)
+    status: Literal["ok", "fail", "login", "inuse", "stopped", "queued",
+                    "running"]
+    loginMode: Literal["reuse", "auto", "open_env"] | None = None
+    inTransitAmount: float | None = Field(default=None, ge=-100_000_000,
+                                          le=100_000_000)
+    unsettledAmount: float | None = Field(default=None, ge=-100_000_000,
+                                          le=100_000_000)
+    nextSettlementAmount: float | None = Field(default=None,
+                                               ge=-100_000_000,
+                                               le=100_000_000)
+    nextSettlementDate: str = Field(default="", max_length=20)
+    completedSettlementAmount: float | None = Field(default=None,
+                                                    ge=-100_000_000,
+                                                    le=100_000_000)
+    nonWithdrawableAmount: float | None = Field(default=None, ge=0,
+                                                le=100_000_000)
+    pendingSettleLimitAmount: float | None = Field(default=None, ge=0,
+                                                   le=100_000_000)
+    lastPayoutAmount: float | None = Field(default=None, ge=-100_000_000,
+                                           le=100_000_000)
+    withdrawableAmount: float | None = Field(default=None, ge=-100_000_000,
+                                             le=100_000_000)
+    collectedAt: datetime | None = None
+    durationSeconds: int | None = Field(default=None, ge=0, le=86_400_000)
+    errorSummary: str = Field(default="", max_length=300)
+    screenshotSha256: str = Field(default="", max_length=64)
+
+
+class StoreFinanceProgressScreenshot(BaseModel):
+    """Failure screenshot attachment for one store."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    environmentSerial: str = Field(min_length=1, max_length=64)
+    contentBase64: str = Field(min_length=1, max_length=700_000)
+    sha256: str = Field(min_length=16, max_length=64)
 
 class StoreFinanceRunBody(BaseModel):
     """Executor completion payload for one inspection run."""

@@ -42,6 +42,8 @@ from .models import (
     LogisticsQueryResult,
     LogisticsQueryRun,
     LocalExecutor,
+    StoreFinanceInspectResult,
+    StoreFinanceInspectRun,
     Tenant,
 )
 from .operation_contract import (
@@ -51,6 +53,8 @@ from .operation_contract import (
     ExecutorWorkspaceSnapshotResult,
     LogisticsRunProgressItem,
     LogisticsScreenshotProgressItem,
+    StoreFinanceProgressRow,
+    StoreFinanceProgressScreenshot,
     WorkspaceEnvironmentPreferences,
     WorkspaceRuntimeConfig,
 )
@@ -72,6 +76,30 @@ BUSINESS_TASK_TYPES = frozenset(
         "environment.retry-failed.v1",
     }
 )
+def _sf_decimal(value):
+    """float/None → Decimal(2 位)，巡检金额列通用转换。"""
+    from decimal import Decimal
+    if value is None:
+        return None
+    return Decimal(str(round(float(value), 2)))
+
+
+def _sf_date(value):
+    """'09-15' / '2026-09-15' → date | None。"""
+    from datetime import date as date_type
+    text = str(value or '').strip()
+    if not text:
+        return None
+    try:
+        if len(text) == 5 and '-' in text:
+            month, day = text.split('-', 1)
+            return date_type(datetime.now(timezone.utc).year,
+                             int(month), int(day))
+        return date_type.fromisoformat(text)
+    except (TypeError, ValueError):
+        return None
+
+
 MIN_SAFE_LOGISTICS_CLIENT_VERSION = (0, 13, 18)
 # 店铺结算巡检为全新任务类型，只有实现了该能力的执行器可领取。
 MIN_SAFE_STORE_FINANCE_CLIENT_VERSION = (0, 17, 18)
@@ -1805,6 +1833,29 @@ class ExecutorChannelService:
                     LogisticsQueryRun.executor_task_id == task.id
                 )
             )
+        elif task.task_type == "store.finance.inspect.v1":
+            run = self.session.scalar(
+                select(StoreFinanceInspectRun).where(
+                    StoreFinanceInspectRun.executor_task_id == task.id
+                )
+            )
+            if run is None:
+                return
+            # 该表无 attempt/last_heartbeat_at 字段，走专用回写（勿并入通用赋值段）
+            self._sync_store_finance_run(
+                task=task,
+                run=run,
+                status=status,
+                phase=phase,
+                progress_current=progress_current,
+                progress_total=progress_total,
+                started_at=started_at,
+                completed_at=completed_at,
+                result_summary=result_summary,
+                progress_snapshot=progress_snapshot,
+                heartbeat_at=heartbeat_at,
+            )
+            return
         else:
             return
         if run is None:
@@ -1980,6 +2031,160 @@ class ExecutorChannelService:
                 "ipCheckTotal": verification.totalCount,
                 "verificationSettingsSource": "desktop_executor",
             }
+
+    def _sync_store_finance_run(
+        self,
+        *,
+        task: ExecutorTask,
+        run: StoreFinanceInspectRun,
+        status: str,
+        phase: str | None,
+        progress_current: int | None,
+        progress_total: int | None,
+        started_at: datetime | None,
+        completed_at: datetime | None,
+        result_summary: dict[str, Any] | None,
+        progress_snapshot: dict[str, Any] | None,
+        heartbeat_at: datetime,
+    ) -> None:
+        """店铺结算巡检的 Run 回写：状态/进度/计数 + 结果行与截图落库。
+
+        本表无 attempt / last_heartbeat_at 字段，与物流通用回写分开实现。
+        """
+        run.status = status
+        if phase is not None:
+            run.phase = phase[:64]
+        if phase == "cancel_requested" or status == "cancelled":
+            run.stop_requested = True
+        run.updated_at = heartbeat_at
+        if started_at is not None:
+            run.started_at = run.started_at or started_at
+        if completed_at is not None:
+            run.completed_at = completed_at
+        if progress_total is not None:
+            run.progress_total = max(0, progress_total)
+        if progress_current is not None:
+            run.progress_completed = min(
+                max(0, progress_current), max(0, run.progress_total)
+            )
+        summary = result_summary or {}
+        success_count = _safe_nonnegative_int(summary.get("successCount"))
+        failed_count = _safe_nonnegative_int(summary.get("failedCount"))
+        if success_count is not None:
+            run.success_count = min(success_count, run.total_count)
+        if failed_count is not None:
+            run.failed_count = min(failed_count, run.total_count)
+        if progress_snapshot is not None:
+            self._upsert_store_finance_progress(
+                run, progress_snapshot, heartbeat_at
+            )
+
+    def _upsert_store_finance_progress(
+        self,
+        run: StoreFinanceInspectRun,
+        snapshot: dict[str, Any],
+        now: datetime,
+    ) -> None:
+        """增量 upsert 巡检结果行（含金额与异常截图二进制）。"""
+        if not set(snapshot).issubset({"rows", "screenshots"}) \
+                or "rows" not in snapshot \
+                or not isinstance(snapshot.get("rows"), list) \
+                or not isinstance(snapshot.get("screenshots", []), list):
+            raise ExecutorServiceError(
+                "executor_progress_snapshot_invalid", status_code=422,
+                diagnostic_reason="snapshot_shape_invalid")
+        try:
+            rows = [
+                StoreFinanceProgressRow.model_validate(item)
+                for item in snapshot["rows"]
+            ]
+            screenshots = [
+                StoreFinanceProgressScreenshot.model_validate(item)
+                for item in snapshot.get("screenshots", [])
+            ]
+        except ValidationError as exc:
+            raise ExecutorServiceError(
+                "executor_progress_snapshot_invalid", status_code=422,
+                diagnostic_reason="row_or_screenshot_schema_invalid") from exc
+        serials = [row.environmentSerial for row in rows]
+        screenshot_serials = [item.environmentSerial for item in screenshots]
+        allowed_serials = set(
+            (run.request_summary or {}).get("environmentSerials") or []
+        )
+        invalid_reason = (
+            "row_count_exceeds_task" if len(rows) > run.total_count else
+            "duplicate_environment_serial"
+            if len(serials) != len(set(serials)) else
+            "environment_outside_task"
+            if allowed_serials and not set(serials).issubset(allowed_serials)
+            else "screenshot_scope_invalid"
+            if (len(screenshot_serials) != len(set(screenshot_serials))
+                or not set(screenshot_serials).issubset(set(serials)))
+            else None
+        )
+        if invalid_reason:
+            raise ExecutorServiceError(
+                "executor_progress_snapshot_invalid", status_code=422,
+                diagnostic_reason=invalid_reason)
+        existing = {
+            row.environment_serial: row
+            for row in self.session.scalars(
+                select(StoreFinanceInspectResult).where(
+                    StoreFinanceInspectResult.run_id == run.id
+                )
+            )
+        }
+        screenshot_by_serial = {
+            item.environmentSerial: item for item in screenshots
+        }
+        expires_at = now + timedelta(days=7)
+        for item in rows:
+            row = existing.get(item.environmentSerial)
+            if row is None:
+                row = StoreFinanceInspectResult(
+                    id=uuid.uuid4(),
+                    run_id=run.id,
+                    tenant_id=run.tenant_id,
+                    environment_serial=item.environmentSerial,
+                    created_at=now,
+                    updated_at=now,
+                )
+                self.session.add(row)
+                existing[item.environmentSerial] = row
+            row.store_name = item.storeName or row.store_name
+            row.gs_code = item.gsCode or row.gs_code
+            row.status = item.status
+            row.login_mode = item.loginMode
+            row.in_transit_amount = _sf_decimal(item.inTransitAmount)
+            row.unsettled_amount = _sf_decimal(item.unsettledAmount)
+            row.next_settlement_amount = _sf_decimal(
+                item.nextSettlementAmount)
+            row.next_settlement_date = _sf_date(item.nextSettlementDate)
+            row.completed_settlement_amount = _sf_decimal(
+                item.completedSettlementAmount)
+            row.non_withdrawable_amount = _sf_decimal(
+                item.nonWithdrawableAmount)
+            row.pending_settle_limit_amount = _sf_decimal(
+                item.pendingSettleLimitAmount)
+            row.last_payout_amount = _sf_decimal(item.lastPayoutAmount)
+            row.withdrawable_amount = _sf_decimal(item.withdrawableAmount)
+            row.collected_at = item.collectedAt
+            row.duration_seconds = item.durationSeconds
+            row.error_summary = item.errorSummary or None
+            shot = screenshot_by_serial.get(item.environmentSerial)
+            if shot is not None:
+                try:
+                    content = base64.b64decode(
+                        shot.contentBase64, validate=True)
+                except (binascii.Error, ValueError):
+                    content = b""
+                if content and len(content) <= 350 * 1024:
+                    row.screenshot_content = content
+                    row.screenshot_sha256 = (
+                        hashlib.sha256(content).hexdigest()
+                    )
+                    row.screenshot_expires_at = expires_at
+            row.updated_at = now
 
     def _upsert_logistics_progress(
         self,

@@ -30,6 +30,8 @@ def _cell_value(row, key):
 
 
 def _std_rows(rows):
+    # 标准导出（发财务的六列表）只含成功采集的店铺；失败行见完整导出
+    rows = [row for row in rows if row.get("status") == "ok"]
     for row in rows:
         yield [
             row.get("storeName") or row.get("environmentSerial") or "",

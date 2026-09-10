@@ -5,7 +5,8 @@ from __future__ import annotations
 from io import BytesIO
 
 from openpyxl import load_workbook
-from test_purchase_api import authenticated_client
+from fastapi.testclient import TestClient
+from test_purchase_api import authenticated_client, build_test_app
 
 from xynigo_auth.store_finance_export import build_store_finance_export
 
@@ -71,125 +72,6 @@ def _sheet_values(content: bytes) -> list[tuple[object, ...]]:
     return values
 
 
-def test_store_finance_run_ingest_snapshot_and_export(tmp_path) -> None:
-    client, database, headers = authenticated_client(tmp_path)
-
-    # 幂等创建：直接经 service 层建 Run（发起路由需要在线执行器，单独覆盖）
-    import uuid
-    from sqlalchemy import select
-    from xynigo_auth.models import (
-        LocalExecutor,
-        SessionRecord,
-        StoreFinanceInspectRun,
-        User,
-    )
-    from xynigo_auth.operation_contract import StoreFinanceRunCreateBody
-    from xynigo_auth.operation_service import OperationRunService
-
-    with database.session_factory() as session:
-        # 用登录会话对应的租户/用户，保证后续 PUT 上报租户一致
-        record = session.scalar(
-            select(SessionRecord)
-            .order_by(SessionRecord.created_at.desc())
-            .limit(1)
-        )
-        user = session.get(User, record.user_id)
-        from xynigo_auth.models import Tenant
-        tenant = session.get(Tenant, user.tenant_id)
-        executor = LocalExecutor(
-            id=uuid.uuid4(),
-            tenant_id=tenant.id,
-            owner_user_id=user.id,
-            display_name="测试执行器",
-            platform="macos",
-            architecture="arm64",
-            client_version="0.17.18",
-            credential_digest="test-digest-" + uuid.uuid4().hex[:24],
-            status="active",
-        )
-        session.add(executor)
-        session.flush()
-        body = StoreFinanceRunCreateBody(
-            idempotencyKey="store-finance-create-0001",
-            executorId=executor.id,
-            environmentSerials=["1746", "1775875785", "1775875509"],
-        )
-        runs = OperationRunService(session)
-        run, unchanged = runs.create_store_finance_run(
-            tenant_id=tenant.id,
-            actor_user_id=user.id,
-            body=body,
-        )
-        session.commit()
-        run_id = run.id
-        # 幂等重放：同 key 同内容返回既有 Run
-        again, unchanged_again = runs.create_store_finance_run(
-            tenant_id=tenant.id,
-            actor_user_id=user.id,
-            body=body,
-        )
-        assert unchanged_again is True
-        assert again.id == run_id
-
-    # 执行器完成上报（HTTP，无执行器凭证也可上报，归属执行器为空）
-    payload = _run_body()
-    first = client.put(
-        "/v1/operations/store-finance-inspect-runs",
-        json=payload,
-        headers=headers,
-    )
-    assert first.status_code == 200, first.text
-    data = first.json()["data"]
-    assert data["status"] == "partial_failure"
-    assert data["successCount"] == 2
-    assert data["failedCount"] == 1
-    assert len(data["rows"]) == 3
-
-    # 重复上报完全相同内容：幂等，不产生第二份数据
-    repeat = client.put(
-        "/v1/operations/store-finance-inspect-runs",
-        json=payload,
-        headers=headers,
-    )
-    assert repeat.status_code == 200
-    assert repeat.json()["data"]["rows"] == data["rows"]
-
-    # 快照端点
-    latest = client.get(
-        "/v1/operation-runs/store-finance-inspect/latest",
-        headers=headers,
-    )
-    assert latest.status_code == 200
-    snapshot = latest.json()["data"]
-    assert snapshot["runId"] == data["runId"]
-    assert snapshot["rows"][0]["storeName"] == "山岚"
-    assert snapshot["rows"][0]["inTransitAmount"] == 3031.29
-
-    # 标准导出：六列表头 + 合计行（openpyxl 可读）
-    export = client.get(
-        "/v1/operation-runs/store-finance-inspect/"
-        f"{data['runId']}/export?variant=standard",
-        headers=headers,
-    )
-    assert export.status_code == 200
-    values = _sheet_values(export.content)
-    assert values[0][:2] == ("店铺中文名", "在途订单金额")
-    names = [row[0] for row in values[1:-1]]
-    assert set(names) >= {"山岚", "花间", "蓝天"}
-    assert values[-1][0] == "合计"
-
-    # 完整导出：CSV 含状态与异常说明列
-    full = client.get(
-        "/v1/operation-runs/store-finance-inspect/"
-        f"{data['runId']}/export?variant=full",
-        headers=headers,
-    )
-    assert full.status_code == 200
-    text = full.content.decode("utf-8-sig")
-    assert "异常说明" in text
-    assert "二次验证" in text or "验证未通过" in text
-
-
 def test_store_finance_export_builds_standard_workbook() -> None:
     rows = [
         {"storeName": "花间", "status": "ok",
@@ -206,9 +88,238 @@ def test_store_finance_export_builds_standard_workbook() -> None:
     assert "spreadsheetml" in mime
     values = _sheet_values(content)
     assert values[0][0] == "店铺中文名"
-    names = [row[0] for row in values[1:-1]]
-    assert set(names) == {"花间", "山岚"}
+    # 标准导出只含成功采集行（login 的蓝天不进财务六列表）
+    names = [row[0] for row in values[1:-1] if row[0]]
+    assert set(names) == {"花间"}
     content2, filename2, _ = build_store_finance_export(
         rows, variant="full")
     assert filename2.endswith("_full.csv")
     assert "已完成结算收入" in content2.decode("utf-8-sig")
+
+
+# ===== 必须改1/2：executor-channel progress/finish 全链契约 =====
+import base64
+import hashlib
+import uuid
+
+from test_executor_channel import (
+    CSRF,
+    create_pairing_code,
+    device_headers,
+    heartbeat,
+    login,
+    pair,
+)
+
+SF_CAPABILITIES = [
+    "config.read.v1",
+    "config.write.v1",
+    "workspace.snapshot.v1",
+    "store.finance.inspect.v1",
+]
+JPEG = b"\xff\xd8synthetic-store-finance-screenshot\xff\xd9"
+
+
+def _e2e_setup(tmp_path):
+    app, database, _oauth = build_test_app(tmp_path)
+    with TestClient(app) as web_client, TestClient(app) as device_client:
+        login(web_client)
+        paired = pair(
+            device_client,
+            create_pairing_code(web_client),
+            capabilities=SF_CAPABILITIES,
+        )
+        yield web_client, device_client, {
+            "executorId": str(paired["executorId"]),
+            "credential": str(paired["deviceCredential"]),
+        }, database
+
+
+def _e2e_params(tmp_path):
+    yield from _e2e_setup(tmp_path)
+
+
+def test_store_finance_progress_finish_updates_run_snapshot_and_screenshots(tmp_path) -> None:
+    """必须改1回归：progress/finish 后 GET 快照有行、终态、截图可读。"""
+    import time as time_module
+    for web_client, device_client, ids, database in _e2e_setup(tmp_path):
+        executor_id = ids["executorId"]
+        credential = ids["credential"]
+        # 心跳上报新版本与能力，使发起门禁通过
+        heartbeat(device_client, credential, capabilities=SF_CAPABILITIES,
+                  client_version="0.17.18")
+
+        created = web_client.post(
+            "/v1/operation-runs/store-finance-inspect",
+            json={
+                "idempotencyKey": "store-finance-e2e-00000001",
+                "executorId": executor_id,
+                "queryMode": "initial",
+                "browserMode": "headless",
+                "concurrency": 3,
+                "environmentSerials": ["1746", "1775875785"],
+            },
+            headers=CSRF,
+        )
+        assert created.status_code == 202, created.text
+        run_id = created.json()["data"]["runId"]
+
+        # 执行器领取任务
+        lease = heartbeat(device_client, credential,
+                          capabilities=SF_CAPABILITIES,
+                          client_version="0.17.18")["task"]
+        assert lease is not None and lease["type"] == \
+            "store.finance.inspect.v1", lease
+        task_id = lease["id"]
+        lease_token = lease["leaseToken"]
+        assert device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/start",
+            json={"leaseToken": lease_token},
+            headers=device_headers(credential),
+        ).status_code == 200
+
+        # progress：行快照（一店完成带截图，一店进行中）
+        sha = hashlib.sha256(JPEG).hexdigest()
+        progress = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/progress",
+            json={
+                "leaseToken": lease_token,
+                "phase": "store_finance.running",
+                "current": 1,
+                "total": 2,
+                "snapshot": {
+                    "rows": [
+                        {
+                            "environmentSerial": "1746",
+                            "storeName": "山岚",
+                            "gsCode": "GS2392643",
+                            "status": "ok",
+                            "loginMode": "auto",
+                            "inTransitAmount": 3031.29,
+                            "unsettledAmount": 7286.45,
+                            "nextSettlementAmount": 3080.5,
+                            "nextSettlementDate": "2026-09-15",
+                            "completedSettlementAmount": 37884.53,
+                            "nonWithdrawableAmount": 237.05,
+                            "collectedAt": "2026-09-10T14:20:00+08:00",
+                            "durationSeconds": 95,
+                            "screenshotSha256": sha,
+                        },
+                        {
+                            "environmentSerial": "1775875785",
+                            "storeName": "花间",
+                            "status": "running",
+                        },
+                    ],
+                    "screenshots": [{
+                        "environmentSerial": "1746",
+                        "contentBase64": base64.b64encode(JPEG).decode(),
+                        "sha256": sha,
+                    }],
+                },
+            },
+            headers=device_headers(credential),
+        )
+        assert progress.status_code == 200, progress.text
+
+        # progress 阶段 GET 快照：已有行（边跑边填）
+        partial = web_client.get(
+            f"/v1/operation-runs/store-finance-inspect/{run_id}"
+        )
+        assert partial.status_code == 200
+        partial_data = partial.json()["data"]
+        assert partial_data["status"] == "running"
+        ok_rows = [r for r in partial_data["rows"] if r["status"] == "ok"]
+        assert ok_rows and ok_rows[0]["storeName"] == "山岚"
+        assert ok_rows[0]["inTransitAmount"] == 3031.29
+
+        # finish：终态
+        finish = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/finish",
+            json={
+                "leaseToken": lease_token,
+                "outcome": "succeeded",
+                "resultCode": "store_finance_completed",
+                "resultSummary": {
+                    "runStatus": "partial_failure",
+                    "phase": "store_finance.partial_failure",
+                    "progressCompleted": 2,
+                    "progressTotal": 2,
+                    "successCount": 1,
+                    "failedCount": 1,
+                },
+            },
+            headers=device_headers(credential),
+        )
+        assert finish.status_code == 200, finish.text
+
+        # GET 快照：终态 + 行 + 截图可读（落库二进制）
+        final = web_client.get(
+            f"/v1/operation-runs/store-finance-inspect/{run_id}"
+        )
+        assert final.status_code == 200
+        final_data = final.json()["data"]
+        assert final_data["status"] == "partial_failure"
+        assert len(final_data["rows"]) == 2
+        ok_row = [r for r in final_data["rows"]
+                  if r["environmentSerial"] == "1746"][0]
+        assert ok_row["screenshotSha256"] == sha
+
+        # 截图二进制已随 progress 落库（含 content，非仅 sha）
+        with database.session_factory() as session:
+            from sqlalchemy import select
+            from xynigo_auth.models import StoreFinanceInspectResult
+            row = session.scalar(
+                select(StoreFinanceInspectResult).where(
+                    StoreFinanceInspectResult.run_id
+                    == uuid.UUID(run_id),
+                    StoreFinanceInspectResult.environment_serial
+                    == "1746",
+                )
+            )
+            assert row is not None
+            assert row.screenshot_content == JPEG
+            assert row.screenshot_expires_at is not None
+
+        # 导出：终态后标准 xlsx 可下载且含 2 行数据
+        export = web_client.get(
+            f"/v1/operation-runs/store-finance-inspect/{run_id}/export"
+            "?variant=standard"
+        )
+        assert export.status_code == 200, export.text
+
+        # 必须改2回归：取消路由存在且已终态 Run 返回冲突/幂等而非 404 假成功
+        cancel = web_client.post(
+            f"/v1/operation-runs/store-finance-inspect/{run_id}/cancel",
+            json={},
+            headers=CSRF,
+        )
+        assert cancel.status_code in (200, 409), cancel.text
+
+
+def test_store_finance_cancel_route_requests_stop(tmp_path) -> None:
+    """必须改2回归：cancel 路由把 stop_requested 写回 Run。"""
+    for web_client, device_client, ids, database in _e2e_setup(tmp_path):
+        executor_id = ids["executorId"]
+        credential = ids["credential"]
+        heartbeat(device_client, credential, capabilities=SF_CAPABILITIES,
+                  client_version="0.17.18")
+        created = web_client.post(
+            "/v1/operation-runs/store-finance-inspect",
+            json={
+                "idempotencyKey": "store-finance-e2e-00000002",
+                "executorId": executor_id,
+                "environmentSerials": ["1746"],
+            },
+            headers=CSRF,
+        )
+        assert created.status_code == 202, created.text
+        run_id = created.json()["data"]["runId"]
+        cancelled = web_client.post(
+            f"/v1/operation-runs/store-finance-inspect/{run_id}/cancel",
+            json={},
+            headers=CSRF,
+        )
+        assert cancelled.status_code == 200, cancelled.text
+        data = cancelled.json()["data"]
+        assert data["stopRequested"] is True

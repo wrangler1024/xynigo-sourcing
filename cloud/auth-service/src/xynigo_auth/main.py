@@ -137,14 +137,12 @@ from .operation_contract import (
     EnvironmentWorkspacePreferenceBody,
     LogisticsQueryRunBody,
     LogisticsQueryRunCreateBody,
-    StoreFinanceRunBody,
     StoreFinanceRunCreateBody,
     WorkspaceViewPreferenceBody,
 )
 from .operation_service import (
     OperationResultService,
     OperationRunService,
-    ingest_store_finance_run,
     store_finance_snapshot,
 )
 from .procurement_import_contract import (
@@ -4865,6 +4863,7 @@ def create_app(
                 "runKey": run.source_run_key,
                 "queryMode": body.queryMode,
                 "browserMode": body.browserMode,
+                "concurrency": body.concurrency,
                 "environmentSerials": list(body.environmentSerials),
             }
             task = executor_tasks.create_config_task(
@@ -4900,66 +4899,51 @@ def create_app(
         session.commit()
         return {"ok": True, "data": result}
 
-    @app.put("/v1/operations/store-finance-inspect-runs")
-    def report_store_finance_inspect_run(
+    @app.post(
+        "/v1/operation-runs/store-finance-inspect/{run_id}/cancel"
+    )
+    def cancel_store_finance_inspect_run(
+        run_id: uuid.UUID,
+        body: ExecutorTaskCancelBody,
         request: Request,
-        body: StoreFinanceRunBody,
         session: SessionDep,
-        executor_credential: Annotated[
-            str | None, Header(alias="X-Xynigo-Executor-Credential")
-        ] = None,
         session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
         authorization: Annotated[str | None, Header()] = None,
     ) -> dict[str, object]:
-        action = "assistant.store_finance.run.report"
         actor = authorize_request(
             request,
             session,
             permission="assistant.access",
             session_token=session_token,
             authorization=authorization,
-            audit_action=action,
+            audit_action="assistant.store_finance.run.cancel",
         )
-        verified_executor = None
-        if executor_credential:
-            verified_executor = executor_channel(session).authenticate(
-                executor_credential
+        runs = OperationRunService(session)
+        run = session.scalar(
+            select(StoreFinanceInspectRun).where(
+                StoreFinanceInspectRun.id == run_id,
+                StoreFinanceInspectRun.tenant_id == actor.tenant.id,
             )
-            if (
-                verified_executor.tenant_id != actor.tenant.id
-                or verified_executor.owner_user_id != actor.user.id
-            ):
-                raise ExecutorServiceError(
-                    "executor_identity_mismatch", status_code=403
-                )
-        run = ingest_store_finance_run(
-            session,
-            tenant_id=actor.tenant.id,
-            body=body,
-            executor_id=(
-                verified_executor.id
-                if verified_executor is not None
-                else None
-            ),
-            client_version=getattr(
-                request.state, "client_version", None
-            ) or None,
         )
-        _add_audit(
-            session,
-            request_id=request.state.request_id,
-            action="assistant.store_finance.run.report",
-            result="success",
+        if run is None:
+            raise HTTPException(status_code=404, detail="巡检批次不存在")
+        if run.executor_task_id is None:
+            raise HTTPException(
+                status_code=409, detail={"code": "operation_run_not_cancellable"}
+            )
+        task = executor_channel(session).get_task(
             tenant_id=actor.tenant.id,
-            actor_user_id=actor.user.id,
-            business_object_type="store_finance_inspect_run",
-            business_object_id=str(run.id),
-            change_summary={"status": run.status,
-                            "successCount": run.success_count,
-                            "failedCount": run.failed_count},
-            **_request_log_context(request),
+            user_id=actor.user.id,
+            task_id=run.executor_task_id,
         )
-        session.commit()
+        if body.expectedStatus and task.status != body.expectedStatus:
+            raise ExecutorServiceError("executor_task_state_conflict", status_code=409)
+        executor_channel(session).cancel_task(
+            tenant_id=actor.tenant.id,
+            user_id=actor.user.id,
+            task_id=task.id,
+        )
+        session.refresh(run)
         return {"ok": True, "data": store_finance_snapshot(session, run)}
 
     @app.get("/v1/operation-runs/store-finance-inspect/latest")

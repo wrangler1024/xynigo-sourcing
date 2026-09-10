@@ -2029,7 +2029,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
       <div class="action-row">
         <button class="btn primary" id="sfStart">一键巡检</button>
         <button class="btn danger" id="sfStop" disabled>停止</button>
-        <span class="resource-state" style="flex:1">全流程只读采集；登录态失效的店铺将自动登录。云端幂等防重：同一店铺不会被并行重复采集。</span>
+        <span class="resource-state" style="flex:1">全流程只读采集；登录态失效的店铺将自动登录。防重说明：同一巡检批次标识不会被重复发起（并发同店互斥将在后续版本提供）。</span>
       </div>
       <div class="progress-wrap">
         <div class="progress"><div class="bar" id="sfBar"></div></div>
@@ -4200,9 +4200,9 @@ function sfRenderShops() {
     $('sfShopRows').innerHTML = '<tr><td colspan="4" class="hint" style="text-align:center; padding:18px;">通过「批量粘贴名单」建立巡检清单；清单保存在本机浏览器。</td></tr>';
     return;
   }
-  $('sfShopRows').innerHTML = rows.map(r => `<tr data-serial="${r.serial}"${r.visible ? '' : ' style="display:none"'}>
-    <td><input type="checkbox" class="sf-sel" data-serial="${r.serial}"${r.selected ? ' checked' : ''} style="accent-color:var(--rhino-600)"></td>
-    <td style="font-weight:800; color:var(--navy-950)">${r.serial}</td>
+  $('sfShopRows').innerHTML = rows.map(r => `<tr data-serial="${esc(r.serial)}"${r.visible ? '' : ' style="display:none"'}>
+    <td><input type="checkbox" class="sf-sel" data-serial="${esc(r.serial)}"${r.selected ? ' checked' : ''} style="accent-color:var(--rhino-600)"></td>
+    <td style="font-weight:800; color:var(--navy-950)">${esc(r.serial)}</td>
     <td class="hint">—</td>
     <td><span class="pill ${r.selected ? 'ok' : 'run'}">${r.selected ? '已勾选' : '未勾选'}</span></td></tr>`).join('');
   $('sfPageInfo').textContent = `共 ${rows.length} 家 · 视口内 ${visibleCount} 家可见 · 视口上限 10 行 · 勾选自动保存`;
@@ -4211,7 +4211,7 @@ function sfRefreshSel() {
   const n = SF_STATE.selected.size;
   $('sfSelCount').textContent = `已选 ${n} 家`;
   $('sfStartHint').textContent = n
-    ? `已选 ${n} 家店铺，点击「一键巡检」开始；预计约 ${Math.max(2, Math.round(n * 0.5))} 分钟（并发 2）。`
+    ? `已选 ${n} 家店铺，点击「一键巡检」开始；预计约 ${Math.max(2, Math.round(n * 0.5 / sfConc()))} 分钟（并发 ${sfConc()}）。`
     : '请先建立并勾选巡检清单。';
 }
 function sfInit() {
@@ -4290,12 +4290,12 @@ function sfRenderRows(rows) {
   $('sfResRows').innerHTML = rows.map(row => {
     const bad = row.status !== 'ok';
     const cells = bad
-      ? `<td colspan="5" class="hint">— 未采集${row.errorSummary ? '（' + row.errorSummary.slice(0, 60) + '）' : ''}—</td><td class="sub-text">—</td>`
+      ? `<td colspan="5" class="hint">— 未采集${row.errorSummary ? '（' + esc(row.errorSummary.slice(0, 60)) + '）' : ''}—</td><td class="sub-text">—</td>`
       : `<td class="num">${sfMoney(row.inTransitAmount)}</td><td class="num">${sfMoney(row.unsettledAmount)}</td><td class="num">${sfMoney(row.nextSettlementAmount)}</td>
          <td class="sub-text">${row.nextSettlementDate || '—'}</td><td class="num">${sfMoney(row.completedSettlementAmount)}</td><td class="num">${sfMoney(row.nonWithdrawableAmount)}</td>`;
     return `<tr data-serial="${row.environmentSerial}"${bad && row.status !== 'queued' && row.status !== 'running' ? ' class="tr-bad"' : (row.status === 'running' ? ' class="tr-run"' : '')}>
-      <td style="font-weight:800; color:var(--navy-950)">${row.storeName || row.environmentSerial}</td>
-      <td><span class="stable-id-button">${row.gsCode || row.environmentSerial}</span></td>
+      <td style="font-weight:800; color:var(--navy-950)">${esc(row.storeName || row.environmentSerial)}</td>
+      <td><span class="stable-id-button">${esc(row.gsCode || row.environmentSerial)}</span></td>
       ${cells}
       <td class="sub-text">${sfTimeOf(row)}</td>
       <td>${sfStatusPill(row.status, row.loginMode)}</td></tr>`;
@@ -4307,12 +4307,13 @@ function sfRenderSummary(data) {
   stats[1].querySelector('b').textContent = data.successCount ?? '—';
   stats[2].querySelector('b').textContent = data.failedCount ?? '—';
   const rows = data.rows || [];
-  const sums = { transit: 0, unsettled: 0, next: 0, done: 0 };
+  const sums = { transit: 0, unsettled: 0, next: 0, done: 0, nonWd: 0 };
   rows.filter(r => r.status === 'ok').forEach(r => {
     sums.transit += r.inTransitAmount || 0;
     sums.unsettled += r.unsettledAmount || 0;
     sums.next += r.nextSettlementAmount || 0;
     sums.done += r.completedSettlementAmount || 0;
+    sums.nonWd += r.nonWithdrawableAmount || 0;
   });
   const money = n => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   stats[3].querySelector('b').textContent = money(sums.transit);
@@ -4323,7 +4324,7 @@ function sfRenderSummary(data) {
   $('sfSum2').textContent = money(sums.unsettled);
   $('sfSum3').textContent = money(sums.next);
   $('sfSum4').textContent = money(sums.done);
-  $('sfSum5').textContent = money(sums.transit * 0);
+  $('sfSum5').textContent = money(sums.nonWd);
   $('sfSumLabel').textContent = `合计（成功 ${data.successCount} / ${data.totalCount} 家）`;
   const bad = (data.failedCount || 0);
   $('sfRetryFail').disabled = !bad;
@@ -4336,11 +4337,11 @@ function sfRenderSummary(data) {
           <b style="font-size:12px">${r.storeName || r.environmentSerial} <span class="stable-id-button">${r.gsCode || r.environmentSerial}</span></b>
           <span class="pill bad">${sfStatusPill(r.status, r.loginMode).replace(/<\/?[^>]+(>|$)/g, '')}</span>
         </div>
-        <p class="xyp2-help">${r.errorSummary || '详见执行器日志。'}<br>截图：异常页面（随 Run 附件保存，可在 Run 详情查看）。</p>
+        <p class="xyp2-help">${esc(r.errorSummary || '详见执行器日志。')}<br>截图：异常页面（随 Run 附件保存，可在 Run 详情查看）。</p>
       </div>`).join('');
   } else $('sfErrBox').hidden = true;
 }
-async function sfStart() {
+async function sfStart(options = {}) {
   if (SF_STATE.running) return;
   const serials = [...SF_STATE.selected];
   if (!serials.length) { sfSetPhase('请先勾选巡检清单。', false); return; }
@@ -4351,8 +4352,9 @@ async function sfStart() {
   const body = {
     idempotencyKey: 'sf-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
     executorId: executor.id,
-    queryMode: 'initial',
+    queryMode: options.queryMode || 'initial',
     browserMode: headless ? 'headless' : 'visible',
+    concurrency: sfConc(),
     environmentSerials: serials,
   };
   try {
@@ -4397,8 +4399,18 @@ async function sfPoll() {
 $('sfStart').onclick = sfStart;
 $('sfStop').onclick = async () => {
   if (!SF_STATE.runId) return;
-  try { await cloudFetchJson('/v1/operation-runs/store-finance-inspect/' + SF_STATE.runId + '/cancel', { method: 'POST' }); } catch (e) {}
-  sfSetPhase('已请求停止；当前采集中店铺完成后终止，已完成数据保留。', false);
+  try {
+    await cloudFetchJson('/v1/operation-runs/store-finance-inspect/'
+      + encodeURIComponent(SF_STATE.runId) + '/cancel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    sfSetPhase('已请求停止；当前采集中店铺完成后终止，已完成数据保留。', false);
+  } catch (e) {
+    sfSetPhase('停止失败：' + (e.message || e)
+      + '。可稍后重试，或直接忽略本轮结果。', false);
+  }
 };
 function sfFailedSerials() {
   return sfLastRows().filter(r => ['fail', 'login', 'inuse'].includes(r.status)).map(r => r.environmentSerial);
@@ -4409,7 +4421,7 @@ async function sfRetryFail() {
   if (!serials.length || SF_STATE.running) return;
   SF_STATE.selected = new Set(serials);
   sfSaveList(); sfRenderShops(); sfRefreshSel();
-  sfStart();
+  await sfStart({ queryMode: 'failed_retry' });
 }
 $('sfRetryFail').onclick = sfRetryFail;
 $('sfClearResult').onclick = () => {

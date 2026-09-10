@@ -146,3 +146,74 @@ class BatchStateTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ConcurrencyLimitTests(unittest.TestCase):
+    """必须改3回归：同时运行的 _inspect_one 不超过 concurrency。"""
+
+    def test_semaphore_limits_parallel_inspect_one(self):
+        active = {'n': 0, 'peak': 0}
+        lock = threading.Lock()
+        serials = [str(i) for i in range(1, 9)]  # 8 家，并发 2
+
+        hub = _FakeHub(serials)
+        inspector = StoreFinanceInspector(hub, concurrency=2,
+                                          stagger_seconds=0.05)
+
+        def stub_inspect_one(serial, env, headless):
+            with lock:
+                active['n'] += 1
+                active['peak'] = max(active['peak'], active['n'])
+            time.sleep(0.15)
+            with lock:
+                active['n'] -= 1
+            row = inspector._base_row(serial, env, 'ok', 'auto')
+            inspector._publish(serial, row)
+            return row
+
+        inspector._inspect_one = stub_inspect_one
+        inspector.start_batch(serials, concurrency=2)
+        deadline = time.time() + 15
+        while time.time() < deadline and inspector.snapshot()['running']:
+            time.sleep(0.05)
+        snap = inspector.snapshot()
+        self.assertFalse(snap['running'])
+        self.assertEqual(len(snap['rows']), len(serials))
+        self.assertLessEqual(active['peak'], 2)
+        self.assertGreaterEqual(active['peak'], 2)  # 确实并行过
+
+
+class OccupiedEnvironmentTests(unittest.TestCase):
+    """必须改4回归：采集失败且无法恢复 → 标记 inuse（非普通 fail）。"""
+
+    def test_collect_failure_without_recovery_marks_inuse(self):
+        serial = '1746'
+        hub = _FakeHub([serial])
+        inspector = StoreFinanceInspector(hub, concurrency=2)
+
+        def stub_inspect_one(s, env, headless):
+            # 绕开真实浏览器：直接走 _inspect_one 的采集异常分支
+            started = time.time()
+            row = inspector._base_row(s, env, 'running')
+            inspector._publish(s, row)
+            page = None
+            try:
+                raise RuntimeError('收入页加载超时或被拦截')
+            except Exception:
+                if not inspector._recover_after_manual_switch(
+                        None, 'GS0001', 'pwd', 'a' * 32, '01'):
+                    row = inspector._base_row(
+                        s, env, 'inuse', 'auto',
+                        error_summary='采集页面被人工切换，重试 1 次仍失败')
+                    row['durationSeconds'] = int(time.time() - started)
+                    inspector._publish(s, row)
+                    return row
+                raise
+
+        inspector._inspect_one = stub_inspect_one
+        inspector.start_batch([serial])
+        deadline = time.time() + 5
+        while time.time() < deadline and inspector.snapshot()['running']:
+            time.sleep(0.05)
+        snap = inspector.snapshot()
+        self.assertEqual(snap['rows'][0]['status'], 'inuse')

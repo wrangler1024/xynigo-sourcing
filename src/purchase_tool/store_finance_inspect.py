@@ -34,6 +34,7 @@ import time
 from datetime import datetime, timezone
 
 from .cdp import CdpClient, CdpError
+from .redaction import scrub_text
 
 SELLERHUB_ORIGIN = 'https://sellerhub.shein.com'
 FUNDS_HASH = '#/mws/seller/new-account-overview'
@@ -92,10 +93,13 @@ def otp_sms_url(sms_key):
 class StoreFinanceInspector(object):
     """批量巡检编排：后台线程驱动单店采集，snapshot() 供进度轮询。"""
 
-    def __init__(self, hub, concurrency=2, headless=True, log=None):
+    def __init__(self, hub, concurrency=2, headless=True, log=None,
+                 stagger_seconds=1.5):
         self.hub = hub
         self.concurrency = max(1, min(5, int(concurrency)))
+        self._semaphore = threading.BoundedSemaphore(self.concurrency)
         self.headless = bool(headless)
+        self._stagger = max(0.0, float(stagger_seconds))
         self._log = log or (lambda msg: None)
         self._lock = threading.Lock()
         self._rows = {}
@@ -105,8 +109,11 @@ class StoreFinanceInspector(object):
 
     # ---- 对外入口（本地 HTTP 端点消费） ----
 
-    def start_batch(self, serials, browser_mode=None):
+    def start_batch(self, serials, browser_mode=None, concurrency=None):
         """重置状态并启动一批巡检；重复发起时拒绝并提示。"""
+        if concurrency is not None:
+            self.concurrency = max(1, min(5, int(concurrency)))
+            self._semaphore = threading.BoundedSemaphore(self.concurrency)
         with self._lock:
             if self._running:
                 return {'running': True, 'total': len(self._rows),
@@ -167,13 +174,18 @@ class StoreFinanceInspector(object):
             for serial in serials:
                 if self._stop_event.is_set():
                     break
-                t = threading.Thread(target=self._inspect_one,
-                                     args=(serial, env_index.get(serial, {}),
+                self._semaphore.acquire()
+                if self._stop_event.is_set():
+                    self._semaphore.release()
+                    break
+                t = threading.Thread(target=self._run_one_guarded,
+                                     args=(serial,
+                                           env_index.get(serial, {}),
                                            headless),
                                      daemon=True)
                 t.start()
                 threads.append(t)
-                time.sleep(1.5)  # 错峰启动，避免并发 start-browser 限流
+                time.sleep(self._stagger)  # 错峰启动，避免并发 start-browser 限流
             for t in threads:
                 t.join()
             with self._lock:
@@ -189,6 +201,13 @@ class StoreFinanceInspector(object):
 
     # ---- 单店采集 ----
 
+    def _run_one_guarded(self, serial, env, headless):
+        """信号量占坑的单店执行：同时运行的 _inspect_one ≤ concurrency。"""
+        try:
+            self._inspect_one(serial, env, headless)
+        finally:
+            self._semaphore.release()
+
     def _inspect_one(self, serial, env, headless):
         started = time.time()
         row = self._base_row(serial, env, 'running')
@@ -198,9 +217,10 @@ class StoreFinanceInspector(object):
         opened_by_me = False
         try:
             opened_before = serial in self.hub.open_container_codes()
+            # 预置：原本未开的环境一律由巡检负责关闭（start 模糊失败也兜底）
+            opened_by_me = not opened_before
             data = self.hub.browser_start(serial, headless=headless) or {}
             port = int(data.get('debuggingPort') or 0)
-            opened_by_me = not opened_before
             if not port:
                 raise RuntimeError('start-browser 未返回调试端口')
             account, password, sms_key = self._resolve_credentials(env)
@@ -218,7 +238,21 @@ class StoreFinanceInspector(object):
                 self._capture_screenshot(serial, page)
                 self._publish(serial, row)
                 return row
-            amounts = self._collect(page, password)
+            try:
+                amounts = self._collect(page, password)
+            except Exception:
+                # 冲突保护：页面可能被人工切换。重建会话并重试 1 次，
+                # 仍失败标记 inuse（环境占用），交「补采失败」或人工。
+                if not self._recover_after_manual_switch(
+                        page, account, password, sms_key, shop_tail):
+                    row = self._base_row(serial, env, 'inuse', login_mode)
+                    row['errorSummary'] = ('采集页面被人工切换，重试 1 次仍失败；'
+                                           '请勿同时手动操作该环境')
+                    row['durationSeconds'] = int(time.time() - started)
+                    self._capture_screenshot(serial, page)
+                    self._publish(serial, row)
+                    return row
+                amounts = self._collect(page, password)
             row = self._base_row(serial, env, 'ok', login_mode)
             row.update(amounts)
             row['durationSeconds'] = int(time.time() - started)
@@ -228,8 +262,8 @@ class StoreFinanceInspector(object):
             row = self._base_row(
                 serial, env, 'fail',
                 'open_env' if opened_before else 'auto',
-                error_summary='%s: %s' % (type(exc).__name__,
-                                          str(exc)[:200]))
+                error_summary=scrub_text(
+                    '%s: %s' % (type(exc).__name__, str(exc)))[:200])
             row['durationSeconds'] = int(time.time() - started)
             try:
                 self._capture_screenshot(serial, page)
@@ -285,6 +319,30 @@ class StoreFinanceInspector(object):
             row = self._rows.get(str(serial))
             if row:
                 row['screenshotSha256'] = digest
+
+    def _recover_after_manual_switch(self, page, account, password,
+                                     sms_key, shop_tail):
+        """采集被人工切换后的恢复：重建会话（必要时重新登录）并回到收入页。
+
+        返回 True 表示已恢复到收入页可重新采集；False 表示无法恢复，
+        调用方应把该店标记为 inuse（环境占用）。
+        """
+        try:
+            page.goto(SELLERHUB_ORIGIN + '/', settle_seconds=6.0)
+        except Exception:
+            return False
+        state = self._route_state(page)
+        if state == 'login_page':
+            result = self._login_flow(page, page.client.port, account,
+                                      password, sms_key, shop_tail)
+            if result not in (True, 'need_password_verify'):
+                return False
+            if result == 'need_password_verify' and \
+                    not self._password_verify(page, password):
+                return False
+        elif state != 'logged_in':
+            return False
+        return self._goto_income(page, password)
 
     # ---- 环境信息与凭据 ----
 
@@ -463,8 +521,12 @@ class StoreFinanceInspector(object):
                 'code' not in text.lower():
             return None
         m = OTP_TAIL_RE.search(text)
-        if m and shop_tail and m.group(1) != shop_tail:
+        if not shop_tail:
+            return None  # 无店铺尾号可校验归属，拒绝接码
+        if m and m.group(1) != shop_tail:
             return None  # 别的账号的旧短信
+        if not m:
+            return None  # 短信缺少账号尾号，无法确认归属
         c = OTP_CODE_RE.search(text) or re.search(r'(\d{6})', text)
         return c.group(1) if c else None
 

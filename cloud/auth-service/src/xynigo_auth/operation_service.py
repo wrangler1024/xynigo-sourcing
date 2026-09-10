@@ -47,7 +47,6 @@ from .operation_contract import (
     EnvironmentRetryRunCreateBody,
     LogisticsQueryRunBody,
     LogisticsQueryRunCreateBody,
-    StoreFinanceRunBody,
     StoreFinanceRunCreateBody,
 )
 from .purchase_service import PurchaseServiceError
@@ -3067,9 +3066,6 @@ class OperationRunService:
         return None
 
 
-_STORE_FINANCE_TERMINAL = _TERMINAL_OPERATION_STATUSES
-
-
 def _store_finance_decimal(value):
     """float/None → Decimal(2位)，供 Numeric 列与导出共用。"""
     from decimal import Decimal
@@ -3094,11 +3090,6 @@ def _store_finance_date(value):
         return None
 
 
-_AMOUNT_FIELDS = (
-    "inTransitAmount", "unsettledAmount", "nextSettlementAmount",
-    "completedSettlementAmount", "nonWithdrawableAmount",
-    "pendingSettleLimitAmount", "lastPayoutAmount", "withdrawableAmount",
-)
 
 
 def store_finance_snapshot(session, run: StoreFinanceInspectRun) -> dict:
@@ -3165,99 +3156,6 @@ def store_finance_snapshot(session, run: StoreFinanceInspectRun) -> dict:
                       if run.started_at else ""),
         "rows": result_rows,
     }
-
-
-def ingest_store_finance_run(
-    session, *, tenant_id: uuid.UUID, body: StoreFinanceRunBody,
-    executor_id: uuid.UUID | None = None, client_version: str | None = None,
-) -> StoreFinanceInspectRun:
-    """执行器完成上报的幂等落库：run 状态/计数 + 每店结果 upsert。"""
-    run = session.scalar(
-        select(StoreFinanceInspectRun).where(
-            StoreFinanceInspectRun.tenant_id == tenant_id,
-            StoreFinanceInspectRun.source_run_key == body.runKey,
-        )
-    )
-    if run is None:
-        raise PurchaseServiceError(
-            "operation_run_not_found", "巡检批次不存在", 404
-        )
-    digest_source = json.dumps(
-        body.model_dump(mode="json"), ensure_ascii=False, sort_keys=True)
-    digest = hashlib.sha256(digest_source.encode("utf-8")).hexdigest()
-    if run.result_payload_hash == digest and run.status in _STORE_FINANCE_TERMINAL:
-        return run  # 完全相同的重复上报，直接幂等返回
-
-    success = sum(item.status == "ok" for item in body.results)
-    failed = sum(item.status in ("fail", "login", "inuse") for item in
-                 body.results)
-    stopped = sum(item.status == "stopped" for item in body.results)
-    if stopped and not success and not failed:
-        run_status = "cancelled"
-    elif failed and success:
-        run_status = "partial_failure"
-    elif failed:
-        run_status = "failed"
-    else:
-        run_status = "completed"
-
-    now = utcnow()
-    run.status = run_status
-    run.phase = "store_finance." + run_status
-    run.progress_completed = min(run.progress_total, len(body.results))
-    run.progress_total = max(run.progress_total, len(body.results))
-    run.total_count = max(run.total_count, len(body.results))
-    run.success_count = success
-    run.failed_count = failed
-    run.result_payload_hash = digest
-    run.completed_at = body.completedAt or now
-    run.started_at = run.started_at or body.startedAt
-    run.updated_at = now
-
-    for item in body.results:
-        existing = session.scalar(
-            select(StoreFinanceInspectResult).where(
-                StoreFinanceInspectResult.run_id == run.id,
-                StoreFinanceInspectResult.environment_serial
-                == item.environmentSerial,
-            )
-        )
-        row = existing or StoreFinanceInspectResult(
-            run_id=run.id,
-            tenant_id=tenant_id,
-            environment_serial=item.environmentSerial,
-        )
-        row.store_name = item.storeName or row.store_name
-        row.gs_code = item.gsCode or row.gs_code
-        row.status = item.status
-        row.login_mode = item.loginMode
-        row.in_transit_amount = _store_finance_decimal(
-            item.inTransitAmount)
-        row.unsettled_amount = _store_finance_decimal(item.unsettledAmount)
-        row.next_settlement_amount = _store_finance_decimal(
-            item.nextSettlementAmount)
-        row.next_settlement_date = _store_finance_date(
-            item.nextSettlementDate)
-        row.completed_settlement_amount = _store_finance_decimal(
-            item.completedSettlementAmount)
-        row.non_withdrawable_amount = _store_finance_decimal(
-            item.nonWithdrawableAmount)
-        row.pending_settle_limit_amount = _store_finance_decimal(
-            item.pendingSettleLimitAmount)
-        row.last_payout_amount = _store_finance_decimal(
-            item.lastPayoutAmount)
-        row.withdrawable_amount = _store_finance_decimal(
-            item.withdrawableAmount)
-        row.collected_at = item.collectedAt
-        row.duration_seconds = item.durationSeconds
-        row.error_summary = item.errorSummary or None
-        row.screenshot_sha256 = item.screenshotSha256 or None
-        row.screenshot_expires_at = None
-        row.execution_version = client_version
-        if existing is None:
-            session.add(row)
-    session.flush()
-    return run
 
 
 class OperationResultService:
