@@ -643,6 +643,8 @@
   #storeFinancePanel .if-switch[aria-checked="true"]:before{transform:translateX(14px)}
   #storeFinancePanel .if-switch:focus-visible{outline:2px solid #078487;outline-offset:3px}
   #storeFinancePanel .if-switch:disabled{opacity:.5;cursor:not-allowed}
+  #storeFinancePanel .if-row{font-size:12px;font-weight:600;color:var(--navy-700)}
+  #storeFinancePanel .xyp2-help{font-size:11px;color:var(--navy-500);margin-top:8px}
   .procurement-state.ok { border-color: #bce5d2; background: var(--green-100); color: var(--green); }
   .procurement-state.bad { border-color: #ffd2c7; background: var(--coral-100); color: var(--coral-500); }
   .procurement-table-scroll { position: relative; }
@@ -1981,7 +1983,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
 
   <div class="module-panel hidden" id="storeFinancePanel">
     <section class="card">
-      <div class="card-title">选择店铺
+      <div class="card-title">① 选择店铺
         <span class="legend">环境序号清单 · 勾选状态自动保存</span>
         <span class="resource-state" id="sfSelCount" style="margin-left:auto; margin-top:0">已选 0 家</span>
       </div>
@@ -2026,7 +2028,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
     </section>
 
     <section class="card">
-      <div class="card-title">执行
+      <div class="card-title">② 执行
         <span class="legend" id="sfRunLegend">Run 待发起</span>
         <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap; margin-left:auto;">
           <span class="if-row" id="sfHeadlessRow">
@@ -2041,8 +2043,8 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
       </div>
 
       <div class="query-phase-banner" id="sfPhaseBanner" hidden>
-        <span class="spinner" id="sfPhaseSpin" hidden></span>
-        <span id="sfPhaseDescription">等待发起巡检。勾选店铺后点击「一键巡检」。</span>
+        <span class="spinner" id="sfPhaseSpin" hidden aria-hidden="true"></span>
+        <div class="query-phase-copy"><b id="sfPhaseTitle">等待发起巡检</b><span id="sfPhaseDescription">勾选店铺后点击「一键巡检」。</span></div>
       </div>
 
       <div class="action-row">
@@ -2058,7 +2060,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
 
     <section class="card table-card">
       <div class="card-title" style="padding:17px 19px 0;">
-        <div>结算汇总 <span class="legend">MXN · 采集时刻快照</span></div>
+        <div>③ 结算汇总 <span class="legend">MXN · 采集时刻快照</span></div>
         <div class="table-actions">
           <button class="btn retry" id="sfRetryFail" disabled>补采失败</button>
           <button class="btn sm" id="sfClearResult">清空结果</button>
@@ -4277,9 +4279,10 @@ function sfConc() {
   const active = document.querySelector('[data-sf-conc].active');
   return active ? Number(active.dataset.sfConc) : 2;
 }
-function sfSetPhase(text, spin) {
+function sfSetPhase(title, text, spin) {
   $('sfPhaseBanner').hidden = false;
   $('sfPhaseSpin').hidden = !spin;
+  $('sfPhaseTitle').textContent = title;
   $('sfPhaseDescription').textContent = text;
 }
 function sfMoney(v) {
@@ -4361,10 +4364,10 @@ function sfRenderSummary(data) {
 async function sfStart(options = {}) {
   if (SF_STATE.running) return;
   const serials = [...SF_STATE.selected];
-  if (!serials.length) { sfSetPhase('请先勾选巡检清单。', false); return; }
+  if (!serials.length) { sfSetPhase('等待发起', '请先勾选巡检清单。', false); return; }
   let executor;
   try { executor = await cloudFormalExecutor('store.finance.inspect.v1'); }
-  catch (e) { sfSetPhase(e.message || '执行器不可用', false); return; }
+  catch (e) { sfSetPhase('执行器不可用', e.message || '无法发起巡检', false); return; }
   const headless = $('sfHeadless').getAttribute('aria-checked') === 'true';
   const body = {
     idempotencyKey: 'sf-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
@@ -4384,10 +4387,10 @@ async function sfStart(options = {}) {
     SF_STATE.running = true;
     $('sfStart').disabled = true; $('sfStop').disabled = false;
     $('sfRunLegend').textContent = 'Run ' + SF_STATE.runId.slice(0, 8);
-    sfSetPhase(`巡检运行中 · 无头${headless ? '开' : '关'} · 并发 ${sfConc()} · 共 ${serials.length} 家`, true);
+    sfSetPhase('巡检运行中', `无头${headless ? '开' : '关'} · 并发 ${sfConc()} · 共 ${serials.length} 家`, true);
     sfPoll();
   } catch (e) {
-    sfSetPhase('发起失败：' + (e.message || e), false);
+    sfSetPhase('发起失败', String(e.message || e), false);
   }
 }
 async function sfPoll() {
@@ -4403,13 +4406,13 @@ async function sfPoll() {
     const done = ['completed', 'partial_failure', 'failed', 'cancelled', 'uncertain'].includes(data.status);
     if (done) {
       const bad = data.failedCount || 0;
-      sfSetPhase(bad ? `巡检完成：成功 ${data.successCount} 家，标记 ${bad} 家。可「补采失败」或导出后人工处理。` : '巡检完成，全部成功。', false);
+      sfSetPhase(bad ? '巡检完成（部分标记）' : '巡检完成', bad ? `成功 ${data.successCount} 家，标记 ${bad} 家。可「补采失败」或导出后人工处理。` : '全部店铺采集成功。', false);
       $('sfStart').disabled = false; $('sfStop').disabled = true;
       $('sfExport').disabled = false; $('sfExportMenuBtn').disabled = false;
       $('sfRetryFail').disabled = !bad;
       SF_STATE.running = false;
     } else {
-      sfSetPhase(`巡检运行中 · 已完成 ${data.progressCompleted ?? 0} / ${data.progressTotal ?? 0}`, true);
+      sfSetPhase('巡检运行中', `已完成 ${data.progressCompleted ?? 0} / ${data.progressTotal ?? 0}`, true);
     }
   } catch (e) { /* 轮询失败静默重试 */ }
 }
@@ -4423,10 +4426,9 @@ $('sfStop').onclick = async () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
     });
-    sfSetPhase('已请求停止；当前采集中店铺完成后终止，已完成数据保留。', false);
+    sfSetPhase('已请求停止', '当前采集中店铺完成后终止，已完成数据保留。', false);
   } catch (e) {
-    sfSetPhase('停止失败：' + (e.message || e)
-      + '。可稍后重试，或直接忽略本轮结果。', false);
+    sfSetPhase('停止失败', String(e.message || e) + '。可稍后重试，或直接忽略本轮结果。', false);
   }
 };
 function sfFailedSerials() {
@@ -4469,7 +4471,7 @@ async function sfExport(variant) {
     link.href = url; link.download = filename;
     document.body.appendChild(link); link.click(); link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-  } catch (e) { sfSetPhase('导出失败：' + (e.message || e), false); }
+  } catch (e) { sfSetPhase('导出失败', String(e.message || e), false); }
 }
 $('sfExport').onclick = () => sfExport('standard');
 $('sfExportStd').onclick = () => { $('sfExportMenu').hidden = true; sfExport('standard'); };
