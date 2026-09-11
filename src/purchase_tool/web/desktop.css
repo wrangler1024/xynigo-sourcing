@@ -168,6 +168,9 @@ button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity:
 .field-grid { display:grid; grid-template-columns:1fr 1fr; gap:17px; }
 .field label, .field > span:first-child { display:block; color:#334155; font-size:11px; font-weight:800; }
 .field small { display:block; margin-top:6px; color:var(--muted); font-size:9px; line-height:1.5; }
+.cache-ttl-row { display:flex; align-items:flex-end; gap:12px; flex-wrap:wrap; }
+.cache-ttl-row .select { flex:1 1 260px; max-width:420px; }
+.cache-ttl-row .button { flex:0 0 auto; height:35px; min-height:35px; }
 .input, .select { width:100%; height:35px; margin-top:8px; padding:0 11px; border:1px solid #d9e1ea; border-radius:9px; outline:none; background:#fff; color:#334155; font-size:11px; }
 .input:focus, .select:focus { border-color:#2dd4bf; box-shadow:0 0 0 3px rgba(45,212,191,.12); }
 .toggle-row { display:flex; grid-column:1/-1; align-items:center; justify-content:space-between; padding:13px; border:1px solid #ccfbf1; border-radius:12px; background:rgba(240,253,250,.65); }

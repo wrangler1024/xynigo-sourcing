@@ -1133,7 +1133,7 @@
       return '<option value="' + item[0] + '"' + (item[0] === ttl ? ' selected' : '') + '>' + item[1] + '</option>';
     }).join('');
     if (!known) markup += '<option value="' + ttl + '" selected>当前配置 ' + ttl + ' 秒</option>';
-    return '<section class="card"><div class="section-body stack"><div class="field-grid"><div class="field"><label for="source-cache-ttl">查询缓存时间</label><select id="source-cache-ttl" class="select">' + markup + '</select><small>协作表按天导入分单，可放心选较长档位；保存前会用你的默认数据源做一次云端读取校验。</small></div><div class="field" style="display:flex;align-items:flex-end"><button class="button primary" data-action="save-cache-ttl">保存并云端校验</button></div></div><div class="validation-box" id="cache-ttl-state">' + icon('shield') + '<span>无需改配置文件；校验通过后立即生效。</span></div></div></section>';
+    return '<section class="card"><div class="section-body stack"><div class="field"><label for="source-cache-ttl">查询缓存时间</label><div class="cache-ttl-row"><select id="source-cache-ttl" class="select">' + markup + '</select><button class="button primary" data-action="save-cache-ttl">保存并云端校验</button></div><small>协作表按天导入分单，可放心选较长档位；保存前会用你的默认数据源做一次云端读取校验。</small></div><div class="validation-box" id="cache-ttl-state">' + icon('shield') + '<span>无需改配置文件；校验通过后立即生效。</span></div></div></section>';
   }
   function saveCacheTtl() {
     var select = document.getElementById('source-cache-ttl');

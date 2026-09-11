@@ -112,7 +112,7 @@ class DesktopUIContractTests(unittest.TestCase):
                 '查询缓存时间', '保存并云端校验', 'save-cache-ttl',
                 'source-cache-ttl',
                 '实时（8 秒，默认）', '30 分钟（协作表推荐）',
-                'cacheTtlSeconds', '云端读取校验'):
+                'cacheTtlSeconds', '云端读取校验', 'cache-ttl-row'):
             self.assertIn(marker, self.javascript)
 
     def test_data_source_hybrid_sync_keeps_environment_bindings_local(self):

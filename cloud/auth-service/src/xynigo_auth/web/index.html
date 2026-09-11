@@ -2889,17 +2889,17 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
       <div class="data-source-setup" style="margin-top:14px">
         <h4>查询缓存时间</h4>
         <div class="settings-grid">
-          <div class="settings-field">
+          <div class="settings-field full">
             <label>采购助手查询结果缓存多久（协作表按天导入，可选较长档位）</label>
-            <select id="localDataSourceCacheTtl">
-              <option value="8">实时（8 秒，默认）</option>
-              <option value="600">10 分钟</option>
-              <option value="1800">30 分钟（协作表推荐）</option>
-              <option value="3600">1 小时</option>
-            </select>
-          </div>
-          <div class="settings-field" style="align-self:end">
-            <button class="btn primary" id="btnSaveCacheTtl" type="button">保存并云端校验</button>
+            <div style="display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap">
+              <select id="localDataSourceCacheTtl" style="flex:1 1 260px;max-width:420px">
+                <option value="8">实时（8 秒，默认）</option>
+                <option value="600">10 分钟</option>
+                <option value="1800">30 分钟（协作表推荐）</option>
+                <option value="3600">1 小时</option>
+              </select>
+              <button class="btn primary" id="btnSaveCacheTtl" type="button" style="height:40px;min-height:40px">保存并云端校验</button>
+            </div>
           </div>
         </div>
         <div class="settings-actions">
