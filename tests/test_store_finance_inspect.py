@@ -474,6 +474,10 @@ class LookupStoresTests(unittest.TestCase):
 
     def _envs(self):
         return [
+            {'containerCode': '1775873542', 'serialNumber': '1699',
+             'containerName': '溪山', 'tagName': '墨西哥本土自营',
+             'accounts': [{'accountName': 'GS0763391'}],
+             'remark': '', 'openTime': 'None'},
             {'containerCode': '1776003960', 'serialNumber': '1377',
              'containerName': '溪山-子', 'tagName': '魏无羡',
              'accounts': [{'accountName': 'GS1098478'}],
@@ -491,12 +495,13 @@ class LookupStoresTests(unittest.TestCase):
             env_list=self._envs(),
             open_codes={'1775999821'})  # browser_status 实时：帆影-子开着
         serials = {r['environmentSerial'] for r in result['matched']}
-        self.assertEqual(serials, {'1377', '1378'})
+        # 「溪山」精确命中主账号(1699)；1377 来自显式序号输入，非子串带出
+        self.assertEqual(serials, {'1377', '1378', '1699'})
         self.assertEqual(result['unmatched'], ['不存在'])
         by_serial = {r['environmentSerial']: r for r in result['matched']}
-        self.assertEqual(by_serial['1377']['storeName'], '溪山-子')
-        self.assertEqual(by_serial['1377']['gsCode'], 'GS1098478')
-        self.assertEqual(by_serial['1377']['group'], '魏无羡')
+        self.assertEqual(by_serial['1699']['storeName'], '溪山')
+        self.assertEqual(by_serial['1699']['gsCode'], 'GS0763391')
+        self.assertEqual(by_serial['1699']['group'], '墨西哥本土自营')
         self.assertEqual(by_serial['1377']['environmentId'], '1776003960')
         self.assertFalse(by_serial['1377']['browserOpen'])
         self.assertEqual(by_serial['1378']['gsCode'], '')  # 未绑账号不出 IndexError

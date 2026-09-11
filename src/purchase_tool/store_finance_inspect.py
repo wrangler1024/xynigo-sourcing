@@ -173,8 +173,10 @@ class StoreFinanceInspector(object):
             hits = [r for r in rows
                     if token in (r['environmentSerial'], r['environmentId'])]
             if not hits:
+                # 店铺名须完整精确匹配（大小写不敏感）；子串会命中
+                # 「溪山」→「溪山-子」一类主/子账号成对环境，视为未命中。
                 hits = [r for r in rows
-                        if lowered in r['storeName'].casefold()]
+                        if r['storeName'].casefold() == lowered]
             if hits:
                 for r in hits[:50]:
                     key = (r['environmentSerial'], r['environmentId'])
