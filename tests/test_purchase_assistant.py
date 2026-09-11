@@ -16,10 +16,12 @@ from purchase_tool.data_source_registry import (
     DataSourceMappingRequired, DataSourceRegistry)
 from purchase_tool.main import Handler
 from purchase_tool.purchase_assistant import (
+    MAX_CACHE_TTL_SECONDS,
     PurchaseAssistantConfig,
     PurchaseAssistantError,
     PurchaseAssistantService,
     PurchaseAssistantSheetProvider,
+    TaskNotFoundError,
     find_recipient,
     parse_spreadsheet_url,
     rows_to_tasks,
@@ -62,10 +64,10 @@ class FakeProvider(object):
     def __init__(self):
         self.rows = [sample_row()]
 
-    def list_tasks(self):
+    def list_tasks(self, force=False):
         return rows_to_tasks(self.rows)
 
-    def get_recipient(self, key):
+    def get_recipient(self, key, force=False):
         return find_recipient(self.rows, key)
 
 
@@ -818,3 +820,148 @@ class PurchaseAssistantHttpTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class BatchRowsTransport(object):
+    """Fake transport whose sheet rows change between full-range fetches."""
+
+    def __init__(self, row_batches):
+        self.row_batches = list(row_batches)
+        self.values_calls = 0
+
+    def request_json(self, method, url, headers=None, payload=None,
+                     timeout=15.0):
+        del headers, payload, timeout
+        if url.endswith('/auth/v3/tenant_access_token/internal'):
+            return {
+                'code': 0,
+                'tenant_access_token': 'tenant-token-for-test',
+                'expire': 7200,
+            }
+        if url.endswith('/sheets/query'):
+            return {
+                'code': 0,
+                'data': {'revision': 1, 'sheets': [{
+                    'resource_type': 'sheet',
+                    'sheet_id': 'sheet_test',
+                    'title': '收件信息（粘贴区）',
+                    'grid_properties': {
+                        'row_count': 500,
+                        'column_count': 20,
+                    },
+                    'hidden': False,
+                }]},
+            }
+        index = min(self.values_calls, len(self.row_batches) - 1)
+        self.values_calls += 1
+        rows = self.row_batches[index]
+        headers_row = [
+            key for key in rows[0] if key != '__row_number'] if rows else []
+        values = [headers_row] + [
+            [row.get(key, '') for key in headers_row] for row in rows]
+        return {'code': 0, 'data': {'valueRange': {'values': values}}}
+
+
+def resident_mapping(token='tok-resident-000001', **overrides):
+    mapping = {
+        'purchaseAssistantSpreadsheetToken': token,
+        'purchaseAssistantSheetId': 'sheet_test',
+        'purchaseAssistantCellRange': 'A1:R',
+        'purchaseAssistantCacheTtlSeconds': 3600,
+    }
+    mapping.update(overrides)
+    return mapping
+
+
+class PurchaseAssistantResidentCacheTests(unittest.TestCase):
+    """Resident per-source providers plus cache-miss fallback refetch."""
+
+    def _service_pair(self, transport, mapping=None):
+        credentials = SimpleNamespace(
+            app_id='cli_test', app_secret='secret-for-test')
+        base = PurchaseAssistantService.from_runtime_config(
+            mapping or resident_mapping(),
+            credential_getter=lambda: credentials,
+            transport_factory=lambda: transport)
+        request_service = base.for_runtime_config(
+            mapping or resident_mapping())
+        return base, request_service
+
+    def test_resident_cache_serves_second_request_without_refetch(self):
+        transport = BatchRowsTransport([[sample_row()]])
+        _base, request_service = self._service_pair(transport)
+
+        first = request_service.search('ORDER-DEMO-001')
+        self.assertEqual(len(first[0]), 1)
+        request_service.recipient(first[0][0]['taskKey'])
+        self.assertEqual(transport.values_calls, 1)
+
+    def test_recipient_refetches_once_when_cache_misses_new_order(self):
+        transport = BatchRowsTransport([
+            [sample_row()],
+            [sample_row(**{
+                '销售订单号': 'ORDER-NEW-042',
+                '系统订单键': 'demo|ORDER-NEW-042|PACKAGE-NEW-042',
+            })],
+        ])
+        _base, request_service = self._service_pair(transport)
+
+        request_service.search('ORDER-DEMO-001')
+        self.assertEqual(transport.values_calls, 1)
+
+        matched, total = request_service.search('ORDER-NEW-042')
+        self.assertEqual(total, 1)
+        self.assertEqual(transport.values_calls, 2)
+        recipient = request_service.recipient(matched[0]['taskKey'])
+        self.assertEqual(recipient['recipientName'], 'Lucia Prueba')
+        self.assertEqual(transport.values_calls, 2)
+
+    def test_absent_task_on_fresh_rows_skips_refetch(self):
+        transport = BatchRowsTransport([[sample_row()]])
+        _base, request_service = self._service_pair(transport)
+
+        with self.assertRaises(PurchaseAssistantError) as ctx:
+            request_service.recipient('demo|missing|key')
+        self.assertIn('协作表中没有对应的采购任务', str(ctx.exception))
+        self.assertEqual(transport.values_calls, 1)
+
+    def test_absent_search_after_cached_miss_costs_single_refetch(self):
+        transport = BatchRowsTransport([[sample_row()]])
+        _base, request_service = self._service_pair(transport)
+
+        request_service.search('ORDER-DEMO-001')
+        self.assertEqual(transport.values_calls, 1)
+        matched, total = request_service.search('NOTHING-MATCHES')
+        self.assertEqual(total, 0)
+        self.assertEqual(matched, [])
+        self.assertEqual(transport.values_calls, 2)
+
+    def test_distinct_source_configs_keep_separate_resident_providers(self):
+        transport = BatchRowsTransport([[sample_row()]])
+        credentials = SimpleNamespace(
+            app_id='cli_test', app_secret='secret-for-test')
+        base = PurchaseAssistantService.from_runtime_config(
+            resident_mapping(),
+            credential_getter=lambda: credentials,
+            transport_factory=lambda: transport)
+        first = base.for_runtime_config(resident_mapping(
+            token='tok-source-a-0001'))
+        second = base.for_runtime_config(resident_mapping(
+            token='tok-source-b-0001'))
+        first.search('ORDER-DEMO-001')
+        second.search('ORDER-DEMO-001')
+        self.assertEqual(transport.values_calls, 2)
+
+    def test_task_not_found_error_stays_a_purchase_assistant_error(self):
+        with self.assertRaises(PurchaseAssistantError) as ctx:
+            find_recipient([sample_row()], 'demo|missing|key')
+        self.assertIsInstance(ctx.exception, TaskNotFoundError)
+
+    def test_cache_ttl_accepts_hour_scale_and_rejects_beyond(self):
+        config = PurchaseAssistantConfig.from_runtime_config(resident_mapping())
+        self.assertEqual(config.cache_ttl_seconds, 3600)
+        self.assertEqual(MAX_CACHE_TTL_SECONDS, 3600)
+        with self.assertRaises(PurchaseAssistantError) as ctx:
+            PurchaseAssistantConfig.from_runtime_config(
+                resident_mapping(**{'purchaseAssistantCacheTtlSeconds': 3601}))
+        self.assertIn('0 到 3600 秒', str(ctx.exception))

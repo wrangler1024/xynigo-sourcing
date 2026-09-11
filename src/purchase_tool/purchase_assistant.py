@@ -9,6 +9,7 @@ import secrets
 import socket
 import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Optional
 from urllib.error import HTTPError, URLError
@@ -34,6 +35,8 @@ ALLOWED_SHEET_HOST_SUFFIXES = ('.feishu.cn', '.larksuite.com')
 SOURCE_MODES = {'personal', 'team'}
 SOURCE_INSPECTION_TTL_SECONDS = 300.0
 MAX_SOURCE_COLUMNS = 702
+# 协作表按天导入分单，行级回源兜底未命中，因此缓存窗口可以远大于旧上限。
+MAX_CACHE_TTL_SECONDS = 3600
 
 
 class PurchaseAssistantError(RuntimeError):
@@ -41,6 +44,11 @@ class PurchaseAssistantError(RuntimeError):
 
 
 class TokenRejectedError(PurchaseAssistantError):
+    pass
+
+
+class TaskNotFoundError(PurchaseAssistantError):
+    """The requested task key matched no row in the served rows."""
     pass
 
 
@@ -253,7 +261,7 @@ def find_recipient(rows: Iterable[dict[str, str]],
                 '原任务对应多个采购子单，请重新搜索并选择具体子订单')
         matched = legacy
     if not wanted or not matched:
-        raise PurchaseAssistantError('未找到对应的采购任务')
+        raise TaskNotFoundError('未找到对应的采购任务')
     signatures = {
         tuple(normalize(row.get(field)) for field in RECIPIENT_FIELDS)
         for row in matched
@@ -306,8 +314,9 @@ class PurchaseAssistantConfig:
         if (parsed.scheme != 'https' or parsed.hostname not in ALLOWED_API_HOSTS
                 or parsed.path != '/open-apis'):
             raise PurchaseAssistantError('采购助手只允许访问飞书官方 OpenAPI')
-        if ttl < 0 or ttl > 60:
-            raise PurchaseAssistantError('采购助手缓存时间必须在 0 到 60 秒')
+        if ttl < 0 or ttl > MAX_CACHE_TTL_SECONDS:
+            raise PurchaseAssistantError(
+                '采购助手缓存时间必须在 0 到 %d 秒' % MAX_CACHE_TTL_SECONDS)
         return cls(token, sheet_id, cell_range, api_base, ttl)
 
 
@@ -360,6 +369,7 @@ class PurchaseAssistantSheetProvider(object):
         self._token_expires_at = 0.0
         self._cached_rows = None
         self._cached_at = 0.0
+        self._last_read_from_cache = False
         self._lock = threading.RLock()
 
     def _invalidate_token(self):
@@ -491,28 +501,67 @@ class PurchaseAssistantSheetProvider(object):
             'headerCount': len(headers),
         }
 
-    def _read_rows(self):
+    def _read_rows(self, force=False):
         with self._lock:
             now = time.monotonic()
-            if (self._cached_rows is not None
+            if (not force
+                    and self._cached_rows is not None
                     and now - self._cached_at
                     <= self.config.cache_ttl_seconds):
+                self._last_read_from_cache = True
                 return self._cached_rows
             rows = rows_from_values(self._fetch_values())
             self._cached_rows = rows
             self._cached_at = now
+            self._last_read_from_cache = False
             return rows
 
-    def list_tasks(self):
-        return rows_to_tasks(self._read_rows())
+    @property
+    def last_read_served_from_cache(self):
+        """True when the most recent read reused cached rows, not a fetch."""
+        with self._lock:
+            return self._last_read_from_cache
 
-    def get_recipient(self, key):
-        return find_recipient(self._read_rows(), key)
+    def list_tasks(self, force=False):
+        return rows_to_tasks(self._read_rows(force=force))
+
+    def get_recipient(self, key, force=False):
+        return find_recipient(self._read_rows(force=force), key)
+
+
+class _ResidentProviderCache(object):
+    """Row-cache carriers kept alive across requests, one per source config.
+
+    The hot plugin path builds an isolated service per request; without this
+    cache every search would refetch the whole sheet. Inspection and
+    validation flows keep using fresh throwaway providers.
+    """
+
+    def __init__(self, max_entries=16):
+        self._lock = threading.Lock()
+        self._entries: "OrderedDict[Any, PurchaseAssistantSheetProvider]" = (
+            OrderedDict())
+        self._max = max(1, int(max_entries))
+
+    def get_or_create(self, config, factory):
+        with self._lock:
+            provider = self._entries.get(config)
+            if provider is not None:
+                self._entries.move_to_end(config)
+                return provider
+        provider = factory()
+        with self._lock:
+            self._entries[config] = provider
+            self._entries.move_to_end(config)
+            while len(self._entries) > self._max:
+                self._entries.popitem(last=False)
+        return provider
 
 
 class PurchaseAssistantService(object):
     def __init__(self, provider=None, config_error='', credential_getter=None,
-                 source_config=None, transport_factory=None):
+                 source_config=None, transport_factory=None,
+                 provider_cache=None):
         self.provider = provider
         self.config_error = str(config_error or '')
         self.credential_getter = credential_getter
@@ -522,14 +571,19 @@ class PurchaseAssistantService(object):
         self._source_lock = threading.RLock()
         self._inspections = {}
         self._validated_targets = {}
+        self._provider_cache = (provider_cache
+                                if isinstance(provider_cache,
+                                              _ResidentProviderCache)
+                                else _ResidentProviderCache())
 
     @classmethod
     def from_runtime_config(cls, mapping, credential_getter=None,
-                            transport_factory=None):
+                            transport_factory=None, provider_cache=None):
         service = cls(
             credential_getter=credential_getter,
             source_config=mapping,
             transport_factory=transport_factory,
+            provider_cache=provider_cache,
         )
         service.reconfigure(mapping)
         return service
@@ -545,12 +599,16 @@ class PurchaseAssistantService(object):
             transport=self._transport(),
         )
 
+    def _resident_provider_for_config(self, config):
+        return self._provider_cache.get_or_create(
+            config, lambda: self._provider_for_config(config))
+
     def reconfigure(self, mapping):
         self.source_config = dict(mapping or {})
         try:
             config = PurchaseAssistantConfig.from_runtime_config(
                 self.source_config)
-            self.provider = self._provider_for_config(config)
+            self.provider = self._resident_provider_for_config(config)
             self.config_error = ''
         except (PurchaseAssistantError, TypeError, ValueError) as exc:
             self.provider = None
@@ -560,11 +618,17 @@ class PurchaseAssistantService(object):
             self._validated_targets.clear()
 
     def for_runtime_config(self, mapping):
-        """Return an isolated request-scoped service without mutating self."""
+        """Return an isolated request-scoped service without mutating self.
+
+        Isolation covers per-service bookkeeping only; the row-cache carrier
+        (and therefore cached rows) is shared with the owning service so the
+        hot plugin path does not refetch the sheet on every request.
+        """
         service = PurchaseAssistantService(
             credential_getter=self.credential_getter,
             source_config=mapping,
             transport_factory=self.transport_factory,
+            provider_cache=self._provider_cache,
         )
         service.reconfigure(mapping)
         return service
@@ -764,10 +828,26 @@ class PurchaseAssistantService(object):
         if not self.provider:
             raise PurchaseAssistantError(
                 self.config_error or '采购助手数据源尚未配置')
-        return search_tasks(self.provider.list_tasks(), query, limit)
+        matched, total = search_tasks(self.provider.list_tasks(), query, limit)
+        if total == 0 and self.provider.last_read_served_from_cache:
+            # 新导入的订单可能晚于缓存；命中缓存却查不到时回源一次再找。
+            matched, total = search_tasks(
+                self.provider.list_tasks(force=True), query, limit)
+        return matched, total
 
     def recipient(self, key):
         if not self.provider:
             raise PurchaseAssistantError(
                 self.config_error or '采购助手数据源尚未配置')
-        return self.provider.get_recipient(key)
+        try:
+            return self.provider.get_recipient(key)
+        except TaskNotFoundError as first_error:
+            if not self.provider.last_read_served_from_cache:
+                raise PurchaseAssistantError(
+                    '协作表中没有对应的采购任务，请核对订单号后重试',
+                ) from first_error
+        try:
+            return self.provider.get_recipient(key, force=True)
+        except TaskNotFoundError as exc:
+            raise PurchaseAssistantError(
+                '协作表中没有对应的采购任务，请核对订单号后重试') from exc
