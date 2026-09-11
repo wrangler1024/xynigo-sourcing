@@ -554,3 +554,30 @@ class LookupBrowserStateFallbackTests(unittest.TestCase):
                  'containerName': '帆影-子', 'tagName': '魏无羡',
                  'accounts': [], 'openTime': '09-10 10:00:00'}])
         self.assertTrue(result['matched'][0]['browserOpen'])
+
+
+class LoginFailureReasonTests(unittest.TestCase):
+    def test_site_unreachable_is_classified_as_network_issue(self):
+        class _Page(object):
+            url = 'chrome-error://chromewebdata/'
+            def inner_text(self):
+                return "This site can't be reached sellerhub.sheincorp.com unexpectedly closed the connection"
+        reason = StoreFinanceInspector._login_failure_reason(_Page())
+        self.assertIn('卖家后台无法访问', reason)
+        self.assertIn('非账号问题', reason)
+
+    def test_plain_login_page_keeps_original_reason(self):
+        class _Page(object):
+            url = 'https://sellerhub.sheincorp.com/user/auth/login'
+            def inner_text(self):
+                return '账号登录 密码登录'
+        reason = StoreFinanceInspector._login_failure_reason(_Page())
+        self.assertEqual(reason, '自动登录未完成（登录页/验证未通过）')
+
+    def test_unreadable_page_falls_back_to_generic_reason(self):
+        class _Page(object):
+            url = 'https://sellerhub.sheincorp.com/'
+            def inner_text(self):
+                raise RuntimeError('页面已销毁')
+        reason = StoreFinanceInspector._login_failure_reason(_Page())
+        self.assertEqual(reason, '自动登录未完成（登录页/验证未通过）')

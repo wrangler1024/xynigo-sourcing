@@ -334,7 +334,7 @@ class StoreFinanceInspector(object):
                 page, port, account, password, sms_key, shop_tail)
             if not session:
                 row = self._base_row(serial, env, 'login', login_mode)
-                row['errorSummary'] = '自动登录未完成（登录页/验证未通过）'
+                row['errorSummary'] = self._login_failure_reason(page)
                 row['durationSeconds'] = int(time.time() - started)
                 self._capture_screenshot(serial, page)
                 self._publish(serial, row)
@@ -489,6 +489,26 @@ class StoreFinanceInspector(object):
         if LOGIN_OK_MARKER in page.inner_text():
             return 'logged_in'
         return 'other'
+
+    @staticmethod
+    def _login_failure_reason(page):
+        """区分「站点不可达」与「登录验证未通过」，避免网络故障误报成账号问题。"""
+        url = (page.url or '') if page is not None else ''
+        text = ''
+        if page is not None:
+            try:
+                text = page.inner_text() or ''
+            except Exception:
+                text = ''
+        lowered = text.lower()
+        if (url.startswith('chrome-error://')
+                or '无法访问此网站' in text
+                or "can't be reached" in lowered
+                or 'unexpectedly closed' in lowered
+                or 'err_connection' in lowered):
+            return ('卖家后台无法访问：连接被重置或站点不可达'
+                    '（代理/网络问题，非账号问题；稍后用「补采失败」重试）')
+        return '自动登录未完成（登录页/验证未通过）'
 
     def _ensure_session(self, page, port, account, password, sms_key,
                         shop_tail):
