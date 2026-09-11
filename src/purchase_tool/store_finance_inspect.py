@@ -565,17 +565,29 @@ class StoreFinanceInspector(object):
         return mode, True
 
     def _goto_income(self, page, password):
-        """导航到我的收入页；触发密码二次验证时自动通过。"""
+        """导航到我的收入页；触发密码二次验证时自动通过。
+
+        冷登录后 SPA 首载在并发批次下偶发超过 20 秒仍不出金额卡
+        （历史失败均为该形态，单店复现正常）——超时先整页重载一次
+        再等，重载通常能让卡住的 chunk 请求恢复。
+        """
         page.js_evaluate(
             "location.hash = '#/gsfs/finance-management/list'")
-        deadline = time.time() + 22
+        if self._await_income_marker(page, password, 25):
+            return True
+        page.goto(SELLERHUB_ORIGIN + '/#/gsfs/finance-management/list',
+                  settle_seconds=4.0)
+        return self._await_income_marker(page, password, 30)
+
+    def _await_income_marker(self, page, password, timeout):
+        deadline = time.time() + timeout
         while time.time() < deadline:
             time.sleep(0.5)
             url = page.url or ''
             if VERIFY_URL_MARK in url:
                 if not self._password_verify(page, password):
                     return False
-                deadline = time.time() + 22
+                deadline = time.time() + timeout
                 continue
             if '累计未结算金额' in page.inner_text():
                 return True
