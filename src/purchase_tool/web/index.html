@@ -2067,7 +2067,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         <span class="resource-state" style="flex:1">全流程只读采集；登录态失效的店铺将自动登录。防重说明：同一巡检批次标识不会被重复发起（并发同店互斥将在后续版本提供）。</span>
       </div>
       <div class="progress-wrap">
-        <div class="progress"><div class="bar" id="sfBar"></div></div>
+        <div class="progress" id="sfProgress" role="progressbar" aria-valuemin="0"><div class="bar" id="sfBar"></div></div>
         <span id="sfProgressText">未开始</span>
       </div>
     </section>
@@ -4403,6 +4403,42 @@ function sfConc() {
   const active = document.querySelector('[data-sf-conc].active');
   return active ? Number(active.dataset.sfConc) : 2;
 }
+let sfClockTimer = null;
+function sfProgressLabel(data) {
+  const total = Math.max(Number(data.progressTotal || 0),
+    (data.rows || []).length);
+  const processed = Number(data.progressCompleted || 0);
+  const durations = (data.rows || [])
+    .map(r => Number(r.durationSeconds || 0)).filter(v => v > 0);
+  const avg = durations.length
+    ? durations.reduce((a, b) => a + b, 0) / durations.length : 0;
+  const average = avg > 0
+    ? (avg >= 60
+      ? `${Math.floor(avg / 60)}分${Math.round(avg % 60)}秒/环境`
+      : `${Math.round(avg)}秒/环境`)
+    : '—';
+  const start = data.startedAt ? Date.parse(data.startedAt) : NaN;
+  const end = data.completedAt ? Date.parse(data.completedAt) : Date.now();
+  const elapsed = Number.isFinite(start)
+    ? Math.max(0, (end - start) / 1000) : 0;
+  const retry = data.queryMode === 'failed_retry'
+    ? elapsedClock(elapsed) : '—';
+  return `已处理 ${processed} / ${total} ｜ 平均 ${average}`
+    + ` ｜ 本轮重查 ${retry} ｜ 累计执行 ${elapsedClock(elapsed)}`;
+}
+function sfPaintProgress(data) {
+  const label = sfProgressLabel(data);
+  $('sfProgressText').textContent = label;
+  $('sfProgress').setAttribute('aria-valuetext', label);
+  if (sfClockTimer) { clearInterval(sfClockTimer); sfClockTimer = null; }
+  if (data.status && !['completed', 'partial_failure', 'failed',
+      'cancelled', 'uncertain'].includes(data.status)) {
+    sfClockTimer = setInterval(() => {
+      // 运行中每秒刷新累计时钟（completedAt 为空 → 用当前时刻）
+      $('sfProgressText').textContent = sfProgressLabel(data);
+    }, 1000);
+  }
+}
 function sfSetPhase(title, text, spin) {
   $('sfPhaseBanner').hidden = false;
   $('sfPhaseSpin').hidden = !spin;
@@ -4515,6 +4551,12 @@ async function sfStart(options = {}) {
     SF_STATE.running = true;
     SF_STATE.stopRequested = false;
     SF_STATE.pollErrors = 0;
+    sfPaintProgress({
+      progressTotal: serials.length, progressCompleted: 0,
+      rows: [], status: 'running',
+      startedAt: new Date().toISOString(),
+      queryMode: options.queryMode || 'initial',
+    });
     $('sfStart').disabled = true; $('sfStop').disabled = false;
     $('sfRunLegend').textContent = 'Run ' + SF_STATE.runId.slice(0, 8);
     sfSetPhase(options.queryMode === 'failed_retry' ? '补采运行中' : '巡检运行中',
@@ -4531,7 +4573,7 @@ async function sfPoll() {
     const data = (res || {}).data || {};
     sfRenderRows(data.rows || []);
     sfRenderSummary(data);
-    $('sfProgressText').textContent = `${data.progressCompleted ?? 0} / ${data.progressTotal ?? 0}`;
+    sfPaintProgress(data);
     $('sfBar').style.width = (data.progressTotal
       ? Math.round((data.progressCompleted || 0) / data.progressTotal * 100) : 0) + '%';
     SF_STATE.pollErrors = 0;
@@ -4596,6 +4638,7 @@ async function sfRetryFail() {
 }
 $('sfRetryFail').onclick = sfRetryFail;
 $('sfClearResult').onclick = () => {
+  if (sfClockTimer) { clearInterval(sfClockTimer); sfClockTimer = null; }
   SF_STATE.runId = null; SF_STATE.lastRows = [];
   $('sfResRows').innerHTML = '<tr><td colspan="10" class="hint" style="text-align:center; padding:22px;">已清空。</td></tr>';
   $('sfPhaseBanner').hidden = true;
