@@ -2027,9 +2027,9 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         <table id="sfShopTable">
           <thead><tr>
             <th style="width:34px"><input type="checkbox" id="sfChkHead" style="accent-color:var(--rhino-600)"></th>
-            <th>店铺名</th><th>店铺账号</th><th>分组</th><th>环境序号</th><th>环境ID</th><th>上次采集</th><th>环境状态</th>
+            <th>店铺名</th><th>店铺账号</th><th>分组</th><th>环境序号</th><th>环境ID</th><th>上次采集</th><th>环境状态</th><th>凭据</th>
           </tr></thead>
-          <tbody id="sfShopRows"><tr><td colspan="8" class="hint" style="text-align:center; padding:18px;">粘贴序号 / 环境ID / 店铺名后点击「查询环境」，从 HubStudio 拉取店铺信息并勾选。</td></tr></tbody>
+          <tbody id="sfShopRows"><tr><td colspan="9" class="hint" style="text-align:center; padding:18px;">粘贴序号 / 环境ID / 店铺名后点击「查询环境」，从 HubStudio 拉取店铺信息并勾选。</td></tr></tbody>
         </table>
       </div>
       <div class="procurement-pagination">
@@ -4243,6 +4243,14 @@ function sfLoadList() {
     SF_STATE.selected = new Set(JSON.parse(localStorage.getItem(SF_SEL_KEY) || '[]'));
   } catch (e) { SF_STATE.shops = []; SF_STATE.selected = new Set(); }
 }
+function sfCredPill(shop) {
+  const ok = shop.accountBound !== false && shop.smsReady !== false;
+  if (ok) return '<span class="pill ok">完整</span>';
+  const miss = [];
+  if (shop.accountBound === false) miss.push('账号');
+  if (shop.smsReady === false) miss.push('接码');
+  return `<span class="pill bad">缺 ${miss.join('+')}</span>`;
+}
 function sfEnvStatePill(shop) {
   return shop.browserOpen
     ? '<span class="pill run">已打开</span>'
@@ -4261,7 +4269,7 @@ function sfRenderShops() {
   });
   const visibleCount = rows.filter(r => r.visible).length;
   if (!rows.length) {
-    $('sfShopRows').innerHTML = '<tr><td colspan="8" class="hint" style="text-align:center; padding:18px;">粘贴序号 / 环境ID / 店铺名后点击「查询环境」，从 HubStudio 拉取店铺信息并勾选。</td></tr>';
+    $('sfShopRows').innerHTML = '<tr><td colspan="9" class="hint" style="text-align:center; padding:18px;">粘贴序号 / 环境ID / 店铺名后点击「查询环境」，从 HubStudio 拉取店铺信息并勾选。</td></tr>';
     $('sfPageInfo').textContent = '视口上限 10 行，超出表内滚动 · 勾选状态自动保存';
     return;
   }
@@ -4273,7 +4281,8 @@ function sfRenderShops() {
     <td style="font-weight:750">${esc(r.shop.environmentSerial)}</td>
     <td class="hint">${esc(r.shop.environmentId)}</td>
     <td class="hint">${esc(sfTimeFull(r.shop.lastRun && r.shop.lastRun.collectedAt))}</td>
-    <td>${sfEnvStatePill(r.shop)}</td></tr>`).join('');
+    <td>${sfEnvStatePill(r.shop)}</td>
+    <td>${sfCredPill(r.shop)}</td></tr>`).join('');
   $('sfPageInfo').textContent = `共 ${rows.length} 家 · 视口内 ${visibleCount} 家可见 · 勾选自动保存`;
 }
 function sfRefreshSel() {

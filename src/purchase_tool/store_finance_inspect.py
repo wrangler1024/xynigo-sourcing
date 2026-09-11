@@ -165,6 +165,9 @@ class StoreFinanceInspector(object):
                 'group': ' '.join(
                     str(env.get('tagName') or '').split())[:64],
                 'browserOpen': browser_open,
+                # 凭据自检（仅存在性标志，绝不携带凭证本体）
+                'accountBound': bool(account_name),
+                'smsReady': bool(parse_sms_url(env.get('remark') or '')),
             })
         matched_keys = set()
         matched_rows = []

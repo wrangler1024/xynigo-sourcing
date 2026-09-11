@@ -597,3 +597,23 @@ class LoginToastReasonTests(unittest.TestCase):
         reason = StoreFinanceInspector._login_failure_reason(_Page())
         self.assertIn('登录被拒', reason)
         self.assertIn('账号或绑定信息不正确', reason)
+
+
+class LookupCredentialFlagsTests(unittest.TestCase):
+    def test_flags_reflect_binding_and_sms_presence(self):
+        inspector = StoreFinanceInspector(_FakeHub([]))
+        result = inspector.lookup_stores(
+            ['1377', '1378'], env_list=[
+                {'containerCode': '1776003960', 'serialNumber': '1377',
+                 'containerName': '溪山-子', 'tagName': '魏无羡',
+                 'accounts': [{'accountName': 'GS1'}],
+                 'remark': '13800000000----https://api68.vip/api/sms/get?key=' + 'a' * 32},
+                {'containerCode': '1775999821', 'serialNumber': '1378',
+                 'containerName': '帆影-子', 'tagName': '魏无羡',
+                 'accounts': [], 'remark': '普通备注文字'},
+            ], open_codes=set())
+        by_serial = {r['environmentSerial']: r for r in result['matched']}
+        self.assertTrue(by_serial['1377']['accountBound'])
+        self.assertTrue(by_serial['1377']['smsReady'])
+        self.assertFalse(by_serial['1378']['accountBound'])
+        self.assertFalse(by_serial['1378']['smsReady'])

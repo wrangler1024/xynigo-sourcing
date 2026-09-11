@@ -1273,7 +1273,7 @@ class ExecutorChannelService:
 
     _STORE_FINANCE_LOOKUP_ROW_KEYS = frozenset({
         "environmentSerial", "environmentId", "storeName",
-        "gsCode", "group", "browserOpen",
+        "gsCode", "group", "browserOpen", "accountBound", "smsReady",
     })
 
     @classmethod
@@ -1850,6 +1850,8 @@ class ExecutorChannelService:
                 "gsCode": str(row.get("gsCode") or "")[:64],
                 "group": str(row.get("group") or "")[:64],
                 "browserOpen": bool(row.get("browserOpen")),
+                "accountBound": bool(row.get("accountBound")),
+                "smsReady": bool(row.get("smsReady")),
             })
         return {
             "matched": cleaned,
