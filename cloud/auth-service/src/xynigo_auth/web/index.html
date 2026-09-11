@@ -57,6 +57,11 @@
   .progress.query-outcome-complete .bar { background: var(--green); }
   #progressText { font-size: 11px; color: var(--navy-500); min-width: 420px; text-align: right; white-space: nowrap; }
   #sfProgressText { font-size: 11px; color: var(--navy-500); min-width: 420px; text-align: right; white-space: nowrap; }
+  #sfProgress.query-outcome-review { background: var(--red-bg); }
+  #sfProgress.query-outcome-review .bar { background: linear-gradient(90deg, var(--green), var(--primary)); }
+  #sfProgress.query-outcome-complete .bar { background: var(--green); }
+  #sfProgressText.query-outcome-review { color: var(--red); font-weight: 600; min-width: 205px; }
+  #sfProgressText.query-outcome-complete { color: var(--green); font-weight: 600; min-width: 120px; }
   #progressText.query-outcome-review { color: var(--red); font-weight: 600; min-width: 205px; }
   #progressText.query-outcome-complete { color: var(--green); font-weight: 600; min-width: 120px; }
   .table-wrap { overflow-x: auto; }
@@ -4436,6 +4441,18 @@ function sfPaintProgress(data) {
   const label = sfProgressLabel(data);
   $('sfProgressText').textContent = label;
   $('sfProgress').setAttribute('aria-valuetext', label);
+  const terminal = data.status
+    && ['completed', 'partial_failure', 'failed', 'cancelled',
+        'uncertain'].includes(data.status);
+  const bad = Number(data.failedCount || 0);
+  $('sfProgress').classList.toggle('query-outcome-review',
+    !!terminal && bad > 0);
+  $('sfProgress').classList.toggle('query-outcome-complete',
+    !!terminal && bad === 0);
+  $('sfProgressText').classList.toggle('query-outcome-review',
+    !!terminal && bad > 0);
+  $('sfProgressText').classList.toggle('query-outcome-complete',
+    !!terminal && bad === 0);
 }
 function sfSetPhase(title, text, spin) {
   $('sfPhaseBanner').hidden = false;
