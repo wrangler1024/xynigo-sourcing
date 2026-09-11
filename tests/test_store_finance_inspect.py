@@ -488,7 +488,8 @@ class LookupStoresTests(unittest.TestCase):
         inspector = StoreFinanceInspector(hub)
         result = inspector.lookup_stores(
             ['1377', '1775999821', '溪山', '不存在'],
-            env_list=self._envs())
+            env_list=self._envs(),
+            open_codes={'1775999821'})  # browser_status 实时：帆影-子开着
         serials = {r['environmentSerial'] for r in result['matched']}
         self.assertEqual(serials, {'1377', '1378'})
         self.assertEqual(result['unmatched'], ['不存在'])
@@ -499,7 +500,7 @@ class LookupStoresTests(unittest.TestCase):
         self.assertEqual(by_serial['1377']['environmentId'], '1776003960')
         self.assertFalse(by_serial['1377']['browserOpen'])
         self.assertEqual(by_serial['1378']['gsCode'], '')  # 未绑账号不出 IndexError
-        self.assertTrue(by_serial['1378']['browserOpen'])
+        self.assertTrue(by_serial['1378']['browserOpen'])  # 来自实时开合集
         for row in result['matched']:
             self.assertNotIn('remark', row)  # 备注含接码链接，绝不下发
 
@@ -533,3 +534,18 @@ class ExecutorLookupPassthroughTests(unittest.TestCase):
         self.assertEqual(summary['matched'][0]['environmentSerial'], '1377')
         self.assertEqual(calls[0]['path'], '/api/store-finance/lookup')
         self.assertEqual(calls[0]['body']['identifiers'], ['溪山'])
+
+
+class LookupBrowserStateFallbackTests(unittest.TestCase):
+    def test_live_query_failure_falls_back_to_open_time(self):
+        class _BrokenStatusHub(_FakeHub):
+            def open_container_codes(self):
+                raise RuntimeError('browser_status 不可用')
+
+        inspector = StoreFinanceInspector(_BrokenStatusHub([]))
+        result = inspector.lookup_stores(
+            ['1378'], env_list=[
+                {'containerCode': '1775999821', 'serialNumber': '1378',
+                 'containerName': '帆影-子', 'tagName': '魏无羡',
+                 'accounts': [], 'openTime': '09-10 10:00:00'}])
+        self.assertTrue(result['matched'][0]['browserOpen'])

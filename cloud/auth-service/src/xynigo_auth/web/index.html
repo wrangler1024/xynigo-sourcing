@@ -2017,7 +2017,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         <table id="sfShopTable">
           <thead><tr>
             <th style="width:34px"><input type="checkbox" id="sfChkHead" style="accent-color:var(--rhino-600)"></th>
-            <th>店铺名</th><th>店铺账号</th><th>分组</th><th>环境序号</th><th>环境ID</th><th>上次采集</th><th>登录态</th>
+            <th>店铺名</th><th>店铺账号</th><th>分组</th><th>环境序号</th><th>环境ID</th><th>上次采集</th><th>环境状态</th>
           </tr></thead>
           <tbody id="sfShopRows"><tr><td colspan="8" class="hint" style="text-align:center; padding:18px;">粘贴序号 / 环境ID / 店铺名后点击「查询环境」，从 HubStudio 拉取店铺信息并勾选。</td></tr></tbody>
         </table>
@@ -4213,17 +4213,10 @@ function sfLoadList() {
     SF_STATE.selected = new Set(JSON.parse(localStorage.getItem(SF_SEL_KEY) || '[]'));
   } catch (e) { SF_STATE.shops = []; SF_STATE.selected = new Set(); }
 }
-function sfLoginPill(shop) {
-  const last = shop.lastRun;
-  if (!last || !last.status) return '<span class="pill run">未采集</span>';
-  if (last.status === 'ok') {
-    const mode = last.loginMode === 'open_env' ? '有效 · 复用已开环境'
-      : last.loginMode === 'auto' ? '有效 · 自动登录' : '有效 · 复用登录';
-    return `<span class="pill ok">${mode}</span>`;
-  }
-  const map = { fail: '上次失败', login: '上次登录未完成', inuse: '上次环境占用', stopped: '上次已停止' };
-  const cls = { fail: 'bad', login: 'bad', inuse: 'bad', stopped: 'warn' }[last.status] || 'warn';
-  return `<span class="pill ${cls}">${map[last.status] || last.status}</span>`;
+function sfEnvStatePill(shop) {
+  return shop.browserOpen
+    ? '<span class="pill run">已打开</span>'
+    : '<span class="pill" style="background:#eef2f5;color:var(--navy-500)">未打开</span>';
 }
 function sfTimeFull(iso) {
   return iso ? String(iso).slice(0, 16).replace('T', ' ') : '—';
@@ -4250,7 +4243,7 @@ function sfRenderShops() {
     <td style="font-weight:750">${esc(r.shop.environmentSerial)}</td>
     <td class="hint">${esc(r.shop.environmentId)}</td>
     <td class="hint">${esc(sfTimeFull(r.shop.lastRun && r.shop.lastRun.collectedAt))}</td>
-    <td>${sfLoginPill(r.shop)}${r.shop.browserOpen ? ' <span class="pill run">浏览器已开</span>' : ''}</td></tr>`).join('');
+    <td>${sfEnvStatePill(r.shop)}</td></tr>`).join('');
   $('sfPageInfo').textContent = `共 ${rows.length} 家 · 视口内 ${visibleCount} 家可见 · 勾选自动保存`;
 }
 function sfRefreshSel() {

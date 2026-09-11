@@ -109,11 +109,13 @@ class StoreFinanceInspector(object):
 
     # ---- 对外入口（本地 HTTP 端点消费） ----
 
-    def lookup_stores(self, identifiers, env_list=None):
+    def lookup_stores(self, identifiers, env_list=None, open_codes=None):
         """按序号 / 环境 ID / 店铺名解析环境，返回展示字段（不含凭证）。
 
         名称匹配为包含式（如「溪山」命中「溪山-子」）；一个标识匹配
-        多个环境时全部返回，交给页面勾选。env_list 可注入缓存读取器。
+        多个环境时全部返回，交给页面勾选。env_list 可注入缓存读取器；
+        open_codes 注入 browser_status 实时开合集（未注入则现查，
+        查询失败退回 env-list 的 openTime 时点值）。
         """
         wanted, seen = [], set()
         for item in identifiers or []:
@@ -125,6 +127,14 @@ class StoreFinanceInspector(object):
             return {'matched': [], 'unmatched': []}
         if env_list is None:
             env_list = self.hub.env_list()
+        live_open = None
+        if open_codes is None:
+            try:
+                live_open = self.hub.open_container_codes()
+            except Exception:
+                live_open = None
+        else:
+            live_open = open_codes
         rows = []
         for env in env_list or []:
             if not isinstance(env, dict):
@@ -141,6 +151,11 @@ class StoreFinanceInspector(object):
                 account_name = str(
                     accounts[0].get('accountName') or '').strip()[:64]
             open_time = str(env.get('openTime') or '').strip()
+            if live_open is not None:
+                browser_open = env_id in live_open
+            else:
+                browser_open = bool(open_time
+                                    and open_time.lower() != 'none')
             rows.append({
                 'environmentSerial': serial_no[:32],
                 'environmentId': env_id[:64],
@@ -148,8 +163,7 @@ class StoreFinanceInspector(object):
                 'gsCode': account_name,
                 'group': ' '.join(
                     str(env.get('tagName') or '').split())[:64],
-                'browserOpen': bool(open_time
-                                    and open_time.lower() != 'none'),
+                'browserOpen': browser_open,
             })
         matched_keys = set()
         matched_rows = []
