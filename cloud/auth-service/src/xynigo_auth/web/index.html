@@ -2064,11 +2064,11 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
       <div class="action-row">
         <button class="btn primary" id="sfStart">一键巡检</button>
         <button class="btn danger" id="sfStop" disabled>停止</button>
+        <div class="progress-wrap" style="flex:0 1 260px; min-width:180px">
+          <div class="progress" id="sfProgress" role="progressbar" aria-valuemin="0"><div class="bar" id="sfBar"></div></div>
+          <span id="sfProgressText">未开始</span>
+        </div>
         <span class="resource-state" style="flex:1">全流程只读采集；登录态失效的店铺将自动登录。防重说明：同一巡检批次标识不会被重复发起（并发同店互斥将在后续版本提供）。</span>
-      </div>
-      <div class="progress-wrap">
-        <div class="progress" id="sfProgress" role="progressbar" aria-valuemin="0"><div class="bar" id="sfBar"></div></div>
-        <span id="sfProgressText">未开始</span>
       </div>
     </section>
 
@@ -4484,10 +4484,13 @@ function sfRenderRows(rows) {
 }
 function sfRenderSummary(data) {
   const stats = $('sfBizSummary').children;
-  stats[0].querySelector('b').textContent = data.totalCount ?? '—';
-  stats[1].querySelector('b').textContent = data.successCount ?? '—';
-  stats[2].querySelector('b').textContent = data.failedCount ?? '—';
   const rows = data.rows || [];
+  // 统计数字实时取自结果行（运行中逐行更新），不等服务端 Run 终态字段
+  const okCount = rows.filter(r => r.status === 'ok').length;
+  const badCount = rows.filter(r => ['fail', 'login', 'inuse'].includes(r.status)).length;
+  stats[0].querySelector('b').textContent = rows.length || data.totalCount || '—';
+  stats[1].querySelector('b').textContent = rows.length ? okCount : (data.successCount ?? '—');
+  stats[2].querySelector('b').textContent = rows.length ? badCount : (data.failedCount ?? '—');
   const sums = { transit: 0, unsettled: 0, next: 0, done: 0, nonWd: 0 };
   rows.filter(r => r.status === 'ok').forEach(r => {
     sums.transit += r.inTransitAmount || 0;
@@ -4553,6 +4556,7 @@ async function sfStart(options = {}) {
     SF_STATE.running = true;
     SF_STATE.stopRequested = false;
     SF_STATE.pollErrors = 0;
+    SF_STATE.etaBase = null;
     sfPaintProgress({
       progressTotal: serials.length, progressCompleted: 0,
       rows: [], status: 'running',
@@ -4596,7 +4600,21 @@ async function sfPoll() {
     } else if (SF_STATE.stopRequested) {
       sfSetPhase('正在停止', `已请求停止，在途店铺完成后终止（已完成 ${data.progressCompleted ?? 0} / ${data.progressTotal ?? 0}）。`, true);
     } else {
-      sfSetPhase('巡检运行中', `已完成 ${data.progressCompleted ?? 0} / ${data.progressTotal ?? 0}`, true);
+      const done = data.progressCompleted ?? 0, total = data.progressTotal ?? 0;
+      if (SF_STATE.etaBase === null || SF_STATE.etaBase === undefined) {
+        SF_STATE.etaBase = { at: Date.now(), done };
+      }
+      let eta = '';
+      const delta = done - SF_STATE.etaBase.done;
+      const elapsed = Date.now() - SF_STATE.etaBase.at;
+      if (delta >= 2 && elapsed > 5000) {
+        const remaining = Math.max(0, total - done);
+        const etaSec = Math.round(remaining / (delta / (elapsed / 1000)));
+        if (remaining > 0) {
+          eta = `，预计还需约 ${Math.floor(etaSec / 60)} 分 ${etaSec % 60} 秒`;
+        }
+      }
+      sfSetPhase('巡检运行中', `已完成 ${done} / ${total}${eta}`, true);
     }
   } catch (e) {
     // 轮询失败静默重试；连续 5 次失败（会话过期/网络中断）必须显式提示，
