@@ -639,7 +639,7 @@
     border-color: var(--rhino-500); box-shadow: 0 0 0 3px rgba(32,174,179,.12);
   }
   #storeFinancePanel .card-title .table-actions { margin-left: auto; }
-  #storeFinancePanel .business-summary { display: grid; grid-template-columns: repeat(7, minmax(0,1fr)); }
+  #storeFinancePanel .business-summary { display: grid; grid-template-columns: repeat(8, minmax(0,1fr)); }
   #storeFinancePanel .if-switch{width:32px;height:18px;padding:0;border:0;border-radius:20px;background:#c5ced8;cursor:pointer;position:relative;transition:background .15s;flex:none}
   #storeFinancePanel .if-switch:before{content:"";position:absolute;width:14px;height:14px;top:2px;left:2px;border-radius:50%;background:#fff;box-shadow:0 1px 3px #0002;transition:transform .15s}
   #storeFinancePanel .if-switch[aria-checked="true"]{background:#078487}
@@ -2097,6 +2097,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         <div class="business-stat"><small>未结算合计</small><b>—</b></div>
         <div class="business-stat"><small>下次结算合计</small><b>—</b></div>
         <div class="business-stat"><small>已完成结算合计</small><b>—</b></div>
+        <div class="business-stat"><small>不可提现合计</small><b>—</b></div>
       </div>
 
       <div style="padding: 0 19px;">
@@ -4500,6 +4501,7 @@ function sfRenderSummary(data) {
   stats[4].querySelector('b').textContent = money(sums.unsettled);
   stats[5].querySelector('b').textContent = money(sums.next);
   stats[6].querySelector('b').textContent = money(sums.done);
+  if (stats[7]) stats[7].querySelector('b').textContent = money(sums.nonWd);
   $('sfSum1').textContent = money(sums.transit);
   $('sfSum2').textContent = money(sums.unsettled);
   $('sfSum3').textContent = money(sums.next);
