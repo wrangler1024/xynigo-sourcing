@@ -988,6 +988,11 @@
   .proxy-type-card-lines { display: grid; gap: 4px; margin-top: 9px; color: var(--navy-700); font-size: 10px; line-height: 1.55; }
   .proxy-type-card-lines span { color: var(--navy-500); }
   .resource-table-scroll { max-height: 560px; overflow: auto; }
+  /* 原型要求：选店铺环境查询结果上限 10 行、结算汇总上限 30 行，
+     超出容器内滚动（th 已 sticky 跟随）。行高≈37px（9px 内边距+13px 字）。 */
+  .table-scroll { overflow-y: auto; }
+  .scroll-10 { max-height: 410px; }
+  .scroll-30 { max-height: 1150px; }
   .resource-table-scroll th { z-index: 1; box-shadow: inset 0 -1px 0 var(--line); }
   .resource-conflict { color: var(--coral-500); font-weight: 800; }
   .resource-muted { color: var(--navy-500); }
