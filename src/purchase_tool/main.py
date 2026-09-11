@@ -108,7 +108,7 @@ from .operation_result_sync import OperationResultSyncQueue
 from .procurement_import import (
     ProcurementImportService, ProcurementImportError, decode_xyp2_remark)
 from .purchase_assistant import (
-    PurchaseAssistantError, PurchaseAssistantService)
+    MAX_CACHE_TTL_SECONDS, PurchaseAssistantError, PurchaseAssistantService)
 from .redaction import scrub_text
 from .resource_center import ResourceCenterService
 from .secure_store_transaction import SecureStoreTransaction
@@ -4239,8 +4239,13 @@ class Handler(BaseHTTPRequestHandler):
                 identity = STATE.auth.require()
                 include_all = bool(set(identity.get('roles') or []) & {
                     'admin', 'super_admin'})
-                self._json(STATE.data_sources.public_snapshot(
-                    identity['user']['id'], include_all=include_all))
+                self._json({
+                    'cacheTtlSeconds': int(
+                        STATE.cfg.get('purchaseAssistantCacheTtlSeconds')
+                        or 8),
+                    **STATE.data_sources.public_snapshot(
+                        identity['user']['id'], include_all=include_all),
+                })
             elif path == DATA_SOURCE_API_PREFIX + '/organization-sync':
                 identity = STATE.auth.require('assistant.access')
                 cloud = STATE.auth.data_source_registry_request(
@@ -5135,6 +5140,38 @@ class Handler(BaseHTTPRequestHandler):
                                     request_identity['user']['id'], include_all=include_all)})
                 else:
                     self._json({'ok': True, **checked})
+            elif path == DATA_SOURCE_API_PREFIX + '/cache-ttl':
+                # 桌面端「缓存时间」档位的保存入口：先走一遍云端读取校验，
+                # 通过才落盘，让非技术采购员得到确定性反馈。
+                member_id = request_identity['user']['id']
+                try:
+                    ttl = int(body.get('ttlSeconds'))
+                except (TypeError, ValueError):
+                    raise PurchaseAssistantError('缓存时间必须是整数秒')
+                if ttl < 0 or ttl > MAX_CACHE_TTL_SECONDS:
+                    raise PurchaseAssistantError(
+                        '缓存时间必须在 0 到 %d 秒' % MAX_CACHE_TTL_SECONDS)
+                source = editable_data_source(
+                    request_identity, body.get('sourceId'),
+                    allow_unclaimed=True)
+                checked = STATE.purchase_assistant.revalidate_target(source)
+                lock = getattr(STATE, 'config_lock', None)
+                with lock if lock is not None else nullcontext():
+                    service = state_local_config_service()
+                    cfg = service.load()
+                    cfg['purchaseAssistantCacheTtlSeconds'] = ttl
+                    committed = service.commit(
+                        cfg, source='desktop_local_api')
+                    STATE.cfg = committed['config']
+                include_all = bool(set(request_identity.get('roles') or []) & {
+                    'admin', 'super_admin'})
+                self._json({
+                    'saved': True,
+                    'ttlSeconds': ttl,
+                    'validation': checked,
+                    **STATE.data_sources.public_snapshot(
+                        member_id, include_all=include_all),
+                })
             elif path == DATA_SOURCE_API_PREFIX + '/inspect':
                 member_id = request_identity['user']['id']
                 self._json({

@@ -550,7 +550,7 @@
     var roleNotice = admin ? '' : '<section class="notice-strip" style="border-color:#dbeafe;background:#eff6ff;color:#172554">' + icon('user') + '<div><b>当前登录：' + esc(role.name) + ' · 采购员</b><p style="color:#1e40af">只显示你的个人速填表和可用的团队协作表；其他采购员与环境映射由管理员维护。</p></div></section>';
     var tabs = '<div class="tabs"><button class="tab ' + (state.sourceTab === 'registry' ? 'active' : '') + '" data-source-tab="registry">当前设备数据源<span class="count">' + ((state.sources && state.sources.dataSources || []).length || counts.personal + counts.team) + '</span></button><button class="tab ' + (state.sourceTab === 'buyers' ? 'active' : '') + '" data-source-tab="buyers">' + (admin ? '采购员默认映射' : '我的默认数据源') + '<span class="count">' + ((state.sources && state.sources.buyerProfiles || []).length || 0) + '</span></button>' + (admin ? '<button class="tab ' + (state.sourceTab === 'environments' ? 'active' : '') + '" data-source-tab="environments">本机环境映射<span class="count">' + counts.mapped + '</span></button>' : '') + '</div>';
     var panel = state.sourceTab === 'buyers' ? buyerDefaults() : (state.sourceTab === 'environments' ? environmentMappings() : sourceRegistry());
-    return header('sources',actions) + '<div class="content stack">' + roleNotice + sourceSyncPanel() + '<section class="metric-grid">' + metric('个人速填表',counts.personal,admin ? '组织配置同步到本机' : '当前账号已配置','user') + metric('团队协作表',counts.team,'组织共享并加密同步','table') + metric('已映射环境',counts.mapped,admin ? '仅保存在当前设备' : '当前账号可用','route') + metric('待处理',counts.pending,counts.pending ? '新发现环境尚未映射' : '没有待处理项','alert',counts.pending > 0) + '</section>' + tabs + panel + '</div>';
+    return header('sources',actions) + '<div class="content stack">' + roleNotice + sourceSyncPanel() + cacheTtlCard() + '<section class="metric-grid">' + metric('个人速填表',counts.personal,admin ? '组织配置同步到本机' : '当前账号已配置','user') + metric('团队协作表',counts.team,'组织共享并加密同步','table') + metric('已映射环境',counts.mapped,admin ? '仅保存在当前设备' : '当前账号可用','route') + metric('待处理',counts.pending,counts.pending ? '新发现环境尚未映射' : '没有待处理项','alert',counts.pending > 0) + '</section>' + tabs + panel + '</div>';
   }
 
   function diagnosticRow(iconName, title, detail, ok) {
@@ -1113,6 +1113,42 @@
       acceptSourceMutation(result,true); closeModal(); renderWorkspace(); showToast(current === sourceId ? '已取消团队默认数据源' : '已设为团队兜底；已有个人默认的采购员不会自动切换');
     }).catch(function (error) { if (error.code === 'config_revision_conflict') loadWorkspaceData(); showError(error); });
   }
+  function cacheValidationSource() {
+    var ds = currentSources();
+    var role = roleInfo();
+    var profiles = ds.buyerProfiles || [];
+    var profile = profiles.find(function (item) { return item.memberId === role.id; });
+    if (profile && profile.defaultDataSourceId) {
+      var source = sourceById(profile.defaultDataSourceId);
+      if (source && source.enabled !== false) return source;
+    }
+    if (role.admin && ds.teamDefaultDataSourceId) return sourceById(ds.teamDefaultDataSourceId) || null;
+    return null;
+  }
+  function cacheTtlCard() {
+    var ttl = Number(currentSources().cacheTtlSeconds || 8);
+    var options = [[8,'实时（8 秒，默认）'],[600,'10 分钟'],[1800,'30 分钟（协作表推荐）'],[3600,'1 小时']];
+    var known = options.some(function (item) { return item[0] === ttl; });
+    var markup = options.map(function (item) {
+      return '<option value="' + item[0] + '"' + (item[0] === ttl ? ' selected' : '') + '>' + item[1] + '</option>';
+    }).join('');
+    if (!known) markup += '<option value="' + ttl + '" selected>当前配置 ' + ttl + ' 秒</option>';
+    return '<section class="card"><div class="section-body stack"><div class="field-grid"><div class="field"><label for="source-cache-ttl">查询缓存时间</label><select id="source-cache-ttl" class="select">' + markup + '</select><small>协作表按天导入分单，可放心选较长档位；保存前会用你的默认数据源做一次云端读取校验。</small></div><div class="field" style="display:flex;align-items:flex-end"><button class="button primary" data-action="save-cache-ttl">保存并云端校验</button></div></div><div class="validation-box" id="cache-ttl-state">' + icon('shield') + '<span>无需改配置文件；校验通过后立即生效。</span></div></div></section>';
+  }
+  function saveCacheTtl() {
+    var select = document.getElementById('source-cache-ttl');
+    var box = document.getElementById('cache-ttl-state');
+    var target = cacheValidationSource();
+    if (!target) return showError(new Error('请先登记并设为默认数据源，再调整缓存时间'));
+    post('/api/local-config/data-sources/cache-ttl',{ttlSeconds:Number(select ? select.value : 0),sourceId:target.id}).then(function (result) {
+      acceptSourceMutation(result,true); renderWorkspace();
+      if (box) box.innerHTML = icon('check') + '<span>已生效：缓存 ' + Number(result.ttlSeconds || 0) + ' 秒；云端校验通过' + (result.validation && result.validation.sheetName ? '（' + esc(result.validation.sheetName) + '）' : '') + '。</span>';
+      showToast('缓存时间已保存');
+    }).catch(function (error) {
+      if (box) box.innerHTML = icon('alert') + '<span>保存失败：' + esc(error.message) + '</span>';
+      showError(error);
+    });
+  }
 
   function saveBuyerDefault(memberId, buttonNode) {
     var select = Array.from(document.querySelectorAll('.buyer-default-select')).find(function (node) {
@@ -1232,6 +1268,7 @@
     else if (action.indexOf('source-reconfigure:') === 0) openSourceModal(action.split(':')[1]);
     else if (action.indexOf('claim-source:') === 0) claimSource(action.split(':')[1]);
     else if (action.indexOf('revalidate-source:') === 0) revalidateSource(action.split(':')[1]);
+    else if (action === 'save-cache-ttl') saveCacheTtl();
     else if (action.indexOf('toggle-team-default:') === 0) toggleTeamDefault(action.split(':')[1]);
     else if (action.indexOf('save-buyer-default:') === 0) saveBuyerDefault(action.split(':')[1], actionNode);
     else if (action === 'modal-close') closeModal();

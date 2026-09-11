@@ -621,6 +621,7 @@ class DataSourceRegistryRouteTests(unittest.TestCase):
             'purchase_assistant': self.purchase_assistant,
             'hub': FakeHub(),
             'executor_credential_store': FakeCredentialStore(),
+            'cfg': {'purchaseAssistantCacheTtlSeconds': 8},
         })()
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         self.thread = threading.Thread(

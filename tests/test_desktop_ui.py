@@ -99,12 +99,21 @@ class DesktopUIContractTests(unittest.TestCase):
                 '/api/local-config/data-sources/metadata',
                 '/api/local-config/data-sources/replace',
                 '/api/local-config/data-sources/revalidate',
+                '/api/local-config/data-sources/cache-ttl',
                 '/api/local-config/data-sources/claim-personal',
                 '/api/local-config/data-sources/buyer-default',
                 '/api/local-config/data-sources/buyer-default/clear'):
             self.assertIn(marker, self.javascript)
         self.assertNotIn('已提交只读验证', self.javascript)
         self.assertIn('.buyer-default-control', self.css)
+
+    def test_cache_ttl_entry_is_novice_facing_and_cloud_validated(self):
+        for marker in (
+                '查询缓存时间', '保存并云端校验', 'save-cache-ttl',
+                'source-cache-ttl',
+                '实时（8 秒，默认）', '30 分钟（协作表推荐）',
+                'cacheTtlSeconds', '云端读取校验'):
+            self.assertIn(marker, self.javascript)
 
     def test_data_source_hybrid_sync_keeps_environment_bindings_local(self):
         rendered = self.javascript + self.css

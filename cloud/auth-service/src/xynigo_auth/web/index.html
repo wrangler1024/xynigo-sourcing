@@ -2866,6 +2866,26 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
           <span class="hint" id="localDataSourceSetupState">链接只用于本次读取；保存前必须通过表头校验。</span>
         </div>
       </div>
+      <div class="data-source-setup" style="margin-top:14px">
+        <h4>查询缓存时间</h4>
+        <div class="settings-grid">
+          <div class="settings-field">
+            <label>采购助手查询结果缓存多久（协作表按天导入，可选较长档位）</label>
+            <select id="localDataSourceCacheTtl">
+              <option value="8">实时（8 秒，默认）</option>
+              <option value="600">10 分钟</option>
+              <option value="1800">30 分钟（协作表推荐）</option>
+              <option value="3600">1 小时</option>
+            </select>
+          </div>
+          <div class="settings-field" style="align-self:end">
+            <button class="btn primary" id="btnSaveCacheTtl" type="button">保存并云端校验</button>
+          </div>
+        </div>
+        <div class="settings-actions">
+          <span class="hint" id="localCacheTtlState">保存前会先用当前默认数据源做一次云端读取校验，通过后才生效。</span>
+        </div>
+      </div>
       <div class="data-source-list" id="localDataSourceList" style="margin-top:14px">
         <div class="data-source-empty">正在读取当前设备数据源…</div>
       </div>
@@ -13581,6 +13601,19 @@ function renderLocalDataSources() {
     ? `当前默认：${currentPersonal.label || '个人数据源'}`
     : (teamDefault ? `当前回退：${teamDefault.label || '团队默认数据源'}` : '未配置个人默认，也没有管理员团队默认；采购助手将停止读取。');
   $('btnUseTeamDataSource').hidden = !currentPersonal || !teamDefault;
+  const ttlSelect = $('localDataSourceCacheTtl');
+  const ttlValue = String(Number(state.cacheTtlSeconds || 8));
+  let customTtl = ttlSelect.querySelector('option[data-custom-ttl]');
+  if (![...ttlSelect.options].some(option => option.value === ttlValue)) {
+    if (!customTtl) {
+      customTtl = document.createElement('option');
+      customTtl.dataset.customTtl = '1';
+      ttlSelect.appendChild(customTtl);
+    }
+    customTtl.value = ttlValue;
+    customTtl.textContent = `当前配置 ${ttlValue} 秒`;
+  }
+  ttlSelect.value = ttlValue;
   $('localDataSourceList').innerHTML = sources.length ? sources.map(source => {
     const ownedByCurrent = source.scope === 'personal' && String(source.ownerMemberId || '') === currentMemberId;
     const claimable = source.scope === 'personal' && !source.ownerMemberId && source.migrationState === 'needs_owner_confirmation';
@@ -13796,6 +13829,47 @@ $('btnCommitLocalDataSource').onclick = async () => {
   if (result) resetLocalDataSourceSetup('数据源已保存；页面不会回显表格链接或私有标识。');
 };
 $('btnLocalDataSourcesRefresh').onclick = () => loadLocalDataSources({notify:true});
+
+$('btnSaveCacheTtl').onclick = async () => {
+  const state = localDataSourceState || {};
+  const sources = Array.isArray(state.dataSources) ? state.dataSources : [];
+  const profiles = Array.isArray(state.buyerProfiles) ? state.buyerProfiles : [];
+  const currentMemberId = String(authIdentity && authIdentity.user && authIdentity.user.id || '');
+  const profile = profiles.find(item => String(item.memberId || '') === currentMemberId) || null;
+  const sourceById = new Map(sources.map(item => [String(item.id || ''), item]));
+  const currentPersonal = profile && sourceById.get(String(profile.defaultDataSourceId || ''));
+  const teamDefault = sourceById.get(String(state.teamDefaultDataSourceId || ''));
+  const source = currentPersonal || (localDataSourceIsAdmin() ? teamDefault : null);
+  const hint = $('localCacheTtlState');
+  if (!source) {
+    toast('请先登记并设为默认数据源，再调整缓存时间');
+    hint.textContent = '尚无可用默认数据源；请先在上方登记并保存。';
+    return;
+  }
+  const button = $('btnSaveCacheTtl');
+  button.disabled = true;
+  hint.textContent = '正在通过云端校验数据源读取…';
+  try {
+    const result = await api('/api/local-config/data-sources/cache-ttl', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        ttlSeconds: Number($('localDataSourceCacheTtl').value),
+        sourceId: source.id,
+      }),
+    });
+    localDataSourceState = result;
+    renderLocalDataSources();
+    const sheetName = result.validation && result.validation.sheetName;
+    hint.textContent = `✓ 已生效：缓存 ${Number(result.ttlSeconds || 0)} 秒；云端校验通过${sheetName ? `（${sheetName}）` : ''}。`;
+    toast('缓存时间已保存');
+  } catch (error) {
+    hint.textContent = `保存失败：${error.message}`;
+    toast(error.message);
+  } finally {
+    button.disabled = false;
+  }
+};
 $('btnRefreshLocalBindingOptions').onclick = () => loadLocalBindingOptions({notify:true});
 $('localDataSourceList').onclick = event => {
   const button = event.target.closest('[data-local-source-action]');

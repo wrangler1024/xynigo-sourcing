@@ -965,3 +965,142 @@ class PurchaseAssistantResidentCacheTests(unittest.TestCase):
             PurchaseAssistantConfig.from_runtime_config(
                 resident_mapping(**{'purchaseAssistantCacheTtlSeconds': 3601}))
         self.assertIn('0 到 3600 秒', str(ctx.exception))
+
+
+class FakeLocalConfigService(object):
+    def __init__(self, cfg):
+        self.cfg = dict(cfg)
+        self.commits = []
+
+    def load(self):
+        return dict(self.cfg)
+
+    def commit(self, cfg, source='test', expected_revision=None):
+        del source, expected_revision
+        self.cfg = dict(cfg)
+        self.commits.append(dict(self.cfg))
+        return {'config': dict(self.cfg),
+                'configRevision': 'rev-%d' % len(self.commits),
+                'changedFields': ['purchaseAssistantCacheTtlSeconds']}
+
+    def revision(self, cfg):
+        del cfg
+        return 'rev-test'
+
+
+class PurchaseAssistantCacheTtlRouteTests(unittest.TestCase):
+    """桌面端缓存时间档位入口：云端校验通过才落盘。"""
+
+    def setUp(self):
+        self.original_state = main_module.STATE
+        self.original_config_service = main_module.state_local_config_service
+        self.service = PurchaseAssistantService(provider=FakeProvider())
+        self.config_service = FakeLocalConfigService({})
+        main_module.state_local_config_service = lambda: self.config_service
+        self.source = {
+            'id': 'ds_' + 'a' * 24,
+            'scope': 'personal',
+            'ownerMemberId': MEMBER_A,
+            'enabled': True,
+            'spreadsheetToken': 'spreadsheet-source',
+            'sheetId': 'sheet_test',
+            'cellRange': 'A1:R',
+            'sheetName': '收件信息（粘贴区）',
+        }
+        self.validation_result = {
+            'valid': True, 'sheetName': '收件信息（粘贴区）',
+            'cellRange': 'A1:Q', 'headerCount': 17,
+        }
+        main_module.STATE = SimpleNamespace(
+            purchase_assistant=self.service,
+            data_sources=SimpleNamespace(
+                source=lambda source_id: self.source,
+                public_snapshot=lambda member_id, include_all=False: {
+                    'dataSources': [], 'buyerProfiles': [],
+                    'registryRevision': 'reg-1'}),
+            cfg={'purchaseAssistantCacheTtlSeconds': 8},
+            config_lock=None,
+            auth=SimpleNamespace(require=lambda *args, **kwargs: {
+                'user': {'id': MEMBER_A, 'name': '脱敏测试成员'},
+                'tenant': {'id': 'tenant-test'},
+                'roles': ['operator'],
+                'permissions': [],
+            }))
+        self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.thread = threading.Thread(
+            target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.base_url = 'http://127.0.0.1:%d' % self.server.server_port
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=3)
+        main_module.STATE = self.original_state
+        main_module.state_local_config_service = (
+            self.original_config_service)
+
+    def _post(self, path, payload):
+        request = Request(
+            self.base_url + path,
+            data=json.dumps(payload).encode('utf-8'),
+            method='POST',
+            headers={'Content-Type': 'application/json'})
+        try:
+            response = urlopen(request, timeout=3)
+        except HTTPError as exc:
+            response = exc
+        return response.status, json.loads(response.read().decode('utf-8'))
+
+    def test_cache_ttl_save_runs_cloud_validation_then_persists(self):
+        calls = []
+        self.service.revalidate_target = lambda target: (
+            calls.append(dict(target)), dict(self.validation_result))[1]
+        status, payload = self._post(
+            '/api/local-config/data-sources/cache-ttl',
+            {'ttlSeconds': 1800, 'sourceId': self.source['id']})
+        self.assertEqual(status, 200)
+        self.assertTrue(payload['saved'])
+        self.assertEqual(payload['ttlSeconds'], 1800)
+        self.assertTrue(payload['validation']['valid'])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]['id'], self.source['id'])
+        self.assertEqual(
+            self.config_service.cfg['purchaseAssistantCacheTtlSeconds'],
+            1800)
+        self.assertEqual(
+            main_module.STATE.cfg['purchaseAssistantCacheTtlSeconds'], 1800)
+        self.assertEqual(len(self.config_service.commits), 1)
+
+    def test_cache_ttl_save_is_rejected_when_cloud_validation_fails(self):
+        def broken(target):
+            del target
+            raise PurchaseAssistantError('数据源云端校验未通过')
+        self.service.revalidate_target = broken
+        status, payload = self._post(
+            '/api/local-config/data-sources/cache-ttl',
+            {'ttlSeconds': 1800, 'sourceId': self.source['id']})
+        self.assertEqual(status, 422)
+        self.assertIn('校验未通过', payload['error'])
+        self.assertNotIn('saved', payload)
+        self.assertEqual(self.config_service.commits, [])
+        self.assertEqual(
+            main_module.STATE.cfg['purchaseAssistantCacheTtlSeconds'], 8)
+
+    def test_cache_ttl_rejects_values_beyond_supported_range(self):
+        status, payload = self._post(
+            '/api/local-config/data-sources/cache-ttl',
+            {'ttlSeconds': 9999, 'sourceId': self.source['id']})
+        self.assertEqual(status, 422)
+        self.assertIn('0 到 3600 秒', payload['error'])
+        self.assertEqual(self.config_service.commits, [])
+
+    def test_data_source_snapshot_exposes_current_cache_ttl(self):
+        request = Request(self.base_url + '/api/local-config/data-sources')
+        try:
+            response = urlopen(request, timeout=3)
+        except HTTPError as exc:
+            response = exc
+        payload = json.loads(response.read().decode('utf-8'))
+        self.assertEqual(response.status, 200)
+        self.assertEqual(payload['cacheTtlSeconds'], 8)
