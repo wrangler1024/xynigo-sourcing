@@ -109,6 +109,69 @@ class StoreFinanceInspector(object):
 
     # ---- 对外入口（本地 HTTP 端点消费） ----
 
+    def lookup_stores(self, identifiers, env_list=None):
+        """按序号 / 环境 ID / 店铺名解析环境，返回展示字段（不含凭证）。
+
+        名称匹配为包含式（如「溪山」命中「溪山-子」）；一个标识匹配
+        多个环境时全部返回，交给页面勾选。env_list 可注入缓存读取器。
+        """
+        wanted, seen = [], set()
+        for item in identifiers or []:
+            text = str(item or '').strip()
+            if text and text not in seen:
+                seen.add(text)
+                wanted.append(text)
+        if not wanted:
+            return {'matched': [], 'unmatched': []}
+        if env_list is None:
+            env_list = self.hub.env_list()
+        rows = []
+        for env in env_list or []:
+            if not isinstance(env, dict):
+                continue
+            serial_no = str(env.get('serialNumber') or '').strip()
+            env_id = str(env.get('containerCode') or '').strip()
+            name = ' '.join(
+                str(env.get('containerName') or '').split())[:128]
+            if not name or not (serial_no or env_id):
+                continue
+            accounts = env.get('accounts') or []
+            account_name = ''
+            if accounts and isinstance(accounts[0], dict):
+                account_name = str(
+                    accounts[0].get('accountName') or '').strip()[:64]
+            open_time = str(env.get('openTime') or '').strip()
+            rows.append({
+                'environmentSerial': serial_no[:32],
+                'environmentId': env_id[:64],
+                'storeName': name,
+                'gsCode': account_name,
+                'group': ' '.join(
+                    str(env.get('tagName') or '').split())[:64],
+                'browserOpen': bool(open_time
+                                    and open_time.lower() != 'none'),
+            })
+        matched_keys = set()
+        matched_rows = []
+        unmatched = []
+        for token in wanted:
+            lowered = token.casefold()
+            hits = [r for r in rows
+                    if token in (r['environmentSerial'], r['environmentId'])]
+            if not hits:
+                hits = [r for r in rows
+                        if lowered in r['storeName'].casefold()]
+            if hits:
+                for r in hits[:50]:
+                    key = (r['environmentSerial'], r['environmentId'])
+                    if key not in matched_keys:
+                        matched_keys.add(key)
+                        matched_rows.append(r)
+            else:
+                unmatched.append(token[:64])
+        matched_rows.sort(key=lambda r: r['storeName'])
+        return {'matched': matched_rows, 'unmatched': unmatched}
+
     def start_batch(self, serials, browser_mode=None, concurrency=None):
         """重置状态并启动一批巡检；重复发起时拒绝并提示。"""
         if concurrency is not None:

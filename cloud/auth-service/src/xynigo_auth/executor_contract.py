@@ -34,6 +34,7 @@ EXECUTOR_CAPABILITIES = Literal[
     "logistics.query.v1",
     "logistics.auto-site.v1",
     "store.finance.inspect.v1",
+    "store.finance.lookup.v1",
     "environment.create-bound.v1",
     "environment.create-backup.v1",
     "environment.retry-row.v1",

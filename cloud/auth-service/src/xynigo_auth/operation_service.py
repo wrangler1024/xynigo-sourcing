@@ -3092,6 +3092,37 @@ def _store_finance_date(value):
 
 
 
+def store_finance_last_runs(session, tenant_id, gs_codes) -> dict:
+    """每个 GS 店铺最近一次巡检结果（登录态/采集时间），供环境查询页合并展示。"""
+    from .models import StoreFinanceInspectResult as ResultModel
+    from .models import StoreFinanceInspectRun as RunModel
+    codes = sorted({str(code or "").strip() for code in gs_codes if code})
+    if not codes:
+        return {}
+    rows = session.execute(
+        select(ResultModel.gs_code, ResultModel.status,
+               ResultModel.login_mode, ResultModel.collected_at,
+               ResultModel.error_summary, RunModel.id)
+        .join(RunModel, RunModel.id == ResultModel.run_id)
+        .where(ResultModel.gs_code.in_(codes),
+               RunModel.tenant_id == tenant_id)
+        .order_by(ResultModel.collected_at.desc())
+    ).all()
+    latest: dict = {}
+    for gs_code, status, login_mode, collected_at, error_summary, run_id in rows:
+        key = str(gs_code or "")
+        if key and key not in latest:
+            latest[key] = {
+                "runId": str(run_id),
+                "status": status,
+                "loginMode": login_mode,
+                "collectedAt": collected_at.isoformat()
+                if collected_at else "",
+                "errorSummary": (error_summary or "")[:200],
+            }
+    return latest
+
+
 def store_finance_snapshot(session, run: StoreFinanceInspectRun) -> dict:
     """前端进度/结果视图的统一快照（含全部结果行）。"""
     from .models import StoreFinanceInspectResult as ResultModel

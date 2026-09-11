@@ -2000,16 +2000,16 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
       </div>
       <div id="sfPastePanel" class="hidden" style="border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin-bottom:12px; background:#fbfdfe;">
         <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">
-          <b style="font-size:12px">批量粘贴环境序号</b>
-          <span class="hint">每行一个，逗号/空格分隔亦可；支持环境序号、环境 ID 或环境完整名称（名称须全名精确匹配，重名请用序号）</span>
+          <b style="font-size:12px">批量粘贴店铺名单</b>
+          <span class="hint">支持环境序号 / 环境ID / 店铺名（包含匹配），每行一个，逗号/空格分隔亦可</span>
         </div>
         <textarea id="sfPasteArea" rows="4" spellcheck="false" placeholder="溪山&#10;1377, 1776003960"
           style="width:100%; margin-top:8px; border:1px solid var(--line); border-radius:11px; padding:9px 12px; font-size:12px; font-family:inherit; color:var(--navy-950); outline:none;"></textarea>
         <div style="display:flex; justify-content:space-between; gap:10px; align-items:center; margin-top:8px; flex-wrap:wrap;">
-          <div class="resource-state" id="sfPasteState">粘贴后点击「添加并勾选」。清单会保存在本机，下次自动恢复。</div>
+          <div class="resource-state" id="sfPasteState">粘贴名单后点击「查询环境」，从 HubStudio 实时拉取店铺信息。</div>
           <div class="table-actions">
             <button class="btn sm" id="sfPasteClose">收起</button>
-            <button class="btn sm primary" id="sfPasteAdd">添加并勾选</button>
+            <button class="btn sm primary" id="sfPasteAdd">查询环境</button>
           </div>
         </div>
       </div>
@@ -2017,9 +2017,9 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         <table id="sfShopTable">
           <thead><tr>
             <th style="width:34px"><input type="checkbox" id="sfChkHead" style="accent-color:var(--rhino-600)"></th>
-            <th>环境序号</th><th>备注</th><th>状态</th>
+            <th>店铺名</th><th>店铺账号</th><th>分组</th><th>环境序号</th><th>环境ID</th><th>上次采集</th><th>登录态</th>
           </tr></thead>
-          <tbody id="sfShopRows"><tr><td colspan="4" class="hint" style="text-align:center; padding:18px;">通过「批量粘贴名单」或「全选后手动录入」建立巡检清单；清单保存在本机浏览器。</td></tr></tbody>
+          <tbody id="sfShopRows"><tr><td colspan="8" class="hint" style="text-align:center; padding:18px;">粘贴序号 / 环境ID / 店铺名后点击「查询环境」，从 HubStudio 拉取店铺信息并勾选。</td></tr></tbody>
         </table>
       </div>
       <div class="procurement-pagination">
@@ -4197,78 +4197,166 @@ async function cloudFormalExecutor(capability, preferredId='') {
 /* ===== 小犀助手 · 店铺结算查询 ===== */
 const SF_STORE_KEY = 'storeFinanceShopList';
 const SF_SEL_KEY = 'storeFinanceSelection';
-const SF_STATE = { runId: null, timer: null, running: false, serials: [], selected: new Set(), lastRows: [] };
+const SF_STATE = { runId: null, timer: null, running: false, shops: [], selected: new Set(), lastRows: [] };
 
 function sfSaveList() {
   try {
-    localStorage.setItem(SF_STORE_KEY, JSON.stringify(SF_STATE.serials));
+    localStorage.setItem(SF_STORE_KEY, JSON.stringify(SF_STATE.shops));
     localStorage.setItem(SF_SEL_KEY, JSON.stringify([...SF_STATE.selected]));
   } catch (e) { /* 本机存储不可用时静默 */ }
 }
 function sfLoadList() {
   try {
-    SF_STATE.serials = JSON.parse(localStorage.getItem(SF_STORE_KEY) || '[]');
+    const saved = JSON.parse(localStorage.getItem(SF_STORE_KEY) || '[]');
+    SF_STATE.shops = Array.isArray(saved) && saved.every(r => r && typeof r === 'object' && r.environmentId)
+      ? saved : [];
     SF_STATE.selected = new Set(JSON.parse(localStorage.getItem(SF_SEL_KEY) || '[]'));
-  } catch (e) { SF_STATE.serials = []; SF_STATE.selected = new Set(); }
+  } catch (e) { SF_STATE.shops = []; SF_STATE.selected = new Set(); }
+}
+function sfLoginPill(shop) {
+  const last = shop.lastRun;
+  if (!last || !last.status) return '<span class="pill run">未采集</span>';
+  if (last.status === 'ok') {
+    const mode = last.loginMode === 'open_env' ? '有效 · 复用已开环境'
+      : last.loginMode === 'auto' ? '有效 · 自动登录' : '有效 · 复用登录';
+    return `<span class="pill ok">${mode}</span>`;
+  }
+  const map = { fail: '上次失败', login: '上次登录未完成', inuse: '上次环境占用', stopped: '上次已停止' };
+  const cls = { fail: 'bad', login: 'bad', inuse: 'bad', stopped: 'warn' }[last.status] || 'warn';
+  return `<span class="pill ${cls}">${map[last.status] || last.status}</span>`;
+}
+function sfTimeFull(iso) {
+  return iso ? String(iso).slice(0, 16).replace('T', ' ') : '—';
 }
 function sfRenderShops() {
   const kw = ($('sfSearch').value || '').trim().toLowerCase();
-  const rows = SF_STATE.serials.map(serial => {
-    const selected = SF_STATE.selected.has(serial);
-    const visible = !kw || serial.toLowerCase().includes(kw);
-    return { serial, selected, visible };
+  const rows = SF_STATE.shops.map(shop => {
+    const selected = SF_STATE.selected.has(shop.environmentId);
+    const hay = [shop.storeName, shop.gsCode, shop.group, shop.environmentSerial, shop.environmentId]
+      .join(' ').toLowerCase();
+    return { shop, selected, visible: !kw || hay.includes(kw) };
   });
   const visibleCount = rows.filter(r => r.visible).length;
   if (!rows.length) {
-    $('sfShopRows').innerHTML = '<tr><td colspan="4" class="hint" style="text-align:center; padding:18px;">通过「批量粘贴名单」建立巡检清单；清单保存在本机浏览器。</td></tr>';
+    $('sfShopRows').innerHTML = '<tr><td colspan="8" class="hint" style="text-align:center; padding:18px;">粘贴序号 / 环境ID / 店铺名后点击「查询环境」，从 HubStudio 拉取店铺信息并勾选。</td></tr>';
+    $('sfPageInfo').textContent = '视口上限 10 行，超出表内滚动 · 勾选状态自动保存';
     return;
   }
-  $('sfShopRows').innerHTML = rows.map(r => `<tr data-serial="${esc(r.serial)}"${r.visible ? '' : ' style="display:none"'}>
-    <td><input type="checkbox" class="sf-sel" data-serial="${esc(r.serial)}"${r.selected ? ' checked' : ''} style="accent-color:var(--rhino-600)"></td>
-    <td style="font-weight:800; color:var(--navy-950)">${esc(r.serial)}</td>
-    <td class="hint">—</td>
-    <td><span class="pill ${r.selected ? 'ok' : 'run'}">${r.selected ? '已勾选' : '未勾选'}</span></td></tr>`).join('');
-  $('sfPageInfo').textContent = `共 ${rows.length} 家 · 视口内 ${visibleCount} 家可见 · 视口上限 10 行 · 勾选自动保存`;
+  $('sfShopRows').innerHTML = rows.map(r => `<tr data-env="${esc(r.shop.environmentId)}"${r.visible ? '' : ' style="display:none"'}>
+    <td><input type="checkbox" class="sf-sel" data-env="${esc(r.shop.environmentId)}"${r.selected ? ' checked' : ''} style="accent-color:var(--rhino-600)"></td>
+    <td style="font-weight:800; color:var(--navy-950)">${esc(r.shop.storeName)}</td>
+    <td>${esc(r.shop.gsCode || '—')}</td>
+    <td class="hint">${esc(r.shop.group || '—')}</td>
+    <td style="font-weight:750">${esc(r.shop.environmentSerial)}</td>
+    <td class="hint">${esc(r.shop.environmentId)}</td>
+    <td class="hint">${esc(sfTimeFull(r.shop.lastRun && r.shop.lastRun.collectedAt))}</td>
+    <td>${sfLoginPill(r.shop)}${r.shop.browserOpen ? ' <span class="pill run">浏览器已开</span>' : ''}</td></tr>`).join('');
+  $('sfPageInfo').textContent = `共 ${rows.length} 家 · 视口内 ${visibleCount} 家可见 · 勾选自动保存`;
 }
 function sfRefreshSel() {
   const n = SF_STATE.selected.size;
   $('sfSelCount').textContent = `已选 ${n} 家`;
   $('sfStartHint').textContent = n
     ? `已选 ${n} 家店铺，点击「一键巡检」开始；预计约 ${Math.max(2, Math.round(n * 0.5 / sfConc()))} 分钟（并发 ${sfConc()}）。`
-    : '请先建立并勾选巡检清单。';
+    : '请先查询并勾选巡检店铺。';
 }
 function sfInit() {
-  if (!SF_STATE.serials.length) sfLoadList();
+  if (!SF_STATE.shops.length) sfLoadList();
   sfRenderShops();
   sfRefreshSel();
   if (!SF_STATE.timer) SF_STATE.timer = setInterval(sfPoll, 2500);
 }
+function sfSelectedSerials() {
+  return SF_STATE.shops
+    .filter(shop => SF_STATE.selected.has(shop.environmentId))
+    .map(shop => shop.environmentSerial)
+    .filter(Boolean);
+}
 $('sfSearch').addEventListener('input', () => sfRenderShops());
 $('sfShopRows').addEventListener('change', e => {
   if (!e.target.classList.contains('sf-sel')) return;
-  if (e.target.checked) SF_STATE.selected.add(e.target.dataset.serial);
-  else SF_STATE.selected.delete(e.target.dataset.serial);
+  if (e.target.checked) SF_STATE.selected.add(e.target.dataset.env);
+  else SF_STATE.selected.delete(e.target.dataset.env);
   sfSaveList(); sfRenderShops(); sfRefreshSel();
 });
 $('sfChkHead').addEventListener('change', e => {
-  if (e.target.checked) SF_STATE.serials.forEach(s => SF_STATE.selected.add(s));
+  if (e.target.checked) SF_STATE.shops.forEach(s => SF_STATE.selected.add(s.environmentId));
   else SF_STATE.selected.clear();
   sfSaveList(); sfRenderShops(); sfRefreshSel();
 });
-$('sfAll').onclick = () => { SF_STATE.serials.forEach(s => SF_STATE.selected.add(s)); sfSaveList(); sfRenderShops(); sfRefreshSel(); };
+$('sfAll').onclick = () => { SF_STATE.shops.forEach(s => SF_STATE.selected.add(s.environmentId)); sfSaveList(); sfRenderShops(); sfRefreshSel(); };
 $('sfNone').onclick = () => { SF_STATE.selected.clear(); sfSaveList(); sfRenderShops(); sfRefreshSel(); };
-$('sfReset').onclick = () => { SF_STATE.serials = []; SF_STATE.selected.clear(); sfSaveList(); sfRenderShops(); sfRefreshSel(); };
+$('sfReset').onclick = () => { SF_STATE.shops = []; SF_STATE.selected.clear(); sfSaveList(); sfRenderShops(); sfRefreshSel(); };
 $('sfPasteBtn').onclick = () => { $('sfPastePanel').classList.toggle('hidden'); $('sfPasteArea').focus(); };
 $('sfPasteClose').onclick = () => $('sfPastePanel').classList.add('hidden');
-$('sfPasteAdd').onclick = () => {
+let sfLookupTimer = null;
+$('sfPasteAdd').onclick = async () => {
   const tokens = ($('sfPasteArea').value || '').split(/[\n,，、\s]+/).map(s => s.trim()).filter(Boolean);
-  if (!tokens.length) { $('sfPasteState').textContent = '请先粘贴环境序号。'; $('sfPasteState').className = 'resource-state warn'; return; }
-  const before = SF_STATE.serials.length;
-  tokens.forEach(t => { if (!SF_STATE.serials.includes(t)) SF_STATE.serials.push(t); SF_STATE.selected.add(t); });
-  sfSaveList(); sfRenderShops(); sfRefreshSel();
-  $('sfPasteState').className = 'resource-state ok';
-  $('sfPasteState').textContent = `已添加 ${SF_STATE.serials.length - before} 个新序号（重复自动跳过），共 ${SF_STATE.serials.length} 家。`;
+  if (!tokens.length) { $('sfPasteState').textContent = '请先粘贴店铺名单。'; $('sfPasteState').className = 'resource-state warn'; return; }
+  let executor;
+  try { executor = await cloudFormalExecutor('store.finance.lookup.v1'); }
+  catch (e) { $('sfPasteState').textContent = e.message || '执行器不可用'; $('sfPasteState').className = 'resource-state warn'; return; }
+  $('sfPasteAdd').disabled = true;
+  $('sfPasteState').className = 'resource-state';
+  $('sfPasteState').textContent = '正在查询 HubStudio 店铺环境…';
+  try {
+    const res = await cloudFetchJson('/v1/store-finance-environments/lookup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        executorId: executor.id,
+        identifiers: tokens.slice(0, 300),
+        idempotencyKey: 'sfl-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+      }),
+    });
+    await sfWaitLookup(res.data.taskId);
+  } catch (e) {
+    $('sfPasteState').textContent = '查询失败：' + (e.message || e);
+    $('sfPasteState').className = 'resource-state warn';
+  } finally {
+    $('sfPasteAdd').disabled = false;
+  }
 };
+function sfWaitLookup(taskId) {
+  return new Promise(resolve => {
+    const started = Date.now();
+    if (sfLookupTimer) clearInterval(sfLookupTimer);
+    sfLookupTimer = setInterval(async () => {
+      if (Date.now() - started > 60000) {
+        clearInterval(sfLookupTimer); sfLookupTimer = null;
+        $('sfPasteState').textContent = '查询超时，请稍后重试。';
+        $('sfPasteState').className = 'resource-state warn';
+        return resolve();
+      }
+      try {
+        const res = await cloudFetchJson('/v1/store-finance-environments/lookup/' + taskId);
+        const data = res.data || {};
+        if (!['succeeded', 'failed', 'cancelled'].includes(data.status)) return;
+        clearInterval(sfLookupTimer); sfLookupTimer = null;
+        if (data.status !== 'succeeded') {
+          $('sfPasteState').textContent = '查询失败：' + (data.resultCode || data.status);
+          $('sfPasteState').className = 'resource-state warn';
+          return resolve();
+        }
+        const lastRuns = data.lastRuns || {};
+        const existing = new Map(SF_STATE.shops.map(s => [s.environmentId, s]));
+        (data.matched || []).forEach(row => {
+          const merged = { ...row, lastRun: lastRuns[row.gsCode] || null };
+          const prev = existing.get(row.environmentId);
+          if (prev) { prev.lastRun = merged.lastRun; prev.browserOpen = merged.browserOpen; }
+          else { SF_STATE.shops.push(merged); SF_STATE.selected.add(row.environmentId); }
+        });
+        sfSaveList(); sfRenderShops(); sfRefreshSel();
+        const missCount = (data.unmatched || []).length;
+        $('sfPasteState').className = missCount ? 'resource-state warn' : 'resource-state ok';
+        $('sfPasteState').textContent = missCount
+          ? `查询完成：匹配 ${data.matched.length} 家（新查中的已自动勾选）；未找到 ${missCount} 个：${data.unmatched.slice(0, 5).join('、')}${missCount > 5 ? '…' : ''}`
+          : `查询完成：匹配 ${data.matched.length} 家（新查中的已自动勾选），共 ${SF_STATE.shops.length} 家在清单。`;
+        resolve();
+      } catch (e) { /* 轮询失败继续等待下一次 */ }
+    }, 1000);
+  });
+}
 document.querySelectorAll('[data-sf-conc]').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('[data-sf-conc]').forEach(b => b.classList.remove('active'));
@@ -4367,8 +4455,8 @@ function sfRenderSummary(data) {
 }
 async function sfStart(options = {}) {
   if (SF_STATE.running) return;
-  const serials = [...SF_STATE.selected];
-  if (!serials.length) { sfSetPhase('等待发起', '请先勾选巡检清单。', false); return; }
+  const serials = sfSelectedSerials();
+  if (!serials.length) { sfSetPhase('等待发起', '请先查询并勾选巡检店铺。', false); return; }
   let executor;
   try { executor = await cloudFormalExecutor('store.finance.inspect.v1'); }
   catch (e) { sfSetPhase('执行器不可用', e.message || '无法发起巡检', false); return; }

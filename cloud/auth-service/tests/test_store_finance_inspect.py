@@ -518,3 +518,150 @@ def test_store_finance_progress_mixed_queued_and_ok_rows(tmp_path) -> None:
         assert rows["1746"]["status"] == "ok"
         assert rows["1775875785"]["status"] == "queued"
         assert rows["1775875785"]["loginMode"] is None
+
+
+# ===== 环境查询（store.finance.lookup.v1）：粘贴 → HubStudio 解析 → 合并上次采集 =====
+def test_store_finance_environment_lookup_round_trip(tmp_path) -> None:
+    import uuid as uuid_module
+    from sqlalchemy import select
+    from xynigo_auth.models import (
+        StoreFinanceInspectResult,
+        StoreFinanceInspectRun,
+    )
+
+    capabilities = SF_CAPABILITIES + ["store.finance.lookup.v1"]
+    for web_client, device_client, ids, database in _e2e_setup(tmp_path):
+        executor_id = ids["executorId"]
+        credential = ids["credential"]
+        heartbeat(device_client, credential, capabilities=capabilities,
+                  client_version="0.17.18")
+
+        created = web_client.post(
+            "/v1/store-finance-environments/lookup",
+            json={
+                "executorId": executor_id,
+                "identifiers": ["溪山", "1377", "不存在"],
+                "idempotencyKey": "sf-lookup-e2e-00001",
+            },
+            headers=CSRF,
+        )
+        assert created.status_code == 202, created.text
+        task_id = created.json()["data"]["taskId"]
+
+        lease = heartbeat(device_client, credential,
+                          capabilities=capabilities,
+                          client_version="0.17.18")["task"]
+        assert lease is not None and lease["type"] == \
+            "store.finance.lookup.v1", lease
+        lease_token = lease["leaseToken"]
+        assert device_client.post(
+            f"/v1/executor-channel/tasks/{lease['id']}/start",
+            json={"leaseToken": lease_token},
+            headers=device_headers(credential),
+        ).status_code == 200
+
+        finish = device_client.post(
+            f"/v1/executor-channel/tasks/{lease['id']}/finish",
+            json={
+                "leaseToken": lease_token,
+                "outcome": "succeeded",
+                "resultCode": "store_finance_lookup_completed",
+                "resultSummary": {
+                    "matched": [{
+                        "environmentSerial": "1377",
+                        "environmentId": "1776003960",
+                        "storeName": "溪山-子",
+                        "gsCode": "GS1098478",
+                        "group": "魏无羡",
+                        "browserOpen": False,
+                    }],
+                    "unmatched": ["不存在"],
+                },
+            },
+            headers=device_headers(credential),
+        )
+        assert finish.status_code == 200, finish.text
+
+        # 先跑一次真实巡检链路，为 GS1098478 沉淀「上次采集/登录态」
+        inspect_created = web_client.post(
+            "/v1/operation-runs/store-finance-inspect",
+            json={
+                "idempotencyKey": "sf-lookup-history-00000001",
+                "executorId": executor_id,
+                "environmentSerials": ["1377"],
+            },
+            headers=CSRF,
+        )
+        assert inspect_created.status_code == 202, inspect_created.text
+        inspect_lease = heartbeat(device_client, credential,
+                                  capabilities=capabilities,
+                                  client_version="0.17.18")["task"]
+        assert inspect_lease["type"] == "store.finance.inspect.v1"
+        device_client.post(
+            f"/v1/executor-channel/tasks/{inspect_lease['id']}/start",
+            json={"leaseToken": inspect_lease["leaseToken"]},
+            headers=device_headers(credential),
+        )
+        progress_resp = device_client.post(
+            f"/v1/executor-channel/tasks/{inspect_lease['id']}/progress",
+            json={
+                "leaseToken": inspect_lease["leaseToken"],
+                "phase": "store_finance.running",
+                "current": 1,
+                "total": 1,
+                "snapshot": {"rows": [{
+                    "environmentSerial": "1377",
+                    "storeName": "溪山-子",
+                    "gsCode": "GS1098478",
+                    "status": "ok",
+                    "loginMode": "reuse",
+                    "inTransitAmount": 10.0,
+                    "unsettledAmount": None,
+                    "nextSettlementAmount": None,
+                    "nextSettlementDate": "",
+                    "completedSettlementAmount": None,
+                    "nonWithdrawableAmount": None,
+                    "pendingSettleLimitAmount": None,
+                    "lastPayoutAmount": None,
+                    "withdrawableAmount": None,
+                    "collectedAt": "2026-09-10T14:20:00+08:00",
+                    "durationSeconds": 60,
+                    "errorSummary": None,
+                    "screenshotSha256": None,
+                }]},
+            },
+            headers=device_headers(credential),
+        )
+        assert progress_resp.status_code == 200, progress_resp.text
+        finish_resp = device_client.post(
+            f"/v1/executor-channel/tasks/{inspect_lease['id']}/finish",
+            json={
+                "leaseToken": inspect_lease["leaseToken"],
+                "outcome": "succeeded",
+                "resultCode": "store_finance_completed",
+                "resultSummary": {
+                    "runStatus": "completed",
+                    "phase": "store_finance.completed",
+                    "progressCompleted": 1,
+                    "progressTotal": 1,
+                    "successCount": 1,
+                    "failedCount": 0,
+                    "stoppedCount": 0,
+                },
+            },
+            headers=device_headers(credential),
+        )
+
+        fetched = web_client.get(
+            f"/v1/store-finance-environments/lookup/{task_id}")
+        assert fetched.status_code == 200, fetched.text
+        data = fetched.json()["data"]
+        assert data["status"] == "succeeded"
+        row = data["matched"][0]
+        assert row["environmentSerial"] == "1377"
+        assert row["storeName"] == "溪山-子"
+        assert "remark" not in row  # 云端输出闭集，多余字段裁剪
+        assert data["unmatched"] == ["不存在"]
+        assert data["lastRuns"]["GS1098478"]["status"] == "ok"
+        assert data["lastRuns"]["GS1098478"]["loginMode"] == "reuse"
+        break

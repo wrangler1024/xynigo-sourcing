@@ -266,6 +266,7 @@ AUTH_PERMISSION_BY_PATH = {
     '/api/requery-failed': 'fulfillment.order.read',
     '/api/screenshot': 'fulfillment.order.read',
     '/api/store-finance/inspect': 'assistant.access',
+    '/api/store-finance/lookup': 'assistant.access',
     '/api/store-finance/progress': 'assistant.access',
     '/api/store-finance/stop': 'assistant.access',
     '/api/store-finance/screenshot': 'assistant.access',
@@ -4589,6 +4590,16 @@ class Handler(BaseHTTPRequestHandler):
                     'visible' if browser_mode == 'visible' else 'headless',
                     concurrency=int(concurrency) if concurrency else None)
                 self._json(result)
+            elif path == '/api/store-finance/lookup':
+                identifiers = body.get('identifiers')
+                if (not isinstance(identifiers, list) or not identifiers
+                        or len(identifiers) > 300):
+                    raise ValueError('查询名单为空或超出上限')
+                env_list = STATE._hub_reads.get(
+                    ('store-finance-lookup-envs',), 120,
+                    STATE.hub.env_list)
+                self._json(STATE.store_finance.lookup_stores(
+                    identifiers, env_list=env_list))
             elif path == '/api/store-finance/stop':
                 self._json(STATE.store_finance.request_stop())
             elif path == '/api/stop':

@@ -467,3 +467,69 @@ class ExactNameMatchTests(unittest.TestCase):
         self.assertEqual(serial, '重名店')
         self.assertEqual(gs, '')  # 未定位到环境，不采集
         self.assertEqual(hub.started, [])
+
+
+class LookupStoresTests(unittest.TestCase):
+    """粘贴序号 / 环境 ID / 店铺名都能解析出环境展示字段。"""
+
+    def _envs(self):
+        return [
+            {'containerCode': '1776003960', 'serialNumber': '1377',
+             'containerName': '溪山-子', 'tagName': '魏无羡',
+             'accounts': [{'accountName': 'GS1098478'}],
+             'remark': '13800000000----https://sms/x', 'openTime': 'None'},
+            {'containerCode': '1775999821', 'serialNumber': '1378',
+             'containerName': '帆影-子', 'tagName': '魏无羡',
+             'accounts': [], 'remark': '', 'openTime': '09-10 10:00:00'},
+        ]
+
+    def test_lookup_by_serial_id_and_name(self):
+        hub = _FakeHub([])
+        inspector = StoreFinanceInspector(hub)
+        result = inspector.lookup_stores(
+            ['1377', '1775999821', '溪山', '不存在'],
+            env_list=self._envs())
+        serials = {r['environmentSerial'] for r in result['matched']}
+        self.assertEqual(serials, {'1377', '1378'})
+        self.assertEqual(result['unmatched'], ['不存在'])
+        by_serial = {r['environmentSerial']: r for r in result['matched']}
+        self.assertEqual(by_serial['1377']['storeName'], '溪山-子')
+        self.assertEqual(by_serial['1377']['gsCode'], 'GS1098478')
+        self.assertEqual(by_serial['1377']['group'], '魏无羡')
+        self.assertEqual(by_serial['1377']['environmentId'], '1776003960')
+        self.assertFalse(by_serial['1377']['browserOpen'])
+        self.assertEqual(by_serial['1378']['gsCode'], '')  # 未绑账号不出 IndexError
+        self.assertTrue(by_serial['1378']['browserOpen'])
+        for row in result['matched']:
+            self.assertNotIn('remark', row)  # 备注含接码链接，绝不下发
+
+    def test_lookup_rejects_empty_input(self):
+        inspector = StoreFinanceInspector(_FakeHub([]))
+        result = inspector.lookup_stores(['  ', ''], env_list=[])
+        self.assertEqual(result, {'matched': [], 'unmatched': []})
+
+
+class ExecutorLookupPassthroughTests(unittest.TestCase):
+    def test_lookup_reaches_local_endpoint_with_identifiers(self):
+        from purchase_tool.operation_executor import LocalOperationExecutor
+        calls = []
+
+        def rpc(request):
+            calls.append(request)
+            return {'httpStatus': 200, 'responseType': 'json',
+                    'body': {'matched': [{'environmentSerial': '1377',
+                                          'environmentId': '1776003960',
+                                          'storeName': '溪山-子',
+                                          'gsCode': 'GS1', 'group': '魏无羡',
+                                          'browserOpen': False}],
+                             'unmatched': []}}
+
+        executor = LocalOperationExecutor(rpc)
+        outcome, code, summary = executor.execute(
+            'store.finance.lookup.v1',
+            {'identifiers': ['溪山']}, lambda **_: None)
+        self.assertEqual(outcome, 'succeeded')
+        self.assertEqual(code, 'store_finance_lookup_completed')
+        self.assertEqual(summary['matched'][0]['environmentSerial'], '1377')
+        self.assertEqual(calls[0]['path'], '/api/store-finance/lookup')
+        self.assertEqual(calls[0]['body']['identifiers'], ['溪山'])

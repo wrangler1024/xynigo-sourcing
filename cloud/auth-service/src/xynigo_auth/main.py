@@ -114,6 +114,7 @@ from .store_finance_export import build_store_finance_export
 from .executor_diagnostics import executor_context, logistics_diagnostics
 from .models import (
     EnvironmentWorkspacePreference,
+    ExecutorTask,
     LocalExecutor,
     StoreFinanceInspectRun,
     LocalLoginRequest,
@@ -137,12 +138,14 @@ from .operation_contract import (
     EnvironmentWorkspacePreferenceBody,
     LogisticsQueryRunBody,
     LogisticsQueryRunCreateBody,
+    StoreFinanceEnvironmentLookupBody,
     StoreFinanceRunCreateBody,
     WorkspaceViewPreferenceBody,
 )
 from .operation_service import (
     OperationResultService,
     OperationRunService,
+    store_finance_last_runs,
     store_finance_snapshot,
 )
 from .procurement_import_contract import (
@@ -4898,6 +4901,94 @@ def create_app(
         )
         session.commit()
         return {"ok": True, "data": result}
+
+    @app.post("/v1/store-finance-environments/lookup", status_code=status.HTTP_202_ACCEPTED)
+    def create_store_finance_environment_lookup(
+        request: Request,
+        body: StoreFinanceEnvironmentLookupBody,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "assistant.store_finance.lookup.create"
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        tasks = executor_channel(session)
+        task = tasks.create_config_task(
+            tenant_id=actor.tenant.id,
+            user_id=actor.user.id,
+            executor_id=body.executorId,
+            task_type="store.finance.lookup.v1",
+            payload={"identifiers": list(body.identifiers)},
+            idempotency_key=body.idempotencyKey,
+        )
+        _add_audit(
+            session,
+            request_id=request.state.request_id,
+            action=action,
+            result="success",
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            business_object_type="executor_task",
+            business_object_id=str(task.id),
+            change_summary={"identifiers": len(body.identifiers)},
+            **_request_log_context(request),
+        )
+        session.commit()
+        return {
+            "ok": True,
+            "data": {
+                "taskId": str(task.id),
+                "status": task.status,
+                "executorId": str(task.executor_id),
+            },
+        }
+
+    @app.get("/v1/store-finance-environments/lookup/{task_id}")
+    def get_store_finance_environment_lookup(
+        task_id: uuid.UUID,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="assistant.store_finance.lookup.read",
+        )
+        task = session.scalar(
+            select(ExecutorTask).where(
+                ExecutorTask.id == task_id,
+                ExecutorTask.tenant_id == actor.tenant.id,
+                ExecutorTask.task_type == "store.finance.lookup.v1",
+            )
+        )
+        if task is None:
+            raise HTTPException(status_code=404, detail="查询任务不存在")
+        data: dict[str, object] = {"taskId": str(task.id), "status": task.status}
+        if task.status in {"succeeded", "failed", "cancelled"}:
+            data["resultCode"] = task.result_code or ""
+            if task.status == "succeeded":
+                tasks = executor_channel(session)
+                summary = tasks.store_finance_lookup_summary(task)
+                rows = summary["matched"]
+                gs_codes = sorted({
+                    str(row["gsCode"]) for row in rows if row["gsCode"]
+                })
+                data["matched"] = rows
+                data["unmatched"] = summary["unmatched"]
+                data["lastRuns"] = store_finance_last_runs(session, actor.tenant.id, gs_codes)
+        return {"ok": True, "data": data}
 
     @app.post(
         "/v1/operation-runs/store-finance-inspect/{run_id}/cancel"

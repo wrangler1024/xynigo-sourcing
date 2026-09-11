@@ -22,6 +22,7 @@ BUSINESS_TASK_TYPES = frozenset({
     'environment.preview-bound.v1',
     'logistics.query.v1',
     'store.finance.inspect.v1',
+    'store.finance.lookup.v1',
     'environment.create-bound.v1',
     'environment.create-backup.v1',
     'environment.retry-row.v1',
@@ -77,6 +78,8 @@ class LocalOperationExecutor(object):
         if task_type == 'store.finance.inspect.v1':
             return self._execute_store_finance(
                 payload, report, cancellation_event)
+        if task_type == 'store.finance.lookup.v1':
+            return self._execute_store_finance_lookup(payload)
         if task_type == 'environment.preview-bound.v1':
             return self._execute_environment_preview(
                 payload, report, cancellation_event)
@@ -454,6 +457,29 @@ class LocalOperationExecutor(object):
             self.sleep(self.poll_interval)
         summary = self._store_finance_summary(total, rows)
         return self._terminal_result('store_finance', summary)
+
+    def _execute_store_finance_lookup(self, payload):
+        """店铺环境查询：一次本地往返，返回匹配环境与未匹配名单。"""
+        identifiers = payload.get('identifiers')
+        if (not isinstance(identifiers, list) or not identifiers
+                or any(not str(item or '').strip() for item in identifiers)):
+            raise OperationExecutionError(
+                'operation_payload_invalid', '查询名单缺少标识')
+        identifiers = [str(item).strip()[:64] for item in identifiers]
+        if len(identifiers) > 300:
+            raise OperationExecutionError(
+                'operation_payload_invalid', '单次查询店铺数量超出上限')
+        result = self._request('POST', '/api/store-finance/lookup',
+                               {'identifiers': identifiers})
+        matched = result.get('matched')
+        unmatched = result.get('unmatched')
+        if not isinstance(matched, list) or not isinstance(unmatched, list):
+            raise OperationExecutionError(
+                'operation_local_response_invalid', '环境查询响应无效')
+        return ('succeeded', 'store_finance_lookup_completed', {
+            'matched': matched[:300],
+            'unmatched': unmatched[:300],
+        })
 
     def _store_finance_screenshot_attachment(self, serial):
         result = self.rpc_executor({

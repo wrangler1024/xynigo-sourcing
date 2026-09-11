@@ -70,6 +70,7 @@ BUSINESS_TASK_TYPES = frozenset(
     {
         "logistics.query.v1",
         "store.finance.inspect.v1",
+        "store.finance.lookup.v1",
         "environment.create-bound.v1",
         "environment.create-backup.v1",
         "environment.retry-row.v1",
@@ -1270,10 +1271,52 @@ class ExecutorChannelService:
         elif config is not None:
             raise ExecutorServiceError("executor_result_invalid", status_code=422)
 
+    _STORE_FINANCE_LOOKUP_ROW_KEYS = frozenset({
+        "environmentSerial", "environmentId", "storeName",
+        "gsCode", "group", "browserOpen",
+    })
+
+    @classmethod
+    def _validate_store_finance_lookup_result(
+        cls, task: ExecutorTask, body: ExecutorTaskFinishBody
+    ) -> bool:
+        """环境查询不是 Run：专用闭集校验，未命中返回 False 走通用分支。"""
+        if task.task_type != "store.finance.lookup.v1":
+            return False
+        summary = body.resultSummary
+        if set(summary) - {"matched", "unmatched"}:
+            raise ExecutorServiceError("executor_result_invalid", status_code=422)
+        matched = summary.get("matched")
+        unmatched = summary.get("unmatched")
+        if body.outcome == "succeeded":
+            if not isinstance(matched, list) or not isinstance(unmatched, list):
+                raise ExecutorServiceError("executor_result_invalid", status_code=422)
+            if len(matched) > 300 or len(unmatched) > 300:
+                raise ExecutorServiceError("executor_result_invalid", status_code=422)
+            for row in matched:
+                if not isinstance(row, dict) or (
+                    set(row) - cls._STORE_FINANCE_LOOKUP_ROW_KEYS
+                ):
+                    raise ExecutorServiceError(
+                        "executor_result_invalid", status_code=422)
+                for field in ("environmentSerial", "environmentId",
+                              "storeName", "gsCode", "group"):
+                    if not isinstance(row.get(field), str):
+                        raise ExecutorServiceError(
+                            "executor_result_invalid", status_code=422)
+            for item in unmatched:
+                if not isinstance(item, str) or not item:
+                    raise ExecutorServiceError(
+                        "executor_result_invalid", status_code=422)
+        return True
+
     @staticmethod
     def _validate_business_result(
         task: ExecutorTask, body: ExecutorTaskFinishBody
     ) -> None:
+        if ExecutorChannelService._validate_store_finance_lookup_result(
+                task, body):
+            return
         if task.task_type not in BUSINESS_TASK_TYPES:
             return
         summary = body.resultSummary
@@ -1786,6 +1829,32 @@ class ExecutorChannelService:
             separators=(",", ":"),
         ).encode("utf-8")
         return hashlib.sha256(raw).hexdigest()
+
+    def store_finance_lookup_summary(self, task: ExecutorTask) -> dict[str, Any]:
+        """Decrypt + shape one finished store.finance.lookup.v1 result."""
+        if task.task_type != "store.finance.lookup.v1":
+            raise ExecutorServiceError("executor_task_type_invalid", status_code=404)
+        summary = self._result_summary(task)
+        matched = summary.get("matched")
+        unmatched = summary.get("unmatched")
+        if not isinstance(matched, list) or not isinstance(unmatched, list):
+            raise ExecutorServiceError("executor_result_invalid", status_code=422)
+        cleaned = []
+        for row in matched[:300]:
+            if not isinstance(row, dict):
+                continue
+            cleaned.append({
+                "environmentSerial": str(row.get("environmentSerial") or "")[:32],
+                "environmentId": str(row.get("environmentId") or "")[:64],
+                "storeName": str(row.get("storeName") or "")[:128],
+                "gsCode": str(row.get("gsCode") or "")[:64],
+                "group": str(row.get("group") or "")[:64],
+                "browserOpen": bool(row.get("browserOpen")),
+            })
+        return {
+            "matched": cleaned,
+            "unmatched": [str(item)[:64] for item in unmatched[:300]],
+        }
 
     def _result_summary(self, task: ExecutorTask) -> dict[str, Any]:
         summary = task.result_summary or {}

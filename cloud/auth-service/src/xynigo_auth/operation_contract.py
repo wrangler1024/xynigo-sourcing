@@ -926,6 +926,34 @@ class StoreFinanceRunCreateBody(BaseModel):
         return cleaned
 
 
+class StoreFinanceEnvironmentLookupBody(BaseModel):
+    """Store environment lookup request executed on the local executor."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    executorId: uuid.UUID
+    identifiers: list[str] = Field(min_length=1, max_length=300)
+    idempotencyKey: str | None = Field(
+        default=None, min_length=8, max_length=128, pattern=SAFE_KEY_RE)
+
+    @field_validator("identifiers")
+    @classmethod
+    def normalize_identifiers(cls, value: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            text = str(item or "").strip()
+            if not text:
+                raise ValueError("identifier 不能为空")
+            if text in seen:
+                continue
+            seen.add(text)
+            cleaned.append(text[:64])
+        if not cleaned:
+            raise ValueError("identifiers 为空")
+        return cleaned
+
+
 class StoreFinanceProgressRow(BaseModel):
     """One store row inside an inspection progress snapshot.
 
