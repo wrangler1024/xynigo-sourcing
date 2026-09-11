@@ -3126,29 +3126,43 @@ def store_finance_last_runs(session, tenant_id, gs_codes) -> dict:
 
 
 def _store_finance_merged_result_rows(session, run):
-    """结果行查询：failed_retry 时先取源 Run 行，再按序号覆盖当前行。"""
+    """结果行查询：failed_retry 沿 sourceRunId 链逐代覆盖合并。
+
+    自动补采会形成多轮链（首轮→补1→补2）：从最老的世代打底、新世代
+    按环境序号必胜覆盖（不依赖 collected_at）。链深限制 3 代防环。
+    """
     from .models import StoreFinanceInspectResult as ResultModel
-    source_run_id = (run.request_summary or {}).get("sourceRunId")
-    current_rows = session.scalars(
-        select(ResultModel).where(ResultModel.run_id == run.id)
-    ).all()
-    if not source_run_id:
-        return sorted(current_rows, key=lambda r: r.store_name or "")
-    source = session.scalar(
-        select(StoreFinanceInspectRun).where(
-            StoreFinanceInspectRun.id == uuid.UUID(str(source_run_id)),
-            StoreFinanceInspectRun.tenant_id == run.tenant_id,
+    generations = [run]
+    seen = {run.id}
+    current = run
+    for _ in range(3):
+        source_run_id = (current.request_summary or {}).get("sourceRunId")
+        if not source_run_id:
+            break
+        parent = session.scalar(
+            select(StoreFinanceInspectRun).where(
+                StoreFinanceInspectRun.id == uuid.UUID(str(source_run_id)),
+                StoreFinanceInspectRun.tenant_id == run.tenant_id,
+            )
         )
-    )
-    if source is None:
-        return sorted(current_rows, key=lambda r: r.store_name or "")
-    source_rows = session.scalars(
-        select(ResultModel).where(ResultModel.run_id == source.id)
-    ).all()
-    by_serial = {row.environment_serial: row for row in source_rows}
-    # 当前 Run 行必胜（不依赖 collected_at：补采行可能早于源行落库时间）
-    for row in current_rows:
-        by_serial[row.environment_serial] = row
+        if parent is None or parent.id in seen:
+            break
+        generations.append(parent)
+        seen.add(parent.id)
+        current = parent
+    if len(generations) == 1:
+        rows = session.scalars(
+            select(ResultModel).where(ResultModel.run_id == run.id)
+        ).all()
+        return sorted(rows, key=lambda r: r.store_name or "")
+    by_serial = {}
+    for generation in reversed(generations):  # 最老打底，最新覆盖
+        gen_rows = session.scalars(
+            select(ResultModel)
+            .where(ResultModel.run_id == generation.id)
+        ).all()
+        for row in gen_rows:
+            by_serial[row.environment_serial] = row
     return sorted(by_serial.values(), key=lambda r: r.store_name or "")
 
 

@@ -845,3 +845,23 @@ def test_store_finance_retry_run_merges_source_rows(tmp_path) -> None:
         names = {row[0] for row in values[1:] if row[0] != "合计"}
         assert names == {"山岚", "花间"}  # 导出含源 Run 成功行
         break
+
+
+def test_store_finance_error_export_lists_only_failed_rows() -> None:
+    """异常导出：只含 fail/login/inuse 行并带卡点说明。"""
+    from xynigo_auth.store_finance_export import build_store_finance_export
+    rows = [
+        {"storeName": "好店", "gsCode": "GS2", "environmentSerial": "2",
+         "status": "ok", "durationSeconds": 30},
+        {"storeName": "坏店", "gsCode": "GS1", "environmentSerial": "1",
+         "status": "login", "errorSummary": "fail:短信验证码未通过",
+         "collectedAt": "2026-09-11T07:00:00Z", "durationSeconds": 66,
+         "loginMode": "auto"},
+    ]
+    content, filename, mime = build_store_finance_export(
+        rows, variant="errors")
+    assert filename.startswith("店铺结算异常_")
+    text = content.decode("utf-8-sig")
+    assert "坏店" in text and "fail:短信验证码未通过" in text
+    assert "好店" not in text
+    assert "环境序号" in text

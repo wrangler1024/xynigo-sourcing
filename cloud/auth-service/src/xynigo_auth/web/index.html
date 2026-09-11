@@ -56,6 +56,7 @@
   .progress.query-outcome-review .bar { background: linear-gradient(90deg, var(--green), var(--primary)); }
   .progress.query-outcome-complete .bar { background: var(--green); }
   #progressText { font-size: 11px; color: var(--navy-500); min-width: 420px; text-align: right; white-space: nowrap; }
+  #sfProgressText { font-size: 11px; color: var(--navy-500); min-width: 420px; text-align: right; white-space: nowrap; }
   #progressText.query-outcome-review { color: var(--red); font-weight: 600; min-width: 205px; }
   #progressText.query-outcome-complete { color: var(--green); font-weight: 600; min-width: 120px; }
   .table-wrap { overflow-x: auto; }
@@ -2084,6 +2085,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
             <div class="export-menu" id="sfExportMenu" hidden>
               <button id="sfExportStd"><b>标准导出</b><small>按运营现有《店铺结算汇总表》六列格式，可直接发财务</small></button>
               <button id="sfExportFull"><b>完整导出</b><small>含附加字段（最近打款、可提现、待结算限制）与异常说明</small></button>
+              <button id="sfExportErr"><b>异常导出</b><small>仅失败/登录未完成/占用行，含卡点说明与环境序号，便于排查</small></button>
             </div>
           </div>
         </div>
@@ -4228,7 +4230,7 @@ async function cloudFormalExecutor(capability, preferredId='') {
 /* ===== 小犀助手 · 店铺结算查询 ===== */
 const SF_STORE_KEY = 'storeFinanceShopList';
 const SF_SEL_KEY = 'storeFinanceSelection';
-const SF_STATE = { runId: null, timer: null, running: false, shops: [], selected: new Set(), lastRows: [], stopRequested: false, pollErrors: 0 };
+const SF_STATE = { runId: null, timer: null, running: false, shops: [], selected: new Set(), lastRows: [], stopRequested: false, pollErrors: 0, retryCount: 0 };
 
 function sfSaveList() {
   try {
@@ -4559,6 +4561,7 @@ async function sfStart(options = {}) {
     SF_STATE.stopRequested = false;
     SF_STATE.pollErrors = 0;
     SF_STATE.etaBase = null;
+    if (options.queryMode !== 'failed_retry') SF_STATE.retryCount = 0;
     sfPaintProgress({
       progressTotal: serials.length, progressCompleted: 0,
       rows: [], status: 'running',
@@ -4599,6 +4602,14 @@ async function sfPoll() {
       $('sfRetryFail').disabled = !bad;
       SF_STATE.running = false;
       SF_STATE.stopRequested = false;
+      if (bad && SF_STATE.retryCount < 2
+          && ['completed', 'partial_failure'].includes(data.status)) {
+        SF_STATE.retryCount += 1;
+        const round = SF_STATE.retryCount;
+        sfSetPhase(`自动补采（第 ${round} 轮）`,
+          `检测到 ${bad} 家失败；1.5 秒后自动发起第 ${round} 轮补采（最多 2 轮）。`, true);
+        setTimeout(() => { if (!SF_STATE.running) sfRetryFail(); }, 1500);
+      }
     } else if (SF_STATE.stopRequested) {
       sfSetPhase('正在停止', `已请求停止，在途店铺完成后终止（已完成 ${data.progressCompleted ?? 0} / ${data.progressTotal ?? 0}）。`, true);
     } else {
@@ -4671,7 +4682,8 @@ $('sfExportMenuBtn').onclick = e => { e.stopPropagation(); $('sfExportMenu').hid
 document.addEventListener('click', () => { const m = $('sfExportMenu'); if (m) m.hidden = true; });
 async function sfExport(variant) {
   if (!SF_STATE.runId) return;
-  const hint = variant === 'full' ? '店铺结算汇总表_完整.csv' : '店铺结算汇总表.xlsx';
+  const hint = variant === 'full' ? '店铺结算汇总表_完整.csv'
+    : variant === 'errors' ? '店铺结算异常.csv' : '店铺结算汇总表.xlsx';
   try {
     const response = await fetch(
       '/v1/operation-runs/store-finance-inspect/'
@@ -4693,6 +4705,7 @@ async function sfExport(variant) {
 $('sfExport').onclick = () => sfExport('standard');
 $('sfExportStd').onclick = () => { $('sfExportMenu').hidden = true; sfExport('standard'); };
 $('sfExportFull').onclick = () => { $('sfExportMenu').hidden = true; sfExport('full'); };
+$('sfExportErr').onclick = () => { $('sfExportMenu').hidden = true; sfExport('errors'); };
 /* 轮询时缓存最近行给补采按钮 */
 const _sfPoll = sfPoll;
 sfPoll = async function () {

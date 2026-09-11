@@ -47,6 +47,40 @@ def _fmt(value):
     return "" if value is None else f"{float(value):.2f}"
 
 
+ERROR_HEADERS = (
+    "店铺中文名", "店铺账号", "环境序号", "状态", "异常说明",
+    "采集时间 (UTC)", "耗时(秒)", "登录方式",
+)
+
+
+def build_store_finance_error_export(rows):
+    """异常行导出（CSV）：失败/登录未完成/占用行 + 卡点说明，供排查。"""
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(ERROR_HEADERS)
+    count = 0
+    for row in sorted(rows, key=lambda r: str(
+            r.get("storeName") or r.get("environmentSerial") or "")):
+        if (row.get("status") or "") not in ("fail", "login", "inuse"):
+            continue
+        count += 1
+        writer.writerow([
+            row.get("storeName") or row.get("environmentSerial") or "",
+            row.get("gsCode") or "",
+            row.get("environmentSerial") or "",
+            row.get("status") or "",
+            row.get("errorSummary") or "",
+            row.get("collectedAt") or "",
+            row.get("durationSeconds")
+            if row.get("durationSeconds") is not None else "",
+            row.get("loginMode") or "",
+        ])
+    content = buffer.getvalue().encode("utf-8-sig")
+    return content, f"店铺结算异常_{stamp}.csv", (
+        "text/csv; charset=utf-8"), count
+
+
 def build_store_finance_export(
     rows, *, variant="standard",
 ):
@@ -57,6 +91,8 @@ def build_store_finance_export(
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
     suffix = "full" if variant == "full" else ""
     base = f"店铺结算汇总表_{stamp}{suffix}"
+    if variant == "errors":
+        return build_store_finance_error_export(rows)[:3]
     rows = sorted(
         rows, key=lambda r: str(r.get("storeName")
                                 or r.get("environmentSerial") or ""))
