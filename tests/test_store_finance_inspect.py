@@ -359,7 +359,7 @@ class MissingEnvironmentTests(unittest.TestCase):
         self.assertFalse(snap['running'])
         row = snap['rows'][0]
         self.assertEqual(row['status'], 'fail')
-        self.assertIn('环境序号未找到', row['errorSummary'])
+        self.assertIn('未匹配到唯一环境', row['errorSummary'])
         self.assertEqual(row['gsCode'], '')
         self.assertEqual(hub.started, [])  # 未误开任何浏览器
 
@@ -410,3 +410,60 @@ class SerialNumberInputTests(unittest.TestCase):
         self.assertEqual(row['environmentSerial'], '941')  # 行键=用户输入
         self.assertNotIn('环境序号未找到', row['errorSummary'] or '')
         self.assertEqual(hub.started, ['41'])  # 浏览器用 containerCode 启动
+
+
+class ExactNameMatchTests(unittest.TestCase):
+    """店铺环境名输入必须全名精确匹配：主/子账号（溪山 / 溪山-子）互不误伤。"""
+
+    class _NamedHub(_FakeHub):
+        def __init__(self):
+            super().__init__([])
+            self._envs = [
+                {'containerCode': '501', 'serialNumber': '9501',
+                 'containerName': '溪山', 'remark': '',
+                 'accounts': [{'accountName': 'GS01'}]},
+                {'containerCode': '502', 'serialNumber': '9502',
+                 'containerName': '溪山-子', 'remark': '',
+                 'accounts': [{'accountName': 'GS02'}]},
+                {'containerCode': '503', 'serialNumber': '9503',
+                 'containerName': '重名店', 'remark': '',
+                 'accounts': [{'accountName': 'GS03'}]},
+                {'containerCode': '504', 'serialNumber': '9504',
+                 'containerName': '重名店', 'remark': '',
+                 'accounts': [{'accountName': 'GS04'}]},
+            ]
+
+        def env_list(self):
+            return [dict(e) for e in self._envs]
+
+    def _run(self, inputs):
+        hub = self._NamedHub()
+        inspector = StoreFinanceInspector(hub, concurrency=4)
+        inspector.start_batch(inputs)
+        deadline = time.time() + 5
+        while time.time() < deadline and inspector.snapshot()['running']:
+            time.sleep(0.05)
+        return hub, {(r['environmentSerial'], r['storeName'],
+                      r['gsCode']) for r in inspector.snapshot()['rows']}
+
+    def test_full_name_hits_main_env_not_sub_env(self):
+        hub, rows = self._run(['溪山'])
+        self.assertIn(('溪山', '溪山', 'GS01'), rows)
+        self.assertNotIn(('溪山', '溪山-子', 'GS02'), rows)
+        self.assertEqual(hub.started, ['501'])  # 用主账号 containerCode 开浏览器
+
+    def test_sub_env_name_still_resolvable_when_named_explicitly(self):
+        _, rows = self._run(['溪山-子'])
+        self.assertIn(('溪山-子', '溪山-子', 'GS02'), rows)
+
+    def test_prefix_is_not_substring_match(self):
+        _, rows = self._run(['溪'])  # 不是任何环境的全名
+        (serial, _, _), = rows
+        self.assertEqual(serial, '溪')
+
+    def test_duplicate_name_refuses_to_pick_one(self):
+        hub, rows = self._run(['重名店'])
+        (serial, _, gs), = rows
+        self.assertEqual(serial, '重名店')
+        self.assertEqual(gs, '')  # 未定位到环境，不采集
+        self.assertEqual(hub.started, [])

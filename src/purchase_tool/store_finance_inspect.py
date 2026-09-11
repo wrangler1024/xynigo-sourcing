@@ -152,15 +152,25 @@ class StoreFinanceInspector(object):
 
     def _run_batch(self, serials, browser_mode):
         try:
+            # 输入兼容三类标识：窗口序号（serialNumber）、环境 ID
+            # （containerCode）、环境全名（containerName 精确匹配——
+            # 店务部主/子账号环境名为「溪山 / 溪山-子」，子串匹配会同
+            # 时命中两个，必须全名相等；重名环境不定位，要求改用序号）。
+            wanted = {str(s).strip().casefold(): s for s in serials}
             env_index = {}
+            name_matches = {}
             for env in self.hub.env_list():
-                # 输入兼容：HubStudio 窗口序号（serialNumber）与环境 ID
-                # （containerCode）都可粘贴；行键保持用户输入原样。
                 for identifier in (env.get('serialNumber'),
                                    env.get('containerCode')):
-                    key = str(identifier or '')
-                    if key and key in serials:
-                        env_index[key] = env
+                    key = str(identifier or '').strip().casefold()
+                    if key and key in wanted:
+                        env_index[wanted[key]] = env
+                name = str(env.get('containerName') or '').strip()
+                if name and name.casefold() in wanted:
+                    name_matches.setdefault(name.casefold(), []).append(env)
+            for name_key, matched in name_matches.items():
+                if len(matched) == 1:
+                    env_index.setdefault(wanted[name_key], matched[0])
             with self._lock:
                 for serial in serials:
                     env = env_index.get(serial, {})
@@ -223,8 +233,8 @@ class StoreFinanceInspector(object):
         try:
             if not env:
                 raise RuntimeError(
-                    '环境序号未找到：请粘贴 HubStudio 环境序号或环境 ID，'
-                    '而非店铺名')
+                    '未匹配到唯一环境：请粘贴环境序号、环境 ID 或环境'
+                    '完整名称（重名环境请用序号定位）')
             # 浏览器操作一律用环境 ID（containerCode）；serial 仅作行键展示。
             container_code = str(env.get('containerCode') or '') or serial
             opened_before = container_code in self.hub.open_container_codes()
