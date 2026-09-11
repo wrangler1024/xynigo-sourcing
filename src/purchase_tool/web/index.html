@@ -4468,7 +4468,10 @@ function sfRenderSummary(data) {
 }
 async function sfStart(options = {}) {
   if (SF_STATE.running) return;
-  const serials = sfSelectedSerials();
+  // 补采失败等场景显式携带序号，不依赖当前勾选态（勾选键是 environmentId，
+  // 与结果行的 environmentSerial 不同键，直接复用会错配成空清单）。
+  const serials = (Array.isArray(options.serials) && options.serials.length)
+    ? options.serials : sfSelectedSerials();
   if (!serials.length) { sfSetPhase('等待发起', '请先查询并勾选巡检店铺。', false); return; }
   let executor;
   try { executor = await cloudFormalExecutor('store.finance.inspect.v1'); }
@@ -4543,9 +4546,12 @@ function sfLastRows() { return SF_STATE.lastRows; }
 async function sfRetryFail() {
   const serials = sfFailedSerials();
   if (!serials.length || SF_STATE.running) return;
-  SF_STATE.selected = new Set(serials);
+  const serialSet = new Set(serials);
+  SF_STATE.selected = new Set(SF_STATE.shops
+    .filter(shop => serialSet.has(shop.environmentSerial))
+    .map(shop => shop.environmentId));
   sfSaveList(); sfRenderShops(); sfRefreshSel();
-  await sfStart({ queryMode: 'failed_retry' });
+  await sfStart({ queryMode: 'failed_retry', serials });
 }
 $('sfRetryFail').onclick = sfRetryFail;
 $('sfClearResult').onclick = () => {
