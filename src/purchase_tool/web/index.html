@@ -4487,6 +4487,7 @@ async function sfStart(options = {}) {
     browserMode: headless ? 'headless' : 'visible',
     concurrency: sfConc(),
     environmentSerials: serials,
+    ...(options.sourceRunId ? { sourceRunId: options.sourceRunId } : {}),
   };
   try {
     const res = await cloudFetchJson('/v1/operation-runs/store-finance-inspect', {
@@ -4500,7 +4501,8 @@ async function sfStart(options = {}) {
     SF_STATE.pollErrors = 0;
     $('sfStart').disabled = true; $('sfStop').disabled = false;
     $('sfRunLegend').textContent = 'Run ' + SF_STATE.runId.slice(0, 8);
-    sfSetPhase('巡检运行中', `无头${headless ? '开' : '关'} · 并发 ${sfConc()} · 共 ${serials.length} 家`, true);
+    sfSetPhase(options.queryMode === 'failed_retry' ? '补采运行中' : '巡检运行中',
+    `无头${headless ? '开' : '关'} · 并发 ${sfConc()} · ${options.queryMode === 'failed_retry' ? '补采失败店铺 ' : '共 '}${serials.length} 家（汇总保持全量视角）`, true);
     sfPoll();
   } catch (e) {
     sfSetPhase('发起失败', String(e.message || e), false);
@@ -4573,7 +4575,8 @@ async function sfRetryFail() {
     .filter(shop => serialSet.has(shop.environmentSerial))
     .map(shop => shop.environmentId));
   sfSaveList(); sfRenderShops(); sfRefreshSel();
-  await sfStart({ queryMode: 'failed_retry', serials });
+  await sfStart({ queryMode: 'failed_retry', serials,
+    sourceRunId: SF_STATE.runId });
 }
 $('sfRetryFail').onclick = sfRetryFail;
 $('sfClearResult').onclick = () => {

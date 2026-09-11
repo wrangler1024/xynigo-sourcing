@@ -763,8 +763,9 @@ class StoreFinanceRetryWiringTests(unittest.TestCase):
         for path in (LOCAL_HTML, CLOUD_HTML):
             html = path.read_text(encoding="utf-8")
             self.assertIn(
-                "await sfStart({ queryMode: 'failed_retry', serials });",
+                "await sfStart({ queryMode: 'failed_retry', serials,",
                 html)
+            self.assertIn("sourceRunId: SF_STATE.runId", html)
             self.assertIn(
                 "const serials = (Array.isArray(options.serials)"
                 " && options.serials.length)", html)

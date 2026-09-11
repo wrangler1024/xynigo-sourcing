@@ -665,3 +665,178 @@ def test_store_finance_environment_lookup_round_trip(tmp_path) -> None:
         assert data["lastRuns"]["GS1098478"]["status"] == "ok"
         assert data["lastRuns"]["GS1098478"]["loginMode"] == "reuse"
         break
+
+
+# ===== 补采合并：failed_retry Run 的快照/导出合并源 Run 成功行 =====
+def test_store_finance_retry_run_merges_source_rows(tmp_path) -> None:
+    for web_client, device_client, ids, database in _e2e_setup(tmp_path):
+        executor_id = ids["executorId"]
+        credential = ids["credential"]
+        heartbeat(device_client, credential, capabilities=SF_CAPABILITIES,
+                  client_version="0.17.18")
+
+        # 源批次：山岚 ok + 花间 fail
+        created = web_client.post(
+            "/v1/operation-runs/store-finance-inspect",
+            json={
+                "idempotencyKey": "sf-merge-source-00001",
+                "executorId": executor_id,
+                "environmentSerials": ["1746", "1747"],
+            },
+            headers=CSRF,
+        )
+        assert created.status_code == 202, created.text
+        source_run_id = created.json()["data"]["runId"]
+        lease = heartbeat(device_client, credential,
+                          capabilities=SF_CAPABILITIES,
+                          client_version="0.17.18")["task"]
+        lease_token = lease["leaseToken"]
+        device_client.post(
+            f"/v1/executor-channel/tasks/{lease['id']}/start",
+            json={"leaseToken": lease_token},
+            headers=device_headers(credential),
+        )
+
+        def _row(serial, name, status):
+            return {
+                "environmentSerial": serial,
+                "storeName": name,
+                "gsCode": "GS" + serial,
+                "status": status,
+                "loginMode": "auto" if status == "ok" else None,
+                "inTransitAmount": 10.0 if status == "ok" else None,
+                "unsettledAmount": None,
+                "nextSettlementAmount": None,
+                "nextSettlementDate": "",
+                "completedSettlementAmount": None,
+                "nonWithdrawableAmount": None,
+                "pendingSettleLimitAmount": None,
+                "lastPayoutAmount": None,
+                "withdrawableAmount": None,
+                "collectedAt": "2026-09-11T06:00:00+08:00",
+                "durationSeconds": 30,
+                "errorSummary": None if status == "ok" else "失败原因",
+                "screenshotSha256": None,
+            }
+
+        device_client.post(
+            f"/v1/executor-channel/tasks/{lease['id']}/progress",
+            json={
+                "leaseToken": lease_token,
+                "phase": "store_finance.running",
+                "current": 2,
+                "total": 2,
+                "snapshot": {"rows": [
+                    _row("1746", "山岚", "ok"),
+                    _row("1747", "花间", "fail"),
+                ]},
+            },
+            headers=device_headers(credential),
+        )
+        device_client.post(
+            f"/v1/executor-channel/tasks/{lease['id']}/finish",
+            json={
+                "leaseToken": lease_token,
+                "outcome": "succeeded",
+                "resultCode": "store_finance_partial_failure",
+                "resultSummary": {
+                    "runStatus": "partial_failure",
+                    "phase": "store_finance.partial_failure",
+                    "progressCompleted": 2,
+                    "progressTotal": 2,
+                    "successCount": 1,
+                    "failedCount": 1,
+                    "stoppedCount": 0,
+                },
+            },
+            headers=device_headers(credential),
+        )
+        source_snap = web_client.get(
+            f"/v1/operation-runs/store-finance-inspect/{source_run_id}"
+        ).json()["data"]
+        assert source_snap["successCount"] == 1
+
+        # 补采批次：只重跑花间(1747)，标记 sourceRunId
+        retry = web_client.post(
+            "/v1/operation-runs/store-finance-inspect",
+            json={
+                "idempotencyKey": "sf-merge-retry-00001",
+                "executorId": executor_id,
+                "queryMode": "failed_retry",
+                "environmentSerials": ["1747"],
+                "sourceRunId": source_run_id,
+            },
+            headers=CSRF,
+        )
+        assert retry.status_code == 202, retry.text
+        retry_run_id = retry.json()["data"]["runId"]
+        # 发起瞬间快照就应带出源 Run 的成功行（汇总不清空）
+        early = web_client.get(
+            f"/v1/operation-runs/store-finance-inspect/{retry_run_id}"
+        ).json()["data"]
+        assert {r["storeName"] for r in early["rows"]} == {"山岚", "花间"}
+        assert early["totalCount"] == 2
+
+        lease2 = heartbeat(device_client, credential,
+                           capabilities=SF_CAPABILITIES,
+                           client_version="0.17.18")["task"]
+        lease2_token = lease2["leaseToken"]
+        device_client.post(
+            f"/v1/executor-channel/tasks/{lease2['id']}/start",
+            json={"leaseToken": lease2_token},
+            headers=device_headers(credential),
+        )
+        device_client.post(
+            f"/v1/executor-channel/tasks/{lease2['id']}/progress",
+            json={
+                "leaseToken": lease2_token,
+                "phase": "store_finance.running",
+                "current": 1,
+                "total": 1,
+                "snapshot": {"rows": [
+                    {**_row("1747", "花间", "ok"),
+                     "inTransitAmount": 99.0},
+                ]},
+            },
+            headers=device_headers(credential),
+        )
+        device_client.post(
+            f"/v1/executor-channel/tasks/{lease2['id']}/finish",
+            json={
+                "leaseToken": lease2_token,
+                "outcome": "succeeded",
+                "resultCode": "store_finance_completed",
+                "resultSummary": {
+                    "runStatus": "completed",
+                    "phase": "store_finance.completed",
+                    "progressCompleted": 1,
+                    "progressTotal": 1,
+                    "successCount": 1,
+                    "failedCount": 0,
+                    "stoppedCount": 0,
+                },
+            },
+            headers=device_headers(credential),
+        )
+        final = web_client.get(
+            f"/v1/operation-runs/store-finance-inspect/{retry_run_id}"
+        ).json()["data"]
+        # 合并后：两家全 ok，花间金额来自补采行
+        rows = {r["storeName"]: r for r in final["rows"]}
+        assert rows["山岚"]["status"] == "ok"
+        assert rows["花间"]["status"] == "ok"
+        assert rows["花间"]["inTransitAmount"] == 99.0
+        assert final["successCount"] == 2
+        assert final["failedCount"] == 0
+        assert final["mergedFromSource"] is True
+        # 进度条仍是补采范围
+        assert final["progressTotal"] == 1
+
+        exported = web_client.get(
+            f"/v1/operation-runs/store-finance-inspect/{retry_run_id}/export"
+        )
+        assert exported.status_code == 200, exported.text
+        values = _sheet_values(exported.content)
+        names = {row[0] for row in values[1:] if row[0] != "合计"}
+        assert names == {"山岚", "花间"}  # 导出含源 Run 成功行
+        break

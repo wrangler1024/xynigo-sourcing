@@ -906,6 +906,8 @@ class StoreFinanceRunCreateBody(BaseModel):
     queryMode: Literal["initial", "failed_retry"] = "initial"
     browserMode: Literal["headless", "visible"] = "headless"
     concurrency: int = Field(default=2, ge=1, le=5)
+    # failed_retry 时指向被补采的源 Run：快照/导出合并源行，成功数据不丢
+    sourceRunId: uuid.UUID | None = None
     environmentSerials: list[str] = Field(min_length=1, max_length=300)
 
     @field_validator("environmentSerials")

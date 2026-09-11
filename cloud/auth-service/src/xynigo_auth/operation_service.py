@@ -388,6 +388,8 @@ class OperationRunService:
             request_summary={
                 "environmentSerials": list(body.environmentSerials),
                 "browserMode": body.browserMode,
+                **({"sourceRunId": str(body.sourceRunId)}
+                   if body.sourceRunId is not None else {}),
             },
             source="cloud_web",
             created_at=now,
@@ -3123,14 +3125,43 @@ def store_finance_last_runs(session, tenant_id, gs_codes) -> dict:
     return latest
 
 
-def store_finance_snapshot(session, run: StoreFinanceInspectRun) -> dict:
-    """前端进度/结果视图的统一快照（含全部结果行）。"""
+def _store_finance_merged_result_rows(session, run):
+    """结果行查询：failed_retry 时先取源 Run 行，再按序号覆盖当前行。"""
     from .models import StoreFinanceInspectResult as ResultModel
-    rows = session.scalars(
-        select(ResultModel)
-        .where(ResultModel.run_id == run.id)
-        .order_by(ResultModel.store_name)
+    source_run_id = (run.request_summary or {}).get("sourceRunId")
+    current_rows = session.scalars(
+        select(ResultModel).where(ResultModel.run_id == run.id)
     ).all()
+    if not source_run_id:
+        return sorted(current_rows, key=lambda r: r.store_name or "")
+    source = session.scalar(
+        select(StoreFinanceInspectRun).where(
+            StoreFinanceInspectRun.id == uuid.UUID(str(source_run_id)),
+            StoreFinanceInspectRun.tenant_id == run.tenant_id,
+        )
+    )
+    if source is None:
+        return sorted(current_rows, key=lambda r: r.store_name or "")
+    source_rows = session.scalars(
+        select(ResultModel).where(ResultModel.run_id == source.id)
+    ).all()
+    by_serial = {row.environment_serial: row for row in source_rows}
+    # 当前 Run 行必胜（不依赖 collected_at：补采行可能早于源行落库时间）
+    for row in current_rows:
+        by_serial[row.environment_serial] = row
+    return sorted(by_serial.values(), key=lambda r: r.store_name or "")
+
+
+def store_finance_snapshot(session, run: StoreFinanceInspectRun) -> dict:
+    """前端进度/结果视图的统一快照（含全部结果行）。
+
+    failed_retry Run 记录了 sourceRunId：快照以源 Run 行打底、当前行
+    按环境序号覆盖合并——补采期间与补采后的汇总卡片/导出都保持全量
+    视角（成功数据不因只重跑失败店铺而丢失）。进度条仍按补采范围计数。
+    """
+    from .models import StoreFinanceInspectResult as ResultModel
+    merged_rows = _store_finance_merged_result_rows(session, run)
+    rows = merged_rows
     result_rows = []
     for row in rows:
         result_rows.append({
@@ -3169,6 +3200,10 @@ def store_finance_snapshot(session, run: StoreFinanceInspectRun) -> dict:
             "errorSummary": row.error_summary or "",
             "screenshotSha256": row.screenshot_sha256 or "",
         })
+    merged = bool((run.request_summary or {}).get("sourceRunId"))
+    ok_count = sum(1 for row in result_rows if row["status"] == "ok")
+    bad_count = sum(1 for row in result_rows
+                    if row["status"] in ("fail", "login", "inuse"))
     return {
         "runId": str(run.id),
         "status": run.status,
@@ -3177,9 +3212,10 @@ def store_finance_snapshot(session, run: StoreFinanceInspectRun) -> dict:
         "browserMode": run.browser_mode,
         "progressCompleted": run.progress_completed,
         "progressTotal": run.progress_total,
-        "totalCount": run.total_count,
-        "successCount": run.success_count,
-        "failedCount": run.failed_count,
+        "totalCount": len(result_rows) if merged else run.total_count,
+        "successCount": ok_count if merged else run.success_count,
+        "failedCount": bad_count if merged else run.failed_count,
+        "mergedFromSource": merged,
         "stopRequested": run.stop_requested,
         "completedAt": (run.completed_at.isoformat()
                         if run.completed_at else ""),

@@ -4843,6 +4843,16 @@ def create_app(
             authorization=authorization,
             audit_action=action,
         )
+        if body.sourceRunId is not None:
+            source_run = session.scalar(
+                select(StoreFinanceInspectRun).where(
+                    StoreFinanceInspectRun.id == body.sourceRunId,
+                    StoreFinanceInspectRun.tenant_id == actor.tenant.id,
+                )
+            )
+            if source_run is None:
+                raise HTTPException(
+                    status_code=404, detail="补采来源批次不存在")
         runs = OperationRunService(session)
         try:
             run, unchanged = runs.create_store_finance_run(
