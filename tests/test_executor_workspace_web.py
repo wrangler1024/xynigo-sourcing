@@ -753,3 +753,20 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StoreFinanceRetryWiringTests(unittest.TestCase):
+    """补采失败回归：勾选键(environmentId)与结果行键(environmentSerial)
+    不同，重试必须显式携带序号，不得复用勾选态推序号（否则空清单秒完成）。"""
+
+    def test_retry_sends_failed_serials_explicitly(self):
+        for path in (LOCAL_HTML, CLOUD_HTML):
+            html = path.read_text(encoding="utf-8")
+            self.assertIn(
+                "await sfStart({ queryMode: 'failed_retry', serials });",
+                html)
+            self.assertIn(
+                "const serials = (Array.isArray(options.serials)"
+                " && options.serials.length)", html)
+            # 勾选展示映射按序号→环境ID，不得直接把序号塞进 selected
+            self.assertNotIn("SF_STATE.selected = new Set(serials);", html)
