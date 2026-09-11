@@ -5168,6 +5168,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({
                     'saved': True,
                     'ttlSeconds': ttl,
+                    # 桌面端保存后会用它重画档位；缺失会把选择回落到默认 8 秒。
+                    'cacheTtlSeconds': ttl,
                     'validation': checked,
                     **STATE.data_sources.public_snapshot(
                         member_id, include_all=include_all),

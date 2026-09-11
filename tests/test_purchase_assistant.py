@@ -1062,6 +1062,8 @@ class PurchaseAssistantCacheTtlRouteTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(payload['saved'])
         self.assertEqual(payload['ttlSeconds'], 1800)
+        # 桌面端用响应里的 cacheTtlSeconds 重画档位；缺它会静默回落到 8 秒。
+        self.assertEqual(payload['cacheTtlSeconds'], 1800)
         self.assertTrue(payload['validation']['valid'])
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0]['id'], self.source['id'])
@@ -1071,6 +1073,13 @@ class PurchaseAssistantCacheTtlRouteTests(unittest.TestCase):
         self.assertEqual(
             main_module.STATE.cfg['purchaseAssistantCacheTtlSeconds'], 1800)
         self.assertEqual(len(self.config_service.commits), 1)
+        request = Request(self.base_url + '/api/local-config/data-sources')
+        try:
+            response = urlopen(request, timeout=3)
+        except HTTPError as exc:
+            response = exc
+        snapshot = json.loads(response.read().decode('utf-8'))
+        self.assertEqual(snapshot['cacheTtlSeconds'], 1800)
 
     def test_cache_ttl_save_is_rejected_when_cloud_validation_fails(self):
         def broken(target):
