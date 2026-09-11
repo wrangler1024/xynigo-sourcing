@@ -82,7 +82,7 @@ def date_after(text, label):
 
 
 def parse_sms_url(remark):
-    """从环境备注提取接码原始 URL（形如「手机号----https://…/sms/get?key=<32hex>」）。
+    """从环境备注提取接码原始 URL（形如「手机号----接码链接（含 32 位 hex 取码参数）」）。
 
     域名与参数名随备注原样使用；备注可含其他文字，链接须满足
     …/sms/get?<3字母参数>=<32位hex>。找不到返回 None。

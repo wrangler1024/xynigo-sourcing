@@ -31,10 +31,10 @@ class MoneyParsingTests(unittest.TestCase):
         self.assertIsNone(date_after(self.TEXT, '累计未结算金额'))
 
     def test_parse_sms_url_from_remark(self):
-        remark = ('13800000000----https://api68.vip/api/sms/get?key='
+        remark = ('13800000000----https://example.test/api/sms/get?key='
                   + 'c' * 32)
         self.assertEqual(parse_sms_url(remark),
-                         'https://api68.vip/api/sms/get?key=' + 'c' * 32)
+                         'https://example.test/api/sms/get?key=' + 'c' * 32)
         self.assertIsNone(parse_sms_url('没有接码链接的备注'))
 
     def test_extract_code_validates_account_tail(self):
@@ -60,7 +60,7 @@ class _FakeHub(object):
             'serialNumber': '9' + s,  # 序号与环境 ID 是两套标识
             'containerName': '店铺' + s,
             'accounts': [{'accountName': 'GS' + s.zfill(4)}],
-            'remark': 'x----https://api68.vip/api/sms/get?key=' + 'a' * 32,
+            'remark': 'x----https://example.test/api/sms/get?key=' + 'a' * 32,
         } for s in self._serials]
 
     def open_container_codes(self):
@@ -607,7 +607,7 @@ class LookupCredentialFlagsTests(unittest.TestCase):
                 {'containerCode': '1776003960', 'serialNumber': '1377',
                  'containerName': '溪山-子', 'tagName': '魏无羡',
                  'accounts': [{'accountName': 'GS1'}],
-                 'remark': '13800000000----https://api68.vip/api/sms/get?key=' + 'a' * 32},
+                 'remark': '13800000000----https://example.test/api/sms/get?key=' + 'a' * 32},
                 {'containerCode': '1775999821', 'serialNumber': '1378',
                  'containerName': '帆影-子', 'tagName': '魏无羡',
                  'accounts': [], 'remark': '普通备注文字'},
