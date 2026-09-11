@@ -490,16 +490,32 @@ class StoreFinanceInspector(object):
             return 'logged_in'
         return 'other'
 
+    _JS_LOGIN_TOAST = (
+        '(() => { const clean = s => String(s || "").replace(/\\s+/g, " ")'
+        '.trim();'
+        ' const hints = ["账号或绑定信息不正确", "账号未启用", "密码错误",'
+        ' "尝试次数过多", "账号已锁定", "验证码错误", "验证码已过期"];'
+        ' const text = clean(document.body.innerText);'
+        ' for (const h of hints) { if (text.indexOf(h) >= 0) return h; }'
+        ' return ""; })()')
+
     @staticmethod
     def _login_failure_reason(page):
-        """区分「站点不可达」与「登录验证未通过」，避免网络故障误报成账号问题。"""
+        """区分「站点不可达」「页面报错」与「验证未通过」，把页面真实
+        提示带给结果行，避免网络/凭据问题被笼统报成登录未完成。"""
         url = (page.url or '') if page is not None else ''
         text = ''
+        toast = ''
         if page is not None:
             try:
                 text = page.inner_text() or ''
             except Exception:
                 text = ''
+            try:
+                toast = page.js_evaluate(
+                    StoreFinanceInspector._JS_LOGIN_TOAST) or ''
+            except Exception:
+                toast = ''
         lowered = text.lower()
         if (url.startswith('chrome-error://')
                 or '无法访问此网站' in text
@@ -508,6 +524,8 @@ class StoreFinanceInspector(object):
                 or 'err_connection' in lowered):
             return ('卖家后台无法访问：连接被重置或站点不可达'
                     '（代理/网络问题，非账号问题；稍后用「补采失败」重试）')
+        if toast:
+            return '登录被拒：%s（核对 HubStudio 绑定的账号密码）' % toast
         return '自动登录未完成（登录页/验证未通过）'
 
     def _ensure_session(self, page, port, account, password, sms_key,
@@ -704,19 +722,21 @@ class StoreFinanceInspector(object):
         return 'no_close_btn';
       })()"""
     _JS_FOCUS_VISIBLE = (
-        '(() => { const xs=[...document.querySelectorAll('
-        '\'input[type="%s"]\')].filter(i=>'
-        'i.getClientRects().length>0 && !i.disabled && !i.readOnly);'
+        '(() => { const xs=[...document.querySelectorAll("input")]'
+        '.filter(i=>(i.type||"text")==="%s" &&'
+        ' i.getClientRects().length>0 && !i.disabled && !i.readOnly);'
         'const e=xs[0]; if(!e) return false;'
         'e.focus(); if(typeof e.select==="function") e.select();'
         ' return true; })()')
     _JS_VALUE_VISIBLE = (
-        '(() => { const e=[...document.querySelectorAll('
-        '\'input[type="%s"]\')].find(i=>i.getClientRects().length>0);'
+        '(() => { const e=[...document.querySelectorAll("input")]'
+        '.find(i=>(i.type||"text")==="%s" &&'
+        ' i.getClientRects().length>0);'
         ' return e ? String(e.value || "") : null; })()')
     _JS_COMMIT_VISIBLE = (
-        '(() => { const e=[...document.querySelectorAll('
-        '\'input[type="%s"]\')].find(i=>i.getClientRects().length>0);'
+        '(() => { const e=[...document.querySelectorAll("input")]'
+        '.find(i=>(i.type||"text")==="%s" &&'
+        ' i.getClientRects().length>0);'
         ' if(e) e.dispatchEvent(new Event("change",'
         ' {bubbles:true,composed:true})); return true; })()')
     _JS_CLICK_TAB = """
@@ -738,25 +758,64 @@ class StoreFinanceInspector(object):
         time.sleep(2)
         return closed == 'clicked'
 
+    _JS_CLEAR_VISIBLE = (
+        '(() => { const e=[...document.querySelectorAll("input")]'
+        '.find(i=>(i.type||"text")==="%s" &&'
+        'i.getClientRects().length>0); if(!e) return false;'
+        'const setter=Object.getOwnPropertyDescriptor('
+        'window.HTMLInputElement.prototype,"value").set;'
+        'setter.call(e, ""); e.dispatchEvent(new Event("input",'
+        '{bubbles:true})); return true; })()')
+    _JS_POINT_VISIBLE_INPUT = (
+        '(() => { const e=[...document.querySelectorAll("input")]'
+        '.find(i=>(i.type||"text")==="%s" &&'
+        'i.getClientRects().length>0); if(!e) return null; '
+        'const rr=e.getBoundingClientRect(); '
+        'const m=Math.max(2, Math.min(12, rr.width / 4, rr.height / 4)); '
+        'const x=Math.min(Math.max(rr.left + rr.width / 2, rr.left + m, m),'
+        ' Math.min(rr.right - m, innerWidth - m)); '
+        'const y=Math.min(Math.max(rr.top + rr.height / 2, rr.top + m, m),'
+        ' Math.min(rr.bottom - m, innerHeight - m)); '
+        'if (x < rr.left || x > rr.right || y < rr.top || y > rr.bottom)'
+        ' return null; '
+        'return {x: x, y: y}; })()')
+
     def _fill_visible_input(self, page, itype, value, retries=2):
-        """填第一个可见的指定类型输入框：全原生事件（聚焦→全选→
-        Backspace 清空→逐键输入→回读校验），凭据不进任何表达式。"""
+        """填第一个可见的指定类型输入框，凭据不进任何 JS 表达式。
+
+        新 GMPSSO 登录页两个坑叠加：①触发 HubStudio 对绑定账密的自动
+        填充，输入框可能预置内容，叠加键入会变成双倍凭据；②逐键输入
+        期间 React 校验/重渲染会吃掉焦点，字符全部丢失。因此用：
+        原生全选删除（一次原子清空）→ 原生点击硬聚焦 → insertText
+        原子插入 → 回读校验，失败自动再清一轮重试。
+        """
         for _ in range(retries + 1):
             self._dismiss_overlay(page)
             if not page.js_evaluate(self._JS_FOCUS_VISIBLE % itype):
                 time.sleep(1.2)
                 continue
-            time.sleep(0.3)
-            for _ in range(len(str(value)) + 3):
-                page.press_key('Backspace', 'Backspace', 8)
+            time.sleep(0.25)
+            page.press_key('KeyA', 'a', 65, modifiers=4)
+            page.press_key('Backspace', 'Backspace', 8)
             time.sleep(0.2)
-            page.type_keys(value, delay=0.03)
+            remaining = page.js_evaluate(self._JS_VALUE_VISIBLE % itype)
+            if remaining:
+                page.js_evaluate(self._JS_CLEAR_VISIBLE % itype)
+                time.sleep(0.3)
+            point = page.js_evaluate(
+                self._JS_POINT_VISIBLE_INPUT % itype)
+            if point:
+                page.native_click_point(point['x'], point['y'])
+                time.sleep(0.15)
+            page.insert_text(str(value))
             time.sleep(0.4)
             got = page.js_evaluate(self._JS_VALUE_VISIBLE % itype)
             if got == str(value):
                 page.js_evaluate(self._JS_COMMIT_VISIBLE % itype)
                 return True
-            time.sleep(1)
+            # 可能是自动填充竞速叠加或焦点再丢：彻底清空后重试一轮
+            page.js_evaluate(self._JS_CLEAR_VISIBLE % itype)
+            time.sleep(0.8)
         return False
 
     def _native_click(self, page, label):

@@ -581,3 +581,18 @@ class LoginFailureReasonTests(unittest.TestCase):
                 raise RuntimeError('页面已销毁')
         reason = StoreFinanceInspector._login_failure_reason(_Page())
         self.assertEqual(reason, '自动登录未完成（登录页/验证未通过）')
+
+
+class LoginToastReasonTests(unittest.TestCase):
+    def test_page_rejection_message_is_surfaced(self):
+        class _Page(object):
+            url = 'https://sellerhub.shein.com/#/login/GMPSSO/xx'
+            def inner_text(self):
+                return '账号登录 提示 您输入的账号或绑定信息不正确或账号未启用 知道了'
+            def js_evaluate(self, expr):
+                if '账号或绑定信息不正确' in expr:
+                    return '账号或绑定信息不正确'
+                return ''
+        reason = StoreFinanceInspector._login_failure_reason(_Page())
+        self.assertIn('登录被拒', reason)
+        self.assertIn('账号或绑定信息不正确', reason)

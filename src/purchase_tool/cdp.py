@@ -195,6 +195,19 @@ class PageTarget(object):
             raise CdpError('输入回读校验失败: %s' % selector)
         return True
 
+    def insert_text(self, text):
+        """向当前焦点元素原子插入文本（Input.insertText）。"""
+        self._send('Input.insertText', {'text': str(text)})
+
+    def native_click_point(self, x, y):
+        """在视口坐标派发一次原生鼠标点击（调用方负责坐标在目标上）。"""
+        self.bring_to_front()
+        for event_type in ('mousePressed', 'mouseReleased'):
+            self._send('Input.dispatchMouseEvent', {
+                'type': event_type, 'x': float(x), 'y': float(y),
+                'button': 'left', 'clickCount': 1})
+        return True
+
     def type_keys(self, text, delay=0.06):
         """向当前焦点逐键输入；适合六格验证码自动跳格。"""
         for ch in str(text):
@@ -363,12 +376,31 @@ class PageTarget(object):
                 'button': 'left', 'clickCount': 1})
         return True
 
+    # 滚动进视口后取「元素与视口交集」内的点击点。新登录页的大按钮在
+    # 800px 无头视口下中心会落在视口外（元素右缘超过视口宽度），直接
+    # 用中心坐标派发鼠标事件会点空；钳制到可见交集内仍能命中按钮。
+    # 闭包直接引用调用方作用域里的元素变量 e；不能再声明 const e=…
+    # （会自引用触发 TDZ ReferenceError，整个表达式被吞成 null）。
+    _JS_CLAMPED_POINT = (
+        '(() => { '
+        'if (e.scrollIntoViewIfNeeded) { try { e.scrollIntoViewIfNeeded(true); }'
+        ' catch (err) {} } '
+        'const rr=e.getBoundingClientRect(); '
+        'const m=Math.max(2, Math.min(12, rr.width / 4, rr.height / 4)); '
+        'const x=Math.min(Math.max(rr.left + rr.width / 2, rr.left + m, m),'
+        ' Math.min(rr.right - m, innerWidth - m)); '
+        'const y=Math.min(Math.max(rr.top + rr.height / 2, rr.top + m, m),'
+        ' Math.min(rr.bottom - m, innerHeight - m)); '
+        'if (x < rr.left || x > rr.right || y < rr.top || y > rr.bottom)'
+        ' return null; '
+        'return {x: x, y: y}; })()')
+
     def click_selector(self, selector):
         point = self._evaluate(
             '(() => { const e=document.querySelector(%s); if(!e) return null; '
             'const r=e.getBoundingClientRect(); if(r.width<=0||r.height<=0) '
-            'return null; return {x:r.left+r.width/2,y:r.top+r.height/2}; })()'
-            % json.dumps(selector))
+            'return null; return %s; })()'
+            % (json.dumps(selector), self._JS_CLAMPED_POINT))
         if not self._click_point(point):
             raise CdpError('未找到可点击元素: %s' % selector)
         return True
@@ -379,14 +411,14 @@ class PageTarget(object):
         exact_js = ('t===wantedNorm' if exact
                     else 't.indexOf(wantedNorm)>=0')
         point = self._evaluate(
-            '(() => { const wanted=%s; const norm=s=>String(s||"").replace(/\\s+/g," ").trim(); '
+            '(() => { const wanted=%s; const norm=s=>String(s||"").replace(/\\s+/g,""); '
             'const wantedNorm=norm(wanted).toLocaleLowerCase(); '
             'const els=[...document.querySelectorAll('
             '"button,a,[role=button],input[type=submit]")]; '
             'for(const e of els){ const t=norm(e.innerText||e.value).toLocaleLowerCase(); '
             'const r=e.getBoundingClientRect(); if(%s && r.width>0&&r.height>0) '
-            'return {x:r.left+r.width/2,y:r.top+r.height/2}; } return null; })()'
-            % (wanted, exact_js))
+            'return %s; } return null; })()'
+            % (wanted, exact_js, self._JS_CLAMPED_POINT))
         if not self._click_point(point):
             raise CdpError('未找到可点击文本: %s' % text)
         return True
