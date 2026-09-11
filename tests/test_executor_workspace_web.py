@@ -771,3 +771,17 @@ class StoreFinanceRetryWiringTests(unittest.TestCase):
                 " && options.serials.length)", html)
             # 勾选展示映射按序号→环境ID，不得直接把序号塞进 selected
             self.assertNotIn("SF_STATE.selected = new Set(serials);", html)
+
+    def test_store_finance_running_banner_keeps_spinner_and_round_copy(self):
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        self.assertEqual(html, CLOUD_HTML.read_text(encoding="utf-8"))
+        for marker in (
+            # 运行横幅的转圈必须保持显示；此前写成 !stopRequested，运行中反而隐藏。
+            "$('sfPhaseSpin').hidden = false;",
+            "'巡检运行中'",
+            "自动补采（第 ${round}/2 轮）",
+            "首轮巡检 + 2 轮自动补采，共 3 轮",
+        ):
+            self.assertIn(marker, html)
+        self.assertNotIn(
+            "$('sfPhaseSpin').hidden = !SF_STATE.stopRequested;", html)

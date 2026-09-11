@@ -4469,7 +4469,8 @@ function sfBannerCarousel(statusMsg) {
   // 运行横幅轮播：状态行（进度/停止/ETA）与说明文案每 4 秒交替
   sfStopBannerCarousel();
   $('sfPhaseBanner').hidden = false;
-  $('sfPhaseSpin').hidden = !SF_STATE.stopRequested;
+  // 运行与“正在停止”期间工作都在继续，转圈保持显示（此前写成 !stopRequested，运行中反而隐藏）。
+  $('sfPhaseSpin').hidden = false;
   $('sfPhaseTitle').textContent = SF_STATE.stopRequested ? '正在停止' : '巡检运行中';
   $('sfPhaseDescription').textContent = statusMsg;
   let idx = 0;
@@ -4636,8 +4637,8 @@ async function sfPoll() {
           && ['completed', 'partial_failure'].includes(data.status)) {
         SF_STATE.retryCount += 1;
         const round = SF_STATE.retryCount;
-        sfSetPhase(`自动补采（第 ${round} 轮）`,
-          `检测到 ${bad} 家失败；1.5 秒后自动发起第 ${round} 轮补采（最多 2 轮）。`, true);
+        sfSetPhase(`自动补采（第 ${round}/2 轮）`,
+          `检测到 ${bad} 家失败；1.5 秒后自动发起第 ${round}/2 轮补采（首轮巡检 + 2 轮自动补采，共 3 轮；人工补采不会自动续跑）。`, true);
         setTimeout(() => { if (!SF_STATE.running) sfRetryFail(); }, 1500);
       }
     } else if (SF_STATE.stopRequested) {
