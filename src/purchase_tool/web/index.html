@@ -655,9 +655,7 @@
   #storeFinancePanel .chip[data-sf-conc]{margin-right:5px}
   #storeFinancePanel .chip[data-sf-conc]:last-of-type{margin-right:0}
   #storeFinancePanel .chip[data-sf-conc].active{background:var(--rhino-600);border-color:var(--rhino-600);color:#fff}
-  #storeFinancePanel .progress-wrap{flex:0 0 300px;min-width:220px}
-  #storeFinancePanel .progress{height:12px}
-  #storeFinancePanel #sfProgressText{font-weight:800;color:var(--navy-700);font-size:12px;white-space:nowrap}
+
   .procurement-state.ok { border-color: #bce5d2; background: var(--green-100); color: var(--green); }
   .procurement-state.bad { border-color: #ffd2c7; background: var(--coral-100); color: var(--coral-500); }
   .procurement-table-scroll { position: relative; }
@@ -2068,11 +2066,10 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
       <div class="action-row">
         <button class="btn primary" id="sfStart">一键巡检</button>
         <button class="btn danger" id="sfStop" disabled>停止</button>
-        <div class="progress-wrap" style="flex:0 1 260px; min-width:180px">
+        <div class="progress-wrap">
           <div class="progress" id="sfProgress" role="progressbar" aria-valuemin="0"><div class="bar" id="sfBar"></div></div>
           <span id="sfProgressText">未开始</span>
         </div>
-        <span class="resource-state" style="flex:1">全流程只读采集；登录态失效的店铺将自动登录。防重说明：同一巡检批次标识不会被重复发起（并发同店互斥将在后续版本提供）。</span>
       </div>
     </section>
 
@@ -4410,12 +4407,10 @@ function sfConc() {
   return active ? Number(active.dataset.sfConc) : 2;
 }
 function sfProgressLabel(data) {
-  // 内嵌进度条只放紧凑计数；平均/本轮/累计等长统计由运行横幅承载
+  // 与物流查询同款完整标签；「累计执行」在补采时=源批次+本轮耗时
   const total = Math.max(Number(data.progressTotal || 0),
     (data.rows || []).length);
-  return `${Number(data.progressCompleted || 0)} / ${total}`;
-}
-function sfRunStatsLabel(data) {
+  const processed = Number(data.progressCompleted || 0);
   const durations = (data.rows || [])
     .map(r => Number(r.durationSeconds || 0)).filter(v => v > 0);
   const avg = durations.length
@@ -4431,9 +4426,8 @@ function sfRunStatsLabel(data) {
     ? Math.max(0, (end - start) / 1000) : 0;
   const retry = data.queryMode === 'failed_retry'
     ? elapsedClock(elapsed) : '—';
-  // 补采时「累计执行」= 源批次耗时 + 本轮耗时，不随新 Run 起点清零
   const cumulative = elapsed + (Number(data.sourceElapsedSeconds) || 0);
-  return `平均 ${average}`
+  return `已处理 ${processed} / ${total} ｜ 平均 ${average}`
     + ` ｜ 本轮重查 ${retry} ｜ 累计执行 ${elapsedClock(cumulative)}`;
 }
 function sfPaintProgress(data) {
@@ -4446,6 +4440,25 @@ function sfSetPhase(title, text, spin) {
   $('sfPhaseSpin').hidden = !spin;
   $('sfPhaseTitle').textContent = title;
   $('sfPhaseDescription').textContent = text;
+}
+const SF_HINT_TEXT = '全流程只读采集；登录态失效的店铺将自动登录。防重说明：同一巡检批次标识不会被重复发起（并发同店互斥将在后续版本提供）。';
+let sfBannerTimer = null;
+function sfStopBannerCarousel() {
+  if (sfBannerTimer) { clearInterval(sfBannerTimer); sfBannerTimer = null; }
+}
+function sfBannerCarousel(statusMsg) {
+  // 运行横幅轮播：状态行（进度/停止/ETA）与说明文案每 4 秒交替
+  sfStopBannerCarousel();
+  $('sfPhaseBanner').hidden = false;
+  $('sfPhaseSpin').hidden = !SF_STATE.stopRequested;
+  $('sfPhaseTitle').textContent = SF_STATE.stopRequested ? '正在停止' : '巡检运行中';
+  $('sfPhaseDescription').textContent = statusMsg;
+  let idx = 0;
+  const slides = [statusMsg, SF_HINT_TEXT];
+  sfBannerTimer = setInterval(() => {
+    idx = 1 - idx;
+    $('sfPhaseDescription').textContent = slides[idx];
+  }, 4000);
 }
 function sfMoney(v) {
   return v === null || v === undefined ? '' : Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -4587,6 +4600,7 @@ async function sfPoll() {
     SF_STATE.pollErrors = 0;
     const done = ['completed', 'partial_failure', 'failed', 'cancelled', 'uncertain'].includes(data.status);
     if (done) {
+      sfStopBannerCarousel();
       const bad = data.failedCount || 0;
       const stopped = (data.rows || []).filter(r => r.status === 'stopped').length;
       const tail = SF_STATE.stopRequested && stopped
@@ -4608,7 +4622,7 @@ async function sfPoll() {
         setTimeout(() => { if (!SF_STATE.running) sfRetryFail(); }, 1500);
       }
     } else if (SF_STATE.stopRequested) {
-      sfSetPhase('正在停止', `已请求停止，在途店铺完成后终止（已完成 ${data.progressCompleted ?? 0} / ${data.progressTotal ?? 0}）｜ ${sfRunStatsLabel(data)}`, true);
+      sfBannerCarousel(`已请求停止，在途店铺完成后终止（已完成 ${data.progressCompleted ?? 0} / ${data.progressTotal ?? 0}）。`);
     } else {
       const done = data.progressCompleted ?? 0, total = data.progressTotal ?? 0;
       if (SF_STATE.etaBase === null || SF_STATE.etaBase === undefined) {
@@ -4624,8 +4638,7 @@ async function sfPoll() {
           eta = `，预计还需约 ${Math.floor(etaSec / 60)} 分 ${etaSec % 60} 秒`;
         }
       }
-      sfSetPhase('巡检运行中',
-        `已完成 ${done} / ${total}${eta} ｜ ${sfRunStatsLabel(data)}`, true);
+      sfBannerCarousel(`已完成 ${done} / ${total}${eta}`);
     }
   } catch (e) {
     // 轮询失败静默重试；连续 5 次失败（会话过期/网络中断）必须显式提示，
@@ -4669,6 +4682,7 @@ async function sfRetryFail() {
 }
 $('sfRetryFail').onclick = sfRetryFail;
 $('sfClearResult').onclick = () => {
+  sfStopBannerCarousel();
   SF_STATE.runId = null; SF_STATE.lastRows = [];
   $('sfResRows').innerHTML = '<tr><td colspan="10" class="hint" style="text-align:center; padding:22px;">已清空。</td></tr>';
   $('sfPhaseBanner').hidden = true;
