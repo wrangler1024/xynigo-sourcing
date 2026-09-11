@@ -332,9 +332,12 @@ class StoreFinanceInspector(object):
             page = self._open_sellerhub(cdp)
             login_mode, session = self._ensure_session(
                 page, port, account, password, sms_key, shop_tail)
-            if not session:
+            if session is not True:
                 row = self._base_row(serial, env, 'login', login_mode)
-                row['errorSummary'] = self._login_failure_reason(page)
+                stage = str(session or '')
+                row['errorSummary'] = (
+                    stage[5:] if stage.startswith('fail:')
+                    else self._login_failure_reason(page))
                 row['durationSeconds'] = int(time.time() - started)
                 self._capture_screenshot(serial, page)
                 self._publish(serial, row)
@@ -540,9 +543,9 @@ class StoreFinanceInspector(object):
                                       sms_key, shop_tail)
             if result == 'need_password_verify':
                 if not self._password_verify(page, password):
-                    return mode, False
-            elif not result:
-                return mode, False
+                    return mode, ('fail:密码二次验证未通过')
+            elif result is not True:
+                return mode, result
         else:
             page.goto(SELLERHUB_ORIGIN + '/', settle_seconds=6.0)
             state = self._route_state(page)
@@ -551,10 +554,10 @@ class StoreFinanceInspector(object):
             if state == 'login_page':
                 return self._ensure_session(page, port, account, password,
                                             sms_key, shop_tail)
-            return None, False
+            return None, 'fail:卖家后台页面状态异常：%s' % (page.url or '')[:60]
 
         if not self._goto_income(page, password):
-            return mode, False
+            return mode, 'fail:收入页加载超时或被拦截'
         return mode, True
 
     def _goto_income(self, page, password):
@@ -578,15 +581,16 @@ class StoreFinanceInspector(object):
 
     def _login_flow(self, page, port, account, password, sms_key,
                     shop_tail):
-        """登录页账密登录；返回 True / False / 'need_password_verify'。"""
+        """登录页账密登录；返回 True / 'need_password_verify' /
+        'fail:阶段原因'（阶段标记让结果行能直接指出卡点）。"""
         if not self._fill_visible_input(page, 'text', account):
-            return False
+            return 'fail:账号输入未成功'
         time.sleep(0.4)
         if not self._fill_visible_input(page, 'password', password):
-            return False
+            return 'fail:密码输入未成功'
         time.sleep(0.4)
         if not self._native_click(page, '登录'):
-            return False
+            return 'fail:未找到/未点中登录按钮'
         deadline = time.time() + 30
         while time.time() < deadline:
             time.sleep(1.5)
@@ -595,11 +599,13 @@ class StoreFinanceInspector(object):
                 return True
             if state == 'login_page':
                 if self._otp_dialog_visible(page):
-                    return self._otp_flow(page, port, sms_key, shop_tail)
+                    result = self._otp_flow(page, port, sms_key, shop_tail)
+                    return result if result else (
+                        'fail:短信验证码未通过（接码超时或码被拒）')
                 continue
             if VERIFY_URL_MARK in (page.url or ''):
                 return 'need_password_verify'
-        return False
+        return 'fail:点击登录后 30 秒无进展：%s' % (page.url or '')[:60]
 
     def _otp_dialog_visible(self, page):
         return bool(page.js_evaluate(
