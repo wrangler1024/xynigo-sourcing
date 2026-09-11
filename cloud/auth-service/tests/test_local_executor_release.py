@@ -9,10 +9,13 @@ import pytest
 
 import xynigo_auth.local_executor_release as release_catalog
 from xynigo_auth.local_executor_release import (
+    RELEASE_VERSION,
     ReleaseAssetIntegrityCache,
     resolve_local_executor_release_asset,
     validate_release_platforms,
 )
+
+_CURRENT_RUNTIME = RELEASE_VERSION + "-"
 
 
 def test_compose_mounts_reviewed_release_assets_read_only() -> None:
@@ -35,7 +38,7 @@ def test_active_release_catalog_keeps_platform_runtimes_synchronized() -> None:
     windows = payload["platforms"]["windows-x86_64"]["runtimeId"]
     macos = payload["platforms"]["macos-arm64"]["runtimeId"]
     assert windows == macos
-    assert windows.startswith("0.17.18-")
+    assert windows.startswith(release_catalog.RELEASE_VERSION + "-")
 
 
 def test_active_catalog_notes_match_published_release_notes() -> None:
@@ -130,12 +133,12 @@ def test_synchronized_release_rejects_platform_runtime_drift() -> None:
     platforms = {
         "windows-x86_64": {
             "installMode": "standard_per_user",
-            "runtimeId": "0.17.18-build-a",
+            "runtimeId": _CURRENT_RUNTIME + "build-a",
             "internalUnsignedTest": True,
         },
         "macos-arm64": {
             "installMode": "standard_system_application",
-            "runtimeId": "0.17.18-build-b",
+            "runtimeId": _CURRENT_RUNTIME + "build-b",
             "internalUnsignedTest": True,
         },
     }
@@ -151,7 +154,7 @@ def test_windows_standard_installer_requires_signature_timestamp_and_publisher()
     valid = {
         "windows-x86_64": {
             "installMode": "standard_per_user",
-            "runtimeId": "0.17.18-testbuild001",
+            "runtimeId": _CURRENT_RUNTIME + "testbuild001",
             "authenticodeSigned": True,
             "authenticodeTimestamped": True,
             "publisher": "Example Trusted Publisher",
@@ -178,7 +181,7 @@ def test_standard_installer_requires_versioned_runtime_id(platform_key: str):
                 if platform_key.startswith("windows-")
                 else "standard_system_application"
             ),
-                "runtimeId": "0.17.18-build001",
+                "runtimeId": _CURRENT_RUNTIME + "build001",
             "authenticodeSigned": True,
             "authenticodeTimestamped": True,
             "publisher": "Example Trusted Publisher",
@@ -199,7 +202,7 @@ def test_macos_standard_installer_requires_full_gatekeeper_evidence():
     valid = {
         "macos-arm64": {
             "installMode": "standard_system_application",
-            "runtimeId": "0.17.18-testbuild001",
+            "runtimeId": _CURRENT_RUNTIME + "testbuild001",
             "developerIdInstallerSigned": True,
             "notarized": True,
             "stapled": True,
@@ -240,12 +243,12 @@ def test_unsigned_standard_installer_requires_explicit_internal_test_gate():
     platforms = {
         "windows-x86_64": {
             "installMode": "standard_per_user",
-            "runtimeId": "0.17.18-testbuild001",
+            "runtimeId": _CURRENT_RUNTIME + "testbuild001",
             "internalUnsignedTest": True,
         },
         "macos-arm64": {
             "installMode": "standard_system_application",
-            "runtimeId": "0.17.18-testbuild001",
+            "runtimeId": _CURRENT_RUNTIME + "testbuild001",
             "internalUnsignedTest": True,
         },
     }
@@ -269,7 +272,7 @@ def test_standard_installer_can_keep_a_valid_green_fallback(monkeypatch):
     platform = {
         "label": "Windows x86_64",
         "installMode": "standard_per_user",
-        "runtimeId": "0.17.18-testbuild001",
+        "runtimeId": _CURRENT_RUNTIME + "testbuild001",
         "assetName": "Xynigo_Setup.exe",
         "sha256": "c" * 64,
         "size": 2,

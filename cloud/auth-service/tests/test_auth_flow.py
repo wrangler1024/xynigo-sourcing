@@ -13,9 +13,11 @@ import httpx
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from xynigo_auth import __version__
 from xynigo_auth.config import Settings
 from xynigo_auth.database import Database
 from xynigo_auth.feishu import FeishuIdentity
+from xynigo_auth.local_executor_release import RELEASE_VERSION
 from xynigo_auth.main import create_app
 from xynigo_auth.models import (
     Base,
@@ -130,7 +132,7 @@ def test_cloud_workspace_shell_and_assets_are_public_but_api_stays_protected(
     with TestClient(app) as client:
         workspace = client.get("/")
         assert workspace.status_code == 200
-        assert "<title>Xynigo Sourcing v0.17.18</title>" in workspace.text
+        assert f"<title>Xynigo Sourcing v{__version__}</title>" in workspace.text
         assert 'src="xynigo-logo.png?v=6"' in workspace.text
         assert 'href="/favicon.ico?v=6"' in workspace.text
         assert "const CLOUD_WEB_MODE" in workspace.text
@@ -176,7 +178,7 @@ def test_authenticated_member_can_read_immutable_local_executor_release(
         assert response.headers["x-content-type-options"] == "nosniff"
         payload = response.json()
         assert payload["schemaVersion"] == 1
-        assert payload["version"] == "0.17.18"
+        assert payload["version"] == RELEASE_VERSION
         assert payload["channel"] == "test"
         assert payload["releaseUrl"] == ""
         assert payload["manifestUrl"] == ""
@@ -190,7 +192,7 @@ def test_authenticated_member_can_read_immutable_local_executor_release(
                 f"/v1/local-executor/releases/{platform}/primary/download"
             )
             if platform == "windows-x86_64":
-                assert info["runtimeId"].startswith("0.17.18-")
+                assert info["runtimeId"].startswith(f"{RELEASE_VERSION}-")
             assert "github.com" not in info["downloadUrl"]
             assert "greenFallback" not in info
 

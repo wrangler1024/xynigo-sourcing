@@ -229,6 +229,7 @@ class ReleaseV0170Tests(unittest.TestCase):
         self.assertNotIn('https://proxy.example.test', html)
         self.assertIn('Xynigo Sourcing v0.17.19', html)
         self.assertIn('累计修复测试 v0.17.19', html)
+        self.assertIn("headers.set('X-Xynigo-Client-Version', '0.17.19-cloud-web')", html)
         self.assertIn('测试环境 · 数据隔离', html)
         self.assertNotIn('本机数据不出站', html)
         self.assertIn('Xyni, GO!', html)
