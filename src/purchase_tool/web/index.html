@@ -4409,11 +4409,13 @@ function sfConc() {
   const active = document.querySelector('[data-sf-conc].active');
   return active ? Number(active.dataset.sfConc) : 2;
 }
-let sfClockTimer = null;
 function sfProgressLabel(data) {
+  // 内嵌进度条只放紧凑计数；平均/本轮/累计等长统计由运行横幅承载
   const total = Math.max(Number(data.progressTotal || 0),
     (data.rows || []).length);
-  const processed = Number(data.progressCompleted || 0);
+  return `${Number(data.progressCompleted || 0)} / ${total}`;
+}
+function sfRunStatsLabel(data) {
   const durations = (data.rows || [])
     .map(r => Number(r.durationSeconds || 0)).filter(v => v > 0);
   const avg = durations.length
@@ -4431,21 +4433,13 @@ function sfProgressLabel(data) {
     ? elapsedClock(elapsed) : '—';
   // 补采时「累计执行」= 源批次耗时 + 本轮耗时，不随新 Run 起点清零
   const cumulative = elapsed + (Number(data.sourceElapsedSeconds) || 0);
-  return `已处理 ${processed} / ${total} ｜ 平均 ${average}`
+  return `平均 ${average}`
     + ` ｜ 本轮重查 ${retry} ｜ 累计执行 ${elapsedClock(cumulative)}`;
 }
 function sfPaintProgress(data) {
   const label = sfProgressLabel(data);
   $('sfProgressText').textContent = label;
   $('sfProgress').setAttribute('aria-valuetext', label);
-  if (sfClockTimer) { clearInterval(sfClockTimer); sfClockTimer = null; }
-  if (data.status && !['completed', 'partial_failure', 'failed',
-      'cancelled', 'uncertain'].includes(data.status)) {
-    sfClockTimer = setInterval(() => {
-      // 运行中每秒刷新累计时钟（completedAt 为空 → 用当前时刻）
-      $('sfProgressText').textContent = sfProgressLabel(data);
-    }, 1000);
-  }
 }
 function sfSetPhase(title, text, spin) {
   $('sfPhaseBanner').hidden = false;
@@ -4614,7 +4608,7 @@ async function sfPoll() {
         setTimeout(() => { if (!SF_STATE.running) sfRetryFail(); }, 1500);
       }
     } else if (SF_STATE.stopRequested) {
-      sfSetPhase('正在停止', `已请求停止，在途店铺完成后终止（已完成 ${data.progressCompleted ?? 0} / ${data.progressTotal ?? 0}）。`, true);
+      sfSetPhase('正在停止', `已请求停止，在途店铺完成后终止（已完成 ${data.progressCompleted ?? 0} / ${data.progressTotal ?? 0}）｜ ${sfRunStatsLabel(data)}`, true);
     } else {
       const done = data.progressCompleted ?? 0, total = data.progressTotal ?? 0;
       if (SF_STATE.etaBase === null || SF_STATE.etaBase === undefined) {
@@ -4630,7 +4624,8 @@ async function sfPoll() {
           eta = `，预计还需约 ${Math.floor(etaSec / 60)} 分 ${etaSec % 60} 秒`;
         }
       }
-      sfSetPhase('巡检运行中', `已完成 ${done} / ${total}${eta}`, true);
+      sfSetPhase('巡检运行中',
+        `已完成 ${done} / ${total}${eta} ｜ ${sfRunStatsLabel(data)}`, true);
     }
   } catch (e) {
     // 轮询失败静默重试；连续 5 次失败（会话过期/网络中断）必须显式提示，
@@ -4674,7 +4669,6 @@ async function sfRetryFail() {
 }
 $('sfRetryFail').onclick = sfRetryFail;
 $('sfClearResult').onclick = () => {
-  if (sfClockTimer) { clearInterval(sfClockTimer); sfClockTimer = null; }
   SF_STATE.runId = null; SF_STATE.lastRows = [];
   $('sfResRows').innerHTML = '<tr><td colspan="10" class="hint" style="text-align:center; padding:22px;">已清空。</td></tr>';
   $('sfPhaseBanner').hidden = true;
