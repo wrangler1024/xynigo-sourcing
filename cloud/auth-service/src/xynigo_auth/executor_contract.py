@@ -65,7 +65,7 @@ class ExecutorPairBody(StrictBody):
     protocolVersion: int = Field(default=1, ge=1, le=10)
     capabilities: list[EXECUTOR_CAPABILITIES] = Field(
         default_factory=lambda: ["config.read.v1", "config.write.v1"],
-        max_length=16,
+        max_length=32,
     )
     devicePublicKey: str | None = Field(default=None, max_length=8192)
 
@@ -171,7 +171,7 @@ class ExecutorPollBody(StrictBody):
     protocolVersion: int = Field(default=1, ge=1, le=10)
     capabilities: list[EXECUTOR_CAPABILITIES] = Field(
         default_factory=list,
-        max_length=16,
+        max_length=32,
     )
     configSummary: ExecutorConfigSummaryV2 | None = None
 
