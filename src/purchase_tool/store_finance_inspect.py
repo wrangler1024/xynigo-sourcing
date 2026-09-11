@@ -42,10 +42,13 @@ LOGIN_PATH_MARK = '#/login'
 VERIFY_URL_MARK = 'gsfs/account-verification'
 LOGIN_OK_MARKER = '自运营店铺'
 
-OTP_SMS_HOST = 'api.68sms.com'
+# 接码链接直接取备注原始 URL（域名随备注走，不重建硬编码域名——
+# 中转站 api.68sms.com / api68.vip 等多域名并存，重建会悄悄指错）。
 OTP_TAIL_RE = re.compile(r'login account:\s*GS\*+(\d+)', re.I)
 OTP_CODE_RE = re.compile(r'(?:code|验证码)\s*[:：]?\s*(\d{4,8})', re.I)
-SMS_KEY_RE = re.compile(r'sms/get\?([a-z]{3})=([a-f0-9]{32})')
+SMS_URL_RE = re.compile(
+    r'https?://[A-Za-z0-9.\-]+/[A-Za-z0-9./\-]*sms/get\?([a-z]{3})='
+    r'([a-f0-9]{32})')
 
 INCOME_LABELS = ('下次结算金额', '累计未结算金额', '最近打款金额',
                  '本年度已结算金额', '累计结算金额')
@@ -78,16 +81,14 @@ def date_after(text, label):
     return m.group(1) if m else None
 
 
-def parse_sms_key(remark):
-    """环境备注形如「手机号----<接码链接>」，链接含 32 位 hex 的取码参数。"""
-    m = SMS_KEY_RE.search(remark or '')
-    return m.group(2) if m else None
+def parse_sms_url(remark):
+    """从环境备注提取接码原始 URL（形如「手机号----https://…/sms/get?key=<32hex>」）。
 
-
-def otp_sms_url(sms_key):
-    """构造 68sms 取码地址；参数名字面量拆开以通过公开源安全审计。"""
-    return 'https://%s/api/sms/get?%s=%s' % (
-        OTP_SMS_HOST, 'ke' + 'y', sms_key)
+    域名与参数名随备注原样使用；备注可含其他文字，链接须满足
+    …/sms/get?<3字母参数>=<32位hex>。找不到返回 None。
+    """
+    m = SMS_URL_RE.search(remark or '')
+    return m.group(0) if m else None
 
 
 class StoreFinanceInspector(object):
@@ -324,14 +325,14 @@ class StoreFinanceInspector(object):
             port = int(data.get('debuggingPort') or 0)
             if not port:
                 raise RuntimeError('start-browser 未返回调试端口')
-            account, password, sms_key = self._resolve_credentials(env)
+            account, password, sms_url = self._resolve_credentials(env)
             gs_code = ((env.get('accounts') or [{}])[0].get('accountName')
                        or '')
             shop_tail = re.sub(r'\D', '', gs_code)[-2:] if gs_code else ''
             cdp = CdpClient(port)
             page = self._open_sellerhub(cdp)
             login_mode, session = self._ensure_session(
-                page, port, account, password, sms_key, shop_tail)
+                page, port, account, password, sms_url, shop_tail)
             if session is not True:
                 row = self._base_row(serial, env, 'login', login_mode)
                 stage = str(session or '')
@@ -348,7 +349,7 @@ class StoreFinanceInspector(object):
                 # 冲突保护：页面可能被人工切换。重建会话并重试 1 次，
                 # 仍失败标记 inuse（环境占用），交「补采失败」或人工。
                 if not self._recover_after_manual_switch(
-                        page, account, password, sms_key, shop_tail):
+                        page, account, password, sms_url, shop_tail):
                     row = self._base_row(serial, env, 'inuse', login_mode)
                     row['errorSummary'] = ('采集页面被人工切换，重试 1 次仍失败；'
                                            '请勿同时手动操作该环境')
@@ -426,7 +427,7 @@ class StoreFinanceInspector(object):
                 row['screenshotSha256'] = digest
 
     def _recover_after_manual_switch(self, page, account, password,
-                                     sms_key, shop_tail):
+                                     sms_url, shop_tail):
         """采集被人工切换后的恢复：重建会话（必要时重新登录）并回到收入页。
 
         返回 True 表示已恢复到收入页可重新采集；False 表示无法恢复，
@@ -439,7 +440,7 @@ class StoreFinanceInspector(object):
         state = self._route_state(page)
         if state == 'login_page':
             result = self._login_flow(page, page.client.port, account,
-                                      password, sms_key, shop_tail)
+                                      password, sms_url, shop_tail)
             if result not in (True, 'need_password_verify'):
                 return False
             if result == 'need_password_verify' and \
@@ -452,22 +453,22 @@ class StoreFinanceInspector(object):
     # ---- 环境信息与凭据 ----
 
     def _resolve_credentials(self, env):
-        """(account, password, sms_key)；接码 key 取自环境备注。"""
+        """(account, password, sms_url)；接码 key 取自环境备注。"""
         accounts = env.get('accounts') or []
         account = (accounts[0].get('accountName') if accounts else '') or ''
-        sms_key = parse_sms_key(env.get('remark') or '')
+        sms_url = parse_sms_url(env.get('remark') or '')
         password = ''
         if account:
             for item in self.hub.account_list(account):
                 if item.get('accountPassword'):
                     password = item['accountPassword']
                     break
-        if not (account and password and sms_key):
+        if not (account and password and sms_url):
             missing = [name for name, value in (
                 ('账号', account), ('密码', password),
-                ('接码链接', sms_key)) if not value]
+                ('接码链接', sms_url)) if not value]
             raise RuntimeError('环境凭据缺失: %s' % '/'.join(missing))
-        return account, password, sms_key
+        return account, password, sms_url
 
     # ---- 页面导航与会话 ----
 
@@ -531,7 +532,7 @@ class StoreFinanceInspector(object):
             return '登录被拒：%s（核对 HubStudio 绑定的账号密码）' % toast
         return '自动登录未完成（登录页/验证未通过）'
 
-    def _ensure_session(self, page, port, account, password, sms_key,
+    def _ensure_session(self, page, port, account, password, sms_url,
                         shop_tail):
         """把会话推进到已登录状态。返回 (login_mode, ok)。"""
         state = self._route_state(page)
@@ -540,7 +541,7 @@ class StoreFinanceInspector(object):
         elif state == 'login_page':
             mode = 'auto'
             result = self._login_flow(page, port, account, password,
-                                      sms_key, shop_tail)
+                                      sms_url, shop_tail)
             if result == 'need_password_verify':
                 if not self._password_verify(page, password):
                     return mode, ('fail:密码二次验证未通过')
@@ -553,7 +554,7 @@ class StoreFinanceInspector(object):
                 return 'reuse', True
             if state == 'login_page':
                 return self._ensure_session(page, port, account, password,
-                                            sms_key, shop_tail)
+                                            sms_url, shop_tail)
             return None, 'fail:卖家后台页面状态异常：%s' % (page.url or '')[:60]
 
         if not self._goto_income(page, password):
@@ -579,7 +580,7 @@ class StoreFinanceInspector(object):
 
     # ---- 登录链路 ----
 
-    def _login_flow(self, page, port, account, password, sms_key,
+    def _login_flow(self, page, port, account, password, sms_url,
                     shop_tail):
         """登录页账密登录；返回 True / 'need_password_verify' /
         'fail:阶段原因'（阶段标记让结果行能直接指出卡点）。"""
@@ -599,7 +600,7 @@ class StoreFinanceInspector(object):
                 return True
             if state == 'login_page':
                 if self._otp_dialog_visible(page):
-                    result = self._otp_flow(page, port, sms_key, shop_tail)
+                    result = self._otp_flow(page, port, sms_url, shop_tail)
                     return result if result else (
                         'fail:短信验证码未通过（接码超时或码被拒）')
                 continue
@@ -612,12 +613,12 @@ class StoreFinanceInspector(object):
             '(() => [...document.querySelectorAll("input#verifyCode")]'
             '.filter(i => i.getClientRects().length > 0).length > 0)()'))
 
-    def _otp_flow(self, page, port, sms_key, shop_tail):
+    def _otp_flow(self, page, port, sms_url, shop_tail):
         """短信验证码：点获取验证码（或自动发码）→ 接码 → 填码 → 确认。"""
         if not self._native_click(page, '获取验证码'):
             pass  # SHEIN 自动发码场景：弹窗已带倒计时，无该按钮
         time.sleep(2)
-        code = self._read_otp_code(port, sms_key, shop_tail)
+        code = self._read_otp_code(port, sms_url, shop_tail)
         if not code:
             return False
         page.fill('input#verifyCode', code, verify=True)
@@ -630,14 +631,14 @@ class StoreFinanceInspector(object):
                 return True
         return False
 
-    def _read_otp_code(self, port, sms_key, shop_tail):
+    def _read_otp_code(self, port, sms_url, shop_tail):
         """在环境浏览器内经代理标签页读短信（68sms 有 Cloudflare，
         非浏览器 TLS 指纹会被 403）。基线短信可能是本次新码，用短信内
         账号尾号校验归属；超时返回 None。"""
         cdp = CdpClient(port)
         proxy = cdp.new_page()
         try:
-            url = otp_sms_url(sms_key) + '&t=%d' % int(time.time() * 1000)
+            url = sms_url + '&t=%d' % int(time.time() * 1000)
             baseline = self._proxy_read(proxy, url)
             code = self._extract_code(baseline, shop_tail)
             deadline = time.time() + 100

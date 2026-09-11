@@ -9,7 +9,7 @@ from purchase_tool.store_finance_inspect import (
     StoreFinanceInspector,
     date_after,
     money_after,
-    parse_sms_key,
+    parse_sms_url,
 )
 
 
@@ -30,11 +30,12 @@ class MoneyParsingTests(unittest.TestCase):
         self.assertEqual(date_after(self.TEXT, '下次结算金额'), '2026-09-14')
         self.assertIsNone(date_after(self.TEXT, '累计未结算金额'))
 
-    def test_parse_sms_key_from_remark(self):
-        remark = ('12095195435----'
-                  + m.otp_sms_url('c' * 32))
-        self.assertEqual(parse_sms_key(remark), 'c' * 32)
-        self.assertIsNone(parse_sms_key('没有接码链接的备注'))
+    def test_parse_sms_url_from_remark(self):
+        remark = ('13800000000----https://api68.vip/api/sms/get?key='
+                  + 'c' * 32)
+        self.assertEqual(parse_sms_url(remark),
+                         'https://api68.vip/api/sms/get?key=' + 'c' * 32)
+        self.assertIsNone(parse_sms_url('没有接码链接的备注'))
 
     def test_extract_code_validates_account_tail(self):
         extract = StoreFinanceInspector._extract_code
@@ -59,7 +60,7 @@ class _FakeHub(object):
             'serialNumber': '9' + s,  # 序号与环境 ID 是两套标识
             'containerName': '店铺' + s,
             'accounts': [{'accountName': 'GS' + s.zfill(4)}],
-            'remark': 'x----' + m.otp_sms_url('a' * 32),
+            'remark': 'x----https://api68.vip/api/sms/get?key=' + 'a' * 32,
         } for s in self._serials]
 
     def open_container_codes(self):
