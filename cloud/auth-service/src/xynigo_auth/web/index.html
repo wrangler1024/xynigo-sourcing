@@ -4424,8 +4424,10 @@ function sfProgressLabel(data) {
     ? Math.max(0, (end - start) / 1000) : 0;
   const retry = data.queryMode === 'failed_retry'
     ? elapsedClock(elapsed) : '—';
+  // 补采时「累计执行」= 源批次耗时 + 本轮耗时，不随新 Run 起点清零
+  const cumulative = elapsed + (Number(data.sourceElapsedSeconds) || 0);
   return `已处理 ${processed} / ${total} ｜ 平均 ${average}`
-    + ` ｜ 本轮重查 ${retry} ｜ 累计执行 ${elapsedClock(elapsed)}`;
+    + ` ｜ 本轮重查 ${retry} ｜ 累计执行 ${elapsedClock(cumulative)}`;
 }
 function sfPaintProgress(data) {
   const label = sfProgressLabel(data);

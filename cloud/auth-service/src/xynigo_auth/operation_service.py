@@ -3201,6 +3201,21 @@ def store_finance_snapshot(session, run: StoreFinanceInspectRun) -> dict:
             "screenshotSha256": row.screenshot_sha256 or "",
         })
     merged = bool((run.request_summary or {}).get("sourceRunId"))
+    source_elapsed = None
+    if merged:
+        source_row = session.scalar(
+            select(StoreFinanceInspectRun).where(
+                StoreFinanceInspectRun.id == uuid.UUID(
+                    str(run.request_summary["sourceRunId"])),
+                StoreFinanceInspectRun.tenant_id == run.tenant_id,
+            )
+        )
+        if (source_row is not None
+                and source_row.started_at is not None
+                and source_row.completed_at is not None):
+            source_elapsed = max(
+                0, int((source_row.completed_at - source_row.started_at)
+                       .total_seconds()))
     ok_count = sum(1 for row in result_rows if row["status"] == "ok")
     bad_count = sum(1 for row in result_rows
                     if row["status"] in ("fail", "login", "inuse"))
@@ -3218,6 +3233,7 @@ def store_finance_snapshot(session, run: StoreFinanceInspectRun) -> dict:
         "successCount": ok_count if merged else run.success_count,
         "failedCount": bad_count if merged else run.failed_count,
         "mergedFromSource": merged,
+        "sourceElapsedSeconds": source_elapsed,
         "stopRequested": run.stop_requested,
         "completedAt": (run.completed_at.isoformat()
                         if run.completed_at else ""),

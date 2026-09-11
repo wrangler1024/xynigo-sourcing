@@ -832,6 +832,7 @@ def test_store_finance_retry_run_merges_source_rows(tmp_path) -> None:
         assert final["successCount"] == 2
         assert final["failedCount"] == 0
         assert final["mergedFromSource"] is True
+        assert isinstance(final["sourceElapsedSeconds"], int)
         # 补采完成后进度走满：2/2
         assert final["progressTotal"] == 2
         assert final["progressCompleted"] == 2
