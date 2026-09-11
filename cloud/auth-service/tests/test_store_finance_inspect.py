@@ -776,6 +776,9 @@ def test_store_finance_retry_run_merges_source_rows(tmp_path) -> None:
         ).json()["data"]
         assert {r["storeName"] for r in early["rows"]} == {"山岚", "花间"}
         assert early["totalCount"] == 2
+        # 进度条分母=合并总数，分子=源成功数（发起即 1/2，而非 0/1）
+        assert early["progressTotal"] == 2
+        assert early["progressCompleted"] == 1
 
         lease2 = heartbeat(device_client, credential,
                            capabilities=SF_CAPABILITIES,
@@ -829,8 +832,9 @@ def test_store_finance_retry_run_merges_source_rows(tmp_path) -> None:
         assert final["successCount"] == 2
         assert final["failedCount"] == 0
         assert final["mergedFromSource"] is True
-        # 进度条仍是补采范围
-        assert final["progressTotal"] == 1
+        # 补采完成后进度走满：2/2
+        assert final["progressTotal"] == 2
+        assert final["progressCompleted"] == 2
 
         exported = web_client.get(
             f"/v1/operation-runs/store-finance-inspect/{retry_run_id}/export"

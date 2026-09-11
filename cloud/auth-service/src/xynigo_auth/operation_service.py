@@ -3210,8 +3210,10 @@ def store_finance_snapshot(session, run: StoreFinanceInspectRun) -> dict:
         "phase": run.phase,
         "queryMode": run.query_mode,
         "browserMode": run.browser_mode,
-        "progressCompleted": run.progress_completed,
-        "progressTotal": run.progress_total,
+        # 补采合并视角下进度条分母=合并总店数、分子=当前已成功数
+        # （8/10 → 9/10 → 10/10），不再按补采范围单独从零计数。
+        "progressCompleted": ok_count if merged else run.progress_completed,
+        "progressTotal": len(result_rows) if merged else run.progress_total,
         "totalCount": len(result_rows) if merged else run.total_count,
         "successCount": ok_count if merged else run.success_count,
         "failedCount": bad_count if merged else run.failed_count,
