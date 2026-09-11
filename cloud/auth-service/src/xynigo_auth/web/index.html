@@ -4220,7 +4220,7 @@ async function cloudFormalExecutor(capability, preferredId='') {
 /* ===== 小犀助手 · 店铺结算查询 ===== */
 const SF_STORE_KEY = 'storeFinanceShopList';
 const SF_SEL_KEY = 'storeFinanceSelection';
-const SF_STATE = { runId: null, timer: null, running: false, shops: [], selected: new Set(), lastRows: [] };
+const SF_STATE = { runId: null, timer: null, running: false, shops: [], selected: new Set(), lastRows: [], stopRequested: false, pollErrors: 0 };
 
 function sfSaveList() {
   try {
@@ -4496,6 +4496,8 @@ async function sfStart(options = {}) {
     });
     SF_STATE.runId = res.data.runId;
     SF_STATE.running = true;
+    SF_STATE.stopRequested = false;
+    SF_STATE.pollErrors = 0;
     $('sfStart').disabled = true; $('sfStop').disabled = false;
     $('sfRunLegend').textContent = 'Run ' + SF_STATE.runId.slice(0, 8);
     sfSetPhase('巡检运行中', `无头${headless ? '开' : '关'} · 并发 ${sfConc()} · 共 ${serials.length} 家`, true);
@@ -4514,18 +4516,34 @@ async function sfPoll() {
     $('sfProgressText').textContent = `${data.progressCompleted ?? 0} / ${data.progressTotal ?? 0}`;
     $('sfBar').style.width = (data.progressTotal
       ? Math.round((data.progressCompleted || 0) / data.progressTotal * 100) : 0) + '%';
+    SF_STATE.pollErrors = 0;
     const done = ['completed', 'partial_failure', 'failed', 'cancelled', 'uncertain'].includes(data.status);
     if (done) {
       const bad = data.failedCount || 0;
-      sfSetPhase(bad ? '巡检完成（部分标记）' : '巡检完成', bad ? `成功 ${data.successCount} 家，标记 ${bad} 家。可「补采失败」或导出后人工处理。` : '全部店铺采集成功。', false);
+      const stopped = (data.rows || []).filter(r => r.status === 'stopped').length;
+      const tail = SF_STATE.stopRequested && stopped
+        ? `（停止前已完成 ${data.successCount} 家，${stopped} 家中途停止）` : '';
+      sfSetPhase(bad ? '巡检完成（部分标记）' : '巡检完成',
+        (bad ? `成功 ${data.successCount} 家，标记 ${bad} 家。可「补采失败」或导出后人工处理。`
+             : `全部店铺采集成功。${tail}`), false);
       $('sfStart').disabled = false; $('sfStop').disabled = true;
       $('sfExport').disabled = false; $('sfExportMenuBtn').disabled = false;
       $('sfRetryFail').disabled = !bad;
       SF_STATE.running = false;
+      SF_STATE.stopRequested = false;
+    } else if (SF_STATE.stopRequested) {
+      sfSetPhase('正在停止', `已请求停止，在途店铺完成后终止（已完成 ${data.progressCompleted ?? 0} / ${data.progressTotal ?? 0}）。`, true);
     } else {
       sfSetPhase('巡检运行中', `已完成 ${data.progressCompleted ?? 0} / ${data.progressTotal ?? 0}`, true);
     }
-  } catch (e) { /* 轮询失败静默重试 */ }
+  } catch (e) {
+    // 轮询失败静默重试；连续 5 次失败（会话过期/网络中断）必须显式提示，
+    // 否则界面永远停留在最后一次画面，看起来像「一直运行中」。
+    SF_STATE.pollErrors += 1;
+    if (SF_STATE.pollErrors >= 5 && SF_STATE.running) {
+      sfSetPhase('状态刷新失败', '已连续多次无法获取巡检进度（会话可能已过期或网络中断）；刷新页面后可在「最近 Run」查看结果。', false);
+    }
+  }
 }
 $('sfStart').onclick = sfStart;
 $('sfStop').onclick = async () => {
@@ -4537,7 +4555,8 @@ $('sfStop').onclick = async () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
     });
-    sfSetPhase('已请求停止', '当前采集中店铺完成后终止，已完成数据保留。', false);
+    SF_STATE.stopRequested = true;
+    sfSetPhase('正在停止', '已请求停止，当前采集中店铺完成后终止，已完成数据保留。', false);
   } catch (e) {
     sfSetPhase('停止失败', String(e.message || e) + '。可稍后重试，或直接忽略本轮结果。', false);
   }
