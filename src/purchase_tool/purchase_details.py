@@ -64,8 +64,19 @@ class PurchaseDetailsService:
             raise PurchaseAssistantError('页面会话标识无效')
         if not re.fullmatch(r'https://www\.shein\.com\.mx/user/orders/detail/[A-Za-z0-9-]{6,64}', url):
             raise PurchaseAssistantError('首版仅支持墨西哥站订单详情')
-        env = state.hub.locate_environment(identifier)
-        code = str(env.get('containerCode') or '')
+        # Only opened environments are eligible. Do not scan the team's entire
+        # environment inventory for every capture (it can contain thousands).
+        matches = []
+        for status in state.hub.browser_status():
+            if state.hub.browser_lifecycle_state(status) != 'open':
+                continue
+            env = state.hub.env_lookup(container_code=str(status.get('containerCode') or ''))
+            if env and str(identifier).strip() in {
+                    str(env.get('containerCode') or ''), str(env.get('serialNumber') or '')}:
+                matches.append(env)
+        if len(matches) != 1:
+            raise PurchaseAssistantError('请核对当前已打开的环境序号或 containerCode')
+        code = str(matches[0].get('containerCode') or '')
         if state.hub.browser_lifecycle_status(code).get('state') != 'open':
             raise PurchaseAssistantError('请先打开指定 HubStudio 环境')
         port = int(state.hub.browser_start(code, headless=False)['debuggingPort'])

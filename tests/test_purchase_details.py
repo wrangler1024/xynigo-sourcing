@@ -47,3 +47,15 @@ def test_submission_timeout_only_reconciles_and_never_replays():
     assert service.handle(state,'buyer',body)['state']=='uncertain'
     assert [c['action'] for c in calls]==['submit','status']
     with pytest.raises(PurchaseAssistantError):service.handle(state,'different-buyer',body)
+
+
+def test_capture_environment_resolution_never_scans_closed_inventory():
+    from types import SimpleNamespace
+    from purchase_tool.purchase_details import PurchaseDetailsService
+    calls=[]
+    hub=SimpleNamespace(browser_status=lambda:[{'containerCode':'open-1','status':0},{'containerCode':'closed-2','status':3}],
+        browser_lifecycle_state=lambda s:'open' if s['status']==0 else 'closed',
+        env_lookup=lambda **kw:(calls.append(kw) or {'containerCode':'open-1','serialNumber':'123'}))
+    with pytest.raises(PurchaseAssistantError):
+        PurchaseDetailsService()._page(SimpleNamespace(hub=hub),'999',URL,MARK)
+    assert calls==[{'container_code':'open-1'}]
