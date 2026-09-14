@@ -37,7 +37,8 @@ class Gateway:
         if self.fail_image:
             raise self.fail_image
         self.rows[row-2][_column_index(column)-1] = {'type':'image','file_token':'demo-image-'+str(self.image_writes)}
-    def _read_range(self, url, sheet, cell_range):
+    def _read_range(self, url, sheet, cell_range, *, raw=False):
+        assert raw is True, "evidence verification requires original image tokens"
         import re
         c, r = re.match(r'([A-Z]+)([0-9]+)',cell_range).groups()
         return {'valueRange':{'values':[[self.rows[int(r)-2][_column_index(c)-1]]]}}
@@ -236,3 +237,36 @@ def test_target_rebinding_invalidates_same_rows_preview(ctx):
     first=locate(g,target,b['taskKey'],u,False)[2]
     second=locate(g,{**target,'spreadsheetToken':'DemoSheetB'},b['taskKey'],u,False)[2]
     assert first != second
+
+
+def test_duplicate_names_never_authorize_unassigned_rows(ctx):
+    s,u,g,run,b=ctx
+    s.add(User(id=uuid.uuid4(),tenant_id=u.tenant_id,feishu_open_id='duplicate-name',display_name=u.display_name))
+    s.commit()
+    g.rows[0][4]=g.rows[1][4]=''
+    with pytest.raises(ReceiptError,match='采购员'):run(b)
+    assert g.writes==0
+
+
+def test_image_reads_use_gateway_original_value_request():
+    from xynigo_auth.procurement_import_sheet import FeishuSheetsGateway
+    from xynigo_auth.purchase_receipt import read_images
+    gateway=FeishuSheetsGateway(app_id='synthetic-app',app_secret='synthetic-secret')
+    calls=[]
+    def request(method,path,**kwargs):
+        calls.append((method,path,kwargs))
+        return {'valueRange':{'values':[[{'type':'image','file_token':'original-demo-token'}]]}}
+    gateway._request=request
+    assert read_images(gateway,{'spreadsheetToken':'DemoSpreadsheet123','sheetId':'DemoTab'},
+        ['下单截图'],[(2,{})])[0]['file_token']=='original-demo-token'
+    assert calls[0][0]=='GET' and calls[0][2]['params'] is None
+
+
+def test_formatted_money_does_not_break_readback(ctx):
+    s,u,g,run,b=ctx
+    old=g.read_table
+    def formatted(*args):
+        t=old(*args)
+        return SheetTable(t.headers,tuple((n,tuple('$MXN1,234.50' if i==8 and v else v for i,v in enumerate(values))) for n,values in t.rows))
+    g.read_table=formatted
+    assert run({**b,'amount':'1234.50'})['state']=='complete'

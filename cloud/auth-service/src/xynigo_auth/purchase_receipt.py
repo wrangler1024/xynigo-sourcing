@@ -76,11 +76,18 @@ def locate(gateway, target, task_key, user, admin):
     for number, values in table.rows:
         row = dict(zip(headers, values))
         if key_for(row) == task_key:
-            if not admin and str(row.get('采购员') or '').strip() not in {str(user.id), user.display_name}:
+            if not admin and str(row.get('采购员') or '').strip() not in {v for v in (str(user.id), user.display_name) if v}:
                 raise ReceiptError('该任务采购员与登录身份不一致，请管理员核对分配姓名')
             matches.append((number, row))
     if not matches:
         raise ReceiptError('原采购任务已不存在，请重新搜索；拆单后缀必须完整保留')
+    # Money must be compared as a numeric cell, not a formatted currency string.
+    column = _column_name(headers.index('实际付款') + 1)
+    for number, row in matches:
+        data = gateway._read_range(sheet_url(target), target['sheetId'],
+                                   f'{column}{number}:{column}{number}', raw=True)
+        cells = (data.get('valueRange') or {}).get('values') or []
+        row['实际付款'] = cells[0][0] if cells and cells[0] else None
     fp = digest({'target': [target['spreadsheetToken'], target['sheetId']],
                  'headers': headers,
                  'rows': [{k: str(r.get(k) or '') for k in IDENTITY_FIELDS} for _, r in matches]})
@@ -247,7 +254,7 @@ def read_images(gateway, target, headers, matches):
     column = _column_name(headers.index('下单截图') + 1)
     result = []
     for row, _ in matches:
-        data = gateway._read_range(sheet_url(target), target['sheetId'], f'{column}{row}:{column}{row}')
+        data = gateway._read_range(sheet_url(target), target['sheetId'], f'{column}{row}:{column}{row}', raw=True)
         values = (data.get('valueRange') or {}).get('values') or []
         result.append(values[0][0] if values and values[0] else None)
     return result
