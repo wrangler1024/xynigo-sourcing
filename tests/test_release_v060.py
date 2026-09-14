@@ -15,9 +15,9 @@ from purchase_tool import __version__
 class ReleaseV0170Tests(unittest.TestCase):
     def test_version_and_packaging_are_aligned(self):
         root = Path(__file__).resolve().parents[1]
-        self.assertEqual(__version__, '0.17.20')
+        self.assertEqual(__version__, '0.17.21')
         pyproject = (root / 'pyproject.toml').read_text(encoding='utf-8')
-        self.assertIn('version = "0.17.20"', pyproject)
+        self.assertIn('version = "0.17.21"', pyproject)
         cloud_project = (root / 'cloud' / 'auth-service' /
                          'pyproject.toml').read_text(encoding='utf-8')
         self.assertIn('version = "0.17.20"', cloud_project)
@@ -28,6 +28,9 @@ class ReleaseV0170Tests(unittest.TestCase):
         cloud_main = (root / 'cloud' / 'auth-service' / 'src' /
                       'xynigo_auth' / 'main.py').read_text(encoding='utf-8')
         self.assertIn('version="0.17.20"', cloud_main)
+        # Pilot executor version is independent of the unchanged cloud catalog.
+        self.assertTrue((root / 'release' / 'v0.17.21.zh-CN.json').is_file())
+        self.assertTrue((root / 'release' / 'v0.17.21.zh-CN.md').is_file())
         self.assertTrue((root / 'release' / 'v0.17.20.zh-CN.json').is_file())
         self.assertTrue((root / 'release' / 'v0.17.20.zh-CN.md').is_file())
         script = (root / '组装Windows绿色包.sh').read_text(encoding='utf-8')
