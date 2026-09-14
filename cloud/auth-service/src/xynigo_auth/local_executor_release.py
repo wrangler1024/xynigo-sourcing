@@ -14,9 +14,9 @@ from urllib.parse import quote
 
 from . import __version__
 
-RELEASE_VERSION = "0.17.21"
+RELEASE_VERSION = "0.17.22"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-14T08:23:11Z"
+RELEASE_PUBLISHED_AT = "2026-09-14T09:25:00Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,10 +31,10 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.17.21-55ebc032a3f0",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.21.exe",
-        "sha256": "b74908091d0424ee710e5552515e4ff7fcc9f6bb47259a0221689e84a865ea5b",
-        "size": 15382767,
+        "runtimeId": "0.17.22-c0c580f10cc2",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.22.exe",
+        "sha256": "d17e1f970a6341bde51e493f8820e052677047b003e903fb9c888272e2ef9e3f",
+        "size": 15379248,
         "installMode": "standard_per_user",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_silent_installer",
@@ -50,10 +50,10 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.17.21-55ebc032a3f0",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.21.pkg",
-        "sha256": "dcd4d2a71f52584905f439bcb75ee41dac9f8d84d9f08150355820b09c183c64",
-        "size": 20279330,
+        "runtimeId": "0.17.22-c0c580f10cc2",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.22.pkg",
+        "sha256": "2d5a9baa15a40ff61e9f3aa1749529bac94b08107cd46a49bacf3e6c9dfa984e",
+        "size": 20279617,
         "installMode": "standard_system_application",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_system_installer",
@@ -319,9 +319,5 @@ def latest_local_executor_release() -> dict[str, object]:
         "releaseUrl": "",
         "manifestUrl": "",
         "platforms": platforms,
-        "notesZh": [
-            "采购助手新增采购详情：读取墨西哥站已付订单的采购订单号、实付金额，生成单张订单长截图并回传团队执行协作表。",
-            "回传前确认任务与截图，保留人工拆单后缀；支持重复提交拦截、版本冲突保护、截图补传和修订留痕，不更新采购状态。",
-            "需配套采购助手插件 0.9.0；本版本发布到现有测试机，可在客户端检查更新后于现有采购环境测试。"
-        ],
+        "notesZh": ["修复墨西哥站详情页内部编号与采购订单号不同导致读取失败的问题。", "保留站点、MXN、付款状态、实付总额和截图前后订单一致性校验；兼容采购助手0.9.0。"],
     }
