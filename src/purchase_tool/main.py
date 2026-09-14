@@ -109,6 +109,7 @@ from .procurement_import import (
     ProcurementImportService, ProcurementImportError, decode_xyp2_remark)
 from .purchase_assistant import (
     MAX_CACHE_TTL_SECONDS, PurchaseAssistantError, PurchaseAssistantService)
+from .purchase_details import PurchaseDetailsService
 from .redaction import scrub_text
 from .resource_center import ResourceCenterService
 from .secure_store_transaction import SecureStoreTransaction
@@ -1212,6 +1213,7 @@ class AppState(object):
                 permission,
                 legacy_clearer=self.lark_credentials.clear,
             ))
+        self.purchase_details = PurchaseDetailsService()
         self.procurement_import = ProcurementImportService()
         install_mode = str(
             os.environ.get('XYNIGO_INSTALL_MODE') or 'green'
@@ -3405,6 +3407,7 @@ class Handler(BaseHTTPRequestHandler):
                     'taskSearch': True,
                     'recipientRead': True,
                     'recipientCurp': True,
+                    'purchaseDetailsV1': True,
                     'sourceConfiguration': False,
                     'desktopManagedDataSources': True,
                     'memberScopedDataSources': True,
@@ -3596,7 +3599,10 @@ class Handler(BaseHTTPRequestHandler):
                 'error': '请求数据格式无效',
             }, 400)
         try:
-            STATE.auth.require()
+            identity = STATE.auth.require()
+            if path == PURCHASE_ASSISTANT_API_PREFIX + '/purchase-details':
+                result = STATE.purchase_details.handle(STATE, identity['user']['id'], body)
+                return self._purchase_assistant_json(result)
             if path.startswith(
                     PURCHASE_ASSISTANT_API_PREFIX + '/data-source/'):
                 return self._purchase_assistant_json({

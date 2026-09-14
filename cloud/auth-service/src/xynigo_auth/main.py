@@ -108,6 +108,8 @@ from .local_executor_release import (
     latest_local_executor_release,
     resolve_local_executor_release_asset,
 )
+from .purchase_receipt import ReceiptBody, ReceiptError, execute as execute_receipt
+from .procurement_import_sheet import FeishuSheetsGateway, LarkSheetSyncError
 from .integration_contract import FeishuIntegrationWriteBody, FeishuReadProxyBody
 from .logistics_export import build_logistics_workbook_export
 from .store_finance_export import build_store_finance_export
@@ -2203,6 +2205,39 @@ def create_app(
         return tenant_feishu_service.public_status(
             session, actor.tenant.id, admin=True
         )
+
+    @app.post("/v1/assistant/purchase-receipts")
+    def purchase_receipt_operation(
+        body: ReceiptBody, request: Request, session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(request, session, permission="assistant.access",
+            session_token=session_token, authorization=authorization,
+            audit_action="assistant.purchase_receipt." + body.action)
+        admin = bool(_user_has_role(session, actor.user, ADMIN_ROLE)
+                     or _user_has_role(session, actor.user, SUPER_ADMIN_ROLE))
+        registry = data_source_registry_service.read(session, tenant_id=actor.tenant.id,
+            user_id=actor.user.id, include_all=admin)['registry']
+        target = next((x for x in registry['dataSources'] if x['id'] == body.sourceId
+                       and x['scope'] == 'team' and x['enabled']
+                       and x['migrationState'] == 'ready'), None)
+        if target is None:
+            raise HTTPException(status_code=403, detail={"code": "receipt_target_forbidden",
+                "message": "仅允许回传已登记的团队协作表，个人速填表不支持回传"})
+        try:
+            credential = tenant_feishu_service.resolve(session, actor.tenant.id)
+            gateway = FeishuSheetsGateway(app_id=credential.app_id, app_secret=credential.app_secret)
+            result = execute_receipt(session, body, user=actor.user, target=target,
+                                     gateway=gateway, admin=admin)
+            return result
+        except ReceiptError as exc:
+            session.rollback()
+            raise HTTPException(status_code=409, detail={"code": "receipt_conflict", "message": str(exc)}) from exc
+        except (TenantFeishuError, LarkSheetSyncError) as exc:
+            session.rollback()
+            raise HTTPException(status_code=422, detail={"code": "receipt_unavailable",
+                "message": "采购凭证服务或协作表暂不可用，请检查配置和权限"}) from exc
 
     @app.post("/v1/integrations/feishu/read")
     def proxy_tenant_feishu_read(
