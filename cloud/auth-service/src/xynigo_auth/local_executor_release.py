@@ -14,9 +14,9 @@ from urllib.parse import quote
 
 from . import __version__
 
-RELEASE_VERSION = "0.17.20"
+RELEASE_VERSION = "0.17.21"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-11T10:52:04Z"
+RELEASE_PUBLISHED_AT = "2026-09-14T08:23:11Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,10 +31,10 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.17.20-f0812df8b6aa",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.20.exe",
-        "sha256": "6e2b8c3772f4a1501a634af21f6b46bf04bb7e476bdc9eed99a5bb0e4f84011c",
-        "size": 15378807,
+        "runtimeId": "0.17.21-55ebc032a3f0",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.21.exe",
+        "sha256": "b74908091d0424ee710e5552515e4ff7fcc9f6bb47259a0221689e84a865ea5b",
+        "size": 15382767,
         "installMode": "standard_per_user",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_silent_installer",
@@ -50,10 +50,10 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.17.20-f0812df8b6aa",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.20.pkg",
-        "sha256": "20c356916c917edbb1f8934fd1984fc17394691bee10d346e8cf14ce06b8273c",
-        "size": 20268176,
+        "runtimeId": "0.17.21-55ebc032a3f0",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.21.pkg",
+        "sha256": "dcd4d2a71f52584905f439bcb75ee41dac9f8d84d9f08150355820b09c183c64",
+        "size": 20279330,
         "installMode": "standard_system_application",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_system_installer",
@@ -320,9 +320,8 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "采购助手查询性能：行缓存改为按数据源常驻并在未命中时自动回源，协作表按天导入场景下不再每次搜索都全量重读，查询明显加快。",
-            "桌面客户端「采购助手数据源」新增「查询缓存时间」档位（实时 8 秒 / 10 分钟 / 30 分钟 / 1 小时），保存时自动通过云端读取校验当前默认数据源，通过才生效；无需再手工修改本机配置文件。",
-            "修复缓存档位保存成功后下拉框回跳显示「实时」、以及档位与「保存并云端校验」按钮不在同一水平线的问题。",
-            "店铺巡检运行横幅恢复运行中的转圈提示；自动补采轮次文案明确为「第 X/2 轮」（首轮巡检 + 2 轮自动补采，共 3 轮，人工补采不会自动续跑）。",
+            "采购助手新增采购详情：读取墨西哥站已付订单的采购订单号、实付金额，生成单张订单长截图并回传团队执行协作表。",
+            "回传前确认任务与截图，保留人工拆单后缀；支持重复提交拦截、版本冲突保护、截图补传和修订留痕，不更新采购状态。",
+            "需配套采购助手插件 0.9.0；本版本发布到现有测试机，可在客户端检查更新后于现有采购环境测试。"
         ],
     }
