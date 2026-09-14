@@ -95,10 +95,13 @@ HIDE_PANEL = r"""(async () => {
  if(window[key]) window[key].restore();
  const original={value:e.style.getPropertyValue('visibility'),priority:e.style.getPropertyPriority('visibility')};
  const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
- const state={expired:false,original,token:"__CAPTURE_TOKEN__"};
+ const state={expired:false,restored:false,original,token:"__CAPTURE_TOKEN__"};
  state.restore=()=>{
    clearTimeout(state.timer);
-   if(window[key]!==state)return;
+   if(state.revealAnimation)state.revealAnimation.cancel();
+   if(window[key]!==state||state.restored)return;
+   state.restored=true;
+   if(state.animation)state.animation.cancel();
    if(original.value)e.style.setProperty('visibility',original.value,original.priority);
    else e.style.removeProperty('visibility');
  };
@@ -106,8 +109,9 @@ HIDE_PANEL = r"""(async () => {
  state.timer=setTimeout(()=>{state.expired=true;state.restore();},10000);
  if(!reduce&&e.animate){
    const animation=e.animate([{opacity:getComputedStyle(e).opacity},{opacity:0}],{duration:120,fill:'forwards',easing:'ease-out'});
+   state.animation=animation;
    try {await animation.finished;} catch(_) {}
-   if(state.expired){animation.cancel();return null;}
+   if(state.expired||state.restored||window[key]!==state){animation.cancel();return null;}
    e.style.setProperty('visibility','hidden','important');animation.cancel();
  } else e.style.setProperty('visibility','hidden','important');
  return true;
@@ -115,13 +119,14 @@ HIDE_PANEL = r"""(async () => {
 
 RESTORE_PANEL = r"""(() => {
  const state=window.__xynigoReceiptPanel;
- if(!state)return false;
+ if(!state)return true;
  if(state.token!=="__CAPTURE_TOKEN__")return true;
- state.restore();delete window.__xynigoReceiptPanel;
+ const invalid=state.expired||state.restored;
+ state.restore();
  const e=document.querySelector('#xynigo-purchase-assistant-host');
- if(e&&!state.expired&&!matchMedia('(prefers-reduced-motion: reduce)').matches&&e.animate)
-   e.animate([{opacity:0},{opacity:getComputedStyle(e).opacity}],{duration:140,easing:'ease-in'});
- return state.expired;
+ if(e&&!invalid&&!matchMedia('(prefers-reduced-motion: reduce)').matches&&e.animate)
+   state.revealAnimation=e.animate([{opacity:0},{opacity:getComputedStyle(e).opacity}],{duration:140,easing:'ease-in'});
+ return invalid;
 })()"""
 
 
@@ -280,7 +285,7 @@ class PurchaseDetailsService:
                     finally:
                         expired = evaluate_capture_animation(page, RESTORE_PANEL, animation_token)
                     if expired:
-                        raise PurchaseAssistantError('截图耗时过长，面板已恢复，请重新读取')
+                        raise PurchaseAssistantError('截图会话已变化或耗时过长，请重新读取')
                     capture_ms = round((time.perf_counter()-capture_start)*1000, 2)
                     after = validate_order(page._evaluate(READ_IDENTITY), url, marker, check_clip=False)
                     if order != after or len(image) > 4_000_000:
