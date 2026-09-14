@@ -227,3 +227,12 @@ def test_migration_creates_and_removes_only_receipt_tables():
             assert {c['name'] for c in inspect(connection).get_columns('purchase_receipts')}==set(PurchaseReceipt.__table__.columns.keys())
             migration.downgrade()
             assert set(inspect(connection).get_table_names())=={'tenants','users'}
+
+
+def test_target_rebinding_invalidates_same_rows_preview(ctx):
+    from xynigo_auth.purchase_receipt import locate
+    s,u,g,run,b=ctx
+    target={'spreadsheetToken':'DemoSheetA','sheetId':'DemoTabA'}
+    first=locate(g,target,b['taskKey'],u,False)[2]
+    second=locate(g,{**target,'spreadsheetToken':'DemoSheetB'},b['taskKey'],u,False)[2]
+    assert first != second

@@ -81,7 +81,9 @@ def locate(gateway, target, task_key, user, admin):
             matches.append((number, row))
     if not matches:
         raise ReceiptError('原采购任务已不存在，请重新搜索；拆单后缀必须完整保留')
-    fp = digest([{k: str(r.get(k) or '') for k in IDENTITY_FIELDS} for _, r in matches])
+    fp = digest({'target': [target['spreadsheetToken'], target['sheetId']],
+                 'headers': headers,
+                 'rows': [{k: str(r.get(k) or '') for k in IDENTITY_FIELDS} for _, r in matches]})
     return headers, matches, fp
 
 
