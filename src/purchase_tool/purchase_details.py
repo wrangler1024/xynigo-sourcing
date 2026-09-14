@@ -17,14 +17,32 @@ READ_ORDER = r'''(() => {
  const total=document.querySelector('.order-total');
  if(!o||!h||!total) return null;
  const a=h.getBoundingClientRect(),z=total.getBoundingClientRect();
+ // Heading/total boxes can be narrower than their overflowing table/text.
+ let region=h;
+ while(region.parentElement&&!region.contains(total)) region=region.parentElement;
+ const boxes=[a,z];
+ for(const e of [region,...region.querySelectorAll('*')]){
+   if(e.closest('#xynigo-purchase-assistant-host')||!e.getClientRects().length) continue;
+   const r=e.getBoundingClientRect();
+   if(r.bottom<a.top||r.top>z.bottom) continue;
+   boxes.push(r);
+   for(const node of e.childNodes){
+     if(node.nodeType!==Node.TEXT_NODE||!node.textContent.trim()) continue;
+     const range=document.createRange();range.selectNodeContents(node);
+     boxes.push(...range.getClientRects());
+   }
+ }
+ const left=Math.max(0,Math.floor(Math.min(...boxes.map(r=>r.left))+scrollX)-8);
+ const top=Math.max(0,Math.floor(a.top+scrollY)-8);
+ const right=Math.ceil(Math.max(...boxes.map(r=>r.right))+scrollX)+8;
+ const bottom=Math.ceil(z.bottom+scrollY)+16;
  const items=(o.orderGoodsList||[]).map(x=>({sku:String(x.display_goods_sn||x.sku_code||''),quantity:String(x.quantity||'')}));
  return {orderNo:String(o.billno||''),amount:String(o.totalPrice?.amount||''),
  currency:String(o.currency_code||''),isPaid:String(o.isPaid||''),paidAt:String(o.paymentTime||''),
  status:String(o.orderStatus||''),items,
  totalText:total.innerText,
  url:location.href,marker:document.documentElement.getAttribute('data-xynigo-receipt-tab'),
- clip:{x:Math.floor(a.left+scrollX),y:Math.floor(a.top+scrollY),
- width:Math.ceil(Math.max(a.right,z.right)-a.left)+2,height:Math.ceil(z.bottom-a.top+8),scale:1}};
+ clip:{x:left,y:top,width:right-left,height:bottom-top,scale:1}};
 })()'''
 
 
