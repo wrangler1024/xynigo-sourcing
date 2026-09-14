@@ -14,9 +14,9 @@ from urllib.parse import quote
 
 from . import __version__
 
-RELEASE_VERSION = "0.17.23"
+RELEASE_VERSION = "0.17.24"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-14T09:56:53Z"
+RELEASE_PUBLISHED_AT = "2026-09-14T11:14:51Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,10 +31,10 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.17.23-b6e1e34097ed",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.23.exe",
-        "sha256": "0f67f35c0da588d186f2a144d3978b5218f0ea029f05f27b1db7aac90be9be69",
-        "size": 15380852,
+        "runtimeId": "0.17.24-d1f4d019776d",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.24.exe",
+        "sha256": "addeefbda7d03cdcced956d2182a407610897262957491c86b58f377ae778fd6",
+        "size": 15385681,
         "installMode": "standard_per_user",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_silent_installer",
@@ -50,10 +50,10 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.17.23-b6e1e34097ed",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.23.pkg",
-        "sha256": "901e169032b20941a4df4debc9c384b8ca1e0940ccd874e8349a6ab3044c87d9",
-        "size": 20279171,
+        "runtimeId": "0.17.24-d1f4d019776d",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.24.pkg",
+        "sha256": "ac995870ba51b941ae2af35f6bc0437394fe15597fef59a6958ac3776da679a4",
+        "size": 20285375,
         "installMode": "standard_system_application",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_system_installer",
@@ -319,5 +319,5 @@ def latest_local_executor_release() -> dict[str, object]:
         "releaseUrl": "",
         "manifestUrl": "",
         "platforms": platforms,
-        "notesZh": ["修复窄窗口订单截图右侧商品列及实付金额被裁切的问题。", "配套采购助手0.9.1新增动态等待提示和耗时显示，保留确认回传及重复提交保护。"],
+        "notesZh": ["优化采购回传的连接复用、批量读取和后台结果查询。", "支持七种浅色标记，默认不填色，范围为当前任务行A～AR；填色失败可单独重试。", "截图面板平滑收起与恢复，需配套采购助手0.10.0及新版云端接口。"],
     }
