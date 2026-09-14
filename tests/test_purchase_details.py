@@ -76,3 +76,24 @@ def test_internal_route_id_can_differ_from_purchase_order_number():
 def test_internal_id_support_does_not_widen_site_boundary(url):
     data=sample();data['url']=url
     with pytest.raises(PurchaseAssistantError):validate_order(data,url,MARK)
+
+
+def test_changed_purchase_order_on_same_url_blocks_submit():
+    import time
+    from types import SimpleNamespace
+    from purchase_tool.purchase_details import PurchaseDetailsService
+    service=PurchaseDetailsService()
+    original=sample()
+    original['url']='https://www.shein.com.mx/user/orders/detail/USH-DEMO-INTERNAL-123'
+    original['orderNo']='GSH-DEMO-PURCHASE-456'
+    changed={**original,'orderNo':'GSH-DEMO-PURCHASE-789'}
+    page=SimpleNamespace(_ws=SimpleNamespace(close=lambda:None),_evaluate=lambda script:changed)
+    service._page=lambda *args:page
+    calls=[]
+    state=SimpleNamespace(auth=SimpleNamespace(purchase_receipt_request=lambda body:calls.append(body)))
+    service.entries['test']={'member':'buyer','time':time.monotonic(),'payload':{'action':'submit'},
+        'sent':False,'reason':'','identifier':'demo','url':original['url'],'marker':MARK,
+        'order':validate_order(original,original['url'],MARK)}
+    with pytest.raises(PurchaseAssistantError,match='变化'):
+        service.handle(state,'buyer',{'captureId':'test','action':'submit','confirmed':True})
+    assert calls==[]
