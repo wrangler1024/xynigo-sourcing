@@ -14,9 +14,9 @@ from urllib.parse import quote
 
 from . import __version__
 
-RELEASE_VERSION = "0.17.22"
+RELEASE_VERSION = "0.17.23"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-14T09:25:00Z"
+RELEASE_PUBLISHED_AT = "2026-09-14T09:56:53Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,10 +31,10 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.17.22-c0c580f10cc2",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.22.exe",
-        "sha256": "d17e1f970a6341bde51e493f8820e052677047b003e903fb9c888272e2ef9e3f",
-        "size": 15379248,
+        "runtimeId": "0.17.23-b6e1e34097ed",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.17.23.exe",
+        "sha256": "0f67f35c0da588d186f2a144d3978b5218f0ea029f05f27b1db7aac90be9be69",
+        "size": 15380852,
         "installMode": "standard_per_user",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_silent_installer",
@@ -50,10 +50,10 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.17.22-c0c580f10cc2",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.22.pkg",
-        "sha256": "2d5a9baa15a40ff61e9f3aa1749529bac94b08107cd46a49bacf3e6c9dfa984e",
-        "size": 20279617,
+        "runtimeId": "0.17.23-b6e1e34097ed",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.17.23.pkg",
+        "sha256": "901e169032b20941a4df4debc9c384b8ca1e0940ccd874e8349a6ab3044c87d9",
+        "size": 20279171,
         "installMode": "standard_system_application",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_system_installer",
@@ -319,5 +319,5 @@ def latest_local_executor_release() -> dict[str, object]:
         "releaseUrl": "",
         "manifestUrl": "",
         "platforms": platforms,
-        "notesZh": ["修复墨西哥站详情页内部编号与采购订单号不同导致读取失败的问题。", "保留站点、MXN、付款状态、实付总额和截图前后订单一致性校验；兼容采购助手0.9.0。"],
+        "notesZh": ["修复窄窗口订单截图右侧商品列及实付金额被裁切的问题。", "配套采购助手0.9.1新增动态等待提示和耗时显示，保留确认回传及重复提交保护。"],
     }
