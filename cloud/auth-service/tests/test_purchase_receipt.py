@@ -76,14 +76,14 @@ def test_multiple_goods_count_payment_once_and_idempotent(ctx):
     assert s.scalar(select(PurchaseReceipt)).image.startswith(b'\xff\xd8\xff')
 
 
-def test_exact_split_suffix_and_ownership(ctx):
+def test_exact_split_suffix_is_preserved(ctx):
     s,u,g,run,b=ctx
     g.rows[0][1]='SALE-1-1';g.rows[1][1]='SALE-1-2'
     with pytest.raises(ReceiptError):run(b)
     assert g.writes==0
     g.rows[0][1]=g.rows[1][1]='SALE-1'
     g.rows[0][4]='Other buyer'
-    with pytest.raises(ReceiptError,match='采购员'):run(b)
+    assert run(b)['state']=='complete'
 
 
 def test_manual_values_are_not_overwritten(ctx):
@@ -191,12 +191,12 @@ def test_api_auth_target_restrictions_and_complete_flow(tmp_path, monkeypatch):
         assert result.json()['state']=='complete'
 
 
-def test_duplicate_purchaser_names_require_explicit_user_id(ctx):
+def test_duplicate_purchaser_names_do_not_block_receipt(ctx):
     s,u,g,run,b=ctx
     s.add(User(id=uuid.uuid4(),tenant_id=u.tenant_id,feishu_open_id='other-user',display_name=u.display_name))
     s.commit()
-    with pytest.raises(ReceiptError,match='采购员'):run(b)
-    assert g.writes==0
+    assert run(b)['state']=='complete'
+    assert g.writes==1
 
 
 def test_manual_image_change_blocks_retry(ctx):
@@ -239,13 +239,13 @@ def test_target_rebinding_invalidates_same_rows_preview(ctx):
     assert first != second
 
 
-def test_duplicate_names_never_authorize_unassigned_rows(ctx):
+def test_blank_purchaser_with_duplicate_names_does_not_block_receipt(ctx):
     s,u,g,run,b=ctx
     s.add(User(id=uuid.uuid4(),tenant_id=u.tenant_id,feishu_open_id='duplicate-name',display_name=u.display_name))
     s.commit()
     g.rows[0][4]=g.rows[1][4]=''
-    with pytest.raises(ReceiptError,match='采购员'):run(b)
-    assert g.writes==0
+    assert run(b)['state']=='complete'
+    assert g.writes==1
 
 
 def test_image_reads_use_gateway_original_value_request():
@@ -270,3 +270,23 @@ def test_formatted_money_does_not_break_readback(ctx):
         return SheetTable(t.headers,tuple((n,tuple('$MXN1,234.50' if i==8 and v else v for i,v in enumerate(values))) for n,values in t.rows))
     g.read_table=formatted
     assert run({**b,'amount':'1234.50'})['state']=='complete'
+
+
+def test_missing_purchaser_column_allows_preview(ctx):
+    s,u,g,run,b=ctx
+    index=g.headers.index('采购员')
+    g.headers=tuple(value for i,value in enumerate(g.headers) if i != index)
+    g.rows=[row[:index]+row[index+1:] for row in g.rows]
+    assert run({**b,'action':'preview'})['ok'] is True
+    assert g.writes==0
+
+
+def test_different_actor_cannot_check_or_retry_receipt(ctx):
+    s,u,g,run,b=ctx
+    assert run(b)['state']=='complete'
+    other=User(id=uuid.uuid4(),tenant_id=u.tenant_id,feishu_open_id='other-actor',display_name='Other buyer')
+    s.add(other);s.commit()
+    target=dict(spreadsheetToken='DemoSpreadsheet123',sheetId='DemoSheet',label='Demo team',sheetName='Execution')
+    for action in ('status','retry-image'):
+        with pytest.raises(ReceiptError,match='他人'):
+            execute(s,ReceiptBody(**{**b,'action':action}),user=other,target=target,gateway=g)

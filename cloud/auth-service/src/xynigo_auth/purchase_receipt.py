@@ -6,7 +6,6 @@ import hashlib
 import json
 import re
 import uuid
-from types import SimpleNamespace
 from decimal import Decimal
 from typing import Literal
 
@@ -14,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from .models import PurchaseReceipt, PurchaseReceiptSlot, PurchaseReceiptOrder, User
+from .models import PurchaseReceipt, PurchaseReceiptSlot, PurchaseReceiptOrder
 from .procurement_import_sheet import _column_name, _cell_contains_image, LarkSheetSyncError
 
 
@@ -63,8 +62,8 @@ def key_for(row):
                                            separators=(',', ':')).encode()).hexdigest()
 
 
-IDENTITY_FIELDS = ('系统订单键', '销售订单号', '店铺', '包裹号', '采购员', '主规格', '次规格', '需求数量', '收货人国家')
-REQUIRED = ('系统订单键', '销售订单号', '店铺', '包裹号', '采购员', '采购订单号', '实际付款', '下单截图')
+IDENTITY_FIELDS = ('系统订单键', '销售订单号', '店铺', '包裹号', '主规格', '次规格', '需求数量', '收货人国家')
+REQUIRED = ('系统订单键', '销售订单号', '店铺', '包裹号', '采购订单号', '实际付款', '下单截图')
 
 
 def locate(gateway, target, task_key, user, admin):
@@ -76,8 +75,6 @@ def locate(gateway, target, task_key, user, admin):
     for number, values in table.rows:
         row = dict(zip(headers, values))
         if key_for(row) == task_key:
-            if not admin and str(row.get('采购员') or '').strip() not in {v for v in (str(user.id), user.display_name) if v}:
-                raise ReceiptError('该任务采购员与登录身份不一致，请管理员核对分配姓名')
             matches.append((number, row))
     if not matches:
         raise ReceiptError('原采购任务已不存在，请重新搜索；拆单后缀必须完整保留')
@@ -116,11 +113,6 @@ def values_equal(actual, expected):
 
 def execute(session, body, *, user, target, gateway, admin=False):
     tenant_id = user.tenant_id
-    if not admin:
-        names = list(session.scalars(select(User.id).where(User.tenant_id == tenant_id,
-                    User.display_name == user.display_name, User.status != 'disabled')))
-        if len(names) != 1:
-            user = SimpleNamespace(id=user.id, tenant_id=tenant_id, display_name='')
     # A target is resolved from the cloud registry, never accepted as an arbitrary URL.
     slot_key = digest([sheet_url(target), target['sheetId'], body.taskKey])
     slot = session.scalar(select(PurchaseReceiptSlot).where(
