@@ -21,11 +21,14 @@ class ReceiptError(ValueError):
     pass
 
 
+FILL_COLORS = ('', '#E2F0D9', '#DDEBF7', '#FFF2CC', '#FCE4D6', '#F4DCE6', '#E4DFEC', '#DDF2EF')
+
+
 class ReceiptBody(BaseModel):
     model_config = ConfigDict(extra='forbid')
     sourceId: str = Field(min_length=1, max_length=100)
     taskKey: str = Field(pattern=r'^PT1-[0-9a-f]{64}$')
-    action: Literal['preview', 'submit', 'retry-image', 'status']
+    action: Literal['preview', 'submit', 'retry-image', 'retry-color', 'status']
     requestId: str = Field(default='', max_length=64)
     expectedRevision: int = Field(default=0, ge=0)
     fingerprint: str = Field(default='', max_length=64)
@@ -35,6 +38,14 @@ class ReceiptBody(BaseModel):
     image: str = Field(default='', max_length=4_000_000)
     reason: str = Field(default='', max_length=300)
     paidAt: str = Field(default='', max_length=40)
+    fillColor: str = Field(default='', max_length=7)
+
+    @field_validator('fillColor')
+    @classmethod
+    def fill_color(cls, value):
+        if value not in FILL_COLORS:
+            raise ValueError('请选择预设浅色或不填色')
+        return value
 
     @field_validator('orderNo')
     @classmethod
@@ -80,11 +91,16 @@ def locate(gateway, target, task_key, user, admin):
         raise ReceiptError('原采购任务已不存在，请重新搜索；拆单后缀必须完整保留')
     # Money must be compared as a numeric cell, not a formatted currency string.
     column = _column_name(headers.index('实际付款') + 1)
-    for number, row in matches:
-        data = gateway._read_range(sheet_url(target), target['sheetId'],
-                                   f'{column}{number}:{column}{number}', raw=True)
-        cells = (data.get('valueRange') or {}).get('values') or []
-        row['实际付款'] = cells[0][0] if cells and cells[0] else None
+    if hasattr(gateway, 'read_money_cells'):
+        amounts = gateway.read_money_cells(sheet_url(target), target['sheetId'], column, [number for number, _ in matches])
+        for (_, row), amount in zip(matches, amounts):
+            row['实际付款'] = amount
+    else:
+        for number, row in matches:
+            data = gateway._read_range(sheet_url(target), target['sheetId'],
+                                       f'{column}{number}:{column}{number}', raw=True)
+            cells = (data.get('valueRange') or {}).get('values') or []
+            row['实际付款'] = cells[0][0] if cells and cells[0] else None
     fp = digest({'target': [target['spreadsheetToken'], target['sheetId']],
                  'headers': headers,
                  'rows': [{k: str(r.get(k) or '') for k in IDENTITY_FIELDS} for _, r in matches]})
@@ -92,12 +108,19 @@ def locate(gateway, target, task_key, user, admin):
 
 
 def public_receipt(record):
-    return {'ok': True, 'receiptId': str(record.id), 'revision': record.revision, 'requestId': record.request_id,
+    color = record.image_cells.get('color') or {'selected': '', 'state': 'skipped'}
+    result = {'ok': True, 'receiptId': str(record.id), 'revision': record.revision, 'requestId': record.request_id,
             'state': record.state, 'orderNo': record.order_no,
             'amount': record.amount, 'currency': record.currency,
             'message': {'complete': '采购详情已回传', 'image_failed': '订单号与金额已写入，请补传截图',
                         'pending': '结果尚未确认，请勿重复提交', 'uncertain': '写入结果未知，请管理员核对协作表；禁止自动重试',
                         'text_done': '订单号与金额已写入，截图结果待确认'}.get(record.state, '待核对')}
+    result['color'] = color
+    if record.state == 'complete' and color['state'] in {'failed', 'pending'}:
+        result['message'] = '采购详情已回传，填色未完成，可仅重试填色'
+    elif record.state == 'complete' and color['state'] == 'complete':
+        result['message'] = '采购详情已回传并填色'
+    return result
 
 
 def values_equal(actual, expected):
@@ -119,7 +142,7 @@ def execute(session, body, *, user, target, gateway, admin=False):
         PurchaseReceiptSlot.tenant_id == tenant_id,
         PurchaseReceiptSlot.task_hash == slot_key).with_for_update())
     record = session.get(PurchaseReceipt, slot.receipt_id) if slot and slot.receipt_id else None
-    if body.action in {'status', 'retry-image'}:
+    if body.action in {'status', 'retry-image', 'retry-color'}:
         if not record or record.request_id != body.requestId:
             raise ReceiptError('未找到当前提交记录')
         if record.actor_id != user.id and not admin:
@@ -127,8 +150,18 @@ def execute(session, body, *, user, target, gateway, admin=False):
         if body.action == 'status':
             return public_receipt(record)
     headers, matches, fingerprint = locate(gateway, target, body.taskKey, user, admin)
+    if body.action == 'retry-color':
+        if record.state != 'complete':
+            raise ReceiptError('凭证未完成，不能填色')
+        if fingerprint != record.fingerprint:
+            raise ReceiptError('任务已变化，请重新核对填色范围')
+        check_expected(matches, record, written=True, check_image=False)
+        if digest(read_images(gateway, target, headers, matches)) != record.image_cells.get('after'):
+            raise ReceiptError('协作表截图已变化，请核对原凭证')
+        return finish_color(session, gateway, target, body.taskKey, user, admin, record,
+                            locked_slot=slot, verified_matches=matches)
     if body.action == 'preview':
-        return {'ok': True, 'expectedRevision': slot.revision if slot else 0,
+        return {'ok': True, 'features': {'fillColorV1': True}, 'expectedRevision': slot.revision if slot else 0,
                 'fingerprint': fingerprint, 'rowCount': len(matches),
                 'targetLabel': target['label'], 'sheetName': target['sheetName'],
                 'existing': public_receipt(record) if record else None}
@@ -139,7 +172,8 @@ def execute(session, body, *, user, target, gateway, admin=False):
         except ValueError:
             raise ReceiptError('同一提交编号的截图无效') from None
         if (record.order_no != body.orderNo or record.amount != body.amount or
-                record.image_hash != incoming_hash):
+                record.image_hash != incoming_hash or
+                body.fillColor != (record.image_cells.get('color') or {}).get('selected', '')):
             raise ReceiptError('同一提交编号的内容不能改变')
         return public_receipt(record)
     if body.action == 'retry-image':
@@ -199,7 +233,8 @@ def execute(session, body, *, user, target, gateway, admin=False):
         request_id=body.requestId, revision=revision, state='pending', fingerprint=fingerprint,
         order_no=body.orderNo, amount=body.amount, currency=body.currency, paid_at=body.paidAt,
         reason=body.reason, image=image, image_hash=hashlib.sha256(image).hexdigest(),
-        previous_id=record.id if record else None, image_cells={'before': digest(image_cells)})
+        previous_id=record.id if record else None, image_cells={'before': digest(image_cells),
+            'color': {'selected': body.fillColor, 'state': 'pending' if body.fillColor else 'skipped'}})
     session.add(current)
     slot.revision, slot.receipt_id = revision, current.id
     try:
@@ -244,6 +279,8 @@ def check_expected(matches, record, *, written, check_image=True):
 
 def read_images(gateway, target, headers, matches):
     column = _column_name(headers.index('下单截图') + 1)
+    if hasattr(gateway, 'read_image_cells'):
+        return gateway.read_image_cells(sheet_url(target), target['sheetId'], column, [row for row, _ in matches])
     result = []
     for row, _ in matches:
         data = gateway._read_range(sheet_url(target), target['sheetId'], f'{column}{row}:{column}{row}', raw=True)
@@ -277,5 +314,68 @@ def write_image(session, gateway, target, task_key, user, admin, record):
         record.state = 'image_failed' if exc.code in {90204, 90213, 91403, 90218, 99991672} else 'uncertain'
     except Exception:
         record.state = 'uncertain'
+    session.commit()  # Evidence completion survives any later color failure/crash.
+    if record.state == 'complete':
+        return finish_color(session, gateway, target, task_key, user, admin, record)
+    return public_receipt(record)
+
+
+def finish_color(session, gateway, target, task_key, user, admin, record, *, locked_slot=None, verified_matches=None):
+    color = record.image_cells.get('color') or {}
+    if not color.get('selected'):
+        return public_receipt(record)
+    slot = locked_slot or session.scalar(select(PurchaseReceiptSlot).where(
+        PurchaseReceiptSlot.tenant_id == user.tenant_id,
+        PurchaseReceiptSlot.task_hash == digest([sheet_url(target), target['sheetId'], task_key])
+    ).with_for_update().execution_options(populate_existing=True))
+    session.refresh(record)
+    color = record.image_cells.get('color') or {}
+    if color.get('state') in {'complete', 'superseded'}:
+        return public_receipt(record)
+    if slot is None or slot.receipt_id != record.id:
+        record.image_cells = {**record.image_cells, 'color': {**color, 'state': 'superseded'}}
+        session.commit()
+        return public_receipt(record)
+    try:
+        if verified_matches is None:
+            headers, matches, fp = locate(gateway, target, task_key, user, admin)
+            if fp != record.fingerprint:
+                raise ReceiptError('任务已变化，停止填色')
+            check_expected(matches, record, written=True, check_image=False)
+            if digest(read_images(gateway, target, headers, matches)) != record.image_cells.get('after'):
+                raise ReceiptError('截图已变化，停止填色')
+        else:
+            matches = verified_matches
+        apply_color(gateway, target, matches, record)
+    except Exception:
+        record.image_cells = {**record.image_cells, 'color': {**color, 'state': 'failed'}}
     session.commit()
     return public_receipt(record)
+
+
+def apply_color(gateway, target, matches, record):
+    """Independent cosmetic result. Never downgrades a verified receipt."""
+    color = record.image_cells.get('color') or {'selected': '', 'state': 'skipped'}
+    selected = color.get('selected', '')
+    if not selected:
+        return
+    if selected not in FILL_COLORS:
+        raise ReceiptError('填色配置无效')
+    rows = sorted({int(number) for number, _ in matches})
+    if not rows or rows[0] < 2:
+        raise ReceiptError('禁止修改表头颜色')
+    try:
+        bands = []
+        for number in rows:
+            if bands and number == bands[-1][1] + 1:
+                bands[-1][1] = number
+            else:
+                bands.append([number, number])
+        gateway._style_ranges(sheet_url(target), [{
+            'ranges': [f"{target['sheetId']}!A{first}:AR{last}" for first, last in bands],
+            'style': {'backColor': selected},
+        }])
+        state = 'complete'
+    except Exception:
+        state = 'failed'
+    record.image_cells = {**record.image_cells, 'color': {'selected': selected, 'state': state}}

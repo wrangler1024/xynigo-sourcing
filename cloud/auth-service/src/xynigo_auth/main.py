@@ -109,6 +109,7 @@ from .local_executor_release import (
     resolve_local_executor_release_asset,
 )
 from .purchase_receipt import ReceiptBody, ReceiptError, execute as execute_receipt
+from .purchase_receipt_gateway import ReceiptGatewayFactory
 from .procurement_import_sheet import FeishuSheetsGateway, LarkSheetSyncError
 from .integration_contract import FeishuIntegrationWriteBody, FeishuReadProxyBody
 from .logistics_export import build_logistics_workbook_export
@@ -505,6 +506,8 @@ def create_app(
             interval_seconds=settings.procurement_import_worker_interval_seconds,
         )
 
+    receipt_gateway_factory = ReceiptGatewayFactory()
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         if operation_sync_worker is not None:
@@ -522,6 +525,7 @@ def create_app(
                 purchase_sync_worker.stop()
             if operation_sync_worker is not None:
                 operation_sync_worker.stop()
+            receipt_gateway_factory.close()
             database.dispose()
 
     app = FastAPI(
@@ -2227,9 +2231,10 @@ def create_app(
                 "message": "仅允许回传已登记的团队协作表，个人速填表不支持回传"})
         try:
             credential = tenant_feishu_service.resolve(session, actor.tenant.id)
-            gateway = FeishuSheetsGateway(app_id=credential.app_id, app_secret=credential.app_secret)
+            gateway = receipt_gateway_factory.create(actor.tenant.id, credential.app_id, credential.app_secret)
             result = execute_receipt(session, body, user=actor.user, target=target,
                                      gateway=gateway, admin=admin)
+            result["performance"] = dict(gateway.metrics)
             return result
         except ReceiptError as exc:
             session.rollback()

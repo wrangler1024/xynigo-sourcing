@@ -18,10 +18,16 @@ class Gateway:
     def __init__(self):
         self.rows = [['origin','SALE-1','Demo shop','PACKAGE-1','Demo buyer','L',1,'','',''],
                      ['origin','SALE-1','Demo shop','PACKAGE-1','Demo buyer','M',1,'','','']]
+        self.metrics = {}
+        self.styles = []
+        self.fail_color = False
         self.writes = 0
         self.image_writes = 0
         self.fail_image = None
         self.fail_text = False
+    def _style_ranges(self, url, data):
+        if self.fail_color: raise OSError('color unavailable')
+        self.styles.append(data)
     def read_table(self, *args):
         return SheetTable(self.headers, tuple((i+2, tuple(r)) for i,r in enumerate(self.rows)))
     def _write_value_ranges(self, url, ranges):
@@ -170,7 +176,7 @@ def test_api_auth_target_restrictions_and_complete_flow(tmp_path, monkeypatch):
     monkeypatch.setattr(app.state.data_source_registry_service,'read',lambda *a,**kw:{'registry':{'dataSources':[target]}})
     monkeypatch.setattr(TenantFeishuService,'resolve',lambda *a:SimpleNamespace(app_id='demo',app_secret='synthetic'))
     g=Gateway()
-    monkeypatch.setattr(main,'FeishuSheetsGateway',lambda **kw:g)
+    monkeypatch.setattr(main.ReceiptGatewayFactory,'create',lambda *args, **kw:g)
     key=key_for(dict(zip(g.headers,g.rows[0])))
     endpoint='/v1/assistant/purchase-receipts'
     with TestClient(app) as client:
@@ -290,3 +296,90 @@ def test_different_actor_cannot_check_or_retry_receipt(ctx):
     for action in ('status','retry-image'):
         with pytest.raises(ReceiptError,match='他人'):
             execute(s,ReceiptBody(**{**b,'action':action}),user=other,target=target,gateway=g)
+
+
+def test_default_color_does_not_change_styles(ctx):
+    s,u,g,run,b=ctx
+    result=run(b)
+    assert result['color']=={'selected':'','state':'skipped'}
+    assert g.styles==[]
+
+
+def test_color_applies_all_task_rows_a_to_ar_after_evidence(ctx):
+    s,u,g,run,b=ctx
+    result=run({**b,'fillColor':'#E2F0D9'})
+    assert result['state']=='complete' and result['color']['state']=='complete'
+    assert g.writes==1 and g.image_writes==1
+    assert g.styles==[[{'ranges':['DemoSheet!A2:AR3'],'style':{'backColor':'#E2F0D9'}}]]
+
+
+def test_color_failure_retries_only_color_and_relocates_rows(ctx):
+    s,u,g,run,b=ctx
+    g.fail_color=True
+    b={**b,'fillColor':'#DDEBF7'}
+    result=run(b)
+    assert result['state']=='complete' and result['color']['state']=='failed'
+    g.fail_color=False
+    g.rows.insert(0,['different','SALE-OTHER','Demo shop','PACKAGE-OTHER','Demo buyer','S',1,'','',''])
+    result=run({**b,'action':'retry-color','image':''})
+    assert result['color']['state']=='complete'
+    assert g.writes==1 and g.image_writes==1
+    assert [x['ranges'] for x in g.styles[0]]==[['DemoSheet!A3:AR4']]
+
+
+def test_image_failure_never_colors_task(ctx):
+    s,u,g,run,b=ctx
+    g.fail_image=LarkSheetSyncError('denied',code=90218)
+    assert run({**b,'fillColor':'#FFF2CC'})['state']=='image_failed'
+    assert not g.styles
+    with pytest.raises(ReceiptError,match='未完成'):
+        run({**b,'action':'retry-color'})
+
+
+def test_color_is_immutable_for_same_submission(ctx):
+    s,u,g,run,b=ctx
+    run({**b,'fillColor':'#F4DCE6'})
+    with pytest.raises(ReceiptError,match='不能改变'):
+        run({**b,'fillColor':'#DDF2EF'})
+    with pytest.raises(ValueError):
+        ReceiptBody(**{**b,'fillColor':'#000000'})
+
+
+def test_color_process_exit_preserves_completed_receipt_and_pending_retry(ctx):
+    s,u,g,run,b=ctx
+    def crash(*args):raise SystemExit('process stopped')
+    original=g._style_ranges;g._style_ranges=crash
+    b={**b,'fillColor':'#E2F0D9'}
+    with pytest.raises(SystemExit):run(b)
+    s.rollback();s.expire_all()
+    record=s.scalar(select(PurchaseReceipt))
+    assert record.state=='complete' and record.image_cells['color']['state']=='pending'
+    g._style_ranges=original
+    result=run({**b,'action':'retry-color','image':''})
+    assert result['state']=='complete' and result['color']['state']=='complete'
+    assert g.writes==1 and g.image_writes==1
+
+
+def test_old_revision_cannot_color_after_new_revision_claim(ctx):
+    from xynigo_auth.purchase_receipt import finish_color
+    s,u,g,run,b=ctx
+    g.fail_color=True
+    run({**b,'fillColor':'#E2F0D9'})
+    record=s.scalar(select(PurchaseReceipt))
+    slot=s.scalar(select(PurchaseReceiptSlot))
+    s.expire_on_commit=False
+    s.commit()
+    with Session(s.bind) as other:
+        other_slot=other.scalar(select(PurchaseReceiptSlot))
+        other_slot.receipt_id=uuid.uuid4();other.commit()
+    g.fail_color=False
+    target=dict(spreadsheetToken='DemoSpreadsheet123',sheetId='DemoSheet')
+    result=finish_color(s,g,target,b['taskKey'],u,False,record)
+    assert result['color']['state']=='superseded' and not g.styles
+
+
+def test_color_bands_never_include_another_task_between_goods(ctx):
+    s,u,g,run,b=ctx
+    g.rows.insert(1,['different','SALE-OTHER','Demo shop','PACKAGE-OTHER','Demo buyer','S',1,'','',''])
+    run({**b,'fillColor':'#E2F0D9'})
+    assert g.styles[0][0]['ranges']==['DemoSheet!A2:AR2','DemoSheet!A4:AR4']

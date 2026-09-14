@@ -1226,12 +1226,15 @@ class LocalAuthService(object):
                     'cloud_response_invalid', '组织数据源同步响应无效', 502)
             return result
 
-    def purchase_receipt_request(self, payload):
+    def purchase_receipt_request(self, payload, expected_member=None):
         with self.lock:
-            self.require('assistant.access')
+            identity = self.require('assistant.access')
+            if expected_member is not None and identity['user']['id'] != expected_member:
+                raise LocalAuthError('authentication_required', '登录身份已变化，请重新读取', 401)
             if not self.session_token:
                 raise LocalAuthError('authentication_required', status=401)
-            return self.client.purchase_receipt_request(self.session_token, payload)
+            token = self.session_token
+        return self.client.purchase_receipt_request(token, payload)
 
     def feishu_read_request(self, path, query, permission):
         with self.lock:
