@@ -14,7 +14,7 @@ def sample():
 def test_extracts_paid_total_only():
     assert validate_order(sample(),URL,MARK)['amount']=='118.23'
 
-@pytest.mark.parametrize('field,value', [('isPaid','0'),('amount','331.31'),('currency','USD'),('marker','different'),('orderNo','OTHER-ORDER'),('amount','NaN')])
+@pytest.mark.parametrize('field,value', [('isPaid','0'),('amount','331.31'),('currency','USD'),('marker','different'),('orderNo',''),('amount','NaN')])
 def test_rejects_mismatched_context(field,value):
     data=sample();data[field]=value
     with pytest.raises(PurchaseAssistantError):validate_order(data,URL,MARK)
@@ -59,3 +59,20 @@ def test_capture_environment_resolution_never_scans_closed_inventory():
     with pytest.raises(PurchaseAssistantError):
         PurchaseDetailsService()._page(SimpleNamespace(hub=hub),'999',URL,MARK)
     assert calls==[{'container_code':'open-1'}]
+
+
+def test_internal_route_id_can_differ_from_purchase_order_number():
+    data=sample()
+    data['url']='https://www.shein.com.mx/user/orders/detail/USH-DEMO-INTERNAL-123'
+    data['orderNo']='GSH-DEMO-PURCHASE-456'
+    assert validate_order(data,data['url'],MARK)['orderNo']=='GSH-DEMO-PURCHASE-456'
+
+
+@pytest.mark.parametrize('url',[
+    'https://www.shein.com/user/orders/detail/USH-DEMO-INTERNAL-123',
+    'https://www.shein.com.mx.example.test/user/orders/detail/USH-DEMO-INTERNAL-123',
+    'https://www.shein.com.mx/user/orders/list',
+])
+def test_internal_id_support_does_not_widen_site_boundary(url):
+    data=sample();data['url']=url
+    with pytest.raises(PurchaseAssistantError):validate_order(data,url,MARK)

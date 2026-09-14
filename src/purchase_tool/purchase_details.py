@@ -32,8 +32,14 @@ def validate_order(data, url, marker):
     if not isinstance(data, dict) or data.get('url') != url or data.get('marker') != marker:
         raise PurchaseAssistantError('订单页面已变化，请重新读取')
     match = re.fullmatch(r'https://www\.shein\.com\.mx/user/orders/detail/([A-Za-z0-9-]{6,64})', url)
-    if not match or match.group(1) != data.get('orderNo') or data.get('currency') != 'MXN':
-        raise PurchaseAssistantError('首版仅支持墨西哥站订单详情，请核对当前页面')
+    if not match:
+        raise PurchaseAssistantError('当前网址不是受支持的墨西哥站订单详情页')
+    # The route identifies an internal order (e.g. USH...), whereas billno is
+    # the displayed purchase order number (e.g. GSH...). They are not equal.
+    if not re.fullmatch(r'[A-Za-z0-9-]{6,64}', str(data.get('orderNo') or '')):
+        raise PurchaseAssistantError('未能读取有效采购订单号，请刷新详情页')
+    if data.get('currency') != 'MXN':
+        raise PurchaseAssistantError('当前订单币种不是 MXN，暂不支持回传')
     if data.get('isPaid') != '1':
         raise PurchaseAssistantError('当前订单未确认付款，不能回传采购凭证')
     try:
@@ -112,7 +118,7 @@ class PurchaseDetailsService:
                 task_key = str(body.get('taskKey') or '')
                 if not re.fullmatch(r'PT1-[0-9a-f]{64}', task_key):
                     raise PurchaseAssistantError('请先选择具体采购任务')
-                # Cloud checks source membership, row ownership and fresh task identity.
+                # Cloud checks registered team source and fresh task identity.
                 preview = state.auth.purchase_receipt_request({'action': 'preview',
                     'sourceId': source['dataSourceId'], 'taskKey': task_key})
                 url, marker = str(body.get('pageUrl') or ''), str(body.get('marker') or '')
