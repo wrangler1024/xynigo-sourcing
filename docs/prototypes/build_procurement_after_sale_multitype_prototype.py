@@ -45,7 +45,9 @@ DESIGN_PATCH = r'''
 (function () {
   const TYPES = [
     {
-      id: 'refund', label: '丢件退款', icon: '📦', state: 'done',
+      id: 'refund', label: '丢件退款', state: 'done',
+      // 图标与一级菜单同款：24×24 线性描边（退回箭头）
+      svg: '<path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',
       desc: '已送达但未收到 → 提交退款申请，原路退回',
       perm: 'procurement.aftersale.refund',
       rule: '已送达但未收到',
@@ -73,7 +75,8 @@ DESIGN_PATCH = r'''
       ],
     },
     {
-      id: 'urge', label: '催促发货', icon: '⏰', state: 'plan',
+      id: 'urge', label: '催促发货', state: 'plan',
+      svg: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
       desc: '已付款未发货 → 批量催促发货（24 小时一次）',
       perm: 'procurement.aftersale.urge',
       rule: '已付款未发货（备货中）',
@@ -101,7 +104,9 @@ DESIGN_PATCH = r'''
       ],
     },
     {
-      id: 'cancel', label: '取消订单', icon: '🚫', state: 'plan',
+      id: 'cancel', label: '取消订单', state: 'plan',
+      // 与「采购中心」的单据图标成对：那边是单据+勾，这边是单据+叉
+      svg: '<path d="M6 3h12v18H6zM9 7h6"/><path d="m9.5 12.5 5 5m0-5-5 5"/>',
       desc: '未发货可取消 → 批量取消（不可逆，需二次确认）',
       perm: 'procurement.aftersale.cancel',
       rule: '未发货且平台允许取消',
@@ -129,6 +134,12 @@ DESIGN_PATCH = r'''
       ],
     },
   ];
+
+  // 只补两条：卡片内一行布局 + 选中态图标砖跟着变渐变（与 .module-tab.active 一致）
+  const style = document.createElement('style');
+  style.textContent = '#asTypeBar .as-mode-inner{display:flex;align-items:center;gap:10px}'
+    + '#asTypeBar .mode-tab.active .nav-icon{color:#fff;background:var(--action-gradient)}';
+  document.head.appendChild(style);
 
   const esc = window.esc || (s => String(s == null ? '' : s)
     .replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])));
@@ -158,8 +169,12 @@ DESIGN_PATCH = r'''
     if (legacyRow) legacyRow.style.display = 'none';
     bar.innerHTML = TYPES.map(t =>
       `<button class="mode-tab${t.id === current ? ' active' : ''}" data-as-type="${t.id}" type="button">`
-      + `${t.icon} ${esc(t.label)}`
-      + `<small>${t.state === 'plan' ? '规划 · ' : ''}${esc(t.desc)}</small></button>`).join('');
+      + '<span class="as-mode-inner">'
+      + `<span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24">${t.svg}</svg></span>`
+      + '<span class="nav-text">'
+      + `<b>${esc(t.label)}</b>`
+      + `<small>${t.state === 'plan' ? '规划 · ' : ''}${esc(t.desc)}</small>`
+      + '</span></span></button>').join('');
     bar.querySelectorAll('[data-as-type]').forEach(btn => {
       btn.onclick = () => switchType(btn.dataset.asType);
     });
