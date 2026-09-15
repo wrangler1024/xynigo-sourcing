@@ -5253,10 +5253,31 @@ function asProgress(data) {
     .filter(v => v > 0);
   const avg = durations.length
     ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : 0;
+  // 单位随阶段变：扫描论「个环境」，提交与回访论「单」
+  const unit = data.unit || '单';
   const average = avg > 0
-    ? (avg >= 60 ? `${Math.floor(avg / 60)}分${avg % 60}秒/单` : `${avg}秒/单`)
+    ? (avg >= 60 ? `${Math.floor(avg / 60)}分${avg % 60}秒/${unit}` : `${avg}秒/${unit}`)
     : '—';
-  $('asProgressText').textContent = `已处理 ${done} / ${total} ｜ 平均 ${average}`;
+  $('asProgressText').textContent =
+    `已处理 ${done} / ${total} ${unit} ｜ 平均 ${average} ｜ ${asEtaText(done, total)}`;
+}
+
+// 预计剩余：沿用店铺结算的采样法（起点采样 + 速率外推），但窗口放宽——
+// 售后每单要开浏览器走完整流程（20~40 秒/单），照搬「5 秒内完成 ≥2 个」几乎凑不满，
+// 会一直显示不出估计。这里改成「至少完成 1 个且窗口 ≥15 秒」。
+function asEtaText(done, total) {
+  if (!total) return '预计还需 —';
+  if (done >= total) return '已全部完成';
+  const base = AS_STATE.etaBase;
+  if (!base || done < base.done) {
+    AS_STATE.etaBase = { at: Date.now(), done };
+    return '预计还需 —';
+  }
+  const elapsed = (Date.now() - base.at) / 1000;
+  const delta = done - base.done;
+  if (delta < 1 || elapsed < 15) return '预计还需 —';
+  const seconds = Math.round((total - done) / (delta / elapsed));
+  return `预计还需 ${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
 }
 const AS_SCAN_PILL = {
   ok: ['run', '已扫描'], empty: ['warn', '无订单'], skip: ['warn', '无订单'],
@@ -5422,6 +5443,7 @@ async function asScan() {
     AS_STATE.running = true;
     AS_STATE.stopRequested = false;
     AS_STATE.pollErrors = 0;
+    AS_STATE.etaBase = null;
     AS_STATE.selected = new Set();
     AS_STATE.rows = [];
     $('asScan').disabled = true; $('asStop').disabled = false;
@@ -5460,6 +5482,7 @@ async function asSubmit() {
     AS_STATE.running = true;
     AS_STATE.stopRequested = false;
     AS_STATE.pollErrors = 0;
+    AS_STATE.etaBase = null;
     AS_STATE.claimRows = [];
     asRenderClaimRows([]);
     $('asScan').disabled = true; $('asSubmit').disabled = true; $('asStop').disabled = false;
@@ -5485,11 +5508,8 @@ async function asPoll() {
         .filter(r => ['ok', 'empty', 'skip', 'fail', 'login', 'inuse',
           'stopped'].includes(String(r.status || '')))
         .map(r => String(r.environmentSerial || ''))).size;
-      $('asProgressText').textContent = envTotal
-        ? `已扫描 ${envDone} / ${envTotal} 个环境 ｜ ${rows.length} 行结果`
-        : '扫描中…';
-      $('asBar').style.width = (envTotal
-        ? Math.round(Math.min(envDone, envTotal) / envTotal * 100) : 0) + '%';
+      asProgress({ progressTotal: envTotal, progressCompleted: envDone,
+        rows, unit: '个环境' });
       AS_STATE.pollErrors = 0;
       AS_STATE.status = String(data.status || '');
       if (['succeeded', 'failed', 'cancelled', 'uncertain'].includes(AS_STATE.status)) {
