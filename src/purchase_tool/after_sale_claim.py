@@ -70,6 +70,12 @@ DELIVERED_RE = re.compile(
 AMOUNT_RE = re.compile(r'\$MXN\s*([\d,]+\.?\d*)')
 REFUND_DONE_RE = re.compile(
     r'Procesamiento de reembolsos|En revisi[óo]n vendedor', re.I)
+# 已退款（含已处理、银行处理中）：这类单不需要也不允许再申请售后
+REFUNDED_RE = re.compile(
+    r'Reembolsos procesados|Reembolsado|reembolso est[áa] siendo procesado', re.I)
+# 「Pedidos Enviados」之外的标签：主标签扫不到候选时补扫，避免把「单在别的标签下」
+# 误报成「没有订单」（实测 0820/0821 批次已退款的单就落在这些标签里）
+FALLBACK_ORDER_TABS = (4, 5, 6, 7)
 
 SCAN_RUNNING_STATES = ('queued', 'running')
 CLAIM_RUNNING_STATES = ('queued', 'running')
@@ -444,6 +450,31 @@ class AfterSaleClaimer(object):
             self._scroll_orders_list(page)
             cards = page.js_evaluate(_JS_SCAN_ORDERS % json.dumps(
                 ORDER_ENTRY_KEY)) or []
+            fallback = []
+            if not any(c.get('hasEntry') for c in cards
+                       if isinstance(c, dict)):
+                # 主标签没有可申请的单：补扫其余标签，把「为什么没有」说清楚
+                for tab in FALLBACK_ORDER_TABS:
+                    page.goto('%s/user/orders/list?status_type=%d'
+                              % (ORIGIN, tab), dom_timeout=40,
+                              settle_seconds=3.0)
+                    for card in (page.js_evaluate(
+                            _JS_SCAN_ORDERS % json.dumps(ORDER_ENTRY_KEY))
+                            or []):
+                        if not isinstance(card, dict):
+                            continue
+                        parsed = parse_order_card(card.get('text') or '')
+                        if not parsed:
+                            continue
+                        text = card.get('text') or ''
+                        if card.get('hasEntry'):
+                            parsed['claimable'] = False
+                            parsed['tabNote'] = '在 status_type=%d 标签下' % tab
+                        elif REFUNDED_RE.search(text):
+                            parsed['refunded'] = True
+                        fallback.append(parsed)
+                    if fallback:
+                        break
             candidates = []
             for card in cards:
                 if not isinstance(card, dict):
@@ -466,10 +497,24 @@ class AfterSaleClaimer(object):
                 candidate['claimable'] = bool(candidate['packages'])
                 candidate['reasonId'] = info.get('reasonId') or ''
                 candidate['preInfoCode'] = info.get('code') or ''
+            if not candidates and fallback:
+                for parsed in fallback:
+                    parsed.setdefault('packages', [])
+                    parsed.setdefault('blockedPackages', [])
+                    parsed.setdefault('claimable', False)
+                    parsed['claimable'] = False
+                    if parsed.get('refunded'):
+                        parsed['note'] = '该单已退款（Reembolsos procesados），无需申请'
+                    else:
+                        parsed['note'] = ('无可申请售后入口（未送达，或申请窗口已过）'
+                                          + ('，' + parsed['tabNote']
+                                             if parsed.get('tabNote') else ''))
+                    candidates.append(parsed)
             with self._lock:
                 row = self._scan_rows.get(serial) or {}
                 row.update({
-                    'status': 'ok' if candidates else 'skip',
+                    'status': 'ok' if any(c.get('claimable') for c in candidates)
+                              else ('skip' if candidates else 'skip'),
                     'orders': candidates,
                     'orderNo': candidates[0]['orderNo'] if candidates else '',
                     'deliveredAt': (candidates[0]['deliveredAt']
@@ -479,8 +524,11 @@ class AfterSaleClaimer(object):
                                  if candidates else []),
                     'claimable': any(c['claimable'] for c in candidates),
                     'durationSeconds': int(time.time() - started),
-                    'errorSummary': None if candidates else (
-                        '该环境订单列表没有可申请售后的已送达订单'),
+                    'errorSummary': None if any(
+                        c.get('claimable') for c in candidates) else (
+                        '；'.join(sorted({c.get('note') or '' for c in candidates
+                                          if c.get('note')}))
+                        or '该环境订单列表没有可申请售后的已送达订单'),
                 })
                 self._scan_rows[serial] = row
         except Exception as exc:

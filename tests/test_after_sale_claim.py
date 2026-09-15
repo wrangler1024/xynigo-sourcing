@@ -87,6 +87,30 @@ class OrderCardParsingTests(unittest.TestCase):
             'https://www.shein.com.mx/user/orders/list?status_type=3'))
 
 
+class FallbackTabReportingTests(unittest.TestCase):
+    """主标签扫不到候选时补扫其余标签，并把「为什么没有」说清楚。
+
+    实测：0820/0821 批次的单不在 Pedidos Enviados 下，而是已退款后落到别的标签，
+    只报「没有可申请订单」会让同事以为没下过单。
+    """
+
+    def test_refunded_marker_matches_list_card_text(self):
+        from purchase_tool import after_sale_claim as m
+        for text in (
+            'Reembolsos procesados $MXN189.52 reembolso está siendo procesado '
+            'por la institución bancaria',
+            'pedido GSH1R9 Reembolsado',
+        ):
+            self.assertTrue(m.REFUNDED_RE.search(text), text)
+        for text in ('Procesamiento de reembolsos', 'Entregado a 05 Sep 2026'):
+            self.assertFalse(m.REFUNDED_RE.search(text), text)
+
+    def test_fallback_tabs_exclude_primary_tab(self):
+        from purchase_tool import after_sale_claim as m
+        self.assertNotIn(m.ORDERS_STATUS_TYPE, m.FALLBACK_ORDER_TABS)
+        self.assertTrue(set(m.FALLBACK_ORDER_TABS))
+
+
 class StartValidationTests(unittest.TestCase):
     def test_submit_filters_incomplete_items(self):
         claimer = AfterSaleClaimer(_FakeHub([]))
