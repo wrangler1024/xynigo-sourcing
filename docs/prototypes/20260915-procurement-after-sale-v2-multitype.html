@@ -15766,13 +15766,14 @@ initializeAuth();
 <script id="prototype-multitype-design">
 /* ============================================================
  * 【设计样稿】采购售后 · 多类型三级菜单
- * 只实现「丢件退款」是当前事实；催发货 / 取消订单 为规划，标签与横幅已标注。
+ * 只实现「丢件退款」是当前事实；催促发货 / 取消订单 为规划，标签与横幅已标注。
  * 本补丁仅用于确认交互形态，不代表已实现能力。
  * ============================================================ */
 (function () {
   const TYPES = [
     {
-      id: 'refund', label: '丢件退款', state: 'done',
+      id: 'refund', label: '丢件退款', icon: '📦', state: 'done',
+      desc: '已送达但未收到 → 提交退款申请，原路退回',
       perm: 'procurement.aftersale.refund',
       rule: '已送达但未收到',
       note: '退款原路退回；两步式，提交即写库',
@@ -15799,11 +15800,12 @@ initializeAuth();
       ],
     },
     {
-      id: 'urge', label: '催发货', state: 'plan',
+      id: 'urge', label: '催促发货', icon: '⏰', state: 'plan',
+      desc: '已付款未发货 → 批量催促发货（24 小时一次）',
       perm: 'procurement.aftersale.urge',
       rule: '已付款未发货（备货中）',
       note: '每个订单 24 小时内最多催一次，冷却期内不可再催',
-      action: '批量催发货',
+      action: '批量催促发货',
       confirm: 'none',
       scanCols: ['下单时间', '金额', '已催次数', '下次可催'],
       claimCols: ['催发时间', '下次可催'],
@@ -15826,7 +15828,8 @@ initializeAuth();
       ],
     },
     {
-      id: 'cancel', label: '取消订单', state: 'plan',
+      id: 'cancel', label: '取消订单', icon: '🚫', state: 'plan',
+      desc: '未发货可取消 → 批量取消（不可逆，需二次确认）',
       perm: 'procurement.aftersale.cancel',
       rule: '未发货且平台允许取消',
       note: '不可逆：提交后订单直接取消；需二次确认',
@@ -15862,15 +15865,29 @@ initializeAuth();
   const typeOf = id => TYPES.find(t => t.id === id) || TYPES[0];
 
   function renderSwitch() {
-    const row = document.querySelector('#afterSalePanel .as-type-row');
-    if (!row) return false;
-    row.innerHTML =
-      '<span class="as-type-label">售后类型</span>'
-      + TYPES.map(t => `<button type="button" class="chip" data-as-type="${t.id}"`
-        + `${t.id === current ? ' style="background:var(--rhino-600);border-color:var(--rhino-600);color:#fff"' : ''}>`
-        + `${esc(t.label)}${t.state === 'plan' ? ' <span style="opacity:.7">规划</span>' : ''}</button>`).join('')
-      + `<span class="hint" id="asTypeHint"></span>`;
-    row.querySelectorAll('[data-as-type]').forEach(btn => {
+    const panel = document.getElementById('afterSalePanel');
+    if (!panel) return false;
+    // 类型选择器照「资源中心 › 环境创建」的卡片式 mode-bar，放在①选择范围上方
+    let bar = document.getElementById('asTypeBar');
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.className = 'mode-bar';
+      bar.id = 'asTypeBar';
+      panel.querySelector('section.card').before(bar);
+      const hint = document.createElement('div');
+      hint.className = 'resource-state';
+      hint.id = 'asTypeHint';
+      hint.style.margin = '10px 0 0';
+      bar.after(hint);
+    }
+    // ① 里原有的类型胶囊属于「当前实现」；设计样稿把类型选择上移，故隐藏
+    const legacyRow = panel.querySelector('.as-type-row');
+    if (legacyRow) legacyRow.style.display = 'none';
+    bar.innerHTML = TYPES.map(t =>
+      `<button class="mode-tab${t.id === current ? ' active' : ''}" data-as-type="${t.id}" type="button">`
+      + `${t.icon} ${esc(t.label)}`
+      + `<small>${t.state === 'plan' ? '规划 · ' : ''}${esc(t.desc)}</small></button>`).join('');
+    bar.querySelectorAll('[data-as-type]').forEach(btn => {
       btn.onclick = () => switchType(btn.dataset.asType);
     });
     return true;
@@ -15893,7 +15910,7 @@ initializeAuth();
       bar.className = 'query-phase-banner';
       bar.style.marginBottom = '12px';
       const panel = document.getElementById('afterSalePanel');
-      panel.querySelector('section.card').before(bar);
+      panel.querySelector('#asTypeHint').after(bar);
     }
     bar.innerHTML = '<div class="query-phase-copy" style="padding-left:0">'
       + `<b>「${esc(t.label)}」为规划类型，本次未实现</b>`
