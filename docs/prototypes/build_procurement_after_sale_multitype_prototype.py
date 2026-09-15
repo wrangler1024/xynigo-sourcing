@@ -135,12 +135,6 @@ DESIGN_PATCH = r'''
     },
   ];
 
-  // 只补两条：卡片内一行布局 + 选中态图标砖跟着变渐变（与 .module-tab.active 一致）
-  const style = document.createElement('style');
-  style.textContent = '#asTypeBar .as-mode-inner{display:flex;align-items:center;gap:10px}'
-    + '#asTypeBar .mode-tab.active .nav-icon{color:#fff;background:var(--action-gradient)}';
-  document.head.appendChild(style);
-
   const esc = window.esc || (s => String(s == null ? '' : s)
     .replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])));
   const picked = { refund: new Set(), urge: new Set(), cancel: new Set() };
@@ -169,7 +163,7 @@ DESIGN_PATCH = r'''
     if (legacyRow) legacyRow.style.display = 'none';
     bar.innerHTML = TYPES.map(t =>
       `<button class="mode-tab${t.id === current ? ' active' : ''}" data-as-type="${t.id}" type="button">`
-      + '<span class="as-mode-inner">'
+      + '<span class="mode-tab-inner">'
       + `<span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24">${t.svg}</svg></span>`
       + '<span class="nav-text">'
       + `<b>${esc(t.label)}</b>`

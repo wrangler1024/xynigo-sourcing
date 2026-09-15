@@ -842,3 +842,41 @@ class AfterSaleClaimWiringTests(unittest.TestCase):
         html = self._read()
         self.assertIn("/cancel', { method: 'POST' })", html)
         self.assertIn("'/v1/after-sale/scan/'", html)
+
+
+class ModeCardIconTests(unittest.TestCase):
+    """类型卡片图标：统一用侧栏同款线性图标（.nav-icon + .nav-text），禁用 emoji。
+
+    原先「环境创建」两张卡用 🔢/📦 表达类型，实心彩色与页面线性风格冲突；
+    采购售后的类型卡也走同一套，因此这里同时钉住全局样式与两处用法。
+    """
+
+    def _htmls(self):
+        local = LOCAL_HTML.read_text(encoding="utf-8")
+        self.assertEqual(local, CLOUD_HTML.read_text(encoding="utf-8"))
+        return (local,)
+
+    def test_env_creation_cards_use_icon_tiles(self):
+        for html in self._htmls():
+            self.assertIn('id="envModeBar"', html)
+            # 两张卡各一个图标砖，且仍保留 data-mode 契约（JS 靠它切换）
+            self.assertEqual(html.count('class="mode-tab-inner"'), 2)
+            self.assertIn('data-mode="bound"', html)
+            self.assertIn('data-mode="backup"', html)
+            # 图标砖数量按块断言：侧栏一级菜单本身就用了同一套 class
+            bar = html[html.index('id="envModeBar"'):html.index('id="envCardSetup"')]
+            self.assertEqual(bar.count('<span class="nav-icon" aria-hidden="true">'), 2)
+            self.assertEqual(bar.count('<svg viewBox="0 0 24 24">'), 2)
+
+    def test_env_creation_emoji_are_removed(self):
+        for html in self._htmls():
+            self.assertNotIn('🔢 绑号环境', html)
+            self.assertNotIn('📦 备用·测试环境', html)
+
+    def test_global_mode_card_icon_styles_exist(self):
+        for html in self._htmls():
+            self.assertIn('.mode-tab-inner { display: flex;', html)
+            self.assertIn('.mode-tab .nav-text b { font-size: 14px; }', html)
+            self.assertIn(
+                '.mode-tab.active .nav-icon { color: #fff; '
+                'background: var(--action-gradient); box-shadow: none; }', html)

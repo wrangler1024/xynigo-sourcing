@@ -1199,6 +1199,11 @@
   .mode-tab small { display: block; margin-top: 3px; color: var(--navy-500); font-size: 11px; font-weight: 600; }
   .mode-tab.active { border-color: var(--rhino-500); background: #f4fbfb; color: var(--navy-950); box-shadow: 0 0 0 3px rgba(32,174,179,.08); }
   .mode-tab:disabled { opacity: .5; cursor: not-allowed; }
+  /* 类型卡片内容：图标砖 + 文字块，图标与侧栏一级菜单同规格（.nav-icon：18px 描边 SVG）。
+     原先用 emoji 表达类型，实心彩色与页面线性风格冲突，已统一换掉。 */
+  .mode-tab-inner { display: flex; align-items: center; gap: 10px; }
+  .mode-tab .nav-text b { font-size: 14px; }
+  .mode-tab.active .nav-icon { color: #fff; background: var(--action-gradient); box-shadow: none; }
   .buyer-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap: 10px; }
   .buyer-card { border: 1px solid var(--line); border-radius: 13px; padding: 11px 13px; background: #fbfcfd; transition: border-color .15s, background .15s; }
   .buyer-card.active { border-color: var(--rhino-500); background: #f4fbfb; box-shadow: 0 0 0 3px rgba(32,174,179,.08); }
@@ -2580,8 +2585,18 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
 
   <div class="module-panel hidden" id="envPanel">
     <div class="mode-bar" id="envModeBar">
-      <button class="mode-tab active" data-mode="bound" type="button">🔢 绑号环境<small>号商 xlsx → 建环境 + 导 Cookie + 绑号 + 备注</small></button>
-      <button class="mode-tab" data-mode="backup" type="button">📦 备用·测试环境<small>不绑号 → 只建环境 + 写备注（不导 Cookie、不写台账）</small></button>
+      <button class="mode-tab active" data-mode="bound" type="button">
+        <span class="mode-tab-inner">
+          <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 12h6"/><path d="M10 8H7a4 4 0 0 0 0 8h3"/><path d="M14 8h3a4 4 0 0 1 0 8h-3"/></svg></span>
+          <span class="nav-text"><b>绑号环境</b><small>号商 xlsx → 建环境 + 导 Cookie + 绑号 + 备注</small></span>
+        </span>
+      </button>
+      <button class="mode-tab" data-mode="backup" type="button">
+        <span class="mode-tab-inner">
+          <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 3 7.5v9L12 21l9-4.5v-9z"/><path d="m3 7.5 9 4.5 9-4.5"/><path d="M12 12v9"/></svg></span>
+          <span class="nav-text"><b>备用·测试环境</b><small>不绑号 → 只建环境 + 写备注（不导 Cookie、不写台账）</small></span>
+        </span>
+      </button>
     </div>
 
     <section class="card" id="envCardSetup">
@@ -15862,12 +15877,6 @@ initializeAuth();
     },
   ];
 
-  // 只补两条：卡片内一行布局 + 选中态图标砖跟着变渐变（与 .module-tab.active 一致）
-  const style = document.createElement('style');
-  style.textContent = '#asTypeBar .as-mode-inner{display:flex;align-items:center;gap:10px}'
-    + '#asTypeBar .mode-tab.active .nav-icon{color:#fff;background:var(--action-gradient)}';
-  document.head.appendChild(style);
-
   const esc = window.esc || (s => String(s == null ? '' : s)
     .replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])));
   const picked = { refund: new Set(), urge: new Set(), cancel: new Set() };
@@ -15896,7 +15905,7 @@ initializeAuth();
     if (legacyRow) legacyRow.style.display = 'none';
     bar.innerHTML = TYPES.map(t =>
       `<button class="mode-tab${t.id === current ? ' active' : ''}" data-as-type="${t.id}" type="button">`
-      + '<span class="as-mode-inner">'
+      + '<span class="mode-tab-inner">'
       + `<span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24">${t.svg}</svg></span>`
       + '<span class="nav-text">'
       + `<b>${esc(t.label)}</b>`
