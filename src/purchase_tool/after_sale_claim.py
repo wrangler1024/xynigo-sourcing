@@ -181,6 +181,16 @@ _JS_PATH_POINT = ('(() => {' + _JS_NORM + _JS_CLAMP + '''
   }
   return null; })()''')
 
+# 退款路径是否已选中：不要靠固定 sleep 猜渲染完成，直接等它真被选中
+_JS_PATH_CHECKED = ('(() => {' + _JS_NORM + '''
+  const opts=[...document.querySelectorAll(".refund-path-option")];
+  for (const o of opts) {
+    if (norm(o.innerText).indexOf(%s) < 0) continue;
+    const inp=o.querySelector("input[type=radio]");
+    return !!(inp && inp.checked);
+  }
+  return false; })()''')
+
 _JS_PRESENTAR_ENABLED = (
     '(() => { const bs=[...document.querySelectorAll('
     '".order-refund-apply__footer button")];'
@@ -665,22 +675,9 @@ class AfterSaleClaimer(object):
             % PACKAGE_SELECT_TEXT, timeout=15)
 
         # 2) 切退款路径到「原路退回」（页面默认是 SHEIN 钱包，必须主动切）
-        if not page.wait_for(_JS_PATH_PRESENT, timeout=20):
-            return {'ok': False, 'reason': '退款路径区未出现',
-                    'packageNo': package_no}
-        point = page.js_evaluate(_JS_PATH_POINT % json.dumps(
-            REFUND_PATH_LABEL_KEY))
-        if not point:
-            return {'ok': False, 'reason': '未找到退款路径选项：%s'
-                    % REFUND_PATH_LABEL, 'packageNo': package_no}
-        if not point.get('checked'):
-            page.native_click_point(point['x'], point['y'])
-            time.sleep(1.6)
-        confirmed = page.js_evaluate(_JS_PATH_POINT % json.dumps(
-            REFUND_PATH_LABEL_KEY)) or {}
-        if not confirmed.get('checked'):
-            return {'ok': False, 'reason': '退款路径未切换到原路退回',
-                    'packageNo': package_no}
+        ok, reason = self._select_refund_path(page)
+        if not ok:
+            return {'ok': False, 'reason': reason, 'packageNo': package_no}
 
         # 3) 提交
         if not page.wait_for(_JS_PRESENTAR_ENABLED, timeout=20):
@@ -695,7 +692,7 @@ class AfterSaleClaimer(object):
             return {'ok': False, 'reason': '提交后未跳转成功页：%s'
                     % (toast or page.url)[:160], 'packageNo': package_no}
         bill = refund_bill_id_from_url(page.url)
-        refund_account = page.js_evaluate(_JS_REFUND_ACCOUNT) or ''
+        refund_account = self._read_refund_account(page)
         remaining = self._pre_info(page, order_no).get('eligible') or []
         return {'ok': True, 'packageNo': package_no,
                 'refundBillId': bill[1] if bill else '',
@@ -710,6 +707,49 @@ class AfterSaleClaimer(object):
             return True
         except CdpError:
             return False
+
+    def _read_refund_account(self, page, timeout=8):
+        """读退款账户（原路退回落到哪张卡）的掩码，取不到返回空串。
+
+        实测坑：该区块是跳到成功页之后约 2 秒才渲染出来的，落地瞬间读会是空；
+        且账户明细接口返回空时平台会把状态文案渲染成占位符 ``Error``（那是它自己的
+        显示问题，不影响退款），故这里轮询到出值为止，识别不出就按空处理。
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            value = page.js_evaluate(_JS_REFUND_ACCOUNT) or ''
+            if value:
+                return value
+            time.sleep(0.6)
+        return ''
+
+    def _select_refund_path(self, page):
+        """把退款路径切到「原路退回」，返回 (是否成功, 失败原因)。
+
+        实测坑：退款路径区是点完 Confirmar 之后约 6 秒才渲染出来的（前几秒
+        ``.refund-path-option`` 数量就是 0），一出现就点会落在「节点在、交互还没绑」
+        的中间态上——点击被吞、checked 仍为 false。因此这里不用固定 sleep 猜时间，
+        改成**取点→点击→等真被选中**的重试循环，每轮重新取一次坐标（渲染期间
+        布局还会变，旧坐标会错位）。
+        """
+        if not page.wait_for(_JS_PATH_PRESENT, timeout=25):
+            return False, '退款路径区未出现'
+        checked_js = _JS_PATH_CHECKED % json.dumps(REFUND_PATH_LABEL_KEY)
+        for _ in range(4):
+            if page.wait_for(checked_js, timeout=1):
+                return True, ''
+            point = page.js_evaluate(_JS_PATH_POINT % json.dumps(
+                REFUND_PATH_LABEL_KEY))
+            if not point:
+                time.sleep(1.5)
+                continue
+            if point.get('checked'):
+                return True, ''
+            page.native_click_point(point['x'], point['y'])
+            if page.wait_for(checked_js, timeout=8):
+                return True, ''
+            time.sleep(1.2)
+        return False, '退款路径未切换到原路退回（已重试 4 次）'
 
     def _fail_claim(self, order_no, status, reason, page):
         with self._lock:
