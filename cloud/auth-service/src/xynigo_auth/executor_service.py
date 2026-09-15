@@ -2574,6 +2574,9 @@ class ExecutorChannelService:
             row.package_no = item.packageNo or None
             row.refund_bill_id = item.refundBillId or None
             row.refund_path = item.refundPath or None
+            row.refund_account = item.refundAccount or None
+            row.delivered_at = item.deliveredAt or None
+            row.goods_img = item.goodsImg or None
             row.duration_seconds = item.durationSeconds
             submitted_at = _after_sale_at(item.submittedAt)
             if submitted_at is not None:

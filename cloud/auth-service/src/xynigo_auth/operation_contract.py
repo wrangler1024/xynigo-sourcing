@@ -1042,6 +1042,8 @@ class AfterSaleScanRow(BaseModel):
     claimable: bool = False
     packageCount: int = Field(default=0, ge=0, le=100_000)
     trackingNo: str = Field(default="", max_length=64)
+    # 商品缩略图地址（SHEIN 商品图 CDN），来自 pre_info 的 item_list[].goods_img
+    goodsImg: str = Field(default="", max_length=300)
     errorSummary: str | None = Field(default=None, max_length=300)
     screenshotSha256: str | None = Field(default=None, max_length=64)
 
@@ -1084,6 +1086,9 @@ class AfterSaleClaimItem(BaseModel):
     orderNo: str = Field(min_length=1, max_length=32)
     storeName: str = Field(default="", max_length=128)
     packageNo: str = Field(default="", max_length=64)
+    # 送达时间与商品图由 Web 从扫描清单带下来，落库后供结果表展示
+    deliveredAt: str = Field(default="", max_length=32)
+    goodsImg: str = Field(default="", max_length=300)
 
 
 class AfterSaleClaimRunCreateBody(BaseModel):
@@ -1123,6 +1128,10 @@ class AfterSaleClaimProgressRow(BaseModel):
     packageNo: str = Field(default="", max_length=64)
     refundBillId: str = Field(default="", max_length=32)
     refundPath: str = Field(default="", max_length=48)
+    # 退款账户（原路退回落到哪张卡，掩码），提交落地页读取，取不到为空
+    refundAccount: str = Field(default="", max_length=40)
+    deliveredAt: str = Field(default="", max_length=32)
+    goodsImg: str = Field(default="", max_length=300)
     durationSeconds: int | None = Field(default=None, ge=0, le=86_400_000)
     submittedAt: str | None = Field(default=None, max_length=40)
     note: str | None = Field(default=None, max_length=200)

@@ -297,6 +297,26 @@ class ProjectionTests(unittest.TestCase):
     def test_terminal_states_cover_skip_and_blocked(self):
         self.assertTrue({'blocked', 'skip', 'empty'} <= AFTER_SALE_TERMINAL_STATES)
 
+    def test_claim_rows_carry_design_fields(self):
+        rows = LocalOperationExecutor._after_sale_rows([{
+            'orderNo': 'GSH1RV90A001B2', 'environmentSerial': '5121',
+            'status': 'ok', 'refundAccount': '****2281',
+            'deliveredAt': '05 Sep 2026 15:19:09',
+            'goodsImg': '//img.ltwebstatic.com/x.jpg',
+        }])
+        self.assertEqual(rows[0]['refundAccount'], '****2281')
+        self.assertEqual(rows[0]['deliveredAt'], '05 Sep 2026 15:19:09')
+        self.assertEqual(rows[0]['goodsImg'], '//img.ltwebstatic.com/x.jpg')
+
+    def test_scan_row_carries_goods_img(self):
+        rows = LocalOperationExecutor._flatten_scan_rows([{
+            'environmentSerial': '5121', 'status': 'ok', 'orders': [{
+                'orderNo': 'GSH1RV90A001B2', 'claimable': True,
+                'packages': [{'shippingNo': 'JMX1', 'goodsImg': '//img.ltwebstatic.com/a.jpg'}],
+            }],
+        }])
+        self.assertEqual(rows[0]['goodsImg'], '//img.ltwebstatic.com/a.jpg')
+
     def test_task_types_registered(self):
         self.assertTrue({'after.sale.scan.v1', 'after.sale.claim.v1'}
                         <= BUSINESS_TASK_TYPES)

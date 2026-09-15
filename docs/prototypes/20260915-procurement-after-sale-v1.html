@@ -2225,10 +2225,10 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
           <table id="asScanTable">
             <thead><tr>
               <th style="width:34px"><input type="checkbox" id="asChkHead" style="accent-color:var(--rhino-600)"></th>
-              <th>环境序号</th><th>买家号环境</th><th>订单号</th><th>售后类型</th><th>送达时间</th>
+              <th>环境序号</th><th>买家号环境</th><th>订单号</th><th style="width:46px">商品图</th><th>售后类型</th><th>送达时间</th>
               <th class="num">金额</th><th>可退包裹</th><th>物流号</th><th>状态</th>
             </tr></thead>
-            <tbody id="asScanRows"><tr><td colspan="10" class="hint" style="text-align:center; padding:18px;">填入环境序号后点击「扫描可申请售后订单」。</td></tr></tbody>
+            <tbody id="asScanRows"><tr><td colspan="11" class="hint" style="text-align:center; padding:18px;">填入环境序号后点击「扫描可申请售后订单」。</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -2261,11 +2261,12 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         <div class="table-scroll scroll-20">
           <table id="asClaimTable">
             <thead><tr>
-              <th>订单号</th><th>售后类型</th><th>环境序号</th><th>买家号环境</th><th>状态</th>
-              <th>退款单号</th><th>退款路径</th><th>提交时间</th><th>备注</th>
+              <th>订单号</th><th style="width:46px">商品图</th><th>售后类型</th><th>环境序号</th>
+              <th>送达时间</th><th>退款单号</th><th>退款路径</th><th>退款信用卡</th><th>状态</th>
+              <th>操作时间</th><th>备注</th>
             </tr></thead>
             <tbody id="asClaimRows">
-              <tr><td colspan="9" class="hint" style="text-align:center; padding:22px;">提交后此处逐步展示每单结果。</td></tr>
+              <tr><td colspan="11" class="hint" style="text-align:center; padding:22px;">提交后此处逐步展示每单结果。</td></tr>
             </tbody>
           </table>
         </div>
@@ -5305,13 +5306,21 @@ function asClaimPill(status) {
   const entry = AS_CLAIM_PILL[String(status || '')] || ['warn', status || '—'];
   return `<span class="pill ${entry[0]}">${entry[1]}</span>`;
 }
+// 商品缩略图：地址必须过采购任务那套白名单（只放行 *.ltwebstatic.com 与同源占位图），
+// 懒加载 + no-referrer，避免把工作台地址带给外部 CDN。
+function asThumbCell(url) {
+  const safe = safeProcurementImageUrl(url);
+  return '<td><span class="procurement-image-thumb">'
+    + (safe ? `<img src="${esc(safe)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '')
+    + '</span></td>';
+}
 function asRenderScanRows(rows) {
   AS_STATE.rows = rows || [];
   const pickable = AS_STATE.rows.filter(r => r.orderNo && r.claimable
     && r.status === 'ok');
   const tbody = $('asScanRows');
   if (!AS_STATE.rows.length) {
-    tbody.innerHTML = '<tr><td colspan="10" class="hint" style="text-align:center; padding:18px;">暂无扫描结果。</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" class="hint" style="text-align:center; padding:18px;">暂无扫描结果。</td></tr>';
   } else {
     tbody.innerHTML = AS_STATE.rows.map(row => {
       const orderNo = row.orderNo || '';
@@ -5327,6 +5336,7 @@ function asRenderScanRows(rows) {
         <td class="sub-text">${esc(row.environmentSerial || '')}</td>
         <td style="font-weight:700; color:var(--navy-950)">${esc(row.storeName || '')}</td>
         <td class="as-order">${esc(orderNo || '—')}</td>
+        ${asThumbCell(row.goodsImg)}
         <td style="font-weight:700; color:#078487; white-space:nowrap">${orderNo ? esc(AFTER_SALE_TYPE) : '—'}</td>
         <td class="sub-text">${esc(row.deliveredAt || '—')}</td>
         <td class="num">${row.amount ? '$MXN' + esc(row.amount) : '—'}</td>
@@ -5350,12 +5360,15 @@ function asRenderClaimRows(rows) {
       const bad = !['ok'].includes(String(row.status || ''));
       return `<tr data-as-claim="${esc(row.orderNo || '')}"${bad && row.status !== 'queued' && row.status !== 'running' ? ' class="tr-bad"' : (row.status === 'running' ? ' class="tr-run"' : '')}>
         <td class="as-order">${esc(row.orderNo || '')}</td>
+        ${asThumbCell(row.goodsImg)}
         <td style="font-weight:700; color:#078487; white-space:nowrap">${esc(AFTER_SALE_TYPE)}</td>
         <td class="sub-text">${esc(row.environmentSerial || '')}</td>
+        <td class="sub-text">${esc(row.deliveredAt || '—')}</td>
         <td style="font-weight:700; color:var(--navy-950)">${esc(row.storeName || '')}</td>
         <td>${asClaimPill(row.status)}</td>
         <td class="sub-text">${esc(row.refundBillId || '—')}</td>
         <td class="sub-text">${esc(row.refundPath || '—')}</td>
+        <td class="sub-text">${esc(row.refundAccount || '—')}</td>
         <td class="sub-text">${esc((row.submittedAt || '').slice(11, 19) || '—')}</td>
         <td class="hint">${esc(row.errorSummary || row.note || '—')}</td>
       </tr>`;
@@ -5575,7 +5588,7 @@ $('asStop').onclick = async () => {
 };
 $('asClearResult').onclick = () => {
   AS_STATE.claimRows = []; AS_STATE.runId = null; AS_STATE.status = '';
-  $('asClaimRows').innerHTML = '<tr><td colspan="9" class="hint" style="text-align:center; padding:22px;">已清空。</td></tr>';
+  $('asClaimRows').innerHTML = '<tr><td colspan="11" class="hint" style="text-align:center; padding:22px;">已清空。</td></tr>';
   $('asPhaseBanner').hidden = true;
   $('asBar').style.width = '0%'; $('asProgressText').textContent = '未开始';
   asRenderClaimRows([]);

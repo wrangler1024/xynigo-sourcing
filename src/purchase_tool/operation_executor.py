@@ -615,11 +615,12 @@ class LocalOperationExecutor(object):
     _AFTER_SALE_SCAN_ROW_FIELDS = (
         'environmentSerial', 'storeName', 'accountName', 'orderNo',
         'deliveredAt', 'amount', 'status', 'claimable', 'packageCount',
-        'trackingNo', 'errorSummary', 'screenshotSha256',
+        'trackingNo', 'goodsImg', 'errorSummary', 'screenshotSha256',
     )
     _AFTER_SALE_CLAIM_ROW_FIELDS = (
         'orderNo', 'environmentSerial', 'storeName', 'status', 'packageNo',
-        'refundBillId', 'refundPath', 'durationSeconds', 'submittedAt',
+        'refundBillId', 'refundPath', 'refundAccount', 'deliveredAt',
+        'goodsImg', 'durationSeconds', 'submittedAt',
         'note', 'errorSummary', 'screenshotSha256',
     )
     _AFTER_SALE_ROW_ALLOWED_STATUS = frozenset({
@@ -630,6 +631,7 @@ class LocalOperationExecutor(object):
         'environmentSerial': 64, 'storeName': 128, 'accountName': 64,
         'orderNo': 32, 'deliveredAt': 32, 'amount': 24, 'packageNo': 64,
         'refundBillId': 32, 'refundPath': 48, 'trackingNo': 64,
+        'refundAccount': 40, 'goodsImg': 300,
         'submittedAt': 40, 'note': 200,
     }
     _AFTER_SALE_NULLABLE_TEXT = {'errorSummary': 300, 'screenshotSha256': 64}
@@ -711,6 +713,8 @@ class LocalOperationExecutor(object):
                     packageCount=len(packages),
                     trackingNo=(packages[0].get('shippingNo')
                                 if packages else ''),
+                    goodsImg=(packages[0].get('goodsImg')
+                              if packages else ''),
                 ))
         return rows
 

@@ -196,6 +196,14 @@ _JS_TOAST_TEXT = ('(() => {' + _JS_NORM + '''
     .filter(Boolean);
   return texts.join(" | ").slice(0,240); })()''')
 
+# 退款账户（原路退回落到哪张卡）：退款成功页的账户区块，实测形如「****2281」。
+# 该区块在账户明细接口返回空时会渲染成占位文案 Error，因此取值后要能识别并丢弃。
+_JS_REFUND_ACCOUNT = (
+    '(() => { const e=document.querySelector(".refundAccount-info .tip");'
+    ' if(!e) return "";'
+    ' const t=String(e.innerText||"").replace(/\\s+/g," ").trim();'
+    ' return /^[*0-9\\s-]{4,24}$/.test(t) ? t : ""; })()')
+
 _JS_TO_REFUND_LABEL = (
     '(() => location.href.indexOf("' + REFUND_LABEL_MARK + '") >= 0)()')
 
@@ -274,6 +282,9 @@ class AfterSaleClaimer(object):
                 'orderNo': order_no,
                 'storeName': str(item.get('storeName') or '').strip()[:128],
                 'packageNo': str(item.get('packageNo') or '').strip()[:64],
+                # 送达时间与商品图来自扫描阶段，随勾选一起带下来
+                'deliveredAt': str(item.get('deliveredAt') or '').strip()[:32],
+                'goodsImg': str(item.get('goodsImg') or '').strip()[:300],
             })
         return self._start('claim', cleaned, browser_mode, headless)
 
@@ -607,6 +618,9 @@ class AfterSaleClaimer(object):
                 'packageNo': last.get('packageNo') or '',
                 'refundBillId': last.get('refundBillId') or '',
                 'refundPath': REFUND_PATH_LABEL,
+                'deliveredAt': str(item.get('deliveredAt') or '')[:32],
+                'goodsImg': str(item.get('goodsImg') or '')[:300],
+                'refundAccount': last.get('refundAccount') or '',
                 'packageCount': len(submitted),
                 'reasonText': reason[:120],
                 'note': ('仍有 %d 个可退包裹未提交（弹窗单选，需再次执行）'
@@ -681,9 +695,11 @@ class AfterSaleClaimer(object):
             return {'ok': False, 'reason': '提交后未跳转成功页：%s'
                     % (toast or page.url)[:160], 'packageNo': package_no}
         bill = refund_bill_id_from_url(page.url)
+        refund_account = page.js_evaluate(_JS_REFUND_ACCOUNT) or ''
         remaining = self._pre_info(page, order_no).get('eligible') or []
         return {'ok': True, 'packageNo': package_no,
                 'refundBillId': bill[1] if bill else '',
+                'refundAccount': refund_account,
                 'toast': toast[:120], 'remaining': remaining}
 
     @staticmethod
@@ -793,7 +809,8 @@ class AfterSaleClaimer(object):
             ' reasonId: rm.reason_id||"",'
             ' eligible:(pm.package_list||[]).map(p=>({packageNo:'
             'String(p.package_no||""), shippingNo:String(p.shipping_no||""),'
-            ' title:String(p.title||"")})),'
+            ' title:String(p.title||""),'
+            ' goodsImg:String(((p.item_list||[])[0]||{}).goods_img||"")})),'
             ' blocked:(pm.disable_package_list||[]).map(p=>'
             'String(p.package_no||""))}; })()') or {}
         if not data:
