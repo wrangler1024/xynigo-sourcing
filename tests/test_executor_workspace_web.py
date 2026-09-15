@@ -820,6 +820,24 @@ class AfterSaleClaimWiringTests(unittest.TestCase):
             "const canPick = !!orderNo && row.claimable === true",
             LOCAL_HTML.read_text(encoding="utf-8"))
 
+    def test_after_sale_type_is_visible_in_field_and_both_tables(self):
+        """本期类型固定「丢件退款」：必须在选择区与两张表里都看得见。
+
+        只写在小字图例里不够——采购同事要能一眼看出这一单做的是什么售后，
+        因此①有独立字段、②清单与③结果各有一列，且渲染同一个常量。
+        """
+        html = self._read()
+        self.assertIn("const AFTER_SALE_TYPE = '丢件退款';", html)
+        self.assertIn('id="asTypeChip"', html)
+        self.assertIn('>售后类型<', html)          # 表头
+        # 两张表的行模板都要渲染该常量；无订单的环境行不标类型
+        self.assertIn("${orderNo ? esc(AFTER_SALE_TYPE) : '—'}", html)
+        self.assertIn('${esc(AFTER_SALE_TYPE)}', html)
+        self.assertEqual(html.count('AFTER_SALE_TYPE)'), 2)
+        # 表头列数与空态 colspan 必须同步（①字段+②③各一列）
+        self.assertIn('colspan="10"', html)
+        self.assertIn('colspan="9"', html)
+
     def test_stop_routes_exist_for_both_phases(self):
         html = self._read()
         self.assertIn("/cancel', { method: 'POST' })", html)

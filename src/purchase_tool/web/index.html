@@ -664,6 +664,15 @@
   #storeFinancePanel #sfProgressText{font-size:11px;color:var(--navy-500);min-width:420px;text-align:right;white-space:nowrap}
 
   /* ===== 小犀助手 · 采购售后（丢件退款） ===== */
+  #afterSalePanel .as-type-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+  #afterSalePanel .as-type-row .as-type-label { font-size:12px; font-weight:700; color:var(--navy-700); }
+  #afterSalePanel .as-type-row .hint { font-size:11px; color:var(--navy-500); }
+  #afterSalePanel .as-type-chip {
+    display:inline-flex; align-items:center; height:26px; padding:0 12px;
+    border:1px solid var(--rhino-500); border-radius:13px;
+    background:rgba(32,174,179,.10); color:#078487;
+    font-size:12px; font-weight:800; letter-spacing:.2px; white-space:nowrap;
+  }
   #afterSalePanel .as-bar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
   #afterSalePanel .as-bar input[type=search] {
     flex:1; min-width:280px; padding:8px 12px;
@@ -2165,12 +2174,17 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
   <div class="module-panel hidden" id="afterSalePanel">
     <section class="card">
       <div class="card-title">① 选择范围
-        <span class="legend">售后类型：丢件退款（包裹已送达但未收到）· 退款原路退回</span>
+        <span class="legend">扫描只读，不动订单数据</span>
         <span class="resource-state" id="asScopeState" style="margin-left:auto; margin-top:0">未扫描</span>
+      </div>
+      <div class="as-type-row">
+        <span class="as-type-label">售后类型</span>
+        <span class="as-type-chip" id="asTypeChip">丢件退款</span>
+        <span class="hint">包裹已送达但未收到 · 退款原路退回；本期仅支持此类型，后续类型在此选择</span>
       </div>
       <div class="as-bar">
         <input type="search" id="asSerials" placeholder="环境序号，如 4902 4901 4897">
-        <span class="hint">环境序号 · 空格/逗号分隔，最多 300 个；扫描只读，不动订单数据</span>
+        <span class="hint">环境序号 · 空格/逗号分隔，最多 300 个</span>
       </div>
       <div class="action-row">
         <button class="btn primary" id="asScan">扫描可申请售后订单</button>
@@ -2196,10 +2210,10 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
           <table id="asScanTable">
             <thead><tr>
               <th style="width:34px"><input type="checkbox" id="asChkHead" style="accent-color:var(--rhino-600)"></th>
-              <th>环境序号</th><th>买家号环境</th><th>订单号</th><th>送达时间</th>
+              <th>环境序号</th><th>买家号环境</th><th>订单号</th><th>售后类型</th><th>送达时间</th>
               <th class="num">金额</th><th>可退包裹</th><th>物流号</th><th>状态</th>
             </tr></thead>
-            <tbody id="asScanRows"><tr><td colspan="9" class="hint" style="text-align:center; padding:18px;">填入环境序号后点击「扫描可申请售后订单」。</td></tr></tbody>
+            <tbody id="asScanRows"><tr><td colspan="10" class="hint" style="text-align:center; padding:18px;">填入环境序号后点击「扫描可申请售后订单」。</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -2211,7 +2225,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
 
     <section class="card table-card">
       <div class="card-title" style="padding:17px 19px 0;">
-        <div>③ 提交结果 <span class="legend">丢件退款 · 退款路径固定「原路退回」（Cuenta original de pago）</span></div>
+        <div>③ 提交结果 <span class="legend">退款路径固定「原路退回」（Cuenta original de pago）</span></div>
         <button class="btn sm" id="asClearResult">清空结果</button>
       </div>
 
@@ -2232,11 +2246,11 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         <div class="table-scroll scroll-20">
           <table id="asClaimTable">
             <thead><tr>
-              <th>订单号</th><th>环境序号</th><th>买家号环境</th><th>状态</th>
+              <th>订单号</th><th>售后类型</th><th>环境序号</th><th>买家号环境</th><th>状态</th>
               <th>退款单号</th><th>退款路径</th><th>提交时间</th><th>备注</th>
             </tr></thead>
             <tbody id="asClaimRows">
-              <tr><td colspan="8" class="hint" style="text-align:center; padding:22px;">提交后此处逐步展示每单结果。</td></tr>
+              <tr><td colspan="9" class="hint" style="text-align:center; padding:22px;">提交后此处逐步展示每单结果。</td></tr>
             </tbody>
           </table>
         </div>
@@ -4865,6 +4879,9 @@ sfPoll = async function () {
 };
 
 /* ===== 小犀助手 · 采购售后（丢件退款） ===== */
+// 本期唯一的售后类型：包裹已送达但未收到 → 丢件退款。后续新增类型时由这里扩展，
+// 表格逐行渲染同一个值，保证「这一单做的是什么售后」在清单与结果里都看得见。
+const AFTER_SALE_TYPE = '丢件退款';
 const AS_LIST_KEY = 'afterSaleEnvList';
 const AS_STATE = {
   mode: '', scanTaskId: null, runId: null, timer: null, running: false,
@@ -4944,7 +4961,7 @@ function asRenderScanRows(rows) {
     && r.status === 'ok');
   const tbody = $('asScanRows');
   if (!AS_STATE.rows.length) {
-    tbody.innerHTML = '<tr><td colspan="9" class="hint" style="text-align:center; padding:18px;">暂无扫描结果。</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="hint" style="text-align:center; padding:18px;">暂无扫描结果。</td></tr>';
   } else {
     tbody.innerHTML = AS_STATE.rows.map(row => {
       const orderNo = row.orderNo || '';
@@ -4960,6 +4977,7 @@ function asRenderScanRows(rows) {
         <td class="sub-text">${esc(row.environmentSerial || '')}</td>
         <td style="font-weight:700; color:var(--navy-950)">${esc(row.storeName || '')}</td>
         <td class="as-order">${esc(orderNo || '—')}</td>
+        <td style="font-weight:700; color:#078487; white-space:nowrap">${orderNo ? esc(AFTER_SALE_TYPE) : '—'}</td>
         <td class="sub-text">${esc(row.deliveredAt || '—')}</td>
         <td class="num">${row.amount ? '$MXN' + esc(row.amount) : '—'}</td>
         <td class="num">${row.packageCount ? row.packageCount : '—'}</td>
@@ -4976,12 +4994,13 @@ function asRenderClaimRows(rows) {
   AS_STATE.claimRows = rows || [];
   const tbody = $('asClaimRows');
   if (!AS_STATE.claimRows.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="hint" style="text-align:center; padding:22px;">提交后此处逐步展示每单结果。</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="hint" style="text-align:center; padding:22px;">提交后此处逐步展示每单结果。</td></tr>';
   } else {
     tbody.innerHTML = AS_STATE.claimRows.map(row => {
       const bad = !['ok'].includes(String(row.status || ''));
       return `<tr data-as-claim="${esc(row.orderNo || '')}"${bad && row.status !== 'queued' && row.status !== 'running' ? ' class="tr-bad"' : (row.status === 'running' ? ' class="tr-run"' : '')}>
         <td class="as-order">${esc(row.orderNo || '')}</td>
+        <td style="font-weight:700; color:#078487; white-space:nowrap">${esc(AFTER_SALE_TYPE)}</td>
         <td class="sub-text">${esc(row.environmentSerial || '')}</td>
         <td style="font-weight:700; color:var(--navy-950)">${esc(row.storeName || '')}</td>
         <td>${asClaimPill(row.status)}</td>
@@ -5207,7 +5226,7 @@ $('asStop').onclick = async () => {
 };
 $('asClearResult').onclick = () => {
   AS_STATE.claimRows = []; AS_STATE.runId = null; AS_STATE.status = '';
-  $('asClaimRows').innerHTML = '<tr><td colspan="8" class="hint" style="text-align:center; padding:22px;">已清空。</td></tr>';
+  $('asClaimRows').innerHTML = '<tr><td colspan="9" class="hint" style="text-align:center; padding:22px;">已清空。</td></tr>';
   $('asPhaseBanner').hidden = true;
   $('asBar').style.width = '0%'; $('asProgressText').textContent = '未开始';
   asRenderClaimRows([]);
