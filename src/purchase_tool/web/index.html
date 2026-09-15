@@ -666,6 +666,14 @@
   /* ===== 小犀助手 · 采购售后（丢件退款） ===== */
   /* 售后三张表的商品缩略图：复用 .procurement-image-thumb，只按密集表格调小一档 */
   #afterSalePanel .procurement-image-thumb { width: 34px; height: 44px; margin-left: 0; border-radius: 8px; box-shadow: none; }
+  /* 状态条右侧的进度区排版（用 class 而非内联样式，否则收起的 display:none 会被内联压住） */
+  #afterSalePanel .as-strip-progress { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  /* 运行状态条的终态收起：折成一行（只留标题与操作），把纵向空间还给表格 */
+  #afterSalePanel #asRunStrip.as-strip-collapsed .query-phase-copy span,
+  #afterSalePanel #asRunStrip.as-strip-collapsed .progress-wrap { display: none; }
+  #afterSalePanel .as-strip-toggle { margin-left: 10px; border: 0; background: transparent;
+    color: var(--rhino-600); font-size: 11px; font-weight: 800; cursor: pointer; padding: 2px 6px; border-radius: 6px; }
+  #afterSalePanel .as-strip-toggle:hover { background: rgba(32,174,179,.10); }
   #afterSalePanel .as-type-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
   #afterSalePanel .as-type-row .as-type-label { font-size:12px; font-weight:700; color:var(--navy-700); }
   #afterSalePanel .as-type-row .hint { font-size:11px; color:var(--navy-500); }

@@ -241,7 +241,9 @@ DESIGN_PATCH = r'''
   function renderScan() {
     const t = typeOf(current);
     const head = document.querySelector('#asScanTable thead tr');
-    head.innerHTML = '<th style="width:34px"><input type="checkbox" style="accent-color:var(--rhino-600)"></th>'
+    // 注意：表头里的复选框必须保留 id="asChkHead"——真实页面的 asSyncSelection()
+    // 要写这个节点，丢了 id 会让每次轮询都抛 null 异常（本样稿踩过）。
+    head.innerHTML = '<th style="width:34px"><input type="checkbox" id="asChkHead" style="accent-color:var(--rhino-600)"></th>'
       + '<th>环境序号</th><th>买家号环境</th><th>订单号</th>'
       + '<th style="width:46px">商品图</th><th>售后类型</th>'
       + t.scanCols.map(c => `<th${/金额/.test(c) ? ' class="num"' : ''}>${esc(c)}</th>`).join('')
@@ -391,6 +393,45 @@ DESIGN_PATCH = r'''
   // 运行状态条：把「阶段横幅 + 进度条 + 进度文本 + 停止」并到一条，钉在类型卡下方，
   // 长列表滚动时也看得见（sticky 压在工作台顶栏下面）。元素是「搬」过来的，不重新接线，
   // 真实页面的 asSetPhase/asProgress 仍写同一批节点。
+
+  // 终态收起：操作跑完（标题含 完成/失败/已停止）后自动折成一行，点「展开」还原。
+  // 不重写状态机——只包一层 asSetPhase，真实页面的驱动逻辑照旧。
+  let stripCollapseTimer = null;
+  function asStripToggle(collapsed) {
+    const strip = document.getElementById('asRunStrip');
+    if (!strip) return;
+    strip.classList.toggle('as-strip-collapsed', collapsed);
+    const btn = strip.querySelector('.as-strip-toggle');
+    if (btn) btn.textContent = collapsed ? '展开' : '收起';
+  }
+  function installStripCollapse() {
+    if (typeof asSetPhase !== 'function' || asSetPhase.__wrapped) return false;
+    const original = asSetPhase;
+    asSetPhase = function (title, text, spin) {
+      original(title, text, spin);
+      const strip = document.getElementById('asRunStrip');
+      if (!strip) return;
+      // 终态判定：不转圈且标题是收尾语气
+      const terminal = !spin && /完成|失败|已停止|不可用/.test(String(title || ''));
+      if (stripCollapseTimer) { clearTimeout(stripCollapseTimer); stripCollapseTimer = null; }
+      if (!terminal) { asStripToggle(false); return; }
+      stripCollapseTimer = setTimeout(() => asStripToggle(true), 2200);
+    };
+    asSetPhase.__wrapped = true;
+    const strip = document.getElementById('asRunStrip');
+    if (strip && !strip.querySelector('.as-strip-toggle')) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'as-strip-toggle';
+      btn.textContent = '收起';
+      btn.onclick = () => asStripToggle(
+        !document.getElementById('asRunStrip').classList.contains('as-strip-collapsed'));
+      const title = document.getElementById('asPhaseTitle');
+      if (title && title.parentElement) title.parentElement.appendChild(btn);
+    }
+    return true;
+  }
+
   function installRunStrip() {
     const panel = document.getElementById('afterSalePanel');
     const banner = document.getElementById('asPhaseBanner');
@@ -409,10 +450,8 @@ DESIGN_PATCH = r'''
     banner.style.flexWrap = 'wrap';
     strip.appendChild(banner);
     if (progressWrap) {
-      progressWrap.style.marginLeft = 'auto';
-      progressWrap.style.display = 'flex';
-      progressWrap.style.alignItems = 'center';
-      progressWrap.style.gap = '10px';
+      // 排版走 class：内联 display:flex 会压过收起态的 display:none
+      progressWrap.classList.add('as-strip-progress');
       if (stop) progressWrap.appendChild(stop);
       banner.appendChild(progressWrap);
     }
@@ -480,6 +519,7 @@ DESIGN_PATCH = r'''
       };
     }
     installRunStrip();
+    installStripCollapse();
     installTracking();
     switchType(current);
     return true;
