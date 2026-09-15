@@ -70,9 +70,11 @@ DESIGN_PATCH = r'''
       ],
       claimRows: [
         { order: 'GSH1RV90A001B2', serial: '5121', status: 'ok',
+          actedAt: '09-15 18:12:03',
           extra: { 退款单号: '2390765181147136', 退款路径: 'Cuenta original de pago',
                    退款信用卡: '****2281' } },
         { order: 'GSH1RV90A002C7', serial: '5122', status: 'ok',
+          actedAt: '09-15 18:12:31',
           extra: { 退款单号: '2390765181147201', 退款路径: 'Cuenta original de pago',
                    退款信用卡: '****2281' } },
       ],
@@ -240,7 +242,8 @@ DESIGN_PATCH = r'''
     const t = typeOf(current);
     const head = document.querySelector('#asScanTable thead tr');
     head.innerHTML = '<th style="width:34px"><input type="checkbox" style="accent-color:var(--rhino-600)"></th>'
-      + '<th style="width:46px">商品图</th><th>环境序号</th><th>买家号环境</th><th>订单号</th><th>售后类型</th>'
+      + '<th>环境序号</th><th>买家号环境</th><th>订单号</th>'
+      + '<th style="width:46px">商品图</th><th>售后类型</th>'
       + t.scanCols.map(c => `<th${/金额/.test(c) ? ' class="num"' : ''}>${esc(c)}</th>`).join('')
       + '<th>状态</th>';
     const rows = t.rows;
@@ -252,10 +255,10 @@ DESIGN_PATCH = r'''
         ? `<span class="pill ok">${esc(r.status)}</span>`
         : `<span class="pill ${r.status === '不可申请' || r.status === '不可取消' ? 'warn' : 'warn'}">${esc(r.status)}</span>`;
       return `<tr${checked ? ' class="as-picked"' : ''}><td>${box}</td>`
-        + thumbCell(t.thumb)
         + `<td class="sub-text">${esc(r.serial)}</td>`
         + `<td style="font-weight:700; color:var(--navy-950)">${esc(r.store)}</td>`
         + `<td class="as-order">${esc(r.order)}</td>`
+        + thumbCell(t.thumb)
         + `<td style="font-weight:700; color:#078487; white-space:nowrap">${esc(t.label)}</td>`
         + t.scanCols.map(c => `<td>${esc(r.extra[c] || '—')}</td>`).join('')
         + `<td>${pill}</td></tr>`;
@@ -272,14 +275,24 @@ DESIGN_PATCH = r'''
   function renderClaim() {
     const t = typeOf(current);
     const head = document.querySelector('#asClaimTable thead tr');
-    head.innerHTML = '<th style="width:46px">商品图</th><th>订单号</th><th>售后类型</th><th>环境序号</th>'
-      + t.claimCols.map(c => `<th>${esc(c)}</th>`).join('') + '<th>状态</th><th>备注</th>';
-    document.getElementById('asClaimRows').innerHTML = t.claimRows.map(r =>
-      `<tr>${thumbCell(t.thumb)}<td class="as-order">${esc(r.order)}</td>`
+    head.innerHTML = '<th>订单号</th><th style="width:46px">商品图</th><th>售后类型</th><th>环境序号</th>'
+      + '<th>送达时间</th>'
+      + t.claimCols.map(c => `<th>${esc(c)}</th>`).join('')
+      + '<th>状态</th><th>操作时间</th><th>备注</th>';
+    document.getElementById('asClaimRows').innerHTML = t.claimRows.map(r => {
+      // 送达时间取自已扫描的清单（同一批数据，前端按订单号关联，不再要一次接口）
+      const scanned = t.rows.find(x => x.order === r.order) || {};
+      const delivered = (scanned.extra || {})['送达时间'] || '—';
+      return `<tr><td class="as-order">${esc(r.order)}</td>`
+      + thumbCell(t.thumb)
       + `<td style="font-weight:700; color:#078487">${esc(t.label)}</td>`
       + `<td class="sub-text">${esc(r.serial)}</td>`
+      + `<td class="sub-text">${esc(delivered)}</td>`
       + t.claimCols.map(c => `<td>${esc(r.extra[c] || '—')}</td>`).join('')
-      + '<td><span class="pill ok">已完成</span></td><td class="hint">—</td></tr>').join('');
+      + `<td><span class="pill ok">已完成</span></td>`
+      + `<td class="sub-text">${esc(r.actedAt || '—')}</td>`
+      + '<td class="hint">—</td></tr>';
+    }).join('');
   }
 
   function syncFooter() {
@@ -351,9 +364,9 @@ DESIGN_PATCH = r'''
       const p = TRACK_PHASES[r.phase] || ['warn', r.phase];
       const bad = r.phase === 'rejected' || r.phase === 'overdue';
       return `<tr${bad ? ' class="tr-bad"' : (r.phase === 'refunded' ? '' : ' class="tr-run"')}>`
-        + thumbCell(typeOf('refund').thumb)
         + `<td class="as-order" style="font-size:12px">${esc(r.billId)}</td>`
         + `<td class="as-order">${esc(r.order)}</td>`
+        + thumbCell(typeOf('refund').thumb)
         + `<td class="sub-text">${esc(r.serial)}</td>`
         + `<td class="sub-text">${esc(r.card)}</td>`
         + `<td><span class="pill ${p[0]}">${esc(p[1])}</span></td>`
@@ -395,7 +408,7 @@ DESIGN_PATCH = r'''
       <div style="padding: 0 19px;">
         <div class="table-scroll scroll-20">
           <table><thead><tr>
-            <th style="width:46px">商品图</th><th>退款单号</th><th>订单号</th><th>环境序号</th><th>退款信用卡</th>
+            <th>退款单号</th><th>订单号</th><th style="width:46px">商品图</th><th>环境序号</th><th>退款信用卡</th>
             <th>阶段</th><th>剩余倒计时</th><th>退款结果</th><th>最近检查</th><th>处置</th>
           </tr></thead><tbody id="asTrackRows"></tbody></table>
         </div>
