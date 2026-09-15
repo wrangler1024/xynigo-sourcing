@@ -133,6 +133,10 @@ def test_after_sale_scan_progress_and_terminal_summary(tmp_path) -> None:
         with database.session_factory() as session:
             from xynigo_auth.models import AfterSaleClaimRun
             assert session.scalar(select(AfterSaleClaimRun)) is None
+        # 还没有任何提交批次：latest 返回 null
+        latest_empty = web_client.get("/v1/operation-runs/after-sale-claim/latest")
+        assert latest_empty.status_code == 200, latest_empty.text
+        assert latest_empty.json()["data"] is None
 
         # 运行中 GET：summary 带上计划环境数（进度条分母）
         running = web_client.get(f"/v1/after-sale/scan/{task_id}")
@@ -401,6 +405,42 @@ def test_after_sale_claim_run_progress_finish_and_snapshot(tmp_path) -> None:
         latest = web_client.get("/v1/operation-runs/after-sale-claim/latest")
         assert latest.status_code == 200, latest.text
         assert latest.json()["data"]["runId"] == run_id
+
+        # 扫描结果页的 lastRuns：按店铺合并「上次提交到哪一步」
+        scan_created = web_client.post(
+            "/v1/after-sale/scan",
+            json={
+                "idempotencyKey": "as-scan-e2e-00000009",
+                "executorId": executor_id,
+                "environmentSerials": ["4902"],
+            },
+            headers=CSRF,
+        )
+        assert scan_created.status_code == 202, scan_created.text
+        scan_task_id = scan_created.json()["data"]["taskId"]
+        _, scan_token = _lease_and_start(
+            device_client, credential, expect_type="after.sale.scan.v1")
+        scan_finish = device_client.post(
+            f"/v1/executor-channel/tasks/{scan_task_id}/finish",
+            json={
+                "leaseToken": scan_token,
+                "outcome": "succeeded",
+                "resultCode": "after_sale_scan_completed",
+                "resultSummary": {
+                    "rows": [_scan_row("4902", order_no="GSH0001",
+                                       claimable=False)],
+                    "totalCount": 1,
+                    "claimableCount": 0,
+                },
+            },
+            headers=device_headers(credential),
+        )
+        assert scan_finish.status_code == 200, scan_finish.text
+        scan_data = web_client.get(
+            f"/v1/after-sale/scan/{scan_task_id}").json()["data"]
+        assert scan_data["lastRuns"]["合成店铺-4902"]["refundBillId"] == "RB0001"
+        assert scan_data["lastRuns"]["合成店铺-4902"]["runId"] == run_id
+        assert scan_data["lastRuns"]["合成店铺-4902"]["status"] == "ok"
 
         # 截图二进制已随进度落库，且带 7 天过期时间
         with database.session_factory() as session:

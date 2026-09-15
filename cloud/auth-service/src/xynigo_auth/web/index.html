@@ -663,7 +663,7 @@
   /* 进度文本与物流查询 #progressText 完全同款 */
   #storeFinancePanel #sfProgressText{font-size:11px;color:var(--navy-500);min-width:420px;text-align:right;white-space:nowrap}
 
-  /* ===== 小犀助手 · 售后处理 ===== */
+  /* ===== 小犀助手 · 采购售后（丢件退款） ===== */
   #afterSalePanel .as-bar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
   #afterSalePanel .as-bar input[type=search] {
     flex:1; min-width:280px; padding:8px 12px;
@@ -1714,7 +1714,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         <button class="secondary-tab" data-parent="procurement" data-module="procurementimport" hidden>导入分单<span class="secondary-status">飞书协作表</span></button>
         <button class="secondary-tab" data-parent="procurement" data-module="procurementorders" hidden>采购任务<span class="secondary-status">云端</span></button>
         <button class="secondary-tab" data-parent="procurement" data-module="procurementexecution" hidden>采购执行<span class="secondary-status">测试</span></button>
-        <button class="secondary-tab" data-parent="procurement" data-module="aftersale" hidden>售后处理<span class="secondary-status">新增</span></button>
+        <button class="secondary-tab" data-parent="procurement" data-module="aftersale" hidden>采购售后<span class="secondary-status">新增</span></button>
         <button class="secondary-tab" data-parent="procurement" data-planned="异常协同" disabled hidden>异常协同<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab active" data-parent="fulfillment" data-module="query">订单物流查询<span class="secondary-status">现有</span></button>
         <button class="secondary-tab" data-parent="operations" data-planned="运营任务" disabled hidden>运营任务<span class="secondary-status planned">规划</span></button>
@@ -2165,12 +2165,12 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
   <div class="module-panel hidden" id="afterSalePanel">
     <section class="card">
       <div class="card-title">① 选择范围
-        <span class="legend">买家号环境序号 · 空格/逗号分隔，最多 300 个</span>
+        <span class="legend">售后类型：丢件退款（包裹已送达但未收到）· 退款原路退回</span>
         <span class="resource-state" id="asScopeState" style="margin-left:auto; margin-top:0">未扫描</span>
       </div>
       <div class="as-bar">
         <input type="search" id="asSerials" placeholder="环境序号，如 4902 4901 4897">
-        <span class="hint">扫描只读：只看订单与可申请状态，不动订单数据</span>
+        <span class="hint">环境序号 · 空格/逗号分隔，最多 300 个；扫描只读，不动订单数据</span>
       </div>
       <div class="action-row">
         <button class="btn primary" id="asScan">扫描可申请售后订单</button>
@@ -2184,7 +2184,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
 
     <section class="card table-card">
       <div class="card-title" style="padding:17px 19px 0;">
-        <div>② 可申请清单 <span class="legend">勾选后批量提交，已提交过的订单不可勾选</span></div>
+        <div>② 可申请清单 <span class="legend">一行一单 · 勾选后批量提交 · 已提交过的订单不可勾选</span></div>
         <div class="table-actions">
           <span class="resource-state" id="asSelCount" style="margin-top:0">已选 0 单</span>
           <button class="btn sm" id="asPickClaimable">全选可申请</button>
@@ -2211,7 +2211,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
 
     <section class="card table-card">
       <div class="card-title" style="padding:17px 19px 0;">
-        <div>③ 提交结果 <span class="legend">退款路径固定「原路退回」（Cuenta original de pago）</span></div>
+        <div>③ 提交结果 <span class="legend">丢件退款 · 退款路径固定「原路退回」（Cuenta original de pago）</span></div>
         <button class="btn sm" id="asClearResult">清空结果</button>
       </div>
 
@@ -3681,8 +3681,8 @@ const FEATURE_MODULES = {
     summary: '批量自动登录采集 SHEIN 店铺后台结算与资金数据，导出《店铺结算汇总表》交财务。全程只读。'
   },
   aftersale: {
-    label: '售后处理', primary: 'procurement', requiredPermission: 'assistant.access',
-    summary: '扫描买家号环境下「已送达但未收到」的订单并批量发起售后申请，退款原路退回。扫描只读，提交为写操作。'
+    label: '采购售后', primary: 'procurement', requiredPermission: 'assistant.access',
+    summary: '采购售后·丢件退款：扫描买家号环境下「已送达但未收到」的订单并批量发起退款申请，退款原路退回。扫描只读，提交为写操作。'
   },
   buyerlib: {
     label: '买家号库', primary: 'resources',
@@ -4864,7 +4864,7 @@ sfPoll = async function () {
   return _sfPoll();
 };
 
-/* ===== 小犀助手 · 售后处理 ===== */
+/* ===== 小犀助手 · 采购售后（丢件退款） ===== */
 const AS_LIST_KEY = 'afterSaleEnvList';
 const AS_STATE = {
   mode: '', scanTaskId: null, runId: null, timer: null, running: false,
