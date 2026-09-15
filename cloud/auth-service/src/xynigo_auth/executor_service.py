@@ -42,11 +42,16 @@ from .models import (
     LogisticsQueryResult,
     LogisticsQueryRun,
     LocalExecutor,
+    AfterSaleClaimResult,
+    AfterSaleClaimRun,
     StoreFinanceInspectResult,
     StoreFinanceInspectRun,
     Tenant,
 )
 from .operation_contract import (
+    AfterSaleClaimProgressRow,
+    AfterSaleClaimScreenshot,
+    AfterSaleScanRow,
     EnvironmentPlanParseResult,
     EnvironmentRunProgressItem,
     EnvironmentIpVerificationProgress,
@@ -71,6 +76,8 @@ BUSINESS_TASK_TYPES = frozenset(
         "logistics.query.v1",
         "store.finance.inspect.v1",
         "store.finance.lookup.v1",
+        "after.sale.scan.v1",
+        "after.sale.claim.v1",
         "environment.create-bound.v1",
         "environment.create-backup.v1",
         "environment.retry-row.v1",
@@ -99,6 +106,20 @@ def _sf_date(value):
         return date_type.fromisoformat(text)
     except (TypeError, ValueError):
         return None
+
+
+def _after_sale_at(value):
+    """ISO 文本提交时间 → timezone-aware datetime | None（售后结果行用）。"""
+    text = str(value or '').strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace('Z', '+00:00'))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 MIN_SAFE_LOGISTICS_CLIENT_VERSION = (0, 13, 18)
@@ -171,6 +192,7 @@ BUSINESS_RESULT_KEYS = frozenset(
         "totalCount",
         "successCount",
         "failedCount",
+        "skippedCount",
         "stoppedCount",
         "cleanupTotal",
         "cleanupDone",
@@ -1310,10 +1332,51 @@ class ExecutorChannelService:
                         "executor_result_invalid", status_code=422)
         return True
 
+    _AFTER_SALE_SCAN_RESULT_KEYS = frozenset({
+        "rows", "totalCount", "claimableCount",
+    })
+
+    @classmethod
+    def _validate_after_sale_scan_result(
+        cls, task: ExecutorTask, body: ExecutorTaskFinishBody
+    ) -> bool:
+        """扫描不是 Run：{rows,totalCount,claimableCount} 专用闭集校验。
+
+        未命中（任务类型不符，或失败回执）返回 False，交回通用业务分支——
+        执行器失败时上报的是通用 {runStatus,phase,errorCode,errorSummary}。
+        """
+        if task.task_type != "after.sale.scan.v1":
+            return False
+        if body.outcome != "succeeded":
+            return False
+        summary = body.resultSummary
+        if set(summary) - cls._AFTER_SALE_SCAN_RESULT_KEYS:
+            raise ExecutorServiceError("executor_result_invalid", status_code=422)
+        raw_rows = summary.get("rows")
+        if not isinstance(raw_rows, list) or len(raw_rows) > 20_000:
+            raise ExecutorServiceError("executor_result_invalid", status_code=422)
+        try:
+            rows = [AfterSaleScanRow.model_validate(item) for item in raw_rows]
+        except ValidationError as exc:
+            raise ExecutorServiceError(
+                "executor_result_invalid", status_code=422) from exc
+        for key in ("totalCount", "claimableCount"):
+            value = summary.get(key)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ExecutorServiceError(
+                    "executor_result_invalid", status_code=422)
+        if summary["claimableCount"] > summary["totalCount"]:
+            raise ExecutorServiceError("executor_result_invalid", status_code=422)
+        if sum(1 for row in rows if row.claimable) > summary["claimableCount"]:
+            raise ExecutorServiceError("executor_result_invalid", status_code=422)
+        return True
+
     @staticmethod
     def _validate_business_result(
         task: ExecutorTask, body: ExecutorTaskFinishBody
     ) -> None:
+        if ExecutorChannelService._validate_after_sale_scan_result(task, body):
+            return
         if ExecutorChannelService._validate_store_finance_lookup_result(
                 task, body):
             return
@@ -1858,6 +1921,76 @@ class ExecutorChannelService:
             "unmatched": [str(item)[:64] for item in unmatched[:300]],
         }
 
+    _AFTER_SALE_SCAN_PROGRESS_KEYS = frozenset({"rows"})
+
+    def after_sale_scan_summary(self, task: ExecutorTask) -> dict[str, Any]:
+        """Shape one after-sale scan task (running or terminal) for the web.
+
+        扫描不建 Run 表：终态行来自加密回执（result_summary），运行中行来自
+        任务行上最近一次进度快照（progress_summary）。totalCount 取执行器
+        回执/进度 total、已上报去重环境数与请求环境数三者的最大值，前端按
+        「已终结环境数 / totalCount」画进度条。
+        """
+        if task.task_type != "after.sale.scan.v1":
+            raise ExecutorServiceError("executor_task_type_invalid", status_code=404)
+        progress = task.progress_summary if isinstance(
+            task.progress_summary, dict) else {}
+        progress_rows = progress.get("rows")
+        rows = ([dict(item) for item in progress_rows]
+                if isinstance(progress_rows, list) else [])
+        total_count = max(0, int(progress.get("progressTotal") or 0))
+        result = task.result_summary or {}
+        # 任务不确定/失败时 result_summary 里只有明文错误摘要，没有密文；
+        # 此时保持进度快照里的部分行，避免解密空密文报错。
+        if (task.status in TERMINAL_TASK_STATUSES
+                and result.get("encryptedResult")):
+            summary = self._result_summary(task)
+            if task.status == "succeeded":
+                result_rows = summary.get("rows")
+                if isinstance(result_rows, list):
+                    rows = [dict(item) for item in result_rows]
+                    total_count = max(0, int(summary.get("totalCount") or 0))
+        serials = {str(row.get("environmentSerial") or "") for row in rows}
+        serials.discard("")
+        total_count = max(total_count, len(serials),
+                          len(self._after_sale_scan_requested_serials(task)))
+        return {
+            "rows": rows,
+            "totalCount": total_count,
+            "claimableCount": sum(1 for row in rows if row.get("claimable")),
+        }
+
+    def _after_sale_scan_requested_serials(self, task: ExecutorTask) -> list[str]:
+        """扫描任务请求的环境序号；解密不可用时退化为空表（GET 不报错）。"""
+        try:
+            payload = self._request_payload(task)
+        except ExecutorServiceError:
+            return []
+        serials = (payload.get("environmentSerials")
+                   if isinstance(payload, dict) else None)
+        if not isinstance(serials, list):
+            return []
+        return [str(item) for item in serials if str(item or "").strip()]
+
+    def _request_payload(self, task: ExecutorTask) -> dict[str, Any]:
+        """解密业务任务的请求载荷（与领取任务同源，只读不改状态）。"""
+        envelope = task.payload_envelope or {}
+        if task.task_type not in ENCRYPTED_TASK_TYPES or not envelope:
+            return envelope
+        if self.payload_cipher is None:
+            raise ExecutorServiceError(
+                "executor_payload_encryption_unavailable", status_code=503
+            )
+        try:
+            return self.payload_cipher.decrypt(
+                envelope.get("encryptedPayload"),
+                tenant_id=task.tenant_id,
+                task_id=task.id,
+                purpose="request",
+            )
+        except ExecutorPayloadCipherError as exc:
+            raise ExecutorServiceError(str(exc), status_code=503) from exc
+
     def _result_summary(self, task: ExecutorTask) -> dict[str, Any]:
         summary = task.result_summary or {}
         if task.task_type not in ENCRYPTED_TASK_TYPES or not summary:
@@ -1926,6 +2059,41 @@ class ExecutorChannelService:
                 progress_snapshot=progress_snapshot,
                 heartbeat_at=heartbeat_at,
             )
+            return
+        elif task.task_type == "after.sale.claim.v1":
+            run = self.session.scalar(
+                select(AfterSaleClaimRun).where(
+                    AfterSaleClaimRun.executor_task_id == task.id
+                )
+            )
+            if run is None:
+                return
+            # 该表无 attempt/last_heartbeat_at 字段，走专用回写（勿并入通用赋值段）
+            self._sync_after_sale_claim_run(
+                task=task,
+                run=run,
+                status=status,
+                phase=phase,
+                progress_current=progress_current,
+                progress_total=progress_total,
+                started_at=started_at,
+                completed_at=completed_at,
+                result_summary=result_summary,
+                progress_snapshot=progress_snapshot,
+                heartbeat_at=heartbeat_at,
+            )
+            return
+        elif task.task_type == "after.sale.scan.v1":
+            # 扫描不建 Run 表：进度行直接落在任务行的 progress_summary，
+            # 终态由 finish 写加密 result_summary。
+            if progress_snapshot is not None:
+                self._store_after_sale_scan_progress(
+                    task,
+                    progress_snapshot,
+                    heartbeat_at,
+                    progress_current=progress_current,
+                    progress_total=progress_total,
+                )
             return
         else:
             return
@@ -2256,6 +2424,240 @@ class ExecutorChannelService:
                     )
                     row.screenshot_expires_at = expires_at
             row.updated_at = now
+
+    def _sync_after_sale_claim_run(
+        self,
+        *,
+        task: ExecutorTask,
+        run: AfterSaleClaimRun,
+        status: str,
+        phase: str | None,
+        progress_current: int | None,
+        progress_total: int | None,
+        started_at: datetime | None,
+        completed_at: datetime | None,
+        result_summary: dict[str, Any] | None,
+        progress_snapshot: dict[str, Any] | None,
+        heartbeat_at: datetime,
+    ) -> None:
+        """售后提交 Run 的回写：状态/进度/计数 + 结果行与截图落库。
+
+        本表无 attempt / last_heartbeat_at 字段，与物流通用回写分开实现。
+        """
+        run.status = status
+        if phase is not None:
+            run.phase = phase[:64]
+        if phase == "cancel_requested" or status == "cancelled":
+            run.stop_requested = True
+        run.updated_at = heartbeat_at
+        if started_at is not None:
+            run.started_at = run.started_at or started_at
+        if completed_at is not None:
+            run.completed_at = completed_at
+        if progress_total is not None:
+            run.progress_total = max(0, progress_total)
+        if progress_current is not None:
+            run.progress_completed = min(
+                max(0, progress_current), max(0, run.progress_total)
+            )
+        summary = result_summary or {}
+        success_count = _safe_nonnegative_int(summary.get("successCount"))
+        failed_count = _safe_nonnegative_int(summary.get("failedCount"))
+        skipped_count = _safe_nonnegative_int(summary.get("skippedCount"))
+        stopped_count = _safe_nonnegative_int(summary.get("stoppedCount"))
+        if success_count is not None:
+            run.success_count = min(success_count, run.total_count)
+        if failed_count is not None:
+            run.failed_count = min(failed_count, run.total_count)
+        if skipped_count is not None:
+            run.skipped_count = min(skipped_count, run.total_count)
+        if stopped_count is not None:
+            run.stopped_count = min(stopped_count, run.total_count)
+        if progress_snapshot is not None:
+            self._upsert_after_sale_claim_progress(
+                run, progress_snapshot, heartbeat_at
+            )
+
+    def _upsert_after_sale_claim_progress(
+        self,
+        run: AfterSaleClaimRun,
+        snapshot: dict[str, Any],
+        now: datetime,
+    ) -> None:
+        """增量 upsert 售后提交结果行（含异常截图二进制）。
+
+        行闭集与建 Run 清单双向对照：orderNo 必须在 request_summary.items
+        内、环境序号必须与清单一致，截图只能挂在本批次的提交行上。
+        """
+        if not set(snapshot).issubset({"rows", "screenshots"}) \
+                or "rows" not in snapshot \
+                or not isinstance(snapshot.get("rows"), list) \
+                or not isinstance(snapshot.get("screenshots", []), list):
+            raise ExecutorServiceError(
+                "executor_progress_snapshot_invalid", status_code=422,
+                diagnostic_reason="snapshot_shape_invalid")
+        try:
+            rows = [
+                AfterSaleClaimProgressRow.model_validate(item)
+                for item in snapshot["rows"]
+            ]
+            screenshots = [
+                AfterSaleClaimScreenshot.model_validate(item)
+                for item in snapshot.get("screenshots", [])
+            ]
+        except ValidationError as exc:
+            raise ExecutorServiceError(
+                "executor_progress_snapshot_invalid", status_code=422,
+                diagnostic_reason="row_or_screenshot_schema_invalid") from exc
+        items = {
+            str(item.get("orderNo") or ""): item
+            for item in ((run.request_summary or {}).get("items") or [])
+            if isinstance(item, dict)
+        }
+        order_numbers = [row.orderNo for row in rows]
+        screenshot_orders = [item.orderNo for item in screenshots]
+        environment_mismatch = any(
+            row.environmentSerial
+            and str(items.get(row.orderNo, {}).get("environmentSerial") or "")
+            and row.environmentSerial
+            != str(items[row.orderNo]["environmentSerial"])
+            for row in rows
+        )
+        invalid_reason = (
+            "row_count_exceeds_task" if len(rows) > run.total_count else
+            "duplicate_order_no"
+            if len(order_numbers) != len(set(order_numbers)) else
+            "order_outside_task"
+            if items and not set(order_numbers).issubset(set(items)) else
+            "environment_mismatch" if environment_mismatch else
+            "screenshot_scope_invalid"
+            if (len(screenshot_orders) != len(set(screenshot_orders))
+                or not set(screenshot_orders).issubset(set(order_numbers)))
+            else None
+        )
+        if invalid_reason:
+            raise ExecutorServiceError(
+                "executor_progress_snapshot_invalid", status_code=422,
+                diagnostic_reason=invalid_reason)
+        existing = {
+            row.order_no: row
+            for row in self.session.scalars(
+                select(AfterSaleClaimResult).where(
+                    AfterSaleClaimResult.run_id == run.id
+                )
+            )
+        }
+        screenshot_by_order = {item.orderNo: item for item in screenshots}
+        expires_at = now + timedelta(days=7)
+        for item in rows:
+            request_item = items.get(item.orderNo) or {}
+            serial = (item.environmentSerial
+                      or str(request_item.get("environmentSerial") or ""))
+            row = existing.get(item.orderNo)
+            if row is None:
+                row = AfterSaleClaimResult(
+                    id=uuid.uuid4(),
+                    run_id=run.id,
+                    tenant_id=run.tenant_id,
+                    order_no=item.orderNo,
+                    environment_serial=serial,
+                    created_at=now,
+                    updated_at=now,
+                )
+                self.session.add(row)
+                existing[item.orderNo] = row
+            if serial:
+                row.environment_serial = serial
+            row.store_name = (item.storeName or row.store_name
+                              or str(request_item.get("storeName") or ""))
+            row.status = item.status
+            row.package_no = item.packageNo or None
+            row.refund_bill_id = item.refundBillId or None
+            row.refund_path = item.refundPath or None
+            row.duration_seconds = item.durationSeconds
+            submitted_at = _after_sale_at(item.submittedAt)
+            if submitted_at is not None:
+                row.submitted_at = submitted_at
+            row.note = item.note or None
+            row.error_summary = item.errorSummary or None
+            shot = screenshot_by_order.get(item.orderNo)
+            if shot is not None:
+                try:
+                    content = base64.b64decode(
+                        shot.contentBase64, validate=True)
+                except (binascii.Error, ValueError):
+                    content = b""
+                if content and len(content) <= 350 * 1024:
+                    row.screenshot_content = content
+                    row.screenshot_sha256 = (
+                        hashlib.sha256(content).hexdigest()
+                    )
+                    row.screenshot_expires_at = expires_at
+            row.updated_at = now
+
+    def _store_after_sale_scan_progress(
+        self,
+        task: ExecutorTask,
+        snapshot: dict[str, Any],
+        now: datetime,
+        *,
+        progress_current: int | None = None,
+        progress_total: int | None = None,
+    ) -> None:
+        """扫描（无 Run 表）的进度行落到任务行的 progress_summary。
+
+        行闭集用扫描行模型校验；同环境多单时 (环境序号, 订单号) 必须唯一，
+        环境序号必须落在请求白名单内，避免串批次上报。
+        """
+        if not isinstance(snapshot, dict) or "rows" not in snapshot \
+                or set(snapshot) - self._AFTER_SALE_SCAN_PROGRESS_KEYS:
+            raise ExecutorServiceError(
+                "executor_progress_snapshot_invalid", status_code=422,
+                diagnostic_reason="snapshot_shape_invalid")
+        raw_rows = snapshot.get("rows")
+        if not isinstance(raw_rows, list) or len(raw_rows) > 20_000:
+            raise ExecutorServiceError(
+                "executor_progress_snapshot_invalid", status_code=422,
+                diagnostic_reason="row_count_exceeds_task")
+        try:
+            rows = [AfterSaleScanRow.model_validate(item) for item in raw_rows]
+        except ValidationError as exc:
+            raise ExecutorServiceError(
+                "executor_progress_snapshot_invalid", status_code=422,
+                diagnostic_reason="row_schema_invalid") from exc
+        keys = [(row.environmentSerial, row.orderNo) for row in rows]
+        allowed_serials = set(self._after_sale_scan_requested_serials(task))
+        invalid_reason = (
+            "duplicate_environment_order" if len(keys) != len(set(keys)) else
+            "environment_outside_task"
+            if (allowed_serials
+                and not {row.environmentSerial for row in rows}
+                .issubset(allowed_serials))
+            else None
+        )
+        if invalid_reason:
+            raise ExecutorServiceError(
+                "executor_progress_snapshot_invalid", status_code=422,
+                diagnostic_reason=invalid_reason)
+        completed_envs = len({
+            row.environmentSerial for row in rows
+            if row.status not in {"queued", "running"}
+        })
+        total = max(
+            0,
+            int(progress_total or 0),
+            len(allowed_serials),
+            len({row.environmentSerial for row in rows}),
+        )
+        completed = (min(total, max(0, int(progress_current or 0)))
+                     if progress_current is not None
+                     else min(total, completed_envs))
+        task.progress_summary = {
+            "rows": [row.model_dump(mode="json") for row in rows],
+            "progressCompleted": completed,
+            "progressTotal": total,
+            "updatedAt": now.isoformat(),
+        }
 
     def _upsert_logistics_progress(
         self,

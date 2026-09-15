@@ -1010,3 +1010,135 @@ class StoreFinanceProgressScreenshot(BaseModel):
     contentType: str = Field(default="image/jpeg", max_length=64)
     size: int | None = Field(default=None, ge=0)
 
+
+# 售后行状态闭集：扫描与提交共用。blocked=平台侧已无可申请包裹（多为已提交
+# 过）、skip/empty=该环境没有可申请订单，三者都是「已终结但不该报错」。
+AFTER_SALE_ROW_STATUSES = (
+    "ok", "empty", "skip", "blocked", "fail", "login", "inuse",
+    "stopped", "queued", "running",
+)
+AfterSaleRowStatus = Literal[
+    "ok", "empty", "skip", "blocked", "fail", "login", "inuse",
+    "stopped", "queued", "running",
+]
+
+
+class AfterSaleScanRow(BaseModel):
+    """One order row inside an after-sale scan snapshot.
+
+    extra=forbid：闭集校验。执行器本地投影器（`_after_sale_rows`）已把本地
+    行裁剪到本闭集后再上报，云端不再容忍投影外字段。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    environmentSerial: str = Field(min_length=1, max_length=64)
+    storeName: str = Field(default="", max_length=128)
+    accountName: str = Field(default="", max_length=64)
+    orderNo: str = Field(default="", max_length=32)
+    deliveredAt: str = Field(default="", max_length=32)
+    amount: str = Field(default="", max_length=24)
+    status: AfterSaleRowStatus
+    claimable: bool = False
+    packageCount: int = Field(default=0, ge=0, le=100_000)
+    trackingNo: str = Field(default="", max_length=64)
+    errorSummary: str | None = Field(default=None, max_length=300)
+    screenshotSha256: str | None = Field(default=None, max_length=64)
+
+
+class AfterSaleScanCreateBody(BaseModel):
+    """Safe cloud request for one read-only after-sale scan task."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    idempotencyKey: str = Field(min_length=8, max_length=128,
+                                pattern=SAFE_KEY_RE)
+    executorId: uuid.UUID
+    browserMode: Literal["headless", "visible"] = "visible"
+    environmentSerials: list[str] = Field(min_length=1, max_length=300)
+
+    @field_validator("environmentSerials")
+    @classmethod
+    def normalize_environment_serials(cls, value: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            text = str(item or "").strip()
+            if not text:
+                raise ValueError("environmentSerial 不能为空")
+            if text in seen:
+                continue
+            seen.add(text)
+            cleaned.append(text)
+        if not cleaned:
+            raise ValueError("environmentSerials 为空")
+        return cleaned
+
+
+class AfterSaleClaimItem(BaseModel):
+    """One order to submit for after-sale inside a claim Run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    environmentSerial: str = Field(min_length=1, max_length=64)
+    orderNo: str = Field(min_length=1, max_length=32)
+    storeName: str = Field(default="", max_length=128)
+    packageNo: str = Field(default="", max_length=64)
+
+
+class AfterSaleClaimRunCreateBody(BaseModel):
+    """Safe cloud request for a durable after-sale claim Run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    idempotencyKey: str = Field(min_length=8, max_length=128,
+                                pattern=SAFE_KEY_RE)
+    executorId: uuid.UUID
+    browserMode: Literal["headless", "visible"] = "visible"
+    items: list[AfterSaleClaimItem] = Field(min_length=1, max_length=500)
+
+    @field_validator("items")
+    @classmethod
+    def unique_orders(cls, value: list[AfterSaleClaimItem]) -> list[AfterSaleClaimItem]:
+        order_numbers = [item.orderNo for item in value]
+        if len(order_numbers) != len(set(order_numbers)):
+            raise ValueError("同一批次内 orderNo 不能重复")
+        return value
+
+
+class AfterSaleClaimProgressRow(BaseModel):
+    """One submitted order row inside a claim progress snapshot.
+
+    extra=forbid：闭集校验。唯一在提交行闭集之外保留的键是 packageCount——
+    执行器本地投影器对扫描/提交两种行共用字段清单，提交成功行会带上本次提交
+    的包裹数；云端接纳但只作展示，不落库。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    orderNo: str = Field(min_length=1, max_length=32)
+    environmentSerial: str = Field(default="", max_length=64)
+    storeName: str = Field(default="", max_length=128)
+    status: AfterSaleRowStatus
+    packageNo: str = Field(default="", max_length=64)
+    refundBillId: str = Field(default="", max_length=32)
+    refundPath: str = Field(default="", max_length=48)
+    durationSeconds: int | None = Field(default=None, ge=0, le=86_400_000)
+    submittedAt: str | None = Field(default=None, max_length=40)
+    note: str | None = Field(default=None, max_length=200)
+    errorSummary: str | None = Field(default=None, max_length=300)
+    screenshotSha256: str | None = Field(default=None, max_length=64)
+    packageCount: int | None = Field(default=None, ge=0, le=100_000)
+
+
+class AfterSaleClaimScreenshot(BaseModel):
+    """Failure screenshot attachment for one submitted order."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    orderNo: str = Field(min_length=1, max_length=64)
+    contentBase64: str = Field(min_length=1, max_length=700_000)
+    sha256: str = Field(min_length=16, max_length=64)
+    contentType: str = Field(default="image/jpeg", max_length=64)
+    size: int | None = Field(default=None, ge=0)
+

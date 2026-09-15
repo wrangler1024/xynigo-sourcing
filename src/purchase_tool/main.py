@@ -115,6 +115,7 @@ from .secure_store_transaction import SecureStoreTransaction
 from .shein_query import (
     QueryOrchestrator, normalize_browser_mode, normalize_query_site)
 from .store_finance_inspect import StoreFinanceInspector
+from .after_sale_claim import AfterSaleClaimer
 from .task_runtime import (HubRuntimeGate, LocalTaskCoordinator, TaskConflict,
                            environment_resources)
 from .updater import StandardInstallerUpdateClient, UpdateCoordinator
@@ -270,6 +271,11 @@ AUTH_PERMISSION_BY_PATH = {
     '/api/store-finance/progress': 'assistant.access',
     '/api/store-finance/stop': 'assistant.access',
     '/api/store-finance/screenshot': 'assistant.access',
+    '/api/after-sale/scan': 'assistant.access',
+    '/api/after-sale/submit': 'assistant.access',
+    '/api/after-sale/progress': 'assistant.access',
+    '/api/after-sale/stop': 'assistant.access',
+    '/api/after-sale/screenshot': 'assistant.access',
     '/api/export': 'fulfillment.order.export',
     '/api/buyer-library': 'resource.buyer.read',
     '/api/buyer-library/import/parse': 'resource.buyer.import',
@@ -1190,6 +1196,11 @@ class AppState(object):
             concurrency=cfg.get('concurrency', 2),
             headless=bool(cfg.get('storeFinanceHeadless', True)),
             log=lambda msg: print('[store-finance]', msg, flush=True))
+        # 售后申请是写操作：默认可见窗口，出问题同事能直接看着接管
+        self.after_sale = AfterSaleClaimer(
+            self.hub,
+            headless=bool(cfg.get('afterSaleHeadless', False)),
+            log=lambda msg: print('[after-sale]', msg, flush=True))
         self.reg_job = RegistrationJob(lambda: self.hub)
         self.buyer_library = BuyerLibraryJob(
             lambda: DatabaseBuyerLibraryService(
@@ -4317,6 +4328,21 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header('Content-Length', str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
+            elif path == '/api/after-sale/progress':
+                snap = STATE.after_sale.snapshot()
+                snap['hubConnected'] = STATE.hub_status()[0]
+                self._json(snap)
+            elif path == '/api/after-sale/screenshot':
+                key = (query.get('key') or query.get('serial') or [''])[0]
+                data = STATE.after_sale.screenshot_bytes(key)
+                if not data:
+                    return self._json({'error': '截图不存在或已清理'}, 404)
+                self.send_response(200)
+                self.send_header('Content-Type', 'image/jpeg')
+                self.send_header('Cache-Control', 'no-store')
+                self.send_header('Content-Length', str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
             elif path.startswith('/api/procurement/'):
                 cloud_path = '/v1/procurement/' + path[len('/api/procurement/'):]
                 if parsed.query:
@@ -4607,6 +4633,46 @@ class Handler(BaseHTTPRequestHandler):
                     identifiers, env_list=env_list))
             elif path == '/api/store-finance/stop':
                 self._json(STATE.store_finance.request_stop())
+            elif path == '/api/after-sale/scan':
+                serials = body.get('serials')
+                if (not isinstance(serials, list) or not serials
+                        or len(serials) > 300):
+                    raise ValueError('售后扫描缺少环境序号或超出上限')
+                clean = []
+                for item in serials:
+                    text = str(item or '').strip()
+                    if not text:
+                        raise ValueError('售后扫描环境序号无效')
+                    clean.append(text)
+                browser_mode = str(body.get('browserMode') or 'visible')
+                self._json(STATE.after_sale.start_scan(
+                    clean,
+                    'visible' if browser_mode == 'visible' else 'headless'))
+            elif path == '/api/after-sale/submit':
+                items = body.get('items')
+                if (not isinstance(items, list) or not items
+                        or len(items) > 500):
+                    raise ValueError('售后提交缺少订单或超出上限')
+                clean = []
+                for item in items:
+                    if not isinstance(item, dict):
+                        raise ValueError('售后提交条目格式错误')
+                    serial = str(item.get('environmentSerial') or '').strip()
+                    order_no = str(item.get('orderNo') or '').strip()
+                    if not (serial and order_no):
+                        raise ValueError('售后提交缺少环境序号或订单号')
+                    clean.append({
+                        'environmentSerial': serial,
+                        'orderNo': order_no,
+                        'storeName': str(item.get('storeName') or '').strip(),
+                        'packageNo': str(item.get('packageNo') or '').strip(),
+                    })
+                browser_mode = str(body.get('browserMode') or 'visible')
+                self._json(STATE.after_sale.start_submit(
+                    clean,
+                    'visible' if browser_mode == 'visible' else 'headless'))
+            elif path == '/api/after-sale/stop':
+                self._json(STATE.after_sale.request_stop())
             elif path == '/api/stop':
                 STATE.orch.request_stop()
                 self._json({'stopped': True})

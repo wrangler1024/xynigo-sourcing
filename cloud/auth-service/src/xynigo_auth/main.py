@@ -113,6 +113,7 @@ from .logistics_export import build_logistics_workbook_export
 from .store_finance_export import build_store_finance_export
 from .executor_diagnostics import executor_context, logistics_diagnostics
 from .models import (
+    AfterSaleClaimRun,
     EnvironmentWorkspacePreference,
     ExecutorTask,
     LocalExecutor,
@@ -130,6 +131,8 @@ from .models import (
     WorkspaceViewPreference,
 )
 from .operation_contract import (
+    AfterSaleClaimRunCreateBody,
+    AfterSaleScanCreateBody,
     EnvironmentCreationRunBody,
     EnvironmentCreationRunCreateBody,
     EnvironmentPlanDryRunBody,
@@ -145,6 +148,8 @@ from .operation_contract import (
 from .operation_service import (
     OperationResultService,
     OperationRunService,
+    after_sale_claim_snapshot,
+    after_sale_last_claims,
     store_finance_last_runs,
     store_finance_snapshot,
 )
@@ -5144,6 +5149,324 @@ def create_app(
                 "X-Xynigo-Row-Count": str(len(snapshot["rows"])),
             },
         )
+
+    # ===== 小犀助手 · 售后处理（扫描只读任务 + 提交 Run） =====
+
+    def _after_sale_scan_payload(
+        session: Session,
+        actor: AdminActor,
+        tasks: ExecutorChannelService,
+        task: ExecutorTask,
+    ) -> dict[str, object]:
+        """扫描任务的统一响应体：GET 与 cancel 同形状。
+
+        summary 在运行中也会带上（部分行 + 计划环境数），前端据此画进度条，
+        并在 status 进入 succeeded/failed/cancelled/uncertain 时判定结束。
+        """
+        summary = tasks.after_sale_scan_summary(task)
+        store_names = {
+            str(row.get("storeName") or "")
+            for row in summary["rows"] if isinstance(row, dict)
+        }
+        return {
+            "taskId": str(task.id),
+            "status": task.status,
+            "executorId": str(task.executor_id),
+            "summary": summary,
+            "lastRuns": after_sale_last_claims(
+                session, actor.tenant.id, store_names),
+        }
+
+    @app.post("/v1/after-sale/scan", status_code=status.HTTP_202_ACCEPTED)
+    def create_after_sale_scan_task(
+        request: Request,
+        body: AfterSaleScanCreateBody,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "assistant.after_sale.scan.create"
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        tasks = executor_channel(session)
+        task = tasks.create_config_task(
+            tenant_id=actor.tenant.id,
+            user_id=actor.user.id,
+            executor_id=body.executorId,
+            task_type="after.sale.scan.v1",
+            payload={
+                "browserMode": body.browserMode,
+                "environmentSerials": list(body.environmentSerials),
+            },
+            idempotency_key=body.idempotencyKey,
+        )
+        _add_audit(
+            session,
+            request_id=request.state.request_id,
+            action=action,
+            result="success",
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            business_object_type="executor_task",
+            business_object_id=str(task.id),
+            change_summary={"environmentCount": len(body.environmentSerials)},
+            **_request_log_context(request),
+        )
+        session.commit()
+        return {
+            "ok": True,
+            "data": {
+                "taskId": str(task.id),
+                "status": task.status,
+                "executorId": str(task.executor_id),
+            },
+        }
+
+    @app.get("/v1/after-sale/scan/{task_id}")
+    def get_after_sale_scan_task(
+        task_id: uuid.UUID,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="assistant.after_sale.scan.read",
+        )
+        task = session.scalar(
+            select(ExecutorTask).where(
+                ExecutorTask.id == task_id,
+                ExecutorTask.tenant_id == actor.tenant.id,
+                ExecutorTask.task_type == "after.sale.scan.v1",
+            )
+        )
+        if task is None:
+            raise HTTPException(status_code=404, detail="扫描任务不存在")
+        return {"ok": True, "data": _after_sale_scan_payload(
+            session, actor, executor_channel(session), task)}
+
+    @app.post("/v1/after-sale/scan/{task_id}/cancel")
+    def cancel_after_sale_scan_task(
+        task_id: uuid.UUID,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        """裸 POST：前端不带 body，这里也不做 body 校验。"""
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="assistant.after_sale.scan.cancel",
+        )
+        tasks = executor_channel(session)
+        task = session.scalar(
+            select(ExecutorTask).where(
+                ExecutorTask.id == task_id,
+                ExecutorTask.tenant_id == actor.tenant.id,
+                ExecutorTask.task_type == "after.sale.scan.v1",
+            )
+        )
+        if task is None:
+            raise HTTPException(status_code=404, detail="扫描任务不存在")
+        # 已终态的任务 cancel_task 原样返回，不会把成功结果改成取消
+        tasks.cancel_task(
+            tenant_id=actor.tenant.id,
+            user_id=actor.user.id,
+            task_id=task.id,
+        )
+        session.refresh(task)
+        return {"ok": True, "data": _after_sale_scan_payload(
+            session, actor, tasks, task)}
+
+    @app.post(
+        "/v1/operation-runs/after-sale-claim",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def create_after_sale_claim_run(
+        request: Request,
+        body: AfterSaleClaimRunCreateBody,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "assistant.after_sale.claim.create"
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        runs = OperationRunService(session)
+        try:
+            run, unchanged = runs.create_after_sale_claim_run(
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                body=body,
+            )
+        except PurchaseServiceError as exc:
+            purchase_error(
+                request,
+                session,
+                actor,
+                action,
+                exc,
+                business_object_id=body.idempotencyKey,
+            )
+        if not unchanged:
+            executor_tasks = executor_channel(session)
+            task = executor_tasks.create_config_task(
+                tenant_id=actor.tenant.id,
+                user_id=actor.user.id,
+                executor_id=body.executorId,
+                task_type="after.sale.claim.v1",
+                payload={
+                    "runId": str(run.id),
+                    "runKey": run.source_run_key,
+                    "browserMode": body.browserMode,
+                    "items": [
+                        item.model_dump(mode="json") for item in body.items
+                    ],
+                },
+                idempotency_key=f"operation:{body.idempotencyKey}",
+                commit=False,
+            )
+            run.executor_task_id = task.id
+            run.status = "queued"
+            run.phase = "queued"
+            run.updated_at = utcnow()
+        result = after_sale_claim_snapshot(session, run)
+        _add_audit(
+            session,
+            request_id=request.state.request_id,
+            action=action,
+            result="success",
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            business_object_type="after_sale_claim_run",
+            business_object_id=str(run.id),
+            change_summary={
+                "status": run.status,
+                "totalCount": run.total_count,
+                "unchanged": unchanged,
+            },
+            **_request_log_context(request),
+        )
+        session.commit()
+        return {"ok": True, "data": result}
+
+    @app.get("/v1/operation-runs/after-sale-claim/latest")
+    def latest_after_sale_claim_run(
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="assistant.after_sale.claim.view",
+        )
+        run = session.scalar(
+            select(AfterSaleClaimRun)
+            .where(AfterSaleClaimRun.tenant_id == actor.tenant.id)
+            .order_by(AfterSaleClaimRun.created_at.desc())
+            .limit(1)
+        )
+        if run is None:
+            return {"ok": True, "data": None}
+        return {"ok": True, "data": after_sale_claim_snapshot(session, run)}
+
+    @app.get("/v1/operation-runs/after-sale-claim/{run_id}")
+    def get_after_sale_claim_run(
+        request: Request,
+        run_id: uuid.UUID,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="assistant.after_sale.claim.view",
+        )
+        run = session.scalar(
+            select(AfterSaleClaimRun).where(
+                AfterSaleClaimRun.id == run_id,
+                AfterSaleClaimRun.tenant_id == actor.tenant.id,
+            )
+        )
+        if run is None:
+            raise HTTPException(status_code=404, detail="售后批次不存在")
+        return {"ok": True, "data": after_sale_claim_snapshot(session, run)}
+
+    @app.post("/v1/operation-runs/after-sale-claim/{run_id}/cancel")
+    def cancel_after_sale_claim_run(
+        run_id: uuid.UUID,
+        request: Request,
+        session: SessionDep,
+        body: ExecutorTaskCancelBody | None = None,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        """取消售后批次；body 可省略（前端裸 POST）。"""
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="assistant.after_sale.claim.cancel",
+        )
+        run = session.scalar(
+            select(AfterSaleClaimRun).where(
+                AfterSaleClaimRun.id == run_id,
+                AfterSaleClaimRun.tenant_id == actor.tenant.id,
+            )
+        )
+        if run is None:
+            raise HTTPException(status_code=404, detail="售后批次不存在")
+        if run.executor_task_id is None:
+            raise HTTPException(
+                status_code=409, detail={"code": "operation_run_not_cancellable"}
+            )
+        task = executor_channel(session).get_task(
+            tenant_id=actor.tenant.id,
+            user_id=actor.user.id,
+            task_id=run.executor_task_id,
+        )
+        expected_status = body.expectedStatus if body is not None else None
+        if expected_status and task.status != expected_status:
+            raise ExecutorServiceError("executor_task_state_conflict", status_code=409)
+        executor_channel(session).cancel_task(
+            tenant_id=actor.tenant.id,
+            user_id=actor.user.id,
+            task_id=task.id,
+        )
+        session.refresh(run)
+        return {"ok": True, "data": after_sale_claim_snapshot(session, run)}
 
     @app.get("/v1/operation-runs/logistics-query/{run_id}/export")
     def export_logistics_operation_run(

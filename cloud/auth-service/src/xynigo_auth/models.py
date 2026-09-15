@@ -2008,6 +2008,9 @@ class ExecutorTask(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     result_code: Mapped[str | None] = mapped_column(String(128))
     result_summary: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    # 非 Run 型业务任务（after.sale.scan.v1）的最近一次进度快照：任务表本身
+    # 没有进度列，快照又必须在建 Run 之外可查，因此单独一列存投影后的行。
+    progress_summary: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -2027,6 +2030,7 @@ class ExecutorTask(Base):
             "'workspace.rpc.v1', 'workspace.snapshot.v1', "
             "'environment.parse.v1', 'logistics.query.v1', "
             "'store.finance.inspect.v1', 'store.finance.lookup.v1', "
+            "'after.sale.scan.v1', 'after.sale.claim.v1', "
             "'environment.preview-bound.v1', "
             "'environment.create-bound.v1', 'environment.create-backup.v1', "
             "'environment.retry-row.v1', 'environment.retry-failed.v1')",
@@ -2254,4 +2258,134 @@ class StoreFinanceInspectResult(Base):
         Index(
             "ix_store_finance_result_run_status", "run_id", "status"
         ),
+    )
+
+
+class AfterSaleClaimRun(Base):
+    """One after-sale submission batch (write-capable claim run).
+
+    字段集与状态枚举沿用 store_finance_inspect_runs；售后没有补采概念，
+    因此不含 query_mode/sourceRunId，另加 skipped_count/stopped_count
+    两个计数列（提交终态 summary 会回报「已跳过/已停止」，与成功/失败并
+    列展示，不重复从结果行推断）。
+    """
+
+    __tablename__ = "after_sale_claim_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    actor_user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    source_run_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    result_payload_hash: Mapped[str | None] = mapped_column(String(64))
+    executor_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("local_executors.id", ondelete="SET NULL")
+    )
+    executor_task_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("executor_tasks.id", ondelete="SET NULL")
+    )
+    browser_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="visible")
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    phase: Mapped[str] = mapped_column(String(64), nullable=False, default="created")
+    progress_completed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    progress_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    stop_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    total_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    success_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    failed_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    skipped_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    stopped_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    request_summary: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    client_version: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "source_run_key", name="uq_after_sale_run_tenant_source"
+        ),
+        CheckConstraint(
+            "browser_mode IN ('headless', 'visible')",
+            name="ck_after_sale_run_browser",
+        ),
+        CheckConstraint(
+            "status IN ('created', 'queued', 'leased', 'running', "
+            "'completed', 'partial_failure', 'failed', 'cancelled', 'uncertain')",
+            name="ck_after_sale_run_status",
+        ),
+        CheckConstraint(
+            "total_count >= 0 AND success_count >= 0 AND failed_count >= 0 "
+            "AND skipped_count >= 0 AND stopped_count >= 0 "
+            "AND progress_completed >= 0 AND progress_total >= 0 "
+            "AND progress_completed <= progress_total",
+            name="ck_after_sale_run_counts",
+        ),
+        Index("ix_after_sale_run_tenant_status", "tenant_id", "status", "updated_at"),
+        Index("ix_after_sale_run_tenant_completed", "tenant_id", "completed_at"),
+        Index("ix_after_sale_run_executor_task", "executor_task_id", unique=True),
+    )
+
+
+class AfterSaleClaimResult(Base):
+    """One submitted order inside an after-sale claim run.
+
+    唯一键是 (run_id, order_no)：同一批次同一订单只会有一条结果行，进度
+    增量上报按订单号覆盖。截图按 store_finance 的做法落在结果行二进制列，
+    过期时间 7 天，快照只回 sha256。
+    """
+
+    __tablename__ = "after_sale_claim_results"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("after_sale_claim_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    order_no: Mapped[str] = mapped_column(String(32), nullable=False)
+    environment_serial: Mapped[str] = mapped_column(String(64), nullable=False)
+    store_name: Mapped[str | None] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    package_no: Mapped[str | None] = mapped_column(String(64))
+    refund_bill_id: Mapped[str | None] = mapped_column(String(32))
+    refund_path: Mapped[str | None] = mapped_column(String(48))
+    duration_seconds: Mapped[int | None] = mapped_column(Integer)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    note: Mapped[str | None] = mapped_column(Text)
+    error_summary: Mapped[str | None] = mapped_column(Text)
+    screenshot_content: Mapped[bytes | None] = mapped_column(LargeBinary)
+    screenshot_sha256: Mapped[str | None] = mapped_column(String(64))
+    screenshot_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id", "order_no", name="uq_after_sale_result_run_order"
+        ),
+        CheckConstraint(
+            "status IN ('ok', 'empty', 'skip', 'blocked', 'fail', 'login', "
+            "'inuse', 'stopped', 'queued', 'running')",
+            name="ck_after_sale_result_status",
+        ),
+        CheckConstraint("duration_seconds IS NULL OR duration_seconds >= 0",
+                        name="ck_after_sale_result_duration"),
+        Index("ix_after_sale_result_run_status", "run_id", "status"),
     )

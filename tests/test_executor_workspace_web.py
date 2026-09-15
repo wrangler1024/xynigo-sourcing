@@ -785,3 +785,42 @@ class StoreFinanceRetryWiringTests(unittest.TestCase):
             self.assertIn(marker, html)
         self.assertNotIn(
             "$('sfPhaseSpin').hidden = !SF_STATE.stopRequested;", html)
+
+
+class AfterSaleClaimWiringTests(unittest.TestCase):
+    """售后处理模块：两步式（扫描→勾选→提交）的界面契约与安全口径。"""
+
+    def _read(self):
+        local = LOCAL_HTML.read_text(encoding="utf-8")
+        self.assertEqual(local, CLOUD_HTML.read_text(encoding="utf-8"))
+        return local
+
+    def test_module_is_registered_in_both_nav_layers(self):
+        html = self._read()
+        self.assertIn('data-module="aftersale"', html)
+        self.assertIn('id="afterSalePanel"', html)
+        self.assertIn("aftersale: {", html)
+        self.assertIn("if (module === 'aftersale') asInit();", html)
+
+    def test_scan_and_submit_hit_the_formal_cloud_routes(self):
+        html = self._read()
+        self.assertIn("cloudFormalExecutor('after.sale.scan.v1')", html)
+        self.assertIn("cloudFormalExecutor('after.sale.claim.v1')", html)
+        self.assertIn("'/v1/after-sale/scan'", html)
+        self.assertIn("'/v1/operation-runs/after-sale-claim'", html)
+
+    def test_refund_path_is_fixed_to_original_payment_account(self):
+        # 页面默认选中 SHEIN 钱包，脚本必须固定切到原路退回，否则退款进钱包
+        html = self._read()
+        self.assertIn("退款路径固定「原路退回」", html)
+
+    def test_only_claimable_rows_are_selectable(self):
+        # 已提交过的订单（平台划入不可退）不得可勾选，这是幂等的第一道闸门
+        self.assertIn(
+            "const canPick = !!orderNo && row.claimable === true",
+            LOCAL_HTML.read_text(encoding="utf-8"))
+
+    def test_stop_routes_exist_for_both_phases(self):
+        html = self._read()
+        self.assertIn("/cancel', { method: 'POST' })", html)
+        self.assertIn("'/v1/after-sale/scan/'", html)

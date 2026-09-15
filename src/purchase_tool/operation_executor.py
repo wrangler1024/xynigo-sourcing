@@ -23,6 +23,8 @@ BUSINESS_TASK_TYPES = frozenset({
     'logistics.query.v1',
     'store.finance.inspect.v1',
     'store.finance.lookup.v1',
+    'after.sale.scan.v1',
+    'after.sale.claim.v1',
     'environment.create-bound.v1',
     'environment.create-backup.v1',
     'environment.retry-row.v1',
@@ -30,6 +32,11 @@ BUSINESS_TASK_TYPES = frozenset({
 })
 STORE_FINANCE_TERMINAL_STATES = frozenset({
     'ok', 'fail', 'login', 'inuse', 'stopped',
+})
+# 售后行状态：blocked=平台侧已无可申请包裹（多为已提交过）、skip=该环境
+# 没有可申请订单，两者都算「已终结但不该报错」。
+AFTER_SALE_TERMINAL_STATES = frozenset({
+    'ok', 'fail', 'blocked', 'skip', 'empty', 'login', 'inuse', 'stopped',
 })
 ENVIRONMENT_TERMINAL_STATES = frozenset({
     'done', 'failed', 'stopped', 'rolled_back', 'cleanup_failed',
@@ -80,6 +87,12 @@ class LocalOperationExecutor(object):
                 payload, report, cancellation_event)
         if task_type == 'store.finance.lookup.v1':
             return self._execute_store_finance_lookup(payload)
+        if task_type == 'after.sale.scan.v1':
+            return self._execute_after_sale_scan(
+                payload, report, cancellation_event)
+        if task_type == 'after.sale.claim.v1':
+            return self._execute_after_sale_claim(
+                payload, report, cancellation_event)
         if task_type == 'environment.preview-bound.v1':
             return self._execute_environment_preview(
                 payload, report, cancellation_event)
@@ -592,6 +605,314 @@ class LocalOperationExecutor(object):
             'totalCount': total,
             'successCount': success,
             'failedCount': failed,
+            'stoppedCount': stopped,
+            'errorCode': '',
+            'errorSummary': '',
+        }
+
+    # ---- 售后申请（扫描只读 / 提交写操作） ----
+
+    _AFTER_SALE_SCAN_ROW_FIELDS = (
+        'environmentSerial', 'storeName', 'accountName', 'orderNo',
+        'deliveredAt', 'amount', 'status', 'claimable', 'packageCount',
+        'trackingNo', 'errorSummary', 'screenshotSha256',
+    )
+    _AFTER_SALE_CLAIM_ROW_FIELDS = (
+        'orderNo', 'environmentSerial', 'storeName', 'status', 'packageNo',
+        'refundBillId', 'refundPath', 'durationSeconds', 'submittedAt',
+        'note', 'errorSummary', 'screenshotSha256',
+    )
+    _AFTER_SALE_ROW_ALLOWED_STATUS = frozenset({
+        'ok', 'empty', 'skip', 'blocked', 'fail', 'login', 'inuse',
+        'stopped', 'queued', 'running',
+    })
+    _AFTER_SALE_TEXT_LIMITS = {
+        'environmentSerial': 64, 'storeName': 128, 'accountName': 64,
+        'orderNo': 32, 'deliveredAt': 32, 'amount': 24, 'packageNo': 64,
+        'refundBillId': 32, 'refundPath': 48, 'trackingNo': 64,
+        'submittedAt': 40, 'note': 200,
+    }
+    _AFTER_SALE_NULLABLE_TEXT = {'errorSummary': 300, 'screenshotSha256': 64}
+
+    @classmethod
+    def _after_sale_rows(cls, raw_rows):
+        """把售后快照行投影成云端契约闭集。
+
+        两个视图共用一套投影：扫描行含订单与包裹计数，提交行含退款单号与
+        路径。可空字段在 None 时保持 None——收成空串会被云端可空校验拒
+        绝(422)，整份进度会被弃。
+        """
+        allowed_text = dict(cls._AFTER_SALE_TEXT_LIMITS)
+        allowed_text.update(cls._AFTER_SALE_NULLABLE_TEXT)
+        fields = tuple(dict.fromkeys(
+            cls._AFTER_SALE_SCAN_ROW_FIELDS
+            + cls._AFTER_SALE_CLAIM_ROW_FIELDS))
+        rows = []
+        for raw in (raw_rows or []):
+            row = {}
+            for field in fields:
+                if field not in raw:
+                    continue
+                value = raw.get(field)
+                if field == 'status':
+                    status = str(value or '').strip()
+                    row[field] = (status if status in
+                                  cls._AFTER_SALE_ROW_ALLOWED_STATUS
+                                  else 'running')
+                elif field in cls._AFTER_SALE_NULLABLE_TEXT:
+                    limit = cls._AFTER_SALE_NULLABLE_TEXT[field]
+                    row[field] = (str(value).strip()[:limit]
+                                  if value is not None else None)
+                elif field == 'claimable':
+                    row[field] = bool(value)
+                elif field == 'packageCount':
+                    row[field] = max(0, int(value or 0))
+                elif field == 'durationSeconds' and value is not None:
+                    row[field] = max(0, int(value))
+                elif field in allowed_text:
+                    row[field] = str(value or '')[:allowed_text[field]]
+                else:
+                    row[field] = value
+            rows.append(row)
+        return rows
+
+    @staticmethod
+    def _flatten_scan_rows(env_rows):
+        """环境级快照 → 订单级行：一个订单一行，无订单环境留一行 empty。
+
+        页面表格是「一行一单、可勾选提交」，因此把执行器侧的
+        {环境: [订单…]} 摊平；同环境多单时每单各自成行，序号重复出现是
+        刻意的（提交时按 (环境, 订单) 定位）。
+        """
+        rows = []
+        for env in env_rows or []:
+            base = {
+                'environmentSerial': env.get('environmentSerial'),
+                'storeName': env.get('storeName'),
+                'accountName': env.get('accountName'),
+                'status': env.get('status'),
+                'errorSummary': env.get('errorSummary'),
+                'screenshotSha256': env.get('screenshotSha256'),
+            }
+            orders = env.get('orders') or []
+            if not orders:
+                rows.append(dict(base, orderNo='', deliveredAt='',
+                                 amount='', claimable=False,
+                                 packageCount=0, trackingNo=''))
+                continue
+            for order in orders:
+                packages = order.get('packages') or []
+                rows.append(dict(
+                    base,
+                    orderNo=order.get('orderNo') or '',
+                    deliveredAt=order.get('deliveredAt') or '',
+                    amount=order.get('amount') or '',
+                    claimable=bool(order.get('claimable')),
+                    packageCount=len(packages),
+                    trackingNo=(packages[0].get('shippingNo')
+                                if packages else ''),
+                ))
+        return rows
+
+    def _execute_after_sale_scan(self, payload, report, cancellation_event):
+        """售前扫描：本地只读跑批，轮询进度并把订单级行增量上报。"""
+        serials = payload.get('environmentSerials')
+        if (not isinstance(serials, list) or not serials
+                or any(not str(item or '').strip() for item in serials)):
+            raise OperationExecutionError(
+                'operation_payload_invalid', '售后扫描缺少环境序号')
+        serials = [str(item).strip() for item in serials]
+        if len(serials) > 300:
+            raise OperationExecutionError(
+                'operation_payload_invalid', '单批售后扫描环境数量超出上限')
+        browser_mode = str(payload.get('browserMode') or 'visible')
+        self._request('POST', '/api/after-sale/scan', {
+            'serials': serials,
+            'browserMode': browser_mode,
+        })
+        total = len(serials)
+        selected = set(serials)
+        stop_sent = False
+        previous = None
+        env_rows = []
+        while True:
+            snapshot = self._request('GET', '/api/after-sale/progress')
+            if cancellation_event.is_set() and not stop_sent:
+                try:
+                    self._request('POST', '/api/after-sale/stop', {})
+                except OperationExecutionError:
+                    pass
+                stop_sent = True
+            env_rows = [row for row in (snapshot.get('rows') or [])
+                        if str(row.get('environmentSerial') or '') in selected]
+            completed = sum(
+                row.get('status') in AFTER_SALE_TERMINAL_STATES
+                for row in env_rows)
+            event = {
+                'phase': ('after_sale.scan.running'
+                          if snapshot.get('running')
+                          else 'after_sale.scan.completed'),
+                'current': min(total, completed),
+                'total': total,
+                'snapshot': {'rows': self._after_sale_rows(
+                    self._flatten_scan_rows(env_rows))},
+            }
+            serialized = json.dumps(
+                event, ensure_ascii=False, sort_keys=True,
+                separators=(',', ':'))
+            if serialized != previous:
+                self._safe_report(report, **event)
+                previous = serialized
+            if not bool(snapshot.get('running')):
+                break
+            self.sleep(self.poll_interval)
+        rows = self._after_sale_rows(self._flatten_scan_rows(env_rows))
+        return ('succeeded', 'after_sale_scan_completed', {
+            'rows': rows,
+            'totalCount': total,
+            'claimableCount': sum(1 for row in rows
+                                  if row.get('claimable')),
+        })
+
+    def _execute_after_sale_claim(self, payload, report, cancellation_event):
+        """售后提交：本地写操作跑批，轮询进度并带异常截图回传。"""
+        items = payload.get('items')
+        if (not isinstance(items, list) or not items
+                or any(not isinstance(item, dict) for item in items)):
+            raise OperationExecutionError(
+                'operation_payload_invalid', '售后提交缺少订单条目')
+        clean = []
+        for item in items:
+            serial = str(item.get('environmentSerial') or '').strip()
+            order_no = str(item.get('orderNo') or '').strip()
+            if not (serial and order_no):
+                raise OperationExecutionError(
+                    'operation_payload_invalid', '售后提交条目缺少环境序号或订单号')
+            clean.append({
+                'environmentSerial': serial,
+                'orderNo': order_no,
+                'storeName': str(item.get('storeName') or '').strip()[:128],
+                'packageNo': str(item.get('packageNo') or '').strip()[:64],
+            })
+        if len(clean) > 500:
+            raise OperationExecutionError(
+                'operation_payload_invalid', '单批售后提交订单数量超出上限')
+        browser_mode = str(payload.get('browserMode') or 'visible')
+        self._request('POST', '/api/after-sale/submit', {
+            'items': clean,
+            'browserMode': browser_mode,
+        })
+        total = len(clean)
+        selected = {item['orderNo'] for item in clean}
+        stop_sent = False
+        previous = None
+        reported_screenshots = set()
+        rows = []
+        while True:
+            snapshot = self._request('GET', '/api/after-sale/progress')
+            if cancellation_event.is_set() and not stop_sent:
+                try:
+                    self._request('POST', '/api/after-sale/stop', {})
+                except OperationExecutionError:
+                    pass
+                stop_sent = True
+            rows = [row for row in (snapshot.get('claimRows') or [])
+                    if str(row.get('orderNo') or '') in selected]
+            completed = sum(
+                row.get('status') in AFTER_SALE_TERMINAL_STATES
+                for row in rows)
+            event = {
+                'phase': ('after_sale.claim.running'
+                          if snapshot.get('running')
+                          else 'after_sale.claim.completed'),
+                'current': min(total, completed),
+                'total': total,
+                'snapshot': {'rows': self._after_sale_rows(rows)},
+            }
+            serialized = json.dumps(
+                event, ensure_ascii=False, sort_keys=True,
+                separators=(',', ':'))
+            if serialized != previous:
+                self._safe_report(report, **event)
+                previous = serialized
+            for row in rows:
+                order_no = str(row.get('orderNo') or '')
+                if (not order_no or order_no in reported_screenshots
+                        or row.get('screenshotStatus') != 'ok'):
+                    continue
+                attachment = self._after_sale_screenshot_attachment(order_no)
+                if attachment is None:
+                    continue
+                attachment_event = dict(event)
+                attachment_event['snapshot'] = {
+                    **event['snapshot'], 'screenshots': [attachment]}
+                if self._safe_report(report, **attachment_event):
+                    reported_screenshots.add(order_no)
+            if not bool(snapshot.get('running')):
+                break
+            self.sleep(self.poll_interval)
+        summary = self._after_sale_summary(total, rows)
+        return self._terminal_result('after_sale', summary)
+
+    def _after_sale_screenshot_attachment(self, order_no):
+        result = self.rpc_executor({
+            'method': 'GET',
+            'path': '/api/after-sale/screenshot?key='
+                    + quote(str(order_no), safe=''),
+            'body': None,
+        })
+        if not isinstance(result, dict) or int(result.get('httpStatus') or 0) != 200:
+            return None
+        if result.get('responseType') != 'base64':
+            return None
+        encoded = str(result.get('bodyBase64') or '')
+        try:
+            content = base64.b64decode(encoded, validate=True)
+        except Exception:
+            return None
+        if not content or len(content) > 350 * 1024:
+            return None
+        return {
+            'orderNo': str(order_no)[:64],
+            'contentType': 'image/jpeg',
+            'contentBase64': encoded,
+            'sha256': hashlib.sha256(content).hexdigest(),
+            'size': len(content),
+        }
+
+    @staticmethod
+    def _after_sale_summary(total, rows):
+        """提交批次汇总：blocked/skip 归「未成功但不算故障」。
+
+        blocked=平台侧已无包裹（多为已提交过），skip=环境无单，两者都不
+        计入 failedCount，否则一次幂等重跑会把整批误报成失败。
+        """
+        rows = rows or []
+        success = sum(row.get('status') == 'ok' for row in rows)
+        stopped = sum(row.get('status') == 'stopped' for row in rows)
+        skipped = sum(row.get('status') in ('blocked', 'skip', 'empty')
+                      for row in rows)
+        failed = sum(
+            row.get('status') in ('fail', 'login', 'inuse')
+            for row in rows)
+        if stopped and not success and not failed:
+            run_status = 'cancelled'
+        elif failed and success:
+            run_status = 'partial_failure'
+        elif failed:
+            run_status = 'failed'
+        else:
+            run_status = 'completed'
+        return {
+            'runStatus': run_status,
+            'phase': 'after_sale.' + run_status,
+            'progressCompleted': min(total, success + failed + stopped
+                                     + skipped),
+            'progressTotal': total,
+            'totalCount': total,
+            'successCount': success,
+            'failedCount': failed,
+            'skippedCount': skipped,
             'stoppedCount': stopped,
             'errorCode': '',
             'errorSummary': '',

@@ -663,6 +663,27 @@
   /* 进度文本与物流查询 #progressText 完全同款 */
   #storeFinancePanel #sfProgressText{font-size:11px;color:var(--navy-500);min-width:420px;text-align:right;white-space:nowrap}
 
+  /* ===== 小犀助手 · 售后处理 ===== */
+  #afterSalePanel .as-bar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
+  #afterSalePanel .as-bar input[type=search] {
+    flex:1; min-width:280px; padding:8px 12px;
+    border: 1px solid var(--line); border-radius: 11px; outline: none;
+    background: #fff; color: var(--navy-950);
+    font-size: 12px; font-weight: 600;
+  }
+  #afterSalePanel .as-bar input[type=search]:focus {
+    border-color: var(--rhino-500); box-shadow: 0 0 0 3px rgba(32,174,179,.12);
+  }
+  #afterSalePanel .as-bar .hint{font-size:11px;color:var(--navy-500)}
+  #afterSalePanel .card-title .table-actions { margin-left:auto; }
+  #afterSalePanel .business-summary { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); }
+  #afterSalePanel .if-row{font-size:12px;font-weight:600;color:var(--navy-700)}
+  #afterSalePanel .xyp2-help{font-size:11px;color:var(--navy-500);margin-top:8px}
+  #afterSalePanel .action-row .resource-state{margin-top:0;padding:8px 12px;font-size:11px;color:var(--navy-500)}
+  #afterSalePanel .as-order{font-weight:800;color:var(--navy-950);font-family:ui-monospace,Menlo,Consolas,monospace}
+  #afterSalePanel tr.as-picked td{background:#f2fbfb}
+  #afterSalePanel #asProgressText{font-size:11px;color:var(--navy-500);min-width:420px;text-align:right;white-space:nowrap}
+
   .procurement-state.ok { border-color: #bce5d2; background: var(--green-100); color: var(--green); }
   .procurement-state.bad { border-color: #ffd2c7; background: var(--coral-100); color: var(--coral-500); }
   .procurement-table-scroll { position: relative; }
@@ -1693,6 +1714,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         <button class="secondary-tab" data-parent="procurement" data-module="procurementimport" hidden>导入分单<span class="secondary-status">飞书协作表</span></button>
         <button class="secondary-tab" data-parent="procurement" data-module="procurementorders" hidden>采购任务<span class="secondary-status">云端</span></button>
         <button class="secondary-tab" data-parent="procurement" data-module="procurementexecution" hidden>采购执行<span class="secondary-status">测试</span></button>
+        <button class="secondary-tab" data-parent="procurement" data-module="aftersale" hidden>售后处理<span class="secondary-status">新增</span></button>
         <button class="secondary-tab" data-parent="procurement" data-planned="异常协同" disabled hidden>异常协同<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab active" data-parent="fulfillment" data-module="query">订单物流查询<span class="secondary-status">现有</span></button>
         <button class="secondary-tab" data-parent="operations" data-planned="运营任务" disabled hidden>运营任务<span class="secondary-status planned">规划</span></button>
@@ -2136,6 +2158,96 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
           <div style="margin-top:10px; display:flex; flex-direction:column; gap:10px;" id="sfErrList"></div>
         </details>
         <p class="xyp2-help">金额为采集时刻后台快照（实时变动）。「已完成结算收入」对应后台「本年度已结算金额」；「不可提现金额」来自「资金限制 → 详情」。标准导出与运营现有《店铺结算汇总表》格式一致，可直接发财务。</p>
+      </div>
+    </section>
+  </div>
+
+  <div class="module-panel hidden" id="afterSalePanel">
+    <section class="card">
+      <div class="card-title">① 选择范围
+        <span class="legend">买家号环境序号 · 空格/逗号分隔，最多 300 个</span>
+        <span class="resource-state" id="asScopeState" style="margin-left:auto; margin-top:0">未扫描</span>
+      </div>
+      <div class="as-bar">
+        <input type="search" id="asSerials" placeholder="环境序号，如 4902 4901 4897">
+        <span class="hint">扫描只读：只看订单与可申请状态，不动订单数据</span>
+      </div>
+      <div class="action-row">
+        <button class="btn primary" id="asScan">扫描可申请售后订单</button>
+        <button class="btn danger" id="asStop" disabled>停止</button>
+        <div class="progress-wrap">
+          <div class="progress" id="asProgress" role="progressbar" aria-valuemin="0"><div class="bar" id="asBar"></div></div>
+          <span id="asProgressText">未开始</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="card table-card">
+      <div class="card-title" style="padding:17px 19px 0;">
+        <div>② 可申请清单 <span class="legend">勾选后批量提交，已提交过的订单不可勾选</span></div>
+        <div class="table-actions">
+          <span class="resource-state" id="asSelCount" style="margin-top:0">已选 0 单</span>
+          <button class="btn sm" id="asPickClaimable">全选可申请</button>
+          <button class="btn sm" id="asPickNone">清空勾选</button>
+        </div>
+      </div>
+      <div style="padding: 0 19px;">
+        <div class="table-scroll scroll-20">
+          <table id="asScanTable">
+            <thead><tr>
+              <th style="width:34px"><input type="checkbox" id="asChkHead" style="accent-color:var(--rhino-600)"></th>
+              <th>环境序号</th><th>买家号环境</th><th>订单号</th><th>送达时间</th>
+              <th class="num">金额</th><th>可退包裹</th><th>物流号</th><th>状态</th>
+            </tr></thead>
+            <tbody id="asScanRows"><tr><td colspan="9" class="hint" style="text-align:center; padding:18px;">填入环境序号后点击「扫描可申请售后订单」。</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div style="padding: 12px 19px 17px; display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center;">
+        <div class="resource-state" id="asSubmitHint">扫描完成后勾选要提交的订单。</div>
+        <button class="btn primary" id="asSubmit" disabled>提交售后</button>
+      </div>
+    </section>
+
+    <section class="card table-card">
+      <div class="card-title" style="padding:17px 19px 0;">
+        <div>③ 提交结果 <span class="legend">退款路径固定「原路退回」（Cuenta original de pago）</span></div>
+        <button class="btn sm" id="asClearResult">清空结果</button>
+      </div>
+
+      <div class="query-phase-banner" id="asPhaseBanner" hidden>
+        <span class="spinner" id="asPhaseSpin" hidden aria-hidden="true"></span>
+        <div class="query-phase-copy"><b id="asPhaseTitle">等待发起</b><span id="asPhaseDescription">先扫描，再勾选提交。</span></div>
+      </div>
+
+      <div class="business-summary" id="asBizSummary" style="padding-top:4px;">
+        <div class="business-stat"><small>提交订单</small><b>—</b></div>
+        <div class="business-stat stat-ok"><small>已受理</small><b>—</b></div>
+        <div class="business-stat"><small>已跳过</small><b>—</b></div>
+        <div class="business-stat stat-bad"><small>失败</small><b>—</b></div>
+        <div class="business-stat"><small>已停止</small><b>—</b></div>
+      </div>
+
+      <div style="padding: 0 19px;">
+        <div class="table-scroll scroll-20">
+          <table id="asClaimTable">
+            <thead><tr>
+              <th>订单号</th><th>环境序号</th><th>买家号环境</th><th>状态</th>
+              <th>退款单号</th><th>退款路径</th><th>提交时间</th><th>备注</th>
+            </tr></thead>
+            <tbody id="asClaimRows">
+              <tr><td colspan="8" class="hint" style="text-align:center; padding:22px;">提交后此处逐步展示每单结果。</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div style="padding: 12px 19px 17px;">
+        <details class="details-box" id="asErrBox" hidden>
+          <summary>异常与跳过详情</summary>
+          <div style="margin-top:10px; display:flex; flex-direction:column; gap:10px;" id="asErrList"></div>
+        </details>
+        <p class="xyp2-help">扫描阶段用买家端只读接口判定「这个包裹现在还能不能申请售后」：已被提交过的包裹会被平台划入不可退，因此重复扫描不会重复提交。提交是写操作——每单逐条串行执行，单与单之间随机停顿，环境之间串行。</p>
       </div>
     </section>
   </div>
@@ -3568,6 +3680,10 @@ const FEATURE_MODULES = {
     label: '店铺结算查询', primary: 'assistant', requiredPermission: 'assistant.access',
     summary: '批量自动登录采集 SHEIN 店铺后台结算与资金数据，导出《店铺结算汇总表》交财务。全程只读。'
   },
+  aftersale: {
+    label: '售后处理', primary: 'procurement', requiredPermission: 'assistant.access',
+    summary: '扫描买家号环境下「已送达但未收到」的订单并批量发起售后申请，退款原路退回。扫描只读，提交为写操作。'
+  },
   buyerlib: {
     label: '买家号库', primary: 'resources',
     requiredPermission: 'resource.buyer.read',
@@ -4747,6 +4863,381 @@ sfPoll = async function () {
   } catch (e) {}
   return _sfPoll();
 };
+
+/* ===== 小犀助手 · 售后处理 ===== */
+const AS_LIST_KEY = 'afterSaleEnvList';
+const AS_STATE = {
+  mode: '', scanTaskId: null, runId: null, timer: null, running: false,
+  rows: [], selected: new Set(), claimRows: [], stopRequested: false,
+  pollErrors: 0, etaBase: null, status: ''
+};
+function asLoadList() {
+  try { $('asSerials').value = localStorage.getItem(AS_LIST_KEY) || ''; }
+  catch (e) {}
+}
+function asSaveList() {
+  try { localStorage.setItem(AS_LIST_KEY, $('asSerials').value || ''); }
+  catch (e) {}
+}
+function asSerials() {
+  return ($('asSerials').value || '').split(/[\s,，;；]+/)
+    .map(s => s.trim()).filter(Boolean);
+}
+function asInit() {
+  if (!$('asSerials').value) asLoadList();
+  if (!AS_STATE.timer) AS_STATE.timer = setInterval(asPoll, 2500);
+}
+function asRunIdOf(data) {
+  // 云端快照与建 Run 响应都把 runId 放顶层；兼容性再兜一层 run.id
+  const d = data || {};
+  return d.runId || (d.run && (d.run.id || d.run.runId)) || null;
+}
+function asSetPhase(title, text, spin) {
+  $('asPhaseBanner').hidden = false;
+  $('asPhaseSpin').hidden = !spin;
+  $('asPhaseTitle').textContent = title;
+  $('asPhaseDescription').textContent = text;
+}
+function asProgress(data) {
+  const total = Math.max(Number(data.progressTotal || 0),
+    (data.rows || []).length, Number(data.totalCount || 0));
+  const done = Number(data.progressCompleted || 0);
+  $('asBar').style.width = (total ? Math.round(done / total * 100) : 0) + '%';
+  const durations = (data.rows || []).map(r => Number(r.durationSeconds || 0))
+    .filter(v => v > 0);
+  const avg = durations.length
+    ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : 0;
+  const average = avg > 0
+    ? (avg >= 60 ? `${Math.floor(avg / 60)}分${avg % 60}秒/单` : `${avg}秒/单`)
+    : '—';
+  $('asProgressText').textContent = `已处理 ${done} / ${total} ｜ 平均 ${average}`;
+}
+const AS_SCAN_PILL = {
+  ok: ['run', '已扫描'], empty: ['warn', '无订单'], skip: ['warn', '无订单'],
+  blocked: ['warn', '不可申请'], fail: ['bad', '失败'],
+  login: ['bad', '未登录'], inuse: ['bad', '环境占用'],
+  stopped: ['warn', '已停止'], queued: ['run', '排队中'], running: ['run', '扫描中']
+};
+function asScanPill(row) {
+  const status = String(row.status || '');
+  if (status === 'ok' && row.orderNo) {
+    return row.claimable
+      ? '<span class="pill ok">可申请</span>'
+      : '<span class="pill warn">不可申请</span>';
+  }
+  const entry = AS_SCAN_PILL[status] || ['warn', status || '—'];
+  return `<span class="pill ${entry[0]}">${entry[1]}</span>`;
+}
+const AS_CLAIM_PILL = {
+  ok: ['ok', '已受理 · 退款审核中'], blocked: ['warn', '不可申请 · 已提交过'],
+  skip: ['warn', '跳过'], empty: ['warn', '无订单'], fail: ['bad', '失败'],
+  login: ['bad', '失败 · 未登录'], inuse: ['bad', '失败 · 环境占用'],
+  stopped: ['warn', '已停止'], queued: ['run', '等待'], running: ['run', '提交中']
+};
+function asClaimPill(status) {
+  const entry = AS_CLAIM_PILL[String(status || '')] || ['warn', status || '—'];
+  return `<span class="pill ${entry[0]}">${entry[1]}</span>`;
+}
+function asRenderScanRows(rows) {
+  AS_STATE.rows = rows || [];
+  const pickable = AS_STATE.rows.filter(r => r.orderNo && r.claimable
+    && r.status === 'ok');
+  const tbody = $('asScanRows');
+  if (!AS_STATE.rows.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="hint" style="text-align:center; padding:18px;">暂无扫描结果。</td></tr>';
+  } else {
+    tbody.innerHTML = AS_STATE.rows.map(row => {
+      const orderNo = row.orderNo || '';
+      const canPick = !!orderNo && row.claimable === true
+        && row.status === 'ok';
+      const box = canPick
+        ? `<input type="checkbox" data-as-order="${esc(orderNo)}"${AS_STATE.selected.has(orderNo) ? ' checked' : ''} style="accent-color:var(--rhino-600)">`
+        : '';
+      const cls = canPick && AS_STATE.selected.has(orderNo)
+        ? ' class="as-picked"' : '';
+      return `<tr data-as-row="${esc(orderNo || row.environmentSerial)}"${cls}>
+        <td>${box}</td>
+        <td class="sub-text">${esc(row.environmentSerial || '')}</td>
+        <td style="font-weight:700; color:var(--navy-950)">${esc(row.storeName || '')}</td>
+        <td class="as-order">${esc(orderNo || '—')}</td>
+        <td class="sub-text">${esc(row.deliveredAt || '—')}</td>
+        <td class="num">${row.amount ? '$MXN' + esc(row.amount) : '—'}</td>
+        <td class="num">${row.packageCount ? row.packageCount : '—'}</td>
+        <td class="sub-text">${esc(row.trackingNo || '—')}</td>
+        <td>${asScanPill(row)}${row.errorSummary ? `<div class="hint" style="margin-top:4px">${esc(String(row.errorSummary).slice(0, 60))}</div>` : ''}</td>
+      </tr>`;
+    }).join('');
+  }
+  $('asScopeState').textContent = AS_STATE.running
+    ? '扫描中' : `已扫描 ${AS_STATE.rows.length} 行 · 可申请 ${pickable.length} 单`;
+  asSyncSelection();
+}
+function asRenderClaimRows(rows) {
+  AS_STATE.claimRows = rows || [];
+  const tbody = $('asClaimRows');
+  if (!AS_STATE.claimRows.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="hint" style="text-align:center; padding:22px;">提交后此处逐步展示每单结果。</td></tr>';
+  } else {
+    tbody.innerHTML = AS_STATE.claimRows.map(row => {
+      const bad = !['ok'].includes(String(row.status || ''));
+      return `<tr data-as-claim="${esc(row.orderNo || '')}"${bad && row.status !== 'queued' && row.status !== 'running' ? ' class="tr-bad"' : (row.status === 'running' ? ' class="tr-run"' : '')}>
+        <td class="as-order">${esc(row.orderNo || '')}</td>
+        <td class="sub-text">${esc(row.environmentSerial || '')}</td>
+        <td style="font-weight:700; color:var(--navy-950)">${esc(row.storeName || '')}</td>
+        <td>${asClaimPill(row.status)}</td>
+        <td class="sub-text">${esc(row.refundBillId || '—')}</td>
+        <td class="sub-text">${esc(row.refundPath || '—')}</td>
+        <td class="sub-text">${esc((row.submittedAt || '').slice(11, 19) || '—')}</td>
+        <td class="hint">${esc(row.errorSummary || row.note || '—')}</td>
+      </tr>`;
+    }).join('');
+  }
+  const rows2 = AS_STATE.claimRows;
+  const stats = $('asBizSummary').children;
+  const ok = rows2.filter(r => r.status === 'ok').length;
+  const skipped = rows2.filter(r => ['blocked', 'skip', 'empty'].includes(r.status)).length;
+  const bad = rows2.filter(r => ['fail', 'login', 'inuse'].includes(r.status)).length;
+  const stopped = rows2.filter(r => r.status === 'stopped').length;
+  stats[0].querySelector('b').textContent = rows2.length || '—';
+  stats[1].querySelector('b').textContent = rows2.length ? ok : '—';
+  stats[2].querySelector('b').textContent = rows2.length ? skipped : '—';
+  stats[3].querySelector('b').textContent = rows2.length ? bad : '—';
+  stats[4].querySelector('b').textContent = rows2.length ? stopped : '—';
+  const issues = rows2.filter(r => ['fail', 'login', 'inuse', 'blocked'].includes(r.status));
+  $('asErrBox').hidden = !issues.length;
+  $('asErrList').innerHTML = issues.map(r =>
+    `<div><b>${esc(r.orderNo || r.environmentSerial || '')}</b> · ${esc(r.storeName || '')} — ${esc(r.errorSummary || asClaimPillText(r.status))}</div>`).join('');
+}
+function asClaimPillText(status) {
+  const entry = AS_CLAIM_PILL[String(status || '')];
+  return entry ? entry[1] : String(status || '');
+}
+function asSyncSelection() {
+  const pickable = AS_STATE.rows.filter(r => r.orderNo && r.claimable
+    && r.status === 'ok');
+  const valid = new Set(pickable.map(r => r.orderNo));
+  [...AS_STATE.selected].forEach(orderNo => {
+    if (!valid.has(orderNo)) AS_STATE.selected.delete(orderNo);
+  });
+  $('asSelCount').textContent = `已选 ${AS_STATE.selected.size} 单`;
+  $('asSubmit').disabled = !AS_STATE.selected.size || AS_STATE.running;
+  const head = $('asChkHead');
+  head.checked = !!pickable.length
+    && pickable.every(r => AS_STATE.selected.has(r.orderNo));
+  head.disabled = !pickable.length;
+  $('asSubmitHint').textContent = pickable.length
+    ? `可申请 ${pickable.length} 单 · 已选 ${AS_STATE.selected.size} 单`
+    : '扫描完成后勾选要提交的订单。';
+}
+function asSelectedItems() {
+  const byOrder = new Map(AS_STATE.rows.map(r => [r.orderNo, r]));
+  return [...AS_STATE.selected].map(orderNo => {
+    const row = byOrder.get(orderNo) || {};
+    return {
+      environmentSerial: row.environmentSerial || '',
+      orderNo: orderNo,
+      storeName: row.storeName || '',
+      packageNo: '',
+    };
+  }).filter(item => item.environmentSerial && item.orderNo);
+}
+async function asScan() {
+  if (AS_STATE.running) return;
+  const serials = asSerials();
+  if (!serials.length) {
+    asSetPhase('等待发起', '请先填入买家号环境序号。', false);
+    return;
+  }
+  if (serials.length > 300) {
+    asSetPhase('发起失败', '单次扫描最多 300 个环境，请分批。', false);
+    return;
+  }
+  asSaveList();
+  let executor;
+  try { executor = await cloudFormalExecutor('after.sale.scan.v1'); }
+  catch (e) { asSetPhase('执行器不可用', e.message || '无法发起扫描', false); return; }
+  try {
+    const res = await cloudFetchJson('/v1/after-sale/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        idempotencyKey: 'as-scan-' + Date.now() + '-'
+          + Math.random().toString(36).slice(2, 8),
+        executorId: executor.id,
+        browserMode: 'visible',
+        environmentSerials: serials,
+      }),
+    });
+    const data = (res || {}).data || {};
+    AS_STATE.scanTaskId = data.taskId || null;
+    AS_STATE.mode = 'scan';
+    AS_STATE.running = true;
+    AS_STATE.stopRequested = false;
+    AS_STATE.pollErrors = 0;
+    AS_STATE.selected = new Set();
+    AS_STATE.rows = [];
+    $('asScan').disabled = true; $('asStop').disabled = false;
+    $('asScanRows').innerHTML = '<tr><td colspan="9" class="hint" style="text-align:center; padding:18px;">扫描中，正在逐个打开环境读取订单…</td></tr>';
+    asSetPhase('扫描运行中', `共 ${serials.length} 个环境 · 只读，不会改动订单`, true);
+    asPoll();
+  } catch (e) {
+    asSetPhase('发起失败', String(e.message || e), false);
+  }
+}
+async function asSubmit() {
+  if (AS_STATE.running) return;
+  const items = asSelectedItems();
+  if (!items.length) {
+    asSetPhase('等待发起', '请先勾选要提交的订单。', false);
+    return;
+  }
+  let executor;
+  try { executor = await cloudFormalExecutor('after.sale.claim.v1'); }
+  catch (e) { asSetPhase('执行器不可用', e.message || '无法发起售后提交', false); return; }
+  try {
+    const res = await cloudFetchJson('/v1/operation-runs/after-sale-claim', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        idempotencyKey: 'as-' + Date.now() + '-'
+          + Math.random().toString(36).slice(2, 8),
+        executorId: executor.id,
+        browserMode: 'visible',
+        items,
+      }),
+    });
+    const data = (res || {}).data || {};
+    AS_STATE.runId = asRunIdOf(data);
+    AS_STATE.mode = 'claim';
+    AS_STATE.running = true;
+    AS_STATE.stopRequested = false;
+    AS_STATE.pollErrors = 0;
+    AS_STATE.claimRows = [];
+    asRenderClaimRows([]);
+    $('asScan').disabled = true; $('asSubmit').disabled = true; $('asStop').disabled = false;
+    asSetPhase('提交售后中',
+      `共 ${items.length} 单 · 退款路径「原路退回」· 逐单串行提交，单间随机停顿`, true);
+    asPoll();
+  } catch (e) {
+    asSetPhase('发起失败', String(e.message || e), false);
+  }
+}
+async function asPoll() {
+  try {
+    if (AS_STATE.mode === 'scan' && AS_STATE.scanTaskId) {
+      const res = await cloudFetchJson('/v1/after-sale/scan/'
+        + encodeURIComponent(AS_STATE.scanTaskId));
+      const data = (res || {}).data || {};
+      const summary = data.summary || {};
+      const rows = summary.rows || [];
+      asRenderScanRows(rows);
+      // 进度按「环境」计：一个环境可能产出多行订单，用去重后的环境数
+      const envTotal = Number(summary.totalCount || 0);
+      const envDone = new Set(rows
+        .filter(r => ['ok', 'empty', 'skip', 'fail', 'login', 'inuse',
+          'stopped'].includes(String(r.status || '')))
+        .map(r => String(r.environmentSerial || ''))).size;
+      $('asProgressText').textContent = envTotal
+        ? `已扫描 ${envDone} / ${envTotal} 个环境 ｜ ${rows.length} 行结果`
+        : '扫描中…';
+      $('asBar').style.width = (envTotal
+        ? Math.round(Math.min(envDone, envTotal) / envTotal * 100) : 0) + '%';
+      AS_STATE.pollErrors = 0;
+      AS_STATE.status = String(data.status || '');
+      if (['succeeded', 'failed', 'cancelled', 'uncertain'].includes(AS_STATE.status)) {
+        AS_STATE.running = false;
+        $('asScan').disabled = false; $('asStop').disabled = true;
+        const claimable = rows.filter(r => r.claimable).length;
+        asSetPhase('扫描完成',
+          claimable ? `可申请 ${claimable} 单，勾选后点「提交售后」。`
+            : '本次没有可申请售后的订单（可能都提交过了）。', false);
+        asRenderScanRows(rows);
+      }
+    } else if (AS_STATE.mode === 'claim' && AS_STATE.runId) {
+      const res = await cloudFetchJson('/v1/operation-runs/after-sale-claim/'
+        + encodeURIComponent(AS_STATE.runId));
+      const data = (res || {}).data || {};
+      asRenderClaimRows(data.rows || []);
+      asProgress(data);
+      AS_STATE.pollErrors = 0;
+      AS_STATE.status = String(data.status || '');
+      const done = ['completed', 'partial_failure', 'failed', 'cancelled',
+        'uncertain'].includes(AS_STATE.status);
+      if (done) {
+        AS_STATE.running = false;
+        $('asScan').disabled = false; $('asSubmit').disabled = false; $('asStop').disabled = true;
+        const bad = Number(data.failedCount || 0);
+        const okCount = Number(data.successCount || 0);
+        asSetPhase(bad ? '提交完成（部分失败）' : '提交完成',
+          bad ? `已受理 ${okCount} 单，失败 ${bad} 单（可在下方「异常与跳过详情」排查）。`
+            : `已受理 ${okCount} 单，退款审核中（结果 7 天内出）。`, false);
+        AS_STATE.mode = '';
+      } else if (AS_STATE.stopRequested) {
+        asSetPhase('正在停止', `已请求停止，在途订单完成后终止（已完成 ${data.progressCompleted ?? 0} / ${data.progressTotal ?? 0}）。`, true);
+      } else {
+        const doneN = data.progressCompleted ?? 0, total = data.progressTotal ?? 0;
+        asSetPhase('提交售后中', `已完成 ${doneN} / ${total}`, true);
+      }
+    }
+  } catch (e) {
+    AS_STATE.pollErrors += 1;
+    if (AS_STATE.pollErrors >= 5 && AS_STATE.running) {
+      asSetPhase('状态刷新失败',
+        '已连续多次无法获取售后进度（会话可能已过期或网络中断）；刷新页面后可在「提交结果」查看。', false);
+    }
+  }
+}
+$('asScan').onclick = asScan;
+$('asSubmit').onclick = asSubmit;
+$('asStop').onclick = async () => {
+  if (!AS_STATE.running) return;
+  AS_STATE.stopRequested = true;
+  asSetPhase('正在停止', '已请求停止；在途订单完成后终止。', true);
+  try {
+    if (AS_STATE.mode === 'claim' && AS_STATE.runId) {
+      await cloudFetchJson('/v1/operation-runs/after-sale-claim/'
+        + encodeURIComponent(AS_STATE.runId) + '/cancel', { method: 'POST' });
+    } else if (AS_STATE.scanTaskId) {
+      await cloudFetchJson('/v1/after-sale/scan/'
+        + encodeURIComponent(AS_STATE.scanTaskId) + '/cancel', { method: 'POST' });
+    }
+  } catch (e) {
+    asSetPhase('停止失败', String(e.message || e) + '。可稍后重试。', false);
+  }
+};
+$('asClearResult').onclick = () => {
+  AS_STATE.claimRows = []; AS_STATE.runId = null; AS_STATE.status = '';
+  $('asClaimRows').innerHTML = '<tr><td colspan="8" class="hint" style="text-align:center; padding:22px;">已清空。</td></tr>';
+  $('asPhaseBanner').hidden = true;
+  $('asBar').style.width = '0%'; $('asProgressText').textContent = '未开始';
+  asRenderClaimRows([]);
+};
+$('asPickClaimable').onclick = () => {
+  AS_STATE.selected = new Set(AS_STATE.rows
+    .filter(r => r.orderNo && r.claimable && r.status === 'ok')
+    .map(r => r.orderNo));
+  asRenderScanRows(AS_STATE.rows);
+};
+$('asPickNone').onclick = () => {
+  AS_STATE.selected = new Set();
+  asRenderScanRows(AS_STATE.rows);
+};
+$('asChkHead').onchange = e => {
+  AS_STATE.selected = e.target.checked
+    ? new Set(AS_STATE.rows.filter(r => r.orderNo && r.claimable
+      && r.status === 'ok').map(r => r.orderNo))
+    : new Set();
+  asRenderScanRows(AS_STATE.rows);
+};
+$('asSerials').addEventListener('input', asSaveList);
+$('asScanRows').addEventListener('change', e => {
+  const orderNo = e.target && e.target.dataset
+    ? e.target.dataset.asOrder : null;
+  if (!orderNo) return;
+  if (e.target.checked) AS_STATE.selected.add(orderNo);
+  else AS_STATE.selected.delete(orderNo);
+  asRenderScanRows(AS_STATE.rows);
+});
 
 function cloudRunElapsed(run) {
   const started = Date.parse(run && (run.startedAt || run.createdAt) || '');
@@ -11175,6 +11666,8 @@ function setFeaturePanel(module) {
   $('queryPanel').classList.toggle('hidden', module !== 'query');
   $('storeFinancePanel').classList.toggle('hidden', module !== 'storefinance');
   if (module === 'storefinance') sfInit();
+  $('afterSalePanel').classList.toggle('hidden', module !== 'aftersale');
+  if (module === 'aftersale') asInit();
   $('procurementPanel').classList.toggle('hidden', module !== 'procurementorders');
   $('procurementExecutionPanel').classList.toggle('hidden', module !== 'procurementexecution');
   $('procurementOrderDetailPanel').classList.toggle('hidden', module !== 'procurementorderdetail');

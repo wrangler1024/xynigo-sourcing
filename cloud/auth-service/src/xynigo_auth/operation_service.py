@@ -34,6 +34,8 @@ from .models import (
     LogisticsQueryResult,
     LogisticsQueryRun,
     LocalExecutor,
+    AfterSaleClaimResult,
+    AfterSaleClaimRun,
     StoreFinanceInspectResult,
     StoreFinanceInspectRun,
     OperationalSyncOutbox,
@@ -41,6 +43,7 @@ from .models import (
     User,
 )
 from .operation_contract import (
+    AfterSaleClaimRunCreateBody,
     EnvironmentCreationRunBody,
     EnvironmentCreationRunCreateBody,
     EnvironmentPlanDryRunBody,
@@ -58,11 +61,13 @@ def utcnow() -> datetime:
 
 def _payload_hash(
     body: (
-        EnvironmentCreationRunBody
+        AfterSaleClaimRunCreateBody
+        | EnvironmentCreationRunBody
         | EnvironmentCreationRunCreateBody
         | EnvironmentRetryRunCreateBody
         | LogisticsQueryRunBody
         | LogisticsQueryRunCreateBody
+        | StoreFinanceRunCreateBody
     ),
 ) -> str:
     payload = body.model_dump(mode="json")
@@ -390,6 +395,68 @@ class OperationRunService:
                 "browserMode": body.browserMode,
                 **({"sourceRunId": str(body.sourceRunId)}
                    if body.sourceRunId is not None else {}),
+            },
+            source="cloud_web",
+            created_at=now,
+            updated_at=now,
+        )
+        self.session.add(run)
+        self.session.flush()
+        return run, False
+
+    def create_after_sale_claim_run(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        body: AfterSaleClaimRunCreateBody,
+    ) -> tuple[AfterSaleClaimRun, bool]:
+        """建售后提交 Run：同一幂等键重复提交返回原 Run（不重复下发）。"""
+        digest = _payload_hash(body)
+        existing = self.session.scalar(
+            select(AfterSaleClaimRun).where(
+                AfterSaleClaimRun.tenant_id == tenant_id,
+                AfterSaleClaimRun.source_run_key == body.idempotencyKey,
+            )
+        )
+        if existing is not None:
+            if existing.payload_hash != digest:
+                raise PurchaseServiceError(
+                    "operation_run_idempotency_conflict",
+                    "同一售后任务标识已提交不同请求",
+                    409,
+                )
+            return existing, True
+        now = utcnow()
+        items = [
+            {
+                "environmentSerial": item.environmentSerial,
+                "orderNo": item.orderNo,
+                "storeName": item.storeName,
+                "packageNo": item.packageNo,
+            }
+            for item in body.items
+        ]
+        run = AfterSaleClaimRun(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            actor_user_id=actor_user_id,
+            source_run_key=body.idempotencyKey,
+            payload_hash=digest,
+            executor_id=body.executorId,
+            browser_mode=body.browserMode,
+            status="created",
+            phase="created",
+            progress_completed=0,
+            progress_total=len(items),
+            total_count=len(items),
+            success_count=0,
+            failed_count=0,
+            skipped_count=0,
+            stopped_count=0,
+            request_summary={
+                "items": items,
+                "browserMode": body.browserMode,
             },
             source="cloud_web",
             created_at=now,
@@ -3255,6 +3322,92 @@ def store_finance_snapshot(session, run: StoreFinanceInspectRun) -> dict:
                       if run.started_at else ""),
         "rows": result_rows,
     }
+
+
+def after_sale_claim_snapshot(session, run: AfterSaleClaimRun) -> dict:
+    """售后提交进度/结果视图的统一快照（含全部提交结果行）。
+
+    顶层键与 store_finance_snapshot 同构（扁平、runId 打头、rows 收尾）；
+    售后没有补采合并，故不出 mergedFromSource/sourceElapsedSeconds；另加
+    skippedCount/stoppedCount，与本地终态 summary 的「已跳过/已停止」一致。
+    """
+    from .models import AfterSaleClaimResult as ResultModel
+    rows = session.scalars(
+        select(ResultModel).where(ResultModel.run_id == run.id)
+    ).all()
+    result_rows = []
+    for row in sorted(rows, key=lambda item: item.order_no or ""):
+        result_rows.append({
+            "orderNo": row.order_no,
+            "environmentSerial": row.environment_serial or "",
+            "storeName": row.store_name or "",
+            "status": row.status,
+            "packageNo": row.package_no or "",
+            "refundBillId": row.refund_bill_id or "",
+            "refundPath": row.refund_path or "",
+            "durationSeconds": row.duration_seconds,
+            "submittedAt": (row.submitted_at.isoformat()
+                            if row.submitted_at else ""),
+            "note": row.note or "",
+            "errorSummary": row.error_summary or "",
+            "screenshotSha256": row.screenshot_sha256 or "",
+        })
+    return {
+        "runId": str(run.id),
+        "status": run.status,
+        "phase": run.phase,
+        "browserMode": run.browser_mode,
+        "progressCompleted": run.progress_completed,
+        "progressTotal": run.progress_total,
+        "totalCount": run.total_count,
+        "successCount": run.success_count,
+        "failedCount": run.failed_count,
+        "skippedCount": run.skipped_count,
+        "stoppedCount": run.stopped_count,
+        "stopRequested": run.stop_requested,
+        "completedAt": (run.completed_at.isoformat()
+                        if run.completed_at else ""),
+        "startedAt": (run.started_at.isoformat()
+                      if run.started_at else ""),
+        "rows": result_rows,
+    }
+
+
+def after_sale_last_claims(session, tenant_id, store_names) -> dict:
+    """每个店铺最近一次售后提交结果（状态/退款单号/提交时间）。
+
+    与 store_finance_last_runs 同形，供扫描结果页合并展示「这个店上次提交
+    到哪一步」；按结果行 updated_at 倒序取每店第一条。
+    """
+    from .models import AfterSaleClaimResult as ResultModel
+    from .models import AfterSaleClaimRun as RunModel
+    names = sorted({str(name or "").strip() for name in store_names if name})
+    if not names:
+        return {}
+    rows = session.execute(
+        select(ResultModel.store_name, ResultModel.status,
+               ResultModel.package_no, ResultModel.refund_bill_id,
+               ResultModel.submitted_at, ResultModel.error_summary,
+               RunModel.id)
+        .join(RunModel, RunModel.id == ResultModel.run_id)
+        .where(ResultModel.store_name.in_(names),
+               RunModel.tenant_id == tenant_id)
+        .order_by(ResultModel.updated_at.desc())
+    ).all()
+    latest: dict = {}
+    for (store_name, status, package_no, refund_bill_id, submitted_at,
+         error_summary, run_id) in rows:
+        key = str(store_name or "")
+        if key and key not in latest:
+            latest[key] = {
+                "runId": str(run_id),
+                "status": status,
+                "packageNo": package_no or "",
+                "refundBillId": refund_bill_id or "",
+                "submittedAt": submitted_at.isoformat() if submitted_at else "",
+                "errorSummary": (error_summary or "")[:200],
+            }
+    return latest
 
 
 class OperationResultService:
