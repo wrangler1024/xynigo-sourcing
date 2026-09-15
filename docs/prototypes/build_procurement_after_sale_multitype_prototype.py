@@ -387,6 +387,38 @@ DESIGN_PATCH = r'''
     cells[4].querySelector('b').textContent = over;
   }
 
+
+  // 运行状态条：把「阶段横幅 + 进度条 + 进度文本 + 停止」并到一条，钉在类型卡下方，
+  // 长列表滚动时也看得见（sticky 压在工作台顶栏下面）。元素是「搬」过来的，不重新接线，
+  // 真实页面的 asSetPhase/asProgress 仍写同一批节点。
+  function installRunStrip() {
+    const panel = document.getElementById('afterSalePanel');
+    const banner = document.getElementById('asPhaseBanner');
+    if (!panel || !banner) return false;
+    if (document.getElementById('asRunStrip')) return true;
+    const actionRow = panel.querySelector('.action-row');
+    const progressWrap = actionRow ? actionRow.querySelector('.progress-wrap') : null;
+    const stop = document.getElementById('asStop');
+    const strip = document.createElement('div');
+    strip.id = 'asRunStrip';
+    // 滚动容器是工作台的 <main>（topbar 不在其中），因此紧贴滚动区顶部即可，视觉上正好压在工作台顶栏下方
+    strip.style.cssText = 'position:sticky; top:8px; z-index:6;';
+    const hint = document.getElementById('asTypeHint');
+    (hint || panel.querySelector('#asTypeBar')).after(strip);
+    banner.style.marginBottom = '0';
+    banner.style.flexWrap = 'wrap';
+    strip.appendChild(banner);
+    if (progressWrap) {
+      progressWrap.style.marginLeft = 'auto';
+      progressWrap.style.display = 'flex';
+      progressWrap.style.alignItems = 'center';
+      progressWrap.style.gap = '10px';
+      if (stop) progressWrap.appendChild(stop);
+      banner.appendChild(progressWrap);
+    }
+    return true;
+  }
+
   function installTracking() {
     const panel = document.getElementById('afterSalePanel');
     if (!panel || document.getElementById('asTrackCard')) return !!panel;
@@ -447,6 +479,7 @@ DESIGN_PATCH = r'''
         toast('样稿演示：正式版在这里下发任务并轮询结果');
       };
     }
+    installRunStrip();
     installTracking();
     switchType(current);
     return true;
