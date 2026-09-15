@@ -15879,6 +15879,30 @@ initializeAuth();
     },
   ];
 
+  // ④ 退款跟踪：以退款单号为主键，平台侧的后续处理进度（只读回访获得）
+  const TRACK_PHASES = {
+    submitted: ['run', '已受理'],
+    reviewing: ['run', '审核中'],
+    processing: ['run', '处理中'],
+    refunded: ['ok', '已退款'],
+    rejected: ['bad', '已拒绝'],
+    overdue: ['warn', '超期未出结果'],
+  };
+  const TRACKING = [
+    { billId: '2390765181147136', order: 'GSH1RV90A001B2', serial: '5121',
+      card: '****2281', phase: 'reviewing', left: '23:12:40',
+      result: '—', checkedAt: '10-12 10:00', action: '—' },
+    { billId: '2390765181147201', order: 'GSH1RV90A002C7', serial: '5122',
+      card: '****2281', phase: 'refunded', left: '—',
+      result: '$MXN132.62', checkedAt: '10-12 10:00', action: '—' },
+    { billId: '2390765181147250', order: 'GSH1RV90A003D1', serial: '5123',
+      card: '—', phase: 'rejected', left: '—',
+      result: '—', checkedAt: '10-12 10:00', action: '需人工申诉' },
+    { billId: '2390765181147263', order: 'GSH1RV90A004E9', serial: '5124',
+      card: '****3317', phase: 'processing', left: '—',
+      result: '—', checkedAt: '10-12 10:00', action: '—' },
+  ];
+
   const esc = window.esc || (s => String(s == null ? '' : s)
     .replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])));
   const picked = { refund: new Set(), urge: new Set(), cancel: new Set() };
@@ -16048,6 +16072,84 @@ initializeAuth();
     ok.onclick = () => { mask.remove(); toast('样稿演示：正式版在这里下发取消任务'); };
   }
 
+
+  function renderTracking() {
+    const body = document.getElementById('asTrackRows');
+    const stats = document.getElementById('asTrackStats');
+    if (!body || !stats) return;
+    body.innerHTML = TRACKING.map(r => {
+      const p = TRACK_PHASES[r.phase] || ['warn', r.phase];
+      const bad = r.phase === 'rejected' || r.phase === 'overdue';
+      return `<tr${bad ? ' class="tr-bad"' : (r.phase === 'refunded' ? '' : ' class="tr-run"')}>`
+        + `<td class="as-order" style="font-size:12px">${esc(r.billId)}</td>`
+        + `<td class="as-order">${esc(r.order)}</td>`
+        + `<td class="sub-text">${esc(r.serial)}</td>`
+        + `<td class="sub-text">${esc(r.card)}</td>`
+        + `<td><span class="pill ${p[0]}">${esc(p[1])}</span></td>`
+        + `<td>${esc(r.left)}</td>`
+        + `<td>${esc(r.result)}</td>`
+        + `<td class="sub-text">${esc(r.checkedAt)}</td>`
+        + `<td class="hint">${esc(r.action)}</td></tr>`;
+    }).join('');
+    const open = TRACKING.filter(r => ['submitted', 'reviewing', 'processing'].includes(r.phase)).length;
+    const done = TRACKING.filter(r => r.phase === 'refunded').length;
+    const bad = TRACKING.filter(r => r.phase === 'rejected').length;
+    const over = TRACKING.filter(r => r.phase === 'overdue').length;
+    const cells = stats.children;
+    cells[0].querySelector('b').textContent = TRACKING.length;
+    cells[1].querySelector('b').textContent = open;
+    cells[2].querySelector('b').textContent = done;
+    cells[3].querySelector('b').textContent = bad;
+    cells[4].querySelector('b').textContent = over;
+  }
+
+  function installTracking() {
+    const panel = document.getElementById('afterSalePanel');
+    if (!panel || document.getElementById('asTrackCard')) return !!panel;
+    const cards = panel.querySelectorAll('section.card');
+    const card = document.createElement('section');
+    card.className = 'card table-card';
+    card.id = 'asTrackCard';
+    card.innerHTML = `<div class="card-title" style="padding:17px 19px 0;">
+        <div>④ 退款跟踪 <span class="legend">退款单号为主键 · 只读回访平台侧处理进度 · 每天一次直到终态</span></div>
+        <div class="table-actions"><button class="btn sm" id="asTrackRefresh">刷新退款进度</button></div>
+      </div>
+      <div class="business-summary" id="asTrackStats" style="padding:4px 19px 0;">
+        <div class="business-stat"><small>跟踪中</small><b>—</b></div>
+        <div class="business-stat"><small>未终态</small><b>—</b></div>
+        <div class="business-stat stat-ok"><small>已退款</small><b>—</b></div>
+        <div class="business-stat stat-bad"><small>已拒绝</small><b>—</b></div>
+        <div class="business-stat"><small>超期</small><b>—</b></div>
+      </div>
+      <div style="padding: 0 19px;">
+        <div class="table-scroll scroll-20">
+          <table><thead><tr>
+            <th>退款单号</th><th>订单号</th><th>环境序号</th><th>退款信用卡</th>
+            <th>阶段</th><th>剩余倒计时</th><th>退款结果</th><th>最近检查</th><th>处置</th>
+          </tr></thead><tbody id="asTrackRows"></tbody></table>
+        </div>
+      </div>
+      <div style="padding: 12px 19px 17px;">
+        <p class="xyp2-help">回访只读：复用提交时的环境，逐个退款单读平台侧阶段（已受理 → 审核中 → 处理中 → 已退款／已拒绝），
+        只回访未终态的单，到终态即冻结。退款信用卡为只读回访时取到的原卡掩码，取不到显示 —。
+        被拒的行请到买家端看「Historial de negociación」的拒绝理由后再决定是否申诉。</p>
+      </div>`;
+    cards[cards.length - 1].after(card);
+    document.getElementById('asTrackRefresh').onclick = () => {
+      // 样稿演示：把「处理中」推进为「已退款」，其余刷新检查时间
+      const now = new Date();
+      const stamp = `${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} `
+        + `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      TRACKING.forEach(r => { r.checkedAt = stamp; });
+      const next = TRACKING.find(r => r.phase === 'processing');
+      if (next) { next.phase = 'refunded'; next.result = '$MXN96.80'; next.left = '—'; }
+      renderTracking();
+      toast('样稿演示：已只读回访 ' + TRACKING.length + ' 个退款单');
+    };
+    renderTracking();
+    return true;
+  }
+
   function install() {
     if (!renderSwitch()) return false;
     const submit = document.getElementById('asSubmit');
@@ -16061,6 +16163,7 @@ initializeAuth();
         toast('样稿演示：正式版在这里下发任务并轮询结果');
       };
     }
+    installTracking();
     switchType(current);
     return true;
   }
