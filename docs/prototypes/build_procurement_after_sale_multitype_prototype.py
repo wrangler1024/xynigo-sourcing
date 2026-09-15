@@ -45,6 +45,7 @@ DESIGN_PATCH = r'''
 (function () {
   const TYPES = [
     {
+      thumb: 'preview-product-a.svg',
       id: 'refund', label: '丢件退款', state: 'done',
       // 图标与一级菜单同款：24×24 线性描边（退回箭头）
       svg: '<path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',
@@ -77,6 +78,7 @@ DESIGN_PATCH = r'''
       ],
     },
     {
+      thumb: 'preview-product-b.svg',
       id: 'urge', label: '催促发货', state: 'plan',
       svg: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
       desc: '已付款未发货 → 批量催促发货（24 小时一次）',
@@ -106,6 +108,7 @@ DESIGN_PATCH = r'''
       ],
     },
     {
+      thumb: 'preview-product-c.svg',
       id: 'cancel', label: '取消订单', state: 'plan',
       // 与「采购中心」的单据图标成对：那边是单据+勾，这边是单据+叉
       svg: '<path d="M6 3h12v18H6zM9 7h6"/><path d="m9.5 12.5 5 5m0-5-5 5"/>',
@@ -225,11 +228,19 @@ DESIGN_PATCH = r'''
       + `<span>本样稿用于确认三级菜单交互；该类型的判定条件、动作与结果字段均为示意数据。</span></div>`;
   }
 
+  function thumbCell(url) {
+    const safe = (typeof safeProcurementImageUrl === 'function')
+      ? safeProcurementImageUrl(url) : url;
+    return '<td><span class="procurement-image-thumb">'
+      + (safe ? `<img src="${esc(safe)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '')
+      + '</span></td>';
+  }
+
   function renderScan() {
     const t = typeOf(current);
     const head = document.querySelector('#asScanTable thead tr');
     head.innerHTML = '<th style="width:34px"><input type="checkbox" style="accent-color:var(--rhino-600)"></th>'
-      + '<th>环境序号</th><th>买家号环境</th><th>订单号</th><th>售后类型</th>'
+      + '<th style="width:46px">商品图</th><th>环境序号</th><th>买家号环境</th><th>订单号</th><th>售后类型</th>'
       + t.scanCols.map(c => `<th${/金额/.test(c) ? ' class="num"' : ''}>${esc(c)}</th>`).join('')
       + '<th>状态</th>';
     const rows = t.rows;
@@ -241,6 +252,7 @@ DESIGN_PATCH = r'''
         ? `<span class="pill ok">${esc(r.status)}</span>`
         : `<span class="pill ${r.status === '不可申请' || r.status === '不可取消' ? 'warn' : 'warn'}">${esc(r.status)}</span>`;
       return `<tr${checked ? ' class="as-picked"' : ''}><td>${box}</td>`
+        + thumbCell(t.thumb)
         + `<td class="sub-text">${esc(r.serial)}</td>`
         + `<td style="font-weight:700; color:var(--navy-950)">${esc(r.store)}</td>`
         + `<td class="as-order">${esc(r.order)}</td>`
@@ -260,10 +272,10 @@ DESIGN_PATCH = r'''
   function renderClaim() {
     const t = typeOf(current);
     const head = document.querySelector('#asClaimTable thead tr');
-    head.innerHTML = '<th>订单号</th><th>售后类型</th><th>环境序号</th>'
+    head.innerHTML = '<th style="width:46px">商品图</th><th>订单号</th><th>售后类型</th><th>环境序号</th>'
       + t.claimCols.map(c => `<th>${esc(c)}</th>`).join('') + '<th>状态</th><th>备注</th>';
     document.getElementById('asClaimRows').innerHTML = t.claimRows.map(r =>
-      `<tr><td class="as-order">${esc(r.order)}</td>`
+      `<tr>${thumbCell(t.thumb)}<td class="as-order">${esc(r.order)}</td>`
       + `<td style="font-weight:700; color:#078487">${esc(t.label)}</td>`
       + `<td class="sub-text">${esc(r.serial)}</td>`
       + t.claimCols.map(c => `<td>${esc(r.extra[c] || '—')}</td>`).join('')
@@ -339,6 +351,7 @@ DESIGN_PATCH = r'''
       const p = TRACK_PHASES[r.phase] || ['warn', r.phase];
       const bad = r.phase === 'rejected' || r.phase === 'overdue';
       return `<tr${bad ? ' class="tr-bad"' : (r.phase === 'refunded' ? '' : ' class="tr-run"')}>`
+        + thumbCell(typeOf('refund').thumb)
         + `<td class="as-order" style="font-size:12px">${esc(r.billId)}</td>`
         + `<td class="as-order">${esc(r.order)}</td>`
         + `<td class="sub-text">${esc(r.serial)}</td>`
@@ -382,7 +395,7 @@ DESIGN_PATCH = r'''
       <div style="padding: 0 19px;">
         <div class="table-scroll scroll-20">
           <table><thead><tr>
-            <th>退款单号</th><th>订单号</th><th>环境序号</th><th>退款信用卡</th>
+            <th style="width:46px">商品图</th><th>退款单号</th><th>订单号</th><th>环境序号</th><th>退款信用卡</th>
             <th>阶段</th><th>剩余倒计时</th><th>退款结果</th><th>最近检查</th><th>处置</th>
           </tr></thead><tbody id="asTrackRows"></tbody></table>
         </div>

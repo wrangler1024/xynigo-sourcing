@@ -109,3 +109,28 @@ python3 -m http.server 8899 --directory docs/prototypes
 ### 退款信用卡这一列怎么来的
 
 退款信用卡是**只读回访时取到的原卡掩码**（真机实测在退款单页的退款账户区块，形如 `****2281`）。因此它的口径是：提交那一刻不一定取得到，先显示 `—`；跟踪回访读到后回填。③ 提交结果与 ④ 退款跟踪两张表都展示这一列，但以 ④ 为准（那里是回访结果）。
+
+## 商品图列（本次新增，三张表都有）
+
+② 可申请清单、③ 提交结果、④ 退款跟踪 三张表都加「商品图」列，放在**勾选框之后的第一列**，尺寸 34×44（密集表格档，不撑高行）。
+
+![商品图列](./20260915-procurement-after-sale-v2-thumbs.png)
+
+**实现上几乎没有新东西**——工作台早有成套约定，直接复用：
+
+| 复用项 | 说明 |
+|---|---|
+| `.procurement-image-thumb` | 采购任务已在用的缩略图样式；本模块按密集表格覆写为 34×44 |
+| `safeProcurementImageUrl()` | 现成的图片地址白名单：只放行 `https://*.ltwebstatic.com`（SHEIN 商品图 CDN）与同源 `/preview-product-*`（本地占位图） |
+| `loading="lazy"` + `referrerpolicy="no-referrer"` | 与采购任务同款：懒加载，且不把工作台地址带给外部 CDN |
+
+数据来源不用新接口：扫描时调用的 `refund_only/pre_info` 本来就返回`package_module.package_list[].item_list[].goods_img`，执行器当前只取了包裹号与物流号、把这个图片地址丢了；带上它即可，一路走到三张表。
+
+### 直引外链图片的两项前置核实（已实测）
+
+1. **CSP 允许**：云端根页面的策略含 `img-src 'self' data: blob: https:`，即允许加载任意外部 https 图片；同时带 `Referrer-Policy: no-referrer`，不会把工作台地址泄给 CDN。
+2. **CDN 允许裸引**：`img.ltwebstatic.com` 的商品图不带 SHEIN referer、甚至带无关 referer 请求均返回 `200 / image/jpeg`（实测 13KB、220×293），没有防盗链。
+
+因此**不需要在执行器侧下载图片再回传**（那会让每行几 KB～几十 KB 的 base64 走一遍云端，行数一多就把进度快照撑爆）。浏览器直连 CDN 是更省的做法；真要离线或断网场景，再退回「执行器转存 + 云端附件」那条路。
+
+样稿里用的是仓内本地的 `preview-product-*.svg` 占位图——既让原型离线可用，也不把真实商品图地址写进版本库；生产环境走 CDN 真图。

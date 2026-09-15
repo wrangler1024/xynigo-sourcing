@@ -880,3 +880,28 @@ class ModeCardIconTests(unittest.TestCase):
             self.assertIn(
                 '.mode-tab.active .nav-icon { color: #fff; '
                 'background: var(--action-gradient); box-shadow: none; }', html)
+
+
+class AfterSaleThumbnailWiringTests(unittest.TestCase):
+    """商品图列：复用采购任务那套缩略图约定，不新造样式、不走外部代理。"""
+
+    def _html(self):
+        local = LOCAL_HTML.read_text(encoding="utf-8")
+        self.assertEqual(local, CLOUD_HTML.read_text(encoding="utf-8"))
+        return local
+
+    def test_panel_scopes_thumbnail_size_for_dense_tables(self):
+        html = self._html()
+        self.assertIn('#afterSalePanel .procurement-image-thumb', html)
+        self.assertIn('width: 34px; height: 44px;', html)
+
+    def test_image_url_guard_allows_shein_cdn_and_local_preview(self):
+        # 白名单是既有函数，三张表的缩略图都必须走它，不得直接拼 URL
+        html = self._html()
+        self.assertIn('function safeProcurementImageUrl', html)
+        self.assertIn("host.endsWith('.ltwebstatic.com')", html)
+        self.assertIn("parsed.pathname.startsWith('/preview-product-')", html)
+
+    def test_thumbnails_are_lazy_and_referrer_free(self):
+        html = self._html()
+        self.assertIn('loading="lazy" referrerpolicy="no-referrer"', html)
