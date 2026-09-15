@@ -15797,7 +15797,7 @@ initializeAuth();
       action: '提交售后',
       confirm: 'none',
       scanCols: ['送达时间', '金额', '可退包裹', '物流号'],
-      claimCols: ['退款单号', '退款路径'],
+      claimCols: ['退款单号', '退款路径', '退款信用卡'],
       rows: [
         { serial: '5121', store: 'ZH-MX-0902-011', order: 'GSH1RV90A001B2',
           pick: true, status: '可申请',
@@ -15811,9 +15811,11 @@ initializeAuth();
       ],
       claimRows: [
         { order: 'GSH1RV90A001B2', serial: '5121', status: 'ok',
-          extra: { 退款单号: '2390765181147136', 退款路径: 'Cuenta original de pago' } },
+          extra: { 退款单号: '2390765181147136', 退款路径: 'Cuenta original de pago',
+                   退款信用卡: '****2281' } },
         { order: 'GSH1RV90A002C7', serial: '5122', status: 'ok',
-          extra: { 退款单号: '2390765181147201', 退款路径: 'Cuenta original de pago' } },
+          extra: { 退款单号: '2390765181147201', 退款路径: 'Cuenta original de pago',
+                   退款信用卡: '****2281' } },
       ],
     },
     {
