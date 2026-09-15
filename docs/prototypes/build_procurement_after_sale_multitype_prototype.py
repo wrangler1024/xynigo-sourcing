@@ -1,0 +1,325 @@
+# -*- coding: utf-8 -*-
+"""生成「采购售后 · 多类型三级菜单」设计样稿原型。
+
+**这是设计样稿，不是已实现的功能。** 当前代码里只实现了「丢件退款」一种类型；
+本样稿在真实工作台页面上叠加一层设计补丁，用来确认「多类型三级菜单」的交互形态，
+催发货 / 取消订单 一律标注「规划」。
+
+做法与主原型一致：逐字复制 src/purchase_tool/web/index.html，先注入数据 mock
+（复用 build_procurement_after_sale_prototype 的那一层），再注入设计补丁——
+补丁只做三件事：把①的类型胶囊换成 chip 分段控件、按类型切换两张表的列与说明、
+给高危类型演示二次确认弹层。所有元素使用工作台既有 class（.chip/.modal-mask/
+.card/.pill 等），不引入新配色。
+
+用法：
+    python docs/prototypes/build_procurement_after_sale_multitype_prototype.py
+    python -m http.server 8899 --directory docs/prototypes
+    # http://127.0.0.1:8899/20260915-procurement-after-sale-v2-multitype.html?runtime=cloud
+"""
+from __future__ import annotations
+
+import importlib.util
+import pathlib
+
+HERE = pathlib.Path(__file__).resolve().parent
+ROOT = HERE.parents[1]
+SOURCE = ROOT / 'src' / 'purchase_tool' / 'web' / 'index.html'
+TARGET = HERE / '20260915-procurement-after-sale-v2-multitype.html'
+
+
+def _load_base_generator():
+    spec = importlib.util.spec_from_file_location(
+        'as_proto_base', HERE / 'build_procurement_after_sale_prototype.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+DESIGN_PATCH = r'''
+<script id="prototype-multitype-design">
+/* ============================================================
+ * 【设计样稿】采购售后 · 多类型三级菜单
+ * 只实现「丢件退款」是当前事实；催发货 / 取消订单 为规划，标签与横幅已标注。
+ * 本补丁仅用于确认交互形态，不代表已实现能力。
+ * ============================================================ */
+(function () {
+  const TYPES = [
+    {
+      id: 'refund', label: '丢件退款', state: 'done',
+      perm: 'procurement.aftersale.refund',
+      rule: '已送达但未收到',
+      note: '退款原路退回；两步式，提交即写库',
+      action: '提交售后',
+      confirm: 'none',
+      scanCols: ['送达时间', '金额', '可退包裹', '物流号'],
+      claimCols: ['退款单号', '退款路径'],
+      rows: [
+        { serial: '5121', store: 'ZH-MX-0902-011', order: 'GSH1RV90A001B2',
+          pick: true, status: '可申请',
+          extra: { 送达时间: '04 Sep 2026 10:37:20', 金额: '$MXN108.22', 可退包裹: '1', 物流号: 'JMX300959285918' } },
+        { serial: '5122', store: 'ZH-MX-0902-012', order: 'GSH1RV90A002C7',
+          pick: true, status: '可申请',
+          extra: { 送达时间: '03 Sep 2026 18:08:37', 金额: '$MXN132.62', 可退包裹: '1', 物流号: '49411547468070' } },
+        { serial: '5123', store: 'ZH-MX-0902-013', order: 'GSH1RV90A003D1',
+          pick: false, status: '不可申请',
+          extra: { 送达时间: '01 Sep 2026 15:19:09', 金额: '$MXN120.47', 可退包裹: '1', 物流号: '49415946103334' } },
+      ],
+      claimRows: [
+        { order: 'GSH1RV90A001B2', serial: '5121', status: 'ok',
+          extra: { 退款单号: '2390765181147136', 退款路径: 'Cuenta original de pago' } },
+        { order: 'GSH1RV90A002C7', serial: '5122', status: 'ok',
+          extra: { 退款单号: '2390765181147201', 退款路径: 'Cuenta original de pago' } },
+      ],
+    },
+    {
+      id: 'urge', label: '催发货', state: 'plan',
+      perm: 'procurement.aftersale.urge',
+      rule: '已付款未发货（备货中）',
+      note: '每个订单 24 小时内最多催一次，冷却期内不可再催',
+      action: '批量催发货',
+      confirm: 'none',
+      scanCols: ['下单时间', '金额', '已催次数', '下次可催'],
+      claimCols: ['催发时间', '下次可催'],
+      rows: [
+        { serial: '5131', store: 'ZH-MX-0902-021', order: 'GSH1RV90B001K3',
+          pick: true, status: '可催发货',
+          extra: { 下单时间: '11 Sep 2026 09:20:11', 金额: '$MXN210.30', 已催次数: '0', 下次可催: '立即' } },
+        { serial: '5132', store: 'ZH-MX-0902-022', order: 'GSH1RV90B002L8',
+          pick: true, status: '可催发货',
+          extra: { 下单时间: '12 Sep 2026 14:02:55', 金额: '$MXN88.00', 已催次数: '1', 下次可催: '13 Sep 2026 14:02' } },
+        { serial: '5133', store: 'ZH-MX-0902-023', order: 'GSH1RV90B003M2',
+          pick: false, status: '冷却中',
+          extra: { 下单时间: '12 Sep 2026 20:31:40', 金额: '$MXN156.90', 已催次数: '2', 下次可催: '13 Sep 2026 20:31' } },
+      ],
+      claimRows: [
+        { order: 'GSH1RV90B001K3', serial: '5131', status: 'ok',
+          extra: { 催发时间: '10:12:03', 下次可催: '16 Sep 2026 10:12' } },
+        { order: 'GSH1RV90B002L8', serial: '5132', status: 'ok',
+          extra: { 催发时间: '10:12:31', 下次可催: '16 Sep 2026 10:12' } },
+      ],
+    },
+    {
+      id: 'cancel', label: '取消订单', state: 'plan',
+      perm: 'procurement.aftersale.cancel',
+      rule: '未发货且平台允许取消',
+      note: '不可逆：提交后订单直接取消；需二次确认',
+      action: '批量取消订单',
+      confirm: 'danger',
+      scanCols: ['下单时间', '金额', '可否取消'],
+      claimCols: ['取消结果', '退款金额'],
+      rows: [
+        { serial: '5141', store: 'ZH-MX-0902-031', order: 'GSH1RV90C001P7',
+          pick: true, status: '可取消',
+          extra: { 下单时间: '13 Sep 2026 08:11:02', 金额: '$MXN99.90', 可否取消: '可取消' } },
+        { serial: '5142', store: 'ZH-MX-0902-032', order: 'GSH1RV90C002Q4',
+          pick: true, status: '可取消',
+          extra: { 下单时间: '13 Sep 2026 11:47:19', 金额: '$MXN143.20', 可否取消: '可取消' } },
+        { serial: '5143', store: 'ZH-MX-0902-033', order: 'GSH1RV90C003R1',
+          pick: false, status: '不可取消',
+          extra: { 下单时间: '12 Sep 2026 07:03:58', 金额: '$MXN76.50', 可否取消: '已发货' } },
+      ],
+      claimRows: [
+        { order: 'GSH1RV90C001P7', serial: '5141', status: 'ok',
+          extra: { 取消结果: '已取消', 退款金额: '$MXN99.90' } },
+        { order: 'GSH1RV90C002Q4', serial: '5142', status: 'ok',
+          extra: { 取消结果: '已取消', 退款金额: '$MXN143.20' } },
+      ],
+    },
+  ];
+
+  const esc = window.esc || (s => String(s == null ? '' : s)
+    .replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])));
+  const picked = { refund: new Set(), urge: new Set(), cancel: new Set() };
+  let current = 'refund';
+
+  const typeOf = id => TYPES.find(t => t.id === id) || TYPES[0];
+
+  function renderSwitch() {
+    const row = document.querySelector('#afterSalePanel .as-type-row');
+    if (!row) return false;
+    row.innerHTML =
+      '<span class="as-type-label">售后类型</span>'
+      + TYPES.map(t => `<button type="button" class="chip" data-as-type="${t.id}"`
+        + `${t.id === current ? ' style="background:var(--rhino-600);border-color:var(--rhino-600);color:#fff"' : ''}>`
+        + `${esc(t.label)}${t.state === 'plan' ? ' <span style="opacity:.7">规划</span>' : ''}</button>`).join('')
+      + `<span class="hint" id="asTypeHint"></span>`;
+    row.querySelectorAll('[data-as-type]').forEach(btn => {
+      btn.onclick = () => switchType(btn.dataset.asType);
+    });
+    return true;
+  }
+
+  function setHint() {
+    const t = typeOf(current);
+    const hint = document.getElementById('asTypeHint');
+    if (!hint) return;
+    hint.innerHTML = `适用：${esc(t.rule)} · ${esc(t.note)} · 权限码 <b>${esc(t.perm)}</b>`;
+  }
+
+  function planBanner() {
+    let bar = document.getElementById('asPlanBanner');
+    const t = typeOf(current);
+    if (t.state !== 'plan') { if (bar) bar.remove(); return; }
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'asPlanBanner';
+      bar.className = 'query-phase-banner';
+      bar.style.marginBottom = '12px';
+      const panel = document.getElementById('afterSalePanel');
+      panel.querySelector('section.card').before(bar);
+    }
+    bar.innerHTML = '<div class="query-phase-copy" style="padding-left:0">'
+      + `<b>「${esc(t.label)}」为规划类型，本次未实现</b>`
+      + `<span>本样稿用于确认三级菜单交互；该类型的判定条件、动作与结果字段均为示意数据。</span></div>`;
+  }
+
+  function renderScan() {
+    const t = typeOf(current);
+    const head = document.querySelector('#asScanTable thead tr');
+    head.innerHTML = '<th style="width:34px"><input type="checkbox" style="accent-color:var(--rhino-600)"></th>'
+      + '<th>环境序号</th><th>买家号环境</th><th>订单号</th><th>售后类型</th>'
+      + t.scanCols.map(c => `<th${/金额/.test(c) ? ' class="num"' : ''}>${esc(c)}</th>`).join('')
+      + '<th>状态</th>';
+    const rows = t.rows;
+    document.getElementById('asScanRows').innerHTML = rows.map(r => {
+      const can = r.pick;
+      const checked = picked[t.id].has(r.order);
+      const box = can ? `<input type="checkbox" data-as-mt-order="${esc(r.order)}"${checked ? ' checked' : ''} style="accent-color:var(--rhino-600)">` : '';
+      const pill = r.status === '可申请' || r.status === '可催发货' || r.status === '可取消'
+        ? `<span class="pill ok">${esc(r.status)}</span>`
+        : `<span class="pill ${r.status === '不可申请' || r.status === '不可取消' ? 'warn' : 'warn'}">${esc(r.status)}</span>`;
+      return `<tr${checked ? ' class="as-picked"' : ''}><td>${box}</td>`
+        + `<td class="sub-text">${esc(r.serial)}</td>`
+        + `<td style="font-weight:700; color:var(--navy-950)">${esc(r.store)}</td>`
+        + `<td class="as-order">${esc(r.order)}</td>`
+        + `<td style="font-weight:700; color:#078487; white-space:nowrap">${esc(t.label)}</td>`
+        + t.scanCols.map(c => `<td>${esc(r.extra[c] || '—')}</td>`).join('')
+        + `<td>${pill}</td></tr>`;
+    }).join('');
+    document.getElementById('asScanRows').querySelectorAll('[data-as-mt-order]').forEach(box => {
+      box.onchange = () => {
+        if (box.checked) picked[t.id].add(box.dataset.asMtOrder);
+        else picked[t.id].delete(box.dataset.asMtOrder);
+        renderScan(); syncFooter();
+      };
+    });
+  }
+
+  function renderClaim() {
+    const t = typeOf(current);
+    const head = document.querySelector('#asClaimTable thead tr');
+    head.innerHTML = '<th>订单号</th><th>售后类型</th><th>环境序号</th>'
+      + t.claimCols.map(c => `<th>${esc(c)}</th>`).join('') + '<th>状态</th><th>备注</th>';
+    document.getElementById('asClaimRows').innerHTML = t.claimRows.map(r =>
+      `<tr><td class="as-order">${esc(r.order)}</td>`
+      + `<td style="font-weight:700; color:#078487">${esc(t.label)}</td>`
+      + `<td class="sub-text">${esc(r.serial)}</td>`
+      + t.claimCols.map(c => `<td>${esc(r.extra[c] || '—')}</td>`).join('')
+      + '<td><span class="pill ok">已完成</span></td><td class="hint">—</td></tr>').join('');
+  }
+
+  function syncFooter() {
+    const t = typeOf(current);
+    const pickable = t.rows.filter(r => r.pick).length;
+    const chosen = picked[t.id].size;
+    const hint = document.getElementById('asSubmitHint');
+    const btn = document.getElementById('asSubmit');
+    if (hint) hint.textContent = `可执行 ${pickable} 单 · 已选 ${chosen} 单`;
+    if (btn) {
+      btn.textContent = t.action;
+      // 规划类型不置灰：置灰就看不到二次确认等交互；点下去只会弹样稿提示
+      btn.disabled = !chosen;
+    }
+    const scanBtn = document.getElementById('asScan');
+    if (scanBtn) scanBtn.textContent = t.id === 'refund' ? '扫描可申请售后订单' : `扫描${t.label}订单`;
+  }
+
+  function switchType(id) {
+    current = id;
+    renderSwitch(); setHint(); planBanner(); renderScan(); renderClaim(); syncFooter();
+    const desc = document.getElementById('asPhaseDescription');
+    const title = document.getElementById('asPhaseTitle');
+    if (title) title.textContent = '等待发起';
+    if (desc) desc.textContent = typeOf(id).state === 'plan'
+      ? '该类型为规划，仅演示列与流程差异；右侧已选数量不会真实提交。'
+      : '先扫描，再勾选提交。';
+    const banner = document.getElementById('asPhaseBanner');
+    if (banner) banner.hidden = false;
+  }
+
+  // 高危类型：提交前二次确认（用工作台既有 modal 原语）
+  function confirmDanger() {
+    const t = typeOf(current);
+    const chosen = [...picked[t.id]];
+    const total = t.rows.filter(r => chosen.includes(r.order))
+      .reduce((sum, r) => sum + Number(String((r.extra['金额'] || '0')).replace(/[^\d.]/g, '') || 0), 0);
+    const mask = document.createElement('div');
+    // 工作台的 .modal-mask 默认 display:none，必须带 .show 才可见
+    mask.className = 'modal-mask show';
+    mask.innerHTML = `<div class="modal" role="dialog" aria-modal="true" style="max-width:520px">
+      <h3 style="margin:0 0 6px">确认批量取消订单？</h3>
+      <p class="hint" style="margin:0 0 12px">该动作<b>不可逆</b>：提交后订单直接取消，平台按原路退回款项。</p>
+      <div style="border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin-bottom:12px">
+        ${chosen.map(o => `<div class="as-order" style="font-size:12px">${esc(o)}</div>`).join('')}
+        <div style="margin-top:8px; font-size:12px">合计金额 <b>$MXN${total.toFixed(2)}</b> · 共 <b>${chosen.length}</b> 单</div>
+      </div>
+      <label class="hint" style="display:block; margin-bottom:6px">输入「取消订单」以确认：</label>
+      <input type="search" id="asConfirmWord" style="width:100%; padding:8px 12px; border:1px solid var(--line); border-radius:10px; font-size:12px">
+      <div class="actions">
+        <button class="btn sm" id="asConfirmCancel">返回</button>
+        <button class="btn sm danger" id="asConfirmOk" disabled>确认取消</button>
+      </div>
+    </div>`;
+    document.body.appendChild(mask);
+    const word = mask.querySelector('#asConfirmWord');
+    const ok = mask.querySelector('#asConfirmOk');
+    word.oninput = () => { ok.disabled = word.value.trim() !== '取消订单'; };
+    mask.querySelector('#asConfirmCancel').onclick = () => mask.remove();
+    ok.onclick = () => { mask.remove(); toast('样稿演示：正式版在这里下发取消任务'); };
+  }
+
+  function install() {
+    if (!renderSwitch()) return false;
+    const submit = document.getElementById('asSubmit');
+    if (submit) {
+      // 覆盖真实提交：样稿不做任何真实调用
+      submit.onclick = () => {
+        const t = typeOf(current);
+        // 高危类型先走二次确认（即便它还是规划类型，也要能演示确认强度）
+        if (t.confirm === 'danger') { confirmDanger(); return; }
+        if (t.state === 'plan') { toast(`样稿演示：「${t.label}」为规划类型，正式版在这里下发任务`); return; }
+        toast('样稿演示：正式版在这里下发任务并轮询结果');
+      };
+    }
+    switchType(current);
+    return true;
+  }
+
+  let tries = 0;
+  const timer = setInterval(function () {
+    tries += 1;
+    if (install() || tries > 60) clearInterval(timer);
+  }, 250);
+})();
+</script>
+'''
+
+
+def main() -> None:
+    base = _load_base_generator()
+    html = SOURCE.read_text(encoding='utf-8')
+    permissions = base.collect_permissions(html)
+    mock = base.MOCK.replace('__PERMISSIONS__', repr(permissions).replace("'", '"'))
+    marker = '<script>\nconst $ = id => document.getElementById(id);'
+    if marker not in html:
+        raise SystemExit('未找到主脚本锚点')
+    html = html.replace(marker, mock + '\n' + marker, 1)
+    html = html.replace('</body>', DESIGN_PATCH + '</body>', 1)
+    html = html.replace('<title>', '<title>采购售后 · 多类型三级菜单 · 设计样稿 · ', 1)
+    TARGET.write_text(html, encoding='utf-8')
+    print('生成:', TARGET)
+    print('大小: %.1f KB' % (TARGET.stat().st_size / 1024))
+
+
+if __name__ == '__main__':
+    main()
