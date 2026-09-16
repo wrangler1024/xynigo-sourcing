@@ -54,8 +54,12 @@ def upgrade() -> None:
         sa.Column("last_status", sa.String(length=16), nullable=True),
         sa.Column("last_error", sa.String(length=300), nullable=True),
         sa.Column("checked_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        # server_default 不能省：模型侧声明了它，ORM 的 INSERT 就会省略这两列，
+        # 库里再没有默认值 → NOT NULL 违约（20260916 真机踩过，既有库由 0039 补）
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False,
+                  server_default=sa.func.now()),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False,
+                  server_default=sa.func.now()),
         sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"],
                                 ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
