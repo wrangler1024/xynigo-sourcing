@@ -114,6 +114,7 @@ from .procurement_import_sheet import FeishuSheetsGateway, LarkSheetSyncError
 from .integration_contract import FeishuIntegrationWriteBody, FeishuReadProxyBody
 from .after_sale_export import (
     build_after_sale_claim_export,
+    build_after_sale_scan_export,
     build_after_sale_track_export,
 )
 from .logistics_export import build_logistics_workbook_export
@@ -5381,6 +5382,59 @@ def create_app(
             "taskId": str(task.id), "status": task.status,
             "executorId": str(task.executor_id),
             "summary": snapshot}}
+
+    @app.get("/v1/after-sale/scan/{task_id}/export")
+    def export_after_sale_scan_task(
+        task_id: uuid.UUID,
+        request: Request,
+        session: Session = Depends(get_session),
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> Response:
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="assistant.after_sale.scan.export",
+        )
+        task = session.scalar(
+            select(ExecutorTask).where(
+                ExecutorTask.id == task_id,
+                ExecutorTask.tenant_id == actor.tenant.id,
+                ExecutorTask.task_type == "after.sale.scan.v1",
+            )
+        )
+        if task is None:
+            raise HTTPException(status_code=404, detail="扫描任务不存在")
+        snapshot = executor_channel(session).after_sale_scan_summary(task)
+        content, filename, mime = build_after_sale_scan_export(snapshot["rows"])
+        _add_audit(
+            session,
+            request_id=request.state.request_id,
+            action="assistant.after_sale.scan.export",
+            result="success",
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            business_object_type="executor_task",
+            business_object_id=str(task.id),
+            change_summary={"rowCount": len(snapshot["rows"])},
+            **_request_log_context(request),
+        )
+        session.commit()
+        return Response(
+            content=content,
+            media_type=mime,
+            headers={
+                "Cache-Control": "private, no-store",
+                "Content-Disposition": (
+                    f"attachment; filename*=UTF-8''{quote(filename)}"
+                ),
+                "X-Content-Type-Options": "nosniff",
+                "X-Xynigo-Row-Count": str(len(snapshot["rows"])),
+            },
+        )
 
     @app.get("/v1/after-sale/track/{task_id}/export")
     def export_after_sale_track_task(

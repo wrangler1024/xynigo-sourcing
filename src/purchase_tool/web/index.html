@@ -2312,6 +2312,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
           <span class="resource-state" id="asSelCount" style="margin-top:0">已选 0 单</span>
           <button class="btn sm" id="asPickClaimable">全选可申请</button>
           <button class="btn sm" id="asPickNone">清空勾选</button>
+          <button class="btn sm" id="asScanExport" title="导出当前扫描清单全部行，不受勾选影响；扫描中导出已返回结果" disabled>导出清单 Excel</button>
         </div>
       </div>
       <div style="padding: 0 19px;">
@@ -5388,6 +5389,7 @@ function asThumbCell(url) {
 }
 function asRenderScanRows(rows) {
   AS_STATE.rows = rows || [];
+  asSyncScanExportButton();
   const pickable = AS_STATE.rows.filter(r => r.orderNo && r.claimable
     && r.status === 'ok');
   const tbody = $('asScanRows');
@@ -5600,6 +5602,44 @@ async function asTrack(explicitItems) {
   }
 }
 // 导出的是「本页 ④ 这一次回访」读到的行——按回访任务取，不重跑回访。
+async function asExportScan() {
+  const taskId = AS_STATE.scanTaskId;
+  if (!taskId) { toast('先扫描订单，再导出清单'); return; }
+  const button = $('asScanExport');
+  const label = button.textContent;
+  button.dataset.exporting = 'true';
+  button.disabled = true; button.textContent = '正在生成…';
+  try {
+    const response = await fetch(
+      '/v1/after-sale/scan/' + encodeURIComponent(taskId) + '/export',
+      {credentials:'same-origin', headers:{'Accept':'application/octet-stream',
+        'X-Xynigo-Source':'cloud_web_workspace'}});
+    if (!response.ok) {
+      let payload = {};
+      try { payload = await response.json(); } catch (_) {}
+      throw cloudApiError(payload, response.status);
+    }
+    const blob = await response.blob();
+    const filename = workspaceDownloadName(
+      response.headers.get('Content-Disposition'), '售后可申请清单.xlsx');
+    const url = URL.createObjectURL(blob), link = document.createElement('a');
+    link.href = url; link.download = filename;
+    document.body.appendChild(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast(`已生成 ${filename}，请查看浏览器下载记录`);
+  } catch (error) {
+    toast(String(error.message || error));
+  } finally {
+    button.dataset.exporting = 'false'; button.textContent = label;
+    asSyncScanExportButton();
+  }
+}
+function asSyncScanExportButton() {
+  $('asScanExport').disabled = $('asScanExport').dataset.exporting === 'true'
+    || !AS_STATE.scanTaskId || !(AS_STATE.rows || []).length;
+}
+$('asScanExport').onclick = asExportScan;
+
 async function asExportTrack() {
   const taskId = AS_STATE.trackTaskId;
   if (!taskId) { toast('先点「刷新退款进度」或「回访指定单」，再导出'); return; }
@@ -5948,6 +5988,7 @@ async function asScan() {
     AS_STATE.etaBase = null;
     AS_STATE.selected = new Set();
     AS_STATE.rows = [];
+    asSyncScanExportButton();
     $('asScan').disabled = true; $('asStop').disabled = false;
     $('asScanRows').innerHTML = '<tr><td colspan="11" class="hint" style="text-align:center; padding:18px;">扫描中，正在逐个打开环境读取订单…</td></tr>';
     asProgress({progressTotal:serials.length, progressCompleted:0, unit:'个环境'});

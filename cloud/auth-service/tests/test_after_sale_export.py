@@ -203,3 +203,27 @@ def test_claim_export_keeps_failure_reason() -> None:
     assert sheet.cell(row=2, column=11).value == "该订单已无可申请售后的包裹"
     assert sheet.cell(row=3, column=9).value == "失败 · 未登录"
     assert sheet.cell(row=3, column=11).value == "登录态失效"
+
+
+def test_scan_export_preserves_order_numbers_status_and_literal_text():
+    from xynigo_auth.after_sale_export import build_after_sale_scan_export, SCAN_HEADERS
+    rows = [dict(environmentSerial="0012", storeName="=1+1", orderNo="0001234567890123456789",
+                 trackingNo="001234567890123456789", status="ok", claimable=True,
+                 amount="0.00", packageCount=2, errorSummary="=HYPERLINK(1)"),
+            dict(environmentSerial="0013", orderNo="ORDER2", status="empty", claimable=False),
+            dict(environmentSerial="0014", status="fail", errorSummary="读取失败")]
+    data, filename, mime = build_after_sale_scan_export(rows)
+    sheet = load_workbook(BytesIO(data)).active
+    assert tuple(c.value for c in sheet[1]) == SCAN_HEADERS
+    assert sheet['A2'].value == '0012'
+    assert sheet['C2'].value == '0001234567890123456789'
+    assert sheet['I2'].value == '001234567890123456789'
+    assert sheet['B2'].value == '=1+1' and sheet['B2'].data_type == 's'
+    assert sheet['K2'].data_type == 's'
+    assert sheet['G2'].value == 0 and sheet['G2'].data_type == 'n'
+    assert sheet['H2'].value == 2
+    assert [sheet.cell(i, 10).value for i in range(2, 5)] == ['可申请', '暂不可申请', '失败']
+    assert sheet.freeze_panes == 'A2' and sheet.auto_filter.ref == 'A1:K4'
+    assert filename.endswith('.xlsx') and mime == MIME_XLSX
+    empty, _, _ = build_after_sale_scan_export([])
+    assert load_workbook(BytesIO(empty)).active.max_row == 1

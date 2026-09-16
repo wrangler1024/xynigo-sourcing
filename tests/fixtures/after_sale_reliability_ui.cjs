@@ -10,7 +10,7 @@ const ctx=vm.createContext({AS_STATE:state,AS_TYPES:[], $:node,crypto:require('n
  asSetPhase:(title,text)=>{node('asPhaseTitle').textContent=title;},asSaveList:()=>{},asSerials:()=>['ENV'],
  asRenderClaimRows:()=>{},asRenderTrackRows:()=>{},asRenderScanRows:()=>{},asProgress:()=>{},asPoll:()=>{},asSyncRetryButton:()=>{},
  asRunIdOf:d=>d.runId,toast:()=>{},console});
-for(const name of ['asCreateTask','asWriteEntryReady','asScan','asTrack','asSubmitItems','asOrderedRows','asTrackItemsFromRows','asParseManualBills','asTrackManual']){
+for(const name of ['asSyncScanExportButton','asCreateTask','asWriteEntryReady','asScan','asTrack','asSubmitItems','asOrderedRows','asTrackItemsFromRows','asParseManualBills','asTrackManual']){
  const m=new RegExp('(?:async )?function '+name+'\\([^]*?\\n}').exec(html);assert.ok(m,name);vm.runInContext(m[0],ctx);
 }
 for(const id of ['asStop','asClearResult']){const a=html.indexOf("$('"+id+"').onclick =");vm.runInContext(html.slice(a,html.indexOf('\n};',a)+3),ctx);}
@@ -40,5 +40,21 @@ const run=code=>vm.runInContext(code,ctx);
   response={data:{status,rows:[],failedCount:0,successCount:0}};await run('asPoll()');
   assert.match(node('asPhaseTitle').textContent, /已停止|失败|待核对/);
  }
+ // Export captures the task at click time and stays locked during polling.
+ vm.runInContext(/async function asExportScan\([^]*?\n}/.exec(html)[0],ctx);
+ state.scanTaskId='SCAN';state.rows=[{orderNo:'ORDER'}];
+ run('asSyncScanExportButton()');assert.equal(node('asScanExport').disabled,false);
+ let releaseExport;let exportPath='';
+ ctx.fetch=async path=>{exportPath=path;await new Promise(r=>releaseExport=r);throw Error('network');};
+ node('asScanExport').textContent='导出清单 Excel';
+ const downloading=run('asExportScan()');
+ state.scanTaskId='NEXT';state.rows=[];
+ run('asSyncScanExportButton()');assert.equal(node('asScanExport').disabled,true);
+ releaseExport();await downloading;
+ assert.equal(exportPath,'/v1/after-sale/scan/SCAN/export');
+ assert.equal(node('asScanExport').disabled,true);
+ assert.equal(node('asScanExport').textContent,'导出清单 Excel');
+ state.rows=[{orderNo:'NEXT'}];run('asSyncScanExportButton()');
+ assert.equal(node('asScanExport').disabled,false);
  console.log('task lifecycle, idempotency, package fan-out and validation PASS');
 })().catch(e=>{console.error(e);process.exitCode=1;});

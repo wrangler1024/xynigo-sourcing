@@ -200,6 +200,17 @@ def test_after_sale_scan_progress_and_terminal_summary(tmp_path) -> None:
         assert len(mid["summary"]["rows"]) == 2
         assert mid["summary"]["claimableCount"] == 1
 
+        exported = web_client.get(f"/v1/after-sale/scan/{task_id}/export")
+        assert exported.status_code == 200, exported.text
+        assert exported.headers["x-xynigo-row-count"] == "2"
+        assert "no-store" in exported.headers["cache-control"]
+        sheet = load_workbook(BytesIO(exported.content)).active
+        assert [sheet.cell(i, 1).value for i in (2, 3)] == ["4902", "4901"]
+        assert [sheet.cell(i, 10).value for i in (2, 3)] == ["可申请", "无订单"]
+        assert web_client.get(f"/v1/after-sale/scan/{task_id}").json()["data"]["status"] == "running"
+        assert web_client.get(f"/v1/after-sale/scan/{uuid.uuid4()}/export").status_code == 404
+        assert device_client.get(f"/v1/after-sale/scan/{task_id}/export").status_code == 401
+
         finish = device_client.post(
             f"/v1/executor-channel/tasks/{task_id}/finish",
             json={

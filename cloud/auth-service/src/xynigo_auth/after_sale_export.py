@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""采购售后的两条导出：④ 退款跟踪、③ 提交结果（批次）。
+"""采购售后导出：② 可申请清单、③ 提交结果（批次）、④ 退款跟踪。
 
 列与工作台表格一一对应，运营可直接用 Excel 筛选：
 - 退款跟踪＝环境序号/订单号/商品图/退款单号/退款信用卡/退款金额/阶段/剩余倒计时/最近检查/备注
@@ -10,6 +10,7 @@
 空值统一留空单元格（不写「—」占位符），Excel 里能直接筛选求和。
 """
 import io
+from decimal import Decimal, InvalidOperation
 from datetime import datetime, timezone
 
 from openpyxl import Workbook
@@ -99,7 +100,7 @@ def _claim_values(row):
     ]
 
 
-def _build_workbook(sheet_title, headers, widths, values):
+def _build_workbook(sheet_title, headers, widths, values, *, literal_strings=False):
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = sheet_title
@@ -113,7 +114,9 @@ def _build_workbook(sheet_title, headers, widths, values):
         )
     for index, row_values in enumerate(values, start=2):
         for column, value in enumerate(row_values, start=1):
-            sheet.cell(row=index, column=column, value=value)
+            cell = sheet.cell(row=index, column=column, value=value)
+            if literal_strings and isinstance(value, str):
+                cell.data_type = "s"
     sheet.freeze_panes = "A2"
     sheet.sheet_view.showGridLines = False
     sheet.auto_filter.ref = (
@@ -144,3 +147,52 @@ def build_after_sale_claim_export(rows):
         [_claim_values(row) for row in rows or []],
     )
     return content, f"售后提交结果_{_stamp()}.xlsx", MIME_XLSX
+
+
+SCAN_HEADERS = (
+    "环境序号", "买家号环境", "订单号", "商品图", "售后类型", "送达时间",
+    "金额（MXN）", "可退包裹", "物流号", "状态", "备注",
+)
+SCAN_STATUS_LABELS = {
+    "ok": "已扫描", "empty": "无订单", "skip": "暂不可申请",
+    "blocked": "不可申请", "fail": "失败", "login": "未登录",
+    "inuse": "环境占用", "stopped": "已停止", "queued": "排队中",
+    "running": "扫描中",
+}
+
+
+def _scan_status(row):
+    status = str(row.get("status") or "")
+    if row.get("orderNo"):
+        if status in {"skip", "empty"}:
+            return "暂不可申请"
+        if status == "ok":
+            return "可申请" if row.get("claimable") else "不可申请"
+    return SCAN_STATUS_LABELS.get(status, status)
+
+
+def _scan_number(value):
+    if value is None or value == "":
+        return ""
+    try:
+        number = Decimal(str(value))
+        return number if number.is_finite() else str(value)
+    except InvalidOperation:
+        return str(value)
+
+
+def build_after_sale_scan_export(rows):
+    """导出当前任务全部扫描行，保持快照顺序，不按勾选筛选、不触发扫描。"""
+    values = [[
+        str(row.get("environmentSerial") or ""), row.get("storeName") or "",
+        str(row.get("orderNo") or ""), row.get("goodsImg") or "",
+        AFTER_SALE_TYPE_LABEL if row.get("orderNo") else "",
+        row.get("deliveredAt") or "", _scan_number(row.get("amount")),
+        _scan_number(row.get("packageCount")), str(row.get("trackingNo") or ""),
+        _scan_status(row), row.get("errorSummary") or "",
+    ] for row in rows or []]
+    content = _build_workbook(
+        "可申请清单", SCAN_HEADERS, (12, 28, 24, 34, 12, 24, 16, 12, 28, 18, 50),
+        values, literal_strings=True,
+    )
+    return content, f"售后可申请清单_{_stamp()}.xlsx", MIME_XLSX
