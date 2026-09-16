@@ -5797,7 +5797,11 @@ function asClaimRowHtml(row) {
         <td style="font-weight:700; color:#078487; white-space:nowrap">${esc(AFTER_SALE_TYPE)}</td>
         <td class="sub-text">${esc(row.deliveredAt || '—')}</td>
         <td class="sub-text">${(row.refunds?.length ? row.refunds : [row]).map(r => esc(r.refundBillId || '—')).join('<br>')}</td>
-        <td class="sub-text">${(row.refunds?.length ? row.refunds : [row]).map(r => esc(r.refundPath || (r.refundBillId ? '未取得' : '—'))).join('<br>')}</td>
+        <td class="sub-text">${(row.refunds?.length ? row.refunds : [row]).map(r => {
+          const path = String(r.refundPath || '').split(/\s*\/\s*/)
+            .map(label => label.trim()).filter(label => label && label !== '其他退款渠道（名称未取得）').join(' / ');
+          return esc(path || (r.refundBillId ? '未取得' : '—'));
+        }).join('<br>')}</td>
         <td class="sub-text">${(row.refunds?.length ? row.refunds : [row]).map(r => esc(r.refundAccount || (r.refundBillId ? '未取得' : '—'))).join('<br>')}</td>
         <td>${asClaimPill(row)}${row.status !== 'ok' && row.refunds?.length ? `<div class="hint">平台：${esc([...new Set(row.refunds.map(r=>r.phaseLabel).filter(Boolean))].join(' / ') || '阶段待核对')} · ${row.refunds.length} 笔退款记录</div>` : ''}</td>
         <td class="sub-text">${esc(row.operationCompletedAt ? new Date(row.operationCompletedAt).toLocaleString('zh-CN', {hour12:false,timeZoneName:'shortOffset'}) : '—')}</td>
