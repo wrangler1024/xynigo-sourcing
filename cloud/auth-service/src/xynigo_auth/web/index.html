@@ -2295,6 +2295,11 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
           <button class="btn primary" id="asTrack">刷新退款进度</button>
         </div>
       </div>
+      <div class="as-bar" style="padding: 0 19px; margin-bottom:10px;">
+        <input type="search" id="asTrackBills" placeholder="直接指定要回访的单：环境序号 订单号 退款单号（多组用分号隔开）">
+        <button class="btn sm" id="asTrackManual">回访指定单</button>
+        <span class="hint">只读；不依赖提交记录，可用于回访历史订单</span>
+      </div>
       <div style="padding: 0 19px;">
         <div class="table-scroll scroll-20">
           <table id="asTrackTable">
@@ -5244,16 +5249,40 @@ function asRenderTrackRows(rows) {
       <td class="hint">${esc(row.note || row.errorSummary || '—')}</td></tr>`;
   }).join('');
 }
-async function asTrack() {
-  if (AS_STATE.running) return;
-  // 回访对象＝③ 里已提交成功（有退款单号）的行；同一次会话内数据就在手上
-  const items = (AS_STATE.claimRows || [])
-    .filter(r => r.refundBillId && r.orderNo)
-    .map(r => ({ environmentSerial: r.environmentSerial || '',
-                 orderNo: r.orderNo, refundBillId: r.refundBillId,
-                 storeName: r.storeName || '' }));
+// 手工指定的回访单：`环境序号 订单号 退款单号` 一组，多组用分号/换行隔开。
+// 之所以要这个入口：④ 原来只认「本页 ③ 里提交过的单」，于是同事换个浏览器/换台机就
+// 看不到那批单、也回访不了别人提交的单——回访对象不该被提交流程绑死。
+function asParseManualBills(text) {
+  return String(text || '').split(/[;\n]+/).map(g => g.trim()).filter(Boolean)
+    .map(group => {
+      const parts = group.split(/[\s,，]+/).filter(Boolean);
+      if (parts.length < 3) return null;
+      return { environmentSerial: parts[0], orderNo: parts[1],
+               refundBillId: parts[2], storeName: '' };
+    }).filter(Boolean);
+}
+async function asTrackManual() {
+  const items = asParseManualBills($('asTrackBills').value);
   if (!items.length) {
-    asSetPhase('无可回访的退款单', '请先提交售后（③ 里出现退款单号后即可回访）。', false);
+    asSetPhase('没有可回访的单',
+      '格式：环境序号 订单号 退款单号（多组用分号隔开）；例如 4904 GSH1RV13Y00NQUV 2390783198795777', false);
+    return;
+  }
+  await asTrack(items);
+}
+async function asTrack(explicitItems) {
+  if (AS_STATE.running) return;
+  // 回访对象：优先用调用方显式给的（④ 的手工入口）；否则取 ③ 里已提交成功（有退款单号）的行
+  const items = (Array.isArray(explicitItems) && explicitItems.length)
+    ? explicitItems
+    : (AS_STATE.claimRows || [])
+      .filter(r => r.refundBillId && r.orderNo)
+      .map(r => ({ environmentSerial: r.environmentSerial || '',
+                   orderNo: r.orderNo, refundBillId: r.refundBillId,
+                   storeName: r.storeName || '' }));
+  if (!items.length) {
+    asSetPhase('无可回访的退款单',
+      '可先在 ④ 上方直接指定要回访的单，或先提交售后（③ 里出现退款单号后即可回访）。', false);
     return;
   }
   let executor;
@@ -5285,7 +5314,8 @@ async function asTrack() {
     asSetPhase('发起失败', String(e.message || e), false);
   }
 }
-$('asTrack').onclick = asTrack;
+$('asTrack').onclick = () => asTrack();
+$('asTrackManual').onclick = asTrackManual;
 
 function asSyncSelection() {
   const pickable = AS_STATE.rows.filter(r => r.orderNo && r.claimable

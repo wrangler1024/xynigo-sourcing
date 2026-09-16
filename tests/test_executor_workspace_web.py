@@ -891,6 +891,21 @@ class AfterSaleClaimWiringTests(unittest.TestCase):
         self.assertIn("'/v1/after-sale/track/'", html)
         self.assertIn("const AS_TL_ORDER = ['submitted', 'reviewing', 'processing', 'refunded']", html)
 
+    def test_track_accepts_manually_specified_bills(self):
+        """④ 必须能回访「指定单」——不依赖提交记录。
+
+        原因：回访对象若只认「本页 ③ 提交过的单」，同事换浏览器/换台机就回访不了，
+        别人提交的单也回访不了。手工入口是这条链路的解耦点。
+        """
+        html = self._read()
+        self.assertIn('id="asTrackBills"', html)
+        self.assertIn('id="asTrackManual"', html)
+        self.assertIn('function asParseManualBills', html)
+        self.assertIn('function asTrackManual', html)
+        # asTrack 必须接受显式 items（手工入口靠它），并保留从 ③ 推导的默认路径
+        self.assertIn('async function asTrack(explicitItems)', html)
+        self.assertIn("Array.isArray(explicitItems) && explicitItems.length", html)
+
     def test_stop_routes_exist_for_both_phases(self):
         html = self._read()
         self.assertIn("/cancel', { method: 'POST' })", html)
