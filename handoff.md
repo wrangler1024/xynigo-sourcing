@@ -18,7 +18,7 @@ Codex 熟悉任务提示词：**`docs/20260916_交接_售后模块熟悉任务_C
 
 | 项 | 状态 | 位置 |
 |---|---|---|
-| ① 历史列表补「环境数」列 | **已完成**（本地全量 1083 passed / 5 skipped） | 分支 `codex/after-sale-history-env-count` @ `5dce475`，已推 origin |
+| ① 历史列表补「环境数」列 | **已完成**（本地全量 1083 passed / 5 skipped；云端全量 314 passed） | 分支 `codex/after-sale-history-env-count` @ `5dce475`，已推 origin |
 | ② 指定单「一行多组」拆组 | **未开始** | —— |
 | ③ 打磨项：历史弹层 `Escape` / 状态条窄屏实测 | **未开始** | —— |
 | ④ 执行器 0.18.1 发版 | **未开始**（只做了流程调研，结论见模块文档 §12.3） | 分发资产与发 Release **待 Jeff 授权** |
