@@ -30,12 +30,12 @@ PHASE_LABELS = {
 
 CLAIM_HEADERS = (
     "环境序号", "订单号", "商品图", "售后类型", "送达时间", "退款单号",
-    "退款路径", "退款信用卡", "状态", "操作时间", "备注",
+    "退款路径", "退款信用卡", "状态", "操作时间", "备注", "订单件数", "商品明细",
 )
-CLAIM_COLUMN_WIDTHS = (12, 22, 34, 12, 20, 22, 26, 16, 20, 20, 32)
+CLAIM_COLUMN_WIDTHS = (12, 22, 34, 12, 20, 22, 26, 16, 20, 20, 32, 12, 60)
 # 与 Web AS_CLAIM_PILL 同一套中文文案：导出与页面不能各说各话
 CLAIM_STATUS_LABELS = {
-    "ok": "已受理 · 退款审核中", "blocked": "不可申请", "uncertain": "待核对 · 请勿补提", "verifying": "提交核验中",
+    "ok": "已受理", "blocked": "不可申请", "uncertain": "待核对 · 请勿补提", "verifying": "提交核验中",
     "skip": "跳过", "empty": "无订单", "fail": "失败",
     "login": "失败 · 未登录", "inuse": "失败 · 环境占用",
     "stopped": "已停止", "queued": "等待", "running": "提交中",
@@ -63,6 +63,17 @@ def _phase_text(row):
     phase = str(row.get("phase") or "").strip()
     label = str(row.get("phaseLabel") or "").strip()
     return label or PHASE_LABELS.get(phase, phase)
+
+
+def _operation_time_text(value):
+    """Keep seconds and an explicit offset; never export a misleading naive time."""
+    if not value:
+        return ""
+    try:
+        moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    return moment.isoformat(sep=" ", timespec="seconds") if moment.tzinfo else ""
 
 
 def _row_values(row):
@@ -93,26 +104,36 @@ def _claim_values(row):
     if legacy_unknown:
         status = "uncertain"
     label = CLAIM_STATUS_LABELS.get(status, status)
+    phases = list(dict.fromkeys(str(r.get("phaseLabel") or "") for r in refunds if r.get("phaseLabel")))
+    if phases:
+        label = ("已受理" if status == "ok" else label) + " · 平台：" + " / ".join(phases)
+    for key, prefix in (("submissionError", "提交响应"), ("recoveryError", "补查")):
+        if row.get(key):
+            note += "\n" + prefix + "：" + row[key]
     if status == "blocked" and any(r.get("source") == "existing" for r in refunds):
         label = "不可申请 · 已有退款申请"
     if status == "uncertain" and "不可直接补提" not in note and "请勿" not in note:
         note += "；提交结果待核对，请勿直接补提"
-    evidence = [" · ".join(str(r.get(k) or "") for k in ("refundBillId", "phaseLabel", "applicationTimeText", "timeZone", "source"))
+    evidence = [" · ".join(str(r.get(k) or "") for k in ("refundBillId", "phaseLabel", "applicationTimeText", "timeZone", "source", "detailsNote"))
                 for r in row.get("refunds") or [] if r.get("source")]
     if evidence:
         note += "\n" + "\n".join(evidence)
     return [
         row.get("environmentSerial") or "",
         row.get("orderNo") or "",
-        row.get("goodsImg") or "",
+        "\n".join(row.get("goodsImages") or ([row["goodsImg"]] if row.get("goodsImg") else [])),
         AFTER_SALE_TYPE_LABEL,
         row.get("deliveredAt") or "",
         "\n".join(str(r.get("refundBillId") or "") for r in refunds),
         "\n".join(str(r.get("refundPath") or "") for r in refunds),
         "\n".join(str(r.get("refundAccount") or "") for r in refunds),
         label,
-        _timestamp_text(row.get("submittedAt")),
+        _operation_time_text(row.get("operationCompletedAt")),
         note,
+        row.get("itemCount"),
+        "\n".join(" · ".join([str(p.get("name") or "商品名称未取得"), str(p.get("specification") or "规格待核对"),
+                              str(p["quantity"])+" 件" if p.get("quantity") is not None else "数量待核对"])
+                    for p in row.get("goodsItems") or []),
     ]
 
 

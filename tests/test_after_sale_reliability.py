@@ -39,6 +39,8 @@ def test_post_acceptance_read_failure_keeps_refund_receipt(monkeypatch):
     def error(*args): raise RuntimeError('synthetic connection failure')
     c._pre_info = error
     monkeypatch.setattr(m.time, 'sleep', lambda _: None)
+    monkeypatch.setattr(m, 'install_observer', lambda *a: True)
+    monkeypatch.setattr(m, 'read_observer', lambda *a: {'packageNo':'P1','refundBillId':'123456789','source':'submit_response'})
     page = Mock();page.wait_for.return_value = True
     page.url = 'https://mx.shein.com/orders/refundLabel/ORDER?refund_bill_id_list=ORDER_123456789'
     def evaluate(code):

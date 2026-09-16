@@ -80,8 +80,9 @@ def test_missing_receipt_cannot_become_ordinary_failure_after_click(monkeypatch)
     c = claimer(); c._click = lambda *args: True
     c._select_refund_path = lambda _: (True, '')
     monkeypatch.setattr(module.time, 'sleep', lambda _: None)
+    monkeypatch.setattr(module, 'install_observer', lambda *a: True)
     page = Mock(); page.url = 'https://www.shein.com.mx/orders/refundApplication?billno=ORDER'
-    page.wait_for.side_effect = lambda js, **kw: js != module._JS_TO_REFUND_LABEL
+    page.wait_for.side_effect = lambda js, **kw: js != module._JS_SUBMIT_SETTLED
     def evaluate(js):
         if js == module._JS_PICK_POINTS: return [{'x':1,'y':1}]
         if js == module._JS_CHECKED_PACKAGES: return ['PKG']

@@ -40,7 +40,7 @@ def test_uncertain_receipts_survive_final_history_export_and_block_direct_replay
             assert record['applicationTimeText'] == '7 Sep 2026 12:00:00'
         export = web.get(f'/v1/operation-runs/after-sale-claim/history/{run}/export')
         sheet = load_workbook(io.BytesIO(export.content)).active
-        assert sheet.cell(2,9).value == '待核对 · 请勿补提'
+        assert sheet.cell(2,9).value == '待核对 · 请勿补提 · 平台：审核中'
         assert 'America/Mexico_City' in sheet.cell(2,11).value
         # Same idempotency key still reads the original run, without creating writes.
         same = web.post('/v1/operation-runs/after-sale-claim', headers=CSRF, json=request)

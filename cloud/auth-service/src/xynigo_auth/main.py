@@ -5616,7 +5616,8 @@ def create_app(
                     "browserMode": body.browserMode,
                     "concurrency": body.concurrency,
                     "items": [
-                        item.model_dump(mode="json") for item in body.items
+                        item.model_dump(mode="json", exclude={"goodsImages", "goodsItems", "itemCount"})
+                        for item in body.items
                     ],
                 },
                 idempotency_key=f"operation:{body.idempotencyKey}",

@@ -71,6 +71,14 @@ def _payload_hash(
     ),
 ) -> str:
     payload = body.model_dump(mode="json")
+    if isinstance(body, AfterSaleClaimRunCreateBody):
+        # Preserve hashes of requests created before optional product facts.
+        for item in payload.get("items", []):
+            for key in ("goodsImages", "goodsItems"):
+                if not item.get(key):
+                    item.pop(key, None)
+            if item.get("itemCount") is None:
+                item.pop("itemCount", None)
     # 重提来源只用于展示（「重提自哪一批」），不参与幂等：它不影响实际提交内容，
     # 若进了哈希，同一批重提时补填/改填来源会被判成「同幂等键下不同请求」而 409。
     payload.pop("retryFromRunId", None)
@@ -477,6 +485,9 @@ class OperationRunService:
                 # 展示字段也留在批次请求摘要里：批次详情、导出、排查都用得上
                 "deliveredAt": item.deliveredAt,
                 "goodsImg": item.goodsImg,
+                "goodsImages": item.goodsImages,
+                "goodsItems": [product.model_dump(mode="json") for product in item.goodsItems],
+                "itemCount": item.itemCount,
             }
             for item in body.items
         ]
@@ -3606,6 +3617,13 @@ def after_sale_claim_snapshot(session, run: AfterSaleClaimRun) -> dict:
             "refundAccount": row.refund_account or "",
             "deliveredAt": row.delivered_at or "",
             "goodsImg": row.goods_img or "",
+            "goodsImages": row.goods_images or [],
+            "goodsItems": row.goods_items or [],
+            "itemCount": row.item_count,
+            "operationCompletedAt": (row.operation_completed_at.isoformat()
+                                     if row.operation_completed_at else ""),
+            "submissionError": row.submission_error or "",
+            "recoveryError": row.recovery_error or "",
             "durationSeconds": row.duration_seconds,
             "submittedAt": (row.submitted_at.isoformat()
                             if row.submitted_at else ""),

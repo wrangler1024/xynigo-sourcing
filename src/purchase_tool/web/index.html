@@ -4376,6 +4376,7 @@ function cloudApiError(payload, status) {
     executor_offline:'所选本地执行器当前离线，请先启动执行器',
     executor_auto_site_required:'所选执行器尚不支持按环境自动识别站点，请更新桌面执行器后重试',
     executor_after_sale_reliability_upgrade_required:'请升级执行器以支持完整退款记录和可靠回传',
+    executor_after_sale_evidence_upgrade_required:'请升级执行器以支持提交回执核验、完整商品信息和操作完成时间',
     executor_after_sale_receipt_upgrade_required:'请升级执行器以支持退款凭证补查和重复提交保护',
     after_sale_receipt_reconciliation_required:'订单有待核对的提交结果，请先核对已有退款记录，不能直接补提',
     executor_after_sale_runtime_upgrade_required:'请先升级本地执行器，以支持售后无头模式和环境并发设置',
@@ -5269,7 +5270,7 @@ document.querySelectorAll('[data-as-concurrency]').forEach(button => {
 async function asRequireRuntimeControls(executor) {
   const required = ['after.sale.runtime-controls.v1'];
   if (AS_STATE.mode !== 'scan') required.push('after.sale.reliable-results.v1');
-  if (AS_STATE.mode === 'claim') required.push('after.sale.receipt-recovery.v1');
+  if (AS_STATE.mode === 'claim') required.push('after.sale.receipt-recovery.v1', 'after.sale.claim-evidence.v1');
   // An upgraded device can still have old capabilities in this page's cache.
   // Refresh the same device before reporting an upgrade requirement.
   if (required.some(cap => !(executor.capabilities || []).includes(cap))) {
@@ -5288,6 +5289,9 @@ async function asRequireRuntimeControls(executor) {
   }
   if (AS_STATE.mode === 'claim' && !(executor.capabilities || []).includes('after.sale.receipt-recovery.v1')) {
     throw new Error('请升级执行器以支持退款凭证补查和重复提交保护');
+  }
+  if (AS_STATE.mode === 'claim' && !(executor.capabilities || []).includes('after.sale.claim-evidence.v1')) {
+    throw new Error('请升级执行器以支持提交回执核验、完整商品信息和操作完成时间');
   }
   if (!(executor.capabilities || []).includes('after.sale.runtime-controls.v1')) {
     throw new Error('请先升级本地执行器，以支持售后无头模式和环境并发设置');
@@ -5442,7 +5446,7 @@ function asScanPill(row) {
   return `<span class="pill ${entry[0]}">${entry[1]}</span>`;
 }
 const AS_CLAIM_PILL = {
-  ok: ['ok', '已受理 · 退款审核中'], blocked: ['warn', '不可申请'],
+  ok: ['ok', '已受理'], blocked: ['warn', '不可申请'],
   uncertain: ['warn', '待核对 · 请勿补提'], verifying: ['run', '提交核验中'],
   skip: ['warn', '跳过'], empty: ['warn', '无订单'], fail: ['bad', '失败'],
   login: ['bad', '失败 · 未登录'], inuse: ['bad', '失败 · 环境占用'],
@@ -5454,6 +5458,10 @@ function asClaimNeedsReconciliation(row) {
 function asClaimPill(value) {
   const row = typeof value === 'object' ? value : {status:value};
   const status = asClaimNeedsReconciliation(row) ? 'uncertain' : row.status;
+  if (status === 'ok' && row.refunds?.length) {
+    const phases=[...new Set(row.refunds.map(r=>r.phaseLabel).filter(Boolean))];
+    return '<span class="pill ok">已受理'+(phases.length?' · '+esc(phases.join(' / ')):'')+'</span>';
+  }
   if (status === 'blocked' && row.refunds?.some(r=>r.source === 'existing')) return '<span class="pill warn">不可申请 · 已有退款申请</span>';
   const entry = AS_CLAIM_PILL[String(status || '')] || ['warn', status || '—'];
   return `<span class="pill ${entry[0]}">${entry[1]}</span>`;
@@ -5512,7 +5520,7 @@ function asScanGoodsHtml(row) {
 function asOpenGoods(row) {
   const dialog = document.createElement('dialog'); dialog.className = 'as-product-dialog';
   const qty = asItemCount(row);
-  dialog.innerHTML = `<h3>${esc(row.orderNo || '')} · 商品图片</h3><p>订单总件数：${qty === null ? '待核对' : qty+' 件'}；可退包裹：${Number(row.packageCount)||0} 个</p>`
+  dialog.innerHTML = `<h3>${esc(row.orderNo || '')} · 商品图片</h3><p>订单总件数：${qty === null ? '待核对' : qty+' 件'}${Number.isInteger(row.packageCount) ? '；可退包裹：'+row.packageCount+' 个' : ''}</p>`
     + '<p class="hint">按平台订单总件数分类，不按图片张数或包裹数分类。逐商品名称、规格及数量未取得时，不根据图片推测。</p>'
     + ((row.goodsItems || []).length ? row.goodsItems.map(item=>{const url=safeProcurementImageUrl(item.goodsImg);return `<div style="display:flex;gap:12px;align-items:center;padding:10px;border-bottom:1px solid var(--line)">${url?`<img src="${esc(url)}" alt="商品图" style="width:56px;height:70px;object-fit:cover" referrerpolicy="no-referrer">`:''}<div>${esc(item.name || '商品名称未取得')}<div class="hint">${esc(item.specification || '规格待核对')} · ${item.quantity === null || item.quantity === undefined ? '逐项数量待核对' : Number(item.quantity)+' 件'}</div></div></div>`;}).join('') : asGoodsImages(row).map(url=>`<img src="${esc(url)}" alt="订单商品图" style="max-width:140px;max-height:180px;margin:8px" referrerpolicy="no-referrer">`).join(''))
     + '<div><button type="button" class="btn">关闭</button></div>';
@@ -5529,9 +5537,12 @@ $('asResetFilters').onclick=()=>{
   $('asDateFrom').value=''; $('asDateTo').value='';
   ['asItemKind','asEligibility','asDateState'].forEach(id=>$(id).value='all'); asFilterChanged();
 };
-$('asScanRows').addEventListener('click',e=>{
-  const b=e.target.closest('[data-as-goods]'); if (!b) return;
-  const row=AS_STATE.rows.find(r=>r.orderNo===b.dataset.asGoods); if(row) asOpenGoods(row);
+[['asScanRows',()=>AS_STATE.rows],['asClaimRows',()=>AS_STATE.claimRows],
+ ['asHistoryDetailBody',()=>AS_HISTORY.detail?.rows || []]].forEach(([id,rows])=>{
+  $(id).addEventListener('click',e=>{
+    const b=e.target.closest('[data-as-goods]'); if (!b) return;
+    const row=(rows() || []).find(r=>r.orderNo===b.dataset.asGoods); if(row) asOpenGoods(row);
+  });
 });
 function asRenderScanRows(rows) {
   AS_STATE.rows = rows || [];
@@ -5582,14 +5593,14 @@ function asClaimRowHtml(row) {
   return `<tr data-as-claim="${esc(row.orderNo || '')}"${cls}>
         <td class="sub-text">${esc(row.environmentSerial || '')}</td>
         <td class="as-order">${esc(row.orderNo || '')}</td>
-        ${asThumbCell(row.goodsImg)}
+        ${asScanGoodsHtml(row)}
         <td style="font-weight:700; color:#078487; white-space:nowrap">${esc(AFTER_SALE_TYPE)}</td>
         <td class="sub-text">${esc(row.deliveredAt || '—')}</td>
         <td class="sub-text">${(row.refunds?.length ? row.refunds : [row]).map(r => esc(r.refundBillId || '—')).join('<br>')}</td>
-        <td class="sub-text">${(row.refunds?.length ? row.refunds : [row]).map(r => esc(r.refundPath || '—')).join('<br>')}</td>
-        <td class="sub-text">${(row.refunds?.length ? row.refunds : [row]).map(r => esc(r.refundAccount || '—')).join('<br>')}</td>
-        <td>${asClaimPill(row)}${row.status !== 'ok' && row.refunds?.length ? `<div class="hint">已查到 ${row.refunds.length} 笔退款记录</div>` : ''}</td>
-        <td class="sub-text">${esc((row.submittedAt || '').slice(11, 19) || '—')}</td>
+        <td class="sub-text">${(row.refunds?.length ? row.refunds : [row]).map(r => esc(r.refundPath || (r.refundBillId ? '未取得' : '—'))).join('<br>')}</td>
+        <td class="sub-text">${(row.refunds?.length ? row.refunds : [row]).map(r => esc(r.refundAccount || (r.refundBillId ? '未取得' : '—'))).join('<br>')}</td>
+        <td>${asClaimPill(row)}${row.status !== 'ok' && row.refunds?.length ? `<div class="hint">平台：${esc([...new Set(row.refunds.map(r=>r.phaseLabel).filter(Boolean))].join(' / ') || '阶段待核对')} · ${row.refunds.length} 笔退款记录</div>` : ''}</td>
+        <td class="sub-text">${esc(row.operationCompletedAt ? new Date(row.operationCompletedAt).toLocaleString('zh-CN', {hour12:false,timeZoneName:'shortOffset'}) : '—')}</td>
         <td class="hint">${asClaimReasonHtml(row)}</td>
       </tr>`;
 }
@@ -5597,8 +5608,9 @@ function asClaimReasonHtml(row) {
   let note = String(row.errorSummary || row.note || '');
   if (row.status === 'blocked' && /可能已提交过/.test(note)) note = '平台未返回可申请包裹；历史记录未采集具体原因，需回访核对';
   if (asClaimNeedsReconciliation(row) && !/不可直接补提|请勿.*补提/.test(note)) note += '；提交结果待核对，请勿直接补提';
-  const evidence = (row.refunds || []).map(r => [r.refundBillId, r.phaseLabel, r.applicationTimeText, r.timeZone, {existing:'提交前已有记录',recovered:'提交后补查，归属待核对',submit_redirect:'本次提交跳转凭证'}[r.source]].filter(Boolean).map(esc).join(' · ')).join('<br>');
-  return esc(note || '—') + (evidence ? '<details><summary>退款凭证</summary>'+evidence+'</details>' : '');
+  const evidence = (row.refunds || []).map(r => [r.refundBillId, r.phaseLabel, r.applicationTimeText, r.timeZone, r.detailsNote, {existing:'提交前已有记录',recovered:'提交后补查',recovered_verified:'提交后核验已受理',submit_response:'本次提交响应凭证',submit_redirect:'本次提交跳转凭证'}[r.source]].filter(Boolean).map(esc).join(' · ')).join('<br>');
+  const diagnostics=[row.submissionError && '提交响应：'+row.submissionError,row.recoveryError && '补查：'+row.recoveryError].filter(Boolean).map(esc).join('<br>');
+  return esc(note || '—') + (diagnostics ? '<details><summary>执行诊断</summary>'+diagnostics+'</details>' : '') + (evidence ? '<details><summary>退款凭证</summary>'+evidence+'</details>' : '');
 }
 function asRenderClaimRows(rows) {
   AS_STATE.claimRows = rows || [];
@@ -6122,10 +6134,17 @@ function asSelectedItems() {
       packageNo: '',
       deliveredAt: row.deliveredAt || '',
       goodsImg: row.goodsImg || '',
+      goodsImages: row.goodsImages || [],
+      goodsItems: row.goodsItems || [],
+      itemCount: asItemCount(row),
     };
   }).filter(item => item.environmentSerial && item.orderNo);
 }
 async function asCreateTask(path, payload) {
+  if (path === '/v1/operation-runs/after-sale-claim'
+      && new TextEncoder().encode(JSON.stringify(payload)).length > 1500000) {
+    throw new Error('本批商品明细较多，请减少勾选订单后分批提交，商品信息将完整保留');
+  }
   const fingerprint = JSON.stringify([path, payload]);
   AS_STATE.pendingCreates ||= {};
   const key = AS_STATE.pendingCreates[fingerprint] ||= 'as-' + crypto.randomUUID();
@@ -6291,6 +6310,9 @@ function asClaimItemsFromRows(rows) {
       packageNo: '',
       deliveredAt: row.deliveredAt || '',
       goodsImg: row.goodsImg || '',
+      goodsImages: row.goodsImages || [],
+      goodsItems: row.goodsItems || [],
+      itemCount: asItemCount(row),
     }));
 }
 function asSyncRetryButton(rows) {

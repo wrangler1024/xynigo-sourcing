@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 from typing import Annotated, Any, Literal
 import uuid
 
@@ -1120,6 +1121,9 @@ class AfterSaleClaimItem(BaseModel):
     # 送达时间与商品图由 Web 从扫描清单带下来，落库后供结果表展示
     deliveredAt: str = Field(default="", max_length=32)
     goodsImg: str = Field(default="", max_length=300)
+    goodsImages: list[Annotated[str, Field(max_length=300)]] = Field(default_factory=list, max_length=100)
+    goodsItems: list[AfterSaleOrderItem] = Field(default_factory=list, max_length=100)
+    itemCount: int | None = Field(default=None, ge=1, le=100_000)
 
     @field_validator('orderNo', mode='before')
     @classmethod
@@ -1148,6 +1152,8 @@ class AfterSaleClaimRunCreateBody(BaseModel):
         order_numbers = [item.orderNo for item in value]
         if len(order_numbers) != len(set(order_numbers)):
             raise ValueError("同一批次内 orderNo 不能重复")
+        if len(json.dumps([item.model_dump(mode="json") for item in value], ensure_ascii=False).encode()) > 1_500_000:
+            raise ValueError("本批商品明细过多，请减少订单后分批提交")
         return value
 
 
@@ -1164,6 +1170,10 @@ class AfterSalePackageRefund(BaseModel):
     applicationTimeText: str = Field(default="", max_length=64)
     timeZone: str = Field(default="", max_length=64)
     submittedAt: str = Field(default="", max_length=40)
+    detailsNote: str = Field(default="", max_length=200)
+    applicationAt: str = Field(default="", max_length=40)
+    reasonId: str = Field(default="", max_length=32)
+    packageNos: list[Annotated[str, Field(max_length=64)]] = Field(default_factory=list, max_length=100)
 
 
 class AfterSaleClaimProgressRow(BaseModel):
@@ -1189,11 +1199,22 @@ class AfterSaleClaimProgressRow(BaseModel):
     goodsImg: str = Field(default="", max_length=300)
     durationSeconds: int | None = Field(default=None, ge=0, le=86_400_000)
     submittedAt: str | None = Field(default=None, max_length=40)
+    operationCompletedAt: str | None = Field(default=None, max_length=40)
+    submissionError: str = Field(default="", max_length=300)
+    recoveryError: str = Field(default="", max_length=300)
     note: str | None = Field(default=None, max_length=200)
     errorSummary: str | None = Field(default=None, max_length=300)
     screenshotSha256: str | None = Field(default=None, max_length=64)
     refunds: list[AfterSalePackageRefund] = Field(default_factory=list, max_length=100)
     packageCount: int | None = Field(default=None, ge=0, le=100_000)
+
+    @model_validator(mode="after")
+    def validate_operation_completion(self):
+        if self.operationCompletedAt:
+            value = datetime.fromisoformat(self.operationCompletedAt.replace("Z", "+00:00"))
+            if value.tzinfo is None or self.status in ("queued", "running", "verifying"):
+                raise ValueError("operationCompletedAt requires a timezone and a terminal row")
+        return self
 
 
 class AfterSaleClaimScreenshot(BaseModel):

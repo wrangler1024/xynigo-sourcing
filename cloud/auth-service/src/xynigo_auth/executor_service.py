@@ -584,6 +584,9 @@ class ExecutorChannelService:
         if (task_type == "after.sale.claim.v1"
                 and "after.sale.receipt-recovery.v1" not in set(executor.capabilities or [])):
             raise ExecutorServiceError("executor_after_sale_receipt_upgrade_required", status_code=409)
+        if (task_type == "after.sale.claim.v1"
+                and "after.sale.claim-evidence.v1" not in set(executor.capabilities or [])):
+            raise ExecutorServiceError("executor_after_sale_evidence_upgrade_required", status_code=409)
         if task_type not in set(executor.capabilities or []):
             raise ExecutorServiceError("executor_capability_missing", status_code=409)
         if task_type in ENCRYPTED_TASK_TYPES and self.payload_cipher is None:
@@ -2680,6 +2683,9 @@ class ExecutorChannelService:
                 old = refunds.get(refund.refundBillId, {})
                 refunds[refund.refundBillId] = {**old, **{
                     k: v for k, v in refund.model_dump(mode="json").items() if v}}
+                merged = refunds[refund.refundBillId]
+                merged['detailsNote'] = '；'.join(label+'未读取' for key,label in
+                    [('refundPath','退款路径'),('refundAccount','退款账户')] if not merged.get(key))
             row.refunds = list(refunds.values())
             row.status = item.status
             row.package_no = item.packageNo or None
@@ -2695,6 +2701,19 @@ class ExecutorChannelService:
             row.goods_img = (item.goodsImg
                              or str(request_item.get("goodsImg") or "")
                              or None)
+            # Product facts are immutable request metadata, not repeated in every
+            # progress frame. Old clients cannot erase the original scan facts.
+            row.goods_images = request_item.get("goodsImages") or row.goods_images or []
+            row.goods_items = request_item.get("goodsItems") or row.goods_items or []
+            if request_item.get("itemCount") is not None:
+                row.item_count = request_item["itemCount"]
+            completed_at = _after_sale_at(item.operationCompletedAt)
+            if completed_at is not None and row.operation_completed_at is None:
+                row.operation_completed_at = completed_at
+            if item.submissionError:
+                row.submission_error = item.submissionError
+            if item.recoveryError:
+                row.recovery_error = item.recoveryError
             row.duration_seconds = item.durationSeconds
             submitted_at = _after_sale_at(item.submittedAt)
             if submitted_at is not None:

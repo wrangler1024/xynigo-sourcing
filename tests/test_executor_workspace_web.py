@@ -871,7 +871,7 @@ class AfterSaleClaimWiringTests(unittest.TestCase):
         self.assertIn('AS_STATE.claimRows.map(asClaimRowHtml)', html)
         self.assertIn('rows.map(asClaimRowHtml)', html,
                       '历史详情必须复用 ③ 的行模板，不得另写一份（列序会漂）')
-        cells = tpl.count('<td') + tpl.count('${asThumbCell')
+        cells = tpl.count('<td') + tpl.count('${asScanGoodsHtml')
         self.assertEqual(cells, 11, '③ 行模板单元格数与表头不一致（会整列错位）')
         # 只数个数拦不住列序错（曾把状态列留在第 6 位）：这里按表头顺序逐个钉行模板
         # （从第一个 <td 起算，否则会把 tr 上的 data-as-claim 属性计入）
@@ -881,10 +881,10 @@ class AfterSaleClaimWiringTests(unittest.TestCase):
             re.findall(r'<th[^>]*>([^<]+)</th>', claim_block), expected,
             '③ 表头顺序变了就必须同步改行模板与这里')
         cells = tpl[tpl.index('<td'):]
-        markers = ['row.environmentSerial', 'row.orderNo', '${asThumbCell',
+        markers = ['row.environmentSerial', 'row.orderNo', '${asScanGoodsHtml',
                    'AFTER_SALE_TYPE', 'row.deliveredAt', 'r.refundBillId',
                    'r.refundPath', 'r.refundAccount', 'asClaimPill',
-                   'row.submittedAt', 'asClaimReasonHtml']
+                   'row.operationCompletedAt', 'asClaimReasonHtml']
         order = [cells.index(k) for k in markers]
         self.assertEqual(order, sorted(order), '③ 行模板列序与表头不一致（会整列错位）')
         # ④ 的行模板同理（含 timelineCell 自带 td）
@@ -1101,8 +1101,8 @@ class AfterSaleThreeRequirementsWiringTests(unittest.TestCase):
         """三处提交共用同一个建 Run 入口，不得出现第二条提交路径。"""
         html = self._html()
         self.assertEqual(
-            html.count("'/v1/operation-runs/after-sale-claim'"), 1,
-            '建 Run 的 URL 只应出现一次（asSubmitItems）')
+            html.count("asCreateTask('/v1/operation-runs/after-sale-claim',"), 1,
+            '建 Run 的请求只应出现一次（asSubmitItems）')
         self.assertIn('async function asSubmitItems(', html)
         for caller in ('async function asSubmit()',
                        'async function asRetryFailedClaims(',
@@ -1368,7 +1368,7 @@ class WebCloudContractAlignmentTests(unittest.TestCase):
         self.assertTrue(keys, '未解析到 asSelectedItems 的键')
         self.assertFalse(keys - fields,
                          f'Web 发了契约没定义的键：{sorted(keys - fields)}')
-        for required in ('environmentSerial', 'orderNo', 'deliveredAt', 'goodsImg'):
+        for required in ('environmentSerial', 'orderNo', 'deliveredAt', 'goodsImg', 'goodsImages', 'goodsItems', 'itemCount'):
             self.assertIn(required, keys)
 
     def test_web_reads_only_contracted_track_row_fields(self):

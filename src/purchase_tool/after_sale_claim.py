@@ -47,7 +47,8 @@ from datetime import datetime, timezone
 from .cdp import CdpClient, CdpError
 from .redaction import scrub_text
 from .after_sale_display import order_item_summary, delivery_summary
-from .after_sale_receipts import refund_bill_id_from_url, read_refund_receipts, receipt_reason
+from .after_sale_receipts import refund_bill_id_from_url, read_refund_receipts, read_current_receipt, receipt_reason
+from .after_sale_submit_evidence import install_observer, read_observer, REMOVE_OBSERVER
 from .after_sale_order_detail import read_order_detail_facts
 
 ORIGIN = 'https://www.shein.com.mx'
@@ -343,6 +344,8 @@ def classify_track_phase(timeline):
 
 _JS_TO_REFUND_LABEL = (
     '(() => location.href.indexOf("' + REFUND_LABEL_MARK + '") >= 0)()')
+_JS_SUBMIT_SETTLED = ('(' + _JS_TO_REFUND_LABEL
+                      + ') || !!window.__xynigoRefundAttempt?.response?.accepted')
 
 
 def _norm_key(text):
@@ -494,6 +497,8 @@ class AfterSaleClaimer(object):
                 # 送达时间与商品图来自扫描阶段，随勾选一起带下来
                 'deliveredAt': str(item.get('deliveredAt') or '').strip()[:32],
                 'goodsImg': str(item.get('goodsImg') or '').strip()[:300],
+                **{key: value for key, value in order_item_summary(item).items()
+                   if key in ('goodsImages', 'goodsItems', 'itemCount')},
             })
         return self._start('claim', cleaned, browser_mode, headless, concurrency)
 
@@ -811,6 +816,9 @@ class AfterSaleClaimer(object):
                     'errorSummary': None,
                     'screenshotSha256': None,
                     'screenshotStatus': '',
+                    'goodsImg': item.get('goodsImg') or '',
+                    'deliveredAt': item.get('deliveredAt') or '',
+                    **{key: item.get(key) for key in ('goodsImages', 'goodsItems', 'itemCount')},
                 }
         # 同环境的多单合并到一次环境打开里跑完，避免反复开关环境。
         grouped = {}
@@ -828,6 +836,8 @@ class AfterSaleClaimer(object):
                     row.update(status='uncertain', errorSummary='提交核验未完成，请先核对退款记录，不可直接补提')
                 if row and row.get('status') in CLAIM_RUNNING_STATES:
                     row['status'] = 'stopped'
+                if row and row.get('status') not in CLAIM_RUNNING_STATES:
+                    row.setdefault('operationCompletedAt', datetime.now(timezone.utc).isoformat())
 
     def _run_track(self, items, headless):
         """按环境分组限流回访；同环境单与单之间串行、轻停顿。"""
@@ -981,7 +991,10 @@ class AfterSaleClaimer(object):
                 finally:
                     row = self._claim_rows.get(item['orderNo'], {})
                     if row.get('_startedAt'):
-                        self._publish_claim(item['orderNo'], {'durationSeconds': int(time.time() - row['_startedAt'])})
+                        self._publish_claim(item['orderNo'], {
+                            'durationSeconds': int(time.time() - row['_startedAt']),
+                            'operationCompletedAt': row.get('operationCompletedAt') or datetime.now(timezone.utc).isoformat(),
+                        })
         finally:
             if opened_by_me:
                 self._stop_env(env, serial)
@@ -1004,6 +1017,7 @@ class AfterSaleClaimer(object):
         # 已经过期（别人先提交了），这里是提交前的最后一道幂等闸门。
         info = self._pre_info(page, order_no)
         eligible = info.get('eligible') or []
+        self._publish_claim(order_no, {'_targetPackages': [p['packageNo'] for p in eligible]})
         if not eligible:
             records, error = self._recover_receipts(page, order_no, 'existing')
             explanation = ('已存在退款申请：' + receipt_reason(records)) if records else (
@@ -1030,7 +1044,15 @@ class AfterSaleClaimer(object):
             self._record_refund(order_no, ok)
             submitted.append(ok)
             if ok.get('verificationError'):
-                self._fail_claim(order_no, 'uncertain', ok['verificationError'] + '；请先核对退款记录，不可直接补提', page)
+                self._publish_claim(order_no, {'recoveryError': ok['verificationError'][:300]})
+                row = self._claim_rows.get(order_no, {})
+                covered = {r.get('packageNo') for r in row.get('refunds', [])
+                           if r.get('source') in ('submit_response', 'submit_redirect', 'recovered_verified')}
+                if set(row.get('_targetPackages') or []).issubset(covered):
+                    self._publish_claim(order_no, {'note': '平台已确认目标包裹受理；后续读取诊断见详情'})
+                    leftover = []
+                    break
+                self._uncertain_claim(page, order_no, ok['verificationError'])
                 return
             remaining = (ok.get('remaining') or [])
             if not remaining:
@@ -1043,20 +1065,28 @@ class AfterSaleClaimer(object):
             if not page.wait_for(_JS_APPLY_READY, timeout=25):
                 break
         last = submitted[-1] if submitted else {}
+        current = self._claim_rows.get(order_no, {})
+        covered = {r.get('packageNo') for r in current.get('refunds', [])
+                   if r.get('source') in ('submit_response', 'submit_redirect', 'recovered_verified')}
+        if not set(current.get('_targetPackages') or []).issubset(covered):
+            self._uncertain_claim(page, order_no, '本轮仍有目标包裹缺少受理凭证')
+            return
         with self._lock:
             row = self._claim_rows.get(order_no) or {}
             row.update({
                 'status': 'fail' if leftover else 'ok',
                 'packageNo': last.get('packageNo') or '',
                 'refundBillId': last.get('refundBillId') or '',
-                'refundPath': REFUND_PATH_LABEL,
+                'refundPath': last.get('refundPath') or REFUND_PATH_LABEL,
                 'deliveredAt': str(item.get('deliveredAt') or '')[:32],
                 'goodsImg': str(item.get('goodsImg') or '')[:300],
                 'refundAccount': last.get('refundAccount') or '',
                 'packageCount': len(submitted),
                 'reasonText': reason[:120],
                 'note': ('仍有 %d 个可退包裹未提交（弹窗单选，需再次执行）'
-                         % len(leftover)) if leftover else '',
+                         % len(leftover)) if leftover else (
+                             '平台已受理本轮目标包裹；后续读取诊断见详情' if row.get('recoveryError')
+                             else '平台已受理本轮目标包裹，退款进度见凭证'),
                 'submittedAt': datetime.now(timezone.utc).isoformat(),
                 'durationSeconds': int(time.time() - started),
                 'errorSummary': None,
@@ -1105,26 +1135,60 @@ class AfterSaleClaimer(object):
         if not page.wait_for(_JS_PRESENTAR_ENABLED, timeout=20):
             return {'ok': False, 'reason': 'Presentar 按钮未解禁',
                     'packageNo': package_no}
+        if not install_observer(page, order_no, package_no):
+            return {'ok': False, 'reason': '提交回执监听未就绪，尚未点击提交', 'packageNo': package_no}
         # 从派发点击起，即使 CDP 断开也可能已写入；先回传待核对状态。
         self._publish_claim(order_no, {'_writeAttempted': True, 'status': 'verifying',
+            '_attemptPackage': package_no, '_attemptStartedAt': datetime.now(timezone.utc).isoformat(),
             'note': '提交已开始，正在核对平台退款凭证；请勿重复提交'})
-        page.click_selector('.order-refund-apply__footer button')
-        landed = page.wait_for(_JS_TO_REFUND_LABEL, timeout=45)
-        toast = page.js_evaluate(_JS_TOAST_TEXT) or ''
-        if not landed:
-            return {'ok': False, 'uncertain': True, 'reason': '提交后未跳转成功页：%s'
-                    % (toast or page.url)[:160], 'packageNo': package_no}
-        bill = refund_bill_id_from_url(page.url)
-        if not bill or bill[0] != order_no:
-            return {'ok': False, 'uncertain': True, 'reason': '退款页未取得与当前订单匹配的退款单号',
-                    'packageNo': package_no}
-        result = {'ok': True, 'packageNo': package_no, 'refundBillId': bill[1],
-                  'refundAccount': '', 'source': 'submit_redirect'}
+        try:
+            page.click_selector('.order-refund-apply__footer button')
+            page.wait_for(_JS_SUBMIT_SETTLED, timeout=45)
+            evidence = read_observer(page, order_no, package_no)
+            bill = refund_bill_id_from_url(page.url)
+            details = None
+            if evidence:
+                result = dict(evidence, ok=True, refundAccount='')
+            elif bill and bill[0] == order_no:
+                if not page.wait_for("document.body.innerText.includes('Código del Reembolso')", timeout=20):
+                    return {'ok': False, 'uncertain': True, 'reason': '退款跳转已出现，目标包裹详情尚未取得'}
+                details = read_current_receipt(page, order_no, classify_track_phase, PHASE_LABELS)
+                if (package_no not in details.get('packageNos', []) or details.get('reasonId') != '83'
+                        or details.get('phase') not in ('submitted', 'reviewing', 'processing', 'refunded')
+                        or not self._receipt_in_attempt(order_no, details)):
+                    return {'ok': False, 'uncertain': True, 'reason': '退款跳转凭证未能匹配本轮目标包裹和提交时段'}
+                result = dict(details, ok=True, packageNo=package_no, source='submit_redirect')
+            else:
+                toast = page.js_evaluate(_JS_TOAST_TEXT) or ''
+                return {'ok': False, 'uncertain': True, 'reason':
+                        '未取得提交响应凭证或匹配的退款跳转链接：' + str(toast)[:160], 'packageNo': package_no}
+        finally:
+            try:
+                page.js_evaluate(REMOVE_OBSERVER)
+            except Exception:
+                pass
         # 一旦平台生成退款单号就记录，后续读账户或资格失败不能丢失已受理凭证。
         self._record_refund(order_no, result)
         try:
+            # The platform redirects from a toast's onClose callback. Its
+            # accepted POST response is stronger evidence than that UI callback.
+            if not bill or bill[1] != result['refundBillId']:
+                page.goto('%s/orders/refundLabel/%s?refund_bill_id=%s'
+                          % (ORIGIN, order_no, result['refundBillId']), settle_seconds=2)
+            try:
+                if not page.wait_for("document.body.innerText.includes('Código del Reembolso')", timeout=20):
+                    raise RuntimeError('退款详情尚未加载完成')
+                details = details or read_current_receipt(page, order_no, classify_track_phase, PHASE_LABELS)
+                if details['refundBillId'] != result['refundBillId']:
+                    raise RuntimeError('退款详情与本次受理单号不一致')
+                if details.get('packageNos') and package_no not in details['packageNos']:
+                    raise RuntimeError('退款详情包裹与本次受理凭证不一致')
+                result.update(details)
+                result['packageNo'] = package_no
+            except Exception as exc:
+                result['detailsNote'] = '已取得平台受理凭证；退款详情读取未完成'
+                self._publish_claim(order_no, {'recoveryError': scrub_text(str(exc))[:300]})
             result['remaining'] = self._pre_info(page, order_no).get('eligible') or []
-            result['refundAccount'] = self._read_refund_account(page)
         except Exception as exc:
             result['verificationError'] = '已受理，但后续核验失败：' + scrub_text(str(exc))[:140]
         self._record_refund(order_no, result)
@@ -1138,17 +1202,22 @@ class AfterSaleClaimer(object):
             row = self._claim_rows.setdefault(order_no, {'orderNo': order_no})
             refunds = {r['refundBillId']: dict(r) for r in row.get('refunds', [])}
             entry = refunds.get(bill, {})
-            source = result.get('source') or entry.get('source') or 'submit_redirect'
+            source = (entry.get('source') if entry.get('source') in ('submit_redirect', 'submit_response')
+                      else result.get('source') or entry.get('source') or 'submit_redirect')
             entry.update({
                 'refundBillId': bill, 'packageNo': result.get('packageNo') or entry.get('packageNo', ''),
-                'refundPath': REFUND_PATH_LABEL if source == 'submit_redirect' else entry.get('refundPath', ''),
+                'refundPath': result.get('refundPath') or entry.get('refundPath') or
+                              (REFUND_PATH_LABEL if source in ('submit_redirect', 'submit_response') else ''),
                 'refundAccount': result.get('refundAccount') or entry.get('refundAccount', ''),
-                'submittedAt': entry.get('submittedAt') or (datetime.now(timezone.utc).isoformat() if source == 'submit_redirect' else ''),
-                'source': entry.get('source') or source,
+                'submittedAt': entry.get('submittedAt') or (datetime.now(timezone.utc).isoformat() if source in ('submit_redirect', 'submit_response') else ''),
+                'source': source,
             })
-            for key in ('phase', 'phaseLabel', 'applicationTimeText', 'timeZone'):
+            for key in ('phase', 'phaseLabel', 'applicationTimeText', 'timeZone',
+                        'applicationAt', 'packageNos', 'reasonId', 'detailsNote'):
                 if result.get(key):
                     entry[key] = result[key]
+            entry['detailsNote'] = '；'.join(label+'未读取' for key,label in
+                [('refundPath','退款路径'),('refundAccount','退款账户')] if not entry.get(key))
             refunds[bill] = entry
             row['refunds'] = list(refunds.values())
             row.update(entry)
@@ -1168,10 +1237,52 @@ class AfterSaleClaimer(object):
     def _uncertain_claim(self, page, order_no, reason):
         # Persist uncertainty before read-only recovery, including on read failure.
         self._fail_claim(order_no, 'verifying', '已触发提交，正在只读核对退款记录；不可直接补提。' + reason[:220], None)
-        records, _ = self._recover_receipts(page, order_no, 'recovered')
-        if records:
-            reason = '已查到退款记录，无法确认由本次提交产生：' + receipt_reason(records)
-        self._fail_claim(order_no, 'uncertain', (reason + '；请先核对，不可直接补提')[:300], page)
+        self._publish_claim(order_no, {'submissionError': reason[:300]})
+        records, error = self._recover_receipts(page, order_no, 'recovered')
+        if error:
+            self._publish_claim(order_no, {'recoveryError': error})
+        row = self._claim_rows.get(order_no, {})
+        # Goal reconciliation is package based. It does not assert which actor
+        # created a receipt. Historical/rejected/other-package refunds cannot
+        # turn the current order into a success.
+        targets = set(row.get('_targetPackages') or [])
+        covered = {r.get('packageNo') for r in row.get('refunds', [])
+                   if r.get('source') in ('submit_redirect', 'submit_response')}
+        attempt = row.get('_attemptPackage')
+        matches = []
+        for record in records:
+            if (self._receipt_in_attempt(order_no, record)
+                    and record.get('reasonId') == '83'
+                    and attempt and attempt in record.get('packageNos', [])
+                    and record.get('phase') in ('submitted', 'reviewing', 'processing', 'refunded')):
+                matches.append(record)
+        if len(matches) == 1 and targets and not error:
+            try:
+                remaining = {p['packageNo'] for p in self._pre_info(page, order_no).get('eligible', [])}
+                if attempt not in remaining:
+                    matched = dict(matches[0], source='recovered_verified', packageNo=attempt)
+                    self._record_refund(order_no, matched)
+                    covered.add(attempt)
+                    if targets.issubset(covered) and not targets.intersection(remaining):
+                        self._publish_claim(order_no, {'status': 'ok', 'errorSummary': None,
+                            'note': '提交后已核验目标包裹退款受理；平台阶段见退款凭证'})
+                        self._capture_screenshot(self._claim_rows, order_no, page)
+                        return
+            except Exception as exc:
+                self._publish_claim(order_no, {'recoveryError': scrub_text(str(exc))[:300]})
+        message = ('已查到退款记录，平台状态见凭证；尚未完成本轮全部目标包裹的受理核验'
+                   if records else '本次提交响应未确认，补查尚未取得匹配退款凭证')
+        self._fail_claim(order_no, 'uncertain', message + '；请先核对，不可直接补提', page)
+
+    def _receipt_in_attempt(self, order_no, record):
+        row = self._claim_rows.get(order_no, {})
+        try:
+            begin = datetime.fromisoformat(row.get('_attemptStartedAt', ''))
+            at = datetime.fromisoformat(record.get('applicationAt', '').replace('Z', '+00:00'))
+            return bool(row.get('_writeAttempted') and begin.tzinfo and at.tzinfo
+                        and begin.timestamp() - 2 <= at.timestamp() <= time.time() + 2)
+        except (ValueError, TypeError):
+            return False
 
     @staticmethod
     def _click(page, selector):

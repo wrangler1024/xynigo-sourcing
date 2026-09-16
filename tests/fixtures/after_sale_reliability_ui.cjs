@@ -3,7 +3,7 @@ const html=fs.readFileSync('src/purchase_tool/web/index.html','utf8');
 const nodes=new Map();const node=id=>{if(!nodes.has(id))nodes.set(id,{style:{},value:'ENV',dataset:{},disabled:false,innerHTML:'',textContent:'',hidden:false});return nodes.get(id);};
 const state={running:false,starting:false,type:'refund',selected:new Set(),pendingCreates:{},claimRows:[],polling:false};
 let calls=[],hold=Promise.resolve(),fail=false,response={data:{taskId:'TASK',runId:'RUN'}};
-const ctx=vm.createContext({AS_STATE:state,AS_TYPES:[], $:node,crypto:require('node:crypto').webcrypto,
+const ctx=vm.createContext({TextEncoder,AS_STATE:state,AS_TYPES:[], $:node,crypto:require('node:crypto').webcrypto,
  asRuntimeOptions:()=>({browserMode:'headless',concurrency:2}),asSyncRuntimeControls:()=>{},
  cloudFormalExecutor:async()=>{await hold;return {id:'EXEC'};},asRequireRuntimeControls:()=>{},
  cloudFetchJson:async(path,options)=>{calls.push({path,body:options?.body?JSON.parse(options.body):null});if(fail)throw Error('lost response');return response;},
@@ -80,7 +80,7 @@ const run=code=>vm.runInContext(code,ctx);
 
  vm.runInContext(/const AS_CLAIM_PILL = \{[^]*?\n};/.exec(html)[0],ctx);
  vm.runInContext(/const AS_RECOVERABLE_CLAIM_STATUS = [^]*?;/.exec(html)[0],ctx);
- for(const name of ['asClaimNeedsReconciliation','asClaimPill','asClaimReasonHtml','asRecoverableClaimRows','asReconcileScanRows']) vm.runInContext(new RegExp('function '+name+'\\([^]*?\\n}').exec(html)[0],ctx);
+ for(const name of ['asItemCount','asClaimNeedsReconciliation','asClaimPill','asClaimReasonHtml','asRecoverableClaimRows','asReconcileScanRows']) vm.runInContext(new RegExp('function '+name+'\\([^]*?\\n}').exec(html)[0],ctx);
  const legacy={orderNo:'ORDER',environmentSerial:'ENV',status:'fail',errorSummary:'提交后未跳转成功页'};
  ctx.legacy=legacy;
  assert.equal(run('asRecoverableClaimRows([legacy]).length'),0);

@@ -630,7 +630,8 @@ class LocalOperationExecutor(object):
     _AFTER_SALE_CLAIM_ROW_FIELDS = (
         'orderNo', 'environmentSerial', 'storeName', 'status', 'packageNo',
         'refundBillId', 'refundPath', 'refundAccount', 'deliveredAt',
-        'goodsImg', 'durationSeconds', 'submittedAt',
+        'goodsImg', 'durationSeconds', 'submittedAt', 'operationCompletedAt',
+        'submissionError', 'recoveryError',
         'note', 'errorSummary', 'screenshotSha256', 'refunds',
     )
     _AFTER_SALE_ROW_ALLOWED_STATUS = frozenset({
@@ -643,13 +644,14 @@ class LocalOperationExecutor(object):
         'refundBillId': 32, 'refundPath': 48, 'trackingNo': 64,
         'refundAccount': 40, 'goodsImg': 300,
         'submittedAt': 40, 'note': 200,
+        'operationCompletedAt': 40, 'submissionError': 300, 'recoveryError': 300,
         'itemCountSource': 32, 'deliveredDate': 10, 'deliveryDateStatus': 24, 'deliveryNote': 200,
         'reasonCode': 64, 'platformStatus': 240, 'reasonSource': 32, 'checkedAt': 40,
     }
     _AFTER_SALE_NULLABLE_TEXT = {'errorSummary': 300, 'screenshotSha256': 64}
 
     @classmethod
-    def _after_sale_rows(cls, raw_rows):
+    def _after_sale_rows(cls, raw_rows, *, claim=False):
         """把售后快照行投影成云端契约闭集。
 
         两个视图共用一套投影：扫描行含订单与包裹计数，提交行含退款单号与
@@ -665,6 +667,8 @@ class LocalOperationExecutor(object):
         for raw in (raw_rows or []):
             row = {}
             for field in fields:
+                if claim and field not in cls._AFTER_SALE_CLAIM_ROW_FIELDS:
+                    continue
                 if field not in raw:
                     continue
                 value = raw.get(field)
@@ -678,10 +682,12 @@ class LocalOperationExecutor(object):
                     row[field] = (str(value).strip()[:limit]
                                   if value is not None else None)
                 elif field == 'refunds':
-                    row[field] = [{k: str(r.get(k) or '')[:limit] for k, limit in
+                    row[field] = [{**{k: str(r.get(k) or '')[:limit] for k, limit in
                         {'refundBillId': 32, 'packageNo': 64, 'refundPath': 48,
                          'refundAccount': 40, 'submittedAt': 40, 'source': 32, 'phase': 24,
-                         'phaseLabel': 24, 'applicationTimeText': 64, 'timeZone': 64}.items()}
+                         'phaseLabel': 24, 'applicationTimeText': 64, 'timeZone': 64,
+                         'detailsNote': 200, 'applicationAt': 40, 'reasonId': 32}.items()},
+                         'packageNos': [str(p)[:64] for p in (r.get('packageNos') or [])[:100]]}
                         for r in (value or []) if isinstance(r, dict)]
                 elif field == 'goodsItems':
                     row[field] = [{'name': str(i.get('name') or '')[:200], 'specification': str(i.get('specification') or '')[:200], 'goodsImg': str(i.get('goodsImg') or '')[:300], 'quantity': i.get('quantity') if isinstance(i.get('quantity'), int) and not isinstance(i.get('quantity'), bool) and 1 <= i['quantity'] <= 100000 else None} for i in (value or [])[:100] if isinstance(i, dict)]
@@ -843,6 +849,7 @@ class LocalOperationExecutor(object):
                 # 本地投影都已就绪，断点只在 Web 与这一跳）。
                 'deliveredAt': str(item.get('deliveredAt') or '').strip()[:32],
                 'goodsImg': str(item.get('goodsImg') or '').strip()[:300],
+                **{key: item.get(key) for key in ('goodsImages', 'goodsItems', 'itemCount')},
             })
         if len(clean) > 500:
             raise OperationExecutionError(
@@ -880,7 +887,7 @@ class LocalOperationExecutor(object):
                           else 'after_sale.claim.completed'),
                 'current': min(total, completed),
                 'total': total,
-                'snapshot': {'rows': self._after_sale_rows(rows)},
+                'snapshot': {'rows': self._after_sale_rows(rows, claim=True)},
             }
             serialized = json.dumps(
                 event, ensure_ascii=False, sort_keys=True,
@@ -905,7 +912,7 @@ class LocalOperationExecutor(object):
                 break
             self.sleep(self.poll_interval)
         summary = self._after_sale_summary(total, rows)
-        summary['rows'] = self._after_sale_rows(rows)
+        summary['rows'] = self._after_sale_rows(rows, claim=True)
         return self._terminal_result('after_sale', summary)
 
     def _after_sale_screenshot_attachment(self, order_no):

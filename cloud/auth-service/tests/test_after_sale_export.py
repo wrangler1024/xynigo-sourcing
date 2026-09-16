@@ -138,7 +138,8 @@ def _claim_row(**overrides) -> dict[str, object]:
         "refundPath": "Cuenta original de pago",
         "refundAccount": "****0212",
         "status": "ok",
-        "submittedAt": "2026-09-16T06:16:50+00:00",
+        "submittedAt": "2026-09-16T06:16:10+00:00",
+        "operationCompletedAt": "2026-09-16T06:16:50+00:00",
         "note": None,
         "errorSummary": None,
     }
@@ -152,10 +153,10 @@ def _claim_sheet(rows):
 
 
 def test_claim_export_header_order_matches_workbench_table() -> None:
-    """列序 = 工作台 ③ 表头，逐字钉死（改列必须同时改 UI 与这里）。"""
+    """前11列与工作台一致，末尾追加订单件数和商品明细。"""
     assert CLAIM_HEADERS == (
         "环境序号", "订单号", "商品图", "售后类型", "送达时间", "退款单号",
-        "退款路径", "退款信用卡", "状态", "操作时间", "备注",
+        "退款路径", "退款信用卡", "状态", "操作时间", "备注", "订单件数", "商品明细",
     )
     sheet, _filename, mime = _claim_sheet([])
     assert [cell.value for cell in sheet[1]] == list(CLAIM_HEADERS)
@@ -169,8 +170,8 @@ def test_claim_export_row_values_follow_header_order() -> None:
         "4589", "GSH1RV19M00NEMB",
         "//img.ltwebstatic.com/v4/j/pi/synthetic.jpg", "丢件退款",
         "04 Sep 2026 16:56:59", "2390853897109507",
-        "Cuenta original de pago", "****0212", "已受理 · 退款审核中",
-        "2026-09-16 06:16", None,
+        "Cuenta original de pago", "****0212", "已受理",
+        "2026-09-16 06:16:50+00:00", None, None, None,
     ]
     assert filename.startswith("售后提交结果_")
     assert filename.endswith(".xlsx")

@@ -42,6 +42,7 @@ AS_CAPABILITIES = [
     "after.sale.track.v1",
     "after.sale.runtime-controls.v1",
     "after.sale.receipt-recovery.v1",
+    "after.sale.claim-evidence.v1",
     "after.sale.reliable-results.v1",
 ]
 CLIENT_VERSION = "0.17.20"
