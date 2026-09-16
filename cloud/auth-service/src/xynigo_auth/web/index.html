@@ -2251,7 +2251,11 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
     <section class="card table-card">
       <div class="card-title" style="padding:17px 19px 0;">
         <div>③ 提交结果 <span class="legend">退款路径固定「原路退回」（Cuenta original de pago）</span></div>
-        <div class="table-actions"><button class="btn sm" id="asClearResult">清空结果</button></div>
+        <div class="table-actions">
+          <button class="btn sm" id="asClaimHistory">提交历史</button>
+          <button class="btn sm" id="asRetryFailed" disabled>补提失败单</button>
+          <button class="btn sm" id="asClearResult">清空结果</button>
+        </div>
       </div>
 
       <!-- 运行状态条（三段时间线共用一条）：显示时会被挂到正在跑的那一段的锚点上 -->
@@ -2260,6 +2264,13 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
           <span class="spinner" id="asPhaseSpin" hidden aria-hidden="true"></span>
           <div class="query-phase-copy"><b id="asPhaseTitle">等待发起</b><span id="asPhaseDescription">先扫描，再勾选提交。</span></div>
         </div>
+      </div>
+
+      <!-- 不扫描也能提交：粘贴「环境序号 订单号」，提交前执行器仍会现场体检可退性 -->
+      <div class="as-bar" style="padding: 0 19px; margin-bottom:10px;">
+        <input type="search" id="asDirectOrders" placeholder="直接提交指定单：环境序号 订单号（多组用分号隔开）">
+        <button class="btn sm" id="asDirectSubmit">直接提交</button>
+        <span class="hint">扫描仍是推荐路径（能先看到金额与包裹数）；直接提交用于台账点名单</span>
       </div>
 
       <div class="business-summary" id="asBizSummary" style="padding-top:4px;">
@@ -3416,6 +3427,41 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
       <div id="environmentHistoryDetailView" hidden>
         <div class="query-history-detail-head"><div><button class="btn" id="btnEnvironmentHistoryBack" type="button">← 返回历史列表</button><div class="query-history-detail-meta" id="environmentHistoryDetailMeta"></div></div></div>
         <div class="query-history-detail-table"><table style="min-width:1050px"><thead><tr><th>买家号（脱敏）</th><th>采购员</th><th>环境名</th><th>Hub 序号</th><th>状态</th><th>恢复已有</th><th>当前步骤</th><th>异常摘要</th><th>更新时间</th></tr></thead><tbody id="environmentHistoryResultBody"></tbody></table></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-mask" id="asHistoryMask" aria-hidden="true">
+  <div class="modal query-history-modal" role="dialog" aria-modal="true" aria-labelledby="asHistoryTitle">
+    <div class="query-history-head">
+      <div><h3 id="asHistoryTitle">售后提交历史</h3><p class="hint">一行＝一个提交批次（含同事提交的，租户内互相可见）；补提/重提会产生新批次，原批次结果不变。</p></div>
+      <button class="image-modal-close" id="btnAsHistoryClose" type="button" aria-label="关闭售后提交历史">×</button>
+    </div>
+    <div class="query-history-body">
+      <div id="asHistoryListView">
+        <div class="query-history-toolbar">
+          <div class="field"><label for="asHistoryStatus">批次状态</label><select id="asHistoryStatus"><option value="">全部状态</option><option value="running">执行中</option><option value="completed">已完成</option><option value="partial_failure">部分失败</option><option value="failed">失败</option><option value="cancelled">已停止</option><option value="uncertain">待核对</option></select></div>
+          <div class="field"><label for="asHistoryActor">操作人</label><select id="asHistoryActor"><option value="">全部用户</option></select></div>
+          <button class="btn" id="btnAsHistoryRefresh" type="button">刷新</button>
+        </div>
+        <div class="table-wrap"><table class="query-history-table" style="min-width:1180px"><thead><tr><th>批次时间</th><th>操作人</th><th>执行器</th><th>提交</th><th>已受理</th><th>已跳过</th><th>已停止</th><th>失败</th><th>状态</th><th>重提自</th><th>操作</th></tr></thead><tbody id="asHistoryBody"><tr><td colspan="11" class="query-history-empty">正在读取提交历史…</td></tr></tbody></table></div>
+        <div class="query-history-pagination"><span class="hint" id="asHistoryPageText">第 1 页</span><button class="btn" id="btnAsHistoryPrev" type="button" disabled>上一页</button><button class="btn" id="btnAsHistoryNext" type="button" disabled>下一页</button></div>
+      </div>
+      <div id="asHistoryDetailView" hidden>
+        <div class="query-history-detail-head"><div>
+          <button class="btn" id="btnAsHistoryBack" type="button">← 返回历史列表</button>
+          <div class="query-history-detail-meta" id="asHistoryDetailMeta"></div>
+        </div>
+          <div class="table-actions">
+            <button class="btn" id="asHistoryTrack" type="button" disabled>回访本批退款单</button>
+            <button class="btn" id="asHistoryRetry" type="button" disabled>重提失败单</button>
+            <button class="btn" id="asHistoryExport" type="button">导出 Excel</button>
+          </div>
+        </div>
+        <div class="query-history-detail-table"><table style="min-width:1250px"><thead><tr>
+          <th>环境序号</th><th>订单号</th><th style="width:46px">商品图</th><th>售后类型</th><th>送达时间</th><th>退款单号</th><th>退款路径</th><th>退款信用卡</th><th>状态</th><th>操作时间</th><th>备注</th>
+        </tr></thead><tbody id="asHistoryDetailBody"></tbody></table></div>
       </div>
     </div>
   </div>
@@ -5017,7 +5063,7 @@ function asSelectType(id) {
 
 const AS_LIST_KEY = 'afterSaleEnvList';
 const AS_STATE = {
-  mode: '', type: 'refund', scanTaskId: null, runId: null,
+  mode: '', type: 'refund', scanTaskId: null, runId: null, runLabel: '',
   trackTaskId: null, timer: null, running: false,
   rows: [], selected: new Set(), claimRows: [], stopRequested: false,
   pollErrors: 0, etaBase: null, status: ''
@@ -5185,15 +5231,12 @@ function asRenderScanRows(rows) {
     ? '扫描中' : `已扫描 ${AS_STATE.rows.length} 行 · 可申请 ${pickable.length} 单`;
   asSyncSelection();
 }
-function asRenderClaimRows(rows) {
-  AS_STATE.claimRows = rows || [];
-  const tbody = $('asClaimRows');
-  if (!AS_STATE.claimRows.length) {
-    tbody.innerHTML = '<tr><td colspan="11" class="hint" style="text-align:center; padding:22px;">提交后此处逐步展示每单结果。</td></tr>';
-  } else {
-    tbody.innerHTML = AS_STATE.claimRows.map(row => {
-      const bad = !['ok'].includes(String(row.status || ''));
-      return `<tr data-as-claim="${esc(row.orderNo || '')}"${bad && row.status !== 'queued' && row.status !== 'running' ? ' class="tr-bad"' : (row.status === 'running' ? ' class="tr-run"' : '')}>
+// ③ 与「历史详情」共用同一套行模板：列序只在这里定义一次（测试按表头逐列钉住）
+function asClaimRowHtml(row) {
+  const bad = !['ok'].includes(String(row.status || ''));
+  const cls = bad && row.status !== 'queued' && row.status !== 'running'
+    ? ' class="tr-bad"' : (row.status === 'running' ? ' class="tr-run"' : '');
+  return `<tr data-as-claim="${esc(row.orderNo || '')}"${cls}>
         <td class="sub-text">${esc(row.environmentSerial || '')}</td>
         <td class="as-order">${esc(row.orderNo || '')}</td>
         ${asThumbCell(row.goodsImg)}
@@ -5206,8 +5249,16 @@ function asRenderClaimRows(rows) {
         <td class="sub-text">${esc((row.submittedAt || '').slice(11, 19) || '—')}</td>
         <td class="hint">${esc(row.errorSummary || row.note || '—')}</td>
       </tr>`;
-    }).join('');
+}
+function asRenderClaimRows(rows) {
+  AS_STATE.claimRows = rows || [];
+  const tbody = $('asClaimRows');
+  if (!AS_STATE.claimRows.length) {
+    tbody.innerHTML = '<tr><td colspan="11" class="hint" style="text-align:center; padding:22px;">提交后此处逐步展示每单结果。</td></tr>';
+  } else {
+    tbody.innerHTML = AS_STATE.claimRows.map(asClaimRowHtml).join('');
   }
+  asSyncRetryButton(AS_STATE.claimRows);
   const rows2 = AS_STATE.claimRows;
   const stats = $('asBizSummary').children;
   const ok = rows2.filter(r => r.status === 'ok').length;
@@ -5368,6 +5419,227 @@ $('asTrack').onclick = () => asTrack();
 $('asTrackManual').onclick = asTrackManual;
 $('asTrackExport').onclick = asExportTrack;
 
+// ===== ③ 提交历史（仿「环境创建历史」弹层）=====
+// 列表**租户内互相可见**（含同事提交的批次）——刻意偏离物流/建环境的
+// 「本人 + 管理员」口径（需求 §6.3），所以这里不按操作人过滤，只留筛选下拉。
+const AS_HISTORY = {
+  loading: false, page: 1, cursor: '', nextCursor: '', cursorStack: [],
+  runId: '', detail: null,
+};
+const AS_BATCH_PILL = {
+  created: ['run', '已创建'], queued: ['run', '排队中'], leased: ['run', '已领取'],
+  running: ['run', '执行中'], completed: ['ok', '已完成'],
+  partial_failure: ['warn', '部分失败'], failed: ['bad', '失败'],
+  cancelled: ['warn', '已停止'], uncertain: ['warn', '待核对'],
+};
+function asBatchPill(status) {
+  const entry = AS_BATCH_PILL[String(status || '')]
+    || ['warn', String(status || '—')];
+  return `<span class="pill ${entry[0]}">${entry[1]}</span>`;
+}
+function asShortRef(value) {
+  const text = String(value || '');
+  return text ? text.slice(0, 8) : '—';
+}
+async function asOpenClaimHistory() {
+  $('asHistoryMask').classList.add('show');
+  $('asHistoryMask').setAttribute('aria-hidden', 'false');
+  asShowClaimHistoryList();
+  await asLoadClaimHistory({ reset: true });
+}
+function asCloseClaimHistory() {
+  $('asHistoryMask').classList.remove('show');
+  $('asHistoryMask').setAttribute('aria-hidden', 'true');
+}
+function asShowClaimHistoryList() {
+  $('asHistoryListView').hidden = false;
+  $('asHistoryDetailView').hidden = true;
+  AS_HISTORY.runId = ''; AS_HISTORY.detail = null;
+}
+async function asLoadClaimHistory(options) {
+  const opts = options || {};
+  if (opts.reset) {
+    AS_HISTORY.page = 1; AS_HISTORY.cursor = '';
+    AS_HISTORY.nextCursor = ''; AS_HISTORY.cursorStack = [];
+  }
+  const params = new URLSearchParams();
+  params.set('limit', '20');
+  if ($('asHistoryStatus').value) params.set('status', $('asHistoryStatus').value);
+  if ($('asHistoryActor').value) params.set('userId', $('asHistoryActor').value);
+  if (AS_HISTORY.cursor) params.set('cursor', AS_HISTORY.cursor);
+  AS_HISTORY.loading = true;
+  $('asHistoryBody').innerHTML = '<tr><td colspan="11" class="query-history-empty">正在读取提交历史…</td></tr>';
+  try {
+    const res = await cloudFetchJson(
+      '/v1/operation-runs/after-sale-claim/history?' + params.toString());
+    const data = (res || {}).data || {};
+    asRenderClaimHistory(data.items || []);
+    asFillClaimHistoryActors(data.actors || []);
+    AS_HISTORY.nextCursor = data.nextCursor || '';
+    $('asHistoryPageText').textContent = `第 ${AS_HISTORY.page} 页`;
+    $('btnAsHistoryPrev').disabled = !AS_HISTORY.cursorStack.length;
+    $('btnAsHistoryNext').disabled = !data.hasMore;
+  } catch (error) {
+    $('asHistoryBody').innerHTML =
+      '<tr><td colspan="11" class="query-history-empty">'
+      + esc(String(error.message || error)) + '</td></tr>';
+    $('btnAsHistoryNext').disabled = true;
+  } finally {
+    AS_HISTORY.loading = false;
+  }
+}
+function asFillClaimHistoryActors(actors) {
+  const select = $('asHistoryActor');
+  const current = select.value;
+  select.innerHTML = ['<option value="">全部用户</option>'].concat(
+    actors.filter(item => !item.status || item.status === 'active')
+      .map(item => `<option value="${esc(item.userId)}">`
+        + `${esc(item.displayName || item.userId)}</option>`)).join('');
+  if (current) select.value = current;
+}
+function asRenderClaimHistory(items) {
+  if (!items.length) {
+    $('asHistoryBody').innerHTML =
+      '<tr><td colspan="11" class="query-history-empty">暂无提交批次</td></tr>';
+    return;
+  }
+  $('asHistoryBody').innerHTML = items.map(item => `<tr>
+      <td class="sub-text">${esc(String(item.createdAt || '').replace('T', ' ').slice(0, 16))}</td>
+      <td>${esc(item.actorName || '—')}</td>
+      <td class="sub-text">${esc(item.executorName || '—')}</td>
+      <td class="num">${Number(item.totalCount || 0)}</td>
+      <td class="num">${Number(item.successCount || 0)}</td>
+      <td class="num">${Number(item.skippedCount || 0)}</td>
+      <td class="num">${Number(item.stoppedCount || 0)}</td>
+      <td class="num">${Number(item.failedCount || 0)}</td>
+      <td>${asBatchPill(item.status)}</td>
+      <td class="sub-text">${esc(asShortRef(item.retryFromRunId))}</td>
+      <td><button class="btn sm" type="button" data-as-history-run="${esc(item.runId)}">查看详情</button></td>
+    </tr>`).join('');
+}
+async function asOpenClaimHistoryDetail(runId) {
+  AS_HISTORY.runId = runId;
+  $('asHistoryListView').hidden = true;
+  $('asHistoryDetailView').hidden = false;
+  $('asHistoryDetailMeta').textContent = '正在读取批次详情…';
+  $('asHistoryDetailBody').innerHTML =
+    '<tr><td colspan="11" class="query-history-empty">正在读取…</td></tr>';
+  try {
+    const res = await cloudFetchJson(
+      '/v1/operation-runs/after-sale-claim/history/' + encodeURIComponent(runId));
+    AS_HISTORY.detail = (res || {}).data || {};
+    asRenderClaimHistoryDetail(AS_HISTORY.detail);
+  } catch (error) {
+    $('asHistoryDetailBody').innerHTML =
+      '<tr><td colspan="11" class="query-history-empty">'
+      + esc(String(error.message || error)) + '</td></tr>';
+  }
+}
+function asRenderClaimHistoryDetail(data) {
+  const batch = data.batch || {};
+  const rows = data.rows || [];
+  const bits = [
+    `批次 ${asShortRef(batch.runId)}`,
+    `提交 ${Number(batch.totalCount || 0)} 单`,
+    `已受理 ${Number(batch.successCount || 0)}`,
+    `已跳过 ${Number(batch.skippedCount || 0)}`,
+    `失败 ${Number(batch.failedCount || 0)}`,
+    esc(batch.actorName || '—'),
+    String(batch.createdAt || '').replace('T', ' ').slice(0, 16),
+  ];
+  if (batch.retryFromRunId) bits.push(`重提自 ${asShortRef(batch.retryFromRunId)}`);
+  $('asHistoryDetailMeta').innerHTML = bits.join(' · ');
+  $('asHistoryDetailBody').innerHTML = rows.length
+    ? rows.map(asClaimRowHtml).join('')
+    : '<tr><td colspan="11" class="query-history-empty">该批次没有结果行</td></tr>';
+  const trackable = rows.filter(row => row.refundBillId && row.orderNo).length;
+  const retryable = asRecoverableClaimRows(rows).length;
+  $('asHistoryTrack').disabled = !trackable;
+  $('asHistoryTrack').textContent = trackable
+    ? `回访本批退款单（${trackable}）` : '回访本批退款单';
+  $('asHistoryRetry').disabled = !retryable;
+  $('asHistoryRetry').textContent = retryable
+    ? `重提失败单（${retryable}）` : '重提失败单';
+}
+// 从历史发起回访＝把该批次「有退款单号的行走」灌进 ④：不新增第二条回访路径
+async function asTrackHistoryBatch() {
+  const rows = ((AS_HISTORY.detail || {}).rows) || [];
+  const items = rows.filter(row => row.refundBillId && row.orderNo).map(row => ({
+    environmentSerial: row.environmentSerial || '', orderNo: row.orderNo,
+    refundBillId: row.refundBillId, storeName: row.storeName || '',
+  }));
+  if (!items.length) { toast('该批次没有可回访的退款单'); return; }
+  asCloseClaimHistory();
+  await asTrack(items);
+}
+async function asRetryHistoryBatch() {
+  const rows = ((AS_HISTORY.detail || {}).rows) || [];
+  await asRetryFailedClaims(rows, AS_HISTORY.runId);
+}
+async function asExportClaimHistory() {
+  const runId = AS_HISTORY.runId;
+  if (!runId) { toast('先打开一个批次再导出'); return; }
+  const button = $('asHistoryExport');
+  const label = button.textContent;
+  button.disabled = true; button.textContent = '正在生成…';
+  try {
+    const response = await fetch(
+      '/v1/operation-runs/after-sale-claim/history/'
+        + encodeURIComponent(runId) + '/export',
+      {credentials:'same-origin', headers:{'Accept':'application/octet-stream',
+        'X-Xynigo-Source':'cloud_web_workspace'}});
+    if (!response.ok) {
+      let payload = {};
+      try { payload = await response.json(); } catch (_) {}
+      throw cloudApiError(payload, response.status);
+    }
+    const blob = await response.blob();
+    const filename = workspaceDownloadName(
+      response.headers.get('Content-Disposition'), '售后提交结果.xlsx');
+    const url = URL.createObjectURL(blob), link = document.createElement('a');
+    link.href = url; link.download = filename;
+    document.body.appendChild(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast(`已生成 ${filename}，请查看浏览器下载记录`);
+  } catch (error) {
+    toast(String(error.message || error));
+  } finally {
+    button.disabled = false; button.textContent = label;
+  }
+}
+$('asClaimHistory').onclick = asOpenClaimHistory;
+$('btnAsHistoryClose').onclick = asCloseClaimHistory;
+$('btnAsHistoryRefresh').onclick = () => asLoadClaimHistory({ reset: true });
+$('asHistoryStatus').onchange = () => asLoadClaimHistory({ reset: true });
+$('asHistoryActor').onchange = () => asLoadClaimHistory({ reset: true });
+$('btnAsHistoryBack').onclick = () => {
+  asShowClaimHistoryList();
+  return asLoadClaimHistory({ reset: true });
+};
+$('asHistoryTrack').onclick = asTrackHistoryBatch;
+$('asHistoryRetry').onclick = asRetryHistoryBatch;
+$('asHistoryExport').onclick = asExportClaimHistory;
+$('asHistoryMask').onclick = event => {
+  if (event.target === event.currentTarget) asCloseClaimHistory();
+};
+$('asHistoryBody').onclick = event => {
+  const button = event.target.closest('[data-as-history-run]');
+  if (button) asOpenClaimHistoryDetail(button.dataset.asHistoryRun);
+};
+$('btnAsHistoryPrev').onclick = () => {
+  if (AS_HISTORY.loading || !AS_HISTORY.cursorStack.length) return;
+  AS_HISTORY.cursor = AS_HISTORY.cursorStack.pop() || '';
+  AS_HISTORY.page = Math.max(1, AS_HISTORY.page - 1);
+  return asLoadClaimHistory();
+};
+$('btnAsHistoryNext').onclick = () => {
+  if (AS_HISTORY.loading || !AS_HISTORY.nextCursor) return;
+  AS_HISTORY.cursorStack.push(AS_HISTORY.cursor);
+  AS_HISTORY.cursor = AS_HISTORY.nextCursor;
+  AS_HISTORY.page += 1;
+  return asLoadClaimHistory();
+};
+
 function asSyncSelection() {
   const pickable = AS_STATE.rows.filter(r => r.orderNo && r.claimable
     && r.status === 'ok');
@@ -5446,17 +5718,20 @@ async function asScan() {
     asSetPhase('发起失败', String(e.message || e), false);
   }
 }
-async function asSubmit() {
-  if (AS_STATE.running) return;
-  AS_STATE.mode = 'claim';  // 状态条落点：提交的进度显示在 ③ 卡片
-  const items = asSelectedItems();
+// 三处提交（③ 勾选提交 / 补提失败单 / 直接提交指定单 / 历史详情重提）共用这一个
+// 建 Run 入口：只留一条提交路径，避免各入口各自拼报文导致字段或幂等键口径漂移。
+async function asSubmitItems(items, options) {
+  if (AS_STATE.running) return false;
+  const opts = options || {};
+  const label = opts.label || '提交售后';
   if (!items.length) {
-    asSetPhase('等待发起', '请先勾选要提交的订单。', false);
-    return;
+    asSetPhase('等待发起', opts.emptyHint || '请先勾选要提交的订单。', false);
+    return false;
   }
+  AS_STATE.mode = 'claim';  // 状态条落点：提交的进度显示在 ③ 卡片
   let executor;
   try { executor = await cloudFormalExecutor('after.sale.claim.v1'); }
-  catch (e) { asSetPhase('执行器不可用', e.message || '无法发起售后提交', false); return; }
+  catch (e) { asSetPhase('执行器不可用', e.message || '无法发起售后提交', false); return false; }
   try {
     const res = await cloudFetchJson('/v1/operation-runs/after-sale-claim', {
       method: 'POST',
@@ -5467,10 +5742,12 @@ async function asSubmit() {
         executorId: executor.id,
         browserMode: 'visible',
         items,
+        retryFromRunId: opts.retryFromRunId || '',
       }),
     });
     const data = (res || {}).data || {};
     AS_STATE.runId = asRunIdOf(data);
+    AS_STATE.runLabel = label;
     AS_STATE.running = true;
     AS_STATE.stopRequested = false;
     AS_STATE.pollErrors = 0;
@@ -5478,12 +5755,106 @@ async function asSubmit() {
     AS_STATE.claimRows = [];
     asRenderClaimRows([]);
     $('asScan').disabled = true; $('asSubmit').disabled = true; $('asStop').disabled = false;
-    asSetPhase('提交售后中',
+    asSetPhase(label + '中',
       `共 ${items.length} 单 · 退款路径「原路退回」· 逐单串行提交，单间随机停顿`, true);
     asPoll();
+    return true;
   } catch (e) {
     asSetPhase('发起失败', String(e.message || e), false);
+    return false;
   }
+}
+async function asSubmit() {
+  const items = asSelectedItems();
+  if (!items.length) {
+    asSetPhase('等待发起',
+      '请先勾选要提交的订单；也可以在上方粘贴「环境序号 订单号」直接提交。', false);
+    return;
+  }
+  await asSubmitItems(items, { label: '提交售后' });
+}
+// 补提失败单的范围＝**可恢复失败**。blocked 不在其中：平台判定「已无可退包裹」，
+// 重提只会白跑一遍写操作（需求 §1），所以界面上这类行不给入口。
+const AS_RECOVERABLE_CLAIM_STATUS = ['fail', 'login', 'inuse', 'stopped'];
+function asRecoverableClaimRows(rows) {
+  return (rows || []).filter(row =>
+    AS_RECOVERABLE_CLAIM_STATUS.includes(String(row.status || ''))
+    && row.orderNo && row.environmentSerial);
+}
+// 提交条目：展示字段（送达时间/商品图）随单带上，③ 与历史详情才有这两列
+function asClaimItemsFromRows(rows) {
+  return (rows || []).filter(row => row.orderNo && row.environmentSerial)
+    .map(row => ({
+      environmentSerial: row.environmentSerial || '',
+      orderNo: row.orderNo,
+      storeName: row.storeName || '',
+      packageNo: '',
+      deliveredAt: row.deliveredAt || '',
+      goodsImg: row.goodsImg || '',
+    }));
+}
+function asSyncRetryButton(rows) {
+  const button = $('asRetryFailed');
+  if (!button) return;
+  const count = asRecoverableClaimRows(rows || AS_STATE.claimRows).length;
+  button.disabled = !count || AS_STATE.running;
+  button.textContent = count ? `补提失败单（${count}）` : '补提失败单';
+}
+async function asRetryFailedClaims(rows, sourceRunId) {
+  const list = asRecoverableClaimRows(rows || AS_STATE.claimRows);
+  if (!list.length) {
+    asSetPhase('没有可补提的单',
+      '当前批次没有可恢复的失败行（blocked 是平台判定已无可退包裹，不给重提入口）。', false);
+    return;
+  }
+  const preview = list.map(r => `${r.environmentSerial} ${r.orderNo}`).join('\n');
+  if (!confirm(`将重新提交 ${list.length} 单失败订单（退款申请是写操作）：\n\n`
+      + preview
+      + '\n\n这些单会组成新的一批，原批次结果不变。确认继续？')) return;
+  await asSubmitItems(asClaimItemsFromRows(list), {
+    label: '补提失败单',
+    retryFromRunId: sourceRunId || AS_STATE.runId || '',
+  });
+}
+// 直接提交指定单：一组＝`环境序号 订单号`，分号/换行分组，空格与中英文逗号都当分隔。
+// 字段不足的组要报出来，不静默丢弃（需求 §4）。
+function asParseDirectOrders(text) {
+  const groups = String(text || '').split(/[;\n]+/).map(g => g.trim())
+    .filter(Boolean);
+  const items = [], invalid = [], duplicates = [];
+  const seen = new Set();
+  groups.forEach(group => {
+    const parts = group.split(/[\s,，、]+/).filter(Boolean);
+    if (parts.length < 2) { invalid.push(group); return; }
+    const key = parts[0] + ' ' + parts[1];
+    if (seen.has(key)) { duplicates.push(key); return; }
+    seen.add(key);
+    items.push({
+      environmentSerial: parts[0], orderNo: parts[1], storeName: '',
+      packageNo: '', deliveredAt: '', goodsImg: '',
+    });
+  });
+  return { items, invalid, duplicates };
+}
+async function asDirectSubmit() {
+  const parsed = asParseDirectOrders($('asDirectOrders').value);
+  if (parsed.invalid.length) {
+    asSetPhase('格式有误',
+      `这些组字段不足（要「环境序号 订单号」）：${parsed.invalid.join(' / ')}`, false);
+    return;
+  }
+  if (!parsed.items.length) {
+    asSetPhase('没有可提交的单',
+      '格式：环境序号 订单号（多组用分号或换行隔开）', false);
+    return;
+  }
+  const notes = [`将直接提交 ${parsed.items.length} 单（退款申请是写操作）`];
+  if (parsed.duplicates.length) {
+    notes.push(`已去掉重复的 ${parsed.duplicates.length} 组：${parsed.duplicates.join(' / ')}`);
+  }
+  notes.push('执行器会先现场体检可退性：不能退的记为 blocked（已跳过），不会重复退款。');
+  if (!confirm(notes.join('\n') + '\n\n确认继续？')) return;
+  await asSubmitItems(parsed.items, { label: '提交指定单' });
 }
 async function asPoll() {
   try {
@@ -5550,15 +5921,19 @@ async function asPoll() {
         $('asScan').disabled = false; $('asSubmit').disabled = false; $('asStop').disabled = true;
         const bad = Number(data.failedCount || 0);
         const okCount = Number(data.successCount || 0);
-        asSetPhase(bad ? '提交完成（部分失败）' : '提交完成',
-          bad ? `已受理 ${okCount} 单，失败 ${bad} 单（可在下方「异常与跳过详情」排查）。`
+        const head = (AS_STATE.runLabel && AS_STATE.runLabel !== '提交售后')
+          ? AS_STATE.runLabel : '提交';
+        asSetPhase(bad ? head + '完成（部分失败）' : head + '完成',
+          bad ? `已受理 ${okCount} 单，失败 ${bad} 单（可点「补提失败单」重试，或在「异常与跳过详情」排查）。`
             : `已受理 ${okCount} 单，退款审核中（结果 7 天内出）。`, false);
         AS_STATE.mode = '';
+        asSyncRetryButton(AS_STATE.claimRows);
       } else if (AS_STATE.stopRequested) {
         asSetPhase('正在停止', `已请求停止，在途订单完成后终止（已完成 ${data.progressCompleted ?? 0} / ${data.progressTotal ?? 0}）。`, true);
       } else {
         const doneN = data.progressCompleted ?? 0, total = data.progressTotal ?? 0;
-        asSetPhase('提交售后中', `已完成 ${doneN} / ${total}`, true);
+        asSetPhase((AS_STATE.runLabel || '提交售后') + '中',
+          `已完成 ${doneN} / ${total}`, true);
       }
     }
   } catch (e) {
@@ -5589,11 +5964,14 @@ $('asStop').onclick = async () => {
 };
 $('asClearResult').onclick = () => {
   AS_STATE.claimRows = []; AS_STATE.runId = null; AS_STATE.status = '';
+  AS_STATE.runLabel = '';
   $('asClaimRows').innerHTML = '<tr><td colspan="11" class="hint" style="text-align:center; padding:22px;">已清空。</td></tr>';
   $('asPhaseBanner').hidden = true;
   $('asBar').style.width = '0%'; $('asProgressText').textContent = '未开始';
   asRenderClaimRows([]);
 };
+$('asRetryFailed').onclick = () => asRetryFailedClaims();
+$('asDirectSubmit').onclick = asDirectSubmit;
 $('asPickClaimable').onclick = () => {
   AS_STATE.selected = new Set(AS_STATE.rows
     .filter(r => r.orderNo && r.claimable && r.status === 'ok')

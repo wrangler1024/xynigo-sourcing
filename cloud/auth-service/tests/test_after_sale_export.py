@@ -6,13 +6,18 @@
 """
 from __future__ import annotations
 
+import pathlib
+import re
 from io import BytesIO
 
 from openpyxl import load_workbook
 
 from xynigo_auth.after_sale_export import (
+    CLAIM_HEADERS,
+    CLAIM_STATUS_LABELS,
     HEADERS,
     MIME_XLSX,
+    build_after_sale_claim_export,
     build_after_sale_track_export,
 )
 
@@ -120,3 +125,81 @@ def test_export_without_rows_still_yields_readable_sheet() -> None:
     assert [cell.value for cell in sheet[1]] == list(HEADERS)
     assert sheet.max_row == 1
     assert workbook.sheetnames == ["退款跟踪"]
+
+
+# ===== ③ 提交结果（批次）导出 =====
+def _claim_row(**overrides) -> dict[str, object]:
+    row: dict[str, object] = {
+        "environmentSerial": "4589",
+        "orderNo": "GSH1RV19M00NEMB",
+        "goodsImg": "//img.ltwebstatic.com/v4/j/pi/synthetic.jpg",
+        "deliveredAt": "04 Sep 2026 16:56:59",
+        "refundBillId": "2390853897109507",
+        "refundPath": "Cuenta original de pago",
+        "refundAccount": "****0212",
+        "status": "ok",
+        "submittedAt": "2026-09-16T06:16:50+00:00",
+        "note": None,
+        "errorSummary": None,
+    }
+    row.update(overrides)
+    return row
+
+
+def _claim_sheet(rows):
+    content, filename, mime = build_after_sale_claim_export(rows)
+    return load_workbook(BytesIO(content)).active, filename, mime
+
+
+def test_claim_export_header_order_matches_workbench_table() -> None:
+    """列序 = 工作台 ③ 表头，逐字钉死（改列必须同时改 UI 与这里）。"""
+    assert CLAIM_HEADERS == (
+        "环境序号", "订单号", "商品图", "售后类型", "送达时间", "退款单号",
+        "退款路径", "退款信用卡", "状态", "操作时间", "备注",
+    )
+    sheet, _filename, mime = _claim_sheet([])
+    assert [cell.value for cell in sheet[1]] == list(CLAIM_HEADERS)
+    assert mime == MIME_XLSX
+    assert sheet.title == "提交结果"
+
+
+def test_claim_export_row_values_follow_header_order() -> None:
+    sheet, filename, _mime = _claim_sheet([_claim_row()])
+    assert [cell.value for cell in sheet[2]] == [
+        "4589", "GSH1RV19M00NEMB",
+        "//img.ltwebstatic.com/v4/j/pi/synthetic.jpg", "丢件退款",
+        "04 Sep 2026 16:56:59", "2390853897109507",
+        "Cuenta original de pago", "****0212", "已受理 · 退款审核中",
+        "2026-09-16 06:16", None,
+    ]
+    assert filename.startswith("售后提交结果_")
+    assert filename.endswith(".xlsx")
+
+
+def test_claim_export_status_labels_match_web_pills() -> None:
+    """状态文案必须与工作台 ③ 的 AS_CLAIM_PILL 同一套（导出与页面不能各说各话）。"""
+    web = (pathlib.Path(__file__).parents[3] / "src" / "purchase_tool"
+           / "web" / "index.html").read_text(encoding="utf-8")
+    block = web[web.index("const AS_CLAIM_PILL = {"):]
+    block = block[:block.index("};")]
+    pairs = re.findall(r"(\w+):\s*\['\w+',\s*'([^']+)'\]", block)
+    assert pairs, "未解析到 Web 的 AS_CLAIM_PILL"
+    for status, label in pairs:
+        if status in CLAIM_STATUS_LABELS:
+            assert CLAIM_STATUS_LABELS[status] == label, (
+                f"状态 {status} 的文案与页面不一致："
+                f"导出={CLAIM_STATUS_LABELS[status]} 页面={label}")
+    # 反向：页面有的状态，导出也得有（否则导出会漏文案）
+    assert set(dict(pairs)) - set(CLAIM_STATUS_LABELS) == set()
+
+
+def test_claim_export_keeps_failure_reason() -> None:
+    """失败行必须能看出原因：备注列取 note，缺 note 时落到 errorSummary。"""
+    sheet, _filename, _mime = _claim_sheet([
+        _claim_row(status="blocked", note="该订单已无可申请售后的包裹"),
+        _claim_row(status="login", note=None, errorSummary="登录态失效"),
+    ])
+    assert sheet.cell(row=2, column=9).value == "不可申请 · 已提交过"
+    assert sheet.cell(row=2, column=11).value == "该订单已无可申请售后的包裹"
+    assert sheet.cell(row=3, column=9).value == "失败 · 未登录"
+    assert sheet.cell(row=3, column=11).value == "登录态失效"

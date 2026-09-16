@@ -434,6 +434,9 @@ class OperationRunService:
                 "orderNo": item.orderNo,
                 "storeName": item.storeName,
                 "packageNo": item.packageNo,
+                # 展示字段也留在批次请求摘要里：批次详情、导出、排查都用得上
+                "deliveredAt": item.deliveredAt,
+                "goodsImg": item.goodsImg,
             }
             for item in body.items
         ]
@@ -457,6 +460,9 @@ class OperationRunService:
             request_summary={
                 "items": items,
                 "browserMode": body.browserMode,
+                # 重提来源批次（提交历史「重提自哪一批」）：写进既有 request_summary
+                # JSON 列，不加列、不加迁移；创建审计的 change_summary 同步记一份。
+                "retryFromRunId": body.retryFromRunId,
             },
             source="cloud_web",
             created_at=now,
@@ -465,6 +471,179 @@ class OperationRunService:
         self.session.add(run)
         self.session.flush()
         return run, False
+
+    def after_sale_claim_history(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        limit: int,
+        cursor: uuid.UUID | None = None,
+        status: str | None = None,
+        actor_user_id: uuid.UUID | None = None,
+    ) -> dict[str, object]:
+        """售后提交历史：一行＝一个提交批次（Run）。
+
+        可见范围＝**租户内互相可见**（只看 tenant_id，不按 actor 过滤）。这是刻意
+        偏离物流查询/创建环境的「本人 + 管理员看全租户」口径，见
+        docs/20260916_需求_售后提交历史与从历史跟进.md §6.3；审计照常记操作人。
+        """
+        statement = select(AfterSaleClaimRun).where(
+            AfterSaleClaimRun.tenant_id == tenant_id
+        )
+        if status is not None:
+            statement = statement.where(AfterSaleClaimRun.status == status)
+        if actor_user_id is not None:
+            statement = statement.where(
+                AfterSaleClaimRun.actor_user_id == actor_user_id
+            )
+        if cursor is not None:
+            cursor_run = self.session.scalar(
+                select(AfterSaleClaimRun).where(
+                    AfterSaleClaimRun.id == cursor,
+                    AfterSaleClaimRun.tenant_id == tenant_id,
+                )
+            )
+            if cursor_run is None:
+                raise PurchaseServiceError(
+                    "after_sale_claim_history_cursor_invalid",
+                    "提交历史游标无效",
+                    422,
+                )
+            statement = statement.where(
+                or_(
+                    AfterSaleClaimRun.created_at < cursor_run.created_at,
+                    and_(
+                        AfterSaleClaimRun.created_at == cursor_run.created_at,
+                        AfterSaleClaimRun.id < cursor_run.id,
+                    ),
+                )
+            )
+        rows = list(self.session.scalars(
+            statement
+            .order_by(AfterSaleClaimRun.created_at.desc(),
+                      AfterSaleClaimRun.id.desc())
+            .limit(limit + 1)
+        ))
+        has_more = len(rows) > limit
+        page = rows[:limit]
+        names = self._after_sale_claim_actor_names(
+            tenant_id, [run.actor_user_id for run in page]
+        )
+        executors = self._after_sale_claim_executor_names(
+            tenant_id, [run.executor_id for run in page]
+        )
+        items = [
+            self._after_sale_claim_history_item(run, names, executors)
+            for run in page
+        ]
+        return {
+            "items": items,
+            "nextCursor": str(page[-1].id) if has_more and page else None,
+            "hasMore": has_more,
+            "actors": self._after_sale_claim_history_actors(tenant_id),
+        }
+
+    def after_sale_claim_history_snapshot(
+        self, *, tenant_id: uuid.UUID, run_id: uuid.UUID
+    ) -> dict[str, object]:
+        """批次详情：单批次快照（不做 root run 合并视图）+ 批次级表头字段。"""
+        run = self.session.scalar(
+            select(AfterSaleClaimRun).where(
+                AfterSaleClaimRun.id == run_id,
+                AfterSaleClaimRun.tenant_id == tenant_id,
+            )
+        )
+        if run is None:
+            raise PurchaseServiceError(
+                "after_sale_claim_run_not_found", "售后批次不存在", 404
+            )
+        names = self._after_sale_claim_actor_names(
+            tenant_id, [run.actor_user_id]
+        )
+        executors = self._after_sale_claim_executor_names(
+            tenant_id, [run.executor_id]
+        )
+        snapshot = after_sale_claim_snapshot(self.session, run)
+        snapshot["batch"] = self._after_sale_claim_history_item(
+            run, names, executors
+        )
+        return snapshot
+
+    def _after_sale_claim_history_item(
+        self, run: AfterSaleClaimRun, actor_names: dict,
+        executor_names: dict | None = None,
+    ) -> dict[str, object]:
+        summary = run.request_summary or {}
+        return {
+            "runId": str(run.id),
+            "status": run.status,
+            "phase": run.phase,
+            "createdAt": _iso(run.created_at),
+            "updatedAt": _iso(run.updated_at),
+            "completedAt": _iso(run.completed_at),
+            "actorUserId": str(run.actor_user_id),
+            "actorName": actor_names.get(run.actor_user_id, ""),
+            "executorId": str(run.executor_id) if run.executor_id else "",
+            "executorName": (executor_names or {}).get(run.executor_id, ""),
+            "totalCount": run.total_count,
+            "successCount": run.success_count,
+            "skippedCount": run.skipped_count,
+            "stoppedCount": run.stopped_count,
+            "failedCount": run.failed_count,
+            "stopRequested": run.stop_requested,
+            "retryFromRunId": str(summary.get("retryFromRunId") or ""),
+        }
+
+    def _after_sale_claim_actor_names(
+        self, tenant_id: uuid.UUID, user_ids: list
+    ) -> dict:
+        wanted = {user_id for user_id in user_ids if user_id is not None}
+        if not wanted:
+            return {}
+        return {
+            user_id: display_name
+            for user_id, display_name in self.session.execute(
+                select(User.id, User.display_name).where(
+                    User.tenant_id == tenant_id, User.id.in_(wanted)
+                )
+            )
+        }
+
+    def _after_sale_claim_executor_names(
+        self, tenant_id: uuid.UUID, executor_ids: list
+    ) -> dict:
+        wanted = {item for item in executor_ids if item is not None}
+        if not wanted:
+            return {}
+        from .models import LocalExecutor as ExecutorModel
+        return {
+            executor_id: display_name
+            for executor_id, display_name in self.session.execute(
+                select(ExecutorModel.id, ExecutorModel.display_name).where(
+                    ExecutorModel.tenant_id == tenant_id,
+                    ExecutorModel.id.in_(wanted),
+                )
+            )
+        }
+
+    def _after_sale_claim_history_actors(
+        self, tenant_id: uuid.UUID
+    ) -> list[dict[str, object]]:
+        """操作人下拉：列表互相可见，所以给全租户提交过售后的人。"""
+        return [{
+            "userId": str(user_id),
+            "displayName": display_name or "",
+            "status": user_status,
+        } for user_id, display_name, user_status in self.session.execute(
+            select(User.id, User.display_name, User.status)
+            .join(AfterSaleClaimRun, AfterSaleClaimRun.actor_user_id == User.id)
+            .where(
+                User.tenant_id == tenant_id,
+                AfterSaleClaimRun.tenant_id == tenant_id,
+            )
+            .distinct()
+            .order_by(User.display_name, User.id)
+        )]
 
     def create_logistics_run(
         self,

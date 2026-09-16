@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import uuid
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from urllib.parse import quote
 
@@ -17,6 +18,9 @@ from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 from sqlalchemy import select
 
+from xynigo_auth.after_sale_export import (
+    CLAIM_HEADERS as CLAIM_EXPORT_HEADERS,
+)
 from xynigo_auth.after_sale_export import HEADERS as EXPORT_HEADERS
 
 from test_executor_channel import (
@@ -833,6 +837,159 @@ def test_after_sale_track_export_workbook_and_auth(tmp_path) -> None:
         assert web_client.get(
             f"/v1/after-sale/track/{task_id}/export"
         ).status_code == 401
+        break
+
+
+# ===== 提交历史：列表 / 详情 / 导出 / 可见范围 =====
+def test_after_sale_claim_history_scope_paging_detail_export(tmp_path) -> None:
+    """提交历史：**租户内互相可见**（含他人批次）、cursor 分页、批次导出、重提来源。
+
+    可见范围是刻意偏离物流/建环境的「本人 + 管理员」口径（需求 §6.3），
+    所以这里必须有「别人的批次也看得到」这条断言，否则等于没验收。
+    """
+    for web_client, device_client, ids, database in _e2e_setup(tmp_path):
+        executor_id, credential = ids["executorId"], ids["credential"]
+        heartbeat(device_client, credential, capabilities=AS_CAPABILITIES,
+                  client_version=CLIENT_VERSION)
+
+        first = web_client.post(
+            "/v1/operation-runs/after-sale-claim",
+            json={
+                "idempotencyKey": "as-claim-history-0000001",
+                "executorId": executor_id,
+                "items": [{
+                    "environmentSerial": "4589", "orderNo": "GSH1A",
+                    "deliveredAt": "04 Sep 2026 16:56:59",
+                    "goodsImg": "//img.ltwebstatic.com/v4/j/pi/x.jpg",
+                }],
+            },
+            headers=CSRF,
+        )
+        assert first.status_code == 202, first.text
+        first_run_id = first.json()["data"]["runId"]
+
+        # 同租户、另一个操作人的批次（直接落库，避免再造一套登录）
+        with database.session_factory() as session:
+            from xynigo_auth.models import AfterSaleClaimRun, User
+            tenant_id = session.scalar(
+                select(AfterSaleClaimRun.tenant_id).where(
+                    AfterSaleClaimRun.id == uuid.UUID(first_run_id))
+            )
+            peer = User(tenant_id=tenant_id, feishu_open_id="ou_as_peer",
+                        display_name="同事甲", status="active")
+            session.add(peer)
+            session.flush()
+            moment = datetime.now(timezone.utc) - timedelta(minutes=5)
+            peer_run = AfterSaleClaimRun(
+                id=uuid.uuid4(), tenant_id=tenant_id, actor_user_id=peer.id,
+                source_run_key="as-claim-history-peer-0001",
+                payload_hash="0" * 64, browser_mode="visible",
+                status="completed", phase="after_sale.completed",
+                progress_completed=1, progress_total=1, total_count=1,
+                success_count=1, failed_count=0, skipped_count=0,
+                stopped_count=0, request_summary={"items": []},
+                source="cloud_web", created_at=moment, updated_at=moment,
+            )
+            session.add(peer_run)
+            session.commit()
+            peer_run_id = str(peer_run.id)
+
+        listed = web_client.get(
+            "/v1/operation-runs/after-sale-claim/history?limit=20")
+        assert listed.status_code == 200, listed.text
+        data = listed.json()["data"]
+        runs = {item["runId"]: item for item in data["items"]}
+        assert first_run_id in runs, runs
+        assert peer_run_id in runs, "别人的批次也必须可见（租户内互相可见）"
+        assert runs[first_run_id]["totalCount"] == 1
+        assert runs[first_run_id]["actorName"] != ""
+        assert [actor["displayName"] for actor in data["actors"]] != []
+
+        # 分页：limit=1 拿第一页 + 游标，第二页不重不漏
+        page_one = web_client.get(
+            "/v1/operation-runs/after-sale-claim/history?limit=1"
+        ).json()["data"]
+        assert len(page_one["items"]) == 1 and page_one["hasMore"] is True
+        page_two = web_client.get(
+            "/v1/operation-runs/after-sale-claim/history?limit=1&cursor="
+            + page_one["nextCursor"]
+        ).json()["data"]
+        second_ids = [item["runId"] for item in page_two["items"]]
+        assert page_one["items"][0]["runId"] not in second_ids
+        assert set(second_ids) <= set(runs)
+
+        # 状态筛选
+        filtered = web_client.get(
+            "/v1/operation-runs/after-sale-claim/history?status=completed"
+        ).json()["data"]
+        assert [item["runId"] for item in filtered["items"]] == [peer_run_id]
+
+        # 详情：表头字段 + 逐单行（含商品图/送达时间，来自 request_summary 与结果表）
+        detail = web_client.get(
+            f"/v1/operation-runs/after-sale-claim/history/{peer_run_id}")
+        assert detail.status_code == 200, detail.text
+        batch = detail.json()["data"]["batch"]
+        assert batch["runId"] == peer_run_id
+        assert batch["actorName"] == "同事甲"
+        assert batch["retryFromRunId"] == ""
+        assert "rows" in detail.json()["data"]
+
+        # 先把第一批的任务跑完，否则同一执行器会被 executor_task_busy 挡住
+        task_id, lease_token = _lease_and_start(
+            device_client, credential, expect_type="after.sale.claim.v1")
+        finished = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/finish",
+            json={
+                "leaseToken": lease_token,
+                "outcome": "succeeded",
+                "resultCode": "after_sale_completed",
+                "resultSummary": {
+                    "runStatus": "completed",
+                    "phase": "after_sale.completed",
+                    "progressCompleted": 1, "progressTotal": 1,
+                    "totalCount": 1, "successCount": 1, "failedCount": 0,
+                    "skippedCount": 0, "stoppedCount": 0,
+                    "errorCode": "", "errorSummary": "",
+                },
+            },
+            headers=device_headers(credential),
+        )
+        assert finished.status_code == 200, finished.text
+
+        # 重提来源：新批次带上 retryFromRunId，列表与详情都要能读出来
+        retry = web_client.post(
+            "/v1/operation-runs/after-sale-claim",
+            json={
+                "idempotencyKey": "as-claim-history-retry-0001",
+                "executorId": executor_id,
+                "retryFromRunId": first_run_id,
+                "items": [{"environmentSerial": "4589", "orderNo": "GSH1B"}],
+            },
+            headers=CSRF,
+        )
+        assert retry.status_code == 202, retry.text
+        retry_run_id = retry.json()["data"]["runId"]
+        retry_item = next(
+            item for item in web_client.get(
+                "/v1/operation-runs/after-sale-claim/history"
+            ).json()["data"]["items"] if item["runId"] == retry_run_id)
+        assert retry_item["retryFromRunId"] == first_run_id
+
+        # 批次导出：列与 ③ 一致，行数等于该批次的结果行
+        exported = web_client.get(
+            f"/v1/operation-runs/after-sale-claim/history/{peer_run_id}/export")
+        assert exported.status_code == 200, exported.text
+        assert exported.headers["content-type"].startswith(
+            "application/vnd.openxmlformats-officedocument"
+            ".spreadsheetml.sheet")
+        assert quote("售后提交结果_") in exported.headers["content-disposition"]
+        sheet = load_workbook(BytesIO(exported.content)).active
+        assert [cell.value for cell in sheet[1]] == list(CLAIM_EXPORT_HEADERS)
+
+        # 未登录必须拦在授权层
+        web_client.cookies.clear()
+        assert web_client.get(
+            "/v1/operation-runs/after-sale-claim/history").status_code == 401
         break
 
 

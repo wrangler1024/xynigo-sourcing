@@ -865,8 +865,12 @@ class AfterSaleClaimWiringTests(unittest.TestCase):
         claim_block = claim_block[:claim_block.index('</table>')]
         self.assertEqual(claim_block.count('<th') - claim_block.count('<thead'), 11)
         # 只数行模板本体（从 .map( 到 }).join），排除同函数里的空态字符串
-        tpl = html[html.index('AS_STATE.claimRows.map('):]
-        tpl = tpl[:tpl.index("}).join('')")]
+        # 行模板抽成了 asClaimRowHtml：③ 与「历史详情」共用一套，列序只在一处定义
+        tpl = html[html.index('function asClaimRowHtml('):]
+        tpl = tpl[:tpl.index('\n}')]
+        self.assertIn('AS_STATE.claimRows.map(asClaimRowHtml)', html)
+        self.assertIn('rows.map(asClaimRowHtml)', html,
+                      '历史详情必须复用 ③ 的行模板，不得另写一份（列序会漂）')
         cells = tpl.count('<td') + tpl.count('${asThumbCell')
         self.assertEqual(cells, 11, '③ 行模板单元格数与表头不一致（会整列错位）')
         # 只数个数拦不住列序错（曾把状态列留在第 6 位）：这里按表头顺序逐个钉行模板
@@ -1037,8 +1041,9 @@ class AfterSaleStatusAnchorWiringTests(unittest.TestCase):
 
     def test_each_flow_sets_its_stage_before_first_message(self):
         html = self._html()
+        # 提交的阶段落在共用入口 asSubmitItems 里（asSubmit/补提/指定单都走它）
         for func, mode in (('async function asScan()', 'scan'),
-                           ('async function asSubmit()', 'claim'),
+                           ('async function asSubmitItems(', 'claim'),
                            ('async function asTrack(', 'track')):
             body = html[html.index(func):]
             body = body[:body.index('\n}\n')]
@@ -1046,6 +1051,98 @@ class AfterSaleStatusAnchorWiringTests(unittest.TestCase):
             head = body[body.index('AS_STATE.running'):
                         body.index('AS_STATE.running = true')]
             self.assertIn(f"AS_STATE.mode = '{mode}'", head)
+
+
+class AfterSaleThreeRequirementsWiringTests(unittest.TestCase):
+    """三个需求的接线契约：补提失败 / 直接提交指定单 / 提交历史。
+
+    口径来自 docs/20260916_售后需求排期与暂缓.md §1 与两份需求文档，
+    其中最容易走偏的三条：① 三处提交只走一个建 Run 入口 ② 补提范围排除 blocked
+    ③ 历史列表不做「本人 + 管理员」过滤。
+    """
+
+    def _html(self):
+        local = LOCAL_HTML.read_text(encoding="utf-8")
+        self.assertEqual(local, CLOUD_HTML.read_text(encoding="utf-8"))
+        return local
+
+    def _fn(self, html, signature):
+        body = html[html.index(signature):]
+        return body[:body.index('\n}\n')]
+
+    def test_single_submit_entry_point(self):
+        """三处提交共用同一个建 Run 入口，不得出现第二条提交路径。"""
+        html = self._html()
+        self.assertEqual(
+            html.count("'/v1/operation-runs/after-sale-claim'"), 1,
+            '建 Run 的 URL 只应出现一次（asSubmitItems）')
+        self.assertIn('async function asSubmitItems(', html)
+        for caller in ('async function asSubmit()',
+                       'async function asRetryFailedClaims(',
+                       'async function asDirectSubmit()'):
+            self.assertIn('asSubmitItems(', self._fn(html, caller),
+                          f'{caller} 必须走共用入口')
+        self.assertIn('asRetryFailedClaims(rows, AS_HISTORY.runId)',
+                      self._fn(html, 'async function asRetryHistoryBatch('))
+
+    def test_retry_scope_excludes_blocked(self):
+        """补提范围＝可恢复失败；blocked 不给入口（重提只会白跑一遍写操作）。"""
+        html = self._html()
+        self.assertIn(
+            "const AS_RECOVERABLE_CLAIM_STATUS = ['fail', 'login', 'inuse', 'stopped'];",
+            html)
+        scope = html[html.index('const AS_RECOVERABLE_CLAIM_STATUS'):
+                     html.index('function asClaimItemsFromRows(')]
+        self.assertNotIn('blocked', scope,
+                         'blocked 不能进补提范围')
+        retry = self._fn(html, 'async function asRetryFailedClaims(')
+        self.assertIn('confirm(', retry)          # 写操作二次确认
+        self.assertIn('retryFromRunId', retry)    # 记「重提自哪一批」
+
+    def test_direct_submit_parses_and_reports_invalid_groups(self):
+        """指定单：分隔符容错 + 字段不足要报出来，不静默丢弃。"""
+        html = self._html()
+        parse = self._fn(html, 'function asParseDirectOrders(')
+        self.assertIn('split(/[;\\n]+/)', parse)
+        self.assertIn('split(/[\\s,，、]+/)', parse)
+        self.assertIn('invalid.push(', parse)
+        self.assertIn('duplicates.push(', parse)
+        direct = self._fn(html, 'async function asDirectSubmit(')
+        self.assertIn('parsed.invalid.length', direct)
+        self.assertIn('asSubmitItems(parsed.items', direct)
+        self.assertIn('confirm(', direct)
+
+    def test_history_detail_actions_reuse_existing_paths(self):
+        """从历史发起的三类动作都不新造链路：回访走 ④、重提走共用入口、导出走批次路由。"""
+        html = self._html()
+        track = self._fn(html, 'async function asTrackHistoryBatch(')
+        self.assertIn('await asTrack(items)', track)
+        self.assertIn('r.refundBillId && r.orderNo', track.replace('row.', 'r.'))
+        export = self._fn(html, 'async function asExportClaimHistory(')
+        self.assertIn("'/v1/operation-runs/after-sale-claim/history/'", export)
+        self.assertIn("+ '/export'", export)
+        self.assertIn('workspaceDownloadName(', export)
+
+    def test_history_detail_table_reuses_claim_columns(self):
+        """历史详情表头 = ③ 表头（同一套 11 列、同一列序）。"""
+        html = self._html()
+        claim = html[html.index('id="asClaimTable"'):]
+        claim = claim[:claim.index('</table>')]
+        detail = html[html.index('id="asHistoryDetailView"'):]
+        detail = detail[:detail.index('</table>')]
+        self.assertEqual(
+            re.findall(r'<th[^>]*>([^<]+)</th>', claim),
+            re.findall(r'<th[^>]*>([^<]+)</th>', detail))
+
+    def test_history_list_is_not_actor_scoped(self):
+        """历史列表在租户内互相可见：云端那条路由不许出现 history_admin 过滤。"""
+        main = (LOCAL_HTML.parents[3] / 'cloud' / 'auth-service' / 'src'
+                / 'xynigo_auth' / 'main.py').read_text(encoding='utf-8')
+        block = main[main.index('def list_after_sale_claim_history('):]
+        block = block[:block.index('@app.get(')]
+        self.assertNotIn('history_admin', block)
+        self.assertNotIn('_user_has_role', block)
+        self.assertIn('permission="assistant.access"', block)
 
 
 class AfterSaleTrackExportWiringTests(unittest.TestCase):
@@ -1162,6 +1259,44 @@ class WebCloudContractAlignmentTests(unittest.TestCase):
         missing = sorted(reads - fields)
         self.assertFalse(missing,
                          f'④ 读了云端契约没有的字段（会恒为空）：{missing}')
+
+    def test_history_list_reads_only_fields_cloud_provides(self):
+        """历史列表/详情读的批次字段，云端 _after_sale_claim_history_item 都必须给。
+
+        这类错（Web 读一个云端没返回的字段）不会让任何一侧单测失败——两边各自
+        自洽，只有打开历史弹层才看到空列。
+        """
+        html = LOCAL_HTML.read_text(encoding='utf-8')
+        service = (self.CLOUD_CONTRACT.parent / 'operation_service.py').read_text(
+            encoding='utf-8')
+        block = service[service.index('def _after_sale_claim_history_item('):]
+        block = block[:block.index('\n    def ')]
+        keys = set(re.findall(r'"(\w+)":', block))
+        self.assertTrue(keys, '未解析到云端批次字段')
+        for signature, prefix in (('function asRenderClaimHistory(', 'item.'),
+                                  ('function asRenderClaimHistoryDetail(', 'batch.')):
+            body = html[html.index(signature):]
+            body = body[:body.index('\n}\n')]
+            reads = set(re.findall(prefix.replace('.', r'\.') + r'(\w+)', body))
+            missing = sorted(reads - keys)
+            self.assertFalse(missing,
+                             f'{signature} 读了云端没给的字段（会恒为空）：{missing}')
+
+    def test_history_routes_match_web_urls(self):
+        """历史列表/详情/导出的 URL 必须与云端路由对上（路径漂移只会是 404）。"""
+        html = LOCAL_HTML.read_text(encoding='utf-8')
+        main = (self.CLOUD_CONTRACT.parent / 'main.py').read_text(
+            encoding='utf-8')
+        for route in ('@app.get("/v1/operation-runs/after-sale-claim/history")',
+                      '@app.get("/v1/operation-runs/after-sale-claim/history/{run_id}")',
+                      '@app.get("/v1/operation-runs/after-sale-claim/history/{run_id}/export")'):
+            self.assertIn(route, main)
+        self.assertIn("'/v1/operation-runs/after-sale-claim/history?'", html)
+        self.assertIn("'/v1/operation-runs/after-sale-claim/history/'", html)
+        # 注册顺序：/history 必须排在 /{run_id} 之前，否则被路径参数吃掉
+        self.assertLess(
+            main.index('@app.get("/v1/operation-runs/after-sale-claim/history")'),
+            main.index('@app.get("/v1/operation-runs/after-sale-claim/{run_id}")'))
 
     def test_track_export_route_matches_web_url(self):
         """导出 URL 与云端路由必须同一条；路径漂移只会表现为线上 404。"""

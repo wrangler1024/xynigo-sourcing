@@ -112,7 +112,10 @@ from .purchase_receipt import ReceiptBody, ReceiptError, execute as execute_rece
 from .purchase_receipt_gateway import ReceiptGatewayFactory
 from .procurement_import_sheet import FeishuSheetsGateway, LarkSheetSyncError
 from .integration_contract import FeishuIntegrationWriteBody, FeishuReadProxyBody
-from .after_sale_export import build_after_sale_track_export
+from .after_sale_export import (
+    build_after_sale_claim_export,
+    build_after_sale_track_export,
+)
 from .logistics_export import build_logistics_workbook_export
 from .store_finance_export import build_store_finance_export
 from .executor_diagnostics import executor_context, logistics_diagnostics
@@ -5539,6 +5542,9 @@ def create_app(
                 "status": run.status,
                 "totalCount": run.total_count,
                 "unchanged": unchanged,
+                # 重提来源批次也进审计：历史列表/详情读的是 request_summary，
+                # 审计留一份「这批是从哪批重提的」可追溯记录
+                "retryFromRunId": body.retryFromRunId,
             },
             **_request_log_context(request),
         )
@@ -5569,6 +5575,131 @@ def create_app(
         if run is None:
             return {"ok": True, "data": None}
         return {"ok": True, "data": after_sale_claim_snapshot(session, run)}
+
+    # 注意注册顺序：/history 必须排在 /{run_id} 之前，否则会被路径参数吃掉
+    @app.get("/v1/operation-runs/after-sale-claim/history")
+    def list_after_sale_claim_history(
+        request: Request,
+        session: SessionDep,
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+        cursor: Annotated[uuid.UUID | None, Query()] = None,
+        run_status: Annotated[
+            Literal[
+                "created", "queued", "leased", "running", "completed",
+                "partial_failure", "failed", "cancelled", "uncertain",
+            ]
+            | None,
+            Query(alias="status"),
+        ] = None,
+        history_user_id: Annotated[
+            uuid.UUID | None, Query(alias="userId")
+        ] = None,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "assistant.after_sale.claim.history.list"
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        # 刻意不做「本人 + 管理员看全租户」过滤：提交历史在租户内互相可见
+        # （见 docs/20260916_需求_售后提交历史与从历史跟进.md §6.3）。
+        runs = OperationRunService(session)
+        data = runs.after_sale_claim_history(
+            tenant_id=actor.tenant.id,
+            limit=limit,
+            cursor=cursor,
+            status=run_status,
+            actor_user_id=history_user_id,
+        )
+        return {"ok": True, "data": data}
+
+    @app.get("/v1/operation-runs/after-sale-claim/history/{run_id}")
+    def get_after_sale_claim_history(
+        run_id: uuid.UUID,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        action = "assistant.after_sale.claim.history.read"
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        runs = OperationRunService(session)
+        try:
+            data = runs.after_sale_claim_history_snapshot(
+                tenant_id=actor.tenant.id, run_id=run_id
+            )
+        except PurchaseServiceError as exc:
+            purchase_error(
+                request, session, actor, action, exc,
+                business_object_id=str(run_id),
+            )
+        return {"ok": True, "data": data}
+
+    @app.get("/v1/operation-runs/after-sale-claim/history/{run_id}/export")
+    def export_after_sale_claim_history(
+        run_id: uuid.UUID,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> Response:
+        action = "assistant.after_sale.claim.history.export"
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        runs = OperationRunService(session)
+        try:
+            snapshot = runs.after_sale_claim_history_snapshot(
+                tenant_id=actor.tenant.id, run_id=run_id
+            )
+        except PurchaseServiceError as exc:
+            purchase_error(
+                request, session, actor, action, exc,
+                business_object_id=str(run_id),
+            )
+        content, filename, mime = build_after_sale_claim_export(snapshot["rows"])
+        _add_audit(
+            session,
+            request_id=request.state.request_id,
+            action=action,
+            result="success",
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            business_object_type="after_sale_claim_run",
+            business_object_id=str(run_id),
+            change_summary={"rowCount": len(snapshot["rows"])},
+            **_request_log_context(request),
+        )
+        session.commit()
+        return Response(
+            content=content,
+            media_type=mime,
+            headers={
+                "Cache-Control": "private, no-store",
+                "Content-Disposition": (
+                    f"attachment; filename*=UTF-8''{quote(filename)}"
+                ),
+                "X-Content-Type-Options": "nosniff",
+                "X-Xynigo-Row-Count": str(len(snapshot["rows"])),
+            },
+        )
 
     @app.get("/v1/operation-runs/after-sale-claim/{run_id}")
     def get_after_sale_claim_run(

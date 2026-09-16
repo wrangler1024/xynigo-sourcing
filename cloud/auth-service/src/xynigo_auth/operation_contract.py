@@ -1101,6 +1101,9 @@ class AfterSaleClaimRunCreateBody(BaseModel):
     executorId: uuid.UUID
     browserMode: Literal["headless", "visible"] = "visible"
     items: list[AfterSaleClaimItem] = Field(min_length=1, max_length=500)
+    # 重提来源批次（③ 补提失败 / 历史详情重提）：只用于展示「重提自哪一批」，
+    # 不参与幂等（幂等仍只看 idempotencyKey 与 payload_hash）。
+    retryFromRunId: str = Field(default="", max_length=64)
 
     @field_validator("items")
     @classmethod
