@@ -666,6 +666,15 @@
   /* ===== 小犀助手 · 采购售后（丢件退款） ===== */
   /* 售后三张表的商品缩略图：复用 .procurement-image-thumb，只按密集表格调小一档 */
   #afterSalePanel .procurement-image-thumb { width: 34px; height: 44px; margin-left: 0; border-radius: 8px; box-shadow: none; }
+  /* 退款跟踪的阶段迷你时间轴：四节点（已受理→审核中→处理中→已退款），当前节点高亮 */
+  #afterSalePanel .as-tl { display:inline-flex; align-items:center; gap:0; }
+  #afterSalePanel .as-tl i { width:8px; height:8px; border-radius:50%; background:#d7e0e8; flex:none; }
+  #afterSalePanel .as-tl u { width:14px; height:2px; background:#d7e0e8; flex:none; }
+  #afterSalePanel .as-tl i.done { background:var(--rhino-500); }
+  #afterSalePanel .as-tl u.done { background:var(--rhino-500); }
+  #afterSalePanel .as-tl i.cur { background:var(--rhino-600); box-shadow:0 0 0 3px rgba(32,174,179,.18); }
+  #afterSalePanel .as-tl i.bad { background:#d9534f; box-shadow:0 0 0 3px rgba(217,83,79,.16); }
+  #afterSalePanel .as-tl-label { margin-left:8px; font-size:12px; font-weight:700; white-space:nowrap; }
   /* 状态条右侧的进度区排版（用 class 而非内联样式，否则收起的 display:none 会被内联压住） */
   #afterSalePanel .as-strip-progress { margin-left: auto; display: flex; align-items: center; gap: 10px; }
   /* 运行状态条的终态收起：折成一行（只留标题与操作），把纵向空间还给表格 */
@@ -2278,6 +2287,30 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
           <div style="margin-top:10px; display:flex; flex-direction:column; gap:10px;" id="asErrList"></div>
         </details>
         <p class="xyp2-help">扫描阶段用买家端只读接口判定「这个包裹现在还能不能申请售后」：已被提交过的包裹会被平台划入不可退，因此重复扫描不会重复提交。提交是写操作——每单逐条串行执行，单与单之间随机停顿，环境之间串行。</p>
+      </div>
+    </section>
+
+    <section class="card table-card">
+      <div class="card-title" style="padding:17px 19px 0;">
+        <div>④ 退款跟踪 <span class="legend">退款单号为主键 · 只读回访平台侧处理进度 · 到终态即冻结</span></div>
+        <div class="table-actions">
+          <button class="btn primary" id="asTrack">刷新退款进度</button>
+        </div>
+      </div>
+      <div style="padding: 0 19px;">
+        <div class="table-scroll scroll-20">
+          <table id="asTrackTable">
+            <thead><tr>
+              <th>环境序号</th><th>订单号</th><th style="width:46px">商品图</th><th>退款单号</th>
+              <th>退款信用卡</th><th>退款金额</th><th>阶段</th><th>剩余倒计时</th>
+              <th>最近检查</th><th>备注</th>
+            </tr></thead>
+            <tbody id="asTrackRows"><tr><td colspan="10" class="hint" style="text-align:center; padding:22px;">点「刷新退款进度」回访已提交的退款单（只读）。</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div style="padding: 12px 19px 17px;">
+        <p class="xyp2-help">回访只读：复用提交时的环境，逐个退款单读平台侧阶段（已受理 → 审核中 → 处理中 → 已退款／已拒绝），只回访未终态的单，到终态即冻结。退款信用卡为回访读到的原卡掩码，取不到显示 —。被拒的行到买家端看「Historial de negociación」的拒绝理由后再决定是否申诉。</p>
       </div>
     </section>
   </div>
@@ -5214,7 +5247,8 @@ sfPoll = async function () {
 const AFTER_SALE_TYPE = '丢件退款';
 const AS_LIST_KEY = 'afterSaleEnvList';
 const AS_STATE = {
-  mode: '', scanTaskId: null, runId: null, timer: null, running: false,
+  mode: '', scanTaskId: null, runId: null, trackTaskId: null, timer: null,
+  running: false,
   rows: [], selected: new Set(), claimRows: [], stopRequested: false,
   pollErrors: 0, etaBase: null, status: ''
 };
@@ -5394,6 +5428,89 @@ function asClaimPillText(status) {
   const entry = AS_CLAIM_PILL[String(status || '')];
   return entry ? entry[1] : String(status || '');
 }
+// 阶段迷你时间轴：四节点固定顺序，当前节点高亮；已拒绝把末节点标红
+const AS_TL_ORDER = ['submitted', 'reviewing', 'processing', 'refunded'];
+const AS_TL_LABEL = { submitted: '已受理', reviewing: '审核中', processing: '处理中',
+  refunded: '已退款', rejected: '已拒绝', overdue: '超期未出结果' };
+function asTimeline(phase) {
+  const rejected = phase === 'rejected';
+  const idx = rejected ? AS_TL_ORDER.length - 1
+    : Math.max(0, AS_TL_ORDER.indexOf(phase));
+  let html = '<span class="as-tl">';
+  for (let i = 0; i < AS_TL_ORDER.length; i++) {
+    if (i) html += `<u class="${i <= idx ? 'done' : ''}"></u>`;
+    const cls = rejected && i === idx ? 'bad'
+      : (i < idx ? 'done' : (i === idx ? 'cur' : ''));
+    html += `<i class="${cls}"></i>`;
+  }
+  return html + '</span>';
+}
+function asRenderTrackRows(rows) {
+  AS_STATE.trackRows = rows || [];
+  const tbody = $('asTrackRows');
+  if (!AS_STATE.trackRows.length) {
+    tbody.innerHTML = '<tr><td colspan="10" class="hint" style="text-align:center; padding:22px;">点「刷新退款进度」回访已提交的退款单（只读）。</td></tr>';
+    return;
+  }
+  tbody.innerHTML = AS_STATE.trackRows.map(row => {
+    const phase = String(row.phase || '');
+    const bad = phase === 'rejected' || phase === 'overdue';
+    return `<tr${bad ? ' class="tr-bad"' : ''}>
+      <td class="sub-text">${esc(row.environmentSerial || '')}</td>
+      <td class="as-order">${esc(row.orderNo || '')}</td>
+      ${asThumbCell(row.goodsImg)}
+      <td class="as-order" style="font-size:12px">${esc(row.refundBillId || '')}</td>
+      <td class="sub-text">${esc(row.refundAccount || '—')}</td>
+      <td>${esc(row.amount || '—')}</td>
+      <td>${asTimeline(phase)}<span class="as-tl-label">${esc(row.phaseLabel || AS_TL_LABEL[phase] || '—')}</span></td>
+      <td>${esc(row.countdown || '—')}</td>
+      <td class="sub-text">${esc((row.checkedAt || '').replace('T', ' ').slice(5, 16) || '—')}</td>
+      <td class="hint">${esc(row.note || row.errorSummary || '—')}</td></tr>`;
+  }).join('');
+}
+async function asTrack() {
+  if (AS_STATE.running) return;
+  // 回访对象＝③ 里已提交成功（有退款单号）的行；同一次会话内数据就在手上
+  const items = (AS_STATE.claimRows || [])
+    .filter(r => r.refundBillId && r.orderNo)
+    .map(r => ({ environmentSerial: r.environmentSerial || '',
+                 orderNo: r.orderNo, refundBillId: r.refundBillId,
+                 storeName: r.storeName || '' }));
+  if (!items.length) {
+    asSetPhase('无可回访的退款单', '请先提交售后（③ 里出现退款单号后即可回访）。', false);
+    return;
+  }
+  let executor;
+  try { executor = await cloudFormalExecutor('after.sale.track.v1'); }
+  catch (e) { asSetPhase('执行器不可用', e.message || '无法发起回访', false); return; }
+  try {
+    const res = await cloudFetchJson('/v1/after-sale/track', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        idempotencyKey: 'as-track-' + Date.now() + '-'
+          + Math.random().toString(36).slice(2, 8),
+        executorId: executor.id, browserMode: 'visible', items,
+      }),
+    });
+    const data = (res || {}).data || {};
+    AS_STATE.trackTaskId = data.taskId || null;
+    AS_STATE.mode = 'track';
+    AS_STATE.running = true;
+    AS_STATE.stopRequested = false;
+    AS_STATE.pollErrors = 0;
+    AS_STATE.etaBase = null;
+    AS_STATE.trackRows = [];
+    AS_STATE.trackTotal = items.length;
+    $('asTrack').disabled = true; $('asStop').disabled = false;
+    asRenderTrackRows([]);
+    asSetPhase('回访运行中', `共 ${items.length} 个退款单 · 只读，不动订单与退款数据`, true);
+    asPoll();
+  } catch (e) {
+    asSetPhase('发起失败', String(e.message || e), false);
+  }
+}
+$('asTrack').onclick = asTrack;
+
 function asSyncSelection() {
   const pickable = AS_STATE.rows.filter(r => r.orderNo && r.claimable
     && r.status === 'ok');
@@ -5533,6 +5650,28 @@ async function asPoll() {
           claimable ? `可申请 ${claimable} 单，勾选后点「提交售后」。`
             : '本次没有可申请售后的订单（可能都提交过了）。', false);
         asRenderScanRows(rows);
+      }
+    } else if (AS_STATE.mode === 'track' && AS_STATE.trackTaskId) {
+      const res = await cloudFetchJson('/v1/after-sale/track/'
+        + encodeURIComponent(AS_STATE.trackTaskId));
+      const data = (res || {}).data || {};
+      const rows = (data.summary || {}).rows || [];
+      asRenderTrackRows(rows);
+      const total = Number((AS_STATE.trackTotal || rows.length)) || rows.length;
+      asProgress({ progressTotal: total, progressCompleted: rows.length,
+        rows, unit: '单' });
+      AS_STATE.pollErrors = 0;
+      AS_STATE.status = String(data.status || '');
+      if (['succeeded', 'failed', 'cancelled', 'uncertain'].includes(AS_STATE.status)) {
+        AS_STATE.running = false;
+        AS_STATE.mode = '';
+        $('asTrack').disabled = false; $('asStop').disabled = true;
+        const open = rows.filter(r => ['submitted', 'reviewing', 'processing']
+          .includes(String(r.phase || ''))).length;
+        const bad = rows.filter(r => String(r.phase || '') === 'rejected').length;
+        asSetPhase('回访完成',
+          `已回访 ${rows.length} 单 · 未终态 ${open} 单`
+          + (bad ? ` · 已拒绝 ${bad} 单需人工` : ''), false);
       }
     } else if (AS_STATE.mode === 'claim' && AS_STATE.runId) {
       const res = await cloudFetchJson('/v1/operation-runs/after-sale-claim/'

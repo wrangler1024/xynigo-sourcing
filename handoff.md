@@ -68,3 +68,35 @@ Web 权威源
 
 业务侧经验（页面结构、四个坑、实测记录）已沉淀到私有业务仓：
 `shein-dropshipping-ops/自动化工具/HubStudio采购环境自动化/06-已送达未收到售后申请.md`，并更新了该目录 README 索引与 `04-踩坑速查表.md`。
+
+---
+
+## 【续作要点】20260916 · 退款跟踪落地进度（上下文压缩后的接续入口）
+
+分支 `codex/after-sale-claim-v1`（23 个提交，**未推送**），worktree `~/Documents/xynigo-worktrees/after-sale-claim`。
+测试口径：本地 `PYTHONPATH=src /Users/jeff/Documents/xynigo-sourcing/.venv/bin/python -m pytest tests -q`；
+云端 `cd cloud/auth-service && .venv/bin/python -m pytest tests -p no:warnings`（venv 是 3.12，已建好）。
+
+### 已完成（按层）
+- **执行器**：`after_sale_claim.py` 扫描/提交/回访三条链；提交链真机 5 单成功（4904/4905/4585/4586/4588）；
+  回访链真机只读验证（4586/4904，阶段「审核中」、倒计时、退款账户 ****7935 / ****2813、金额全对）
+- **本地桥接**：`after.sale.scan.v1` / `after.sale.claim.v1` / `after.sale.track.v1`（operation_executor + executor_channel）
+- **云端**：`after_sale_claim_runs/_results`（迁移 0035/0036）、`after_sale_refund_tracking`（迁移 0037）；
+  路由含 scan/claim/track 三套；回访进度 upsert 进跟踪表，快照按退款单号读回
+- **Web（权威源）**：采购售后单类型两步式（扫描→勾选→提交）已接真实接口；②③ 表含商品图/送达时间/退款信用卡/操作时间；运行状态条（sticky + 终态收起 + 完整进度标签 + 预计还需）
+- **设计稿**：`docs/prototypes/20260915-procurement-after-sale-v2-multitype.html`（多类型三级菜单 + ④ 退款跟踪含迷你时间轴与导出），由真实页面注入 mock 生成
+
+### 唯一剩余：Web ④ 退款跟踪卡片接真实接口
+1. 权威源 `src/purchase_tool/web/index.html` 加 ④ 卡片（设计稿已是最终形态：列序 环境序号/订单号/商品图/退款单号/退款信用卡/退款金额/阶段/最近检查/处置 + 阶段迷你时间轴 + 导出 Excel 三变体）
+2. 发起 `POST /v1/after-sale/track`（body `{idempotencyKey, executorId, browserMode, items:[{environmentSerial,orderNo,refundBillId,storeName}]}`）
+3. 轮询 `GET /v1/after-sale/track/{taskId}` → `summary.rows`（跟踪表快照，含 phase/countdown/refundAccount/amount/checkedAt）
+4. `capability=after.sale.track.v1` 走 `cloudFormalExecutor`；跑完 `sync_web_workspace.py` + 重生成两个原型
+5. 导出待做：照 `store_finance_export.py` 建 `after_sale_track_export.py` + 路由 `…/export?variant=standard|full|open`
+
+### 硬约束与踩过的坑（勿重复）
+- 页面渲染比跳转慢且不稳定：**读值轮询到出值、点击验证生效再重试**，不要估 sleep（踩过三次：退款路径 6s、退款账户 2s、时间轴）
+- 退款单页时间轴**会列出尚未到达的步骤**，判当前阶段要用当前步骤信号（审核节点带「está en revisión」）
+- 重写既有表结构必须保留原节点 id（丢过 `asChkHead` 导致轮询全抛 null）；改完必跑「表头列数＝行单元格数」校验
+- 新增 ORM 表先翻同库写法：UUID 主键 `mapped_column(primary_key=True, default=uuid.uuid4)`、
+  时间戳 `server_default=func.now()`；新模型/契约要显式加进 `executor_service` 导入清单
+- 该后台的 `.refundAccount-info .status` 会渲染占位符 `Error`（平台自身问题），不是失败信号
