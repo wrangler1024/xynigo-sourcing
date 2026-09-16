@@ -463,6 +463,7 @@ class OperationRunService:
             request_summary={
                 "items": items,
                 "browserMode": body.browserMode,
+                "concurrency": body.concurrency,
                 # 重提来源批次（提交历史「重提自哪一批」）：写进既有 request_summary
                 # JSON 列，不加列、不加迁移；创建审计的 change_summary 同步记一份。
                 "retryFromRunId": body.retryFromRunId,

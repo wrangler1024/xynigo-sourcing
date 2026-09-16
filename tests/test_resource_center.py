@@ -213,7 +213,7 @@ class ResourceCenterTests(unittest.TestCase):
             ProxyEndpoint('ip_b', '203.0.113.9', 1080, 'SOCKS5', 'u', 'p'),
         ]
         job = ProxyCheckJob(lambda _ids: list(endpoints), checker=checker)
-        job.start(['ip_a', 'ip_b'], concurrency=10, timeout=8)
+        job.start(['ip_a', 'ip_b'], concurrency=2, timeout=8)
         wait_job(job)
         snapshot = job.snapshot()
         self.assertEqual(checker.calls, 2)

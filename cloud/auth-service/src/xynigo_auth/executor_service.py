@@ -573,6 +573,11 @@ class ExecutorChannelService:
                 and payload.get("site") == "AUTO"
                 and "logistics.auto-site.v1" not in set(executor.capabilities or [])):
             raise ExecutorServiceError("executor_auto_site_required", status_code=409)
+        if (task_type in {"after.sale.scan.v1", "after.sale.claim.v1", "after.sale.track.v1"}
+                and ("concurrency" in payload or payload.get("browserMode") == "headless")
+                and "after.sale.runtime-controls.v1" not in set(executor.capabilities or [])):
+            raise ExecutorServiceError(
+                "executor_after_sale_runtime_upgrade_required", status_code=409)
         if task_type not in set(executor.capabilities or []):
             raise ExecutorServiceError("executor_capability_missing", status_code=409)
         if task_type in ENCRYPTED_TASK_TYPES and self.payload_cipher is None:

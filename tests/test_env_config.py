@@ -60,7 +60,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(
             snapshot['runtimeConfig']['configRevision'],
             main_module.config_revision(public_executor_config(state.cfg)))
-        self.assertEqual(snapshot['runtimeConfig']['envCreateWorkers'], 5)
+        self.assertEqual(snapshot['runtimeConfig']['envCreateWorkers'], 2)
         rendered = json.dumps(snapshot, ensure_ascii=False)
         self.assertNotIn(TEST_PROXY, rendered)
         self.assertNotIn('proxyLink', rendered)
@@ -434,15 +434,15 @@ class ConfigTests(unittest.TestCase):
             updated_config(default_config(), {'importBuyerPlan': '新刚'})
 
     def test_env_create_workers_setting(self):
-        # 模块三建环境并发：纯 API 路径，默认 5、1-10 可调
-        self.assertEqual(default_config()['envCreateWorkers'], 5)
-        cfg = updated_config(default_config(), {'envCreateWorkers': 8})
-        self.assertEqual(cfg['envCreateWorkers'], 8)
-        for bad in (0, 11, 'x'):
-            with self.assertRaisesRegex(ValueError, '1-10'):
+        # 模块三建环境并发：纯 API 路径，默认 2，仅支持 2 / 3 / 5
+        self.assertEqual(default_config()['envCreateWorkers'], 2)
+        cfg = updated_config(default_config(), {'envCreateWorkers': 3})
+        self.assertEqual(cfg['envCreateWorkers'], 3)
+        for bad in (0, 1, 4, 8, 11, True, 2.5, '2', 'x'):
+            with self.assertRaisesRegex(ValueError, '2、3、5'):
                 updated_config(default_config(), {'envCreateWorkers': bad})
         public = public_config(default_config())
-        self.assertEqual(public['envCreateWorkers'], 5)
+        self.assertEqual(public['envCreateWorkers'], 2)
 
     def test_proxy_link_falls_back_to_builtin_default(self):
         # 前期写死：未配置/已清除 → 内置默认；自定义 → 覆盖默认

@@ -342,15 +342,15 @@ class EnvWebJobTests(unittest.TestCase):
         cfg = {
             'purchaseTag': TEST_TAG,
             'proxyLink': TEST_PROXY,
-            'envCreateWorkers': 9,
+            'envCreateWorkers': 5,
             'safeParallelTasks': True,
         }
         job = EnvBatchJob(lambda: FakeHub(), lambda: cfg)
         backup = BackupEnvJob(lambda: FakeHub(), lambda: cfg)
         self.assertEqual(job._runtime_config()['workers'], 2)
-        self.assertEqual(job._runtime_config()['configuredWorkers'], 9)
+        self.assertEqual(job._runtime_config()['configuredWorkers'], 5)
         self.assertEqual(backup._runtime_config()['workers'], 2)
-        self.assertEqual(backup._runtime_config()['configuredWorkers'], 9)
+        self.assertEqual(backup._runtime_config()['configuredWorkers'], 5)
 
         cfg['safeParallelTasks'] = False
         self.assertEqual(job._runtime_config()['workers'], 3)
@@ -383,9 +383,12 @@ class EnvWebJobTests(unittest.TestCase):
         hub = BlockingFirstCreateHub()
         cfg = {
             'purchaseTag': TEST_TAG, 'proxyLink': TEST_PROXY,
-            'envCreateWorkers': 1,
+            'envCreateWorkers': 2,
         }
         job = EnvBatchJob(lambda: hub, lambda: cfg)
+        original_runtime_config = job._runtime_config
+        # Internal single-worker cap keeps row two queued for stop coverage.
+        job._runtime_config = lambda *args, **kwargs: dict(original_runtime_config(*args, **kwargs), workers=1)
         parsed = job.parse(
             'vendor.xlsx',
             base64.b64encode(output.getvalue()).decode('ascii'))
@@ -1090,9 +1093,11 @@ class BackupEnvJobTests(unittest.TestCase):
         hub = BlockingFirstCreateHub()
         cfg = {
             'purchaseTag': TEST_TAG, 'proxyLink': TEST_PROXY,
-            'envCreateWorkers': 1,
+            'envCreateWorkers': 2,
         }
         job = BackupEnvJob(lambda: hub, lambda: cfg)
+        original_runtime_config = job._runtime_config
+        job._runtime_config = lambda *args, **kwargs: dict(original_runtime_config(*args, **kwargs), workers=1)
         job.start('新刚', 2, '备用', '20260819',
                   verify_sample_count=2, confirm_write=True)
         self.assertTrue(hub.first_started.wait(1))

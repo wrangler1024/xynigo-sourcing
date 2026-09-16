@@ -55,6 +55,7 @@ SUPPORTED_CAPABILITIES = (
     'after.sale.scan.v1',
     'after.sale.claim.v1',
     'after.sale.track.v1',
+    'after.sale.runtime-controls.v1',
     'environment.create-bound.v1',
     'environment.create-backup.v1',
     'environment.retry-row.v1',
@@ -68,6 +69,7 @@ MODERN_ONLY_CAPABILITIES = frozenset({
     'after.sale.scan.v1',
     'after.sale.claim.v1',
     'after.sale.track.v1',
+    'after.sale.runtime-controls.v1',
 })
 COMPATIBLE_CAPABILITIES = tuple(
     capability for capability in SUPPORTED_CAPABILITIES

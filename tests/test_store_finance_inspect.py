@@ -262,7 +262,7 @@ class ExecutorConcurrencyPassthroughTests(unittest.TestCase):
             'runKey': 'store-finance-conc-test-0001',
             'environmentSerials': ['1746'],
             'browserMode': 'headless',
-            'concurrency': 4,
+            'concurrency': 3,
         }
         outcome, code, summary = executor.execute(
             'store.finance.inspect.v1', payload,
@@ -272,10 +272,10 @@ class ExecutorConcurrencyPassthroughTests(unittest.TestCase):
                          if c['path'] == '/api/store-finance/inspect'
                          and c['method'] == 'POST']
         self.assertEqual(len(inspect_calls), 1)
-        self.assertEqual(inspect_calls[0]['body']['concurrency'], 4)
+        self.assertEqual(inspect_calls[0]['body']['concurrency'], 3)
         self.assertEqual(outcome, 'succeeded')
 
-    def test_concurrency_defaults_to_two_and_caps_at_five(self):
+    def test_concurrency_defaults_to_two_and_rejects_other_values(self):
         executor, calls = self._executor_with_fake_local()
         executor.execute('store.finance.inspect.v1', {
             'runKey': 'store-finance-conc-test-0002',
@@ -286,17 +286,16 @@ class ExecutorConcurrencyPassthroughTests(unittest.TestCase):
                          and c['method'] == 'POST']
         self.assertEqual(inspect_calls[0]['body']['concurrency'], 2)
 
-        # 超上限的值被夹到 5
-        executor, calls = self._executor_with_fake_local()
-        executor.execute('store.finance.inspect.v1', {
-            'runKey': 'store-finance-conc-test-0003',
-            'environmentSerials': ['1746'],
-            'concurrency': 99,
-        }, lambda **event: None, cancellation_event=threading.Event())
-        inspect_calls = [c for c in calls
-                         if c['path'] == '/api/store-finance/inspect'
-                         and c['method'] == 'POST']
-        self.assertEqual(inspect_calls[0]['body']['concurrency'], 5)
+        from purchase_tool.operation_executor import OperationExecutionError
+        for invalid in (1, 4, 99, True, '2', 2.5):
+            executor, calls = self._executor_with_fake_local()
+            with self.assertRaises(OperationExecutionError):
+                executor.execute('store.finance.inspect.v1', {
+                    'runKey': 'store-finance-conc-test-0003',
+                    'environmentSerials': ['SYNTH-A'],
+                    'concurrency': invalid,
+                }, lambda **event: None, cancellation_event=threading.Event())
+            self.assertFalse(any(c['method'] == 'POST' for c in calls))
 
 
 class ProjectionTests(unittest.TestCase):
@@ -439,7 +438,7 @@ class ExactNameMatchTests(unittest.TestCase):
 
     def _run(self, inputs):
         hub = self._NamedHub()
-        inspector = StoreFinanceInspector(hub, concurrency=4)
+        inspector = StoreFinanceInspector(hub, concurrency=3)
         inspector.start_batch(inputs)
         deadline = time.time() + 5
         while time.time() < deadline and inspector.snapshot()['running']:
