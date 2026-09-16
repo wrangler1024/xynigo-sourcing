@@ -11,9 +11,9 @@
 
 ## 评审对象
 
-- 分支 `codex/after-sale-three-requirements`，本分支只有两个提交：
+- 分支 `codex/after-sale-three-requirements`，相对 main 只有三个提交（两个是文档）：
   - `4bd73ff` feat: 补提失败 + 直接提交指定单 + 提交历史（**主体，请重点看这个**）
-  - `baa0824` docs: 本评审请求提示词
+  - `baa0824` / `e6bebaf` docs: 本评审请求提示词及其范围说明
 - 基线 `origin/main` `b482e1f`。**基线里已经有的东西不属于本次评审对象**（它们是上一轮按 Jeff 指令合并的收口）：
   ④ 退款跟踪导出、运行状态条按阶段落点、③ 补齐送达时间/商品图 + 环境序号移到最前、
   迁移 `0039` 补跟踪表时间列默认值、以及执行器桥接层透传 `deliveredAt`/`goodsImg`。
