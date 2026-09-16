@@ -691,10 +691,24 @@
     #afterSalePanel .as-strip-progress .progress { flex-basis:100%; }
   }
 
-  /* Three after-sale lists share a 20 standard-row viewport; rows are never truncated. */
-  #afterSalePanel .scroll-20 { --as-row-height:64px; max-height:calc(40px + 20 * var(--as-row-height)); overflow:auto; }
-  #afterSalePanel .scroll-20 th { position:sticky; top:0; z-index:2; height:40px; background:var(--surface-2,#f6f8fb); }
-  #afterSalePanel .scroll-20 td { height:var(--as-row-height); }
+  /* Three after-sale lists share a 30 standard-row viewport; rows are never truncated. */
+  #afterSalePanel .as-list-scroll { --as-row-height:64px; max-height:calc(40px + 30 * var(--as-row-height)); overflow:auto; }
+  #afterSalePanel .as-list-scroll th { position:sticky; top:0; z-index:2; height:40px; background:var(--surface-2,#f6f8fb); }
+  #afterSalePanel .as-list-scroll td { height:var(--as-row-height); }
+  /* Reserve all three dots; only the visible portion changes, never the label width. */
+  .as-status-active::after {
+    content:'...'; content:'...' / '';
+    display:inline-block; width:3ch; font-family:monospace; white-space:nowrap;
+    animation:asStatusDots 1.2s steps(1,end) infinite;
+  }
+  @keyframes asStatusDots {
+    0% { clip-path:inset(0 66.6667% 0 0); }
+    33.3333% { clip-path:inset(0 33.3333% 0 0); }
+    66.6667%,100% { clip-path:inset(0 0 0 0); }
+  }
+  @media(prefers-reduced-motion:reduce) {
+    .as-status-active::after { animation:none; clip-path:none; }
+  }
   #afterSalePanel #asRunStrip .query-phase-banner { display:block; }
   #afterSalePanel #asRunStrip .query-phase-banner[hidden] { display:none; }
   #afterSalePanel #asRunStrip .query-phase-copy { display:flex; width:100%; margin-bottom:10px; }
@@ -2391,7 +2405,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
       </div>
       <div class="hint" style="padding:8px 19px">日期包含起止日；多包裹须全部送达后取最晚日期，不完整则待核对。修改筛选会清空勾选。导出仍包含全部扫描结果。</div>
       <div style="padding: 0 19px;">
-        <div class="table-scroll scroll-20">
+        <div class="table-scroll as-list-scroll">
           <table id="asScanTable">
             <thead><tr>
               <th style="width:34px"><input type="checkbox" id="asChkHead" aria-label="全选当前筛选范围内可申请订单" style="accent-color:var(--rhino-600)"></th>
@@ -2440,7 +2454,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
       <div class="as-claim-filters" id="asClaimFilters" role="group" aria-label="提交结果状态筛选"></div>
 
       <div style="padding: 0 19px;">
-        <div class="table-scroll scroll-20">
+        <div class="table-scroll as-list-scroll">
           <table id="asClaimTable">
             <thead><tr>
               <th>环境序号</th><th>订单号</th><th style="width:46px">商品图</th><th>售后类型</th>
@@ -2482,7 +2496,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         <p class="as-manual-help" id="asTrackManualHelp">每组填环境序号、订单号、退款单号，以空格分隔；多组用中英文分号或换行分隔。只读查询，可回访历史订单，无需本页提交记录。</p>
       </div>
       <div style="padding: 0 19px;">
-        <div class="table-scroll scroll-20">
+        <div class="table-scroll as-list-scroll">
           <table id="asTrackTable">
             <thead><tr>
               <th>环境序号</th><th>订单号</th><th style="width:46px">商品图</th><th>退款单号</th>
@@ -5450,6 +5464,7 @@ function asSetPhase(title, text, spin) {
   banner.hidden = false;
   $('asPhaseSpin').hidden = !spin;
   $('asPhaseTitle').textContent = title;
+  $('asPhaseTitle').className = spin ? 'as-status-active' : '';
   $('asPhaseDescription').textContent = text;
   if (asStripCollapseTimer) {
     clearTimeout(asStripCollapseTimer);
@@ -5535,7 +5550,7 @@ function asScanPill(row) {
       : '<span class="pill warn">不可申请</span>';
   }
   const entry = AS_SCAN_PILL[status] || ['warn', status || '—'];
-  return `<span class="pill ${entry[0]}">${entry[1]}</span>`;
+  return `<span class="pill ${entry[0]}${status === 'running' ? ' as-status-active' : ''}">${entry[1]}</span>`;
 }
 function asOrderIdentity(row) {
   return JSON.stringify([String(row.environmentSerial || '').trim(), String(row.orderNo || '').trim().toUpperCase()]);
@@ -5573,7 +5588,7 @@ function asPendingPill(row) {
   const labels = {queued:['run','等待提交'],running:['run','提交中'],verifying:['run','提交核验中'],
     fail:['bad','上次提交失败'],login:['bad','提交前未登录'],inuse:['bad','提交前环境占用'],stopped:['warn','上次已停止']};
   const entry = labels[result.status];
-  return entry ? `<span class="pill ${entry[0]}">${entry[1]}</span>` : asClaimPill(result);
+  return entry ? `<span class="pill ${entry[0]}${['running','verifying'].includes(result.status) ? ' as-status-active' : ''}">${entry[1]}</span>` : asClaimPill(result);
 }
 function asPendingReasonHtml(row) {
   const result = asSubmissionForRow(row);
@@ -5604,7 +5619,7 @@ function asClaimPill(value) {
   }
   if (status === 'blocked' && row.refunds?.some(r=>r.source === 'existing')) return '<span class="pill warn">不可申请 · 已有退款申请</span>';
   const entry = AS_CLAIM_PILL[String(status || '')] || ['warn', status || '—'];
-  return `<span class="pill ${entry[0]}">${entry[1]}</span>`;
+  return `<span class="pill ${entry[0]}${['running','verifying'].includes(status) ? ' as-status-active' : ''}">${entry[1]}</span>`;
 }
 // 商品缩略图：地址必须过采购任务那套白名单（只放行 *.ltwebstatic.com 与同源占位图），
 // 懒加载 + no-referrer，避免把工作台地址带给外部 CDN。
@@ -5780,6 +5795,7 @@ function asRenderScanRows(rows) {
       </tr>`;
     }).join('');
   }
+  $('asScopeState').className = 'resource-state' + (AS_STATE.running && AS_STATE.mode === 'scan' ? ' as-status-active' : '');
   $('asScopeState').textContent = AS_STATE.running && AS_STATE.mode === 'scan'
     ? '扫描中' : `已扫描 ${AS_STATE.rows.length} 行 · 当前可选 ${pickable.length} 单`;
   asSyncSelection();
@@ -5825,7 +5841,7 @@ function asRenderClaimRows(rows) {
   const tbody = $('asClaimRows');
   const visible = AS_STATE.claimRows.filter(row => asClaimMatchesFilter(row, AS_STATE.claimFilter || 'all'));
   if (!AS_STATE.claimRows.length) {
-    tbody.innerHTML = `<tr><td colspan="11" class="hint" style="text-align:center; padding:22px;">${AS_STATE.running && AS_STATE.mode === 'claim' ? '提交批次运行中，等待订单明细回传。' : '提交后此处逐步展示每单结果。'}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="11" class="hint" style="text-align:center; padding:22px;">${AS_STATE.running && AS_STATE.mode === 'claim' ? '<span class="as-status-active">提交批次运行中</span>，等待订单明细回传。' : '提交后此处逐步展示每单结果。'}</td></tr>`;
   } else if (!visible.length) {
     tbody.innerHTML = '<tr><td colspan="11" class="hint" style="text-align:center; padding:22px;">该分类暂无结果。</td></tr>';
   } else {
@@ -5942,7 +5958,7 @@ function asRenderTrackRows(rows) {
       <td class="sub-text">${esc(row.refundAccount || '—')}</td>
       <td>${esc(row.amount || '—')}</td>
       <td>${['queued', 'running', 'stopped', 'fail', 'login', 'inuse'].includes(row.status)
-        ? `<span class="as-tl-label">${esc(({queued:'等待', running:'回访中', stopped:'已停止', fail:'回访失败', login:'未登录', inuse:'环境不可用'})[row.status])}</span>`
+        ? `<span class="as-tl-label${row.status === 'running' ? ' as-status-active' : ''}">${esc(({queued:'等待', running:'回访中', stopped:'已停止', fail:'回访失败', login:'未登录', inuse:'环境不可用'})[row.status])}</span>`
         : `${asTimeline(phase)}<span class="as-tl-label">${esc(row.phaseLabel || AS_TL_LABEL[phase] || '—')}</span>`}</td>
       <td>${esc(row.countdown || '—')}</td>
       <td class="sub-text">${esc((row.checkedAt || '').replace('T', ' ').slice(5, 16) || '—')}</td>
@@ -6125,7 +6141,7 @@ const AS_BATCH_PILL = {
 function asBatchPill(status) {
   const entry = AS_BATCH_PILL[String(status || '')]
     || ['warn', String(status || '—')];
-  return `<span class="pill ${entry[0]}">${entry[1]}</span>`;
+  return `<span class="pill ${entry[0]}${status === 'running' ? ' as-status-active' : ''}">${entry[1]}</span>`;
 }
 function asShortRef(value) {
   const text = String(value || '');
@@ -6434,7 +6450,7 @@ async function asScan() {
     AS_STATE.rows = [];
     asSyncScanExportButton();
     $('asScan').disabled = true; $('asStop').disabled = false;
-    $('asScanRows').innerHTML = '<tr><td colspan="12" class="hint" style="text-align:center; padding:18px;">扫描中，正在逐个打开环境读取订单…</td></tr>';
+    $('asScanRows').innerHTML = '<tr><td colspan="12" class="hint" style="text-align:center; padding:18px;"><span class="as-status-active">扫描中</span>，正在逐个打开环境读取订单…</td></tr>';
     asProgress({progressTotal:serials.length, progressCompleted:0, unit:'个环境'});
     asSetPhase('扫描运行中', `共 ${serials.length} 个环境 · 只读，不会改动订单`, true);
     asPoll();
