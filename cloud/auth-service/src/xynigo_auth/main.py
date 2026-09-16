@@ -5609,13 +5609,17 @@ def create_app(
         # 刻意不做「本人 + 管理员看全租户」过滤：提交历史在租户内互相可见
         # （见 docs/20260916_需求_售后提交历史与从历史跟进.md §6.3）。
         runs = OperationRunService(session)
-        data = runs.after_sale_claim_history(
-            tenant_id=actor.tenant.id,
-            limit=limit,
-            cursor=cursor,
-            status=run_status,
-            actor_user_id=history_user_id,
-        )
+        try:
+            data = runs.after_sale_claim_history(
+                tenant_id=actor.tenant.id,
+                limit=limit,
+                cursor=cursor,
+                status=run_status,
+                actor_user_id=history_user_id,
+            )
+        except PurchaseServiceError as exc:
+            # 坏游标（过期/被改过/别的租户的 id）要走 422，不能变成未捕获的 500
+            purchase_error(request, session, actor, action, exc)
         return {"ok": True, "data": data}
 
     @app.get("/v1/operation-runs/after-sale-claim/history/{run_id}")

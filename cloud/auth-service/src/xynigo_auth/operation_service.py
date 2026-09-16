@@ -71,6 +71,9 @@ def _payload_hash(
     ),
 ) -> str:
     payload = body.model_dump(mode="json")
+    # 重提来源只用于展示（「重提自哪一批」），不参与幂等：它不影响实际提交内容，
+    # 若进了哈希，同一批重提时补填/改填来源会被判成「同幂等键下不同请求」而 409。
+    payload.pop("retryFromRunId", None)
     # Preserve replay hashes of requests created before site confirmation existed.
     if payload.get("confirmedSite") is None:
         payload.pop("confirmedSite", None)

@@ -986,6 +986,69 @@ def test_after_sale_claim_history_scope_paging_detail_export(tmp_path) -> None:
         sheet = load_workbook(BytesIO(exported.content)).active
         assert [cell.value for cell in sheet[1]] == list(CLAIM_EXPORT_HEADERS)
 
+        # 坏游标要走 422（过期/被改过/别的租户的 id），不能变成未捕获的 500
+        bad_cursor = web_client.get(
+            "/v1/operation-runs/after-sale-claim/history?cursor="
+            + str(uuid.uuid4()))
+        assert bad_cursor.status_code == 422, bad_cursor.text
+        assert bad_cursor.json()["detail"]["code"] == (
+            "after_sale_claim_history_cursor_invalid")
+
+        # 跨租户隔离：别的租户的批次不能在列表里露出来
+        with database.session_factory() as session:
+            from xynigo_auth.models import (AfterSaleClaimRun, Tenant, User)
+            outsider_tenant = Tenant(feishu_tenant_key="tenant_as_history",
+                                     name="别的租户", status="active")
+            session.add(outsider_tenant)
+            session.flush()
+            outsider = User(tenant_id=outsider_tenant.id,
+                            feishu_open_id="ou_as_outsider",
+                            display_name="外租户", status="active")
+            session.add(outsider)
+            session.flush()
+            moment = datetime.now(timezone.utc) - timedelta(minutes=1)
+            session.add(AfterSaleClaimRun(
+                id=uuid.uuid4(), tenant_id=outsider_tenant.id,
+                actor_user_id=outsider.id,
+                source_run_key="as-claim-history-outsider-0001",
+                payload_hash="1" * 64, browser_mode="visible",
+                status="completed", phase="after_sale.completed",
+                progress_completed=1, progress_total=1, total_count=1,
+                success_count=1, failed_count=0, skipped_count=0,
+                stopped_count=0, request_summary={"items": []},
+                source="cloud_web", created_at=moment, updated_at=moment,
+            ))
+            session.commit()
+        visible = web_client.get(
+            "/v1/operation-runs/after-sale-claim/history?limit=100"
+        ).json()["data"]["items"]
+        assert all(item["actorName"] != "外租户" for item in visible), (
+            "别的租户的批次不得可见")
+
+        # retryFromRunId 只用于展示，不参与幂等：同幂等键改这个字段仍算同一请求
+        again = web_client.post(
+            "/v1/operation-runs/after-sale-claim",
+            json={
+                "idempotencyKey": "as-claim-history-retry-0001",
+                "executorId": executor_id,
+                "retryFromRunId": "",
+                "items": [{"environmentSerial": "4589", "orderNo": "GSH1B"}],
+            },
+            headers=CSRF,
+        )
+        assert again.status_code == 202, again.text
+        assert again.json()["data"]["runId"] == retry_run_id
+        # 幂等命中与否看审计的 unchanged（响应体是批次快照，不带这个字段）
+        with database.session_factory() as session:
+            from xynigo_auth.models import AuditEvent
+            replay = session.scalar(
+                select(AuditEvent.change_summary).where(
+                    AuditEvent.action == "assistant.after_sale.claim.create",
+                    AuditEvent.business_object_id == retry_run_id,
+                ).order_by(AuditEvent.created_at.desc()).limit(1))
+        assert replay.get("unchanged") is True, (
+            "重提来源不该参与幂等（补填/改填来源不该 409）")
+
         # 未登录必须拦在授权层
         web_client.cookies.clear()
         assert web_client.get(

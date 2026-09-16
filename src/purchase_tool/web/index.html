@@ -5051,14 +5051,33 @@ function asSelectType(id) {
         + '并在执行器侧实现对应动作。当前版本只提供「丢件退款」。</span></div>';
     }
   }
-  // 规划类型下不允许发起任务（按钮禁用 + 说明），避免点了没反应
+  // 规划类型下不允许发起任务（按钮禁用 + 说明），避免点了没反应。
+  // 四个写入口（扫描/勾选提交/补提失败/直接提交/历史重提）统一由 asSyncWriteButtons 刷
   const scan = $('asScan');
   if (scan) scan.disabled = planned;
   const submit = $('asSubmit');
   if (submit) submit.disabled = planned || !(AS_STATE.selected || new Set()).size;
+  asSyncWriteButtons();
   if (planned) {
     asSetPhase('该类型尚未实现', `「${t.label}」为规划类型，当前版本只提供「丢件退款」。`, false);
   }
+}
+// 规划类型 + 运行中 → 所有写入口都不给点。统一在这里算，避免新增入口时漏接
+// （补提失败单/直接提交指定单/历史重提都是本次新增，漏一个就会「点完确认框什么也没发生」
+// 或者更糟：在规划类型下真的提交了退款申请）。
+function asSyncWriteButtons() {
+  const busy = AS_STATE.type !== 'refund' || AS_STATE.running;
+  const direct = $('asDirectSubmit');
+  if (direct) direct.disabled = busy;
+  const historyRetry = $('asHistoryRetry');
+  if (historyRetry) {
+    const count = asRecoverableClaimRows(
+      ((AS_HISTORY || {}).detail || {}).rows || []).length;
+    historyRetry.disabled = busy || !count;
+    historyRetry.textContent = count
+      ? `重提失败单（${count}）` : '重提失败单';
+  }
+  asSyncRetryButton(AS_STATE.claimRows);
 }
 
 const AS_LIST_KEY = 'afterSaleEnvList';
@@ -5539,27 +5558,26 @@ function asRenderClaimHistoryDetail(data) {
   const batch = data.batch || {};
   const rows = data.rows || [];
   const bits = [
-    `批次 ${asShortRef(batch.runId)}`,
+    `批次 ${esc(asShortRef(batch.runId))}`,
     `提交 ${Number(batch.totalCount || 0)} 单`,
     `已受理 ${Number(batch.successCount || 0)}`,
     `已跳过 ${Number(batch.skippedCount || 0)}`,
     `失败 ${Number(batch.failedCount || 0)}`,
     esc(batch.actorName || '—'),
-    String(batch.createdAt || '').replace('T', ' ').slice(0, 16),
+    esc(String(batch.createdAt || '').replace('T', ' ').slice(0, 16)),
   ];
-  if (batch.retryFromRunId) bits.push(`重提自 ${asShortRef(batch.retryFromRunId)}`);
+  if (batch.retryFromRunId) {
+    bits.push(`重提自 ${esc(asShortRef(batch.retryFromRunId))}`);
+  }
   $('asHistoryDetailMeta').innerHTML = bits.join(' · ');
   $('asHistoryDetailBody').innerHTML = rows.length
     ? rows.map(asClaimRowHtml).join('')
     : '<tr><td colspan="11" class="query-history-empty">该批次没有结果行</td></tr>';
   const trackable = rows.filter(row => row.refundBillId && row.orderNo).length;
-  const retryable = asRecoverableClaimRows(rows).length;
   $('asHistoryTrack').disabled = !trackable;
   $('asHistoryTrack').textContent = trackable
     ? `回访本批退款单（${trackable}）` : '回访本批退款单';
-  $('asHistoryRetry').disabled = !retryable;
-  $('asHistoryRetry').textContent = retryable
-    ? `重提失败单（${retryable}）` : '重提失败单';
+  asSyncWriteButtons();
 }
 // 从历史发起回访＝把该批次「有退款单号的行走」灌进 ④：不新增第二条回访路径
 async function asTrackHistoryBatch() {
@@ -5574,7 +5592,9 @@ async function asTrackHistoryBatch() {
 }
 async function asRetryHistoryBatch() {
   const rows = ((AS_HISTORY.detail || {}).rows) || [];
-  await asRetryFailedClaims(rows, AS_HISTORY.runId);
+  const started = await asRetryFailedClaims(rows, AS_HISTORY.runId);
+  // 与「回访本批」同款：新批次进度写在弹层后面的 ③，不关弹层就看不见
+  if (started) asCloseClaimHistory();
 }
 async function asExportClaimHistory() {
   const runId = AS_HISTORY.runId;
@@ -5720,15 +5740,32 @@ async function asScan() {
 }
 // 三处提交（③ 勾选提交 / 补提失败单 / 直接提交指定单 / 历史详情重提）共用这一个
 // 建 Run 入口：只留一条提交路径，避免各入口各自拼报文导致字段或幂等键口径漂移。
+// 写入口的前置闸门：规划类型不给发起、已有任务在跑不给发起。
+// 必须在**确认框之前**调用——否则用户点完「确认」才发现什么都没发生。
+// 四个入口（勾选提交/补提失败/直接提交指定单/历史重提）都过这里，asSubmitItems 也留一份。
+function asWriteEntryReady() {
+  if (AS_STATE.running) {
+    asSetPhase('已有任务在跑',
+      '当前还有售后任务在执行，等它结束再发起（两批同时跑会互相占用环境）。', false);
+    return false;
+  }
+  if (AS_STATE.type !== 'refund') {
+    const current = AS_TYPES.find(item => item.id === AS_STATE.type) || {};
+    asSetPhase('该类型尚未实现',
+      `「${current.label || AS_STATE.type}」为规划类型，当前版本只提供「丢件退款」。`, false);
+    return false;
+  }
+  return true;
+}
 async function asSubmitItems(items, options) {
-  if (AS_STATE.running) return false;
   const opts = options || {};
   const label = opts.label || '提交售后';
+  if (!asWriteEntryReady()) return false;   // 最后一道闸：任何调用方都绕不过去
+  AS_STATE.mode = 'claim';  // 状态条落点：提交的进度显示在 ③ 卡片（早于任何提示）
   if (!items.length) {
     asSetPhase('等待发起', opts.emptyHint || '请先勾选要提交的订单。', false);
     return false;
   }
-  AS_STATE.mode = 'claim';  // 状态条落点：提交的进度显示在 ③ 卡片
   let executor;
   try { executor = await cloudFormalExecutor('after.sale.claim.v1'); }
   catch (e) { asSetPhase('执行器不可用', e.message || '无法发起售后提交', false); return false; }
@@ -5765,6 +5802,7 @@ async function asSubmitItems(items, options) {
   }
 }
 async function asSubmit() {
+  if (!asWriteEntryReady()) return;
   const items = asSelectedItems();
   if (!items.length) {
     asSetPhase('等待发起',
@@ -5797,7 +5835,7 @@ function asSyncRetryButton(rows) {
   const button = $('asRetryFailed');
   if (!button) return;
   const count = asRecoverableClaimRows(rows || AS_STATE.claimRows).length;
-  button.disabled = !count || AS_STATE.running;
+  button.disabled = !count || AS_STATE.running || AS_STATE.type !== 'refund';
   button.textContent = count ? `补提失败单（${count}）` : '补提失败单';
 }
 async function asRetryFailedClaims(rows, sourceRunId) {
@@ -5807,11 +5845,12 @@ async function asRetryFailedClaims(rows, sourceRunId) {
       '当前批次没有可恢复的失败行（blocked 是平台判定已无可退包裹，不给重提入口）。', false);
     return;
   }
+  if (!asWriteEntryReady()) return false;
   const preview = list.map(r => `${r.environmentSerial} ${r.orderNo}`).join('\n');
   if (!confirm(`将重新提交 ${list.length} 单失败订单（退款申请是写操作）：\n\n`
       + preview
       + '\n\n这些单会组成新的一批，原批次结果不变。确认继续？')) return;
-  await asSubmitItems(asClaimItemsFromRows(list), {
+  return await asSubmitItems(asClaimItemsFromRows(list), {
     label: '补提失败单',
     retryFromRunId: sourceRunId || AS_STATE.runId || '',
   });
@@ -5821,11 +5860,13 @@ async function asRetryFailedClaims(rows, sourceRunId) {
 function asParseDirectOrders(text) {
   const groups = String(text || '').split(/[;\n]+/).map(g => g.trim())
     .filter(Boolean);
-  const items = [], invalid = [], duplicates = [];
+  const items = [], invalid = [], duplicates = [], trimmed = [];
   const seen = new Set();
   groups.forEach(group => {
     const parts = group.split(/[\s,，、]+/).filter(Boolean);
     if (parts.length < 2) { invalid.push(group); return; }
+    // 从表格整行粘过来常带多余列：只取前两列，但要在确认框里说一声（不静默取）
+    if (parts.length > 2) trimmed.push(group);
     const key = parts[0] + ' ' + parts[1];
     if (seen.has(key)) { duplicates.push(key); return; }
     seen.add(key);
@@ -5834,7 +5875,7 @@ function asParseDirectOrders(text) {
       packageNo: '', deliveredAt: '', goodsImg: '',
     });
   });
-  return { items, invalid, duplicates };
+  return { items, invalid, duplicates, trimmed };
 }
 async function asDirectSubmit() {
   const parsed = asParseDirectOrders($('asDirectOrders').value);
@@ -5848,9 +5889,13 @@ async function asDirectSubmit() {
       '格式：环境序号 订单号（多组用分号或换行隔开）', false);
     return;
   }
+  if (!asWriteEntryReady()) return;
   const notes = [`将直接提交 ${parsed.items.length} 单（退款申请是写操作）`];
   if (parsed.duplicates.length) {
     notes.push(`已去掉重复的 ${parsed.duplicates.length} 组：${parsed.duplicates.join(' / ')}`);
+  }
+  if (parsed.trimmed.length) {
+    notes.push(`有 ${parsed.trimmed.length} 组带了多余字段，只取前两列（环境序号 订单号）`);
   }
   notes.push('执行器会先现场体检可退性：不能退的记为 blocked（已跳过），不会重复退款。');
   if (!confirm(notes.join('\n') + '\n\n确认继续？')) return;
@@ -5970,8 +6015,14 @@ $('asClearResult').onclick = () => {
   $('asBar').style.width = '0%'; $('asProgressText').textContent = '未开始';
   asRenderClaimRows([]);
 };
-$('asRetryFailed').onclick = () => asRetryFailedClaims();
-$('asDirectSubmit').onclick = asDirectSubmit;
+$('asRetryFailed').onclick = () => {
+  if ($('asRetryFailed').disabled) return;
+  return asRetryFailedClaims();
+};
+$('asDirectSubmit').onclick = () => {
+  if ($('asDirectSubmit').disabled) return;
+  return asDirectSubmit();
+};
 $('asPickClaimable').onclick = () => {
   AS_STATE.selected = new Set(AS_STATE.rows
     .filter(r => r.orderNo && r.claimable && r.status === 'ok')

@@ -1041,16 +1041,16 @@ class AfterSaleStatusAnchorWiringTests(unittest.TestCase):
 
     def test_each_flow_sets_its_stage_before_first_message(self):
         html = self._html()
-        # 提交的阶段落在共用入口 asSubmitItems 里（asSubmit/补提/指定单都走它）
+        # 提交的阶段落在共用入口 asSubmitItems 里（asSubmit/补提/指定单/历史重提都走它）
         for func, mode in (('async function asScan()', 'scan'),
                            ('async function asSubmitItems(', 'claim'),
                            ('async function asTrack(', 'track')):
             body = html[html.index(func):]
             body = body[:body.index('\n}\n')]
-            # 入口就要设好阶段：否则首条报错（如「执行器不可用」）会落到上一个阶段的卡片
-            head = body[body.index('AS_STATE.running'):
-                        body.index('AS_STATE.running = true')]
-            self.assertIn(f"AS_STATE.mode = '{mode}'", head)
+            # 阶段要早于该函数里的第一条提示：否则首条报错（如「执行器不可用」）
+            # 会落到上一阶段的卡片，用户看着像那个阶段在跑
+            self.assertLess(body.index(f"AS_STATE.mode = '{mode}'"),
+                            body.index('asSetPhase('))
 
 
 class AfterSaleThreeRequirementsWiringTests(unittest.TestCase):
@@ -1133,6 +1133,63 @@ class AfterSaleThreeRequirementsWiringTests(unittest.TestCase):
         self.assertEqual(
             re.findall(r'<th[^>]*>([^<]+)</th>', claim),
             re.findall(r'<th[^>]*>([^<]+)</th>', detail))
+
+    def test_write_entries_share_type_and_running_guard(self):
+        """规划类型与「已有任务在跑」必须挡住**所有**写入口（评审必修第 2 条）。
+
+        asSubmitItems 早退要给文案（调用方可能已弹过 confirm，静默 return 会让人
+        以为提交了）；四个入口的 disabled 统一在 asSyncWriteButtons 里算，
+        避免以后再加入口时漏接（漏一个就会在规划类型下真的提交退款）。
+        """
+        html = self._html()
+        # 闸门只有一处实现，四个入口都要在**确认框之前**过它
+        gate = self._fn(html, 'function asWriteEntryReady(')
+        self.assertIn('if (AS_STATE.running) {', gate)
+        self.assertIn('已有任务在跑', gate)
+        self.assertIn("if (AS_STATE.type !== 'refund') {", gate)
+        self.assertIn('该类型尚未实现', gate)
+        for signature in ('async function asSubmit()',
+                          'async function asRetryFailedClaims(',
+                          'async function asDirectSubmit('):
+            body = self._fn(html, signature)
+            self.assertIn('asWriteEntryReady()', body,
+                          f'{signature} 必须过闸门')
+            if 'confirm(' in body:
+                self.assertLess(body.index('asWriteEntryReady()'),
+                                body.index('confirm('),
+                                f'{signature} 的闸门必须在确认框之前')
+        # 共用入口再留一道（任何新调用方都绕不过去）
+        self.assertIn('if (!asWriteEntryReady()) return false;',
+                      self._fn(html, 'async function asSubmitItems('))
+        # 统一刷按钮态，且接在类型切换上
+        sync = self._fn(html, 'function asSyncWriteButtons(')
+        self.assertIn("AS_STATE.type !== 'refund' || AS_STATE.running", sync)
+        self.assertIn("$('asDirectSubmit')", sync)
+        self.assertIn("$('asHistoryRetry')", sync)
+        self.assertIn('asSyncRetryButton(AS_STATE.claimRows)', sync)
+        self.assertIn('asSyncWriteButtons();',
+                      self._fn(html, 'function asSelectType('))
+        retry = self._fn(html, 'function asSyncRetryButton(')
+        self.assertIn("AS_STATE.type !== 'refund'", retry)
+        # 点击前先看 disabled（disabled 只是视觉，别绕过）
+        for button in ('asRetryFailed', 'asDirectSubmit'):
+            self.assertIn(f"$('{button}').disabled) return", html)
+
+    def test_history_retry_closes_modal_after_start(self):
+        """历史重提成功后与「回访本批」同款关弹层：新批次进度写在弹层后面的 ③。"""
+        html = self._html()
+        retry = self._fn(html, 'async function asRetryHistoryBatch(')
+        self.assertIn('const started = await asRetryFailedClaims(', retry)
+        self.assertIn('if (started) asCloseClaimHistory();', retry)
+        failed = self._fn(html, 'async function asRetryFailedClaims(')
+        self.assertIn('return await asSubmitItems(', failed)
+
+    def test_detail_meta_escapes_retry_source(self):
+        """详情 meta 走 innerHTML，重提来源是请求体里的自由字符串，必须转义。"""
+        html = self._html()
+        detail = self._fn(html, 'function asRenderClaimHistoryDetail(')
+        self.assertIn('重提自 ${esc(asShortRef(batch.retryFromRunId))}', detail)
+        self.assertIn('批次 ${esc(asShortRef(batch.runId))}', detail)
 
     def test_history_list_is_not_actor_scoped(self):
         """历史列表在租户内互相可见：云端那条路由不许出现 history_admin 过滤。"""
