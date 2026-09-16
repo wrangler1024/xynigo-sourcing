@@ -1054,6 +1054,10 @@ class AfterSaleScanRow(BaseModel):
     trackingNo: str = Field(default="", max_length=64)
     # 商品缩略图地址（SHEIN 商品图 CDN），来自 pre_info 的 item_list[].goods_img
     goodsImg: str = Field(default="", max_length=300)
+    reasonCode: str = Field(default="", max_length=64)
+    platformStatus: str = Field(default="", max_length=240)
+    reasonSource: str = Field(default="", max_length=32)
+    checkedAt: str = Field(default="", max_length=40)
     errorSummary: str | None = Field(default=None, max_length=300)
     screenshotSha256: str | None = Field(default=None, max_length=64)
 

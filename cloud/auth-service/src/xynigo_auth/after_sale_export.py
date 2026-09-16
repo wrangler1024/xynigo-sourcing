@@ -152,6 +152,7 @@ def build_after_sale_claim_export(rows):
 SCAN_HEADERS = (
     "环境序号", "买家号环境", "订单号", "商品图", "售后类型", "送达时间",
     "金额（MXN）", "可退包裹", "物流号", "状态", "备注",
+    "平台订单状态原文", "资格判断来源", "最近读取时间",
 )
 SCAN_STATUS_LABELS = {
     "ok": "已扫描", "empty": "无订单", "skip": "暂不可申请",
@@ -190,9 +191,12 @@ def build_after_sale_scan_export(rows):
         row.get("deliveredAt") or "", _scan_number(row.get("amount")),
         _scan_number(row.get("packageCount")), str(row.get("trackingNo") or ""),
         _scan_status(row), row.get("errorSummary") or "",
+        row.get("platformStatus") or "",
+        {"order_list": "平台订单列表", "pre_info": "平台售后资格核验"}.get(row.get("reasonSource"), ""),
+        row.get("checkedAt") or "",
     ] for row in rows or []]
     content = _build_workbook(
-        "可申请清单", SCAN_HEADERS, (12, 28, 24, 34, 12, 24, 16, 12, 28, 18, 50),
+        "可申请清单", SCAN_HEADERS, (12, 28, 24, 34, 12, 24, 16, 12, 28, 18, 50, 45, 24, 30),
         values, literal_strings=True,
     )
     return content, f"售后可申请清单_{_stamp()}.xlsx", MIME_XLSX

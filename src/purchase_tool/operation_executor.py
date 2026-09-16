@@ -623,6 +623,7 @@ class LocalOperationExecutor(object):
         'environmentSerial', 'storeName', 'accountName', 'orderNo',
         'deliveredAt', 'amount', 'status', 'claimable', 'packageCount',
         'trackingNo', 'goodsImg', 'errorSummary', 'screenshotSha256',
+        'reasonCode', 'platformStatus', 'reasonSource', 'checkedAt',
     )
     _AFTER_SALE_CLAIM_ROW_FIELDS = (
         'orderNo', 'environmentSerial', 'storeName', 'status', 'packageNo',
@@ -640,6 +641,7 @@ class LocalOperationExecutor(object):
         'refundBillId': 32, 'refundPath': 48, 'trackingNo': 64,
         'refundAccount': 40, 'goodsImg': 300,
         'submittedAt': 40, 'note': 200,
+        'reasonCode': 64, 'platformStatus': 240, 'reasonSource': 32, 'checkedAt': 40,
     }
     _AFTER_SALE_NULLABLE_TEXT = {'errorSummary': 300, 'screenshotSha256': 64}
 
@@ -721,6 +723,10 @@ class LocalOperationExecutor(object):
                     status=order.get('status') or base['status'],
                     errorSummary=order.get('note', base['errorSummary']) or None,
                     orderNo=order.get('orderNo') or '',
+                    reasonCode=order.get('reasonCode') or '',
+                    platformStatus=order.get('platformStatus') or '',
+                    reasonSource=order.get('reasonSource') or '',
+                    checkedAt=order.get('checkedAt') or '',
                     deliveredAt=order.get('deliveredAt') or '',
                     amount=order.get('amount') or '',
                     claimable=bool(order.get('claimable')),

@@ -173,7 +173,9 @@ def test_after_sale_scan_progress_and_terminal_summary(tmp_path) -> None:
                 "current": 1,
                 "total": 2,
                 "snapshot": {"rows": [
-                    _scan_row("4902", order_no="GSH0001", claimable=True),
+                    {**_scan_row("4902", order_no="GSH0001", claimable=True),
+                     "platformStatus": "Enviado", "reasonSource": "pre_info",
+                     "checkedAt": "2026-09-16T00:00:00+00:00", "reasonCode": ""},
                     {
                         "environmentSerial": "4901",
                         "storeName": "合成店铺-4901",
@@ -199,6 +201,7 @@ def test_after_sale_scan_progress_and_terminal_summary(tmp_path) -> None:
         assert mid["summary"]["totalCount"] == 2
         assert len(mid["summary"]["rows"]) == 2
         assert mid["summary"]["claimableCount"] == 1
+        assert mid["summary"]["rows"][0]["platformStatus"] == "Enviado"
 
         exported = web_client.get(f"/v1/after-sale/scan/{task_id}/export")
         assert exported.status_code == 200, exported.text

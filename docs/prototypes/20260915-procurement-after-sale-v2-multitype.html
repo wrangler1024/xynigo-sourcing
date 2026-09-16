@@ -5827,6 +5827,21 @@ function asThumbCell(url) {
     + (safe ? `<img src="${esc(safe)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '')
     + '</span></td>';
 }
+function asScanReasonHtml(row) {
+  const note = String(row.errorSummary || '');
+  const raw = String(row.platformStatus || '');
+  const checked = String(row.checkedAt || '');
+  const source = row.reasonSource === 'pre_info' ? '平台售后资格核验' : '平台订单列表';
+  const legacy = !row.reasonCode && /退款处理中或审核中/.test(note);
+  const evidence = raw || checked ? `<details class="hint" style="margin-top:5px;white-space:normal;overflow-wrap:anywhere">
+    <summary style="cursor:pointer">平台原文与读取时间</summary>
+    <div>订单状态原文：${esc(raw || '未获取')}</div>
+    <div>资格判断来源：${esc(source)}</div>
+    <div>最近读取：${esc(checked || '未记录')}</div>
+  </details>` : '';
+  return (note ? `<div class="hint" style="margin-top:4px;white-space:normal;overflow-wrap:anywhere;max-width:360px">${esc(note)}</div>` : '')
+    + (legacy ? '<div class="hint">历史扫描未采集具体阶段，请重新扫描核对。</div>' : '') + evidence;
+}
 function asRenderScanRows(rows) {
   AS_STATE.rows = rows || [];
   asSyncScanExportButton();
@@ -5856,7 +5871,7 @@ function asRenderScanRows(rows) {
         <td class="num">${row.amount ? '$MXN' + esc(row.amount) : '—'}</td>
         <td class="num">${row.packageCount ? row.packageCount : '—'}</td>
         <td class="sub-text">${esc(row.trackingNo || '—')}</td>
-        <td>${asScanPill(row)}${row.errorSummary ? `<div class="hint" style="margin-top:4px">${esc(String(row.errorSummary).slice(0, 60))}</div>` : ''}</td>
+        <td>${asScanPill(row)}${asScanReasonHtml(row)}</td>
       </tr>`;
     }).join('');
   }

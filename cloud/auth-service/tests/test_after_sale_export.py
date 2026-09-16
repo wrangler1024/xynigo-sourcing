@@ -209,7 +209,8 @@ def test_scan_export_preserves_order_numbers_status_and_literal_text():
     from xynigo_auth.after_sale_export import build_after_sale_scan_export, SCAN_HEADERS
     rows = [dict(environmentSerial="0012", storeName="=1+1", orderNo="0001234567890123456789",
                  trackingNo="001234567890123456789", status="ok", claimable=True,
-                 amount="0.00", packageCount=2, errorSummary="=HYPERLINK(1)"),
+                 amount="0.00", packageCount=2, errorSummary="=HYPERLINK(1)",
+                 platformStatus="En revisión vendedor/SHEIN.", reasonSource="order_list", checkedAt="2026-09-16T00:00:00+00:00"),
             dict(environmentSerial="0013", orderNo="ORDER2", status="empty", claimable=False),
             dict(environmentSerial="0014", status="fail", errorSummary="读取失败")]
     data, filename, mime = build_after_sale_scan_export(rows)
@@ -220,10 +221,13 @@ def test_scan_export_preserves_order_numbers_status_and_literal_text():
     assert sheet['I2'].value == '001234567890123456789'
     assert sheet['B2'].value == '=1+1' and sheet['B2'].data_type == 's'
     assert sheet['K2'].data_type == 's'
+    assert sheet['L2'].value == 'En revisión vendedor/SHEIN.'
+    assert sheet['M2'].value == '平台订单列表'
+    assert sheet['N2'].value == '2026-09-16T00:00:00+00:00'
     assert sheet['G2'].value == 0 and sheet['G2'].data_type == 'n'
     assert sheet['H2'].value == 2
     assert [sheet.cell(i, 10).value for i in range(2, 5)] == ['可申请', '暂不可申请', '失败']
-    assert sheet.freeze_panes == 'A2' and sheet.auto_filter.ref == 'A1:K4'
+    assert sheet.freeze_panes == 'A2' and sheet.auto_filter.ref == 'A1:N4'
     assert filename.endswith('.xlsx') and mime == MIME_XLSX
     empty, _, _ = build_after_sale_scan_export([])
     assert load_workbook(BytesIO(empty)).active.max_row == 1

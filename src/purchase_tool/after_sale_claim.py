@@ -120,6 +120,7 @@ _JS_SCAN_ORDERS = ('(() => {' + _JS_NORM + '''
     const delivered = /^Entregado(?:\\s|$)/i.test((track ? track.innerText : '').trim());
     out.push({text: t.slice(0, 2400), hasEntry: entry,
       statusText: status ? status.innerText : '',
+      statusDetail: [...li.querySelectorAll('.status-ctn_text')].map(n => n.innerText.trim()).filter(Boolean).join(' / '),
       delivered: delivered,
       deliveredAt: delivered && when ? when.innerText.trim() : '',
       goodsImg: img ? (img.getAttribute('src') || '') : ''});
@@ -362,28 +363,54 @@ def parse_order_card(text):
     }
 
 
-def scan_unavailable_note(card, order):
-    """解释有订单但无丢件退款入口；只用卡片内状态，不匹配导航或收货按钮。"""
-    text = str(card.get('text') or '')
+def scan_platform_evidence(card):
+    """只保留订单卡片内的平台状态，不回传整张卡片的账户/商品文字。"""
+    parts = []
+    for key in ('statusDetail', 'statusText'):
+        text = scrub_text(str(card.get(key) or '')).strip()
+        if text and text not in parts:
+            parts.append(text)
+    return ' / '.join(parts)[:240]
+
+
+def scan_unavailable_reason(card, order):
+    """具体审核节点优先于订单的笼统退款流程状态；未知原因不得猜测。"""
     status = str(card.get('statusText') or '').strip()
-    if REFUNDED_RE.search(text):
-        return '平台显示已退款；当前没有丢件退款申请入口'
-    if order.get('refundInProgress') or re.search(
-            r'Reembolsando|En revisi[óo]n|Reseña de SHEIN', status, re.I):
-        return '平台显示退款处理中或审核中；当前没有丢件退款申请入口'
-    if card.get('delivered') or order.get('deliveredAt') or re.search(
-            r'Entregado|Recibido', status, re.I):
-        return '已送达；当前未显示丢件退款申请入口'
+    detail = str(card.get('statusDetail') or '').strip()
+    # 旧卡片仅有 text 时也可识别明确状态句，但不把按钮/订单导航当作状态。
+    evidence = detail + '\n' + status
+    raw = str(card.get('text') or '')
+    review_evidence = evidence
+    if not detail and not re.search(r'Reembolsado|Reembolsos procesados', status, re.I):
+        review_evidence += '\n' + '\n'.join(line for line in raw.splitlines()
+            if re.fullmatch(r'En revisi[óo]n (?:vendedor(?:/SHEIN)?|SHEIN)\.?', line.strip(), re.I))
+    if re.search(r'En revisi[óo]n (?:vendedor(?:/SHEIN)?|SHEIN)', review_evidence, re.I):
+        return 'refund_reviewing', '已有退款申请 · 卖家/SHEIN审核中；当前无丢件退款申请入口'
+    if re.search(r'En revisi[óo]n|Reseña de SHEIN', evidence, re.I):
+        return 'refund_reviewing', '已有退款申请 · 审核中；当前无丢件退款申请入口'
+    if re.search(r'Reembolso est[áa] siendo procesado|Reembolsando', evidence, re.I):
+        return 'refund_processing', '已有退款申请 · 退款处理中（不代表已到账）；当前无丢件退款申请入口'
+    if re.search(r'Reembolsado', evidence, re.I):
+        return 'refund_completed', '平台显示已退款；到账情况请查看退款详情'
+    if re.search(r'Reembolsos procesados', evidence, re.I):
+        return 'refund_processed', '平台显示退款已处理；到账情况请查看退款详情'
+    if order.get('refundInProgress') or re.search(r'Procesamiento de reembolsos', evidence, re.I):
+        return 'refund_in_progress', '已有退款申请 · 退款流程中，详细阶段待核对；当前无丢件退款申请入口'
+    if card.get('delivered') or order.get('deliveredAt') or re.search(r'Entregado|Recibido', status, re.I):
+        return 'delivered_no_entry', '已送达；未发现丢件退款入口，具体原因待核对'
     if re.search(r'Enviado', status, re.I):
-        return '运输中（Enviado）；当前没有丢件退款申请入口'
+        return 'in_transit', '运输中（Enviado）；当前没有丢件退款申请入口'
     if re.search(r'Procesando', status, re.I):
-        return '备货中（Procesando）；当前没有丢件退款申请入口'
+        return 'preparing', '备货中（Procesando）；当前没有丢件退款申请入口'
     if re.search(r'No pagado|Pendiente de pago', status, re.I):
-        return '待付款；当前没有丢件退款申请入口'
+        return 'unpaid', '待付款；当前没有丢件退款申请入口'
     if re.search(r'Cancelad', status, re.I):
-        return '订单已取消；当前没有丢件退款申请入口'
-    return ('有订单；当前未显示丢件退款申请入口'
-            + ('（平台状态：%s）' % scrub_text(status)[:80] if status else ''))
+        return 'cancelled', '订单已取消；当前没有丢件退款申请入口'
+    return 'entry_missing', '未发现丢件退款入口；具体原因待核对'
+
+
+def scan_unavailable_note(card, order):
+    return scan_unavailable_reason(card, order)[1]
 
 
 def validate_scan_pre_info(data):
@@ -681,11 +708,16 @@ class AfterSaleClaimer(object):
                 parsed['claimable'] = False
                 parsed['status'] = 'skip'
                 parsed['goodsImg'] = str(card.get('goodsImg') or '')[:300]
-                parsed['note'] = scan_unavailable_note(card, parsed)
+                parsed['reasonCode'], parsed['note'] = scan_unavailable_reason(card, parsed)
+                parsed['platformStatus'] = scan_platform_evidence(card)
+                parsed['reasonSource'] = 'order_list'
+                parsed['checkedAt'] = datetime.now(timezone.utc).isoformat()
                 if self._stop_event.is_set():
                     parsed['status'] = 'stopped'
                     parsed['note'] = '扫描已停止，尚未核验可申请性'
+                    parsed['reasonCode'] = 'stopped'
                 elif card.get('hasEntry'):
+                    parsed['reasonSource'] = 'pre_info'
                     # 所有订单里的入口同样要体检；不因所在分类而强制跳过。
                     try:
                         info = self._scan_pre_info(page, parsed['orderNo'])
@@ -693,10 +725,13 @@ class AfterSaleClaimer(object):
                         parsed['blockedPackages'] = info.get('blocked') or []
                         parsed['claimable'] = bool(parsed['packages'])
                         parsed['status'] = 'ok' if parsed['claimable'] else 'blocked'
+                        parsed['reasonCode'] = '' if parsed['claimable'] else 'no_eligible_packages'
+                        parsed['reasonSource'] = 'pre_info'
                         parsed['note'] = ('' if parsed['claimable'] else
-                                          '平台核验当前无可申请的丢件退款包裹')
+                                          '平台资格核验未返回可申请的丢件退款包裹；具体限制原因待核对')
                     except Exception as exc:
                         parsed['status'] = 'fail'
+                        parsed['reasonCode'] = 'eligibility_read_failed'
                         parsed['note'] = scrub_text('可申请性核验失败：%s' % exc)[:200]
                 candidates.append(parsed)
             with self._lock:
@@ -1251,6 +1286,7 @@ class AfterSaleClaimer(object):
                     card, hasEntry=bool(card.get('hasEntry') or previous.get('hasEntry')),
                     delivered=bool(card.get('delivered') or previous.get('delivered')),
                     deliveredAt=card.get('deliveredAt') or previous.get('deliveredAt') or '',
+                    statusDetail=card.get('statusDetail') or previous.get('statusDetail') or '',
                     goodsImg=card.get('goodsImg') or previous.get('goodsImg') or '')
             if not state.get('next'):
                 return list(cards.values())

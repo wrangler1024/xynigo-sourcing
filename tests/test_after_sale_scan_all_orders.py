@@ -100,6 +100,40 @@ class AllOrdersScanTests(unittest.TestCase):
         self.assertNotIn('窗口已过', rows[0]['errorSummary'])
         claimer._scan_pre_info.assert_not_called()
 
+    def test_specific_refund_reason_and_evidence_survive_scan_projection(self):
+        sample = card(status='Procesamiento de reembolsos')
+        sample['statusDetail'] = 'En revisión vendedor/SHEIN.'
+        rows, _, _ = self.scan([[sample]])
+        row = rows[0]
+        self.assertEqual(row['reasonCode'], 'refund_reviewing')
+        self.assertIn('卖家/SHEIN审核中', row['errorSummary'])
+        self.assertNotIn('或审核中', row['errorSummary'])
+        self.assertEqual(row['platformStatus'], 'En revisión vendedor/SHEIN. / Procesamiento de reembolsos')
+        self.assertEqual(row['reasonSource'], 'order_list')
+        self.assertTrue(row['checkedAt'].endswith('+00:00'))
+        wire = LocalOperationExecutor._after_sale_rows(rows)[0]
+        self.assertEqual(wire['reasonCode'], row['reasonCode'])
+        self.assertEqual(wire['platformStatus'], row['platformStatus'])
+
+    def test_refund_phases_do_not_guess_or_conflate_bank_processing(self):
+        cases = [
+            ('Procesamiento de reembolsos', 'refund_in_progress', '详细阶段待核对'),
+            ('Reembolso está siendo procesado', 'refund_processing', '不代表已到账'),
+            ('Reembolsado', 'refund_completed', '已退款'),
+            ('Reembolsos procesados', 'refund_processed', '退款已处理'),
+            ('Enviado', 'in_transit', '运输中'),
+            ('unknown', 'entry_missing', '具体原因待核对'),
+        ]
+        for status, code, note in cases:
+            with self.subTest(status=status):
+                c = card(status=status)
+                result = module.scan_unavailable_reason(c, module.parse_order_card(c['text']))
+                self.assertEqual(result[0], code)
+                self.assertIn(note, result[1])
+        c = card(status='Reembolsado')
+        c['text'] += '\nEn revisión vendedor/SHEIN.'
+        self.assertEqual(module.scan_unavailable_reason(c, module.parse_order_card(c['text']))[0], 'refund_completed')
+
     def test_empty_requires_confirmed_empty_list(self):
         rows, _, _ = self.scan([[]])
         self.assertEqual(rows[0]['status'], 'empty')
