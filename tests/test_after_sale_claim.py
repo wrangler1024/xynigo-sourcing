@@ -384,6 +384,40 @@ class ProjectionTests(unittest.TestCase):
                         <= BUSINESS_TASK_TYPES)
 
 
+class TrackBridgeTests(unittest.TestCase):
+    """退款跟踪的桥接投影与汇总（timeline 不上行是本轮刻意的取舍）。"""
+
+    def test_track_row_projection_drops_timeline(self):
+        rows = LocalOperationExecutor._after_sale_track_rows([{
+            'refundBillId': '2390833880014851', 'orderNo': 'GSH1RV21M00NV67',
+            'environmentSerial': '4586', 'status': 'ok', 'phase': 'reviewing',
+            'phaseLabel': '审核中', 'countdown': '23:48:25',
+            'refundAccount': '****7935', 'amount': '270.22',
+            'checkedAt': '2026-09-16T01:08:17+00:00',
+            'timeline': '很长的平台时间轴原文' * 20,   # 必须被丢掉
+            'note': '未终态，下次回访继续跟',
+            'errorSummary': None, 'durationSeconds': 6,
+        }])
+        self.assertNotIn('timeline', rows[0])
+        self.assertEqual(rows[0]['phase'], 'reviewing')
+        self.assertEqual(rows[0]['refundAccount'], '****7935')
+        self.assertIsNone(rows[0]['errorSummary'])
+
+    def test_track_summary_counts_phases(self):
+        summary = LocalOperationExecutor._after_sale_track_summary(3, [
+            {'status': 'ok', 'phase': 'reviewing'},
+            {'status': 'ok', 'phase': 'refunded'},
+            {'status': 'fail', 'phase': ''},
+        ])
+        self.assertEqual(summary['successCount'], 2)
+        self.assertEqual(summary['failedCount'], 1)
+        self.assertEqual(summary['phaseCounts'], {'reviewing': 1, 'refunded': 1})
+        self.assertEqual(summary['runStatus'], 'partial_failure')
+
+    def test_track_task_type_registered(self):
+        self.assertIn('after.sale.track.v1', BUSINESS_TASK_TYPES)
+
+
 if __name__ == '__main__':
     unittest.main()
 

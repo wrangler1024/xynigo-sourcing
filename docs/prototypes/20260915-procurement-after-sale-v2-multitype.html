@@ -666,6 +666,15 @@
   /* ===== 小犀助手 · 采购售后（丢件退款） ===== */
   /* 售后三张表的商品缩略图：复用 .procurement-image-thumb，只按密集表格调小一档 */
   #afterSalePanel .procurement-image-thumb { width: 34px; height: 44px; margin-left: 0; border-radius: 8px; box-shadow: none; }
+  /* 退款跟踪的阶段迷你时间轴：四节点（已受理→审核中→处理中→已退款），当前节点高亮 */
+  #afterSalePanel .as-tl { display:inline-flex; align-items:center; gap:0; }
+  #afterSalePanel .as-tl i { width:8px; height:8px; border-radius:50%; background:#d7e0e8; flex:none; }
+  #afterSalePanel .as-tl u { width:14px; height:2px; background:#d7e0e8; flex:none; }
+  #afterSalePanel .as-tl i.done { background:var(--rhino-500); }
+  #afterSalePanel .as-tl u.done { background:var(--rhino-500); }
+  #afterSalePanel .as-tl i.cur { background:var(--rhino-600); box-shadow:0 0 0 3px rgba(32,174,179,.18); }
+  #afterSalePanel .as-tl i.bad { background:#d9534f; box-shadow:0 0 0 3px rgba(217,83,79,.16); }
+  #afterSalePanel .as-tl-label { margin-left:8px; font-size:12px; font-weight:700; white-space:nowrap; }
   /* 状态条右侧的进度区排版（用 class 而非内联样式，否则收起的 display:none 会被内联压住） */
   #afterSalePanel .as-strip-progress { margin-left: auto; display: flex; align-items: center; gap: 10px; }
   /* 运行状态条的终态收起：折成一行（只留标题与操作），把纵向空间还给表格 */
@@ -16143,6 +16152,23 @@ initializeAuth();
   }
 
 
+  // 阶段迷你时间轴：四节点固定顺序，当前节点高亮；已拒绝把末节点标红
+  const TL_ORDER = ['submitted', 'reviewing', 'processing', 'refunded'];
+  const TL_LABEL = { submitted: '已受理', reviewing: '审核中', processing: '处理中',
+                     refunded: '已退款', rejected: '已拒绝', overdue: '超期未出结果' };
+  function timelineCell(phase) {
+    const rejected = phase === 'rejected';
+    const idx = rejected ? TL_ORDER.length - 1 : Math.max(0, TL_ORDER.indexOf(phase));
+    let html = '<span class="as-tl">';
+    for (let i = 0; i < TL_ORDER.length; i++) {
+      if (i) html += `<u class="${i <= idx ? 'done' : ''}"></u>`;
+      const cls = rejected && i === idx ? 'bad' : (i < idx ? 'done' : (i === idx ? 'cur' : ''));
+      html += `<i class="${cls}"></i>`;
+    }
+    html += '</span>';
+    return `<td>${html}<span class="as-tl-label">${esc(TL_LABEL[phase] || phase)}</span></td>`;
+  }
+
   function renderTracking() {
     const body = document.getElementById('asTrackRows');
     const stats = document.getElementById('asTrackStats');
@@ -16151,14 +16177,14 @@ initializeAuth();
       const p = TRACK_PHASES[r.phase] || ['warn', r.phase];
       const bad = r.phase === 'rejected' || r.phase === 'overdue';
       return `<tr${bad ? ' class="tr-bad"' : (r.phase === 'refunded' ? '' : ' class="tr-run"')}>`
-        + `<td class="as-order" style="font-size:12px">${esc(r.billId)}</td>`
+        + `<td class="sub-text">${esc(r.serial)}</td>`
         + `<td class="as-order">${esc(r.order)}</td>`
         + thumbCell(typeOf('refund').thumb)
-        + `<td class="sub-text">${esc(r.serial)}</td>`
+        + `<td class="as-order" style="font-size:12px">${esc(r.billId)}</td>`
         + `<td class="sub-text">${esc(r.card)}</td>`
-        + `<td><span class="pill ${p[0]}">${esc(p[1])}</span></td>`
-        + `<td>${esc(r.left)}</td>`
         + `<td>${esc(r.result)}</td>`
+        + timelineCell(r.phase)   // 该函数自带 <td>，外层不要再包一层
+        + `<td>${esc(r.left)}</td>`
         + `<td class="sub-text">${esc(r.checkedAt)}</td>`
         + `<td class="hint">${esc(r.action)}</td></tr>`;
     }).join('');
@@ -16252,7 +16278,18 @@ initializeAuth();
     card.id = 'asTrackCard';
     card.innerHTML = `<div class="card-title" style="padding:17px 19px 0;">
         <div>④ 退款跟踪 <span class="legend">退款单号为主键 · 只读回访平台侧处理进度 · 每天一次直到终态</span></div>
-        <div class="table-actions"><button class="btn sm" id="asTrackRefresh">刷新退款进度</button></div>
+        <div class="table-actions">
+          <button class="btn sm" id="asTrackRefresh">刷新退款进度</button>
+          <div class="export-split">
+            <button class="btn primary" id="asTrackExport">导出 Excel</button>
+            <button class="btn primary" id="asTrackExportMenuBtn">▾</button>
+            <div class="export-menu" id="asTrackExportMenu" hidden>
+              <button id="asTrackExportStd"><b>标准导出</b><small>退款单号/订单号/环境/金额/阶段/倒计时/退款账户/最近检查，可直接发财务对账</small></button>
+              <button id="asTrackExportFull"><b>完整导出</b><small>在标准列基础上加平台时间轴原文与处置建议，便于排查</small></button>
+              <button id="asTrackExportOpen"><b>待跟进导出</b><small>仅未终态（已受理/审核中/处理中）与异常（已拒绝/超期）的行</small></button>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="business-summary" id="asTrackStats" style="padding:4px 19px 0;">
         <div class="business-stat"><small>跟踪中</small><b>—</b></div>
@@ -16264,8 +16301,9 @@ initializeAuth();
       <div style="padding: 0 19px;">
         <div class="table-scroll scroll-20">
           <table><thead><tr>
-            <th>退款单号</th><th>订单号</th><th style="width:46px">商品图</th><th>环境序号</th><th>退款信用卡</th>
-            <th>阶段</th><th>剩余倒计时</th><th>退款结果</th><th>最近检查</th><th>处置</th>
+            <th>环境序号</th><th>订单号</th><th style="width:46px">商品图</th><th>退款单号</th>
+            <th>退款信用卡</th><th>退款金额</th><th>阶段</th><th>剩余倒计时</th>
+            <th>最近检查</th><th>处置</th>
           </tr></thead><tbody id="asTrackRows"></tbody></table>
         </div>
       </div>
@@ -16275,6 +16313,21 @@ initializeAuth();
         被拒的行请到买家端看「Historial de negociación」的拒绝理由后再决定是否申诉。</p>
       </div>`;
     cards[cards.length - 1].after(card);
+    const exportMenu = document.getElementById('asTrackExportMenu');
+    const openExport = () => { exportMenu.hidden = !exportMenu.hidden; };
+    document.getElementById('asTrackExport').onclick = openExport;
+    document.getElementById('asTrackExportMenuBtn').onclick = e => { e.stopPropagation(); openExport(); };
+    document.addEventListener('click', () => { exportMenu.hidden = true; }, true);
+    const exportDemo = variant => {
+      exportMenu.hidden = true;
+      const rows = variant === 'open'
+        ? TRACKING.filter(r => !['refunded', 'rejected'].includes(r.phase) || r.phase === 'rejected')
+        : TRACKING;
+      toast(`样稿演示：正式版导出「${variant}」共 ${rows.length} 行（服务端生成 xlsx/csv）`);
+    };
+    document.getElementById('asTrackExportStd').onclick = () => exportDemo('standard');
+    document.getElementById('asTrackExportFull').onclick = () => exportDemo('full');
+    document.getElementById('asTrackExportOpen').onclick = () => exportDemo('open');
     document.getElementById('asTrackRefresh').onclick = () => {
       // 样稿演示：把「处理中」推进为「已退款」，其余刷新检查时间
       const now = new Date();

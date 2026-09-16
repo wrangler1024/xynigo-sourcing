@@ -666,6 +666,15 @@
   /* ===== 小犀助手 · 采购售后（丢件退款） ===== */
   /* 售后三张表的商品缩略图：复用 .procurement-image-thumb，只按密集表格调小一档 */
   #afterSalePanel .procurement-image-thumb { width: 34px; height: 44px; margin-left: 0; border-radius: 8px; box-shadow: none; }
+  /* 退款跟踪的阶段迷你时间轴：四节点（已受理→审核中→处理中→已退款），当前节点高亮 */
+  #afterSalePanel .as-tl { display:inline-flex; align-items:center; gap:0; }
+  #afterSalePanel .as-tl i { width:8px; height:8px; border-radius:50%; background:#d7e0e8; flex:none; }
+  #afterSalePanel .as-tl u { width:14px; height:2px; background:#d7e0e8; flex:none; }
+  #afterSalePanel .as-tl i.done { background:var(--rhino-500); }
+  #afterSalePanel .as-tl u.done { background:var(--rhino-500); }
+  #afterSalePanel .as-tl i.cur { background:var(--rhino-600); box-shadow:0 0 0 3px rgba(32,174,179,.18); }
+  #afterSalePanel .as-tl i.bad { background:#d9534f; box-shadow:0 0 0 3px rgba(217,83,79,.16); }
+  #afterSalePanel .as-tl-label { margin-left:8px; font-size:12px; font-weight:700; white-space:nowrap; }
   /* 状态条右侧的进度区排版（用 class 而非内联样式，否则收起的 display:none 会被内联压住） */
   #afterSalePanel .as-strip-progress { margin-left: auto; display: flex; align-items: center; gap: 10px; }
   /* 运行状态条的终态收起：折成一行（只留标题与操作），把纵向空间还给表格 */

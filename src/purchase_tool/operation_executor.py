@@ -25,6 +25,7 @@ BUSINESS_TASK_TYPES = frozenset({
     'store.finance.lookup.v1',
     'after.sale.scan.v1',
     'after.sale.claim.v1',
+    'after.sale.track.v1',
     'environment.create-bound.v1',
     'environment.create-backup.v1',
     'environment.retry-row.v1',
@@ -92,6 +93,9 @@ class LocalOperationExecutor(object):
                 payload, report, cancellation_event)
         if task_type == 'after.sale.claim.v1':
             return self._execute_after_sale_claim(
+                payload, report, cancellation_event)
+        if task_type == 'after.sale.track.v1':
+            return self._execute_after_sale_track(
                 payload, report, cancellation_event)
         if task_type == 'environment.preview-bound.v1':
             return self._execute_environment_preview(
@@ -921,6 +925,147 @@ class LocalOperationExecutor(object):
             'errorCode': '',
             'errorSummary': '',
         }
+
+    _AFTER_SALE_TRACK_ROW_FIELDS = (
+        'refundBillId', 'orderNo', 'environmentSerial', 'storeName', 'status',
+        'phase', 'phaseLabel', 'countdown', 'refundAccount', 'amount',
+        'checkedAt', 'note', 'errorSummary', 'durationSeconds',
+    )
+    _AFTER_SALE_TRACK_TEXT_LIMITS = {
+        'refundBillId': 32, 'orderNo': 32, 'environmentSerial': 64,
+        'storeName': 128, 'phase': 24, 'phaseLabel': 24, 'countdown': 24,
+        'refundAccount': 40, 'amount': 24, 'checkedAt': 40, 'note': 200,
+    }
+
+    @classmethod
+    def _after_sale_track_rows(cls, snap_rows):
+        """回访行投影成云端闭集。
+
+        注意 timeline（平台时间轴原文）**不上行**——它是排查用的长文本，只跟着
+        「完整导出」走本地落库，塞进进度快照会白占每轮上报的体积。需要时由导出
+        侧读库取。
+        """
+        rows = []
+        for raw in (snap_rows or []):
+            row = {}
+            for field in cls._AFTER_SALE_TRACK_ROW_FIELDS:
+                if field not in raw:
+                    continue
+                value = raw.get(field)
+                if field == 'status':
+                    status = str(value or '').strip()
+                    row[field] = status if status in cls._AFTER_SALE_ROW_ALLOWED_STATUS \
+                        else 'running'
+                elif field == 'errorSummary':
+                    row[field] = (str(value).strip()[:300]
+                                  if value is not None else None)
+                elif field == 'durationSeconds' and value is not None:
+                    row[field] = max(0, int(value))
+                elif field in cls._AFTER_SALE_TRACK_TEXT_LIMITS:
+                    row[field] = str(value or '')[
+                        :cls._AFTER_SALE_TRACK_TEXT_LIMITS[field]]
+                else:
+                    row[field] = value
+            rows.append(row)
+        return rows
+
+    @staticmethod
+    def _after_sale_track_summary(total, rows):
+        """回访批次汇总：阶段计数 + 行状态计数（终态口径供跟踪表冻结判断）。"""
+        rows = rows or []
+        ok = sum(r.get('status') == 'ok' for r in rows)
+        stopped = sum(r.get('status') == 'stopped' for r in rows)
+        failed = sum(r.get('status') in ('fail', 'inuse') for r in rows)
+        phases = {}
+        for row in rows:
+            key = str(row.get('phase') or '')
+            if key:
+                phases[key] = phases.get(key, 0) + 1
+        if stopped and not ok and not failed:
+            run_status = 'cancelled'
+        elif failed and ok:
+            run_status = 'partial_failure'
+        elif failed:
+            run_status = 'failed'
+        else:
+            run_status = 'completed'
+        return {
+            'runStatus': run_status,
+            'phase': 'after_sale.track.' + run_status,
+            'progressCompleted': min(total, ok + failed + stopped),
+            'progressTotal': total,
+            'totalCount': total,
+            'successCount': ok,
+            'failedCount': failed,
+            'stoppedCount': stopped,
+            'phaseCounts': phases,
+            'errorCode': '',
+            'errorSummary': '',
+        }
+
+    def _execute_after_sale_track(self, payload, report, cancellation_event):
+        """退款跟踪回访：本地只读跑批，轮询回传阶段行。"""
+        items = payload.get('items')
+        if (not isinstance(items, list) or not items
+                or any(not isinstance(i, dict) for i in items)):
+            raise OperationExecutionError(
+                'operation_payload_invalid', '退款跟踪缺少退款单条目')
+        clean = []
+        for item in items:
+            serial = str(item.get('environmentSerial') or '').strip()
+            order_no = str(item.get('orderNo') or '').strip()
+            bill = str(item.get('refundBillId') or '').strip()
+            if not (serial and order_no and bill):
+                raise OperationExecutionError(
+                    'operation_payload_invalid',
+                    '退款跟踪条目缺少环境序号/订单号/退款单号')
+            clean.append({
+                'environmentSerial': serial, 'orderNo': order_no,
+                'refundBillId': bill,
+                'storeName': str(item.get('storeName') or '').strip()[:128],
+            })
+        if len(clean) > 500:
+            raise OperationExecutionError(
+                'operation_payload_invalid', '单批回访退款单数量超出上限')
+        browser_mode = str(payload.get('browserMode') or 'visible')
+        self._request('POST', '/api/after-sale/track', {
+            'items': clean, 'browserMode': browser_mode,
+        })
+        total = len(clean)
+        selected = {c['refundBillId'] for c in clean}
+        stop_sent = False
+        previous = None
+        rows = []
+        while True:
+            snapshot = self._request('GET', '/api/after-sale/progress')
+            if cancellation_event.is_set() and not stop_sent:
+                try:
+                    self._request('POST', '/api/after-sale/stop', {})
+                except OperationExecutionError:
+                    pass
+                stop_sent = True
+            rows = [r for r in (snapshot.get('trackRows') or [])
+                    if str(r.get('refundBillId') or '') in selected]
+            completed = sum(
+                r.get('status') in AFTER_SALE_TERMINAL_STATES for r in rows)
+            event = {
+                'phase': ('after_sale.track.running'
+                          if snapshot.get('running')
+                          else 'after_sale.track.completed'),
+                'current': min(total, completed),
+                'total': total,
+                'snapshot': {'rows': self._after_sale_track_rows(rows)},
+            }
+            serialized = json.dumps(event, ensure_ascii=False, sort_keys=True,
+                                    separators=(',', ':'))
+            if serialized != previous:
+                self._safe_report(report, **event)
+                previous = serialized
+            if not bool(snapshot.get('running')):
+                break
+            self.sleep(self.poll_interval)
+        summary = self._after_sale_track_summary(total, rows)
+        return self._terminal_result('after_sale_track', summary)
 
     def _execute_logistics(self, payload, report, cancellation_event):
         run_key = self._required_text(payload, 'runKey')

@@ -54,6 +54,7 @@ SUPPORTED_CAPABILITIES = (
     'store.finance.lookup.v1',
     'after.sale.scan.v1',
     'after.sale.claim.v1',
+    'after.sale.track.v1',
     'environment.create-bound.v1',
     'environment.create-backup.v1',
     'environment.retry-row.v1',
@@ -66,6 +67,7 @@ MODERN_ONLY_CAPABILITIES = frozenset({
     'store.finance.lookup.v1',
     'after.sale.scan.v1',
     'after.sale.claim.v1',
+    'after.sale.track.v1',
 })
 COMPATIBLE_CAPABILITIES = tuple(
     capability for capability in SUPPORTED_CAPABILITIES
