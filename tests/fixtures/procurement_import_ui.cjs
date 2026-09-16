@@ -135,6 +135,7 @@ const chooseFile = () => { node('procurementImportFile').files = [file]; node('p
   pollFailure = false; completed = true;
   await run('pollProcurementImportSync("synthetic-job")');
   assert.equal(node('procurementImportFooterSummary').textContent, '本批导入已完成');
+  assert.equal(node('importRunStrip').hidden, false, 'completion must keep the sticky result visible');
   assert.equal(node('btnProcurementImportReset').disabled, false);
   valid = false;
   await node('btnProcurementImportValidateTarget').onclick();
@@ -144,6 +145,7 @@ const chooseFile = () => { node('procurementImportFile').files = [file]; node('p
   await node('btnProcurementImportValidateTarget').onclick();
   run('renderProcurementImportSyncStatus({state:"completed", rowsWritten:60})');
   node('procurementImportTargetSheet').onchange();
+  assert.equal(node('importRunStrip').hidden, true, 'changing target must clear the previous sticky result');
   assert.equal(node('btnProcurementImportSyncImages').disabled, true);
   assert.equal(steps[1].attributes['aria-current'], 'step', 'changed target invalidates completion');
   node('btnProcurementImportReset').onclick();
