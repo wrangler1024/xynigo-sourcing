@@ -90,3 +90,27 @@ def test_redirect_limit(monkeypatch):
     with pytest.raises(images.ProcurementImageError, match='次数过多'):
         images.fetch_procurement_image(URL)
     assert len(calls) == images.MAX_IMAGE_REDIRECTS + 1
+
+
+def test_export_deadline_interrupts_slow_chunks(monkeypatch):
+    now=[0.0]
+    monkeypatch.setattr(images.time,'monotonic',lambda:now[0])
+    class SlowResponse(Response):
+        def read1(self,size):
+            now[0]+=1
+            return b'x'*min(size,100)
+    class Opener:
+        def open(self,request,timeout):
+            assert timeout<=2
+            return SlowResponse()
+    monkeypatch.setattr(images,'build_opener',lambda *a:Opener())
+    with pytest.raises(images.ProcurementImageError,match='超时'):
+        images.fetch_procurement_image(URL,deadline=2)
+    assert now[0]==2
+
+
+def test_expired_deadline_never_opens_network(monkeypatch):
+    calls=install_opener(monkeypatch,[])
+    with pytest.raises(images.ProcurementImageError,match='超时'):
+        images.fetch_procurement_image(URL,deadline=images.time.monotonic()-1)
+    assert not calls

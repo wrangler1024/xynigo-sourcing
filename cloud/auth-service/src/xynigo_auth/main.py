@@ -113,6 +113,7 @@ from .purchase_receipt_gateway import ReceiptGatewayFactory
 from .procurement_import_sheet import FeishuSheetsGateway, LarkSheetSyncError
 from .integration_contract import FeishuIntegrationWriteBody, FeishuReadProxyBody
 from .after_sale_export import (
+    AfterSaleExportBusy,
     build_after_sale_claim_export,
     build_after_sale_scan_export,
     build_after_sale_track_export,
@@ -5413,7 +5414,10 @@ def create_app(
         if task is None:
             raise HTTPException(status_code=404, detail="扫描任务不存在")
         snapshot = executor_channel(session).after_sale_scan_summary(task)
-        content, filename, mime = build_after_sale_scan_export(snapshot["rows"])
+        try:
+            content, filename, mime = build_after_sale_scan_export(snapshot["rows"])
+        except AfterSaleExportBusy as exc:
+            raise HTTPException(status_code=429, detail=str(exc), headers={"Retry-After": "5"}) from exc
         _add_audit(
             session,
             request_id=request.state.request_id,
@@ -5466,7 +5470,10 @@ def create_app(
         if task is None:
             raise HTTPException(status_code=404, detail="回访任务不存在")
         snapshot = executor_channel(session).after_sale_track_summary(task)
-        content, filename, mime = build_after_sale_track_export(snapshot["rows"])
+        try:
+            content, filename, mime = build_after_sale_track_export(snapshot["rows"])
+        except AfterSaleExportBusy as exc:
+            raise HTTPException(status_code=429, detail=str(exc), headers={"Retry-After": "5"}) from exc
         _add_audit(
             session,
             request_id=request.state.request_id,
@@ -5784,7 +5791,10 @@ def create_app(
                 request, session, actor, action, exc,
                 business_object_id=str(run_id),
             )
-        content, filename, mime = build_after_sale_claim_export(snapshot["rows"])
+        try:
+            content, filename, mime = build_after_sale_claim_export(snapshot["rows"])
+        except AfterSaleExportBusy as exc:
+            raise HTTPException(status_code=429, detail=str(exc), headers={"Retry-After": "5"}) from exc
         _add_audit(
             session,
             request_id=request.state.request_id,

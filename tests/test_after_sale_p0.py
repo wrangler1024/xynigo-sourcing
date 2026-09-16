@@ -90,6 +90,7 @@ const window={GB_OrderReturnLabel:{billno:'SYNTH',refund_page_info:{cur_refund_o
  refund_bill_goods_list:[{package_no:'PKG'}],
  refund_record_list:[{refund_path:'3',refund_amount_without_symbol:'10.00'},{refund_path:'2',refund_amount_without_symbol:'0.00'}]}}}};
 const document={body:{innerText:'Código del Reembolso:12345\nPlazo de la solicitud:10 Sep 2025 10:00:00\nestá en revisión'},
+ querySelectorAll:s=>s==='.refundAccount-info .tip'?[{innerText:'****1234',querySelectorAll:()=>[]}]:[],
  querySelector:s=>s==='.refundAccount-info .tip'?{innerText:'****1234'}:{innerText:'Error'}};
 const facts=FACTS;
 assert.equal(facts.refundAccount,'****1234');assert.equal(facts.refundPath,'Cuenta original de pago');
@@ -242,7 +243,7 @@ def test_url_only_receipt_for_other_package_is_never_accepted(monkeypatch):
 def test_missing_detail_warning_clears_after_fields_are_read():
     c=claimer()
     c._record_refund('SYNTH',{'refundBillId':'12345','source':'recovered'})
-    assert '退款账户未读取' in c._claim_rows['SYNTH']['refunds'][0]['detailsNote']
+    assert '退款账户详情未加载完成' in c._claim_rows['SYNTH']['refunds'][0]['detailsNote']
     c._record_refund('SYNTH',{'refundBillId':'12345','source':'recovered',
         'refundAccount':'****1234','refundPath':'Cuenta original de pago','detailsNote':''})
     assert c._claim_rows['SYNTH']['refunds'][0]['detailsNote']==''
@@ -251,7 +252,7 @@ def test_missing_detail_warning_clears_after_fields_are_read():
 def test_web_product_rows_keep_all_images_quantities_and_action_time():
     html=Path('src/purchase_tool/web/index.html').read_text(encoding='utf-8')
     names=['asOrderIdentity','asSubmissionForRow','asSubmissionProtections','asSubmissionHasEvidence','asOrderRefundRows','asSubmissionBlocksSelection','asCanSelectScanRow',
-           'asItemCount','asGoodsImages','asScanGoodsHtml','asSelectedItems','asClaimRowHtml',
+           'asItemCount','asGoodsImages','asScanGoodsHtml','asSelectedItems','asClaimRowHtml','asRefundPathText','asRefundAccountHtml',
            'asClaimNeedsReconciliation','asClaimPill','asClaimReasonHtml','asRecoverableClaimRows']
     functions=[]
     for name in names:

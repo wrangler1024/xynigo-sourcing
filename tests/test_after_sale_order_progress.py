@@ -99,6 +99,7 @@ const asTimeline=()=>'<span>timeline</span>';
 const AS_TL_LABEL={reviewing:'审核中'};
 const asRenderScanRows=rows=>{AS_STATE.rows=rows;};
 const asRenderClaimRows=rows=>{AS_STATE.claimRows=rows;};
+const asSupplementClaimAccounts=()=>{};
 const asSyncRetryButton=()=>{};
 const asSyncRuntimeControls=()=>{};
 let response,fetches=0;

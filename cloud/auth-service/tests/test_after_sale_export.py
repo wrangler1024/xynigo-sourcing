@@ -21,6 +21,8 @@ from xynigo_auth.after_sale_export import (
     build_after_sale_track_export,
 )
 
+MISSING_IMAGE_NOTE = '商品图片 1/1 张未取得（读取失败或超出本次导出预算），原链接见商品图单元格及批注'
+
 
 def _row(**overrides) -> dict[str, object]:
     row: dict[str, object] = {
@@ -69,7 +71,7 @@ def test_export_row_values_follow_header_order() -> None:
     assert [cell.value for cell in sheet[2]] == [
         "4586", "GSH1RV13Y00NQUV", "https://img.shein.com/synthetic-goods.jpg",
         "2390833880014851", "****7935", "270.22", "已退款", None,
-        "2026-09-16 01:08", None,
+        "2026-09-16 01:08", MISSING_IMAGE_NOTE,
     ]
     assert sheet.max_row == 2
 
@@ -106,7 +108,7 @@ def test_export_checked_at_and_note_fallbacks() -> None:
     ]
     assert [sheet.cell(row=index, column=10).value
             for index in range(5, 7)] == [
-        "拒绝理由：地址不可达", "回访失败：环境占用",
+        "拒绝理由：地址不可达\n"+MISSING_IMAGE_NOTE, "回访失败：环境占用\n"+MISSING_IMAGE_NOTE,
     ]
 
 
@@ -171,7 +173,7 @@ def test_claim_export_row_values_follow_header_order() -> None:
         "//img.ltwebstatic.com/v4/j/pi/synthetic.jpg", "丢件退款",
         "04 Sep 2026 16:56:59", "2390853897109507",
         "Cuenta original de pago", "****0212", "已受理",
-        "2026-09-16 06:16:50+00:00", None, None, None,
+        "2026-09-16 06:16:50+00:00", MISSING_IMAGE_NOTE, None, None,
     ]
     assert filename.startswith("售后提交结果_")
     assert filename.endswith(".xlsx")
@@ -201,9 +203,9 @@ def test_claim_export_keeps_failure_reason() -> None:
         _claim_row(status="login", note=None, errorSummary="登录态失效"),
     ])
     assert sheet.cell(row=2, column=9).value == "不可申请"
-    assert sheet.cell(row=2, column=11).value == "该订单已无可申请售后的包裹"
+    assert sheet.cell(row=2, column=11).value == "该订单已无可申请售后的包裹\n"+MISSING_IMAGE_NOTE
     assert sheet.cell(row=3, column=9).value == "失败 · 未登录"
-    assert sheet.cell(row=3, column=11).value == "登录态失效"
+    assert sheet.cell(row=3, column=11).value == "登录态失效\n"+MISSING_IMAGE_NOTE
 
 
 def test_scan_export_preserves_order_numbers_status_and_literal_text():

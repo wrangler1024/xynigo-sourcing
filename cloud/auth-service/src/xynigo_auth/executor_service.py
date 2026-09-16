@@ -2034,7 +2034,8 @@ class ExecutorChannelService:
         items = [item for item in items if isinstance(item, dict) and item.get("refundBillId")]
         bills = [str(item["refundBillId"]) for item in items]
         latest = after_sale_tracking_snapshot(self.session, task.tenant_id, bills)
-        images = {row["refundBillId"]: row.get("goodsImg") or "" for row in latest["rows"]}
+        images = {row["refundBillId"]: {key: row.get(key) for key in
+                  ('goodsImg', 'goodsImages', 'goodsItems', 'itemCount')} for row in latest["rows"]}
         progress = task.progress_summary
         if isinstance(progress, dict):
             source_rows = progress.get("rows") or []
@@ -2054,7 +2055,8 @@ class ExecutorChannelService:
                 storeName=item.get("storeName") or "", status="queued",
             ).model_dump(mode="json")
             row.update(by_bill.get(bill) or {})
-            row["goodsImg"] = row.get("goodsImg") or images.get(bill) or ""
+            for key, value in (images.get(bill) or {}).items():
+                row[key] = row.get(key) or value
             rows.append(row)
         counts: dict[str, int] = {}
         for row in rows:
@@ -2684,14 +2686,17 @@ class ExecutorChannelService:
                 refunds[refund.refundBillId] = {**old, **{
                     k: v for k, v in refund.model_dump(mode="json").items() if v}}
                 merged = refunds[refund.refundBillId]
-                merged['detailsNote'] = '；'.join(label+'未读取' for key,label in
-                    [('refundPath','退款路径'),('refundAccount','退款账户')] if not merged.get(key))
+                merged['detailsNote'] = '；'.join(filter(None, [
+                    '' if merged.get('refundPath') else '退款路径未读取',
+                    '' if merged.get('refundAccount') else '退款账户详情未加载完成，待回访补全',
+                ]))
             row.refunds = list(refunds.values())
             row.status = item.status
             row.package_no = item.packageNo or None
+            same_refund = not item.refundBillId or item.refundBillId == row.refund_bill_id
             row.refund_bill_id = item.refundBillId or row.refund_bill_id
-            row.refund_path = item.refundPath or None
-            row.refund_account = item.refundAccount or None
+            row.refund_path = item.refundPath or (row.refund_path if same_refund else None)
+            row.refund_account = item.refundAccount or (row.refund_account if same_refund else None)
             # 展示字段兜底：老执行器的桥接层按固定字段重建条目，会把这两个字段丢掉
             # （0.17/0.18.0 都如此），而云端清单（request_summary）里本来就有——
             # 不该因为同事没升级桌面端就把 ③ 的送达时间、④ 的商品图留空。
@@ -2780,6 +2785,18 @@ class ExecutorChannelService:
                 raise ExecutorServiceError(
                     "executor_progress_snapshot_invalid", status_code=422,
                     diagnostic_reason="refund_bill_identity_mismatch")
+        stored = {record.refund_bill_id: record for record in self.session.scalars(
+            select(AfterSaleRefundTracking).where(
+                AfterSaleRefundTracking.tenant_id == task.tenant_id,
+                AfterSaleRefundTracking.refund_bill_id.in_([row.refundBillId for row in rows]))
+        ).all()}
+        for row in rows:
+            record = stored.get(row.refundBillId)
+            item = requested[row.refundBillId]
+            if record and (record.order_no != item.get('orderNo') or (record.environment_serial
+                    and record.environment_serial != item.get('environmentSerial'))):
+                raise ExecutorServiceError("executor_progress_snapshot_invalid", status_code=422,
+                    diagnostic_reason="refund_tracking_identity_mismatch")
         previous = task.progress_summary if isinstance(task.progress_summary, dict) else {}
         per_task = {row["refundBillId"]: row for row in previous.get("rows", [])}
         for row in rows:
@@ -2790,18 +2807,19 @@ class ExecutorChannelService:
             per_task[row.refundBillId] = row.model_dump(mode="json")
         task.progress_summary = {"rows": [per_task[bill] for bill in requested if bill in per_task]}
         for row in rows:
-            record = self.session.scalar(
-                select(AfterSaleRefundTracking).where(
-                    AfterSaleRefundTracking.tenant_id == task.tenant_id,
-                    AfterSaleRefundTracking.refund_bill_id == row.refundBillId,
-                )
-            )
+            record = stored.get(row.refundBillId)
             if record is None:
                 record = AfterSaleRefundTracking(
                     id=uuid.uuid4(), tenant_id=task.tenant_id,
                     refund_bill_id=row.refundBillId, order_no=row.orderNo,
                 )
                 self.session.add(record)
+            elif not record.environment_serial:
+                # Legacy records lack environment provenance. Fresh successful
+                # reads may establish it; their old account cannot move with it.
+                record.refund_account = None
+                record.checked_at = None
+                record.phase = record.phase_label = record.countdown = record.amount = None
             record.order_no = row.orderNo or record.order_no
             record.environment_serial = row.environmentSerial or None
             record.store_name = row.storeName or None
@@ -2809,7 +2827,7 @@ class ExecutorChannelService:
                 record.phase = row.phase or None
                 record.phase_label = row.phaseLabel or None
                 record.countdown = row.countdown or None
-                record.refund_account = row.refundAccount or None
+                record.refund_account = row.refundAccount or record.refund_account
                 record.amount = row.amount or None
             record.last_status = row.status
             record.last_error = row.errorSummary

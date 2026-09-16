@@ -47,7 +47,8 @@ from datetime import datetime, timezone
 from .cdp import CdpClient, CdpError
 from .redaction import scrub_text
 from .after_sale_display import order_item_summary, delivery_summary
-from .after_sale_receipts import refund_bill_id_from_url, read_refund_receipts, read_current_receipt, receipt_reason
+from .after_sale_receipts import (refund_bill_id_from_url, read_refund_receipts,
+    read_current_receipt, receipt_reason, read_refund_account, REFUND_ACCOUNT_JS)
 from .after_sale_submit_evidence import install_observer, read_observer, REMOVE_OBSERVER
 from .after_sale_order_detail import read_order_detail_facts
 
@@ -287,11 +288,7 @@ _JS_TOAST_TEXT = ('(() => {' + _JS_NORM + '''
 
 # 退款账户（原路退回落到哪张卡）：退款成功页的账户区块，实测形如「****2281」。
 # 该区块在账户明细接口返回空时会渲染成占位文案 Error，因此取值后要能识别并丢弃。
-_JS_REFUND_ACCOUNT = (
-    '(() => { const e=document.querySelector(".refundAccount-info .tip");'
-    ' if(!e) return "";'
-    ' const t=String(e.innerText||"").replace(/\\s+/g," ").trim();'
-    ' return /^[*0-9\\s-]{4,24}$/.test(t) ? t : ""; })()')
+_JS_REFUND_ACCOUNT = REFUND_ACCOUNT_JS
 
 # 退款跟踪：退款单页的进度时间轴与金额。只读回访用，绝不点任何按钮。
 # 阶段文案实测（真机）：受理「Solicitud de reembolso aceptada」→ 审核中
@@ -926,14 +923,14 @@ class AfterSaleClaimer(object):
         if not phase:
             self._fail_track(bill, 'fail', '未读到可识别的退款阶段，请稍后重试')
             return
-        account = state.get('account') or ''
-        if not account:
-            account = self._read_refund_account(page, timeout=6)
+        account = self._read_refund_account(page, expected_identity=(item['orderNo'], bill))
         note = ''
         if phase == 'rejected':
             note = '需人工：到买家端看 Historial de negociación 的拒绝理由后决定是否申诉'
         elif phase not in TRACK_TERMINAL_PHASES:
             note = '未终态，下次回访继续跟'
+        if not account:
+            note = '；'.join(filter(None, [note, '退款账户详情未加载完成，待回访补全']))
         amounts = state.get('amounts') or []
         with self._lock:
             row = self._track_rows.get(bill) or {}
@@ -1216,8 +1213,10 @@ class AfterSaleClaimer(object):
                         'applicationAt', 'packageNos', 'reasonId', 'detailsNote'):
                 if result.get(key):
                     entry[key] = result[key]
-            entry['detailsNote'] = '；'.join(label+'未读取' for key,label in
-                [('refundPath','退款路径'),('refundAccount','退款账户')] if not entry.get(key))
+            entry['detailsNote'] = '；'.join(filter(None, [
+                '' if entry.get('refundPath') else '退款路径未读取',
+                '' if entry.get('refundAccount') else '退款账户详情未加载完成，待回访补全',
+            ]))
             refunds[bill] = entry
             row['refunds'] = list(refunds.values())
             row.update(entry)
@@ -1293,20 +1292,14 @@ class AfterSaleClaimer(object):
         except CdpError:
             return False
 
-    def _read_refund_account(self, page, timeout=15):
+    def _read_refund_account(self, page, timeout=15, expected_identity=None):
         """读退款账户（原路退回落到哪张卡）的掩码，取不到返回空串。
 
         实测坑：该区块是跳到成功页之后约 2 秒才渲染出来的，落地瞬间读会是空；
         且账户明细接口返回空时平台会把状态文案渲染成占位符 ``Error``（那是它自己的
         显示问题，不影响退款），故这里轮询到出值为止，识别不出就按空处理。
         """
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            value = page.js_evaluate(_JS_REFUND_ACCOUNT) or ''
-            if value:
-                return value
-            time.sleep(0.6)
-        return ''
+        return read_refund_account(page, timeout=timeout, expected_identity=expected_identity)
 
     def _select_refund_path(self, page):
         """把退款路径切到「原路退回」，返回 (是否成功, 失败原因)。

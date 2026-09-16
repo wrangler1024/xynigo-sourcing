@@ -1,5 +1,6 @@
 """Bounded, credential-free downloads of source product images from SHEIN CDN."""
 import ssl
+import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
@@ -53,7 +54,7 @@ class _NoAutomaticRedirect(HTTPRedirectHandler):
         return None
 
 
-def fetch_procurement_image(url):
+def fetch_procurement_image(url, *, deadline=None):
     current = trusted_procurement_image_url(url)
     if not current:
         raise ProcurementImageError('订单图片网址不是受支持的 SHEIN 图片地址')
@@ -61,18 +62,35 @@ def fetch_procurement_image(url):
         _NoAutomaticRedirect(),
         HTTPSHandler(context=ssl.create_default_context(cafile=certifi.where())))
     for attempt in range(MAX_IMAGE_REDIRECTS + 1):
+        remaining = None if deadline is None else deadline - time.monotonic()
+        if remaining is not None and remaining <= 0:
+            raise ProcurementImageError('订单图片读取超时')
         request = Request(current, headers={
             'Accept': 'image/jpeg,image/png,image/gif,image/webp',
             'User-Agent': 'Xynigo-Sourcing-Image-Import',
         })
         try:
-            with opener.open(request, timeout=IMAGE_TIMEOUT_SECONDS) as response:
+            timeout = IMAGE_TIMEOUT_SECONDS if remaining is None else min(2, remaining)
+            with opener.open(request, timeout=timeout) as response:
                 if response.getcode() != 200:
                     raise ProcurementImageError('订单图片网址返回异常状态')
                 length = response.headers.get('Content-Length', '')
                 if str(length).isdigit() and int(length) > MAX_IMAGE_BYTES:
                     raise ProcurementImageError('订单图片超过 5MB，已停止读取')
-                data = response.read(MAX_IMAGE_BYTES + 1)
+                if deadline is None:
+                    data = response.read(MAX_IMAGE_BYTES + 1)
+                else:
+                    chunks = []
+                    size = 0
+                    while size <= MAX_IMAGE_BYTES:
+                        if time.monotonic() >= deadline:
+                            raise ProcurementImageError('订单图片读取超时')
+                        chunk = response.read1(min(64 * 1024, MAX_IMAGE_BYTES + 1 - size))
+                        if not chunk:
+                            break
+                        chunks.append(chunk)
+                        size += len(chunk)
+                    data = b''.join(chunks)
                 if len(data) > MAX_IMAGE_BYTES:
                     raise ProcurementImageError('订单图片超过 5MB，已停止读取')
                 image_content_type(data)

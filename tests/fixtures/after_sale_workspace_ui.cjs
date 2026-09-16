@@ -21,7 +21,7 @@ for(const name of ['asSetOrderView','asOrderIdentity','asSubmissionForRow','asSu
  'asClaimPill','asClaimPillText','asClaimReasonHtml','asItemCount','asFilteredRows','asSelectedItems',
  'asRecoverableClaimRows','asReconcileScanRows','asSyncSelection','asRenderScanRows','asRenderClaimRows',
  'asRenderClaimFilters','asClaimMatchesFilter','asOrderDetailHtml','asGoodsImages','asScanGoodsHtml',
- 'asTrackItemsFromRows','asClaimRowHtml']){
+ 'asTrackItemsFromRows','asClaimRowHtml','asRefundPathText','asRefundAccountHtml','asSupplementClaimAccounts']){
  const match=new RegExp('function '+name+'\\([^]*?\\n}').exec(html);assert(match,name);run(match[0]);
 }
 const scan=(orderNo,environmentSerial='ENV-A')=>({orderNo,environmentSerial,status:'ok',claimable:true,
@@ -114,4 +114,25 @@ const details=run('asOrderDetailHtml(unsafe,{...unsafe,status:"uncertain",submis
 assert.doesNotMatch(details,/<script>|<img src=x/);assert.match(details,/&lt;script&gt;/);
 assert.match(details,/不会自动改写提交结果/);assert.doesNotMatch(details,/id="asOrderDetailTrack"/);
 assert.equal(JSON.stringify([...state.submissions]),submissionSnapshot);
+// A read-only account supplement is bound to order, environment and refund identity.
+const receipt={orderNo:'ORDER-A',environmentSerial:'ENV-A',status:'uncertain',refundBillId:'12345',
+ operationCompletedAt:'2026-09-01T01:02:03Z',refunds:[{refundBillId:'12345',source:'submit_response',detailsNote:'退款账户未读取'}]};
+const receiptBefore=JSON.stringify(receipt);
+state.claimRows=[receipt];state.claimFilter='all';context.AS_HISTORY={detail:{rows:[receipt]}};
+context.tracking={refundBillId:'12345',orderNo:'OTHER',environmentSerial:'ENV-A',status:'ok',refundAccount:'****1234',checkedAt:'2026-09-02T01:00:00Z'};
+run('asSupplementClaimAccounts([tracking])');assert.equal(state.claimRows[0].refunds[0].refundAccount,undefined);
+context.tracking.orderNo='ORDER-A';context.tracking.environmentSerial='OTHER';
+run('asSupplementClaimAccounts([tracking])');assert.equal(state.claimRows[0].refunds[0].refundAccount,undefined);
+context.tracking.environmentSerial='ENV-A';run('asSupplementClaimAccounts([tracking])');
+assert.equal(state.claimRows[0].refunds[0].refundAccount,'****1234');
+assert.equal(state.claimRows[0].status,'uncertain');assert.equal(state.claimRows[0].operationCompletedAt,receipt.operationCompletedAt);
+assert.match(node('asClaimRows').innerHTML,/回访补全/);assert.match(node('asHistoryDetailBody').innerHTML,/回访补全/);
+assert.equal(JSON.stringify(receipt),receiptBefore,'raw submission snapshot is not mutated');
+context.tracking.refundAccount='****9999';run('asSupplementClaimAccounts([tracking])');
+assert.equal(state.claimRows[0].refunds[0].refundAccount,'****1234','known card cannot be silently replaced');
+for(const path of ['Cuenta original de pago / 其他退款渠道（名称未取得）','Cuenta original de pago ／ 其他退款渠道 ( 名称未取得 )']) {
+ context.path=path;assert.equal(run('asRefundPathText(path)'),'Cuenta original de pago');
+}
+assert.equal(run("asRefundPathText('其他退款渠道（名称未取得）')"),'');
+assert.equal(run("asRefundPathText('Cuenta original de pago / Cartera SHEIN')"),'Cuenta original de pago / Cartera SHEIN');
 console.log('PASS: immutable scans, continuous reconciliation, protected retry matrix, environment/run isolation, tabs, full-batch filters, clear protection, P0 fields and escaped detail evidence');

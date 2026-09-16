@@ -681,6 +681,9 @@
   /* 标题 / 说明 / 收起 同排：收起态折成「标题 + 展开」一行，与原型一致 */
   #afterSalePanel #asRunStrip .query-phase-copy { flex-direction: row; align-items: baseline; gap: 8px; flex-wrap:wrap; }
   #afterSalePanel #asRunStrip .query-phase-copy b { flex:none; white-space:nowrap; }
+  #afterSalePanel .as-phase-heading { display:inline-flex; align-items:center; gap:6px; flex:none; white-space:nowrap; }
+  #afterSalePanel #asPhaseSpin { flex:none; margin:0; }
+  #afterSalePanel #asPhaseSpin[hidden] { display:none; }
   /* 状态条右侧的进度区排版（用 class 而非内联样式，否则收起的 display:none 会被内联压住） */
   #afterSalePanel .as-strip-progress { margin-left: auto; display: flex; align-items: center; gap: 10px; flex-wrap:wrap; min-width:0; max-width:100%; }
   #afterSalePanel .as-strip-progress .progress { min-width:80px; }
@@ -761,7 +764,7 @@
   @media(max-width:900px) { #afterSalePanel .as-strip-progress .progress { flex-basis:140px; } #afterSalePanel #asProgressText { flex-basis:100%; } }
 
   /* 运行状态条的终态收起：折成一行（只留标题与操作），把纵向空间还给表格 */
-  #afterSalePanel #asRunStrip.as-strip-collapsed .query-phase-copy span,
+  #afterSalePanel #asRunStrip.as-strip-collapsed #asPhaseDescription,
   #afterSalePanel #asRunStrip.as-strip-collapsed .progress-wrap { display: none; }
   #afterSalePanel .as-strip-toggle { margin-left: 10px; border: 0; background: transparent;
     color: var(--rhino-600); font-size: 11px; font-weight: 800; cursor: pointer; padding: 2px 6px; border-radius: 6px; }
@@ -2332,9 +2335,11 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
          扫描完成后保持当前展开/收起状态，由用户手动控制。 -->
     <div id="asRunStrip">
       <div class="query-phase-banner" id="asPhaseBanner" hidden>
-        <span class="spinner" id="asPhaseSpin" hidden aria-hidden="true"></span>
         <div class="query-phase-copy">
-          <b id="asPhaseTitle">等待发起</b>
+          <div class="as-phase-heading">
+            <span class="spinner" id="asPhaseSpin" hidden aria-hidden="true"></span>
+            <b id="asPhaseTitle">等待发起</b>
+          </div>
           <span id="asPhaseDescription">先扫描，再勾选提交。</span>
           <button type="button" class="as-strip-toggle" id="asStripToggle">收起</button>
         </div>
@@ -5802,6 +5807,37 @@ function asRenderScanRows(rows) {
   asRefreshOrderDetail();
 }
 // 本次提交与历史详情共用行模板，保留多图、凭证与独立的操作完成时间。
+function asRefundPathText(value) {
+  return [...new Set(String(value || '').split(/\s*[/／]\s*/).map(label => label.trim())
+    .filter(label => label && label.normalize('NFKC').replace(/\s+/g,'') !== '其他退款渠道(名称未取得)'))].join(' / ');
+}
+function asRefundAccountHtml(refund) {
+  const value = refund.refundAccount || (refund.refundBillId ? '待补全' : '—');
+  const checked = refund.refundAccountSource === 'tracking' && refund.refundAccountCheckedAt;
+  return esc(value) + (checked ? '<div class="hint">回访补全 · '+esc(new Date(checked).toLocaleString('zh-CN',{hour12:false}))+'</div>'
+    : !refund.refundAccount && refund.refundBillId ? '<div class="hint">可刷新退款进度补采</div>' : '');
+}
+function asSupplementClaimAccounts(trackRows) {
+  const successful = new Map((trackRows || []).filter(r => r.status === 'ok' && /^\*{4}\d{4}$/.test(r.refundAccount || '') && r.checkedAt)
+    .map(r => [r.refundBillId, r]));
+  if (!successful.size) return;
+  const supplement = row => {
+    const refunds = (row.refunds?.length ? row.refunds : row.refundBillId ? [row] : []).map(raw => {
+      const tracking = successful.get(raw.refundBillId);
+      if (raw.refundAccount || !tracking || tracking.orderNo !== row.orderNo || String(tracking.environmentSerial) !== String(row.environmentSerial)) return raw;
+      return {...raw, refundAccount:tracking.refundAccount, refundAccountSource:'tracking', refundAccountCheckedAt:tracking.checkedAt,
+        detailsNote:String(raw.detailsNote || '').split(/[；;]/).filter(part=>!part.startsWith('退款账户')).join('；')};
+    });
+    const primary = refunds.find(r=>r.refundBillId===row.refundBillId);
+    return {...row, refunds, ...(primary?.refundAccount && !row.refundAccount ? {
+      refundAccount:primary.refundAccount,refundAccountSource:primary.refundAccountSource,refundAccountCheckedAt:primary.refundAccountCheckedAt} : {})};
+  };
+  if ((AS_STATE.claimRows || []).length) asRenderClaimRows(AS_STATE.claimRows.map(supplement));
+  if (AS_HISTORY.detail?.rows?.length) {
+    AS_HISTORY.detail.rows = AS_HISTORY.detail.rows.map(supplement);
+    $('asHistoryDetailBody').innerHTML = AS_HISTORY.detail.rows.map(asClaimRowHtml).join('');
+  }
+}
 function asClaimRowHtml(row) {
   const bad = !['ok'].includes(String(row.status || ''));
   const cls = bad && row.status !== 'queued' && !['running','verifying'].includes(row.status)
@@ -5814,11 +5850,10 @@ function asClaimRowHtml(row) {
         <td class="sub-text">${esc(row.deliveredAt || '—')}</td>
         <td class="sub-text">${(row.refunds?.length ? row.refunds : [row]).map(r => esc(r.refundBillId || '—')).join('<br>')}</td>
         <td class="sub-text">${(row.refunds?.length ? row.refunds : [row]).map(r => {
-          const path = String(r.refundPath || '').split(/\s*\/\s*/)
-            .map(label => label.trim()).filter(label => label && label !== '其他退款渠道（名称未取得）').join(' / ');
+          const path = asRefundPathText(r.refundPath);
           return esc(path || (r.refundBillId ? '未取得' : '—'));
         }).join('<br>')}</td>
-        <td class="sub-text">${(row.refunds?.length ? row.refunds : [row]).map(r => esc(r.refundAccount || (r.refundBillId ? '未取得' : '—'))).join('<br>')}</td>
+        <td class="sub-text">${(row.refunds?.length ? row.refunds : [row]).map(asRefundAccountHtml).join('<br>')}</td>
         <td>${asClaimPill(row)}${row.status !== 'ok' && row.refunds?.length ? `<div class="hint">平台：${esc([...new Set(row.refunds.map(r=>r.phaseLabel).filter(Boolean))].join(' / ') || '阶段待核对')} · ${row.refunds.length} 笔退款记录</div>` : ''}</td>
         <td class="sub-text">${esc(row.operationCompletedAt ? new Date(row.operationCompletedAt).toLocaleString('zh-CN', {hour12:false,timeZoneName:'shortOffset'}) : '—')}</td>
         <td class="hint">${asClaimReasonHtml(row)}</td>
@@ -6698,6 +6733,7 @@ async function asPoll() {
       const summary = data.summary || {};
       const rows = asOrderedRows(AS_STATE.trackItems, summary.rows || [], 'refundBillId');
       asRenderTrackRows(rows);
+      asSupplementClaimAccounts(rows);
       const total = Number(summary.progressTotal ?? AS_STATE.trackTotal ?? rows.length);
       // 新云端给的是任务级进度。旧云端没有该字段时不拿共享历史行凑完成数。
       const completed = Number(summary.progressCompleted || 0);

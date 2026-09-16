@@ -5,17 +5,24 @@
 - 退款跟踪＝环境序号/订单号/商品图/退款单号/退款信用卡/退款金额/阶段/剩余倒计时/最近检查/备注
 - 提交结果＝环境序号/订单号/商品图/售后类型/送达时间/退款单号/退款路径/退款信用卡/状态/操作时间/备注
 
-商品图列写的是 CDN 链接而不是内嵌图片：导出过程不依赖外网取图，
-链接在 Excel 里可直接点开；要内嵌图片另说（需服务端下载，多一层失败面）。
+商品图以内嵌单元格图片导出，多件订单合为同格图片网格；源链接保留在批注中。
+读取失败保留原链接并在备注说明，不因个别图片失败丢失整份订单数据。
 空值统一留空单元格（不写「—」占位符），Excel 里能直接筛选求和。
 """
 import io
+import threading
+from functools import wraps
 from decimal import Decimal, InvalidOperation
 from datetime import datetime, timezone
 
 from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.comments import Comment
 from openpyxl.utils import get_column_letter
+
+from .after_sale_export_images import collect_thumbnails, product_image_grid, product_image_urls
+from .after_sale_presentation import display_refund_path
+from .procurement_import_xlsx import embed_cell_images
 
 HEADERS = (
     "环境序号", "订单号", "商品图", "退款单号", "退款信用卡",
@@ -45,6 +52,24 @@ AFTER_SALE_TYPE_LABEL = "丢件退款"
 MIME_XLSX = (
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
+
+_EXPORT_SLOT = threading.BoundedSemaphore(1)
+
+
+class AfterSaleExportBusy(RuntimeError):
+    pass
+
+
+def _one_export_at_a_time(build):
+    @wraps(build)
+    def guarded(*args, **kwargs):
+        if not _EXPORT_SLOT.acquire(blocking=False):
+            raise AfterSaleExportBusy('售后表格正在生成，请稍后重试导出')
+        try:
+            return build(*args, **kwargs)
+        finally:
+            _EXPORT_SLOT.release()
+    return guarded
 
 
 def _timestamp_text(value):
@@ -81,7 +106,7 @@ def _row_values(row):
     return [
         row.get("environmentSerial") or "",
         row.get("orderNo") or "",
-        row.get("goodsImg") or "",
+        "\n".join(product_image_urls(row)),
         row.get("refundBillId") or "",
         row.get("refundAccount") or "",
         row.get("amount") or "",
@@ -118,14 +143,19 @@ def _claim_values(row):
                 for r in row.get("refunds") or [] if r.get("source")]
     if evidence:
         note += "\n" + "\n".join(evidence)
+    account_checks = ['账户回访补全：%s，最近回访 %s' %
+                      (r.get('refundBillId') or '', _operation_time_text(r.get('refundAccountCheckedAt')))
+                      for r in refunds if r.get('refundAccountSource') == 'tracking']
+    if account_checks:
+        note += '\n' + '\n'.join(account_checks)
     return [
         row.get("environmentSerial") or "",
         row.get("orderNo") or "",
-        "\n".join(row.get("goodsImages") or ([row["goodsImg"]] if row.get("goodsImg") else [])),
+        "\n".join(product_image_urls(row)),
         AFTER_SALE_TYPE_LABEL,
         row.get("deliveredAt") or "",
         "\n".join(str(r.get("refundBillId") or "") for r in refunds),
-        "\n".join(str(r.get("refundPath") or "") for r in refunds),
+        "\n".join(display_refund_path(r.get("refundPath")) for r in refunds),
         "\n".join(str(r.get("refundAccount") or "") for r in refunds),
         label,
         _operation_time_text(row.get("operationCompletedAt")),
@@ -137,23 +167,48 @@ def _claim_values(row):
     ]
 
 
-def _build_workbook(sheet_title, headers, widths, values, *, literal_strings=False):
+def _build_workbook(sheet_title, headers, widths, values, *, literal_strings=False,
+                    rows=(), image_column=3, image_fetcher=None):
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = sheet_title
+    side = Side(style="thin", color="D8E2EA")
+    border = Border(left=side, right=side, top=side, bottom=side)
     for column, name in enumerate(headers, start=1):
         cell = sheet.cell(row=1, column=column, value=name)
         cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = PatternFill("solid", fgColor="123B63")
         cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = border
         sheet.column_dimensions[get_column_letter(column)].width = (
             widths[column - 1]
         )
     for index, row_values in enumerate(values, start=2):
         for column, value in enumerate(row_values, start=1):
             cell = sheet.cell(row=index, column=column, value=value)
+            cell.border = border
+            cell.alignment = Alignment(vertical="center", wrap_text=True)
             if literal_strings and isinstance(value, str):
                 cell.data_type = "s"
+    thumbnails = collect_thumbnails(rows, image_fetcher)
+    images = []
+    note_column = headers.index('备注') + 1
+    for index, row in enumerate(rows, start=2):
+        urls = product_image_urls(row)
+        if not urls:
+            continue
+        cell = sheet.cell(index, image_column)
+        cell.comment = Comment('商品图片原始链接（按图序）：\n'+'\n'.join(urls), 'Xynigo')
+        grid = product_image_grid(urls, thumbnails)
+        if grid:
+            images.append((cell.coordinate, grid[0]))
+            sheet.row_dimensions[index].height = grid[1]
+        missing = sum(not thumbnails.get(url) for url in urls)
+        if missing:
+            note = sheet.cell(index, note_column)
+            note.value = '\n'.join(filter(None, [str(note.value or ''),
+                '商品图片 %d/%d 张未取得（读取失败或超出本次导出预算），原链接见商品图单元格及批注' % (missing,len(urls))]))
+            note.data_type = 's'
     sheet.freeze_panes = "A2"
     sheet.sheet_view.showGridLines = False
     sheet.auto_filter.ref = (
@@ -161,27 +216,32 @@ def _build_workbook(sheet_title, headers, widths, values, *, literal_strings=Fal
     )
     buffer = io.BytesIO()
     workbook.save(buffer)
-    return buffer.getvalue()
+    workbook.close()
+    return embed_cell_images(buffer.getvalue(), images)
 
 
 def _stamp():
     return datetime.now(timezone.utc).strftime("%Y%m%d")
 
 
-def build_after_sale_track_export(rows):
+@_one_export_at_a_time
+def build_after_sale_track_export(rows, *, image_fetcher=None):
     """④ 退款跟踪导出。返回 (content, filename, mime)。"""
     content = _build_workbook(
         "退款跟踪", HEADERS, COLUMN_WIDTHS,
-        [_row_values(row) for row in rows or []],
+        [_row_values(row) for row in rows or []], literal_strings=True,
+        rows=rows or [], image_fetcher=image_fetcher,
     )
     return content, f"退款跟踪结果_{_stamp()}.xlsx", MIME_XLSX
 
 
-def build_after_sale_claim_export(rows):
+@_one_export_at_a_time
+def build_after_sale_claim_export(rows, *, image_fetcher=None):
     """③ 提交结果（批次）导出。返回 (content, filename, mime)。"""
     content = _build_workbook(
         "提交结果", CLAIM_HEADERS, CLAIM_COLUMN_WIDTHS,
         [_claim_values(row) for row in rows or []], literal_strings=True,
+        rows=rows or [], image_fetcher=image_fetcher,
     )
     return content, f"售后提交结果_{_stamp()}.xlsx", MIME_XLSX
 
@@ -219,11 +279,12 @@ def _scan_number(value):
         return str(value)
 
 
-def build_after_sale_scan_export(rows):
+@_one_export_at_a_time
+def build_after_sale_scan_export(rows, *, image_fetcher=None):
     """导出当前任务全部扫描行，保持快照顺序，不按勾选筛选、不触发扫描。"""
     values = [[
         str(row.get("environmentSerial") or ""), row.get("storeName") or "",
-        str(row.get("orderNo") or ""), row.get("goodsImg") or "",
+        str(row.get("orderNo") or ""), "\n".join(product_image_urls(row)),
         AFTER_SALE_TYPE_LABEL if row.get("orderNo") else "",
         row.get("deliveredAt") or "", _scan_number(row.get("amount")),
         _scan_number(row.get("packageCount")), str(row.get("trackingNo") or ""),
@@ -234,6 +295,6 @@ def build_after_sale_scan_export(rows):
     ] for row in rows or []]
     content = _build_workbook(
         "可申请清单", SCAN_HEADERS, (12, 28, 24, 34, 12, 24, 16, 12, 28, 18, 50, 45, 24, 30),
-        values, literal_strings=True,
+        values, literal_strings=True, rows=rows or [], image_column=4, image_fetcher=image_fetcher,
     )
     return content, f"售后可申请清单_{_stamp()}.xlsx", MIME_XLSX

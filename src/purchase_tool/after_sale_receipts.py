@@ -1,5 +1,6 @@
 """Read-only refund evidence. A found record is never proof of who submitted it."""
 import re
+import time
 from urllib.parse import parse_qs, urlparse
 
 ORIGIN = 'https://www.shein.com.mx'
@@ -29,6 +30,36 @@ def refund_bill_id_from_url(url):
 
 
 _DETAIL_LINKS = "[...document.querySelectorAll('a.she-btn-black')].filter(a=>a.innerText.trim()==='Detalles')"
+REFUND_ACCOUNT_JS = r'''(() => {
+  const tips=[...document.querySelectorAll('.refundAccount-info .tip')];
+  for (const tip of tips) {
+    const candidates=[tip.innerText, ...[...tip.querySelectorAll('img')].map(img=>img.alt)];
+    for (const candidate of candidates) {
+      const text=String(candidate || '').replace(/[\s-]+/g,'');
+      if (/^[*•●xX]{2,}\d{4}$/.test(text)) return '****'+text.slice(-4);
+    }
+  }
+  return '';
+})()'''
+
+
+def read_refund_account(page, timeout=15, expected_identity=None):
+    """Wait for a masked account value, not the earlier placeholder node."""
+    deadline = time.monotonic() + max(0, timeout)
+    while True:
+        if expected_identity and refund_bill_id_from_url(page.url) != expected_identity:
+            raise RuntimeError('退款详情在账户读取期间发生切换')
+        value = page.js_evaluate(REFUND_ACCOUNT_JS) or ''
+        if expected_identity and refund_bill_id_from_url(page.url) != expected_identity:
+            raise RuntimeError('退款详情在账户读取期间发生切换')
+        if isinstance(value, str) and re.fullmatch(r'\*{4}\d{4}', value):
+            return value
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return ''
+        time.sleep(min(0.6, remaining))
+
+
 _DETAIL_FACTS = r'''(() => {
   const text=document.body.innerText || '';
   const pick=re=>{const m=text.match(re);return m?m[1].trim():''};
@@ -44,10 +75,10 @@ _DETAIL_FACTS = r'''(() => {
     refundBillId:pick(/Código del Reembolso\s*[:：]\s*(\d+)/i),
     applicationTimeText:pick(/Plazo de la solicitud\s*[:：]\s*([^\n]+)/i),
     timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone || '',
-    refundAccount: (()=>{const a=document.querySelector('.refundAccount-info .tip');const t=String(a?.innerText || a?.querySelector('img')?.alt || '').trim();return /^[*0-9\s-]{4,24}$/.test(t)?t:'';})(),
+    refundAccount: __REFUND_ACCOUNT_READER__,
     refundPath: (()=>{if(paths.length)return paths.map(p=>pathLabels[p] || '其他退款渠道（名称未取得）').join(' / ');const t=document.querySelector('.refundAccount-info')?.innerText || '';const m=t.match(/Cuenta original de pago|Cartera SHEIN|Tarjeta de regalo/i);return m?m[0]:'';})(),
     phaseText: text.split('\n').filter(line=>/en revisión|En revisión vendedor|reembolso|reembolsad|rechazad/i.test(line)).join('\n').slice(0,3000)};
-})()'''
+})()'''.replace('__REFUND_ACCOUNT_READER__', REFUND_ACCOUNT_JS)
 
 
 def read_refund_receipts(page, order_no, classify_phase, phase_labels, on_record=None):
@@ -86,10 +117,13 @@ def read_refund_receipts(page, order_no, classify_phase, phase_labels, on_record
 
 def read_current_receipt(page, order_no, classify_phase, phase_labels):
     identity = refund_bill_id_from_url(page.url)
-    page.wait_for("!!document.querySelector('.refundAccount-info .tip')", timeout=8)
-    facts = page.js_evaluate(_DETAIL_FACTS) or {}
-    if not identity or identity[0] != order_no or identity[1] != facts.get('refundBillId'):
+    if not identity or identity[0] != order_no:
         raise RuntimeError('退款详情的订单或退款单号不一致')
+    account = read_refund_account(page, expected_identity=identity)
+    facts = page.js_evaluate(_DETAIL_FACTS) or {}
+    if refund_bill_id_from_url(page.url) != identity or identity[1] != facts.get('refundBillId'):
+        raise RuntimeError('退款详情的订单或退款单号不一致')
+    facts['refundAccount'] = account or facts.get('refundAccount') or ''
     phase = classify_phase(facts.get('phaseText') or '')
     package_nos = [str(p)[:64] for p in (facts.get('packageNos') or []) if p][:100]
     return {
@@ -100,9 +134,10 @@ def read_current_receipt(page, order_no, classify_phase, phase_labels):
         **{key: str(facts.get(key) or '')[:limit] for key, limit in
            [('applicationTimeText',64),('timeZone',64),('applicationAt',40),('reasonId',32),
             ('refundAccount',40),('refundPath',48)]},
-        'detailsNote': '；'.join(label+'未读取' for key,label in
-                              [('refundPath','退款路径'),('refundAccount','退款账户')]
-                              if not facts.get(key)),
+        'detailsNote': '；'.join(filter(None, [
+            '' if facts.get('refundPath') else '退款路径未读取',
+            '' if facts.get('refundAccount') else '退款账户详情未加载完成，待回访补全',
+        ])),
     }
 
 

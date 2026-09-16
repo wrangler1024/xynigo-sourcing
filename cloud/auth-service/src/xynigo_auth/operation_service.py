@@ -3594,9 +3594,18 @@ def after_sale_claim_snapshot(session, run: AfterSaleClaimRun) -> dict:
     skippedCount/stoppedCount，与本地终态 summary 的「已跳过/已停止」一致。
     """
     from .models import AfterSaleClaimResult as ResultModel
+    from .models import AfterSaleRefundTracking as TrackingModel
+    from .after_sale_presentation import display_refund_path, masked_refund_account, present_refund
     rows = session.scalars(
         select(ResultModel).where(ResultModel.run_id == run.id)
     ).all()
+    bills = {str(refund.get('refundBillId') or '') for row in rows
+             for refund in (row.refunds or [{'refundBillId': row.refund_bill_id}])}
+    bills.discard('')
+    tracked = {item.refund_bill_id: item for item in session.scalars(
+        select(TrackingModel).where(TrackingModel.tenant_id == run.tenant_id,
+                                    TrackingModel.refund_bill_id.in_(bills))
+    ).all()} if bills else {}
     result_rows = []
     order_index = {
         str(item.get("orderNo") or ""): index
@@ -3605,6 +3614,22 @@ def after_sale_claim_snapshot(session, run: AfterSaleClaimRun) -> dict:
     }
     for row in sorted(rows, key=lambda item: (
             order_index.get(item.order_no, len(order_index)), item.order_no or "")):
+        refunds = []
+        for raw in (row.refunds or ([{'refundBillId': row.refund_bill_id,
+                'refundPath': row.refund_path, 'refundAccount': row.refund_account}]
+                if row.refund_bill_id else [])):
+            refund = dict(raw)
+            tracking = tracked.get(refund.get('refundBillId'))
+            if (not masked_refund_account(refund.get('refundAccount')) and tracking
+                    and tracking.order_no == row.order_no
+                    and tracking.environment_serial == row.environment_serial
+                    and masked_refund_account(tracking.refund_account) and tracking.checked_at):
+                refund.update(refundAccount=masked_refund_account(tracking.refund_account),
+                              refundAccountSource='tracking',
+                              refundAccountCheckedAt=(tracking.checked_at if tracking.checked_at.tzinfo
+                                  else tracking.checked_at.replace(tzinfo=timezone.utc)).isoformat())
+            refunds.append(present_refund(refund))
+        primary = next((ref for ref in refunds if ref.get('refundBillId') == row.refund_bill_id), {})
         result_rows.append({
             "orderNo": row.order_no,
             "environmentSerial": row.environment_serial or "",
@@ -3612,9 +3637,11 @@ def after_sale_claim_snapshot(session, run: AfterSaleClaimRun) -> dict:
             "status": row.status,
             "packageNo": row.package_no or "",
             "refundBillId": row.refund_bill_id or "",
-            "refunds": row.refunds or [],
-            "refundPath": row.refund_path or "",
-            "refundAccount": row.refund_account or "",
+            "refunds": refunds,
+            "refundPath": display_refund_path(row.refund_path),
+            "refundAccount": primary.get('refundAccount') or row.refund_account or "",
+            "refundAccountSource": primary.get('refundAccountSource') or "",
+            "refundAccountCheckedAt": primary.get('refundAccountCheckedAt') or "",
             "deliveredAt": row.delivered_at or "",
             "goodsImg": row.goods_img or "",
             "goodsImages": row.goods_images or [],
@@ -4296,11 +4323,17 @@ def after_sale_tracking_snapshot(session, tenant_id, refund_bill_ids) -> dict:
     records.sort(key=lambda record: bill_index[record.refund_bill_id])
     # 商品图不在跟踪表：按订单号从提交结果表取（同单同图），避免为展示再存一份
     from .models import AfterSaleClaimResult as ClaimResultModel
-    images = dict(session.execute(
-        select(ClaimResultModel.order_no, ClaimResultModel.goods_img).where(
-            ClaimResultModel.tenant_id == tenant_id,
-            ClaimResultModel.goods_img.is_not(None))
-    ).all())
+    images = {}
+    orders = {record.order_no for record in records}
+    claims = session.scalars(select(ClaimResultModel).where(
+        ClaimResultModel.tenant_id == tenant_id,
+        ClaimResultModel.order_no.in_(orders)).order_by(ClaimResultModel.updated_at.desc())
+    ).all() if orders else []
+    for claim in claims:
+        key = (claim.environment_serial, claim.order_no)
+        if key not in images and (claim.goods_images or claim.goods_img or claim.goods_items):
+            images[key] = {'goodsImg': claim.goods_img or '', 'goodsImages': claim.goods_images or [],
+                           'goodsItems': claim.goods_items or [], 'itemCount': claim.item_count}
     rows = [{
         "refundBillId": r.refund_bill_id,
         "orderNo": r.order_no or "",
@@ -4312,7 +4345,7 @@ def after_sale_tracking_snapshot(session, tenant_id, refund_bill_ids) -> dict:
         "countdown": r.countdown or "",
         "refundAccount": r.refund_account or "",
         "amount": r.amount or "",
-        "goodsImg": images.get(r.order_no) or "",
+        **images.get((r.environment_serial, r.order_no), {'goodsImg': '', 'goodsImages': [], 'goodsItems': []}),
         "checkedAt": r.checked_at.isoformat() if r.checked_at else "",
         "note": (r.last_error or "") or "",
         "errorSummary": r.last_error,
