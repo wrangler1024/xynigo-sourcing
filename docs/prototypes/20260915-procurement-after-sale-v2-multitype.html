@@ -708,6 +708,18 @@
     border-color: var(--rhino-500); box-shadow: 0 0 0 3px rgba(32,174,179,.12);
   }
   #afterSalePanel .as-bar .hint{font-size:11px;color:var(--navy-500)}
+  #afterSalePanel .as-manual-entry { margin:4px 19px 16px; padding:14px 16px; border:1px solid var(--line); border-radius:12px; background:var(--surface); }
+  #afterSalePanel .as-manual-label { display:block; margin-bottom:8px; color:var(--navy-800); font-size:12px; font-weight:700; }
+  #afterSalePanel .as-manual-controls { display:grid; grid-template-columns:minmax(0,1fr) 128px; align-items:stretch; gap:12px; }
+  #afterSalePanel .as-manual-controls input { box-sizing:border-box; width:100%; min-width:0; height:44px; padding:0 12px; border:1px solid var(--line); border-radius:9px; background:#fff; color:var(--navy-950); font-size:13px; }
+  #afterSalePanel .as-manual-controls input::placeholder { color:var(--navy-500); }
+  #afterSalePanel .as-manual-controls input:focus { outline:none; border-color:var(--rhino-500); box-shadow:0 0 0 3px rgba(32,174,179,.12); }
+  #afterSalePanel .as-manual-controls .btn { box-sizing:border-box; width:100%; min-height:44px; margin:0; justify-content:center; white-space:nowrap; border-radius:9px; }
+  #afterSalePanel .as-manual-help { margin:8px 0 0; color:var(--navy-500); font-size:11px; line-height:1.6; }
+  @media(max-width:600px) {
+    #afterSalePanel .as-manual-entry { padding:12px; }
+    #afterSalePanel .as-manual-controls { grid-template-columns:minmax(0,1fr); gap:8px; }
+  }
   #afterSalePanel .card-title .table-actions { margin-left:auto; }
   #afterSalePanel .business-summary { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); }
   #afterSalePanel .if-row{font-size:12px;font-weight:600;color:var(--navy-700)}
@@ -2310,10 +2322,13 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
       </div>
 
       <!-- 不扫描也能提交：粘贴「环境序号 订单号」，提交前执行器仍会现场体检可退性 -->
-      <div class="as-bar" style="padding: 0 19px; margin-bottom:10px;">
-        <input type="search" id="asDirectOrders" placeholder="直接提交指定单：环境序号 订单号（多组用分号隔开）">
-        <button class="btn sm" id="asDirectSubmit">直接提交</button>
-        <span class="hint">扫描仍是推荐路径（能先看到金额与包裹数）；直接提交用于台账点名单</span>
+      <div class="as-manual-entry">
+        <label class="as-manual-label" for="asDirectOrders">指定订单提交</label>
+        <div class="as-manual-controls">
+          <input type="search" id="asDirectOrders" placeholder="环境序号 订单号；环境序号 订单号" aria-describedby="asDirectHelp" autocomplete="off" spellcheck="false">
+          <button class="btn" id="asDirectSubmit" type="button">直接提交</button>
+        </div>
+        <p class="as-manual-help" id="asDirectHelp">每组填环境序号、订单号，以空格分隔；多组用分号分隔。提交前仍会核验可申请状态；需先查看金额和包裹数，可使用上方扫描。</p>
       </div>
 
       <div class="business-summary" id="asBizSummary" style="padding-top:4px;">
@@ -2356,10 +2371,13 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
           <button class="btn primary" id="asTrack">刷新退款进度</button>
         </div>
       </div>
-      <div class="as-bar" style="padding: 0 19px; margin-bottom:10px;">
-        <input type="search" id="asTrackBills" placeholder="直接指定要回访的单：环境序号 订单号 退款单号（多组用分号隔开）">
-        <button class="btn sm" id="asTrackManual">回访指定单</button>
-        <span class="hint">只读；不依赖提交记录，可用于回访历史订单</span>
+      <div class="as-manual-entry">
+        <label class="as-manual-label" for="asTrackBills">指定退款单回访</label>
+        <div class="as-manual-controls">
+          <input type="search" id="asTrackBills" placeholder="环境序号 订单号 退款单号；…" aria-describedby="asTrackManualHelp" autocomplete="off" spellcheck="false">
+          <button class="btn" id="asTrackManual" type="button">回访指定单</button>
+        </div>
+        <p class="as-manual-help" id="asTrackManualHelp">每组填环境序号、订单号、退款单号，以空格分隔；多组用分号分隔。只读查询，可回访历史订单，无需本页提交记录。</p>
       </div>
       <div style="padding: 0 19px;">
         <div class="table-scroll scroll-20">
