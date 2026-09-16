@@ -4,7 +4,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from purchase_tool import after_sale_claim as module
 from purchase_tool.operation_executor import LocalOperationExecutor
@@ -61,7 +61,8 @@ class AllOrdersScanTests(unittest.TestCase):
             return_value=info or {'eligible': [{'packageNo': 'SYNTHPKG'}]})
         claimer._submit_package = Mock(side_effect=AssertionError('Scan must never submit'))
         claimer._scan_rows['SYNTHENV'] = {'environmentSerial': 'SYNTHENV', 'status': 'queued'}
-        claimer._scan_one('SYNTHENV', {}, False)
+        with patch.object(module, 'read_order_detail_facts', side_effect=ValueError('synthetic detail unavailable')):
+            claimer._scan_one('SYNTHENV', {}, False)
         self.assertEqual(page.visits, [module.ORDERS_LIST_URL])
         claimer._submit_package.assert_not_called()
         rows = LocalOperationExecutor._after_sale_rows(

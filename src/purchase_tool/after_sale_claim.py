@@ -10,8 +10,8 @@ recibido」，退款原路退回）。人工动线是：打开环境 → 进订�
 
 1. ``start_scan``（**只读**）按环境序号扫描订单列表，逐单调用买家端
    ``refund_only/pre_info`` 判定「这个包裹现在还能不能申请售后」，产出
-   可勾选清单。已提交过的包裹会被平台挪进 ``disable_package_list``，
-   因此扫描阶段就能天然幂等地区分出「可申请 / 已提交过」。
+   可勾选清单。包裹列表只证明当前资格；不可申请的具体原因需结合平台
+   状态与关联退款凭证，不能仅由可退列表为空推断「已提交过」。
 2. ``start_submit``（**写操作**）只对人工勾选的行提交：直接进申请页 →
    勾可退包裹 → Confirmar → 切退款路径 → Presentar，成功后落库
    ``refund_bill_id``。
@@ -47,6 +47,8 @@ from datetime import datetime, timezone
 from .cdp import CdpClient, CdpError
 from .redaction import scrub_text
 from .after_sale_display import order_item_summary, delivery_summary
+from .after_sale_receipts import refund_bill_id_from_url, read_refund_receipts, receipt_reason
+from .after_sale_order_detail import read_order_detail_facts
 
 ORIGIN = 'https://www.shein.com.mx'
 # 从「所有订单」开始：运输中、已送达和退款单可能落在不同分类。
@@ -84,7 +86,6 @@ CLAIM_RUNNING_STATES = ('queued', 'running')
 
 # 提交成功后前端跳转的落地页，URL 里带 refund_bill_id_list=<单号>_<退款单ID>
 REFUND_LABEL_MARK = '/orders/refundLabel/'
-REFUND_BILL_ID_RE = re.compile(r'refund_bill_id_list=([A-Z0-9]+)_(\d+)')
 
 _JS_NORM = ('const norm=s=>String(s||"").replace(/\\s+/g,"")'
             '.toLocaleLowerCase();')
@@ -446,16 +447,6 @@ def validate_scan_pre_info(data):
     return data
 
 
-def refund_bill_id_from_url(url):
-    """从成功页 URL 取 ``(订单号, 退款单ID)``；不在成功页返回 None。
-
-    成功页形如：``/orders/refundLabel/<billno>?refund_bill_id_list=
-    <billno>_<refund_bill_id>``。
-    """
-    match = REFUND_BILL_ID_RE.search(str(url or ''))
-    return (match.group(1), match.group(2)) if match else None
-
-
 class AfterSaleClaimer(object):
     """售后扫描与提交编排：后台线程驱动，snapshot() 供进度轮询。"""
 
@@ -739,6 +730,20 @@ class AfterSaleClaimer(object):
                         parsed['status'] = 'fail'
                         parsed['reasonCode'] = 'eligibility_read_failed'
                         parsed['note'] = scrub_text('可申请性核验失败：%s' % exc)[:200]
+                try:
+                    if self._stop_event.is_set():
+                        raise RuntimeError('扫描已停止，不再读取详情')
+                    detail = read_order_detail_facts(page, parsed['orderNo'])
+                    card = dict(card, **detail)
+                    parsed.update(order_item_summary(card))
+                    if detail.get('deliveredAt'):
+                        parsed['deliveredAt'] = detail['deliveredAt']
+                    if detail.get('goodsImages'):
+                        parsed['goodsImg'] = detail['goodsImages'][0]
+                except Exception:
+                    # Presentation detail failure does not change pre_info eligibility.
+                    # Unknown quantities/dates remain visibly unknown, never inferred.
+                    parsed.update(itemCount=None, itemCountSource='')
                 parsed.update(delivery_summary(card, parsed))
                 candidates.append(parsed)
             with self._lock:
@@ -819,6 +824,8 @@ class AfterSaleClaimer(object):
         with self._lock:
             for item in items:
                 row = self._claim_rows.get(item['orderNo'])
+                if row and row.get('status') == 'verifying':
+                    row.update(status='uncertain', errorSummary='提交核验未完成，请先核对退款记录，不可直接补提')
                 if row and row.get('status') in CLAIM_RUNNING_STATES:
                     row['status'] = 'stopped'
 
@@ -965,10 +972,16 @@ class AfterSaleClaimer(object):
                 try:
                     self._claim_one(page, serial, item)
                 except Exception as exc:
-                    self._fail_claim(
-                        item['orderNo'], 'fail',
-                        scrub_text('%s: %s' % (type(exc).__name__,
-                                               str(exc)))[:200], page)
+                    order_no = item['orderNo']
+                    reason = scrub_text('%s: %s' % (type(exc).__name__, str(exc)))[:200]
+                    if self._claim_rows.get(order_no, {}).get('_writeAttempted'):
+                        self._uncertain_claim(page, order_no, reason)
+                    else:
+                        self._fail_claim(order_no, 'fail', reason, page)
+                finally:
+                    row = self._claim_rows.get(item['orderNo'], {})
+                    if row.get('_startedAt'):
+                        self._publish_claim(item['orderNo'], {'durationSeconds': int(time.time() - row['_startedAt'])})
         finally:
             if opened_by_me:
                 self._stop_env(env, serial)
@@ -976,7 +989,7 @@ class AfterSaleClaimer(object):
     def _claim_one(self, page, serial, item):
         order_no = item['orderNo']
         started = time.time()
-        self._publish_claim(order_no, {'status': 'running'})
+        self._publish_claim(order_no, {'status': 'running', '_startedAt': started, '_writeAttempted': False})
         url = REFUND_APPLY_URL % order_no
         page.goto(url, dom_timeout=45, settle_seconds=6.0)
         if self._login_required(page):
@@ -992,9 +1005,12 @@ class AfterSaleClaimer(object):
         info = self._pre_info(page, order_no)
         eligible = info.get('eligible') or []
         if not eligible:
-            self._fail_claim(
-                order_no, 'blocked',
-                '该订单已无可申请售后的包裹（可能已提交过）', page)
+            records, error = self._recover_receipts(page, order_no, 'existing')
+            explanation = ('已存在退款申请：' + receipt_reason(records)) if records else (
+                '平台资格核验未返回可申请包裹；未取得已有退款凭证，具体限制原因待核对')
+            if error:
+                explanation += '；退款记录读取未完成'
+            self._fail_claim(order_no, 'blocked', explanation[:300], page)
             return
         submitted = []
         leftover = []
@@ -1006,13 +1022,15 @@ class AfterSaleClaimer(object):
             guard += 1
             ok = self._submit_package(page, order_no)
             if not ok.get('ok'):
-                self._fail_claim(order_no, 'fail', ok.get('reason') or '提交失败',
-                                 page)
+                if ok.get('uncertain'):
+                    self._uncertain_claim(page, order_no, ok.get('reason') or '提交结果未确认')
+                else:
+                    self._fail_claim(order_no, 'fail', ok.get('reason') or '提交失败', page)
                 return
             self._record_refund(order_no, ok)
             submitted.append(ok)
             if ok.get('verificationError'):
-                self._fail_claim(order_no, 'fail', ok['verificationError'], page)
+                self._fail_claim(order_no, 'uncertain', ok['verificationError'] + '；请先核对退款记录，不可直接补提', page)
                 return
             remaining = (ok.get('remaining') or [])
             if not remaining:
@@ -1087,20 +1105,21 @@ class AfterSaleClaimer(object):
         if not page.wait_for(_JS_PRESENTAR_ENABLED, timeout=20):
             return {'ok': False, 'reason': 'Presentar 按钮未解禁',
                     'packageNo': package_no}
-        if not self._click(page, '.order-refund-apply__footer button'):
-            return {'ok': False, 'reason': '未找到 Presentar 按钮',
-                    'packageNo': package_no}
+        # 从派发点击起，即使 CDP 断开也可能已写入；先回传待核对状态。
+        self._publish_claim(order_no, {'_writeAttempted': True, 'status': 'verifying',
+            'note': '提交已开始，正在核对平台退款凭证；请勿重复提交'})
+        page.click_selector('.order-refund-apply__footer button')
         landed = page.wait_for(_JS_TO_REFUND_LABEL, timeout=45)
         toast = page.js_evaluate(_JS_TOAST_TEXT) or ''
         if not landed:
-            return {'ok': False, 'reason': '提交后未跳转成功页：%s'
+            return {'ok': False, 'uncertain': True, 'reason': '提交后未跳转成功页：%s'
                     % (toast or page.url)[:160], 'packageNo': package_no}
         bill = refund_bill_id_from_url(page.url)
-        if not bill or not bill[1]:
-            return {'ok': False, 'reason': '已跳转退款页但未取得退款单号，请人工核对',
+        if not bill or bill[0] != order_no:
+            return {'ok': False, 'uncertain': True, 'reason': '退款页未取得与当前订单匹配的退款单号',
                     'packageNo': package_no}
         result = {'ok': True, 'packageNo': package_no, 'refundBillId': bill[1],
-                  'refundAccount': ''}
+                  'refundAccount': '', 'source': 'submit_redirect'}
         # 一旦平台生成退款单号就记录，后续读账户或资格失败不能丢失已受理凭证。
         self._record_refund(order_no, result)
         try:
@@ -1119,16 +1138,40 @@ class AfterSaleClaimer(object):
             row = self._claim_rows.setdefault(order_no, {'orderNo': order_no})
             refunds = {r['refundBillId']: dict(r) for r in row.get('refunds', [])}
             entry = refunds.get(bill, {})
+            source = result.get('source') or entry.get('source') or 'submit_redirect'
             entry.update({
-                'refundBillId': bill, 'packageNo': result.get('packageNo') or '',
-                'refundPath': REFUND_PATH_LABEL,
+                'refundBillId': bill, 'packageNo': result.get('packageNo') or entry.get('packageNo', ''),
+                'refundPath': REFUND_PATH_LABEL if source == 'submit_redirect' else entry.get('refundPath', ''),
                 'refundAccount': result.get('refundAccount') or entry.get('refundAccount', ''),
-                'submittedAt': entry.get('submittedAt') or datetime.now(timezone.utc).isoformat(),
+                'submittedAt': entry.get('submittedAt') or (datetime.now(timezone.utc).isoformat() if source == 'submit_redirect' else ''),
+                'source': entry.get('source') or source,
             })
+            for key in ('phase', 'phaseLabel', 'applicationTimeText', 'timeZone'):
+                if result.get(key):
+                    entry[key] = result[key]
             refunds[bill] = entry
             row['refunds'] = list(refunds.values())
             row.update(entry)
             row['packageCount'] = len(refunds)
+
+    def _recover_receipts(self, page, order_no, source):
+        captured = []
+        def remember(record):
+            captured.append(record)
+            self._record_refund(order_no, dict(record, source=source))
+        try:
+            records = read_refund_receipts(page, order_no, classify_track_phase, PHASE_LABELS, on_record=remember)
+            return records, ''
+        except Exception as exc:
+            return captured, scrub_text(str(exc))[:120]
+
+    def _uncertain_claim(self, page, order_no, reason):
+        # Persist uncertainty before read-only recovery, including on read failure.
+        self._fail_claim(order_no, 'verifying', '已触发提交，正在只读核对退款记录；不可直接补提。' + reason[:220], None)
+        records, _ = self._recover_receipts(page, order_no, 'recovered')
+        if records:
+            reason = '已查到退款记录，无法确认由本次提交产生：' + receipt_reason(records)
+        self._fail_claim(order_no, 'uncertain', (reason + '；请先核对，不可直接补提')[:300], page)
 
     @staticmethod
     def _click(page, selector):
@@ -1185,7 +1228,7 @@ class AfterSaleClaimer(object):
     def _fail_claim(self, order_no, status, reason, page):
         with self._lock:
             row = self._claim_rows.get(order_no) or {}
-            row.update({'status': status, 'errorSummary': reason})
+            row.update({'status': status, 'errorSummary': reason, 'note': ''})
             self._claim_rows[order_no] = row
         if page is not None:
             self._capture_screenshot(self._claim_rows, order_no, page)

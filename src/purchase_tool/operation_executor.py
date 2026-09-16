@@ -37,7 +37,7 @@ STORE_FINANCE_TERMINAL_STATES = frozenset({
 # 售后行状态：blocked=平台侧已无可申请包裹（多为已提交过）、skip=该环境
 # 没有可申请订单，两者都算「已终结但不该报错」。
 AFTER_SALE_TERMINAL_STATES = frozenset({
-    'ok', 'fail', 'blocked', 'skip', 'empty', 'login', 'inuse', 'stopped',
+    'ok', 'fail', 'blocked', 'skip', 'empty', 'login', 'inuse', 'stopped', 'uncertain',
 })
 ENVIRONMENT_TERMINAL_STATES = frozenset({
     'done', 'failed', 'stopped', 'rolled_back', 'cleanup_failed',
@@ -635,7 +635,7 @@ class LocalOperationExecutor(object):
     )
     _AFTER_SALE_ROW_ALLOWED_STATUS = frozenset({
         'ok', 'empty', 'skip', 'blocked', 'fail', 'login', 'inuse',
-        'stopped', 'queued', 'running',
+        'stopped', 'queued', 'running', 'uncertain', 'verifying',
     })
     _AFTER_SALE_TEXT_LIMITS = {
         'environmentSerial': 64, 'storeName': 128, 'accountName': 64,
@@ -680,7 +680,8 @@ class LocalOperationExecutor(object):
                 elif field == 'refunds':
                     row[field] = [{k: str(r.get(k) or '')[:limit] for k, limit in
                         {'refundBillId': 32, 'packageNo': 64, 'refundPath': 48,
-                         'refundAccount': 40, 'submittedAt': 40}.items()}
+                         'refundAccount': 40, 'submittedAt': 40, 'source': 32, 'phase': 24,
+                         'phaseLabel': 24, 'applicationTimeText': 64, 'timeZone': 64}.items()}
                         for r in (value or []) if isinstance(r, dict)]
                 elif field == 'goodsItems':
                     row[field] = [{'name': str(i.get('name') or '')[:200], 'specification': str(i.get('specification') or '')[:200], 'goodsImg': str(i.get('goodsImg') or '')[:300], 'quantity': i.get('quantity') if isinstance(i.get('quantity'), int) and not isinstance(i.get('quantity'), bool) and 1 <= i['quantity'] <= 100000 else None} for i in (value or [])[:100] if isinstance(i, dict)]
@@ -948,7 +949,8 @@ class LocalOperationExecutor(object):
         failed = sum(
             row.get('status') in ('fail', 'login', 'inuse')
             for row in rows)
-        if len(rows) != total or any(r.get('status') not in AFTER_SALE_TERMINAL_STATES for r in rows):
+        uncertain = sum(row.get('status') == 'uncertain' for row in rows)
+        if uncertain or len(rows) != total or any(r.get('status') not in AFTER_SALE_TERMINAL_STATES for r in rows):
             run_status = 'uncertain'
         elif stopped and not success and not failed:
             run_status = 'cancelled'
@@ -962,13 +964,14 @@ class LocalOperationExecutor(object):
             'runStatus': run_status,
             'phase': 'after_sale.' + run_status,
             'progressCompleted': min(total, success + failed + stopped
-                                     + skipped),
+                                     + skipped + uncertain),
             'progressTotal': total,
             'totalCount': total,
             'successCount': success,
             'failedCount': failed,
             'skippedCount': skipped,
             'stoppedCount': stopped,
+            'uncertainCount': uncertain,
             'errorCode': '',
             'errorSummary': '',
         }

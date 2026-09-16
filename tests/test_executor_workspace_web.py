@@ -884,7 +884,7 @@ class AfterSaleClaimWiringTests(unittest.TestCase):
         markers = ['row.environmentSerial', 'row.orderNo', '${asThumbCell',
                    'AFTER_SALE_TYPE', 'row.deliveredAt', 'r.refundBillId',
                    'r.refundPath', 'r.refundAccount', 'asClaimPill',
-                   'row.submittedAt', 'row.errorSummary']
+                   'row.submittedAt', 'asClaimReasonHtml']
         order = [cells.index(k) for k in markers]
         self.assertEqual(order, sorted(order), '③ 行模板列序与表头不一致（会整列错位）')
         # ④ 的行模板同理（含 timelineCell 自带 td）

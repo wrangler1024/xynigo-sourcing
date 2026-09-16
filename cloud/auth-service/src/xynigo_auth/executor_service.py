@@ -581,6 +581,9 @@ class ExecutorChannelService:
         if (task_type in {"after.sale.claim.v1", "after.sale.track.v1"}
                 and "after.sale.reliable-results.v1" not in set(executor.capabilities or [])):
             raise ExecutorServiceError("executor_after_sale_reliability_upgrade_required", status_code=409)
+        if (task_type == "after.sale.claim.v1"
+                and "after.sale.receipt-recovery.v1" not in set(executor.capabilities or [])):
+            raise ExecutorServiceError("executor_after_sale_receipt_upgrade_required", status_code=409)
         if task_type not in set(executor.capabilities or []):
             raise ExecutorServiceError("executor_capability_missing", status_code=409)
         if task_type in ENCRYPTED_TASK_TYPES and self.payload_cipher is None:
@@ -1401,6 +1404,8 @@ class ExecutorChannelService:
             allowed_keys = allowed_keys | {"rows"}
             if "rows" in summary and not isinstance(summary["rows"], list):
                 raise ExecutorServiceError("executor_result_invalid", status_code=422)
+        if task.task_type == "after.sale.claim.v1":
+            allowed_keys = allowed_keys | {"uncertainCount"}
         if set(summary) - allowed_keys:
             raise ExecutorServiceError("executor_result_invalid", status_code=422)
         run_status = str(summary.get("runStatus") or "")
@@ -1438,6 +1443,8 @@ class ExecutorChannelService:
         count_keys = BUSINESS_RESULT_KEYS - {
             "runStatus", "phase", "errorCode", "errorSummary", "phaseCounts"
         }
+        if task.task_type == "after.sale.claim.v1":
+            count_keys = count_keys | {"uncertainCount"}
         for key in count_keys:
             if key not in summary:
                 continue

@@ -2387,7 +2387,7 @@ class AfterSaleClaimResult(Base):
         ),
         CheckConstraint(
             "status IN ('ok', 'empty', 'skip', 'blocked', 'fail', 'login', "
-            "'inuse', 'stopped', 'queued', 'running')",
+            "'inuse', 'stopped', 'queued', 'running', 'uncertain', 'verifying')",
             name="ck_after_sale_result_status",
         ),
         CheckConstraint("duration_seconds IS NULL OR duration_seconds >= 0",

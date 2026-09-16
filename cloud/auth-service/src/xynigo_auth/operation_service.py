@@ -430,6 +430,43 @@ class OperationRunService:
                     409,
                 )
             return existing, True
+        # Guard every entry point, including direct input without retryFromRunId.
+        # A lost receipt must never become permission to replay a platform write.
+        from .models import AfterSaleClaimResult
+        # Environment serial/code/name are aliases of the same buyer browser.
+        # The platform order identity is stable across those aliases.
+        requested = {i.orderNo for i in body.items}
+        prior = self.session.scalars(select(AfterSaleClaimResult).where(
+            AfterSaleClaimResult.tenant_id == tenant_id,
+            func.upper(func.trim(AfterSaleClaimResult.order_no)).in_([i.orderNo for i in body.items]),
+        )).all()
+        for row in prior:
+            if row.order_no.strip().upper() not in requested:
+                continue
+            message = (row.error_summary or '') + (row.note or '')
+            legacy_unknown = row.status == 'fail' and (
+                bool(row.refunds or row.refund_bill_id) or any(marker in message for marker in (
+                    '提交后未跳转', '已跳转退款页', '已受理，但后续核验失败')))
+            if row.status in ('uncertain', 'verifying') or legacy_unknown:
+                raise PurchaseServiceError(
+                    'after_sale_receipt_reconciliation_required',
+                    '订单存在待核对的提交结果，请先核对已有退款记录，不能直接补提', 409)
+        # A dead executor may never have uploaded its in-flight row. The run's
+        # uncertain terminal state must also protect such an unreported write.
+        uncertain_runs = self.session.scalars(select(AfterSaleClaimRun).where(
+            AfterSaleClaimRun.tenant_id == tenant_id,
+            AfterSaleClaimRun.status == 'uncertain',
+        )).all()
+        prior_by_run = {(row.run_id, row.order_no.strip().upper()): row for row in prior}
+        for previous in uncertain_runs:
+            for item in (previous.request_summary or {}).get('items') or []:
+                key = str(item.get('orderNo') or '').strip().upper()
+                if key not in requested:
+                    continue
+                row = prior_by_run.get((previous.id, key))
+                if row is None or row.status in ('queued', 'running'):
+                    raise PurchaseServiceError('after_sale_receipt_reconciliation_required',
+                        '之前的提交任务结果不明且缺少完整回执，请先核对平台退款记录', 409)
         now = utcnow()
         items = [
             {
@@ -3588,6 +3625,7 @@ def after_sale_claim_snapshot(session, run: AfterSaleClaimRun) -> dict:
         "failedCount": run.failed_count,
         "skippedCount": run.skipped_count,
         "stoppedCount": run.stopped_count,
+        "uncertainCount": sum(row['status'] == 'uncertain' for row in result_rows),
         "stopRequested": run.stop_requested,
         "completedAt": (run.completed_at.isoformat()
                         if run.completed_at else ""),

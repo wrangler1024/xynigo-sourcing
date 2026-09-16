@@ -1025,11 +1025,11 @@ class StoreFinanceProgressScreenshot(BaseModel):
 # 过）、skip/empty=该环境没有可申请订单，三者都是「已终结但不该报错」。
 AFTER_SALE_ROW_STATUSES = (
     "ok", "empty", "skip", "blocked", "fail", "login", "inuse",
-    "stopped", "queued", "running",
+    "stopped", "queued", "running", "uncertain", "verifying",
 )
 AfterSaleRowStatus = Literal[
     "ok", "empty", "skip", "blocked", "fail", "login", "inuse",
-    "stopped", "queued", "running",
+    "stopped", "queued", "running", "uncertain", "verifying",
 ]
 
 
@@ -1121,6 +1121,11 @@ class AfterSaleClaimItem(BaseModel):
     deliveredAt: str = Field(default="", max_length=32)
     goodsImg: str = Field(default="", max_length=300)
 
+    @field_validator('orderNo', mode='before')
+    @classmethod
+    def normalize_order_identity(cls, value):
+        return value.strip().upper() if isinstance(value, str) else value
+
 
 class AfterSaleClaimRunCreateBody(BaseModel):
     """Safe cloud request for a durable after-sale claim Run."""
@@ -1153,6 +1158,11 @@ class AfterSalePackageRefund(BaseModel):
     packageNo: str = Field(default="", max_length=64)
     refundPath: str = Field(default="", max_length=48)
     refundAccount: str = Field(default="", max_length=40)
+    source: str = Field(default="", max_length=32)
+    phase: str = Field(default="", max_length=24)
+    phaseLabel: str = Field(default="", max_length=24)
+    applicationTimeText: str = Field(default="", max_length=64)
+    timeZone: str = Field(default="", max_length=64)
     submittedAt: str = Field(default="", max_length=40)
 
 

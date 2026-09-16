@@ -57,7 +57,7 @@ def order_item_summary(card):
                       'name': str(item.get('name') or '')[:200],
                       'specification': str(item.get('specification') or '')[:200],
                       'quantity': quantity if isinstance(quantity, int) and not isinstance(quantity, bool) and 1 <= quantity <= 100000 else None})
-    return {'goodsItems': items, 'itemCount': count, 'itemCountSource': 'order_card' if count is not None else '',
+    return {'goodsItems': items, 'itemCount': count, 'itemCountSource': (card.get('itemCountSource') or 'order_card') if count is not None else '',
             'goodsImages': images[:100]}
 
 
@@ -77,7 +77,7 @@ def delivery_summary(card, order):
     # Card dates are still displayed as original evidence, but are not silently
     # treated as a complete multi-package date without package-level proof.
     single_date = delivery_date(order.get('deliveredAt'))
-    if not isinstance(total, bool) and total == 1 and len(package_ids) <= 1 and card.get('delivered') is True and single_date:
+    if not evidence and not isinstance(total, bool) and total == 1 and len(package_ids) <= 1 and card.get('delivered') is True and single_date:
         return {'deliveredDate': single_date, 'deliveryDateStatus': 'complete', 'deliveryNote': ''}
     if len(package_ids) > 1 or (isinstance(total, int) and total > 1):
         note = '多包裹送达信息不完整，待核对；不参与送达日期筛选'

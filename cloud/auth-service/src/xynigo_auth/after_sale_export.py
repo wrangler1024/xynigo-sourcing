@@ -35,7 +35,7 @@ CLAIM_HEADERS = (
 CLAIM_COLUMN_WIDTHS = (12, 22, 34, 12, 20, 22, 26, 16, 20, 20, 32)
 # 与 Web AS_CLAIM_PILL 同一套中文文案：导出与页面不能各说各话
 CLAIM_STATUS_LABELS = {
-    "ok": "已受理 · 退款审核中", "blocked": "不可申请 · 已提交过",
+    "ok": "已受理 · 退款审核中", "blocked": "不可申请", "uncertain": "待核对 · 请勿补提", "verifying": "提交核验中",
     "skip": "跳过", "empty": "无订单", "fail": "失败",
     "login": "失败 · 未登录", "inuse": "失败 · 环境占用",
     "stopped": "已停止", "queued": "等待", "running": "提交中",
@@ -85,6 +85,22 @@ def _claim_values(row):
     """提交结果一行。列序必须与 CLAIM_HEADERS 一一对应（测试钉列序）。"""
     status = str(row.get("status") or "").strip()
     refunds = row.get("refunds") or [row]
+    note = row.get("errorSummary") or row.get("note") or ""
+    if status == "blocked" and "可能已提交过" in note:
+        note = "平台未返回可申请包裹；历史记录未采集具体原因，需回访核对"
+    legacy_unknown = status == "fail" and (row.get("refunds") or row.get("refundBillId") or any(
+        marker in note for marker in ("提交后未跳转", "已跳转退款页", "已受理，但后续核验失败")))
+    if legacy_unknown:
+        status = "uncertain"
+    label = CLAIM_STATUS_LABELS.get(status, status)
+    if status == "blocked" and any(r.get("source") == "existing" for r in refunds):
+        label = "不可申请 · 已有退款申请"
+    if status == "uncertain" and "不可直接补提" not in note and "请勿" not in note:
+        note += "；提交结果待核对，请勿直接补提"
+    evidence = [" · ".join(str(r.get(k) or "") for k in ("refundBillId", "phaseLabel", "applicationTimeText", "timeZone", "source"))
+                for r in row.get("refunds") or [] if r.get("source")]
+    if evidence:
+        note += "\n" + "\n".join(evidence)
     return [
         row.get("environmentSerial") or "",
         row.get("orderNo") or "",
@@ -94,9 +110,9 @@ def _claim_values(row):
         "\n".join(str(r.get("refundBillId") or "") for r in refunds),
         "\n".join(str(r.get("refundPath") or "") for r in refunds),
         "\n".join(str(r.get("refundAccount") or "") for r in refunds),
-        (CLAIM_STATUS_LABELS.get(status, status) + (" · 部分包裹已受理" if status != "ok" and row.get("refunds") else "")),
+        label,
         _timestamp_text(row.get("submittedAt")),
-        row.get("note") or row.get("errorSummary") or "",
+        note,
     ]
 
 
@@ -144,7 +160,7 @@ def build_after_sale_claim_export(rows):
     """③ 提交结果（批次）导出。返回 (content, filename, mime)。"""
     content = _build_workbook(
         "提交结果", CLAIM_HEADERS, CLAIM_COLUMN_WIDTHS,
-        [_claim_values(row) for row in rows or []],
+        [_claim_values(row) for row in rows or []], literal_strings=True,
     )
     return content, f"售后提交结果_{_stamp()}.xlsx", MIME_XLSX
 

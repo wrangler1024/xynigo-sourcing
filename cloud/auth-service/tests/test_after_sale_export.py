@@ -199,7 +199,7 @@ def test_claim_export_keeps_failure_reason() -> None:
         _claim_row(status="blocked", note="该订单已无可申请售后的包裹"),
         _claim_row(status="login", note=None, errorSummary="登录态失效"),
     ])
-    assert sheet.cell(row=2, column=9).value == "不可申请 · 已提交过"
+    assert sheet.cell(row=2, column=9).value == "不可申请"
     assert sheet.cell(row=2, column=11).value == "该订单已无可申请售后的包裹"
     assert sheet.cell(row=3, column=9).value == "失败 · 未登录"
     assert sheet.cell(row=3, column=11).value == "登录态失效"
