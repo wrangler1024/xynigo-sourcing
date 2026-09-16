@@ -679,7 +679,8 @@
   #afterSalePanel #asRunStrip { position: sticky; top: 8px; z-index: 6; }
   #afterSalePanel #asRunStrip .query-phase-banner { margin-bottom: 0; flex-wrap: wrap; }
   /* 标题 / 说明 / 收起 同排：收起态折成「标题 + 展开」一行，与原型一致 */
-  #afterSalePanel #asRunStrip .query-phase-copy { flex-direction: row; align-items: baseline; gap: 8px; }
+  #afterSalePanel #asRunStrip .query-phase-copy { flex-direction: row; align-items: baseline; gap: 8px; flex-wrap:wrap; }
+  #afterSalePanel #asRunStrip .query-phase-copy b { flex:none; white-space:nowrap; }
   /* 状态条右侧的进度区排版（用 class 而非内联样式，否则收起的 display:none 会被内联压住） */
   #afterSalePanel .as-strip-progress { margin-left: auto; display: flex; align-items: center; gap: 10px; flex-wrap:wrap; min-width:0; max-width:100%; }
   #afterSalePanel .as-strip-progress .progress { min-width:80px; }
@@ -718,7 +719,7 @@
   #afterSalePanel .as-manual-entry { margin:4px 19px 16px; padding:14px 16px; border:1px solid var(--line); border-radius:12px; background:var(--surface); }
   #afterSalePanel .as-manual-label { display:block; margin-bottom:8px; color:var(--navy-800); font-size:12px; font-weight:700; }
   #afterSalePanel .as-manual-controls { display:grid; grid-template-columns:minmax(0,1fr) 128px; align-items:stretch; gap:12px; }
-  #afterSalePanel .as-manual-controls textarea { box-sizing:border-box; width:100%; min-width:0; height:72px; padding:10px 12px; resize:vertical; border:1px solid var(--line); border-radius:9px; background:#fff; color:var(--navy-950); font-size:13px; }
+  #afterSalePanel .as-manual-controls textarea { box-sizing:border-box; width:100%; min-width:0; height:72px; min-height:72px; padding:10px 12px; resize:vertical; border:1px solid var(--line); border-radius:9px; background:#fff; color:var(--navy-950); font-size:13px; }
   #afterSalePanel .as-manual-controls textarea::placeholder { color:var(--navy-500); }
   #afterSalePanel .as-manual-controls textarea:focus { outline:none; border-color:var(--rhino-500); box-shadow:0 0 0 3px rgba(32,174,179,.12); }
   #afterSalePanel .as-manual-controls .btn { box-sizing:border-box; width:100%; min-height:44px; margin:0; justify-content:center; white-space:nowrap; border-radius:9px; }
