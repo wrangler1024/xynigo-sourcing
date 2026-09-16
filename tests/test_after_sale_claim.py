@@ -428,10 +428,13 @@ class _FakeRpc(object):
     def __init__(self, progress_script):
         self.progress_script = list(progress_script)
         self.calls = []
+        self.bodies = []   # [(method, path, body)]：断言上行报文体用
 
     def __call__(self, request):
         path = request.get('path') or ''
         self.calls.append((request.get('method'), path))
+        self.bodies.append((request.get('method'), path,
+                            request.get('body')))
         if path.startswith('/api/after-sale/scan'):
             return {'httpStatus': 200, 'responseType': 'json', 'body': {}}
         if path.startswith('/api/after-sale/submit'):
@@ -540,6 +543,33 @@ class BridgeClaimTests(unittest.TestCase):
             'browserMode': 'visible',
         }, lambda **event: None, cancel)
         self.assertIn(('POST', '/api/after-sale/stop'), rpc.calls)
+
+    def test_claim_items_pass_through_display_fields(self):
+        """送达时间/商品图必须在桥接层重建条目时透传。
+
+        只测 Web 的 `asSelectedItems()` 会全绿——值恰恰是在这一跳被
+        「只保留四个字段」的重建丢掉的（真机 4589/4598 两单 ③ 那两列为空即此因）。
+        这条盯的是「Web 发了 ≠ 值到得了」。
+        """
+        rpc = _FakeRpc([{'running': False, 'claimRows': []}])
+        executor = LocalOperationExecutor(rpc, poll_interval=0.001,
+                                          sleep_fn=lambda _s: None)
+        executor._execute_after_sale_claim({
+            'runKey': 'as-run-passthrough',
+            'items': [{
+                'environmentSerial': '4589', 'orderNo': 'GSH1RV19M00NEMB',
+                'storeName': 'XG-MX-0828-134', 'packageNo': '',
+                'deliveredAt': '04 Sep 2026 16:56:59',
+                'goodsImg': '//img.ltwebstatic.com/v4/j/pi/x.jpg',
+            }],
+            'browserMode': 'visible',
+        }, lambda **event: None, threading.Event())
+        posted = next(body for method, path, body in rpc.bodies
+                      if method == 'POST' and path == '/api/after-sale/submit')
+        self.assertEqual(posted['items'][0]['deliveredAt'],
+                         '04 Sep 2026 16:56:59')
+        self.assertEqual(posted['items'][0]['goodsImg'],
+                         '//img.ltwebstatic.com/v4/j/pi/x.jpg')
 
     def test_claim_rejects_item_without_order_no(self):
         executor = LocalOperationExecutor(_FakeRpc([{'running': False,
