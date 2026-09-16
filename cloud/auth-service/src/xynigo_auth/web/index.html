@@ -2305,6 +2305,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         <div class="table-actions">
           <button class="btn sm" id="asClaimHistory">提交历史</button>
           <button class="btn sm" id="asRetryFailed" disabled>补提失败单</button>
+          <button class="btn sm" id="asClaimExport" title="导出当前批次已回传的提交结果" disabled>导出提交结果 Excel</button>
           <button class="btn sm" id="asClearResult">清空结果</button>
         </div>
       </div>
@@ -2352,7 +2353,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
       <div class="card-title" style="padding:17px 19px 0;">
         <div>④ 退款跟踪 <span class="legend">退款单号为主键 · 只读回访平台侧处理进度 · 到终态即冻结</span></div>
         <div class="table-actions">
-          <button class="btn" id="asTrackExport">导出 Excel</button>
+          <button class="btn" id="asTrackExport">导出退款跟踪 Excel</button>
           <button class="btn primary" id="asTrack">刷新退款进度</button>
         </div>
       </div>
@@ -5161,12 +5162,15 @@ function asSerials() {
 // 刷新后恢复最近一次提交批次：④ 的回访对象取自已提交的行（有退款单号），
 // 而 ③ 只活在本页会话里——不恢复的话，刷新一次 ④ 就永远提示「无可回访」。
 async function asLoadLatestClaim() {
-  if ((AS_STATE.claimRows || []).length) return;
+  if (AS_STATE.running || AS_STATE.runId || (AS_STATE.claimRows || []).length) return;
   try {
     const res = await cloudFetchJson('/v1/operation-runs/after-sale-claim/latest');
     const data = (res || {}).data;
     const rows = (data && data.rows) || [];
     if (!rows.length) return;
+    // 请求返回前可能已发起新批次，不能让旧批次覆盖当前展示与导出对象。
+    if (AS_STATE.running || AS_STATE.runId || (AS_STATE.claimRows || []).length) return;
+    AS_STATE.runId = asRunIdOf(data);
     AS_STATE.claimRows = rows;
     asRenderClaimRows(rows);
     asSetPhase('已恢复最近提交批次',
@@ -5341,6 +5345,7 @@ function asClaimRowHtml(row) {
 }
 function asRenderClaimRows(rows) {
   AS_STATE.claimRows = rows || [];
+  asSyncClaimExportButton();
   const tbody = $('asClaimRows');
   if (!AS_STATE.claimRows.length) {
     tbody.innerHTML = '<tr><td colspan="11" class="hint" style="text-align:center; padding:22px;">提交后此处逐步展示每单结果。</td></tr>';
@@ -5666,11 +5671,27 @@ async function asRetryHistoryBatch() {
   // 与「回访本批」同款：新批次进度写在弹层后面的 ③，不关弹层就看不见
   if (started) asCloseClaimHistory();
 }
+function asSyncClaimExportButton() {
+  const button = $('asClaimExport');
+  button.disabled = button.dataset.exporting === 'true'
+    || !AS_STATE.runId || !(AS_STATE.claimRows || []).length;
+}
+async function asExportClaimResults() {
+  if (!AS_STATE.runId || !(AS_STATE.claimRows || []).length) {
+    toast('当前没有可导出的提交结果'); return;
+  }
+  return asDownloadClaimBatch(AS_STATE.runId, $('asClaimExport'));
+}
 async function asExportClaimHistory() {
   const runId = AS_HISTORY.runId;
   if (!runId) { toast('先打开一个批次再导出'); return; }
-  const button = $('asHistoryExport');
+  return asDownloadClaimBatch(runId, $('asHistoryExport'));
+}
+// 当前结果和历史详情共享同一批次导出，捕获点击时的 runId，不改历史选择状态。
+async function asDownloadClaimBatch(runId, button) {
+  if (button.dataset.exporting === 'true') return;
   const label = button.textContent;
+  button.dataset.exporting = 'true';
   button.disabled = true; button.textContent = '正在生成…';
   try {
     const response = await fetch(
@@ -5695,8 +5716,11 @@ async function asExportClaimHistory() {
     toast(String(error.message || error));
   } finally {
     button.disabled = false; button.textContent = label;
+    delete button.dataset.exporting;
+    asSyncClaimExportButton();
   }
 }
+$('asClaimExport').onclick = asExportClaimResults;
 $('asClaimHistory').onclick = asOpenClaimHistory;
 $('btnAsHistoryClose').onclick = asCloseClaimHistory;
 $('btnAsHistoryRefresh').onclick = () => asLoadClaimHistory({ reset: true });
