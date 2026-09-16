@@ -30,6 +30,7 @@ AS_CAPABILITIES = [
     "workspace.snapshot.v1",
     "after.sale.scan.v1",
     "after.sale.claim.v1",
+    "after.sale.track.v1",
 ]
 CLIENT_VERSION = "0.17.20"
 JPEG = b"\xff\xd8synthetic-after-sale-screenshot\xff\xd9"
@@ -610,3 +611,104 @@ def test_after_sale_claim_cancel_requests_stop(tmp_path) -> None:
             f"/v1/operation-runs/after-sale-claim/{uuid.uuid4()}"
         ).status_code == 404
         break
+
+
+# ===== 退款跟踪：建任务 → 进度落跟踪表 → GET 形状 + 白名单 =====
+def _track_row(bill, *, order_no="GSH0001", serial="4586", phase="reviewing",
+               account="****7935", amount="270.22", status="ok"):
+    return {
+        "refundBillId": bill, "orderNo": order_no, "environmentSerial": serial,
+        "storeName": "合成店铺", "status": status, "phase": phase,
+        "phaseLabel": {"reviewing": "审核中", "refunded": "已退款"}.get(phase, phase),
+        "countdown": "23:48:25" if phase == "reviewing" else "",
+        "refundAccount": account, "amount": amount,
+        "checkedAt": "2026-09-16T01:08:17+00:00", "note": None,
+        "errorSummary": None, "durationSeconds": 6,
+    }
+
+
+def test_after_sale_track_create_progress_and_whitelist(tmp_path) -> None:
+    """④ 退款跟踪：本用例盯的是评审指出的两个真问题——
+    路由授权（曾误写 authorize 导致请求 500）与回访行必须落在任务清单内。"""
+    for web_client, device_client, ids, database in _e2e_setup(tmp_path):
+        executor_id, credential = ids["executorId"], ids["credential"]
+        heartbeat(device_client, credential, capabilities=AS_CAPABILITIES,
+                  client_version=CLIENT_VERSION)
+
+        created = web_client.post(
+            "/v1/after-sale/track",
+            json={
+                "idempotencyKey": "as-track-e2e-00000001",
+                "executorId": executor_id,
+                "items": [
+                    {"environmentSerial": "4586", "orderNo": "GSH0001",
+                     "refundBillId": "2390833880014851"},
+                    {"environmentSerial": "4904", "orderNo": "GSH0002",
+                     "refundBillId": "2390783198795777"},
+                ],
+            },
+            headers=CSRF,
+        )
+        assert created.status_code == 202, created.text
+        task_id = created.json()["data"]["taskId"]
+
+        leased_id, lease_token = _lease_and_start(
+            device_client, credential, expect_type="after.sale.track.v1")
+        assert leased_id == task_id
+
+        progress = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/progress",
+            json={
+                "leaseToken": lease_token,
+                "phase": "after_sale.track.running",
+                "current": 2,
+                "total": 2,
+                "snapshot": {"rows": [
+                    _track_row("2390833880014851", order_no="GSH0001"),
+                    _track_row("2390783198795777", order_no="GSH0002",
+                               serial="4904", phase="refunded",
+                               account="****2813", amount="35.26"),
+                ]},
+            },
+            headers=device_headers(credential),
+        )
+        assert progress.status_code == 200, progress.text
+
+        # GET：形状 + 阶段分布（读的是跟踪表，覆盖更新后的最新态）
+        snap = web_client.get(f"/v1/after-sale/track/{task_id}")
+        assert snap.status_code == 200, snap.text
+        data = snap.json()["data"]
+        assert data["taskId"] == task_id
+        rows = data["summary"]["rows"]
+        assert len(rows) == 2, rows
+        assert data["summary"]["counts"] == {"reviewing": 1, "refunded": 1}
+        reviewing = next(r for r in rows if r["phase"] == "reviewing")
+        assert reviewing["refundAccount"] == "****7935"
+        assert reviewing["countdown"] == "23:48:25"
+
+        # 落表：按 refund_bill_id 唯一，值为最近一次回访态
+        with database.session_factory() as session:
+            from xynigo_auth.models import AfterSaleRefundTracking
+            records = session.scalars(select(AfterSaleRefundTracking)).all()
+            assert {r.refund_bill_id for r in records} == {
+                "2390833880014851", "2390783198795777"}
+            one = next(r for r in records
+                       if r.refund_bill_id == "2390833880014851")
+            assert one.phase == "reviewing"
+            assert one.refund_account == "****7935"
+            assert one.order_no == "GSH0001"
+
+        # 白名单：清单外的退款单号必须整批 422，不得覆盖别人的行
+        outside = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/progress",
+            json={
+                "leaseToken": lease_token,
+                "phase": "after_sale.track.running",
+                "current": 1,
+                "total": 1,
+                "snapshot": {"rows": [
+                    _track_row("9999999999999999", phase="refunded")]},
+            },
+            headers=device_headers(credential),
+        )
+        assert outside.status_code == 422, outside.text
