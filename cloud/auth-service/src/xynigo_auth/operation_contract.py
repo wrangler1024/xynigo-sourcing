@@ -1056,7 +1056,8 @@ class AfterSaleScanCreateBody(BaseModel):
     idempotencyKey: str = Field(min_length=8, max_length=128,
                                 pattern=SAFE_KEY_RE)
     executorId: uuid.UUID
-    browserMode: Literal["headless", "visible"] = "visible"
+    browserMode: Literal["headless", "visible"] = "headless"
+    concurrency: int = Field(default=2, ge=1, le=5, strict=True)
     environmentSerials: list[str] = Field(min_length=1, max_length=300)
 
     @field_validator("environmentSerials")
@@ -1099,7 +1100,8 @@ class AfterSaleClaimRunCreateBody(BaseModel):
     idempotencyKey: str = Field(min_length=8, max_length=128,
                                 pattern=SAFE_KEY_RE)
     executorId: uuid.UUID
-    browserMode: Literal["headless", "visible"] = "visible"
+    browserMode: Literal["headless", "visible"] = "headless"
+    concurrency: int = Field(default=2, ge=1, le=5, strict=True)
     items: list[AfterSaleClaimItem] = Field(min_length=1, max_length=500)
     # 重提来源批次（③ 补提失败 / 历史详情重提）：只用于展示「重提自哪一批」，
     # 不参与幂等（幂等仍只看 idempotencyKey 与 payload_hash）。
@@ -1175,7 +1177,8 @@ class AfterSaleTrackCreateBody(BaseModel):
     idempotencyKey: str = Field(min_length=8, max_length=128,
                                 pattern=SAFE_KEY_RE)
     executorId: uuid.UUID
-    browserMode: Literal["headless", "visible"] = "visible"
+    browserMode: Literal["headless", "visible"] = "headless"
+    concurrency: int = Field(default=2, ge=1, le=5, strict=True)
     items: list[AfterSaleTrackItem] = Field(min_length=1, max_length=500)
 
     @field_validator("items")

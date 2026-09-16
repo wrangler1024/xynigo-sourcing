@@ -33,6 +33,8 @@ recibido」，退款原路退回）。人工动线是：打开环境 → 进订�
 - 环境占用沿用店铺巡检的四层策略：谁开谁关、被人工切换重试一次后标
   ``inuse``、运行中拒绝重复发起、云端幂等键防并行重复提交。
 """
+from concurrent.futures import ThreadPoolExecutor
+
 import hashlib
 import json
 import random
@@ -309,10 +311,11 @@ def refund_bill_id_from_url(url):
 class AfterSaleClaimer(object):
     """售后扫描与提交编排：后台线程驱动，snapshot() 供进度轮询。"""
 
-    def __init__(self, hub, log=None, headless=False,
+    def __init__(self, hub, log=None, headless=True,
                  stagger_seconds=1.5, order_stagger=(5.0, 15.0)):
         self.hub = hub
         self.headless = bool(headless)
+        self._concurrency = 2
         self._stagger = max(0.0, float(stagger_seconds))
         low, high = order_stagger or (0.0, 0.0)
         self._order_stagger = (max(0.0, float(low)), max(0.0, float(high)))
@@ -328,11 +331,13 @@ class AfterSaleClaimer(object):
 
     # ---- 对外入口（本地 HTTP 端点消费） ----
 
-    def start_scan(self, serials, browser_mode=None, headless=None):
+    def start_scan(self, serials, browser_mode=None, headless=None,
+                    concurrency=2):
         """启动一批只读扫描；运行中重复发起会被拒绝。"""
-        return self._start('scan', serials, browser_mode, headless)
+        return self._start('scan', serials, browser_mode, headless, concurrency)
 
-    def start_submit(self, items, browser_mode=None, headless=None):
+    def start_submit(self, items, browser_mode=None, headless=None,
+                    concurrency=2):
         """启动一批售后提交；items 为 ``[{environmentSerial, orderNo}]``。"""
         cleaned = []
         for item in items or []:
@@ -351,9 +356,10 @@ class AfterSaleClaimer(object):
                 'deliveredAt': str(item.get('deliveredAt') or '').strip()[:32],
                 'goodsImg': str(item.get('goodsImg') or '').strip()[:300],
             })
-        return self._start('claim', cleaned, browser_mode, headless)
+        return self._start('claim', cleaned, browser_mode, headless, concurrency)
 
-    def start_track(self, items, browser_mode=None, headless=None):
+    def start_track(self, items, browser_mode=None, headless=None,
+                    concurrency=2):
         """启动一批只读回访（退款跟踪）：items=[{environmentSerial, orderNo, refundBillId}]。"""
         cleaned = []
         for item in items or []:
@@ -369,7 +375,7 @@ class AfterSaleClaimer(object):
                 'refundBillId': bill,
                 'storeName': str(item.get('storeName') or '').strip()[:128],
             })
-        return self._start('track', cleaned, browser_mode, headless)
+        return self._start('track', cleaned, browser_mode, headless, concurrency)
 
     def request_stop(self):
         self._stop_event.set()
@@ -401,12 +407,17 @@ class AfterSaleClaimer(object):
 
     # ---- 批次编排 ----
 
-    def _start(self, mode, items, browser_mode, headless=None):
+    def _start(self, mode, items, browser_mode, headless=None, concurrency=2):
+        if type(concurrency) is not int or not 1 <= concurrency <= 5:
+            raise ValueError('售后环境并发数必须为 1 到 5 的整数')
+        if browser_mode not in (None, 'headless', 'visible'):
+            raise ValueError('售后浏览器模式无效')
         with self._lock:
             if self._running:
                 return {'running': True, 'mode': self._mode,
                         'error': '已有售后任务运行中'}
             self._running = True
+            self._concurrency = concurrency
             self._mode = mode
             self._stop_event = threading.Event()
             self._screenshots = {}
@@ -429,7 +440,8 @@ class AfterSaleClaimer(object):
 
     def _run_batch(self, mode, items, browser_mode):
         try:
-            headless = self.headless if browser_mode != 'visible' else False
+            headless = (browser_mode == 'headless' if browser_mode is not None
+                        else self.headless)
             if mode == 'scan':
                 self._run_scan(items, headless)
             elif mode == 'track':
@@ -441,6 +453,31 @@ class AfterSaleClaimer(object):
         finally:
             with self._lock:
                 self._running = False
+
+    def _run_environment_jobs(self, jobs, stagger=0):
+        """按环境限流；序号/名称等别名解析到同一环境时也不允许同时操作。"""
+        locks = {}
+        for serial, env, _, _ in jobs:
+            key = str(env.get('containerCode') or serial).casefold()
+            locks.setdefault(key, threading.Lock())
+
+        def execute(job):
+            serial, env, callback, args = job
+            key = str(env.get('containerCode') or serial).casefold()
+            with locks[key]:
+                if not self._stop_event.is_set():
+                    callback(*args)
+
+        with ThreadPoolExecutor(max_workers=self._concurrency) as pool:
+            futures = []
+            for index, job in enumerate(jobs):
+                if self._stop_event.is_set():
+                    break
+                if index and stagger and self._stop_event.wait(stagger):
+                    break
+                futures.append(pool.submit(execute, job))
+            for future in futures:
+                future.result()
 
     def _env_index(self, keys):
         """把序号/环境ID/环境名解析成环境对象（重名环境要求改用序号）。"""
@@ -483,19 +520,11 @@ class AfterSaleClaimer(object):
                     'screenshotSha256': None,
                     'screenshotStatus': '',
                 }
-        threads = []
-        for serial in serials:
-            if self._stop_event.is_set():
-                break
-            thread = threading.Thread(
-                target=self._scan_one_guarded,
-                args=(serial, env_index.get(serial, {}), headless),
-                daemon=True)
-            thread.start()
-            threads.append(thread)
-            time.sleep(self._stagger)
-        for thread in threads:
-            thread.join()
+        self._run_environment_jobs([
+            (serial, env_index.get(serial, {}), self._scan_one_guarded,
+             (serial, env_index.get(serial, {}), headless))
+            for serial in serials
+        ], stagger=self._stagger)
         with self._lock:
             for serial in serials:
                 row = self._scan_rows.get(serial)
@@ -653,16 +682,11 @@ class AfterSaleClaimer(object):
         grouped = {}
         for item in items:
             grouped.setdefault(item['environmentSerial'], []).append(item)
-        for serial, group in grouped.items():
-            if self._stop_event.is_set():
-                break
-            env = env_index.get(serial, {})
-            thread = threading.Thread(
-                target=self._claim_env_guarded, args=(serial, env, group,
-                                                      headless),
-                daemon=True)
-            thread.start()
-            thread.join()  # 环境之间串行：写操作不并发
+        self._run_environment_jobs([
+            (serial, env_index.get(serial, {}), self._claim_env_guarded,
+             (serial, env_index.get(serial, {}), group, headless))
+            for serial, group in grouped.items()
+        ])
         with self._lock:
             for item in items:
                 row = self._claim_rows.get(item['orderNo'])
@@ -670,7 +694,7 @@ class AfterSaleClaimer(object):
                     row['status'] = 'stopped'
 
     def _run_track(self, items, headless):
-        """按环境分组只读回访；环境之间串行，单与单之间轻停顿。"""
+        """按环境分组限流回访；同环境单与单之间串行、轻停顿。"""
         env_index = self._env_index([i['environmentSerial'] for i in items])
         with self._lock:
             for item in items:
@@ -689,15 +713,24 @@ class AfterSaleClaimer(object):
         grouped = {}
         for item in items:
             grouped.setdefault(item['environmentSerial'], []).append(item)
-        for serial, group in grouped.items():
-            if self._stop_event.is_set():
-                break
-            self._track_env(serial, env_index.get(serial, {}), group, headless)
+        self._run_environment_jobs([
+            (serial, env_index.get(serial, {}), self._track_env_guarded,
+             (serial, env_index.get(serial, {}), group, headless))
+            for serial, group in grouped.items()
+        ])
         with self._lock:
             for item in items:
                 row = self._track_rows.get(item['refundBillId'])
                 if row and row.get('status') in ('queued', 'running'):
                     row['status'] = 'stopped'
+
+    def _track_env_guarded(self, serial, env, items, headless):
+        try:
+            self._track_env(serial, env, items, headless)
+        except Exception as exc:
+            for item in items:
+                self._fail_track(item['refundBillId'], 'fail',
+                                 scrub_text(str(exc))[:200])
 
     def _track_env(self, serial, env, items, headless):
         page = None

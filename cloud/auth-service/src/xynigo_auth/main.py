@@ -5248,6 +5248,7 @@ def create_app(
             task_type="after.sale.scan.v1",
             payload={
                 "browserMode": body.browserMode,
+                "concurrency": body.concurrency,
                 "environmentSerials": list(body.environmentSerials),
             },
             idempotency_key=body.idempotencyKey,
@@ -5326,6 +5327,7 @@ def create_app(
             task_type="after.sale.track.v1",
             payload={
                 "browserMode": body.browserMode,
+                "concurrency": body.concurrency,
                 "items": [item.model_dump(mode="json") for item in body.items],
             },
             idempotency_key=body.idempotencyKey,
@@ -5517,6 +5519,7 @@ def create_app(
                     "runId": str(run.id),
                     "runKey": run.source_run_key,
                     "browserMode": body.browserMode,
+                    "concurrency": body.concurrency,
                     "items": [
                         item.model_dump(mode="json") for item in body.items
                     ],

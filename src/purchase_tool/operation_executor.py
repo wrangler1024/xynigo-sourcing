@@ -733,10 +733,13 @@ class LocalOperationExecutor(object):
         if len(serials) > 300:
             raise OperationExecutionError(
                 'operation_payload_invalid', '单批售后扫描环境数量超出上限')
-        browser_mode = str(payload.get('browserMode') or 'visible')
+        browser_mode = str(payload.get('browserMode') or 'headless')
+        concurrency = payload.get('concurrency', 2)
+        if type(concurrency) is not int or not 1 <= concurrency <= 5:
+            raise OperationExecutionError('operation_payload_invalid', '售后环境并发数必须为 1 到 5')
         self._request('POST', '/api/after-sale/scan', {
             'serials': serials,
-            'browserMode': browser_mode,
+            'browserMode': browser_mode, 'concurrency': concurrency,
         })
         total = len(serials)
         selected = set(serials)
@@ -810,10 +813,13 @@ class LocalOperationExecutor(object):
         if len(clean) > 500:
             raise OperationExecutionError(
                 'operation_payload_invalid', '单批售后提交订单数量超出上限')
-        browser_mode = str(payload.get('browserMode') or 'visible')
+        browser_mode = str(payload.get('browserMode') or 'headless')
+        concurrency = payload.get('concurrency', 2)
+        if type(concurrency) is not int or not 1 <= concurrency <= 5:
+            raise OperationExecutionError('operation_payload_invalid', '售后环境并发数必须为 1 到 5')
         self._request('POST', '/api/after-sale/submit', {
             'items': clean,
-            'browserMode': browser_mode,
+            'browserMode': browser_mode, 'concurrency': concurrency,
         })
         total = len(clean)
         selected = {item['orderNo'] for item in clean}
@@ -1032,9 +1038,12 @@ class LocalOperationExecutor(object):
         if len(clean) > 500:
             raise OperationExecutionError(
                 'operation_payload_invalid', '单批回访退款单数量超出上限')
-        browser_mode = str(payload.get('browserMode') or 'visible')
+        browser_mode = str(payload.get('browserMode') or 'headless')
+        concurrency = payload.get('concurrency', 2)
+        if type(concurrency) is not int or not 1 <= concurrency <= 5:
+            raise OperationExecutionError('operation_payload_invalid', '售后环境并发数必须为 1 到 5')
         self._request('POST', '/api/after-sale/track', {
-            'items': clean, 'browserMode': browser_mode,
+            'items': clean, 'browserMode': browser_mode, 'concurrency': concurrency,
         })
         total = len(clean)
         selected = {c['refundBillId'] for c in clean}

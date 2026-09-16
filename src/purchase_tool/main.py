@@ -1198,10 +1198,10 @@ class AppState(object):
             concurrency=cfg.get('concurrency', 2),
             headless=bool(cfg.get('storeFinanceHeadless', True)),
             log=lambda msg: print('[store-finance]', msg, flush=True))
-        # 售后申请是写操作：默认可见窗口，出问题同事能直接看着接管
+        # 售后默认无头运行，单批任务可显式切换为可见窗口
         self.after_sale = AfterSaleClaimer(
             self.hub,
-            headless=bool(cfg.get('afterSaleHeadless', False)),
+            headless=bool(cfg.get('afterSaleHeadless', True)),
             log=lambda msg: print('[after-sale]', msg, flush=True))
         self.reg_job = RegistrationJob(lambda: self.hub)
         self.buyer_library = BuyerLibraryJob(
@@ -4651,10 +4651,10 @@ class Handler(BaseHTTPRequestHandler):
                     if not text:
                         raise ValueError('售后扫描环境序号无效')
                     clean.append(text)
-                browser_mode = str(body.get('browserMode') or 'visible')
+                browser_mode = str(body.get('browserMode') or 'headless')
                 self._json(STATE.after_sale.start_scan(
                     clean,
-                    'visible' if browser_mode == 'visible' else 'headless'))
+                    browser_mode, concurrency=body.get('concurrency', 2)))
             elif path == '/api/after-sale/submit':
                 items = body.get('items')
                 if (not isinstance(items, list) or not items
@@ -4674,10 +4674,10 @@ class Handler(BaseHTTPRequestHandler):
                         'storeName': str(item.get('storeName') or '').strip(),
                         'packageNo': str(item.get('packageNo') or '').strip(),
                     })
-                browser_mode = str(body.get('browserMode') or 'visible')
+                browser_mode = str(body.get('browserMode') or 'headless')
                 self._json(STATE.after_sale.start_submit(
                     clean,
-                    'visible' if browser_mode == 'visible' else 'headless'))
+                    browser_mode, concurrency=body.get('concurrency', 2)))
             elif path == '/api/after-sale/track':
                 items = body.get('items')
                 if (not isinstance(items, list) or not items
@@ -4697,10 +4697,10 @@ class Handler(BaseHTTPRequestHandler):
                         'refundBillId': bill,
                         'storeName': str(item.get('storeName') or '').strip(),
                     })
-                browser_mode = str(body.get('browserMode') or 'visible')
+                browser_mode = str(body.get('browserMode') or 'headless')
                 self._json(STATE.after_sale.start_track(
                     clean,
-                    'visible' if browser_mode == 'visible' else 'headless'))
+                    browser_mode, concurrency=body.get('concurrency', 2)))
             elif path == '/api/after-sale/stop':
                 self._json(STATE.after_sale.request_stop())
             elif path == '/api/stop':
