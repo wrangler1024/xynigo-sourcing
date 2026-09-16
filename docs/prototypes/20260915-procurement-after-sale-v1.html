@@ -1698,6 +1698,27 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
 .env-site-review .field{flex:1;min-width:180px}
 .env-site-review .site-conflict{color:#a33328;font-weight:600}
 .env-site-review.reviewed{border-color:#8bc7b8;background:#f2faf7}
+
+  /* 模块级吸顶任务条：仅由用户收起，终态保持当前展开状态。 */
+  .task-run-strip { position:sticky; top:8px; z-index:6; flex:none; min-width:0; padding:12px 16px; border:1px solid #b9dfe2; border-radius:14px; background:#f2fbfb; box-shadow:0 3px 12px rgba(8,37,72,.04); }
+  .task-run-strip[hidden] { display:none; }
+  .task-run-strip > summary { cursor:pointer; color:var(--navy-950); font-weight:700; font-size:13px; }
+  .task-run-strip > summary::after { content:'展开'; float:right; color:var(--rhino-600); font-size:12px; }
+  .task-run-strip[open] > summary::after { content:'收起'; }
+  .task-run-strip-body { margin-top:10px; min-width:0; }
+  .task-run-strip .query-phase-banner { margin:0 0 10px; }
+  .task-run-strip .action-row { flex-wrap:wrap; margin:0; }
+  .task-run-strip .progress-wrap { min-width:0; flex:1 1 240px; flex-wrap:wrap; }
+  #storeFinancePanel .task-run-strip #sfProgressText,
+  .task-run-strip #progressText { min-width:0; white-space:normal; overflow-wrap:anywhere; }
+  .task-run-strip .execution-state { margin:10px 0 0; }
+  .task-run-strip .procurement-import-sync-progress { margin-top:0; }
+  @media(max-width:700px) {
+    .task-run-strip { padding:10px 12px; }
+    .task-run-strip .progress-wrap { flex-basis:100%; }
+    .task-run-strip .progress { min-width:100px; }
+  }
+
 </style>
 </head>
 <body class="auth-locked">
@@ -1974,6 +1995,12 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
   </div>
 
   <div class="module-panel hidden import-first-layout" id="procurementImportPanel">
+    <details class="task-run-strip" id="importRunStrip" open hidden>
+      <summary>导入分单 · 任务进度</summary>
+      <div class="task-run-strip-body">
+<div class="procurement-import-sync-progress" id="procurementImportSyncProgress" role="status" aria-live="polite" hidden></div>
+      </div>
+    </details>
     <div class="if-heading"><div><div class="if-eyebrow">采购中心 / 导入分单</div><h1>导入分单</h1><p>按采购备注生成明细，导入本批飞书协作表。</p></div><div class="if-heading-actions"><button class="if-btn" id="btnProcurementImportHistory" type="button" hidden><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-history" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path><path d="M12 7v5l4 2"></path></svg>导入历史</button><button class="if-btn" id="btnProcurementImportReset" type="button"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-refresh-cw" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path><path d="M8 16H3v5"></path></svg>重新开始</button></div></div>
     <ol class="if-flow" aria-label="导入步骤">
       <li data-import-step="0"><span class="if-step-circle">1</span><span>解析订单文件</span><i></i></li>
@@ -2019,7 +2046,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
       <div class="if-table-footer"><span><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-shield-check" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path><path d="m9 12 2 2 4-4"></path></svg>预览隐藏收件信息</span><span>商品图片 <b id="procurementImportOrderImages">0</b></span></div>
     </section>
     <details class="if-rules"><summary><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-circle-question-mark" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><path d="M12 17h.01"></path></svg>历史订单整单跳过；导入至飞书协作表，不创建采购任务。<span>查看导入规则</span></summary><p>接口直接导入，无需人工复制粘贴，不会覆盖已有单元格。采购需求区按标准列序写入，前五列固定为“分单日期 / 采购员 / 销售订单号 / 店铺 / 运营”；采购下单区可自由增删、改名和排序，不参与导入校验。</p><p>订单金额只写首条明细，商品金额逐条计算；完整收件信息紧随采购指导价。同订单按淡色分组，商品图与采购链接自动处理。系统追踪区仅用于幂等防重。已导入订单保持原样，不能在这里修改；采购任务认领前修改属于独立修订流程。</p></details>
-    <footer class="if-action-footer" id="procurementImportSyncBar"><div class="if-footer-content"><div class="if-footer-copy"><b id="procurementImportFooterSummary">请先解析本批订单</b><small id="procurementImportFooterHint">完成目标飞书协作表校验后可导入</small></div><div class="procurement-import-sync-progress" id="procurementImportSyncProgress" role="status" aria-live="polite" hidden></div></div><div class="if-footer-actions"><div class="if-color-setting"><span id="procurementImportBackgroundLabel">订单背景色</span><button id="procurementImportFillBackground" type="button" class="if-switch" role="switch" aria-checked="true" aria-labelledby="procurementImportBackgroundLabel" aria-describedby="procurementImportBackgroundHelp"></button><span class="if-switch-help" role="tooltip" id="procurementImportBackgroundHelp">同一订单使用相同底色，仅作用于本次新增明细</span></div><button class="if-btn if-primary if-import-button" id="btnProcurementImportSyncImages" type="button" disabled><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-folder-input" aria-hidden="true"><path d="M2 9V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-1"></path><path d="M2 13h10"></path><path d="m9 16 3-3-3-3"></path></svg>导入数据并补齐图片</button></div></footer>
+    <footer class="if-action-footer" id="procurementImportSyncBar"><div class="if-footer-content"><div class="if-footer-copy"><b id="procurementImportFooterSummary">请先解析本批订单</b><small id="procurementImportFooterHint">完成目标飞书协作表校验后可导入</small></div></div><div class="if-footer-actions"><div class="if-color-setting"><span id="procurementImportBackgroundLabel">订单背景色</span><button id="procurementImportFillBackground" type="button" class="if-switch" role="switch" aria-checked="true" aria-labelledby="procurementImportBackgroundLabel" aria-describedby="procurementImportBackgroundHelp"></button><span class="if-switch-help" role="tooltip" id="procurementImportBackgroundHelp">同一订单使用相同底色，仅作用于本次新增明细</span></div><button class="if-btn if-primary if-import-button" id="btnProcurementImportSyncImages" type="button" disabled><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-folder-input" aria-hidden="true"><path d="M2 9V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-1"></path><path d="M2 13h10"></path><path d="m9 16 3-3-3-3"></path></svg>导入数据并补齐图片</button></div></footer>
   </div>
 
   <div class="module-panel hidden" id="xyp2ParserPanel">
@@ -2065,6 +2092,24 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
   </div>
 
   <div class="module-panel hidden" id="storeFinancePanel">
+    <details class="task-run-strip" id="sfRunStrip" open>
+      <summary>店铺结算查询 · 任务进度</summary>
+      <div class="task-run-strip-body">
+      <div class="query-phase-banner" id="sfPhaseBanner" hidden>
+        <span class="spinner" id="sfPhaseSpin" hidden aria-hidden="true"></span>
+        <div class="query-phase-copy"><b id="sfPhaseTitle">等待发起巡检</b><span id="sfPhaseDescription">勾选店铺后点击「一键巡检」。</span></div>
+      </div>
+
+<div class="action-row">
+        <button class="btn danger" id="sfStop" disabled>停止</button>
+        <div class="progress-wrap">
+          <div class="progress" id="sfProgress" role="progressbar" aria-valuemin="0"><div class="bar" id="sfBar"></div>
+      </div>
+          <span id="sfProgressText">未开始</span>
+        </div>
+      </div>
+      </div>
+    </details>
     <section class="card">
       <div class="card-title">① 选择店铺
         <span class="legend">环境序号清单 · 勾选状态自动保存</span>
@@ -2125,18 +2170,8 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         </div>
       </div>
 
-      <div class="query-phase-banner" id="sfPhaseBanner" hidden>
-        <span class="spinner" id="sfPhaseSpin" hidden aria-hidden="true"></span>
-        <div class="query-phase-copy"><b id="sfPhaseTitle">等待发起巡检</b><span id="sfPhaseDescription">勾选店铺后点击「一键巡检」。</span></div>
-      </div>
-
       <div class="action-row">
         <button class="btn primary" id="sfStart">一键巡检</button>
-        <button class="btn danger" id="sfStop" disabled>停止</button>
-        <div class="progress-wrap">
-          <div class="progress" id="sfProgress" role="progressbar" aria-valuemin="0"><div class="bar" id="sfBar"></div></div>
-          <span id="sfProgressText">未开始</span>
-        </div>
       </div>
     </section>
 
@@ -2447,6 +2482,23 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
   </div>
 
   <div class="module-panel hidden" id="queryPanel">
+    <details class="task-run-strip" id="queryRunStrip" open>
+      <summary>订单物流查询 · 任务进度</summary>
+      <div class="task-run-strip-body">
+    <div class="query-phase-banner" id="queryPhaseBanner" hidden>
+      <span class="spinner" aria-hidden="true"></span>
+      <div class="query-phase-copy"><b id="queryPhaseTitle">正在预检执行环境</b><span id="queryPhaseDescription">正在确认执行器、HubStudio 与浏览器内核可用。</span></div>
+    </div>
+<div class="action-row">
+        <button class="btn danger" id="btnStop" disabled>⏹ 停止</button>
+      <div class="progress-wrap">
+        <div class="progress" id="queryProgress" role="progressbar" aria-label="物流查询进度" aria-valuemin="0" aria-valuenow="0" aria-valuemax="0"><div class="bar" id="bar"></div>
+      </div>
+        <span id="progressText">已处理 0 / 0 ｜ 平均 — ｜ 本轮重查 — ｜ 累计执行 00:00</span>
+      </div>
+      </div>
+      </div>
+    </details>
   <section class="runtime-selection-notice" id="runtimeSelectionNotice" hidden>
     <span class="runtime-status-dot warn" aria-hidden="true"></span>
     <div class="runtime-selection-notice-copy"><b id="runtimeSelectionTitle">开始前请选择执行设备</b><span id="runtimeSelectionDescription">查询和采购任务只会发送到你明确选择的电脑。</span></div>
@@ -2475,17 +2527,9 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
   </section>
 
   <section class="card">
-    <div class="query-phase-banner" id="queryPhaseBanner" hidden>
-      <span class="spinner" aria-hidden="true"></span>
-      <div class="query-phase-copy"><b id="queryPhaseTitle">正在预检执行环境</b><span id="queryPhaseDescription">正在确认执行器、HubStudio 与浏览器内核可用。</span></div>
-    </div>
+
     <div class="action-row">
       <button class="btn primary" id="btnStart">▶ 开始查询</button>
-      <button class="btn danger" id="btnStop" disabled>⏹ 停止</button>
-      <div class="progress-wrap">
-        <div class="progress" id="queryProgress" role="progressbar" aria-label="物流查询进度" aria-valuemin="0" aria-valuenow="0" aria-valuemax="0"><div class="bar" id="bar"></div></div>
-        <span id="progressText">已处理 0 / 0 ｜ 平均 — ｜ 本轮重查 — ｜ 累计执行 00:00</span>
-      </div>
     </div>
   </section>
 
@@ -2657,6 +2701,20 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
   </div>
 
   <div class="module-panel hidden" id="envPanel">
+    <details class="task-run-strip" id="envRunStrip" open>
+      <summary>环境创建 · 任务进度</summary>
+      <div class="task-run-strip-body">
+<div class="action-row">
+        <button class="btn danger" id="btnEnvStop" disabled>⏹ 停止并撤销</button>
+        <div class="progress-wrap"><div class="progress"><div class="bar" id="envBar"></div>
+      </div><span class="hint" id="envProgressText">0 / 0</span></div>
+        <span class="hint" id="envElapsed">已用 00:00</span></div>
+      <div class="execution-state idle" id="envExecutionState" role="status" aria-live="polite">
+        <span class="state-dot" aria-hidden="true"></span>
+        <span class="state-copy"><b class="state-title" id="envExecutionTitle">等待执行确认</b><span class="state-detail" id="envExecutionDetail">完成正式执行确认后，这里会立即显示任务提交和后台执行状态。</span></span>
+      </div>
+      </div>
+    </details>
     <div class="mode-bar" id="envModeBar">
       <button class="mode-tab active" data-mode="bound" type="button">
         <span class="mode-tab-inner">
@@ -2768,14 +2826,8 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
       <div class="action-row">
         <button class="btn" id="btnEnvPreview" disabled>👁 干跑预览（只读）</button>
         <button class="btn primary" id="btnEnvStart" disabled>▶ 正式执行</button>
-        <button class="btn danger" id="btnEnvStop" disabled>⏹ 停止并撤销</button>
-        <div class="progress-wrap"><div class="progress"><div class="bar" id="envBar"></div></div><span class="hint" id="envProgressText">0 / 0</span></div>
-        <span class="hint" id="envElapsed">已用 00:00</span>
       </div>
-      <div class="execution-state idle" id="envExecutionState" role="status" aria-live="polite">
-        <span class="state-dot" aria-hidden="true"></span>
-        <span class="state-copy"><b class="state-title" id="envExecutionTitle">等待执行确认</b><span class="state-detail" id="envExecutionDetail">完成正式执行确认后，这里会立即显示任务提交和后台执行状态。</span></span>
-      </div>
+
       <div class="note-card" style="margin-top:12px">五步状态机：<b>建环境（使用 HubStudio 当前可用默认内核 + 加权指纹）→ 导 Cookie 原文 → 绑账号 → 写完整备注 → 完成</b>。停止并撤销会先阻止新行、等待已进入执行的并发行完整收尾，再只销毁本任务新建环境；历史恢复环境不会删除。撤销完成后可修改参数或采购员分配，并重新上传同一原始 xlsx。</div>
     </section>
 
@@ -13771,6 +13823,7 @@ function invalidateProcurementImportTarget(message, clearSheets=false) {
   $('btnProcurementImportSyncImages').disabled = true;
   $('btnProcurementImportSyncImages').textContent = '导入数据并补齐图片';
   $('procurementImportSyncProgress').hidden = true;
+  $('importRunStrip').hidden = true;
   $('procurementImportSyncProgress').replaceChildren();
   $('procurementImportSyncBar').classList.remove(
     'is-running', 'is-completed', 'is-warning', 'is-failed');
@@ -14105,6 +14158,7 @@ function renderProcurementImportSyncStatus(status) {
   const progress = $('procurementImportSyncProgress');
   const syncBar = $('procurementImportSyncBar');
   progress.hidden = false;
+  $('importRunStrip').hidden = false;
   ensureProcurementImportProgressShell(progress);
   const running = procurementImportRunningStates.includes(status.state);
   const visualState = running ? 'running' : (
