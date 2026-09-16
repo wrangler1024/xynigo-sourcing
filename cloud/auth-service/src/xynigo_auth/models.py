@@ -2031,6 +2031,7 @@ class ExecutorTask(Base):
             "'environment.parse.v1', 'logistics.query.v1', "
             "'store.finance.inspect.v1', 'store.finance.lookup.v1', "
             "'after.sale.scan.v1', 'after.sale.claim.v1', "
+            "'after.sale.track.v1', "
             "'environment.preview-bound.v1', "
             "'environment.create-bound.v1', 'environment.create-backup.v1', "
             "'environment.retry-row.v1', 'environment.retry-failed.v1')",
@@ -2391,4 +2392,43 @@ class AfterSaleClaimResult(Base):
         CheckConstraint("duration_seconds IS NULL OR duration_seconds >= 0",
                         name="ck_after_sale_result_duration"),
         Index("ix_after_sale_result_run_status", "run_id", "status"),
+    )
+
+
+class AfterSaleRefundTracking(Base):
+    """退款跟踪：一个退款单一行，按 refund_bill_id 唯一。
+
+    与「提交结果」的分工是——提交结果＝我提交了什么（不可变）；本表＝平台后来怎么
+    处理（每次只读回访覆盖更新）。已退款/已拒绝为终态，回访侧不再扫，行冻结。
+    """
+
+    __tablename__ = "after_sale_refund_tracking"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    refund_bill_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    order_no: Mapped[str] = mapped_column(String(32), nullable=False)
+    environment_serial: Mapped[str | None] = mapped_column(String(64))
+    store_name: Mapped[str | None] = mapped_column(String(128))
+    phase: Mapped[str | None] = mapped_column(String(24))
+    phase_label: Mapped[str | None] = mapped_column(String(24))
+    countdown: Mapped[str | None] = mapped_column(String(24))
+    refund_account: Mapped[str | None] = mapped_column(String(40))
+    amount: Mapped[str | None] = mapped_column(String(24))
+    timeline: Mapped[str | None] = mapped_column(Text)
+    last_status: Mapped[str | None] = mapped_column(String(16))
+    last_error: Mapped[str | None] = mapped_column(String(300))
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(),
+        onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "refund_bill_id",
+                         name="uq_after_sale_track_tenant_bill"),
+        Index("ix_after_sale_track_tenant_phase", "tenant_id", "phase"),
+        Index("ix_after_sale_track_tenant_checked", "tenant_id", "checked_at"),
     )

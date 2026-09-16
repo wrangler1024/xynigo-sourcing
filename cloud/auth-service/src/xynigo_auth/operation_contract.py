@@ -1151,3 +1151,59 @@ class AfterSaleClaimScreenshot(BaseModel):
     contentType: str = Field(default="image/jpeg", max_length=64)
     size: int | None = Field(default=None, ge=0)
 
+
+
+class AfterSaleTrackItem(BaseModel):
+    """One refund bill to revisit (read-only) inside a tracking task."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    environmentSerial: str = Field(min_length=1, max_length=64)
+    orderNo: str = Field(min_length=1, max_length=32)
+    refundBillId: str = Field(min_length=1, max_length=32)
+    storeName: str = Field(default="", max_length=128)
+
+
+class AfterSaleTrackCreateBody(BaseModel):
+    """Safe cloud request for one read-only refund tracking task."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    idempotencyKey: str = Field(min_length=8, max_length=128,
+                                pattern=SAFE_KEY_RE)
+    executorId: uuid.UUID
+    browserMode: Literal["headless", "visible"] = "visible"
+    items: list[AfterSaleTrackItem] = Field(min_length=1, max_length=500)
+
+    @field_validator("items")
+    @classmethod
+    def unique_bills(cls, value):
+        bills = [item.refundBillId for item in value]
+        if len(bills) != len(set(bills)):
+            raise ValueError("同一批次内 refundBillId 不能重复")
+        return value
+
+
+class AfterSaleTrackRow(BaseModel):
+    """One refund bill row inside tracking progress / snapshot.
+
+    extra=forbid：闭集。刻意不含 timeline——平台时间轴原文只在执行器侧保留，
+    跟随导出取用，不占每轮进度上报的体积。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    refundBillId: str = Field(min_length=1, max_length=32)
+    orderNo: str = Field(default="", max_length=32)
+    environmentSerial: str = Field(default="", max_length=64)
+    storeName: str = Field(default="", max_length=128)
+    status: AfterSaleRowStatus
+    phase: str = Field(default="", max_length=24)
+    phaseLabel: str = Field(default="", max_length=24)
+    countdown: str = Field(default="", max_length=24)
+    refundAccount: str = Field(default="", max_length=40)
+    amount: str = Field(default="", max_length=24)
+    checkedAt: str = Field(default="", max_length=40)
+    note: str | None = Field(default=None, max_length=200)
+    errorSummary: str | None = Field(default=None, max_length=300)
+    durationSeconds: int | None = Field(default=None, ge=0, le=86_400_000)
