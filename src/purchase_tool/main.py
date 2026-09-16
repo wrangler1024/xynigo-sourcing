@@ -49,6 +49,8 @@ from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, unquote
 
+from .concurrency import require_concurrency, normalize_concurrency
+
 from . import __version__
 from .buyer_library import BuyerLibraryJob, DatabaseBuyerLibraryService
 from .buyer_ledger_sync import validate_unified_schema
@@ -389,7 +391,7 @@ def default_config():
         'purchaseTag': mx_tag,
         'purchaseTags': {'MX': mx_tag, 'US': us_tag},
         'proxyLink': os.environ.get('XYNIGO_PROXY_LINK', ''),
-        'envCreateWorkers': 5,
+        'envCreateWorkers': 2,
         'safeParallelTasks': True,
         'queryBrowserMode': 'headless',
         'queryAllowOpenEnvironment': False,
@@ -449,6 +451,8 @@ def effective_proxy_link(cfg):
 def normalize_purchase_assistant_profiles(cfg):
     """Migrate the legacy single target into two non-public source profiles."""
     cfg = dict(cfg or {})
+    for key in ('concurrency', 'envCreateWorkers'):
+        cfg[key] = normalize_concurrency(cfg.get(key))
     mode = str(cfg.get('purchaseAssistantSourceMode') or '').strip().lower()
     if mode not in {'personal', 'team'}:
         mode = 'team'
@@ -703,23 +707,14 @@ def updated_config(old_cfg, body):
         raise ValueError('端口必须是 1-65535 的整数') from exc
     if not 1 <= cfg['hubPort'] <= 65535 or not 1 <= cfg['serverPort'] <= 65535:
         raise ValueError('端口必须是 1-65535 的整数')
-    try:
-        cfg['concurrency'] = max(1, min(5, int(cfg.get('concurrency', 2))))
-    except (TypeError, ValueError):
-        cfg['concurrency'] = 2
+    for key in ('concurrency', 'envCreateWorkers'):
+        cfg[key] = (require_concurrency(body[key]) if key in body
+                    else normalize_concurrency(cfg.get(key)))
     try:
         cfg['verifySampleCount'] = max(
             0, min(10, int(cfg.get('verifySampleCount', 3))))
     except (TypeError, ValueError):
         cfg['verifySampleCount'] = 3
-    if 'envCreateWorkers' in body:
-        try:
-            workers = int(body.get('envCreateWorkers'))
-        except (TypeError, ValueError) as exc:
-            raise ValueError('模块三建环境并发数必须是 1-10 的整数') from exc
-        if not 1 <= workers <= 10:
-            raise ValueError('模块三建环境并发数必须是 1-10 的整数')
-        cfg['envCreateWorkers'] = workers
     if 'safeParallelTasks' in body:
         if not isinstance(body.get('safeParallelTasks'), bool):
             raise ValueError('安全并行模式必须是布尔值')
@@ -794,10 +789,11 @@ def updated_executor_config(old_cfg, body):
                 if key in CONFIG_FIELDS})
     integer_ranges = {
         'hubPort': (1, 65535),
-        'concurrency': (1, 5),
-        'envCreateWorkers': (1, 10),
         'verifySampleCount': (0, 10),
     }
+    for key in ('concurrency', 'envCreateWorkers'):
+        cfg[key] = (require_concurrency(body[key]) if key in body
+                    else normalize_concurrency(cfg.get(key)))
     for key, (minimum, maximum) in integer_ranges.items():
         raw = body[key] if key in body else cfg.get(key, defaults[key])
         try:
@@ -1522,11 +1518,7 @@ class AppState(object):
             str(item or '').strip() for item in self.hub_groups()
             if str(item or '').strip()
         })
-        try:
-            configured_workers = max(
-                1, min(10, int(self.cfg.get('envCreateWorkers') or 5)))
-        except (TypeError, ValueError):
-            configured_workers = 5
+        configured_workers = normalize_concurrency(self.cfg.get('envCreateWorkers'))
         preflight = {}
         for site in ('MX', 'US'):
             try:
@@ -2129,11 +2121,7 @@ def environment_worker_policy(cfg):
     for audit while the effective value is the reliability boundary.
     """
     cfg = dict(cfg or {})
-    try:
-        configured = max(
-            1, min(10, int(cfg.get('envCreateWorkers') or 5)))
-    except (TypeError, ValueError):
-        configured = 5
+    configured = normalize_concurrency(cfg.get('envCreateWorkers'))
     cap = 2 if bool(cfg.get('safeParallelTasks')) else 3
     return configured, min(configured, cap)
 
@@ -4622,11 +4610,11 @@ class Handler(BaseHTTPRequestHandler):
                     clean.append(text)
                 browser_mode = str(
                     body.get('browserMode') or 'headless')
-                concurrency = body.get('concurrency')
+                concurrency = body.get('concurrency', 2)
                 result = STATE.store_finance.start_batch(
                     clean,
                     'visible' if browser_mode == 'visible' else 'headless',
-                    concurrency=int(concurrency) if concurrency else None)
+                    concurrency=concurrency)
                 self._json(result)
             elif path == '/api/store-finance/lookup':
                 identifiers = body.get('identifiers')
@@ -4911,7 +4899,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/resources/proxies/check/start':
                 count = STATE.resources.start_proxy_checks(
                     body.get('assetIds'),
-                    concurrency=body.get('concurrency', 10),
+                    concurrency=body.get('concurrency', 2),
                     timeout=body.get('timeoutSec', 8))
                 self._json({'started': True, 'count': count}, 202)
             elif path == '/api/resources/proxies/check/stop':

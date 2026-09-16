@@ -646,20 +646,20 @@
   }
   #storeFinancePanel .card-title .table-actions { margin-left: auto; }
   #storeFinancePanel .business-summary { display: grid; grid-template-columns: repeat(8, minmax(0,1fr)); }
-  #storeFinancePanel .if-switch{width:32px;height:18px;padding:0;border:0;border-radius:20px;background:#c5ced8;cursor:pointer;position:relative;transition:background .15s;flex:none}
-  #storeFinancePanel .if-switch:before{content:"";position:absolute;width:14px;height:14px;top:2px;left:2px;border-radius:50%;background:#fff;box-shadow:0 1px 3px #0002;transition:transform .15s}
-  #storeFinancePanel .if-switch[aria-checked="true"]{background:#078487}
-  #storeFinancePanel .if-switch[aria-checked="true"]:before{transform:translateX(14px)}
-  #storeFinancePanel .if-switch:focus-visible{outline:2px solid #078487;outline-offset:3px}
-  #storeFinancePanel .if-switch:disabled{opacity:.5;cursor:not-allowed}
-  #storeFinancePanel .if-row{font-size:12px;font-weight:600;color:var(--navy-700)}
+  :is(#storeFinancePanel, #afterSalePanel) .if-switch{width:32px;height:18px;padding:0;border:0;border-radius:20px;background:#c5ced8;cursor:pointer;position:relative;transition:background .15s;flex:none}
+  :is(#storeFinancePanel, #afterSalePanel) .if-switch:before{content:"";position:absolute;width:14px;height:14px;top:2px;left:2px;border-radius:50%;background:#fff;box-shadow:0 1px 3px #0002;transition:transform .15s}
+  :is(#storeFinancePanel, #afterSalePanel) .if-switch[aria-checked="true"]{background:#078487}
+  :is(#storeFinancePanel, #afterSalePanel) .if-switch[aria-checked="true"]:before{transform:translateX(14px)}
+  :is(#storeFinancePanel, #afterSalePanel) .if-switch:focus-visible{outline:2px solid #078487;outline-offset:3px}
+  :is(#storeFinancePanel, #afterSalePanel) .if-switch:disabled{opacity:.5;cursor:not-allowed}
+  :is(#storeFinancePanel, #afterSalePanel) .if-row{font-size:12px;font-weight:600;color:var(--navy-700)}
   #storeFinancePanel .xyp2-help{font-size:11px;color:var(--navy-500);margin-top:8px}
   #storeFinancePanel .procurement-pagination-copy{font-size:11px;color:var(--navy-500)}
   #storeFinancePanel .action-row .resource-state{margin-top:0;padding:8px 12px;font-size:11px;color:var(--navy-500)}
   #storeFinancePanel .sf-filter-bar .hint{font-size:11px;color:var(--navy-500)}
-  #storeFinancePanel .chip[data-sf-conc]{margin-right:5px}
-  #storeFinancePanel .chip[data-sf-conc]:last-of-type{margin-right:0}
-  #storeFinancePanel .chip[data-sf-conc].active{background:var(--rhino-600);border-color:var(--rhino-600);color:#fff}
+  :is(#storeFinancePanel, #afterSalePanel) .chip:is([data-sf-conc], [data-as-concurrency]){margin-right:5px}
+  :is(#storeFinancePanel, #afterSalePanel) .chip:is([data-sf-conc], [data-as-concurrency]):last-of-type{margin-right:0}
+  :is(#storeFinancePanel, #afterSalePanel) .chip:is([data-sf-conc], [data-as-concurrency]).active{background:var(--rhino-600);border-color:var(--rhino-600);color:#fff}
   /* 进度文本与物流查询 #progressText 完全同款 */
   #storeFinancePanel #sfProgressText{font-size:11px;color:var(--navy-500);min-width:420px;text-align:right;white-space:nowrap}
 
@@ -675,13 +675,6 @@
   #afterSalePanel .as-tl i.cur { background:var(--rhino-600); box-shadow:0 0 0 3px rgba(32,174,179,.18); }
   #afterSalePanel .as-tl i.bad { background:#d9534f; box-shadow:0 0 0 3px rgba(217,83,79,.16); }
   #afterSalePanel .as-tl-label { margin-left:8px; font-size:12px; font-weight:700; white-space:nowrap; }
-  .as-runtime-controls label { display:inline-flex; align-items:center; gap:8px; cursor:pointer; }
-  .as-runtime-controls input[type="checkbox"] { appearance:none; width:32px; height:18px; margin:0; border:0; border-radius:20px; background:#c5ced8; position:relative; cursor:pointer; flex:none; }
-  .as-runtime-controls input[type="checkbox"]::before { content:""; position:absolute; width:14px; height:14px; top:2px; left:2px; border-radius:50%; background:#fff; box-shadow:0 1px 3px #0002; }
-  .as-runtime-controls input:checked { background:#078487; }
-  .as-runtime-controls input:checked::before { transform:translateX(14px); }
-  .as-runtime-controls input:focus-visible { outline:2px solid #078487; outline-offset:3px; }
-  .as-runtime-controls input:disabled { opacity:.5; cursor:not-allowed; }
   /* 运行状态条：sticky 压在工作台滚动区（main）顶部，视觉上落在顶栏下方 */
   #afterSalePanel #asRunStrip { position: sticky; top: 8px; z-index: 6; }
   #afterSalePanel #asRunStrip .query-phase-banner { margin-bottom: 0; flex-wrap: wrap; }
@@ -2172,7 +2165,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
             <span class="hint">不弹浏览器窗口，异常回退有头并截图</span>
           </span>
           <span class="if-row">并发
-            <button class="chip active" data-sf-conc="2">2</button><button class="chip" data-sf-conc="3">3</button><button class="chip" data-sf-conc="5">5</button>
+            <button class="chip active" data-sf-conc="2" aria-pressed="true">2</button><button class="chip" data-sf-conc="3" aria-pressed="false">3</button><button class="chip" data-sf-conc="5" aria-pressed="false">5</button>
           </span>
         </div>
       </div>
@@ -2271,11 +2264,12 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
       <div class="resource-state" id="asTypeHint" style="margin:10px 0 12px"></div>
       <div class="query-phase-banner" id="asPlanBanner" hidden style="margin-top:12px"></div>
       <div class="as-runtime-controls" style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin:12px 0">
-        <label class="if-row" for="asVisibleBrowser"><input type="checkbox" role="switch" id="asVisibleBrowser">显示浏览器窗口</label>
-        <span class="hint">默认无头运行</span>
-        <div role="group" aria-label="售后环境并发数" style="display:flex;align-items:center;gap:6px">
-          <span>环境并发</span>
-          <button class="chip" type="button" data-as-concurrency="1" aria-pressed="false">1</button>
+        <span class="if-row"><span id="asHeadlessLabel">无头模式</span>
+          <button type="button" class="if-switch" id="asHeadless" role="switch" aria-checked="true" aria-labelledby="asHeadlessLabel"></button>
+          <span class="hint">不弹浏览器窗口；关闭后显示窗口</span>
+        </span>
+        <div class="if-row" role="group" aria-label="售后环境并发数">
+          <span>并发</span>
           <button class="chip active" type="button" data-as-concurrency="2" aria-pressed="true">2</button>
           <button class="chip" type="button" data-as-concurrency="3" aria-pressed="false">3</button>
           <button class="chip" type="button" data-as-concurrency="5" aria-pressed="false">5</button>
@@ -2962,10 +2956,10 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
     </section>
 
     <section class="card">
-      <div class="card-title">本机批量检测 <span class="legend">默认并发 10、超时 8 秒、失败自动复测 1 次；同 IP 只检测一次</span></div>
+      <div class="card-title">本机批量检测 <span class="legend">默认并发 2、超时 8 秒、失败自动复测 1 次；同 IP 只检测一次</span></div>
       <div class="proxy-check-bar">
         <div><div class="progress"><div class="bar" id="proxyCheckBar"></div></div><div class="hint" id="proxyCheckState" style="margin-top:7px">尚未开始检测</div></div>
-        <div class="proxy-check-settings"><div class="field"><label>并发数（1-20）</label><input class="env-text" id="proxyCheckConcurrency" inputmode="numeric" value="10"></div><div class="field"><label>超时秒数（3-30）</label><input class="env-text" id="proxyCheckTimeout" inputmode="numeric" value="8"></div></div>
+        <div class="proxy-check-settings"><div class="field"><label>并发数</label><select class="env-text" id="proxyCheckConcurrency"><option value="2">2</option><option value="3">3</option><option value="5">5</option></select></div><div class="field"><label>超时秒数（3-30）</label><input class="env-text" id="proxyCheckTimeout" inputmode="numeric" value="8"></div></div>
         <div class="table-actions"><button class="btn primary" id="btnProxyCheckSelected" type="button">检测已选</button><button class="btn" id="btnProxyCheckFiltered" type="button">检测当前筛选</button></div>
         <button class="btn danger" id="btnProxyCheckStop" type="button" disabled>停止</button>
       </div>
@@ -3070,15 +3064,15 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
           <input type="text" id="cfgPort" value="6873" inputmode="numeric">
         </div>
         <div class="settings-field">
-          <label>并发查询数（1-5）</label>
-          <input type="text" id="cfgConcurrency" value="2" inputmode="numeric">
+          <label>并发查询数</label>
+          <select id="cfgConcurrency"><option value="2">2</option><option value="3">3</option><option value="5">5</option></select>
         </div>
         <div class="settings-field full">
           <label>跨模块任务模式</label>
           <div class="query-col-checks">
             <label><input type="checkbox" id="cfgSafeParallel"> 开启安全并行：允许物流查询与一种环境创建任务同时运行</label>
           </div>
-          <div class="hint">同一环境仍禁止双开；注册、两个建环境批次和两个物流查询批次继续互斥。开启后建环境实际并发自动封顶为 3，首次发布默认关闭。</div>
+          <div class="hint">同一环境仍禁止双开；注册、两个建环境批次和两个物流查询批次继续互斥。开启后建环境实际并发封顶为 2，关闭时封顶为 3。</div>
         </div>
         <div class="settings-field full">
           <label>模块一 · 查询结果隐藏字段</label>
@@ -3100,8 +3094,8 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
           <div class="hint">通过 HubStudio Local API 无头、只读启动环境进程，页面不会弹出真实环境窗口。</div>
         </div>
         <div class="settings-field">
-          <label>建环境并发数（1-10）</label>
-          <input type="text" id="cfgEnvWorkers" value="5" inputmode="numeric">
+          <label>建环境并发数</label>
+          <select id="cfgEnvWorkers"><option value="2">2</option><option value="3">3</option><option value="5">5</option></select>
         </div>
         <div class="settings-field">
           <label>墨西哥站 HubStudio 采购分组</label>
@@ -4727,11 +4721,15 @@ function sfWaitLookup(taskId) {
 }
 document.querySelectorAll('[data-sf-conc]').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('[data-sf-conc]').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
+    if (SF_STATE.running) return;
+    document.querySelectorAll('[data-sf-conc]').forEach(b => {
+      b.classList.toggle('active', b === btn);
+      b.setAttribute('aria-pressed', String(b === btn));
+    });
   });
 });
 $('sfHeadless').onclick = () => {
+  if (SF_STATE.running) return;
   const on = $('sfHeadless').getAttribute('aria-checked') === 'true';
   $('sfHeadless').setAttribute('aria-checked', String(!on));
 };
@@ -4780,7 +4778,12 @@ function sfPaintProgress(data) {
   $('sfProgressText').classList.toggle('query-outcome-complete',
     !!terminal && bad === 0);
 }
+function sfSyncRuntimeControls() {
+  $('sfHeadless').disabled = SF_STATE.running;
+  document.querySelectorAll('[data-sf-conc]').forEach(b => { b.disabled = SF_STATE.running; });
+}
 function sfSetPhase(title, text, spin) {
+  sfSyncRuntimeControls();
   $('sfPhaseBanner').hidden = false;
   $('sfPhaseSpin').hidden = !spin;
   $('sfPhaseTitle').textContent = title;
@@ -4958,6 +4961,7 @@ async function sfPoll() {
       $('sfExport').disabled = false; $('sfExportMenuBtn').disabled = false;
       $('sfRetryFail').disabled = !bad;
       SF_STATE.running = false;
+      sfSyncRuntimeControls();
       SF_STATE.stopRequested = false;
       if (bad && SF_STATE.retryCount < 2
           && ['completed', 'partial_failure'].includes(data.status)) {
@@ -5169,16 +5173,21 @@ const AS_STATE = {
 };
 function asRuntimeOptions() {
   return {
-    browserMode: $('asVisibleBrowser').checked ? 'visible' : 'headless',
+    browserMode: $('asHeadless').getAttribute('aria-checked') === 'true' ? 'headless' : 'visible',
     concurrency: Number(document.querySelector('[data-as-concurrency].active')?.dataset.asConcurrency || 2),
   };
 }
 function asSyncRuntimeControls() {
-  $('asVisibleBrowser').disabled = AS_STATE.running;
+  $('asHeadless').disabled = AS_STATE.running;
   document.querySelectorAll('[data-as-concurrency]').forEach(button => {
     button.disabled = AS_STATE.running;
   });
 }
+$('asHeadless').onclick = () => {
+  if (AS_STATE.running) return;
+  const control = $('asHeadless');
+  control.setAttribute('aria-checked', String(control.getAttribute('aria-checked') !== 'true'));
+};
 document.querySelectorAll('[data-as-concurrency]').forEach(button => {
   button.onclick = () => {
     if (AS_STATE.running) return;
@@ -9236,7 +9245,7 @@ async function pollProxyChecks() {
 async function startProxyChecks(assetIds) {
   if (!assetIds.length) { toast('请先选择至少一个代理 IP'); return; }
   if (assetIds.length > 200) { toast('单批最多检测 200 个代理 IP，请缩小筛选范围'); return; }
-  const concurrency = Number($('proxyCheckConcurrency').value || 10);
+  const concurrency = Number($('proxyCheckConcurrency').value || 2);
   const timeoutSec = Number($('proxyCheckTimeout').value || 8);
   try {
     const result = await api('/api/resources/proxies/check/start', {
@@ -15335,14 +15344,14 @@ async function loadLocalSettingsPage() {
     const cfg = await api('/api/config');
     localSettingsConfigRevision = String(cfg.configRevision || '');
     $('cfgPort').value = cfg.hubPort || 6873;
-    $('cfgConcurrency').value = cfg.concurrency || 2;
+    $('cfgConcurrency').value = ([2, 3, 5].includes(cfg.concurrency) ? cfg.concurrency : 2);
     safeParallelTasks = cfg.safeParallelTasks !== false;
     $('cfgSafeParallel').checked = safeParallelTasks;
     setHiddenQueryColumns(cfg.hiddenQueryColumns || []);
     $('cfgHideEnvName').checked = hiddenQueryColumns.has('envName');
     $('cfgHideIp').checked = hiddenQueryColumns.has('ip');
     $('cfgEnvVerify').value = String(cfg.verifySampleCount ?? 3);
-    $('cfgEnvWorkers').value = cfg.envCreateWorkers == null ? 5 : cfg.envCreateWorkers;
+    $('cfgEnvWorkers').value = [2, 3, 5].includes(cfg.envCreateWorkers) ? cfg.envCreateWorkers : 2;
     const rawPlan = cfg.importBuyerPlan || '1:新刚';
     $('cfgEnvAssign').value = planTemplateIsValid(rawPlan) ? rawPlan : '1:新刚';
     const purchaseTags = cfg.purchaseTags || {MX:cfg.purchaseTag || '', US:''};
@@ -15542,11 +15551,11 @@ $('btnCfgSave').onclick = async () => {
   const port = parseInt($('cfgPort').value.trim(), 10);
   if (!port || port < 1 || port > 65535) { toast('端口无效，请输入 1-65535 的数字'); return; }
   const conc = parseInt($('cfgConcurrency').value.trim(), 10);
-  if (!conc || conc < 1 || conc > 5) { toast('并发数请填 1-5 的整数（建议 2-3）'); return; }
+  if (![2, 3, 5].includes(conc)) { toast('并发数请选择 2、3 或 5'); return; }
   const verifyCount = Number($('cfgEnvVerify').value);
   if (!Number.isInteger(verifyCount) || verifyCount < 0 || verifyCount > 10) { toast('抽检数请填写 0–10 的整数'); return; }
   const envWorkers = parseInt($('cfgEnvWorkers').value.trim(), 10);
-  if (Number.isNaN(envWorkers) || envWorkers < 1 || envWorkers > 10) { toast('模块三建环境并发数请填 1-10'); return; }
+  if (![2, 3, 5].includes(envWorkers)) { toast('建环境并发数请选择 2、3 或 5'); return; }
   const importBuyerPlan = $('cfgEnvAssign').value.trim();
   if (!importBuyerPlan) { toast('模块三采购员分配模板不能为空'); return; }
   if (!planTemplateIsValid(importBuyerPlan)) { toast(`分配模板格式错误或含名单外采购员（名单：${envBuyers.map(b => `${b.name}-${b.code}`).join(' / ')}）`); return; }

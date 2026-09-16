@@ -408,8 +408,8 @@ class AfterSaleClaimer(object):
     # ---- 批次编排 ----
 
     def _start(self, mode, items, browser_mode, headless=None, concurrency=2):
-        if type(concurrency) is not int or not 1 <= concurrency <= 5:
-            raise ValueError('售后环境并发数必须为 1 到 5 的整数')
+        if type(concurrency) is not int or concurrency not in (2, 3, 5):
+            raise ValueError('售后环境并发数必须为 2、3、5 中 的整数')
         if browser_mode not in (None, 'headless', 'visible'):
             raise ValueError('售后浏览器模式无效')
         with self._lock:

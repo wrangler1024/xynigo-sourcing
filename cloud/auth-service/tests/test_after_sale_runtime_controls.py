@@ -23,7 +23,7 @@ def test_runtime_defaults_and_strict_bounds(model, path, scope):
     body = dict(scope, idempotencyKey='synthetic-runtime', executorId=str(uuid.uuid4()))
     parsed = model.model_validate(body)
     assert parsed.browserMode == 'headless' and parsed.concurrency == 2
-    for invalid in (0,6,True,'2',2.5):
+    for invalid in (0,1,4,6,True,'2',2.5):
         with pytest.raises(ValidationError):
             model.model_validate(dict(body, concurrency=invalid))
     with pytest.raises(ValidationError):

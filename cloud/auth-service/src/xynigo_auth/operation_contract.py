@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 import uuid
 
 from pydantic import (
+    AfterValidator,
     AliasChoices,
     BaseModel,
     ConfigDict,
@@ -15,6 +16,15 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+
+def _concurrency_choice(value: int) -> int:
+    if value not in (2, 3, 5):
+        raise ValueError("concurrency must be 2, 3 or 5")
+    return value
+
+
+ConcurrencyChoice = Annotated[int, Field(strict=True), AfterValidator(_concurrency_choice)]
 
 
 SAFE_KEY_RE = r"^[A-Za-z0-9._:-]+$"
@@ -905,7 +915,7 @@ class StoreFinanceRunCreateBody(BaseModel):
     executorId: uuid.UUID
     queryMode: Literal["initial", "failed_retry"] = "initial"
     browserMode: Literal["headless", "visible"] = "headless"
-    concurrency: int = Field(default=2, ge=1, le=5)
+    concurrency: ConcurrencyChoice = 2
     # failed_retry 时指向被补采的源 Run：快照/导出合并源行，成功数据不丢
     sourceRunId: uuid.UUID | None = None
     environmentSerials: list[str] = Field(min_length=1, max_length=300)
@@ -1057,7 +1067,7 @@ class AfterSaleScanCreateBody(BaseModel):
                                 pattern=SAFE_KEY_RE)
     executorId: uuid.UUID
     browserMode: Literal["headless", "visible"] = "headless"
-    concurrency: int = Field(default=2, ge=1, le=5, strict=True)
+    concurrency: ConcurrencyChoice = 2
     environmentSerials: list[str] = Field(min_length=1, max_length=300)
 
     @field_validator("environmentSerials")
@@ -1101,7 +1111,7 @@ class AfterSaleClaimRunCreateBody(BaseModel):
                                 pattern=SAFE_KEY_RE)
     executorId: uuid.UUID
     browserMode: Literal["headless", "visible"] = "headless"
-    concurrency: int = Field(default=2, ge=1, le=5, strict=True)
+    concurrency: ConcurrencyChoice = 2
     items: list[AfterSaleClaimItem] = Field(min_length=1, max_length=500)
     # 重提来源批次（③ 补提失败 / 历史详情重提）：只用于展示「重提自哪一批」，
     # 不参与幂等（幂等仍只看 idempotencyKey 与 payload_hash）。
@@ -1178,7 +1188,7 @@ class AfterSaleTrackCreateBody(BaseModel):
                                 pattern=SAFE_KEY_RE)
     executorId: uuid.UUID
     browserMode: Literal["headless", "visible"] = "headless"
-    concurrency: int = Field(default=2, ge=1, le=5, strict=True)
+    concurrency: ConcurrencyChoice = 2
     items: list[AfterSaleTrackItem] = Field(min_length=1, max_length=500)
 
     @field_validator("items")

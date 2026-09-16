@@ -1427,7 +1427,7 @@ class BatchEnvOrchestrator(_EnvironmentLookupMixin):
     def __init__(self, hub, purchase_tag, proxy_link, site='MX',
                  purchase_date=None, state_store=None,
                  write_interval=0.3, sleep_fn=time.sleep, rng=None,
-                 on_progress=None, max_workers=5, stop_event=None,
+                 on_progress=None, max_workers=2, stop_event=None,
                  reject_existing_account_refs=None):
         self.hub = hub
         self.site = normalize_env_site(site)
@@ -1440,8 +1440,8 @@ class BatchEnvOrchestrator(_EnvironmentLookupMixin):
         self.rng = rng or random
         self.on_progress = on_progress
         self.stop_event = stop_event or threading.Event()
-        # 并行建环境：纯 Local API 路径（不开浏览器窗口），默认 5、
-        # 1-10 可调；模块一开窗口场景的并发结论不适用于此处。
+        # 并行建环境：纯 Local API 路径（不开浏览器窗口），默认 2、
+        # 由运行配置的 2 / 3 / 5 档位及安全上限决定；模块一开窗口场景的并发结论不适用于此处。
         self.max_workers = max(1, min(10, int(max_workers)))
         self._persist_lock = threading.Lock()
         self._environment_index = EnvironmentSnapshotIndex()
@@ -1997,7 +1997,7 @@ class BackupEnvOrchestrator(_EnvironmentLookupMixin):
 
     def __init__(self, hub, purchase_tag, proxy_link, site='MX',
                  write_interval=0.3, sleep_fn=time.sleep, rng=None,
-                 on_progress=None, max_workers=5, stop_event=None):
+                 on_progress=None, max_workers=2, stop_event=None):
         self.hub = hub
         self.site = normalize_env_site(site)
         self.purchase_tag = validate_purchase_tag(purchase_tag)

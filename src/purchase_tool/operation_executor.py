@@ -409,12 +409,15 @@ class LocalOperationExecutor(object):
         if len(serials) > 300:
             raise OperationExecutionError(
                 'operation_payload_invalid', '单批巡检店铺数量超出上限')
+        concurrency = payload.get('concurrency', 2)
+        if type(concurrency) is not int or concurrency not in (2, 3, 5):
+            raise OperationExecutionError(
+                'operation_payload_invalid', '并发数必须是 2、3、5 中的整数')
         browser_mode = str(payload.get('browserMode') or 'headless')
         start_body = {
             'serials': serials,
             'browserMode': browser_mode,
-            'concurrency': max(1, min(5, int(payload.get('concurrency')
-                                              or 2))),
+            'concurrency': concurrency,
             'operationRunKey': run_key,
         }
         self._request('POST', '/api/store-finance/inspect', start_body)
@@ -735,8 +738,8 @@ class LocalOperationExecutor(object):
                 'operation_payload_invalid', '单批售后扫描环境数量超出上限')
         browser_mode = str(payload.get('browserMode') or 'headless')
         concurrency = payload.get('concurrency', 2)
-        if type(concurrency) is not int or not 1 <= concurrency <= 5:
-            raise OperationExecutionError('operation_payload_invalid', '售后环境并发数必须为 1 到 5')
+        if type(concurrency) is not int or concurrency not in (2, 3, 5):
+            raise OperationExecutionError('operation_payload_invalid', '售后环境并发数必须为 2、3、5 中的整数')
         self._request('POST', '/api/after-sale/scan', {
             'serials': serials,
             'browserMode': browser_mode, 'concurrency': concurrency,
@@ -815,8 +818,8 @@ class LocalOperationExecutor(object):
                 'operation_payload_invalid', '单批售后提交订单数量超出上限')
         browser_mode = str(payload.get('browserMode') or 'headless')
         concurrency = payload.get('concurrency', 2)
-        if type(concurrency) is not int or not 1 <= concurrency <= 5:
-            raise OperationExecutionError('operation_payload_invalid', '售后环境并发数必须为 1 到 5')
+        if type(concurrency) is not int or concurrency not in (2, 3, 5):
+            raise OperationExecutionError('operation_payload_invalid', '售后环境并发数必须为 2、3、5 中的整数')
         self._request('POST', '/api/after-sale/submit', {
             'items': clean,
             'browserMode': browser_mode, 'concurrency': concurrency,
@@ -1040,8 +1043,8 @@ class LocalOperationExecutor(object):
                 'operation_payload_invalid', '单批回访退款单数量超出上限')
         browser_mode = str(payload.get('browserMode') or 'headless')
         concurrency = payload.get('concurrency', 2)
-        if type(concurrency) is not int or not 1 <= concurrency <= 5:
-            raise OperationExecutionError('operation_payload_invalid', '售后环境并发数必须为 1 到 5')
+        if type(concurrency) is not int or concurrency not in (2, 3, 5):
+            raise OperationExecutionError('operation_payload_invalid', '售后环境并发数必须为 2、3、5 中的整数')
         self._request('POST', '/api/after-sale/track', {
             'items': clean, 'browserMode': browser_mode, 'concurrency': concurrency,
         })

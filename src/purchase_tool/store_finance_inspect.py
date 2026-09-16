@@ -33,6 +33,8 @@ import threading
 import time
 from datetime import datetime, timezone
 
+from .concurrency import require_concurrency, normalize_concurrency
+
 from .cdp import CdpClient, CdpError
 from .redaction import scrub_text
 
@@ -97,7 +99,7 @@ class StoreFinanceInspector(object):
     def __init__(self, hub, concurrency=2, headless=True, log=None,
                  stagger_seconds=1.5):
         self.hub = hub
-        self.concurrency = max(1, min(5, int(concurrency)))
+        self.concurrency = normalize_concurrency(concurrency)
         self._semaphore = threading.BoundedSemaphore(self.concurrency)
         self.headless = bool(headless)
         self._stagger = max(0.0, float(stagger_seconds))
@@ -192,15 +194,15 @@ class StoreFinanceInspector(object):
         matched_rows.sort(key=lambda r: r['storeName'])
         return {'matched': matched_rows, 'unmatched': unmatched}
 
-    def start_batch(self, serials, browser_mode=None, concurrency=None):
+    def start_batch(self, serials, browser_mode=None, concurrency=2):
         """重置状态并启动一批巡检；重复发起时拒绝并提示。"""
-        if concurrency is not None:
-            self.concurrency = max(1, min(5, int(concurrency)))
-            self._semaphore = threading.BoundedSemaphore(self.concurrency)
+        concurrency = require_concurrency(concurrency)
         with self._lock:
             if self._running:
                 return {'running': True, 'total': len(self._rows),
                         'error': '已有巡检批次运行中'}
+            self.concurrency = concurrency
+            self._semaphore = threading.BoundedSemaphore(concurrency)
             self._running = True
             self._rows = {}
             self._screenshots = {}

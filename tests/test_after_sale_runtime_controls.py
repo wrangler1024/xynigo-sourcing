@@ -20,7 +20,7 @@ def test_batch_resolves_explicit_browser_mode(mode, browser, expected):
     callback.assert_called_once_with([], expected)
 
 
-@pytest.mark.parametrize('value', [0, 6, True, '2', 2.5, None])
+@pytest.mark.parametrize('value', [0, 1, 4, 6, True, '2', 2.5, None])
 def test_invalid_concurrency_never_starts_a_batch(value):
     claimer = AfterSaleClaimer(None)
     with pytest.raises(ValueError):
@@ -138,7 +138,7 @@ def test_headless_request_overrides_legacy_visible_config():
     claimer._run_scan.assert_called_once_with([], True)
 
 
-@pytest.mark.parametrize('concurrency', [1, 2, 3, 5])
+@pytest.mark.parametrize('concurrency', [2, 3, 5])
 def test_selected_concurrency_is_the_worker_limit(concurrency):
     claimer = AfterSaleClaimer(None)
     claimer._concurrency = concurrency
@@ -169,7 +169,7 @@ def test_web_runtime_controls_use_shared_settings_for_all_three_tasks():
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-@pytest.mark.parametrize('concurrency', [1, 2, 3, 5])
+@pytest.mark.parametrize('concurrency', [2, 3, 5])
 def test_start_captures_selected_limit_for_worker(concurrency):
     claimer = AfterSaleClaimer(None)
     seen = []
