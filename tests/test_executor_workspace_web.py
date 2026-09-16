@@ -835,8 +835,46 @@ class AfterSaleClaimWiringTests(unittest.TestCase):
         self.assertIn('${esc(AFTER_SALE_TYPE)}', html)
         self.assertEqual(html.count('AFTER_SALE_TYPE)'), 2)
         # 表头列数与空态 colspan 必须同步（①字段+②③各一列）
-        self.assertIn('colspan="10"', html)
-        self.assertIn('colspan="9"', html)
+        self.assertIn('colspan="11"', html)
+
+    def test_all_three_tables_have_header_row_cell_parity(self):
+        """三张表的表头列数必须等于行模板的单元格数。
+
+        踩过两次：改表结构时漏列/丢节点 id，导致整列错位（③ 曾把退款单号显示在
+        商家名列上）。这里直接数表头 th 与行模板 td（含 asThumbCell / asClaimPill /
+        timelineCell 这类自带 td 的辅助函数），比断言某个 colspan 更能防回归。
+        """
+        html = self._read()
+        for table_id in ('asScanTable', 'asClaimTable', 'asTrackTable'):
+            block = html[html.index(f'id="{table_id}"'):]
+            block = block[:block.index('</table>')]
+            header = block.count('<th') - block.count('<thead')
+            self.assertGreater(header, 0, table_id)
+        # ③ 的行模板：显式 td + 两个自带 td 的辅助函数，必须与表头 11 相等
+        claim_block = html[html.index('id="asClaimTable"'):]
+        claim_block = claim_block[:claim_block.index('</table>')]
+        self.assertEqual(claim_block.count('<th') - claim_block.count('<thead'), 11)
+        # 只数行模板本体（从 .map( 到 }).join），排除同函数里的空态字符串
+        tpl = html[html.index('AS_STATE.claimRows.map('):]
+        tpl = tpl[:tpl.index("}).join('')")]
+        cells = tpl.count('<td') + tpl.count('${asThumbCell')
+        self.assertEqual(cells, 11, '③ 行模板单元格数与表头不一致（会整列错位）')
+        # ④ 的行模板同理（含 timelineCell 自带 td）
+        track_block = html[html.index('id="asTrackTable"'):]
+        track_block = track_block[:track_block.index('</table>')]
+        self.assertEqual(track_block.count('<th') - track_block.count('<thead'), 10)
+        track_tpl = html[html.index('AS_STATE.trackRows.map('):]
+        track_tpl = track_tpl[:track_tpl.index("}).join('')")]
+        # ④ 的 timeline 是包在显式 <td> 里的，只额外算商品图那格
+        track_cells = track_tpl.count('<td') + track_tpl.count('${asThumbCell')
+        self.assertEqual(track_cells, 10, '④ 行模板单元格数与表头不一致')
+
+    def test_track_card_wired_to_real_endpoints(self):
+        html = self._read()
+        self.assertIn("cloudFormalExecutor('after.sale.track.v1')", html)
+        self.assertIn("'/v1/after-sale/track'", html)
+        self.assertIn("'/v1/after-sale/track/'", html)
+        self.assertIn("const AS_TL_ORDER = ['submitted', 'reviewing', 'processing', 'refunded']", html)
 
     def test_stop_routes_exist_for_both_phases(self):
         html = self._read()

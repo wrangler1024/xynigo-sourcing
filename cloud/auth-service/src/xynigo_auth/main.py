@@ -5266,9 +5266,12 @@ def create_app(
         session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
         authorization: Annotated[str | None, Header()] = None,
     ):
-        actor = authorize(
-            request, session, permission="assistant.access",
-            session_token=session_token, authorization=authorization,
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
             audit_action="assistant.after_sale.track.create",
         )
         tasks = executor_channel(session)
@@ -5308,9 +5311,12 @@ def create_app(
         session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
         authorization: Annotated[str | None, Header()] = None,
     ):
-        actor = authorize(
-            request, session, permission="assistant.access",
-            session_token=session_token, authorization=authorization,
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
             audit_action="assistant.after_sale.track.read",
         )
         task = session.scalar(
@@ -5322,11 +5328,7 @@ def create_app(
         )
         if task is None:
             raise HTTPException(status_code=404, detail="回访任务不存在")
-        payload = (task.payload_envelope or {}) if isinstance(
-            task.payload_envelope, dict) else {}
-        bills = [str(item.get("refundBillId") or "")
-                 for item in (payload.get("items") or [])
-                 if isinstance(item, dict)]
+        bills = executor_channel(session).after_sale_track_requested_bills(task)
         snapshot = after_sale_tracking_snapshot(session, actor.tenant.id, bills)
         return {"ok": True, "data": {
             "taskId": str(task.id), "status": task.status,

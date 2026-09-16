@@ -80,6 +80,7 @@ BUSINESS_TASK_TYPES = frozenset(
         "store.finance.lookup.v1",
         "after.sale.scan.v1",
         "after.sale.claim.v1",
+        "after.sale.track.v1",
         "environment.create-bound.v1",
         "environment.create-backup.v1",
         "environment.retry-row.v1",
@@ -188,6 +189,7 @@ PUBLIC_CONFIG_RESULT_KEYS = frozenset(
 BUSINESS_RESULT_KEYS = frozenset(
     {
         "runStatus",
+        "phaseCounts",
         "phase",
         "progressCompleted",
         "progressTotal",
@@ -1973,6 +1975,19 @@ class ExecutorChannelService:
         if not isinstance(serials, list):
             return []
         return [str(item) for item in serials if str(item or "").strip()]
+
+    def after_sale_track_requested_bills(self, task: ExecutorTask) -> list[str]:
+        """回访任务请求的退款单号；解密不可用时退化为空表（GET 不报错）。"""
+        try:
+            payload = self._request_payload(task)
+        except ExecutorServiceError:
+            return []
+        items = (payload.get("items") if isinstance(payload, dict) else None)
+        if not isinstance(items, list):
+            return []
+        return [str(item.get("refundBillId") or "")
+                for item in items if isinstance(item, dict)
+                and str(item.get("refundBillId") or "").strip()]
 
     def _request_payload(self, task: ExecutorTask) -> dict[str, Any]:
         """解密业务任务的请求载荷（与领取任务同源，只读不改状态）。"""

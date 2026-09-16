@@ -5084,7 +5084,7 @@ function asRenderClaimRows(rows) {
   AS_STATE.claimRows = rows || [];
   const tbody = $('asClaimRows');
   if (!AS_STATE.claimRows.length) {
-    tbody.innerHTML = '<tr><td colspan="9" class="hint" style="text-align:center; padding:22px;">提交后此处逐步展示每单结果。</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" class="hint" style="text-align:center; padding:22px;">提交后此处逐步展示每单结果。</td></tr>';
   } else {
     tbody.innerHTML = AS_STATE.claimRows.map(row => {
       const bad = !['ok'].includes(String(row.status || ''));
@@ -5094,7 +5094,6 @@ function asRenderClaimRows(rows) {
         <td style="font-weight:700; color:#078487; white-space:nowrap">${esc(AFTER_SALE_TYPE)}</td>
         <td class="sub-text">${esc(row.environmentSerial || '')}</td>
         <td class="sub-text">${esc(row.deliveredAt || '—')}</td>
-        <td style="font-weight:700; color:var(--navy-950)">${esc(row.storeName || '')}</td>
         <td>${asClaimPill(row.status)}</td>
         <td class="sub-text">${esc(row.refundBillId || '—')}</td>
         <td class="sub-text">${esc(row.refundPath || '—')}</td>
