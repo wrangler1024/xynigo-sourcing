@@ -342,3 +342,9 @@ def test_invalid_green_fallback_is_rejected(field, value):
                 "greenFallback": fallback,
             }
         })
+
+
+def test_cloud_only_release_explicitly_retains_reviewed_installers():
+    from xynigo_auth import __version__
+    assert release_catalog.CATALOG_REVIEWED_CLOUD_VERSION == __version__ == "0.18.2"
+    assert release_catalog.latest_local_executor_release()["version"] == "0.18.1"

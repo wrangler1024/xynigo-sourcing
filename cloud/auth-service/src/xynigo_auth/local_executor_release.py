@@ -2,7 +2,8 @@
 
 Installer downloads stay on the authenticated Xynigo system origin. A new
 application version must update this module in the same reviewed release
-change; otherwise the import-time guard prevents advertising a stale build.
+change; otherwise the import-time guard prevents advertising an unreviewed build.
+Cloud-only releases may explicitly retain the previously reviewed installer catalog.
 """
 
 from __future__ import annotations
@@ -15,13 +16,15 @@ from urllib.parse import quote
 from . import __version__
 
 RELEASE_VERSION = "0.18.1"
+# v0.18.2 changes cloud exports and Web only; keep immutable v0.18.1 installers.
+CATALOG_REVIEWED_CLOUD_VERSION = "0.18.2"
 RELEASE_CHANNEL = "test"
 RELEASE_PUBLISHED_AT = "2026-09-16T13:50:16Z"
 
 
-if RELEASE_VERSION != __version__:
+if CATALOG_REVIEWED_CLOUD_VERSION != __version__:
     raise RuntimeError(
-        "local executor release catalog must match the cloud application version"
+        "local executor release catalog must be reviewed for the cloud application version"
     )
 
 
