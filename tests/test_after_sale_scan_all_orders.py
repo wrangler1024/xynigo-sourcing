@@ -57,7 +57,7 @@ class AllOrdersScanTests(unittest.TestCase):
         claimer._login_required = lambda _: False
         claimer._scroll_orders_list = lambda _: None
         claimer._capture_screenshot = lambda *_: None
-        claimer._pre_info = Mock(side_effect=info) if callable(info) else Mock(
+        claimer._scan_pre_info = Mock(side_effect=info) if callable(info) else Mock(
             return_value=info or {'eligible': [{'packageNo': 'SYNTHPKG'}]})
         claimer._submit_package = Mock(side_effect=AssertionError('Scan must never submit'))
         claimer._scan_rows['SYNTHENV'] = {'environmentSerial': 'SYNTHENV', 'status': 'queued'}
@@ -76,7 +76,7 @@ class AllOrdersScanTests(unittest.TestCase):
         self.assertNotIn('已送达', rows[0]['errorSummary'])  # Recibido 按钮不是签收状态
         self.assertEqual(rows[0]['goodsImg'], card()['goodsImg'])
         self.assertFalse(rows[0]['claimable'])
-        claimer._pre_info.assert_not_called()
+        claimer._scan_pre_info.assert_not_called()
 
     def test_mixed_orders_on_all_pages_keep_independent_eligibility(self):
         rows, claimer, page = self.scan([
@@ -89,7 +89,7 @@ class AllOrdersScanTests(unittest.TestCase):
         self.assertEqual([r['claimable'] for r in rows], [False, True, False])
         self.assertIsNone(rows[1]['errorSummary'])
         self.assertIn('已退款', rows[2]['errorSummary'])
-        claimer._pre_info.assert_called_once_with(page, 'SYNTH002')
+        claimer._scan_pre_info.assert_called_once_with(page, 'SYNTH002')
         self.assertEqual(page.clicks, ['.j-order-list .sui-pagination__next'])
         self.assertTrue(any('s.signature !==' in x for x in page.waits))
 
@@ -98,7 +98,7 @@ class AllOrdersScanTests(unittest.TestCase):
         self.assertFalse(rows[0]['claimable'])
         self.assertIn('已送达', rows[0]['errorSummary'])
         self.assertNotIn('窗口已过', rows[0]['errorSummary'])
-        claimer._pre_info.assert_not_called()
+        claimer._scan_pre_info.assert_not_called()
 
     def test_empty_requires_confirmed_empty_list(self):
         rows, _, _ = self.scan([[]])
@@ -132,13 +132,50 @@ class AllOrdersScanTests(unittest.TestCase):
         rows, _, _ = self.scan([[card()], [card(), card('SYNTH002')]])
         self.assertEqual(len(rows), 2)
 
+    def test_delivered_order_with_generic_shipped_status_remains_claimable(self):
+        delivered = card(status='Enviado', entry=True)
+        delivered.update(delivered=True, deliveredAt='07 Sep 2026 12:39:32')
+        rows, claimer, _ = self.scan([[delivered]])
+        self.assertTrue(rows[0]['claimable'])
+        self.assertEqual(rows[0]['deliveredAt'], '07 Sep 2026 12:39:32')
+        self.assertEqual(claimer._scan_pre_info.call_count, 1)
+
+    def test_missing_delivery_date_does_not_exclude_valid_entry(self):
+        delivered = card(status='Enviado', entry=True)
+        delivered.update(delivered=True, deliveredAt='')
+        rows, _, page = self.scan([[delivered]])
+        self.assertTrue(rows[0]['claimable'])
+        self.assertEqual(rows[0]['deliveredAt'], '')
+        self.assertTrue(any('rows.every' in x for x in page.waits))
+
+    def test_delivery_marker_overrides_generic_shipped_status_without_entry(self):
+        delivered = card(status='Enviado', entry=False)
+        delivered.update(delivered=True, deliveredAt='')
+        rows, claimer, _ = self.scan([[delivered]])
+        self.assertFalse(rows[0]['claimable'])
+        self.assertIn('已送达', rows[0]['errorSummary'])
+        self.assertNotIn('运输中', rows[0]['errorSummary'])
+        claimer._scan_pre_info.assert_not_called()
+
+    def test_duplicate_compact_card_does_not_erase_entry_or_delivery_date(self):
+        full = card(entry=True)
+        full.update(delivered=True, deliveredAt='07 Sep 2026 12:39:32')
+        compact = card()
+        compact['goodsImg'] = ''
+        rows, claimer, _ = self.scan([[full], [compact]])
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]['claimable'])
+        self.assertEqual(rows[0]['deliveredAt'], full['deliveredAt'])
+        self.assertEqual(rows[0]['goodsImg'], full['goodsImg'])
+        self.assertEqual(claimer._scan_pre_info.call_count, 1)
+
     def test_unrecognised_card_fails_instead_of_silently_disappearing(self):
         rows, _, _ = self.scan([[{'text': 'unexpected card markup'}]])
         self.assertEqual(rows[0]['status'], 'fail')
 
     def test_next_page_timeout_does_not_return_a_complete_partial_list(self):
         page = FakePage([[card()], [card('SYNTH002')]])
-        page.wait_for = Mock(side_effect=[True, True, False])
+        page.wait_for = Mock(side_effect=[True, True, True, False])
         claimer = module.AfterSaleClaimer(object())
         claimer._scroll_orders_list = lambda _: None
         with self.assertRaisesRegex(RuntimeError, '翻页未完成'):

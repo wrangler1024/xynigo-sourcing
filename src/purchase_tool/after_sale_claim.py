@@ -39,6 +39,7 @@ import random
 import re
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 
 from .cdp import CdpClient, CdpError
@@ -104,17 +105,21 @@ _JS_CLAMP = (
 # （parse_order_card 可脱浏览器单测）。状态词只取卡片内文本——历史坑是
 # 全局正则会命中顶部标签栏的 Enviado。
 _JS_SCAN_ORDERS = ('(() => {' + _JS_NORM + '''
-  const out=[]; const cards=[...document.querySelectorAll("li.list-item")]
-    .filter(n=>/N[úu]m\\.?\\s*de\\s*pedido/i.test(n.innerText||""));
+  const out=[]; const cards=[...document.querySelectorAll(".j-order-list li.list-item")]
+    .filter(n=>n.offsetWidth || n.offsetHeight);
   for (const li of cards) {
     const t = li.innerText || "";
-    if (!/N[úu]m\\.?\\s*de\\s*pedido/i.test(t)) continue;
     const entry = [...li.querySelectorAll("a")].some(a =>
       norm(a.innerText).indexOf(%s) >= 0);
     const status = li.querySelector('.order-status-text .status-text');
     const img = li.querySelector('img.crop-image-container__img');
+    const track = li.querySelector('.order-list-track__title');
+    const when = li.querySelector('.order-list-track__time');
+    const delivered = /^Entregado(?:\\s|$)/i.test((track ? track.innerText : '').trim());
     out.push({text: t.slice(0, 2400), hasEntry: entry,
       statusText: status ? status.innerText : '',
+      delivered: delivered,
+      deliveredAt: delivered && when ? when.innerText.trim() : '',
       goodsImg: img ? (img.getAttribute('src') || '') : ''});
   }
   return out; })()''')
@@ -139,6 +144,40 @@ _JS_ORDER_LIST_STATE = r'''(() => {
     (String(e.innerText || '').match(/N[úu]m\.?\s*de\s*pedido\s*([A-Z0-9]{6,})/i) || [])[1] || '');
   return {ready:all && !loading && (cards.length > 0 || empty),
     empty:empty && !cards.length, next:nextEnabled, signature:orders.join('|')};
+})()'''
+
+# 扫描专用只读请求：每次使用独立状态对象，超时旧响应不能覆盖下一单。
+# 只投影所需字段，不把完整平台响应或账户资料带回执行器。
+_JS_SCAN_PRE_INFO = r'''(() => {
+  const input = %s;
+  const state = {id:input.id, done:false, error:'', response:null,
+    controller:new AbortController()};
+  window.__xyScanPre = state;
+  if (location.origin !== input.origin) {
+    state.error='page_changed'; state.done=true; return false;
+  }
+  fetch('/bff-api/trade-api/refund_only/pre_info?_ver=1.1.8&_lang=es', {
+    method:'POST', credentials:'include', signal:state.controller.signal,
+    headers:{'Content-Type':'application/json'}, body:JSON.stringify({billno:input.orderNo})
+  }).then(async r => {
+    const j = await r.json();
+    const info = j && j.info || {};
+    const pm = info.package_module || {};
+    state.response = {
+      httpStatus:r.status, code:j && j.code,
+      reasonId:(info.reason_module || {}).reason_id,
+      eligible:Array.isArray(pm.package_list) ? pm.package_list.map(p => {
+        if (!p || typeof p !== 'object') return null;
+        const first = Array.isArray(p.item_list) ? (p.item_list[0] || {}) : {};
+        return {packageNo:p.package_no, shippingNo:String(p.shipping_no || ''),
+          title:String(p.title || ''), goodsImg:String(first.goods_img || '')};
+      }) : null,
+      blocked:Array.isArray(pm.disable_package_list)
+        ? pm.disable_package_list.map(p => p && p.package_no) : null
+    };
+    state.done=true;
+  }).catch(() => {state.error='request_failed'; state.done=true;});
+  return true;
 })()'''
 
 # 申请页就绪标志：退款理由区块渲染出来即视为表单可用
@@ -329,7 +368,8 @@ def scan_unavailable_note(card, order):
     if order.get('refundInProgress') or re.search(
             r'Reembolsando|En revisi[óo]n|Reseña de SHEIN', status, re.I):
         return '平台显示退款处理中或审核中；当前没有丢件退款申请入口'
-    if order.get('deliveredAt') or re.search(r'Entregado|Recibido', status, re.I):
+    if card.get('delivered') or order.get('deliveredAt') or re.search(
+            r'Entregado|Recibido', status, re.I):
         return '已送达；当前未显示丢件退款申请入口'
     if re.search(r'Enviado', status, re.I):
         return '运输中（Enviado）；当前没有丢件退款申请入口'
@@ -341,6 +381,34 @@ def scan_unavailable_note(card, order):
         return '订单已取消；当前没有丢件退款申请入口'
     return ('有订单；当前未显示丢件退款申请入口'
             + ('（平台状态：%s）' % scrub_text(status)[:80] if status else ''))
+
+
+def validate_scan_pre_info(data):
+    """只有成功、完整且理由正确的只读响应才能判定可申请/不可申请。"""
+    if not isinstance(data, dict):
+        raise RuntimeError('可申请性接口返回结构异常')
+    http_status = data.get('httpStatus')
+    if not isinstance(http_status, int) or not 200 <= http_status < 300:
+        raise RuntimeError('可申请性接口 HTTP 请求失败')
+    if str(data.get('code')) != '0':
+        raise RuntimeError('可申请性接口未返回成功结果')
+    if str(data.get('reasonId')) != '83':
+        raise RuntimeError('平台未确认已送达未收到的退款理由')
+    eligible, blocked = data.get('eligible'), data.get('blocked')
+    if not isinstance(eligible, list) or not isinstance(blocked, list):
+        raise RuntimeError('可申请性接口缺少包裹列表')
+    numbers = []
+    for package in eligible:
+        if not isinstance(package, dict) or not isinstance(package.get('packageNo'), str) \
+                or not package['packageNo'].strip():
+            raise RuntimeError('可申请性接口可退包裹标识异常')
+        numbers.append(package['packageNo'].strip())
+    if any(not isinstance(number, str) or not number.strip() for number in blocked):
+        raise RuntimeError('可申请性接口不可退包裹标识异常')
+    if len(numbers) != len(set(numbers)) or set(numbers).intersection(
+            number.strip() for number in blocked):
+        raise RuntimeError('可申请性接口包裹状态冲突')
+    return data
 
 
 def refund_bill_id_from_url(url):
@@ -573,6 +641,11 @@ class AfterSaleClaimer(object):
                 parsed = parse_order_card(card.get('text') or '')
                 if not parsed:
                     raise RuntimeError('订单卡片格式无法识别，请人工核对所有订单页')
+                # 送达时间可能晚于订单卡片渲染；结构化时间避免长卡片截断丢值。
+                delivery = DELIVERED_RE.search(
+                    'Entregado a ' + str(card.get('deliveredAt') or ''))
+                if delivery and not parsed['deliveredAt']:
+                    parsed['deliveredAt'] = delivery.group(1).strip()
                 parsed['packages'] = []
                 parsed['blockedPackages'] = []
                 parsed['claimable'] = False
@@ -585,7 +658,7 @@ class AfterSaleClaimer(object):
                 elif card.get('hasEntry'):
                     # 所有订单里的入口同样要体检；不因所在分类而强制跳过。
                     try:
-                        info = self._pre_info(page, parsed['orderNo'])
+                        info = self._scan_pre_info(page, parsed['orderNo'])
                         parsed['packages'] = info.get('eligible') or []
                         parsed['blockedPackages'] = info.get('blocked') or []
                         parsed['claimable'] = bool(parsed['packages'])
@@ -1086,9 +1159,14 @@ class AfterSaleClaimer(object):
             self._scroll_orders_list(page)
             if not page.wait_for(ready, timeout=15):
                 raise RuntimeError('所有订单列表仍在加载，请重试扫描')
+            # 已观察到：入口已渲染，但送达日期稍后才补上。有限等待展示字段，
+            # 日期始终缺失也不据此排除有入口的订单，可申请性仍以接口为准。
+            scan_js = _JS_SCAN_ORDERS % json.dumps(ORDER_ENTRY_KEY)
+            page.wait_for('(() => { const rows=%s; return rows.every('
+                          'r => !r.delivered || !!r.deliveredAt); })()'
+                          % scan_js, timeout=12)
             state = page.js_evaluate(_JS_ORDER_LIST_STATE) or {}
-            raw_cards = page.js_evaluate(_JS_SCAN_ORDERS % json.dumps(
-                ORDER_ENTRY_KEY))
+            raw_cards = page.js_evaluate(scan_js)
             if not state.get('ready') or not isinstance(raw_cards, list):
                 raise RuntimeError('所有订单列表读取失败，请重试扫描')
             if not raw_cards and not state.get('empty'):
@@ -1097,13 +1175,46 @@ class AfterSaleClaimer(object):
                 parsed = parse_order_card(card.get('text') or '') if isinstance(card, dict) else None
                 if not parsed:
                     raise RuntimeError('订单卡片格式无法识别，请人工核对所有订单页')
-                cards[parsed['orderNo']] = card
+                previous = cards.get(parsed['orderNo']) or {}
+                # 跨页重复卡片的简版不能抹掉已发现的入口。仍会现场 pre_info
+                # 核验，不因旧卡片曾有入口就认定可申请。
+                cards[parsed['orderNo']] = dict(
+                    card, hasEntry=bool(card.get('hasEntry') or previous.get('hasEntry')),
+                    delivered=bool(card.get('delivered') or previous.get('delivered')),
+                    deliveredAt=card.get('deliveredAt') or previous.get('deliveredAt') or '',
+                    goodsImg=card.get('goodsImg') or previous.get('goodsImg') or '')
             if not state.get('next'):
                 return list(cards.values())
             previous_signature = state.get('signature')
             if not self._click(page, '.j-order-list .sui-pagination__next'):
                 raise RuntimeError('所有订单列表翻页失败，请重试扫描')
         raise RuntimeError('所有订单页数超出扫描上限，请人工核对，未确认扫描完整')
+
+    def _scan_pre_info(self, page, order_no):
+        """扫描严格核验；不改变既有提交链的请求与异常处理。"""
+        request_id = uuid.uuid4().hex
+        request_json = json.dumps({'id': request_id, 'origin': ORIGIN,
+                                   'orderNo': str(order_no)})
+        result_js = ('(() => { const s=window.__xyScanPre; '
+                     'return s && s.id === %s && s.done '
+                     '? {error:s.error, response:s.response} : null; })()'
+                     % json.dumps(request_id))
+        try:
+            page.js_evaluate(_JS_SCAN_PRE_INFO % request_json)
+            if not page.wait_for(result_js, timeout=20):
+                raise RuntimeError('可申请性查询超时，请重试扫描')
+            result = page.js_evaluate(result_js)
+            if not isinstance(result, dict) or result.get('error'):
+                raise RuntimeError('可申请性查询失败或订单页面已切换，请重试扫描')
+            return validate_scan_pre_info(result.get('response'))
+        finally:
+            try:
+                page.js_evaluate(
+                    '(() => { const s=window.__xyScanPre; if(s && s.id === %s) {'
+                    's.controller.abort(); delete window.__xyScanPre;} })()'
+                    % json.dumps(request_id))
+            except Exception:
+                pass
 
     def _pre_info(self, page, order_no):
         """在页面上下文里调买家端只读接口，判该单当前可退包裹。
