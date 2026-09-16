@@ -1410,8 +1410,17 @@ class ExecutorChannelService:
             not isinstance(error_summary, str) or len(error_summary) > 300
         ):
             raise ExecutorServiceError("executor_result_invalid", status_code=422)
+        # phaseCounts 是「阶段→单数」的映射，不是标量计数：只校验键值类型，
+        # 不能进下面的非负整数循环（否则回访终态回执会被 422 挡掉）。
+        phase_counts = summary.get("phaseCounts")
+        if phase_counts is not None and (
+            not isinstance(phase_counts, dict)
+            or any(not isinstance(k, str) or not isinstance(v, int) or v < 0
+                   for k, v in phase_counts.items())
+        ):
+            raise ExecutorServiceError("executor_result_invalid", status_code=422)
         count_keys = BUSINESS_RESULT_KEYS - {
-            "runStatus", "phase", "errorCode", "errorSummary"
+            "runStatus", "phase", "errorCode", "errorSummary", "phaseCounts"
         }
         for key in count_keys:
             if key not in summary:

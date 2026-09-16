@@ -859,6 +859,11 @@ class AfterSaleClaimWiringTests(unittest.TestCase):
         tpl = tpl[:tpl.index("}).join('')")]
         cells = tpl.count('<td') + tpl.count('${asThumbCell')
         self.assertEqual(cells, 11, '③ 行模板单元格数与表头不一致（会整列错位）')
+        # 只数个数拦不住列序错（曾把状态列留在第 6 位）：这里钉死关键顺序
+        order = [tpl.index(k) for k in (
+            'row.refundBillId', 'row.refundPath', 'row.refundAccount', 'asClaimPill')]
+        self.assertEqual(order, sorted(order),
+                         '③ 列序必须与表头一致：退款单号 → 退款路径 → 退款信用卡 → 状态')
         # ④ 的行模板同理（含 timelineCell 自带 td）
         track_block = html[html.index('id="asTrackTable"'):]
         track_block = track_block[:track_block.index('</table>')]

@@ -5398,10 +5398,10 @@ function asRenderClaimRows(rows) {
         <td style="font-weight:700; color:#078487; white-space:nowrap">${esc(AFTER_SALE_TYPE)}</td>
         <td class="sub-text">${esc(row.environmentSerial || '')}</td>
         <td class="sub-text">${esc(row.deliveredAt || '—')}</td>
-        <td>${asClaimPill(row.status)}</td>
         <td class="sub-text">${esc(row.refundBillId || '—')}</td>
         <td class="sub-text">${esc(row.refundPath || '—')}</td>
         <td class="sub-text">${esc(row.refundAccount || '—')}</td>
+        <td>${asClaimPill(row.status)}</td>
         <td class="sub-text">${esc((row.submittedAt || '').slice(11, 19) || '—')}</td>
         <td class="hint">${esc(row.errorSummary || row.note || '—')}</td>
       </tr>`;
@@ -5576,7 +5576,7 @@ async function asScan() {
     AS_STATE.selected = new Set();
     AS_STATE.rows = [];
     $('asScan').disabled = true; $('asStop').disabled = false;
-    $('asScanRows').innerHTML = '<tr><td colspan="9" class="hint" style="text-align:center; padding:18px;">扫描中，正在逐个打开环境读取订单…</td></tr>';
+    $('asScanRows').innerHTML = '<tr><td colspan="11" class="hint" style="text-align:center; padding:18px;">扫描中，正在逐个打开环境读取订单…</td></tr>';
     asSetPhase('扫描运行中', `共 ${serials.length} 个环境 · 只读，不会改动订单`, true);
     asPoll();
   } catch (e) {

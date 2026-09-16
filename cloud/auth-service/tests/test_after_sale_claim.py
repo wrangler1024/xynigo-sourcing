@@ -267,10 +267,7 @@ def test_after_sale_scan_rejects_row_extra_field_and_cross_batch_serial(tmp_path
             headers=device_headers(credential),
         )
         assert outside.status_code == 422, outside.text
-        break
 
-
-# ===== 提交：建 Run（幂等）→ 进度 + 截图 → 终态快照 =====
 def test_after_sale_claim_run_progress_finish_and_snapshot(tmp_path) -> None:
     for web_client, device_client, ids, database in _e2e_setup(tmp_path):
         executor_id, credential = ids["executorId"], ids["credential"]
@@ -712,3 +709,38 @@ def test_after_sale_track_create_progress_and_whitelist(tmp_path) -> None:
             headers=device_headers(credential),
         )
         assert outside.status_code == 422, outside.text
+        # 终态 finish：回访是 scan 型任务，终态必须能回来（含 phaseCounts 这个 dict）。
+        # 曾把 phaseCounts 放进 BUSINESS_RESULT_KEYS 却按非负整数校验 → finish 422，
+        # 任务永远 running、④ 停在「回访运行中」。这里锁死该回归。
+        finished = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/finish",
+            json={
+                "leaseToken": lease_token,
+                "outcome": "succeeded",
+                "resultCode": "after_sale_track_completed",
+                "resultSummary": {
+                    "runStatus": "completed",
+                    "phase": "after_sale.track.completed",
+                    "progressCompleted": 2,
+                    "progressTotal": 2,
+                    "totalCount": 2,
+                    "successCount": 2,
+                    "failedCount": 0,
+                    "stoppedCount": 0,
+                    "phaseCounts": {"reviewing": 1, "refunded": 1},
+                    "errorCode": "",
+                    "errorSummary": "",
+                },
+            },
+            headers=device_headers(credential),
+        )
+        assert finished.status_code == 200, finished.text
+
+        terminal = web_client.get(f"/v1/after-sale/track/{task_id}")
+        assert terminal.status_code == 200, terminal.text
+        assert terminal.json()["data"]["status"] in (
+            "succeeded", "completed"), terminal.text
+        break
+
+
+# ===== 提交：建 Run（幂等）→ 进度 + 截图 → 终态快照 =====
