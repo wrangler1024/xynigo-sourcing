@@ -582,11 +582,9 @@ class OperationRunService:
     def _after_sale_claim_environment_counts(self, run_ids: list) -> dict:
         """批次环境数＝该批次结果行去重 environment_serial（不新增表/列）。
 
-        替代方案 request_summary.items 记的是「请求了多少个环境」，扫描/重提
-        都会带上，看似更稳；但它是**计划值**，与页面同排的「提交/已受理」等
-        实际值不同源，执行器整批没跑起来时会出现「提交 0 / 环境数 3」这种
-        对不上的组合。结果行虽然运行中是逐步补齐的（与其它计数一致），
-        但语义与表格其余列一致。
+        统计已经回传结果行的环境，不是请求中计划涉及的环境，也不是成功环境数。
+        运行中随结果回传增加；尚无结果行时为 0。totalCount 仍保留请求订单数，
+        因此可能出现提交数大于 0、环境数为 0 的待执行批次。
         """
         wanted = [run_id for run_id in run_ids if run_id is not None]
         if not wanted:

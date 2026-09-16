@@ -176,8 +176,8 @@ MOCK = r'''
       runId: 'a1f0c3d2-0003-4000-8000-000000000003', status: 'partial_failure',
       createdAt: '2026-09-15T09:40:52+00:00', actorName: '熊新刚',
       actorUserId: 'proto-user-2',
-      executorName: '同事的 Windows 执行器', environmentCount: 2, totalCount: 4,
-      successCount: 2, skippedCount: 1, stoppedCount: 0, failedCount: 1,
+      executorName: '同事的 Windows 执行器', environmentCount: 2, totalCount: 2,
+      successCount: 1, skippedCount: 0, stoppedCount: 0, failedCount: 1,
       retryFromRunId: '',
     },
   ];
