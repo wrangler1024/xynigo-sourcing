@@ -2,8 +2,7 @@
 
 Installer downloads stay on the authenticated Xynigo system origin. A new
 application version must update this module in the same reviewed release
-change; otherwise the import-time guard prevents advertising an unreviewed build.
-Cloud-only releases may explicitly retain the previously reviewed installer catalog.
+change; otherwise the import-time guard prevents advertising a stale build.
 """
 
 from __future__ import annotations
@@ -15,16 +14,14 @@ from urllib.parse import quote
 
 from . import __version__
 
-RELEASE_VERSION = "0.18.1"
-# v0.18.2 changes cloud exports and Web only; keep immutable v0.18.1 installers.
-CATALOG_REVIEWED_CLOUD_VERSION = "0.18.2"
+RELEASE_VERSION = "0.18.2"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-16T13:50:16Z"
+RELEASE_PUBLISHED_AT = "2026-09-16T14:12:02Z"
 
 
-if CATALOG_REVIEWED_CLOUD_VERSION != __version__:
+if RELEASE_VERSION != __version__:
     raise RuntimeError(
-        "local executor release catalog must be reviewed for the cloud application version"
+        "local executor release catalog must match the cloud application version"
     )
 
 
@@ -34,10 +31,10 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.18.1-fa610ec0f119",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.18.1.exe",
-        "sha256": "d55afa17b503efd9b4981db07908d616e8deca99cdfc5e6a32bee53385e1307e",
-        "size": 15361682,
+        "runtimeId": "0.18.2-7d1c7bde9f67",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.18.2.exe",
+        "sha256": "e905780c11e98b0cfc82460280597e5c3de3c8c46f962c487e7598cf52f148cb",
+        "size": 15364231,
         "installMode": "standard_per_user",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_silent_installer",
@@ -53,10 +50,10 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.18.1-fa610ec0f119",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.18.1.pkg",
-        "sha256": "52d73959885648c0b00dd99d1a809745ed429ecfa475189464c1ae320300ef59",
-        "size": 14362224,
+        "runtimeId": "0.18.2-7d1c7bde9f67",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.18.2.pkg",
+        "sha256": "77c8a5bdf27ff4f53f1c023f25304be616081328823ed26c1ae7eecd577f672e",
+        "size": 14362281,
         "installMode": "standard_system_application",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_system_installer",
@@ -323,9 +320,8 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "修复采购售后扫描覆盖：从所有订单检查真实可申请入口，明确区分运输中与可申请。",
-            "提交及回访进度按本次任务统计；等待、停止、失败和待核对状态清晰展示，支持独立停止回访。",
-            "保留同一订单全部已受理包裹退款号，最终回执可靠入库；历史、导出和回访统一使用完整结果。",
-            "优化多行输入、中文分号支持、运行设置及窄屏布局；新任务要求可靠结果能力，云端已先行升级。",
+            "新增采购售后可申请清单 Excel 导出，支持扫描中导出已返回结果，保留状态、备注和长编号。",
+            "优化扫描输入框及指定提交、回访输入区高度与对齐。",
+            "统一云端、工作台与 Windows/macOS 客户端为 v0.18.2，安装包包含最新售后功能及界面。"
         ],
     }
