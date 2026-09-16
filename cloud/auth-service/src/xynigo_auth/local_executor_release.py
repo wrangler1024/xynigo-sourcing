@@ -16,7 +16,7 @@ from . import __version__
 
 RELEASE_VERSION = "0.18.1"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-16T04:46:56Z"
+RELEASE_PUBLISHED_AT = "2026-09-16T13:50:16Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,10 +31,10 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.18.1-624a76e1934e",
+        "runtimeId": "0.18.1-fa610ec0f119",
         "assetName": "Xynigo_Sourcing_Windows_Setup_v0.18.1.exe",
-        "sha256": "ed81554f60acc9ee92b274273ed55fca699f5dfa5a2ebbb24b69f3fe77bdf17f",
-        "size": 15399110,
+        "sha256": "d55afa17b503efd9b4981db07908d616e8deca99cdfc5e6a32bee53385e1307e",
+        "size": 15361682,
         "installMode": "standard_per_user",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_silent_installer",
@@ -50,10 +50,10 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.18.1-624a76e1934e",
+        "runtimeId": "0.18.1-fa610ec0f119",
         "assetName": "Xynigo_Sourcing_macOS_Standard_v0.18.1.pkg",
-        "sha256": "0159f7e0ee164a3c29e159a3e5143bebeb638d22b8e47d2444dc91ef168234b1",
-        "size": 20330815,
+        "sha256": "52d73959885648c0b00dd99d1a809745ed429ecfa475189464c1ae320300ef59",
+        "size": 14362224,
         "installMode": "standard_system_application",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_system_installer",
@@ -320,9 +320,9 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "新增「采购售后（丢件退款）」模块：扫描可申请退款的订单、批量提交退款申请、以及提交后的退款跟踪回访（只读）。",
-            "采购售后固定「原路退回」退款路径；已被提交过的包裹由平台划入不可退，重复扫描不会重复提交。",
-            "合入采购详情与回执线：采购回执/小票留存、采购详情反馈（含七种浅色标记、截图面板平滑恢复）。",
-            "配套要求：先升级云端，再更新本机执行器与采购助手；老执行器不具备 after.sale.* 能力，新任务下不去。",
+            "修复采购售后扫描覆盖：从所有订单检查真实可申请入口，明确区分运输中与可申请。",
+            "提交及回访进度按本次任务统计；等待、停止、失败和待核对状态清晰展示，支持独立停止回访。",
+            "保留同一订单全部已受理包裹退款号，最终回执可靠入库；历史、导出和回访统一使用完整结果。",
+            "优化多行输入、中文分号支持、运行设置及窄屏布局；新任务要求可靠结果能力，云端已先行升级。",
         ],
     }
