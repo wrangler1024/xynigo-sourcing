@@ -2274,7 +2274,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         <div class="table-scroll scroll-20">
           <table id="asClaimTable">
             <thead><tr>
-              <th>订单号</th><th style="width:46px">商品图</th><th>售后类型</th><th>环境序号</th>
+              <th>环境序号</th><th>订单号</th><th style="width:46px">商品图</th><th>售后类型</th>
               <th>送达时间</th><th>退款单号</th><th>退款路径</th><th>退款信用卡</th><th>状态</th>
               <th>操作时间</th><th>备注</th>
             </tr></thead>
@@ -5497,10 +5497,10 @@ function asRenderClaimRows(rows) {
     tbody.innerHTML = AS_STATE.claimRows.map(row => {
       const bad = !['ok'].includes(String(row.status || ''));
       return `<tr data-as-claim="${esc(row.orderNo || '')}"${bad && row.status !== 'queued' && row.status !== 'running' ? ' class="tr-bad"' : (row.status === 'running' ? ' class="tr-run"' : '')}>
+        <td class="sub-text">${esc(row.environmentSerial || '')}</td>
         <td class="as-order">${esc(row.orderNo || '')}</td>
         ${asThumbCell(row.goodsImg)}
         <td style="font-weight:700; color:#078487; white-space:nowrap">${esc(AFTER_SALE_TYPE)}</td>
-        <td class="sub-text">${esc(row.environmentSerial || '')}</td>
         <td class="sub-text">${esc(row.deliveredAt || '—')}</td>
         <td class="sub-text">${esc(row.refundBillId || '—')}</td>
         <td class="sub-text">${esc(row.refundPath || '—')}</td>
@@ -5660,11 +5660,16 @@ function asSelectedItems() {
   const byOrder = new Map(AS_STATE.rows.map(r => [r.orderNo, r]));
   return [...AS_STATE.selected].map(orderNo => {
     const row = byOrder.get(orderNo) || {};
+    // 送达时间与商品图在 ② 扫描时已经读到，必须随提交单一起带上：
+    // 执行器只把它们透传进 ③ 的行与云端结果表，不带就是空列
+    // （③ 的送达时间恒为「—」、商品图恒为空就是这么来的）。
     return {
       environmentSerial: row.environmentSerial || '',
       orderNo: orderNo,
       storeName: row.storeName || '',
       packageNo: '',
+      deliveredAt: row.deliveredAt || '',
+      goodsImg: row.goodsImg || '',
     };
   }).filter(item => item.environmentSerial && item.orderNo);
 }

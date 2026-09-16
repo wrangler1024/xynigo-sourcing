@@ -869,11 +869,20 @@ class AfterSaleClaimWiringTests(unittest.TestCase):
         tpl = tpl[:tpl.index("}).join('')")]
         cells = tpl.count('<td') + tpl.count('${asThumbCell')
         self.assertEqual(cells, 11, '③ 行模板单元格数与表头不一致（会整列错位）')
-        # 只数个数拦不住列序错（曾把状态列留在第 6 位）：这里钉死关键顺序
-        order = [tpl.index(k) for k in (
-            'row.refundBillId', 'row.refundPath', 'row.refundAccount', 'asClaimPill')]
-        self.assertEqual(order, sorted(order),
-                         '③ 列序必须与表头一致：退款单号 → 退款路径 → 退款信用卡 → 状态')
+        # 只数个数拦不住列序错（曾把状态列留在第 6 位）：这里按表头顺序逐个钉行模板
+        # （从第一个 <td 起算，否则会把 tr 上的 data-as-claim 属性计入）
+        expected = ['环境序号', '订单号', '商品图', '售后类型', '送达时间', '退款单号',
+                    '退款路径', '退款信用卡', '状态', '操作时间', '备注']
+        self.assertEqual(
+            re.findall(r'<th[^>]*>([^<]+)</th>', claim_block), expected,
+            '③ 表头顺序变了就必须同步改行模板与这里')
+        cells = tpl[tpl.index('<td'):]
+        markers = ['row.environmentSerial', 'row.orderNo', '${asThumbCell',
+                   'AFTER_SALE_TYPE', 'row.deliveredAt', 'row.refundBillId',
+                   'row.refundPath', 'row.refundAccount', 'asClaimPill',
+                   'row.submittedAt', 'row.errorSummary']
+        order = [cells.index(k) for k in markers]
+        self.assertEqual(order, sorted(order), '③ 行模板列序与表头不一致（会整列错位）')
         # ④ 的行模板同理（含 timelineCell 自带 td）
         track_block = html[html.index('id="asTrackTable"'):]
         track_block = track_block[:track_block.index('</table>')]
@@ -1070,6 +1079,25 @@ class WebCloudContractAlignmentTests(unittest.TestCase):
         self.assertFalse(keys - fields,
                          f'Web 发了契约没定义的键：{sorted(keys - fields)}')
         for required in ('environmentSerial', 'orderNo', 'refundBillId'):
+            self.assertIn(required, keys)
+
+    def test_web_claim_items_carry_delivered_at_and_goods_img(self):
+        """③ 的送达时间与商品图靠提交单从扫描清单带下来。
+
+        这两个字段在云端契约里是可选的（default=""），漏发**不会报错**——
+        只会静默变成空列（③ 上线当天送达时间恒「—」、商品图恒空就是这么来的）。
+        所以这里不仅查「发的键是否是契约子集」，还点名要求这两个字段必须在。
+        """
+        html = LOCAL_HTML.read_text(encoding='utf-8')
+        body = html[html.index('function asSelectedItems()'):]
+        body = body[:body.index('\n}')]
+        fields = set(re.findall(r'^    (\w+):', self._contract_block(
+            'AfterSaleClaimItem'), re.M))
+        keys = set(re.findall(r'^      (\w+):', body, re.M))
+        self.assertTrue(keys, '未解析到 asSelectedItems 的键')
+        self.assertFalse(keys - fields,
+                         f'Web 发了契约没定义的键：{sorted(keys - fields)}')
+        for required in ('environmentSerial', 'orderNo', 'deliveredAt', 'goodsImg'):
             self.assertIn(required, keys)
 
     def test_web_reads_only_contracted_track_row_fields(self):
