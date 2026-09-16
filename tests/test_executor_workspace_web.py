@@ -829,7 +829,16 @@ class AfterSaleClaimWiringTests(unittest.TestCase):
         """
         html = self._read()
         self.assertIn("const AFTER_SALE_TYPE = '丢件退款';", html)
-        self.assertIn('id="asTypeChip"', html)
+        # 类型选择＝三段式卡片（与设计稿一致）：丢件退款为本期实现，另两个标注「规划」
+        self.assertIn('id="asTypeBar"', html)
+        self.assertIn('class="mode-bar"', html)
+        self.assertIn("const AS_TYPES = [", html)
+        for label in ('丢件退款', '催促发货', '取消订单'):
+            self.assertIn(label, html)
+        self.assertIn("state: 'plan'", html)
+        # 规划类型必须走明确的未实现态，而不是摆假数据
+        self.assertIn('id="asPlanBanner"', html)
+        self.assertIn('为规划类型，本次未实现', html)
         self.assertIn('>售后类型<', html)          # 表头
         # 两张表的行模板都要渲染该常量；无订单的环境行不标类型
         self.assertIn("${orderNo ? esc(AFTER_SALE_TYPE) : '—'}", html)
@@ -904,7 +913,9 @@ class ModeCardIconTests(unittest.TestCase):
         for html in self._htmls():
             self.assertIn('id="envModeBar"', html)
             # 两张卡各一个图标砖，且仍保留 data-mode 契约（JS 靠它切换）
-            self.assertEqual(html.count('class="mode-tab-inner"'), 2)
+            # 注意按块计数：售后类型卡也用同一个 .mode-tab-inner（这里只数环境创建的两张）
+            bar = html[html.index('id="envModeBar"'):html.index('id="envCardSetup"')]
+            self.assertEqual(bar.count('class="mode-tab-inner"'), 2)
             self.assertIn('data-mode="bound"', html)
             self.assertIn('data-mode="backup"', html)
             # 图标砖数量按块断言：侧栏一级菜单本身就用了同一套 class

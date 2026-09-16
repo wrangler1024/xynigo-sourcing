@@ -2201,11 +2201,9 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         <span class="legend">扫描只读，不动订单数据</span>
         <span class="resource-state" id="asScopeState" style="margin-left:auto; margin-top:0">未扫描</span>
       </div>
-      <div class="as-type-row">
-        <span class="as-type-label">售后类型</span>
-        <span class="as-type-chip" id="asTypeChip">丢件退款</span>
-        <span class="hint">包裹已送达但未收到 · 退款原路退回；本期仅支持此类型，后续类型在此选择</span>
-      </div>
+      <div class="mode-bar" id="asTypeBar" role="group" aria-label="售后类型"></div>
+      <div class="resource-state" id="asTypeHint" style="margin:10px 0 0"></div>
+      <div class="query-phase-banner" id="asPlanBanner" hidden style="margin-top:12px"></div>
       <div class="as-bar">
         <input type="search" id="asSerials" placeholder="环境序号，如 4902 4901 4897">
         <span class="hint">环境序号 · 空格/逗号分隔，最多 300 个</span>
@@ -4941,10 +4939,73 @@ sfPoll = async function () {
 // 本期唯一的售后类型：包裹已送达但未收到 → 丢件退款。后续新增类型时由这里扩展，
 // 表格逐行渲染同一个值，保证「这一单做的是什么售后」在清单与结果里都看得见。
 const AFTER_SALE_TYPE = '丢件退款';
+// 售后类型：本期只实现「丢件退款」；催促发货/取消订单为规划类型——卡片可见（让人看出这是
+// 可扩展的类型位），但选中后进入明确的「未实现」态，不摆假数据、不允许发起任务。
+// 落地一个新类型时需要同时具备：业务规则（判定条件/幂等/冷却）、权限拆分、执行器侧动作。
+const AS_TYPES = [
+  { id: 'refund', label: '丢件退款', state: 'done',
+    svg: '<path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',
+    rule: '已送达但未收到', note: '退款原路退回；两步式，提交即写库',
+    perm: 'assistant.access' },
+  { id: 'urge', label: '催促发货', state: 'plan',
+    svg: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+    rule: '已付款未发货（备货中）', note: '每个订单 24 小时内最多催一次，冷却期内不可再催',
+    perm: 'procurement.aftersale.urge' },
+  { id: 'cancel', label: '取消订单', state: 'plan',
+    svg: '<path d="M6 3h12v18H6zM9 7h6"/><path d="m9.5 12.5 5 5m0-5-5 5"/>',
+    rule: '未发货且平台允许取消', note: '不可逆：提交后订单直接取消；需二次确认',
+    perm: 'procurement.aftersale.cancel' },
+];
+function asTypeOf(id) {
+  return AS_TYPES.find(t => t.id === id) || AS_TYPES[0];
+}
+function asRenderTypeBar() {
+  const bar = $('asTypeBar');
+  if (!bar) return;
+  bar.innerHTML = AS_TYPES.map(t =>
+    `<button class="mode-tab${t.id === AS_STATE.type ? ' active' : ''}"`
+    + ` data-as-type="${t.id}" type="button">`
+    + '<span class="mode-tab-inner">'
+    + `<span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24">${t.svg}</svg></span>`
+    + '<span class="nav-text">'
+    + `<b>${esc(t.label)}${t.state === 'plan' ? ' <span style="opacity:.7">规划</span>' : ''}</b>`
+    + `<small>${esc(t.state === 'plan' ? '规划 · ' : '')}${esc(t.note)}</small>`
+    + '</span></span></button>').join('');
+  bar.querySelectorAll('[data-as-type]').forEach(btn => {
+    btn.onclick = () => asSelectType(btn.dataset.asType);
+  });
+  const t = asTypeOf(AS_STATE.type);
+  $('asTypeHint').innerHTML = `适用：${esc(t.rule)} · ${esc(t.note)} · 权限码 <b>${esc(t.perm)}</b>`;
+}
+function asSelectType(id) {
+  const t = asTypeOf(id);
+  AS_STATE.type = t.id;
+  asRenderTypeBar();
+  const planned = t.state === 'plan';
+  const banner = $('asPlanBanner');
+  if (banner) {
+    banner.hidden = !planned;
+    if (planned) {
+      banner.innerHTML = '<div class="query-phase-copy" style="padding-left:0">'
+        + `<b>「${esc(t.label)}」为规划类型，本次未实现</b>`
+        + '<span>该类型尚未接入：需要先定业务规则（判定条件、幂等与冷却）、拆权限、'
+        + '并在执行器侧实现对应动作。当前版本只提供「丢件退款」。</span></div>';
+    }
+  }
+  // 规划类型下不允许发起任务（按钮禁用 + 说明），避免点了没反应
+  const scan = $('asScan');
+  if (scan) scan.disabled = planned;
+  const submit = $('asSubmit');
+  if (submit) submit.disabled = planned || !(AS_STATE.selected || new Set()).size;
+  if (planned) {
+    asSetPhase('该类型尚未实现', `「${t.label}」为规划类型，当前版本只提供「丢件退款」。`, false);
+  }
+}
+
 const AS_LIST_KEY = 'afterSaleEnvList';
 const AS_STATE = {
-  mode: '', scanTaskId: null, runId: null, trackTaskId: null, timer: null,
-  running: false,
+  mode: '', type: 'refund', scanTaskId: null, runId: null,
+  trackTaskId: null, timer: null, running: false,
   rows: [], selected: new Set(), claimRows: [], stopRequested: false,
   pollErrors: 0, etaBase: null, status: ''
 };
@@ -4961,6 +5022,8 @@ function asSerials() {
     .map(s => s.trim()).filter(Boolean);
 }
 function asInit() {
+  asRenderTypeBar();
+  asSelectType(AS_STATE.type);
   if (!$('asSerials').value) asLoadList();
   if (!AS_STATE.timer) AS_STATE.timer = setInterval(asPoll, 2500);
 }
