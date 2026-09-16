@@ -1369,9 +1369,10 @@ class ExecutorChannelService:
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ExecutorServiceError(
                     "executor_result_invalid", status_code=422)
-        if summary["claimableCount"] > summary["totalCount"]:
+        # totalCount 是环境数；同一环境可有多个可申请订单，不能与单数比较。
+        if len({row.environmentSerial for row in rows}) > summary["totalCount"]:
             raise ExecutorServiceError("executor_result_invalid", status_code=422)
-        if sum(1 for row in rows if row.claimable) > summary["claimableCount"]:
+        if sum(1 for row in rows if row.claimable) != summary["claimableCount"]:
             raise ExecutorServiceError("executor_result_invalid", status_code=422)
         return True
 

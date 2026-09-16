@@ -45,9 +45,9 @@ from .cdp import CdpClient, CdpError
 from .redaction import scrub_text
 
 ORIGIN = 'https://www.shein.com.mx'
-# 订单列表标签：status_type=3 即「Pedidos Enviados」（实测页面标题为
-# 「Podidos Enviados」），已送达订单就落在这里，也是采购人工操作的入口。
-ORDERS_STATUS_TYPE = 3
+# 从「所有订单」开始：运输中、已送达和退款单可能落在不同分类。
+# 订单是否存在与是否可以申请丢件退款是两件事，不能只保留有入口的卡片。
+ORDERS_STATUS_TYPE = 0
 ORDERS_LIST_URL = '%s/user/orders/list?status_type=%d' % (
     ORIGIN, ORDERS_STATUS_TYPE)
 REFUND_APPLY_URL = ORIGIN + \
@@ -73,9 +73,7 @@ REFUND_DONE_RE = re.compile(
 # 已退款（含已处理、银行处理中）：这类单不需要也不允许再申请售后
 REFUNDED_RE = re.compile(
     r'Reembolsos procesados|Reembolsado|reembolso est[áa] siendo procesado', re.I)
-# 「Pedidos Enviados」之外的标签：主标签扫不到候选时补扫，避免把「单在别的标签下」
-# 误报成「没有订单」（实测 0820/0821 批次已退款的单就落在这些标签里）
-FALLBACK_ORDER_TABS = (4, 5, 6, 7)
+MAX_ORDER_LIST_PAGES = 100
 
 SCAN_RUNNING_STATES = ('queued', 'running')
 CLAIM_RUNNING_STATES = ('queued', 'running')
@@ -113,9 +111,35 @@ _JS_SCAN_ORDERS = ('(() => {' + _JS_NORM + '''
     if (!/N[úu]m\\.?\\s*de\\s*pedido/i.test(t)) continue;
     const entry = [...li.querySelectorAll("a")].some(a =>
       norm(a.innerText).indexOf(%s) >= 0);
-    out.push({text: t.slice(0, 1200), hasEntry: entry});
+    const status = li.querySelector('.order-status-text .status-text');
+    const img = li.querySelector('img.crop-image-container__img');
+    out.push({text: t.slice(0, 2400), hasEntry: entry,
+      statusText: status ? status.innerText : '',
+      goodsImg: img ? (img.getAttribute('src') || '') : ''});
   }
   return out; })()''')
+
+# 只认可订单列表自身的空态，购物袋的 empty 不能作为「无订单」证据。
+# 等待卡片/明确空态及 loading 消失；超时应报查询失败，不能猜成无订单。
+_JS_ORDER_LIST_STATE = r'''(() => {
+  const visible = e => !!e && !!(e.offsetWidth || e.offsetHeight);
+  const root = document.querySelector('.j-order-list');
+  if (!root) return {ready:false};
+  const selected = root.querySelector('[role=tab][aria-selected=true] [data-id]');
+  const all = !!selected && selected.getAttribute('data-id') === '0';
+  const loading = [...root.querySelectorAll('.order-list-loading')].some(visible);
+  const cards = [...root.querySelectorAll('li.list-item')].filter(visible);
+  const empty = [...root.querySelectorAll('.c-order-search')].some(e =>
+    visible(e) && /Se encuentra vac[ií]o/i.test(e.innerText || ''));
+  const next = root.querySelector('.sui-pagination__next');
+  const nextEnabled = visible(next) && !next.disabled &&
+    next.getAttribute('aria-disabled') !== 'true' &&
+    !next.classList.contains('sui-pagination__btn-disabled');
+  const orders = cards.map(e =>
+    (String(e.innerText || '').match(/N[úu]m\.?\s*de\s*pedido\s*([A-Z0-9]{6,})/i) || [])[1] || '');
+  return {ready:all && !loading && (cards.length > 0 || empty),
+    empty:empty && !cards.length, next:nextEnabled, signature:orders.join('|')};
+})()'''
 
 # 申请页就绪标志：退款理由区块渲染出来即视为表单可用
 _JS_APPLY_READY = (
@@ -294,6 +318,29 @@ def parse_order_card(text):
         'amount': amount.group(1) if amount else '',
         'refundInProgress': bool(REFUND_DONE_RE.search(raw)),
     }
+
+
+def scan_unavailable_note(card, order):
+    """解释有订单但无丢件退款入口；只用卡片内状态，不匹配导航或收货按钮。"""
+    text = str(card.get('text') or '')
+    status = str(card.get('statusText') or '').strip()
+    if REFUNDED_RE.search(text):
+        return '平台显示已退款；当前没有丢件退款申请入口'
+    if order.get('refundInProgress') or re.search(
+            r'Reembolsando|En revisi[óo]n|Reseña de SHEIN', status, re.I):
+        return '平台显示退款处理中或审核中；当前没有丢件退款申请入口'
+    if order.get('deliveredAt') or re.search(r'Entregado|Recibido', status, re.I):
+        return '已送达；当前未显示丢件退款申请入口'
+    if re.search(r'Enviado', status, re.I):
+        return '运输中（Enviado）；当前没有丢件退款申请入口'
+    if re.search(r'Procesando', status, re.I):
+        return '备货中（Procesando）；当前没有丢件退款申请入口'
+    if re.search(r'No pagado|Pendiente de pago', status, re.I):
+        return '待付款；当前没有丢件退款申请入口'
+    if re.search(r'Cancelad', status, re.I):
+        return '订单已取消；当前没有丢件退款申请入口'
+    return ('有订单；当前未显示丢件退款申请入口'
+            + ('（平台状态：%s）' % scrub_text(status)[:80] if status else ''))
 
 
 def refund_bill_id_from_url(url):
@@ -520,74 +567,42 @@ class AfterSaleClaimer(object):
                 self._fail_scan(serial, 'login',
                                 '买家端未登录（环境登录态缺失，请先登录该环境）')
                 return
-            self._scroll_orders_list(page)
-            cards = page.js_evaluate(_JS_SCAN_ORDERS % json.dumps(
-                ORDER_ENTRY_KEY)) or []
-            fallback = []
-            if not any(c.get('hasEntry') for c in cards
-                       if isinstance(c, dict)):
-                # 主标签没有可申请的单：补扫其余标签，把「为什么没有」说清楚
-                for tab in FALLBACK_ORDER_TABS:
-                    page.goto('%s/user/orders/list?status_type=%d'
-                              % (ORIGIN, tab), dom_timeout=40,
-                              settle_seconds=3.0)
-                    for card in (page.js_evaluate(
-                            _JS_SCAN_ORDERS % json.dumps(ORDER_ENTRY_KEY))
-                            or []):
-                        if not isinstance(card, dict):
-                            continue
-                        parsed = parse_order_card(card.get('text') or '')
-                        if not parsed:
-                            continue
-                        text = card.get('text') or ''
-                        if card.get('hasEntry'):
-                            parsed['claimable'] = False
-                            parsed['tabNote'] = '在 status_type=%d 标签下' % tab
-                        elif REFUNDED_RE.search(text):
-                            parsed['refunded'] = True
-                        fallback.append(parsed)
-                    if fallback:
-                        break
+            cards = self._read_all_order_cards(page)
             candidates = []
             for card in cards:
-                if not isinstance(card, dict):
-                    continue
-                # 只对「已送达且有售后入口」的单子问接口：没有入口的单
-                # 平台根本不给申请，问了也是白问。
-                if not card.get('hasEntry'):
-                    continue
                 parsed = parse_order_card(card.get('text') or '')
                 if not parsed:
-                    continue
+                    raise RuntimeError('订单卡片格式无法识别，请人工核对所有订单页')
                 parsed['packages'] = []
                 parsed['blockedPackages'] = []
                 parsed['claimable'] = False
+                parsed['status'] = 'skip'
+                parsed['goodsImg'] = str(card.get('goodsImg') or '')[:300]
+                parsed['note'] = scan_unavailable_note(card, parsed)
+                if self._stop_event.is_set():
+                    parsed['status'] = 'stopped'
+                    parsed['note'] = '扫描已停止，尚未核验可申请性'
+                elif card.get('hasEntry'):
+                    # 所有订单里的入口同样要体检；不因所在分类而强制跳过。
+                    try:
+                        info = self._pre_info(page, parsed['orderNo'])
+                        parsed['packages'] = info.get('eligible') or []
+                        parsed['blockedPackages'] = info.get('blocked') or []
+                        parsed['claimable'] = bool(parsed['packages'])
+                        parsed['status'] = 'ok' if parsed['claimable'] else 'blocked'
+                        parsed['note'] = ('' if parsed['claimable'] else
+                                          '平台核验当前无可申请的丢件退款包裹')
+                    except Exception as exc:
+                        parsed['status'] = 'fail'
+                        parsed['note'] = scrub_text('可申请性核验失败：%s' % exc)[:200]
                 candidates.append(parsed)
-            for candidate in candidates:
-                info = self._pre_info(page, candidate['orderNo'])
-                candidate['packages'] = info.get('eligible') or []
-                candidate['blockedPackages'] = info.get('blocked') or []
-                candidate['claimable'] = bool(candidate['packages'])
-                candidate['reasonId'] = info.get('reasonId') or ''
-                candidate['preInfoCode'] = info.get('code') or ''
-            if not candidates and fallback:
-                for parsed in fallback:
-                    parsed.setdefault('packages', [])
-                    parsed.setdefault('blockedPackages', [])
-                    parsed.setdefault('claimable', False)
-                    parsed['claimable'] = False
-                    if parsed.get('refunded'):
-                        parsed['note'] = '该单已退款（Reembolsos procesados），无需申请'
-                    else:
-                        parsed['note'] = ('无可申请售后入口（未送达，或申请窗口已过）'
-                                          + ('，' + parsed['tabNote']
-                                             if parsed.get('tabNote') else ''))
-                    candidates.append(parsed)
             with self._lock:
                 row = self._scan_rows.get(serial) or {}
                 row.update({
-                    'status': 'ok' if any(c.get('claimable') for c in candidates)
-                              else ('skip' if candidates else 'skip'),
+                    'status': ('stopped' if self._stop_event.is_set() else
+                               'fail' if any(c['status'] == 'fail' for c in candidates) else
+                               'ok' if any(c['claimable'] for c in candidates) else
+                               'skip' if candidates else 'empty'),
                     'orders': candidates,
                     'orderNo': candidates[0]['orderNo'] if candidates else '',
                     'deliveredAt': (candidates[0]['deliveredAt']
@@ -597,11 +612,9 @@ class AfterSaleClaimer(object):
                                  if candidates else []),
                     'claimable': any(c['claimable'] for c in candidates),
                     'durationSeconds': int(time.time() - started),
-                    'errorSummary': None if any(
-                        c.get('claimable') for c in candidates) else (
-                        '；'.join(sorted({c.get('note') or '' for c in candidates
-                                          if c.get('note')}))
-                        or '该环境订单列表没有可申请售后的已送达订单'),
+                    'errorSummary': (None if candidates else
+                                     '扫描已停止，未确认订单列表' if self._stop_event.is_set()
+                                     else '所有订单列表为空'),
                 })
                 self._scan_rows[serial] = row
         except Exception as exc:
@@ -1056,6 +1069,41 @@ class AfterSaleClaimer(object):
                 '(() => { window.scrollTo(0, document.body.scrollHeight);'
                 ' return true; })()')
             time.sleep(1.2)
+
+    def _read_all_order_cards(self, page):
+        """读取所有订单的分页，去重；加载/翻页失败不伪装成空订单。"""
+        cards = {}
+        previous_signature = None
+        for _ in range(MAX_ORDER_LIST_PAGES):
+            if self._stop_event.is_set():
+                return list(cards.values())
+            changed = ('' if previous_signature is None else
+                       ' && s.signature !== %s' % json.dumps(previous_signature))
+            ready = ('(() => { const s=%s; return s.ready%s; })()'
+                     % (_JS_ORDER_LIST_STATE, changed))
+            if not page.wait_for(ready, timeout=30):
+                raise RuntimeError('所有订单列表未就绪或翻页未完成，请重试扫描')
+            self._scroll_orders_list(page)
+            if not page.wait_for(ready, timeout=15):
+                raise RuntimeError('所有订单列表仍在加载，请重试扫描')
+            state = page.js_evaluate(_JS_ORDER_LIST_STATE) or {}
+            raw_cards = page.js_evaluate(_JS_SCAN_ORDERS % json.dumps(
+                ORDER_ENTRY_KEY))
+            if not state.get('ready') or not isinstance(raw_cards, list):
+                raise RuntimeError('所有订单列表读取失败，请重试扫描')
+            if not raw_cards and not state.get('empty'):
+                raise RuntimeError('未读到订单卡片，也未确认空列表，请重试扫描')
+            for card in raw_cards:
+                parsed = parse_order_card(card.get('text') or '') if isinstance(card, dict) else None
+                if not parsed:
+                    raise RuntimeError('订单卡片格式无法识别，请人工核对所有订单页')
+                cards[parsed['orderNo']] = card
+            if not state.get('next'):
+                return list(cards.values())
+            previous_signature = state.get('signature')
+            if not self._click(page, '.j-order-list .sui-pagination__next'):
+                raise RuntimeError('所有订单列表翻页失败，请重试扫描')
+        raise RuntimeError('所有订单页数超出扫描上限，请人工核对，未确认扫描完整')
 
     def _pre_info(self, page, order_no):
         """在页面上下文里调买家端只读接口，判该单当前可退包裹。

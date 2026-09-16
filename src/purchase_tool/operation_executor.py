@@ -710,6 +710,8 @@ class LocalOperationExecutor(object):
                 packages = order.get('packages') or []
                 rows.append(dict(
                     base,
+                    status=order.get('status') or base['status'],
+                    errorSummary=order.get('note', base['errorSummary']) or None,
                     orderNo=order.get('orderNo') or '',
                     deliveredAt=order.get('deliveredAt') or '',
                     amount=order.get('amount') or '',
@@ -718,7 +720,7 @@ class LocalOperationExecutor(object):
                     trackingNo=(packages[0].get('shippingNo')
                                 if packages else ''),
                     goodsImg=(packages[0].get('goodsImg')
-                              if packages else ''),
+                              if packages else '') or order.get('goodsImg') or '',
                 ))
         return rows
 

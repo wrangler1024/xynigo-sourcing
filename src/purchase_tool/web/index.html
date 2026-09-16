@@ -5199,13 +5199,17 @@ function asEtaText(done, total) {
   return `预计还需 ${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
 }
 const AS_SCAN_PILL = {
-  ok: ['run', '已扫描'], empty: ['warn', '无订单'], skip: ['warn', '无订单'],
+  ok: ['run', '已扫描'], empty: ['warn', '无订单'], skip: ['warn', '暂不可申请'],
   blocked: ['warn', '不可申请'], fail: ['bad', '失败'],
   login: ['bad', '未登录'], inuse: ['bad', '环境占用'],
   stopped: ['warn', '已停止'], queued: ['run', '排队中'], running: ['run', '扫描中']
 };
 function asScanPill(row) {
   const status = String(row.status || '');
+  // 兼容旧执行器：有订单号的 skip/empty 行不能标成「无订单」。
+  if (row.orderNo && ['skip', 'empty'].includes(status)) {
+    return '<span class="pill warn">暂不可申请</span>';
+  }
   if (status === 'ok' && row.orderNo) {
     return row.claimable
       ? '<span class="pill ok">可申请</span>'
@@ -5944,7 +5948,7 @@ async function asPoll() {
         const claimable = rows.filter(r => r.claimable).length;
         asSetPhase('扫描完成',
           claimable ? `可申请 ${claimable} 单，勾选后点「提交售后」。`
-            : '本次没有可申请售后的订单（可能都提交过了）。', false);
+            : '本次没有可申请售后的订单，请查看各行的平台状态或核验说明。', false);
         asRenderScanRows(rows);
       }
     } else if (AS_STATE.mode === 'track' && AS_STATE.trackTaskId) {

@@ -230,6 +230,58 @@ def test_after_sale_scan_progress_and_terminal_summary(tmp_path) -> None:
         break
 
 
+def test_all_orders_scan_finishes_multiple_claimable_orders_in_one_environment(tmp_path) -> None:
+    """环境数不是订单数；所有订单扫描同时保留可申请、运输中和核验失败行。"""
+    for web_client, device_client, ids, _database in _e2e_setup(tmp_path):
+        credential = ids["credential"]
+        heartbeat(device_client, credential, capabilities=AS_CAPABILITIES,
+                  client_version=CLIENT_VERSION)
+        created = web_client.post(
+            "/v1/after-sale/scan",
+            json={**_scan_body("SYNTHENV"), "executorId": ids["executorId"]},
+            headers=CSRF,
+        )
+        assert created.status_code == 202, created.text
+        task_id, lease_token = _lease_and_start(
+            device_client, credential, expect_type="after.sale.scan.v1")
+        rows = [_scan_row("SYNTHENV", order_no="SYNTH001", claimable=True),
+                _scan_row("SYNTHENV", order_no="SYNTH002", claimable=True),
+                {**_scan_row("SYNTHENV", order_no="SYNTH003", claimable=False),
+                 "status": "skip", "errorSummary": "运输中（Enviado）；当前没有丢件退款申请入口"},
+                {**_scan_row("SYNTHENV", order_no="SYNTH004", claimable=False),
+                 "status": "fail", "errorSummary": "可申请性核验失败：合成超时"}]
+        progress = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/progress",
+            json={"leaseToken": lease_token, "phase": "after_sale.scan.completed",
+                  "current": 1, "total": 1, "snapshot": {"rows": rows}},
+            headers=device_headers(credential),
+        )
+        assert progress.status_code == 200, progress.text
+        finish_body = {
+            "leaseToken": lease_token, "outcome": "succeeded",
+            "resultCode": "after_sale_scan_completed",
+            "resultSummary": {"rows": rows, "totalCount": 1, "claimableCount": 2},
+        }
+        # 仍拒绝不实的可申请计数，不能为了多单把计数校验全部放开。
+        invalid = {**finish_body, "resultSummary": {
+            **finish_body["resultSummary"], "claimableCount": 3}}
+        rejected = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/finish", json=invalid,
+            headers=device_headers(credential))
+        assert rejected.status_code == 422, rejected.text
+        finished = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/finish", json=finish_body,
+            headers=device_headers(credential))
+        assert finished.status_code == 200, finished.text
+        data = web_client.get(f"/v1/after-sale/scan/{task_id}").json()["data"]
+        assert data["status"] == "succeeded"
+        assert data["summary"]["totalCount"] == 1
+        assert data["summary"]["claimableCount"] == 2
+        assert [(r["orderNo"], r["status"], r["errorSummary"]) for r in data["summary"]["rows"]] == [
+            (r["orderNo"], r["status"], r["errorSummary"]) for r in rows]
+        break
+
+
 def test_after_sale_scan_rejects_row_extra_field_and_cross_batch_serial(tmp_path) -> None:
     """闭集 extra=forbid 与请求白名单：投影外字段/串批次环境序号必须 422。"""
     for web_client, device_client, ids, _database in _e2e_setup(tmp_path):

@@ -125,12 +125,8 @@ class TrackPhaseTests(unittest.TestCase):
         self.assertIn('trackRows', claimer.snapshot())
 
 
-class FallbackTabReportingTests(unittest.TestCase):
-    """主标签扫不到候选时补扫其余标签，并把「为什么没有」说清楚。
-
-    实测：0820/0821 批次的单不在 Pedidos Enviados 下，而是已退款后落到别的标签，
-    只报「没有可申请订单」会让同事以为没下过单。
-    """
+class OrderListReportingTests(unittest.TestCase):
+    """从所有订单识别退款与运输状态，不把无入口误报为无订单。"""
 
     def test_refunded_marker_matches_list_card_text(self):
         from purchase_tool import after_sale_claim as m
@@ -143,10 +139,10 @@ class FallbackTabReportingTests(unittest.TestCase):
         for text in ('Procesamiento de reembolsos', 'Entregado a 05 Sep 2026'):
             self.assertFalse(m.REFUNDED_RE.search(text), text)
 
-    def test_fallback_tabs_exclude_primary_tab(self):
+    def test_scan_starts_from_all_orders(self):
         from purchase_tool import after_sale_claim as m
-        self.assertNotIn(m.ORDERS_STATUS_TYPE, m.FALLBACK_ORDER_TABS)
-        self.assertTrue(set(m.FALLBACK_ORDER_TABS))
+        self.assertEqual(m.ORDERS_STATUS_TYPE, 0)
+        self.assertTrue(m.ORDERS_LIST_URL.endswith('/user/orders/list?status_type=0'))
 
 
 class StartValidationTests(unittest.TestCase):
