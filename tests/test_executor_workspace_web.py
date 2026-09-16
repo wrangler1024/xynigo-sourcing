@@ -977,6 +977,68 @@ class AfterSaleThumbnailWiringTests(unittest.TestCase):
         self.assertIn('loading="lazy" referrerpolicy="no-referrer"', html)
 
 
+class AfterSaleStatusAnchorWiringTests(unittest.TestCase):
+    """运行状态条只有一条（② 扫描 / ③ 提交 / ④ 回访 共用），所以必须按阶段换落点。
+
+    它原先固定写在 ③ 提交结果里，扫描时进度条出现在 ③ 下面，看着像提交的进度。
+    这里按「卡片顺序」钉住四个锚点的位置，防止再被写死回某一张卡片。
+    """
+
+    def _html(self):
+        local = LOCAL_HTML.read_text(encoding="utf-8")
+        self.assertEqual(local, CLOUD_HTML.read_text(encoding="utf-8"))
+        return local
+
+    def test_one_status_bar_node_only(self):
+        html = self._html()
+        self.assertEqual(html.count('id="asPhaseBanner"'), 1)
+        self.assertEqual(html.count('id="asPhaseTitle"'), 1)
+
+    def test_anchors_sit_in_the_stage_cards_they_belong_to(self):
+        html = self._html()
+        panel = html[html.index('id="afterSalePanel"'):]
+        marks = [
+            ('① 选择范围', 'asPhaseAnchorIdle'),
+            ('② 可申请清单', 'asPhaseAnchorScan'),
+            ('③ 提交结果', 'asPhaseAnchorClaim'),
+            ('④ 退款跟踪', 'asPhaseAnchorTrack'),
+        ]
+        # 每个锚点都必须落在本阶段的卡片标题之后、下一阶段标题之前
+        for index, (title, anchor) in enumerate(marks):
+            start = panel.index(title)
+            end = (panel.index(marks[index + 1][0])
+                   if index + 1 < len(marks) else len(panel))
+            self.assertIn(f'id="{anchor}"', panel[start:end],
+                          f'{anchor} 不在「{title}」卡片里')
+
+    def test_claim_anchor_wraps_the_shared_banner(self):
+        html = self._html()
+        block = html[html.index('id="asPhaseAnchorClaim"'):]
+        block = block[:block.index('id="asPhaseAnchorTrack"')]
+        self.assertIn('id="asPhaseBanner"', block)
+
+    def test_set_phase_reparents_banner_to_current_stage(self):
+        html = self._html()
+        body = html[html.index('const AS_PHASE_ANCHORS = {'):]
+        body = body[:body.index('\n}\n')]
+        for key in ('idle', 'scan', 'claim', 'track'):
+            self.assertIn(f'{key}:', body)
+        self.assertIn('anchor.appendChild(banner)', body)
+        self.assertIn('stage || AS_STATE.mode', body)
+
+    def test_each_flow_sets_its_stage_before_first_message(self):
+        html = self._html()
+        for func, mode in (('async function asScan()', 'scan'),
+                           ('async function asSubmit()', 'claim'),
+                           ('async function asTrack(', 'track')):
+            body = html[html.index(func):]
+            body = body[:body.index('\n}\n')]
+            # 入口就要设好阶段：否则首条报错（如「执行器不可用」）会落到上一个阶段的卡片
+            head = body[body.index('AS_STATE.running'):
+                        body.index('AS_STATE.running = true')]
+            self.assertIn(f"AS_STATE.mode = '{mode}'", head)
+
+
 class WebCloudContractAlignmentTests(unittest.TestCase):
     """Web 发出的报文与读取的字段，必须与云端契约对齐。
 
