@@ -67,6 +67,8 @@ def test_release_frees_a_shared_slot_and_is_idempotent(tmp_path) -> None:
         ]
         assert active_plans(database) == 5
 
+        # A sixth *different* group is still refused; the same-group retry case
+        # is covered by test_same_group_retry_replaces_a_plan_instead_of_being_refused.
         blocked = client.post(
             "/v1/environment-plans/parse",
             json={
@@ -74,7 +76,7 @@ def test_release_frees_a_shared_slot_and_is_idempotent(tmp_path) -> None:
                 "filename": "synthetic-buyers.xlsx",
                 "contentBase64": workbook_base64(marker="quota-6"),
                 "site": "MX",
-                "environmentGroup": GROUPS[0],
+                "environmentGroup": "合成六",
             },
             headers=CSRF,
         )
@@ -101,7 +103,7 @@ def test_release_frees_a_shared_slot_and_is_idempotent(tmp_path) -> None:
 
         retried = parse(
             client, key="environment-quota-0007", marker="quota-7",
-            group=GROUPS[0],
+            group="合成六",
         )
         assert retried["reused"] is False
 
@@ -193,3 +195,70 @@ def test_release_does_not_count_as_active_but_keeps_the_audit_row(tmp_path) -> N
         )
         assert latest.status_code == 200
         assert latest.json()["plan"] is None
+
+
+def test_same_group_retry_replaces_a_plan_instead_of_being_refused(tmp_path) -> None:
+    """A retry in the same site and group must not be refused by its own slot."""
+    app, database, _oauth = build_test_app(tmp_path)
+    with TestClient(app) as client:
+        login(client)
+        # Fill the organization quota with other groups, then retry the first.
+        for index in range(5):
+            parse(
+                client,
+                key=f"environment-refill-000{index + 1}",
+                marker=f"refill-{index}",
+                group=GROUPS[index],
+            )
+        assert active_plans(database) == 5
+        again = parse(
+            client,
+            key="environment-refill-0006",
+            marker="refill-retry",
+            group=GROUPS[0],
+        )
+        assert again["reused"] is False
+        # The earlier plan for that group is gone; the other four survive.
+        assert active_plans(database) == 5
+        with database.session_factory() as session:
+            rows = session.execute(
+                select(
+                    EnvironmentAccountPlan.environment_group,
+                    EnvironmentAccountPlan.status,
+                )
+            ).all()
+        by_group: dict[str, list[str]] = {}
+        for group, status in rows:
+            by_group.setdefault(group, []).append(status)
+        assert sorted(by_group[GROUPS[0]]) == ["expired", "parsed"]
+
+
+def test_release_refuses_a_submitted_plan(tmp_path) -> None:
+    """Releasing must not rewrite the record of a plan that already ran."""
+    app, database, _oauth = build_test_app(tmp_path)
+    service = app.state.environment_plan_service
+    with TestClient(app) as client:
+        login(client)
+        plan = parse(client, key="environment-submitted-release-0001", marker="sub")
+        with database.session_factory() as session:
+            record = session.get(
+                EnvironmentAccountPlan, uuid.UUID(plan["cloudPlanId"])
+            )
+            service.mark_submitted(record)
+            session.commit()
+            tenant_id = record.tenant_id
+            user_id = record.created_by_user_id
+        response = client.post(
+            f"/v1/environment-plans/{plan['cloudPlanId']}/release",
+            json={},
+            headers=CSRF,
+        )
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"]["code"] == "environment_plan_consumed"
+        with database.session_factory() as session:
+            record = session.get(
+                EnvironmentAccountPlan, uuid.UUID(plan["cloudPlanId"])
+            )
+            assert record.status == "submitted"
+            assert "releasedBy" not in (record.preview_summary or {})
+            assert tenant_id == record.tenant_id and user_id == record.created_by_user_id

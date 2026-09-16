@@ -238,6 +238,8 @@ def test_bound_submit_can_skip_the_conflicting_rows(tmp_path) -> None:
             assert summary["assignments"] == [
                 {"purchaserLabel": "新刚", "count": 2}
             ]
+            # The probe sample was frozen against 3 rows; it must not exceed 2.
+            assert summary["verifySampleCount"] == 2
         leased = heartbeat(device, credential, capabilities=CAPABILITIES)["task"]
         assert leased["type"] == "environment.create-bound.v1"
         assert leased["payload"]["totalCount"] == 2

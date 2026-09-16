@@ -182,6 +182,14 @@ class CloudEnvironmentPlanService:
                 "解析计划不存在或不属于当前用户",
                 status=404,
             )
+        if record.status == "submitted":
+            # A stale tab can still hold a plan id that already produced a Run.
+            # Marking it "abandoned" would rewrite that Run's audit trail.
+            raise CloudEnvironmentPlanError(
+                "environment_plan_consumed",
+                "解析计划已提交，请重新上传 xlsx",
+                status=409,
+            )
         already_released = record.status == "expired"
         if not already_released:
             self._release_record(record, reason=reason)
@@ -578,6 +586,22 @@ class CloudEnvironmentPlanService:
                 keep_plan_id=reusable.id,
             )
             return self._public_result(reusable, reused=True)
+        # Count the plans this upload is about to replace as already gone: an
+        # operator retrying in the same site and group must not be refused by
+        # the slot its own earlier upload still holds.  The earlier plan is only
+        # released after this parse succeeds, so a bad file costs nothing.
+        replaceable_ids = list(
+            session.scalars(
+                select(EnvironmentAccountPlan.id).where(
+                    EnvironmentAccountPlan.tenant_id == tenant_id,
+                    EnvironmentAccountPlan.created_by_user_id == actor_user_id,
+                    EnvironmentAccountPlan.status == "parsed",
+                    EnvironmentAccountPlan.expires_at > utcnow(),
+                    EnvironmentAccountPlan.site == normalized_site,
+                    EnvironmentAccountPlan.environment_group == normalized_group,
+                )
+            )
+        )
         active_count = int(
             session.scalar(
                 select(func.count(EnvironmentAccountPlan.id)).where(
@@ -588,14 +612,18 @@ class CloudEnvironmentPlanService:
             )
             or 0
         )
+        active_count = max(0, active_count - len(replaceable_ids))
         if active_count >= self.max_active_plans_per_tenant:
-            next_expiry = session.scalar(
-                select(func.min(EnvironmentAccountPlan.expires_at)).where(
-                    EnvironmentAccountPlan.tenant_id == tenant_id,
-                    EnvironmentAccountPlan.status == "parsed",
-                    EnvironmentAccountPlan.expires_at > utcnow(),
-                )
+            remaining = select(func.min(EnvironmentAccountPlan.expires_at)).where(
+                EnvironmentAccountPlan.tenant_id == tenant_id,
+                EnvironmentAccountPlan.status == "parsed",
+                EnvironmentAccountPlan.expires_at > utcnow(),
             )
+            if replaceable_ids:
+                remaining = remaining.where(
+                    EnvironmentAccountPlan.id.notin_(replaceable_ids)
+                )
+            next_expiry = session.scalar(remaining)
             retry_after = 60
             if next_expiry is not None:
                 remaining = (_as_aware(next_expiry) - utcnow()).total_seconds()

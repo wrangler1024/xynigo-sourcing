@@ -4057,10 +4057,14 @@ def create_app(
                             )
                         run.total_count = len(plan_accounts)
                         run.progress_total = len(plan_accounts)
+                        # The sample size was frozen against the untrimmed batch;
+                        # keep the snapshot and the task payload in step.
+                        verify_count = min(int(verify_count or 0), len(plan_accounts))
                         summary = dict(run.request_summary or {})
                         summary["skippedConflictRows"] = skipped_conflicts
                         summary["skippedConflictCount"] = len(skipped_conflicts)
                         summary["assignments"] = assignments
+                        summary["verifySampleCount"] = verify_count
                         run.request_summary = summary
                         run.updated_at = utcnow()
                 account_refs = {
@@ -4111,9 +4115,6 @@ def create_app(
                 if body.mode == "bound"
                 else "environment.create-backup.v1"
             )
-            if body.mode == "bound" and run.total_count != body.totalCount:
-                # Rows dropped by the duplicate guard must not inflate the sample.
-                verify_count = min(int(verify_count or 0), run.total_count)
             task_payload = {
                 "runId": str(run.id),
                 "taskId": str(run.root_run_id or run.id),
@@ -8465,6 +8466,10 @@ def _validation_log_target(method: str, path: str) -> tuple[str | None, str | No
         r"/v1/environment-plans/[A-Za-z0-9._:-]{8,128}/preview", path
     ):
         return "resource.environment.plan.preview", None
+    if method == "POST" and re.fullmatch(
+        r"/v1/environment-plans/[A-Za-z0-9._:-]{8,128}/release", path
+    ):
+        return "resource.environment.plan.release", None
     retry_run_match = re.fullmatch(
         r"/v1/operation-runs/environment-creation/([0-9a-fA-F-]{36})/retry",
         path,

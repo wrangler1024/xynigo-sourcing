@@ -1022,3 +1022,52 @@ class WebCloudContractAlignmentTests(unittest.TestCase):
         missing = sorted(reads - fields)
         self.assertFalse(missing,
                          f'④ 读了云端契约没有的字段（会恒为空）：{missing}')
+
+
+class EnvironmentConflictSkipWiringTests(unittest.TestCase):
+    """建环境判重修复（20260916）在 Web 上的三个可见入口与文案，逐条钉住。
+
+    判重原本只回一个"已有环境"的错误，运营看不到是哪些行；这里钉住冲突清单、
+    跳过开关与放弃解析按钮，避免后续改动把它们删掉而无人察觉。
+    """
+
+    def _html(self):
+        local = LOCAL_HTML.read_text(encoding="utf-8")
+        self.assertEqual(local, CLOUD_HTML.read_text(encoding="utf-8"))
+        return local
+
+    def test_conflict_panel_and_skip_toggle_are_wired(self):
+        html = self._html()
+        for marker in (
+            'id="envConflictPanel"',
+            'id="envConflictList"',
+            'id="envSkipConflicts"',
+            'function renderEnvSubmitConflicts(err)',
+            'function envSubmitAccountCount()',
+            "skipConflictingRows:envSkipConflictsRequested()",
+            'diagnostics.truncated',
+        ):
+            self.assertIn(marker, html)
+        # 默认不跳过：只有运营勾选后请求才带真值
+        self.assertIn("$('envSkipConflicts').checked", html)
+
+    def test_discard_plan_button_calls_release_endpoint(self):
+        html = self._html()
+        self.assertIn('id="btnEnvDiscardPlan"', html)
+        self.assertIn(
+            "/v1/environment-plans/${encodeURIComponent(planId)}/release", html
+        )
+        self.assertIn("$('btnEnvDiscardPlan').hidden = !(", html)
+
+    def test_new_plan_error_codes_have_copy(self):
+        html = self._html()
+        for code in (
+            'environment_plan_released',
+            'environment_plan_superseded',
+            'environment_plan_all_conflicting',
+        ):
+            self.assertIn(f"{code}:", html)
+
+    def test_confirmation_counts_skipped_rows_out(self):
+        html = self._html()
+        self.assertIn('已排除 ${envAccountCount - envSubmitAccountCount()} 个已有环境的账号', html)

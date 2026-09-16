@@ -13784,7 +13784,10 @@ $('btnEnvStart').onclick = async () => {
   if (!environmentSiteReviewReady()) { toast('请先核对并确认本批账号实际站点'); return; }
   const assignment = composeAssignmentSpec();
   const writeLarkLedger = false;
-  if (!confirm(`将按${siteName}处理 ${envAccountCount} 个账号：创建环境、导入 Cookie、绑定账号并写备注。\n\n本次确认只授权 HubStudio 写入，是否继续？`)) return;
+  const skipNote = envSubmitAccountCount() < envAccountCount
+    ? `（已排除 ${envAccountCount - envSubmitAccountCount()} 个已有环境的账号）`
+    : '';
+  if (!confirm(`将按${siteName}处理 ${envSubmitAccountCount()} 个账号${skipNote}：创建环境、导入 Cookie、绑定账号并写备注。\n\n本次确认只授权 HubStudio 写入，是否继续？`)) return;
   const confirmLarkWrite = false;
   if (CLOUD_WEB_MODE) {
     cloudEnvironmentRunId = '';
@@ -13894,9 +13897,13 @@ function renderEnvSubmitConflicts(err) {
     if (err && err.code === 'environment_account_already_bound') clearEnvSubmitConflicts();
     return 0;
   }
-  envSubmitConflicts = {rows};
+  const diagnostics = (err && err.diagnostics) || {};
+  const total = Number(diagnostics.totalRows || 0);
+  const skippable = Number(diagnostics.skippableRows || rows.length);
+  const truncated = !!diagnostics.truncated;
+  envSubmitConflicts = {rows, totalRows: total, skippable, truncated};
   const list = $('envConflictList');
-  list.innerHTML = rows.map(row => {
+  const rendered = rows.map(row => {
     const parts = [
       row.emailMasked || '账号已脱敏',
       row.orderMasked ? `单号 ${row.orderMasked}` : '',
@@ -13905,8 +13912,9 @@ function renderEnvSubmitConflicts(err) {
     ].filter(Boolean);
     return `<div class="conflict-row"><span>#${Number(row.rowNumber) || ''}</span><span>${esc(parts.join(' · '))}</span></div>`;
   }).join('');
-  const total = Number((err.diagnostics && err.diagnostics.totalRows) || 0);
-  const skippable = Number((err.diagnostics && err.diagnostics.skippableRows) || rows.length);
+  list.innerHTML = rendered + (truncated
+    ? `<div class="conflict-row"><span>…</span><span>冲突行较多，这里只列出前 ${rows.length} 行；勾选跳过后按清单整体排除，未列出的冲突行也会一起跳过。</span></div>`
+    : '');
   $('envConflictTitle').textContent = total
     ? `本批 ${total} 行中有 ${skippable} 行已存在环境`
     : `有 ${skippable} 行已存在环境`;
@@ -13915,6 +13923,12 @@ function renderEnvSubmitConflicts(err) {
     : `跳过这 ${skippable} 行，只创建其余账号`;
   $('envConflictPanel').hidden = false;
   return skippable;
+}
+
+function envSubmitAccountCount() {
+  // What the operator is about to confirm: the batch minus the skipped rows.
+  if (!envSkipConflictsRequested() || !envSubmitConflicts) return envAccountCount;
+  return Math.max(0, envAccountCount - Number(envSubmitConflicts.skippable || 0));
 }
 
 $('btnEnvConflictClose').onclick = () => {
