@@ -60,7 +60,9 @@ services:
     networks:
       - identity
       - edge
-    mem_limit: 256m
+    # 256m 在 20260916 售后模块上线后不够用：uvicorn 常驻 ~240MB，被 cgroup
+    # OOM 杀成每 1-2 分钟一轮重启（dmesg + docker events 实证）。提到 512m。
+    mem_limit: 512m
     cpus: 1.0
     read_only: true
     tmpfs:
