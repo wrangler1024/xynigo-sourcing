@@ -5021,9 +5021,27 @@ function asSerials() {
   return ($('asSerials').value || '').split(/[\s,，;；]+/)
     .map(s => s.trim()).filter(Boolean);
 }
+// 刷新后恢复最近一次提交批次：④ 的回访对象取自已提交的行（有退款单号），
+// 而 ③ 只活在本页会话里——不恢复的话，刷新一次 ④ 就永远提示「无可回访」。
+async function asLoadLatestClaim() {
+  if ((AS_STATE.claimRows || []).length) return;
+  try {
+    const res = await cloudFetchJson('/v1/operation-runs/after-sale-claim/latest');
+    const data = (res || {}).data;
+    const rows = (data && data.rows) || [];
+    if (!rows.length) return;
+    AS_STATE.claimRows = rows;
+    asRenderClaimRows(rows);
+    asSetPhase('已恢复最近提交批次',
+      `共 ${rows.length} 单（含退款单号的可直接被 ④ 回访）`, false);
+  } catch (e) {
+    // 本地模式没有该路由（404）：静默跳过，不影响页面其它功能
+  }
+}
 function asInit() {
   asRenderTypeBar();
   asSelectType(AS_STATE.type);
+  asLoadLatestClaim();
   if (!$('asSerials').value) asLoadList();
   if (!AS_STATE.timer) AS_STATE.timer = setInterval(asPoll, 2500);
 }
