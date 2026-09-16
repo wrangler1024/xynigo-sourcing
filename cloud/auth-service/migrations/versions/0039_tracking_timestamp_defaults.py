@@ -18,7 +18,7 @@ SQLAlchemy 的 INSERT 直接省略这两列，落到库里就是 NULL → NOT NU
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0039_after_sale_tracking_timestamp_defaults"
+revision = "0039_tracking_timestamp_defaults"
 down_revision = "0038_after_sale_refund_tracking"
 branch_labels = None
 depends_on = None

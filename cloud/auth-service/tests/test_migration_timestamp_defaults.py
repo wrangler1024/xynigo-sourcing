@@ -50,10 +50,14 @@ def test_non_null_timestamps_declare_server_default() -> None:
 def test_after_sale_tracking_table_has_timestamp_defaults() -> None:
     """点名的回归位：0038 建表漏写、0039 补上。"""
     migration = (MIGRATIONS
-                 / "0039_after_sale_tracking_timestamp_defaults.py")
+                 / "0039_tracking_timestamp_defaults.py")
     assert migration.exists(), "补默认值的迁移不在了"
     text = migration.read_text(encoding="utf-8")
     assert 'down_revision = "0038_after_sale_refund_tracking"' in text
     for column in ("created_at", "updated_at"):
         assert f'"{column}"' in text
     assert text.count("server_default=sa.func.now()") >= 1
+    # alembic_version.version_num 是 VARCHAR(32)，超长会让迁移在
+    # 写版本号时失败（20260916 部署实测 StringDataRightTruncation）。
+    revision_id = re.search(r'^revision = "([^"]+)"', text, re.M).group(1)
+    assert len(revision_id) <= 32, f"revision id 超过 alembic_version 列宽：{revision_id}"
