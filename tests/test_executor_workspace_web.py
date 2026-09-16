@@ -990,11 +990,13 @@ class AfterSaleThumbnailWiringTests(unittest.TestCase):
         self.assertIn('loading="lazy" referrerpolicy="no-referrer"', html)
 
 
-class AfterSaleStatusAnchorWiringTests(unittest.TestCase):
-    """运行状态条只有一条（② 扫描 / ③ 提交 / ④ 回访 共用），所以必须按阶段换落点。
+class AfterSaleRunStripWiringTests(unittest.TestCase):
+    """运行状态条：三段操作共用一条，放在 ① 之上、sticky 常驻、终态自动收起。
 
-    它原先固定写在 ③ 提交结果里，扫描时进度条出现在 ③ 下面，看着像提交的进度。
-    这里按「卡片顺序」钉住四个锚点的位置，防止再被写死回某一张卡片。
+    来自原型定版（docs/prototypes/20260915-procurement-after-sale-v2-multitype.md
+    §「动态操作进度放哪里」）。踩过的两个坑都写成断言：
+    ① 状态条必须在**面板级**——放进卡片里 sticky 会被卡片边界带走；
+    ② 收起靠 class，进度区排版不能写内联 display（会压过收起态的 display:none）。
     """
 
     def _html(self):
@@ -1002,42 +1004,65 @@ class AfterSaleStatusAnchorWiringTests(unittest.TestCase):
         self.assertEqual(local, CLOUD_HTML.read_text(encoding="utf-8"))
         return local
 
-    def test_one_status_bar_node_only(self):
+    def test_single_strip_and_single_nodes(self):
         html = self._html()
-        self.assertEqual(html.count('id="asPhaseBanner"'), 1)
-        self.assertEqual(html.count('id="asPhaseTitle"'), 1)
+        for node in ('id="asRunStrip"', 'id="asPhaseBanner"', 'id="asProgress"',
+                     'id="asProgressText"', 'id="asStop"', 'id="asStripToggle"'):
+            self.assertEqual(html.count(node), 1, f'{node} 应只有一个')
 
-    def test_anchors_sit_in_the_stage_cards_they_belong_to(self):
+    def test_strip_sits_above_card_one_at_panel_level(self):
+        """位置＝① 之上，且是面板的直接子元素（在卡片里就吸不住）。"""
         html = self._html()
-        panel = html[html.index('id="afterSalePanel"'):]
-        marks = [
-            ('① 选择范围', 'asPhaseAnchorIdle'),
-            ('② 可申请清单', 'asPhaseAnchorScan'),
-            ('③ 提交结果', 'asPhaseAnchorClaim'),
-            ('④ 退款跟踪', 'asPhaseAnchorTrack'),
-        ]
-        # 每个锚点都必须落在本阶段的卡片标题之后、下一阶段标题之前
-        for index, (title, anchor) in enumerate(marks):
-            start = panel.index(title)
-            end = (panel.index(marks[index + 1][0])
-                   if index + 1 < len(marks) else len(panel))
-            self.assertIn(f'id="{anchor}"', panel[start:end],
-                          f'{anchor} 不在「{title}」卡片里')
+        panel = html.index('id="afterSalePanel"')
+        strip = html.index('id="asRunStrip"')
+        card_one = html.index('① 选择范围')
+        self.assertLess(panel, strip)
+        self.assertLess(strip, card_one)
+        # 面板与状态条之间不能夹着卡片/段落的开始标签
+        between = html[panel:strip]
+        self.assertNotIn('<section', between)
 
-    def test_claim_anchor_wraps_the_shared_banner(self):
+    def test_strip_is_sticky(self):
         html = self._html()
-        block = html[html.index('id="asPhaseAnchorClaim"'):]
-        block = block[:block.index('id="asPhaseAnchorTrack"')]
-        self.assertIn('id="asPhaseBanner"', block)
+        self.assertIn('#afterSalePanel #asRunStrip { position: sticky; top: 8px;',
+                      html)
+        self.assertIn('#afterSalePanel #asRunStrip .query-phase-banner '
+                      '{ margin-bottom: 0; flex-wrap: wrap; }', html)
 
-    def test_set_phase_reparents_banner_to_current_stage(self):
+    def test_strip_holds_progress_and_stop_exactly_once(self):
+        """进度条/进度文本/停止按钮在状态条里；① 卡里不再各留一份。"""
         html = self._html()
-        body = html[html.index('const AS_PHASE_ANCHORS = {'):]
-        body = body[:body.index('\n}\n')]
-        for key in ('idle', 'scan', 'claim', 'track'):
-            self.assertIn(f'{key}:', body)
-        self.assertIn('anchor.appendChild(banner)', body)
-        self.assertIn('stage || AS_STATE.mode', body)
+        strip = html[html.index('id="asRunStrip"'):]
+        strip = strip[:strip.index('① 选择范围')]
+        for node in ('id="asProgress"', 'id="asProgressText"', 'id="asStop"'):
+            self.assertIn(node, strip, f'{node} 应在状态条里')
+        card_one = html[html.index('① 选择范围'):]
+        card_one = card_one[:card_one.index('② 可申请清单')]
+        for node in ('id="asProgress"', 'id="asProgressText"', 'id="asStop"'):
+            self.assertNotIn(node, card_one, f'{node} 不该在 ① 卡里再留一份')
+
+    def test_progress_wrap_uses_class_not_inline_display(self):
+        """排版走 class：内联 display:flex 会压过收起态的 display:none。"""
+        html = self._html()
+        strip = html[html.index('id="asRunStrip"'):]
+        strip = strip[:strip.index('① 选择范围')]
+        self.assertIn('class="progress-wrap as-strip-progress"', strip)
+        self.assertNotIn('style="display:flex"', strip.replace(' ', ''))
+        self.assertIn('#afterSalePanel .as-strip-progress { margin-left: auto;',
+                      html)
+
+    def test_set_phase_no_longer_reparents_and_collapses_on_terminal(self):
+        """状态条不再按阶段换落点；终态延迟 2.2 秒收起，跑动中保持展开。"""
+        html = self._html()
+        self.assertNotIn('AS_PHASE_ANCHORS', html)
+        self.assertNotIn('asPhaseAnchor', html)
+        phase = html[html.index('function asSetPhase('):]
+        phase = phase[:phase.index('\n}\n')]
+        self.assertIn('asStripToggle(false)', phase)
+        self.assertIn('setTimeout(() => asStripToggle(true), 2200)', phase)
+        self.assertIn('asStripTerminal', phase)
+        self.assertIn('/完成|失败|已停止|不可用/', html)
+        self.assertIn("$('asStripToggle').onclick", html)
 
     def test_each_flow_sets_its_stage_before_first_message(self):
         html = self._html()
