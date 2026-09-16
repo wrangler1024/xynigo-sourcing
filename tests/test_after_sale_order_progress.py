@@ -70,7 +70,7 @@ class ExecutionOrderTests(unittest.TestCase):
 @unittest.skipUnless(shutil.which('node'), 'Node.js is required for Web behavior tests')
 class WebOrderProgressTests(unittest.TestCase):
     def test_actual_web_functions_keep_order_progress_and_scan_expansion(self):
-        html = (Path(__file__).resolve().parents[1] / 'src/purchase_tool/web/index.html').read_text()
+        html = (Path(__file__).resolve().parents[1] / 'src/purchase_tool/web/index.html').read_text(encoding='utf-8')
         functions = []
         for name in ['asItemCount', 'asFilteredRows', 'asSelectedItems', 'asOrderedRows', 'asProgress', 'asStripToggle',
                      'asSetPhase', 'asRenderTrackRows', 'asPoll']:
@@ -157,5 +157,5 @@ const cloudFetchJson=async()=>{fetches++;return {data:response};};
 })().catch(e=>{console.error(e);process.exitCode=1});
 '''
         result = subprocess.run(['node', '-e', setup+'\n'.join(functions)+checks],
-                                capture_output=True, text=True)
+                                capture_output=True, text=True, encoding='utf-8')
         self.assertEqual(result.returncode, 0, result.stderr)

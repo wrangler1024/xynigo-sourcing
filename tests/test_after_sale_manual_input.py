@@ -8,7 +8,7 @@ import pytest
 
 @pytest.mark.skipif(not shutil.which('node'), reason='Node.js required')
 def test_manual_inputs_accept_chinese_english_and_mixed_separators():
-    html = (Path(__file__).resolve().parents[1] / 'src/purchase_tool/web/index.html').read_text()
+    html = (Path(__file__).resolve().parents[1] / 'src/purchase_tool/web/index.html').read_text(encoding='utf-8')
     functions = []
     for name in ['asParseDirectOrders', 'asParseManualBills']:
         start = html.index('function ' + name + '(')
@@ -36,5 +36,5 @@ assert.equal(asParseDirectOrders('；;\n').items.length, 0);
 assert.deepEqual(asParseManualBills('；;\n'), {items:[], invalid:[], duplicates:[]});
 '''
     result = subprocess.run(['node', '-e', '\n'.join(functions) + checks],
-                            text=True, capture_output=True)
+                            text=True, encoding='utf-8', capture_output=True)
     assert result.returncode == 0, result.stderr

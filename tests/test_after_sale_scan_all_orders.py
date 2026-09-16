@@ -262,13 +262,13 @@ assert.equal(read().empty,false);
 assert.equal(read().signature,'SYNTH001');
 assert.equal(read().next,false);
 '''
-        subprocess.run(['node', '-e', js], check=True, capture_output=True, text=True)
+        subprocess.run(['node', '-e', js], check=True, capture_output=True, text=True, encoding='utf-8')
 
 
 class ScanStatusWebTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('node'), 'Node.js is required for Web behavior tests')
     def test_nonclaimable_order_is_not_labelled_empty_including_old_executor(self):
-        html = (Path(__file__).resolve().parents[1] / 'src/purchase_tool/web/index.html').read_text()
+        html = (Path(__file__).resolve().parents[1] / 'src/purchase_tool/web/index.html').read_text(encoding='utf-8')
         js = html[html.index('const AS_SCAN_PILL = {'):html.index('const AS_CLAIM_PILL = {')]
         js += '''
 const assert = require('node:assert/strict');
@@ -280,4 +280,4 @@ assert.match(asScanPill({orderNo:'',status:'empty'}), /无订单/);
 assert.match(asScanPill({orderNo:'SYNTH002',status:'ok',claimable:true}), />可申请</);
 assert.match(asScanPill({orderNo:'SYNTH003',status:'fail'}), /失败/);
 '''
-        subprocess.run(['node', '-e', js], check=True, capture_output=True, text=True)
+        subprocess.run(['node', '-e', js], check=True, capture_output=True, text=True, encoding='utf-8')
