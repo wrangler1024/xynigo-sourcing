@@ -14,9 +14,9 @@ from urllib.parse import quote
 
 from . import __version__
 
-RELEASE_VERSION = "0.18.3"
+RELEASE_VERSION = "0.18.4"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-16T16:14:35Z"
+RELEASE_PUBLISHED_AT = "2026-09-16T18:42:28Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,10 +31,10 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.18.3-0b66449181a7",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.18.3.exe",
-        "sha256": "5f45b09d79c6723288ae52f1b204efae85400b52b08b85374c8ad1cfde63a95c",
-        "size": 15380141,
+        "runtimeId": "0.18.4-a84df3b6f3db",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.18.4.exe",
+        "sha256": "c9b9f9acd73541fcee08fbfc03819171fca3d90b5b420a7e4ca8a7bad84f0d3a",
+        "size": 15378766,
         "installMode": "standard_per_user",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_silent_installer",
@@ -50,10 +50,10 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.18.3-0b66449181a7",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.18.3.pkg",
-        "sha256": "9cc7f6d91da9f04354ad1429db29dc000b3af78a3e157ce6d0782da7bdc0fd0b",
-        "size": 14402136,
+        "runtimeId": "0.18.4-a84df3b6f3db",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.18.4.pkg",
+        "sha256": "80f013bb8fc87423479ccc87da3b9c5dc2ef5052176ffa9e7a281c4ebc61e4c9",
+        "size": 11737125,
         "installMode": "standard_system_application",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_system_installer",
@@ -320,10 +320,10 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "修复采购售后不可申请原因反馈，按实际退款凭证展示阶段与平台申请时间。",
-            "补齐提交后退款回执查询，结果不明进入待核对并阻止直接补提。",
-            "补采订单送达日期、全部商品图片、规格与件数，支持按日期及单件/多件筛选。",
-            "统一三张售后表格的滚动高度与任务进度，显示平均耗时和累计用时。",
-            "云端与 Windows/macOS 执行器统一升级为 v0.18.3。"
+            "采购售后重构为订单处理双视图，待处理订单与本次提交分开查看，退款跟踪可直接打开提交历史。",
+            "保留原始扫描依据，持续关联提交状态；清空显示及后续批次失败不解除已有退款凭证和待核对保护。",
+            "修复多件订单提交后商品图片丢失，结果、历史和导出保留完整商品信息。",
+            "按匹配的提交回执及目标包裹凭证核验受理结果，补齐退款详情、独立操作完成时间及诊断信息。",
+            "云端与 Windows/macOS 执行器统一升级为 v0.18.4；提交售后前请更新执行器。"
         ],
     }
