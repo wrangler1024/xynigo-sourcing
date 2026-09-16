@@ -11,9 +11,15 @@
 
 ## 评审对象
 
-- 分支 `codex/after-sale-three-requirements`，唯一提交 `4bd73ff`
-- 基线 `origin/main` `b482e1f`（收口后的 main：含 ④ 导出、状态条落点、③ 字段修复、迁移 0039、桥接层透传）
-- worktree：`~/Documents/xynigo-worktrees/merge-pf2`
+- 分支 `codex/after-sale-three-requirements`，本分支只有两个提交：
+  - `4bd73ff` feat: 补提失败 + 直接提交指定单 + 提交历史（**主体，请重点看这个**）
+  - `baa0824` docs: 本评审请求提示词
+- 基线 `origin/main` `b482e1f`。**基线里已经有的东西不属于本次评审对象**（它们是上一轮按 Jeff 指令合并的收口）：
+  ④ 退款跟踪导出、运行状态条按阶段落点、③ 补齐送达时间/商品图 + 环境序号移到最前、
+  迁移 `0039` 补跟踪表时间列默认值、以及执行器桥接层透传 `deliveredAt`/`goodsImg`。
+  若要核对它们，直接看 `origin/main` 的 `b482e1f` 及之前的四个 merge 提交。
+- 复核命令：`git diff origin/main...codex/after-sale-three-requirements`（三点，只看本分支引入的差异）
+- worktree：`~/Documents/xynigo-worktrees/merge-pf2`（当前就在这个分支上）
 
 ## 口径要点（这四条最容易走偏，请逐条核）
 
