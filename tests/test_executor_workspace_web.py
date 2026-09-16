@@ -1220,6 +1220,34 @@ class AfterSaleThreeRequirementsWiringTests(unittest.TestCase):
         self.assertIn('重提自 ${esc(asShortRef(batch.retryFromRunId))}', detail)
         self.assertIn('批次 ${esc(asShortRef(batch.runId))}', detail)
 
+    def test_history_list_environment_count_column(self):
+        """历史列表「环境数」列：钉列序 + 空态 colspan + 行模板格数三处一致。
+
+        列数从 11 变 12，漏改占位行的 colspan 只会让空态少一格（肉眼看不出），
+        所以 colspan 与表头列数在这里必须相等；列序也逐列钉住，
+        只数单元格个数会让整列错位照样通过。
+        """
+        html = self._html()
+        anchor = html.index('id="asHistoryBody"')
+        table = html[html.rindex('<table', 0, anchor):]
+        table = table[:table.index('</table>')]
+        columns = re.findall(r'<th[^>]*>([^<]+)</th>', table)
+        self.assertEqual(columns, [
+            '批次时间', '操作人', '执行器', '环境数', '提交', '已受理', '已跳过',
+            '已停止', '失败', '状态', '重提自', '操作'])
+        colspans = {int(count) for count in re.findall(r'colspan="(\d+)"', table)}
+        self.assertEqual(colspans, {len(columns)},
+                         '空态/错误态的 colspan 必须等于表头列数')
+        render = self._fn(html, 'function asRenderClaimHistory(')
+        template = render[render.index('items.map(item => `<tr>'):]
+        template = template[:template.index(".join('')")]
+        self.assertEqual(template.count('<td'), len(columns), '行模板格数必须等于列数')
+        self.assertIn('${Number(item.environmentCount || 0)}', template)
+        self.assertLess(template.index('item.executorName'),
+                        template.index('item.environmentCount'))
+        self.assertLess(template.index('item.environmentCount'),
+                        template.index('item.totalCount'))
+
     def test_history_list_is_not_actor_scoped(self):
         """历史列表在租户内互相可见：云端那条路由不许出现 history_admin 过滤。"""
         main = (LOCAL_HTML.parents[3] / 'cloud' / 'auth-service' / 'src'

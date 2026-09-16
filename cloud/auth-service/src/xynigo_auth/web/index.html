@@ -3536,7 +3536,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
           <div class="field"><label for="asHistoryActor">操作人</label><select id="asHistoryActor"><option value="">全部用户</option></select></div>
           <button class="btn" id="btnAsHistoryRefresh" type="button">刷新</button>
         </div>
-        <div class="table-wrap"><table class="query-history-table" style="min-width:1180px"><thead><tr><th>批次时间</th><th>操作人</th><th>执行器</th><th>提交</th><th>已受理</th><th>已跳过</th><th>已停止</th><th>失败</th><th>状态</th><th>重提自</th><th>操作</th></tr></thead><tbody id="asHistoryBody"><tr><td colspan="11" class="query-history-empty">正在读取提交历史…</td></tr></tbody></table></div>
+        <div class="table-wrap"><table class="query-history-table" style="min-width:1240px"><thead><tr><th>批次时间</th><th>操作人</th><th>执行器</th><th>环境数</th><th>提交</th><th>已受理</th><th>已跳过</th><th>已停止</th><th>失败</th><th>状态</th><th>重提自</th><th>操作</th></tr></thead><tbody id="asHistoryBody"><tr><td colspan="12" class="query-history-empty">正在读取提交历史…</td></tr></tbody></table></div>
         <div class="query-history-pagination"><span class="hint" id="asHistoryPageText">第 1 页</span><button class="btn" id="btnAsHistoryPrev" type="button" disabled>上一页</button><button class="btn" id="btnAsHistoryNext" type="button" disabled>下一页</button></div>
       </div>
       <div id="asHistoryDetailView" hidden>
@@ -5648,7 +5648,7 @@ async function asLoadClaimHistory(options) {
   if ($('asHistoryActor').value) params.set('userId', $('asHistoryActor').value);
   if (AS_HISTORY.cursor) params.set('cursor', AS_HISTORY.cursor);
   AS_HISTORY.loading = true;
-  $('asHistoryBody').innerHTML = '<tr><td colspan="11" class="query-history-empty">正在读取提交历史…</td></tr>';
+  $('asHistoryBody').innerHTML = '<tr><td colspan="12" class="query-history-empty">正在读取提交历史…</td></tr>';
   try {
     const res = await cloudFetchJson(
       '/v1/operation-runs/after-sale-claim/history?' + params.toString());
@@ -5661,7 +5661,7 @@ async function asLoadClaimHistory(options) {
     $('btnAsHistoryNext').disabled = !data.hasMore;
   } catch (error) {
     $('asHistoryBody').innerHTML =
-      '<tr><td colspan="11" class="query-history-empty">'
+      '<tr><td colspan="12" class="query-history-empty">'
       + esc(String(error.message || error)) + '</td></tr>';
     $('btnAsHistoryNext').disabled = true;
   } finally {
@@ -5680,13 +5680,14 @@ function asFillClaimHistoryActors(actors) {
 function asRenderClaimHistory(items) {
   if (!items.length) {
     $('asHistoryBody').innerHTML =
-      '<tr><td colspan="11" class="query-history-empty">暂无提交批次</td></tr>';
+      '<tr><td colspan="12" class="query-history-empty">暂无提交批次</td></tr>';
     return;
   }
   $('asHistoryBody').innerHTML = items.map(item => `<tr>
       <td class="sub-text">${esc(String(item.createdAt || '').replace('T', ' ').slice(0, 16))}</td>
       <td>${esc(item.actorName || '—')}</td>
       <td class="sub-text">${esc(item.executorName || '—')}</td>
+      <td class="num">${Number(item.environmentCount || 0)}</td>
       <td class="num">${Number(item.totalCount || 0)}</td>
       <td class="num">${Number(item.successCount || 0)}</td>
       <td class="num">${Number(item.skippedCount || 0)}</td>
