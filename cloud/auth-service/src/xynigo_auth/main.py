@@ -133,6 +133,7 @@ from .models import (
 from .operation_contract import (
     AfterSaleClaimRunCreateBody,
     AfterSaleScanCreateBody,
+    AfterSaleTrackCreateBody,
     EnvironmentCreationRunBody,
     EnvironmentCreationRunCreateBody,
     EnvironmentPlanDryRunBody,
@@ -149,6 +150,7 @@ from .operation_service import (
     OperationResultService,
     OperationRunService,
     after_sale_claim_snapshot,
+    after_sale_tracking_snapshot,
     after_sale_last_claims,
     store_finance_last_runs,
     store_finance_snapshot,
@@ -5255,6 +5257,81 @@ def create_app(
             raise HTTPException(status_code=404, detail="扫描任务不存在")
         return {"ok": True, "data": _after_sale_scan_payload(
             session, actor, executor_channel(session), task)}
+
+    @app.post("/v1/after-sale/track", status_code=status.HTTP_202_ACCEPTED)
+    def create_after_sale_track_task(
+        body: AfterSaleTrackCreateBody,
+        request: Request,
+        session: Session = Depends(get_session),
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ):
+        actor = authorize(
+            request, session, permission="assistant.access",
+            session_token=session_token, authorization=authorization,
+            audit_action="assistant.after_sale.track.create",
+        )
+        tasks = executor_channel(session)
+        task = tasks.create_config_task(
+            tenant_id=actor.tenant.id,
+            user_id=actor.user.id,
+            executor_id=body.executorId,
+            task_type="after.sale.track.v1",
+            payload={
+                "browserMode": body.browserMode,
+                "items": [item.model_dump(mode="json") for item in body.items],
+            },
+            idempotency_key=body.idempotencyKey,
+        )
+        _add_audit(
+            session,
+            request_id=request.state.request_id,
+            action="assistant.after_sale.track.create",
+            result="success",
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            business_object_type="executor_task",
+            business_object_id=str(task.id),
+            change_summary={"billCount": len(body.items)},
+            **_request_log_context(request),
+        )
+        session.commit()
+        return {"ok": True, "data": {
+            "taskId": str(task.id), "status": task.status,
+            "executorId": str(task.executor_id)}}
+
+    @app.get("/v1/after-sale/track/{task_id}")
+    def get_after_sale_track_task(
+        task_id: uuid.UUID,
+        request: Request,
+        session: Session = Depends(get_session),
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ):
+        actor = authorize(
+            request, session, permission="assistant.access",
+            session_token=session_token, authorization=authorization,
+            audit_action="assistant.after_sale.track.read",
+        )
+        task = session.scalar(
+            select(ExecutorTask).where(
+                ExecutorTask.id == task_id,
+                ExecutorTask.tenant_id == actor.tenant.id,
+                ExecutorTask.task_type == "after.sale.track.v1",
+            )
+        )
+        if task is None:
+            raise HTTPException(status_code=404, detail="回访任务不存在")
+        payload = (task.payload_envelope or {}) if isinstance(
+            task.payload_envelope, dict) else {}
+        bills = [str(item.get("refundBillId") or "")
+                 for item in (payload.get("items") or [])
+                 if isinstance(item, dict)]
+        snapshot = after_sale_tracking_snapshot(session, actor.tenant.id, bills)
+        return {"ok": True, "data": {
+            "taskId": str(task.id), "status": task.status,
+            "executorId": str(task.executor_id),
+            "summary": snapshot}}
 
     @app.post("/v1/after-sale/scan/{task_id}/cancel")
     def cancel_after_sale_scan_task(

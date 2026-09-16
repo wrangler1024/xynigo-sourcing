@@ -31,6 +31,7 @@ from .executor_payload_crypto import (
 )
 from .executor_diagnostics import validate_diagnostics
 from .models import (
+    AfterSaleRefundTracking,
     EnvironmentCreationResult,
     EnvironmentCreationRun,
     ExecutorPairingCode,
@@ -52,6 +53,7 @@ from .operation_contract import (
     AfterSaleClaimProgressRow,
     AfterSaleClaimScreenshot,
     AfterSaleScanRow,
+    AfterSaleTrackRow,
     EnvironmentPlanParseResult,
     EnvironmentRunProgressItem,
     EnvironmentIpVerificationProgress,
@@ -2083,6 +2085,12 @@ class ExecutorChannelService:
                 heartbeat_at=heartbeat_at,
             )
             return
+        elif task.task_type == "after.sale.track.v1":
+            # 回访不建 Run：进度行直接 upsert 进跟踪表（表按 refund_bill_id 唯一，
+            # 每次覆盖更新，终态行由回访侧不再重扫而自然冻结）。
+            if progress_snapshot is not None:
+                self._upsert_after_sale_track(task, progress_snapshot, heartbeat_at)
+            return
         elif task.task_type == "after.sale.scan.v1":
             # 扫描不建 Run 表：进度行直接落在任务行的 progress_summary，
             # 终态由 finish 写加密 result_summary。
@@ -2597,6 +2605,69 @@ class ExecutorChannelService:
                     )
                     row.screenshot_expires_at = expires_at
             row.updated_at = now
+
+    def _upsert_after_sale_track(self, task: ExecutorTask,
+                                 snapshot: dict[str, Any],
+                                 now: datetime) -> None:
+        """回访进度行 upsert 进 after_sale_refund_tracking。
+
+        闭集用 AfterSaleTrackRow 校验；refundBillId 必须落在该任务请求清单内，
+        避免串批次覆盖别人的行。timeline 不在行契约内（刻意），故不落库到进度；
+        它由导出侧回读执行器，不进每轮上报体积。
+        """
+        if not isinstance(snapshot, dict) or "rows" not in snapshot \
+                or set(snapshot) - {"rows", "screenshots"}:
+            raise ExecutorServiceError(
+                "executor_progress_snapshot_invalid", status_code=422,
+                diagnostic_reason="snapshot_shape_invalid")
+        raw_rows = snapshot.get("rows")
+        if not isinstance(raw_rows, list) or len(raw_rows) > 20_000:
+            raise ExecutorServiceError(
+                "executor_progress_snapshot_invalid", status_code=422,
+                diagnostic_reason="row_count_exceeds_task")
+        try:
+            rows = [AfterSaleTrackRow.model_validate(item) for item in raw_rows]
+        except ValidationError as exc:
+            raise ExecutorServiceError(
+                "executor_progress_snapshot_invalid", status_code=422,
+                diagnostic_reason="row_schema_invalid") from exc
+        payload = self._request_payload(task)
+        allowed = {
+            str(item.get("refundBillId") or "")
+            for item in (payload.get("items") or [])
+            if isinstance(item, dict)
+        }
+        if allowed and not {r.refundBillId for r in rows}.issubset(allowed):
+            raise ExecutorServiceError(
+                "executor_progress_snapshot_invalid", status_code=422,
+                diagnostic_reason="refund_bill_outside_task")
+        for row in rows:
+            record = self.session.scalar(
+                select(AfterSaleRefundTracking).where(
+                    AfterSaleRefundTracking.tenant_id == task.tenant_id,
+                    AfterSaleRefundTracking.refund_bill_id == row.refundBillId,
+                )
+            )
+            if record is None:
+                record = AfterSaleRefundTracking(
+                    id=uuid.uuid4(), tenant_id=task.tenant_id,
+                    refund_bill_id=row.refundBillId, order_no=row.orderNo,
+                )
+                self.session.add(record)
+            record.order_no = row.orderNo or record.order_no
+            record.environment_serial = row.environmentSerial or None
+            record.store_name = row.storeName or None
+            record.phase = row.phase or None
+            record.phase_label = row.phaseLabel or None
+            record.countdown = row.countdown or None
+            record.refund_account = row.refundAccount or None
+            record.amount = row.amount or None
+            record.last_status = row.status
+            record.last_error = row.errorSummary
+            record.updated_at = now
+            if row.checkedAt:
+                record.checked_at = _after_sale_at(row.checkedAt) or record.checked_at
+        self.session.flush()
 
     def _store_after_sale_scan_progress(
         self,

@@ -4003,3 +4003,36 @@ class OperationResultService:
             )
             or 0
         )
+
+
+def after_sale_tracking_snapshot(session, tenant_id, refund_bill_ids) -> dict:
+    """按退款单号读跟踪表当前状态（回访是覆盖更新，这里读的就是最新一次）。"""
+    from .models import AfterSaleRefundTracking as Model
+    bills = [str(b) for b in (refund_bill_ids or []) if str(b or "").strip()]
+    if not bills:
+        return {"rows": [], "counts": {}}
+    records = session.scalars(
+        select(Model).where(Model.tenant_id == tenant_id,
+                            Model.refund_bill_id.in_(bills))
+    ).all()
+    rows = [{
+        "refundBillId": r.refund_bill_id,
+        "orderNo": r.order_no or "",
+        "environmentSerial": r.environment_serial or "",
+        "storeName": r.store_name or "",
+        "status": r.last_status or "queued",
+        "phase": r.phase or "",
+        "phaseLabel": r.phase_label or "",
+        "countdown": r.countdown or "",
+        "refundAccount": r.refund_account or "",
+        "amount": r.amount or "",
+        "checkedAt": r.checked_at.isoformat() if r.checked_at else "",
+        "note": (r.last_error or "") or "",
+        "errorSummary": r.last_error,
+        "durationSeconds": None,
+    } for r in records]
+    counts: dict = {}
+    for row in rows:
+        key = row["phase"] or "unknown"
+        counts[key] = counts.get(key, 0) + 1
+    return {"rows": rows, "counts": counts}
