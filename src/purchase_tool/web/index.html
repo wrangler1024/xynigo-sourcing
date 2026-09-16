@@ -681,7 +681,14 @@
   /* 标题 / 说明 / 收起 同排：收起态折成「标题 + 展开」一行，与原型一致 */
   #afterSalePanel #asRunStrip .query-phase-copy { flex-direction: row; align-items: baseline; gap: 8px; }
   /* 状态条右侧的进度区排版（用 class 而非内联样式，否则收起的 display:none 会被内联压住） */
-  #afterSalePanel .as-strip-progress { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  #afterSalePanel .as-strip-progress { margin-left: auto; display: flex; align-items: center; gap: 10px; flex-wrap:wrap; min-width:0; max-width:100%; }
+  #afterSalePanel .as-strip-progress .progress { min-width:80px; }
+  #afterSalePanel #asStop { flex:none; }
+  @media(max-width:900px) {
+    #afterSalePanel .as-strip-progress { width:100%; margin-left:0; }
+    #afterSalePanel #asProgressText { flex:1 1 160px; text-align:left; }
+    #afterSalePanel .as-strip-progress .progress { flex-basis:100%; }
+  }
   /* 运行状态条的终态收起：折成一行（只留标题与操作），把纵向空间还给表格 */
   #afterSalePanel #asRunStrip.as-strip-collapsed .query-phase-copy span,
   #afterSalePanel #asRunStrip.as-strip-collapsed .progress-wrap { display: none; }
@@ -711,9 +718,9 @@
   #afterSalePanel .as-manual-entry { margin:4px 19px 16px; padding:14px 16px; border:1px solid var(--line); border-radius:12px; background:var(--surface); }
   #afterSalePanel .as-manual-label { display:block; margin-bottom:8px; color:var(--navy-800); font-size:12px; font-weight:700; }
   #afterSalePanel .as-manual-controls { display:grid; grid-template-columns:minmax(0,1fr) 128px; align-items:stretch; gap:12px; }
-  #afterSalePanel .as-manual-controls input { box-sizing:border-box; width:100%; min-width:0; height:44px; padding:0 12px; border:1px solid var(--line); border-radius:9px; background:#fff; color:var(--navy-950); font-size:13px; }
-  #afterSalePanel .as-manual-controls input::placeholder { color:var(--navy-500); }
-  #afterSalePanel .as-manual-controls input:focus { outline:none; border-color:var(--rhino-500); box-shadow:0 0 0 3px rgba(32,174,179,.12); }
+  #afterSalePanel .as-manual-controls textarea { box-sizing:border-box; width:100%; min-width:0; height:72px; padding:10px 12px; resize:vertical; border:1px solid var(--line); border-radius:9px; background:#fff; color:var(--navy-950); font-size:13px; }
+  #afterSalePanel .as-manual-controls textarea::placeholder { color:var(--navy-500); }
+  #afterSalePanel .as-manual-controls textarea:focus { outline:none; border-color:var(--rhino-500); box-shadow:0 0 0 3px rgba(32,174,179,.12); }
   #afterSalePanel .as-manual-controls .btn { box-sizing:border-box; width:100%; min-height:44px; margin:0; justify-content:center; white-space:nowrap; border-radius:9px; }
   #afterSalePanel .as-manual-help { margin:8px 0 0; color:var(--navy-500); font-size:11px; line-height:1.6; }
   @media(max-width:600px) {
@@ -727,7 +734,7 @@
   #afterSalePanel .action-row .resource-state{margin-top:0;padding:8px 12px;font-size:11px;color:var(--navy-500)}
   #afterSalePanel .as-order{font-weight:800;color:var(--navy-950);font-family:ui-monospace,Menlo,Consolas,monospace}
   #afterSalePanel tr.as-picked td{background:#f2fbfb}
-  #afterSalePanel #asProgressText{font-size:11px;color:var(--navy-500);min-width:420px;text-align:right;white-space:nowrap}
+  #afterSalePanel #asProgressText{font-size:11px;color:var(--navy-500);min-width:0;text-align:right;white-space:normal;overflow-wrap:anywhere}
 
   .procurement-state.ok { border-color: #bce5d2; background: var(--green-100); color: var(--green); }
   .procurement-state.bad { border-color: #ffd2c7; background: var(--coral-100); color: var(--coral-500); }
@@ -2339,10 +2346,10 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
       <div class="as-manual-entry">
         <label class="as-manual-label" for="asDirectOrders">指定订单提交</label>
         <div class="as-manual-controls">
-          <input type="search" id="asDirectOrders" placeholder="环境序号 订单号；环境序号 订单号" aria-describedby="asDirectHelp" autocomplete="off" spellcheck="false">
+          <textarea id="asDirectOrders" rows="2" placeholder="环境序号 订单号；环境序号 订单号" aria-describedby="asDirectHelp" autocomplete="off" spellcheck="false"></textarea>
           <button class="btn" id="asDirectSubmit" type="button">直接提交</button>
         </div>
-        <p class="as-manual-help" id="asDirectHelp">每组填环境序号、订单号，以空格分隔；多组用分号分隔。提交前仍会核验可申请状态；需先查看金额和包裹数，可使用上方扫描。</p>
+        <p class="as-manual-help" id="asDirectHelp">每组填环境序号、订单号，以空格分隔；多组用中英文分号或换行分隔。提交前仍会核验可申请状态；需先查看金额和包裹数，可使用上方扫描。</p>
       </div>
 
       <div class="business-summary" id="asBizSummary" style="padding-top:4px;">
@@ -2379,7 +2386,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
 
     <section class="card table-card">
       <div class="card-title" style="padding:17px 19px 0;">
-        <div>④ 退款跟踪 <span class="legend">退款单号为主键 · 只读回访平台侧处理进度 · 到终态即冻结</span></div>
+        <div>④ 退款跟踪 <span class="legend">退款单号为主键 · 只读查询平台进度 · 可重复回访</span></div>
         <div class="table-actions">
           <button class="btn" id="asTrackExport">导出退款跟踪 Excel</button>
           <button class="btn primary" id="asTrack">刷新退款进度</button>
@@ -2388,10 +2395,10 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
       <div class="as-manual-entry">
         <label class="as-manual-label" for="asTrackBills">指定退款单回访</label>
         <div class="as-manual-controls">
-          <input type="search" id="asTrackBills" placeholder="环境序号 订单号 退款单号；…" aria-describedby="asTrackManualHelp" autocomplete="off" spellcheck="false">
+          <textarea id="asTrackBills" rows="2" placeholder="环境序号 订单号 退款单号；…" aria-describedby="asTrackManualHelp" autocomplete="off" spellcheck="false"></textarea>
           <button class="btn" id="asTrackManual" type="button">回访指定单</button>
         </div>
-        <p class="as-manual-help" id="asTrackManualHelp">每组填环境序号、订单号、退款单号，以空格分隔；多组用分号分隔。只读查询，可回访历史订单，无需本页提交记录。</p>
+        <p class="as-manual-help" id="asTrackManualHelp">每组填环境序号、订单号、退款单号，以空格分隔；多组用中英文分号或换行分隔。只读查询，可回访历史订单，无需本页提交记录。</p>
       </div>
       <div style="padding: 0 19px;">
         <div class="table-scroll scroll-20">
@@ -2406,7 +2413,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         </div>
       </div>
       <div style="padding: 12px 19px 17px;">
-        <p class="xyp2-help">回访只读：复用提交时的环境，逐个退款单读平台侧阶段（已受理 → 审核中 → 处理中 → 已退款／已拒绝），只回访未终态的单，到终态即冻结。退款信用卡为回访读到的原卡掩码，取不到显示 —。被拒的行到买家端看「Historial de negociación」的拒绝理由后再决定是否申诉。</p>
+        <p class="xyp2-help">回访只读：复用提交时的环境，逐个退款单读平台侧阶段（已受理 → 审核中 → 处理中 → 已退款／已拒绝），可按需重复回访；读取失败不会覆盖上次有效阶段。退款信用卡为回访读到的原卡掩码，取不到显示 —。被拒的行到买家端看「Historial de negociación」的拒绝理由后再决定是否申诉。</p>
       </div>
     </section>
   </div>
@@ -4333,6 +4340,7 @@ function cloudApiError(payload, status) {
     executor_not_found:'本地执行器设备不存在或不属于当前组织',
     executor_offline:'所选本地执行器当前离线，请先启动执行器',
     executor_auto_site_required:'所选执行器尚不支持按环境自动识别站点，请更新桌面执行器后重试',
+    executor_after_sale_reliability_upgrade_required:'请升级执行器以支持完整退款记录和可靠回传',
     executor_after_sale_runtime_upgrade_required:'请先升级本地执行器，以支持售后无头模式和环境并发设置',
     executor_upgrade_required:'所选执行器版本过旧，请先在线更新到 v0.13.18 或更高版本',
     executor_hub_unavailable:'所选执行器尚未确认 HubStudio 可用，请先启动并检查 HubStudio',
@@ -5168,7 +5176,7 @@ function asSelectType(id) {
 // （补提失败单/直接提交指定单/历史重提都是本次新增，漏一个就会「点完确认框什么也没发生」
 // 或者更糟：在规划类型下真的提交了退款申请）。
 function asSyncWriteButtons() {
-  const busy = AS_STATE.type !== 'refund' || AS_STATE.running;
+  const busy = AS_STATE.type !== 'refund' || AS_STATE.running || AS_STATE.starting;
   const direct = $('asDirectSubmit');
   if (direct) direct.disabled = busy;
   const historyRetry = $('asHistoryRetry');
@@ -5186,7 +5194,7 @@ const AS_LIST_KEY = 'afterSaleEnvList';
 const AS_STATE = {
   mode: '', type: 'refund', scanTaskId: null, runId: null, runLabel: '',
   trackTaskId: null, timer: null, running: false,
-  polling: false, claimItems: [], trackItems: [],
+  starting: false, pendingCreates: {}, polling: false, claimItems: [], trackItems: [],
   rows: [], selected: new Set(), claimRows: [], stopRequested: false,
   pollErrors: 0, etaBase: null, status: ''
 };
@@ -5197,19 +5205,24 @@ function asRuntimeOptions() {
   };
 }
 function asSyncRuntimeControls() {
-  $('asHeadless').disabled = AS_STATE.running;
+  const busy = AS_STATE.running || AS_STATE.starting;
+  $('asHeadless').disabled = busy;
+  ['asTrack', 'asTrackManual', 'asClearResult'].forEach(id => { $(id).disabled = busy; });
+  $('asScan').disabled = busy || AS_STATE.type !== 'refund';
+  $('asSubmit').disabled = busy || AS_STATE.type !== 'refund' || !AS_STATE.selected.size;
+  asSyncWriteButtons();
   document.querySelectorAll('[data-as-concurrency]').forEach(button => {
-    button.disabled = AS_STATE.running;
+    button.disabled = busy;
   });
 }
 $('asHeadless').onclick = () => {
-  if (AS_STATE.running) return;
+  if (AS_STATE.running || AS_STATE.starting) return;
   const control = $('asHeadless');
   control.setAttribute('aria-checked', String(control.getAttribute('aria-checked') !== 'true'));
 };
 document.querySelectorAll('[data-as-concurrency]').forEach(button => {
   button.onclick = () => {
-    if (AS_STATE.running) return;
+    if (AS_STATE.running || AS_STATE.starting) return;
     document.querySelectorAll('[data-as-concurrency]').forEach(item => {
       item.classList.toggle('active', item === button);
       item.setAttribute('aria-pressed', String(item === button));
@@ -5217,6 +5230,9 @@ document.querySelectorAll('[data-as-concurrency]').forEach(button => {
   };
 });
 function asRequireRuntimeControls(executor) {
+  if (AS_STATE.mode !== 'scan' && !(executor.capabilities || []).includes('after.sale.reliable-results.v1')) {
+    throw new Error('请升级执行器以支持完整退款记录和可靠回传');
+  }
   if (!(executor.capabilities || []).includes('after.sale.runtime-controls.v1')) {
     throw new Error('请先升级本地执行器，以支持售后无头模式和环境并发设置');
   }
@@ -5319,7 +5335,7 @@ function asProgress(data) {
 // 会一直显示不出估计。这里改成「至少完成 1 个且窗口 ≥15 秒」。
 function asEtaText(done, total) {
   if (!total) return '预计还需 —';
-  if (done >= total) return '已全部完成';
+  if (done >= total) return '本轮处理结束';
   const base = AS_STATE.etaBase;
   if (!base || done < base.done) {
     AS_STATE.etaBase = { at: Date.now(), done };
@@ -5416,10 +5432,10 @@ function asClaimRowHtml(row) {
         ${asThumbCell(row.goodsImg)}
         <td style="font-weight:700; color:#078487; white-space:nowrap">${esc(AFTER_SALE_TYPE)}</td>
         <td class="sub-text">${esc(row.deliveredAt || '—')}</td>
-        <td class="sub-text">${esc(row.refundBillId || '—')}</td>
-        <td class="sub-text">${esc(row.refundPath || '—')}</td>
-        <td class="sub-text">${esc(row.refundAccount || '—')}</td>
-        <td>${asClaimPill(row.status)}</td>
+        <td class="sub-text">${(row.refunds?.length ? row.refunds : [row]).map(r => esc(r.refundBillId || '—')).join('<br>')}</td>
+        <td class="sub-text">${(row.refunds?.length ? row.refunds : [row]).map(r => esc(r.refundPath || '—')).join('<br>')}</td>
+        <td class="sub-text">${(row.refunds?.length ? row.refunds : [row]).map(r => esc(r.refundAccount || '—')).join('<br>')}</td>
+        <td>${asClaimPill(row.status)}${row.status !== 'ok' && row.refunds?.length ? `<div class="hint">已有 ${row.refunds.length} 个包裹受理</div>` : ''}</td>
         <td class="sub-text">${esc((row.submittedAt || '').slice(11, 19) || '—')}</td>
         <td class="hint">${esc(row.errorSummary || row.note || '—')}</td>
       </tr>`;
@@ -5500,35 +5516,56 @@ function asRenderTrackRows(rows) {
 // 之所以要这个入口：④ 原来只认「本页 ③ 里提交过的单」，于是同事换个浏览器/换台机就
 // 看不到那批单、也回访不了别人提交的单——回访对象不该被提交流程绑死。
 function asParseManualBills(text) {
-  return String(text || '').split(/[;；\n]+/).map(g => g.trim()).filter(Boolean)
-    .map(group => {
-      const parts = group.split(/[\s,，]+/).filter(Boolean);
-      if (parts.length < 3) return null;
-      return { environmentSerial: parts[0], orderNo: parts[1],
-               refundBillId: parts[2], storeName: '' };
-    }).filter(Boolean);
+  const items = [], invalid = [], duplicates = [], seen = new Set();
+  String(text || '').split(/[;；\n]+/).map(g => g.trim()).filter(Boolean).forEach(group => {
+    const parts = group.split(/[\s,，]+/).filter(Boolean);
+    if (parts.length !== 3) { invalid.push(group); return; }
+    const bill = parts[2];
+    if (seen.has(bill)) { duplicates.push(group); return; }
+    seen.add(bill);
+    items.push({environmentSerial:parts[0], orderNo:parts[1], refundBillId:bill, storeName:''});
+  });
+  return {items, invalid, duplicates};
 }
 async function asTrackManual() {
-  const items = asParseManualBills($('asTrackBills').value);
-  if (!items.length) {
-    asSetPhase('没有可回访的单',
-      '格式：环境序号 订单号 退款单号（多组用分号隔开）；例如 4904 GSH1RV13Y00NQUV 2390783198795777', false);
+  if (AS_STATE.running || AS_STATE.starting) return;
+  const parsed = asParseManualBills($('asTrackBills').value);
+  if (parsed.invalid.length || parsed.duplicates.length) {
+    asSetPhase('请检查回访清单',
+      `格式错误 ${parsed.invalid.length} 组，重复退款单 ${parsed.duplicates.length} 组：`
+      + [...parsed.invalid, ...parsed.duplicates].join(' / '), false);
     return;
   }
-  await asTrack(items);
+  if (!parsed.items.length) {
+    asSetPhase('没有可回访的单', '每组需要环境序号、订单号、退款单号，多组用分号或换行隔开。', false);
+    return;
+  }
+  await asTrack(parsed.items);
+}
+function asTrackItemsFromRows(rows) {
+  const seen = new Set(), items = [];
+  (rows || []).forEach(row => {
+    const refunds = row.refunds?.length ? row.refunds : [row];
+    refunds.forEach(refund => {
+      if (!refund.refundBillId || !row.orderNo || seen.has(refund.refundBillId)) return;
+      seen.add(refund.refundBillId);
+      items.push({environmentSerial:row.environmentSerial || '', orderNo:row.orderNo,
+        refundBillId:refund.refundBillId, storeName:row.storeName || ''});
+    });
+  });
+  return items;
 }
 async function asTrack(explicitItems) {
-  if (AS_STATE.running) return;
+  if (AS_STATE.running || AS_STATE.starting) return;
+  AS_STATE.starting = true;
+  asSyncRuntimeControls();
+  try {
   const runtime = asRuntimeOptions();
   AS_STATE.mode = 'track';  // 状态条落点：回访的进度显示在 ④ 卡片
   // 回访对象：优先用调用方显式给的（④ 的手工入口）；否则取 ③ 里已提交成功（有退款单号）的行
   const items = (Array.isArray(explicitItems) && explicitItems.length)
     ? explicitItems
-    : (AS_STATE.claimRows || [])
-      .filter(r => r.refundBillId && r.orderNo)
-      .map(r => ({ environmentSerial: r.environmentSerial || '',
-                   orderNo: r.orderNo, refundBillId: r.refundBillId,
-                   storeName: r.storeName || '' }));
+    : asTrackItemsFromRows(AS_STATE.claimRows);
   if (!items.length) {
     asSetPhase('无可回访的退款单',
       '可先在 ④ 上方直接指定要回访的单，或先提交售后（③ 里出现退款单号后即可回访）。', false);
@@ -5538,14 +5575,7 @@ async function asTrack(explicitItems) {
   try { executor = await cloudFormalExecutor('after.sale.track.v1'); asRequireRuntimeControls(executor); }
   catch (e) { asSetPhase('执行器不可用', e.message || '无法发起回访', false); return; }
   try {
-    const res = await cloudFetchJson('/v1/after-sale/track', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        idempotencyKey: 'as-track-' + Date.now() + '-'
-          + Math.random().toString(36).slice(2, 8),
-        executorId: executor.id, browserMode: runtime.browserMode, concurrency: runtime.concurrency, items,
-      }),
-    });
+    const res = await asCreateTask('/v1/after-sale/track', {executorId: executor.id, browserMode: runtime.browserMode, concurrency: runtime.concurrency, items});
     const data = (res || {}).data || {};
     AS_STATE.trackTaskId = data.taskId || null;
     AS_STATE.running = true;
@@ -5562,6 +5592,10 @@ async function asTrack(explicitItems) {
     asPoll();
   } catch (e) {
     asSetPhase('发起失败', String(e.message || e), false);
+  }
+  } finally {
+    AS_STATE.starting = false;
+    asSyncRuntimeControls();
   }
 }
 // 导出的是「本页 ④ 这一次回访」读到的行——按回访任务取，不重跑回访。
@@ -5735,7 +5769,7 @@ function asRenderClaimHistoryDetail(data) {
   $('asHistoryDetailBody').innerHTML = rows.length
     ? rows.map(asClaimRowHtml).join('')
     : '<tr><td colspan="11" class="query-history-empty">该批次没有结果行</td></tr>';
-  const trackable = rows.filter(row => row.refundBillId && row.orderNo).length;
+  const trackable = asTrackItemsFromRows(rows).length;
   $('asHistoryTrack').disabled = !trackable;
   $('asHistoryTrack').textContent = trackable
     ? `回访本批退款单（${trackable}）` : '回访本批退款单';
@@ -5744,10 +5778,7 @@ function asRenderClaimHistoryDetail(data) {
 // 从历史发起回访＝把该批次「有退款单号的行走」灌进 ④：不新增第二条回访路径
 async function asTrackHistoryBatch() {
   const rows = ((AS_HISTORY.detail || {}).rows) || [];
-  const items = rows.filter(row => row.refundBillId && row.orderNo).map(row => ({
-    environmentSerial: row.environmentSerial || '', orderNo: row.orderNo,
-    refundBillId: row.refundBillId, storeName: row.storeName || '',
-  }));
+  const items = asTrackItemsFromRows(rows);
   if (!items.length) { toast('该批次没有可回访的退款单'); return; }
   asCloseClaimHistory();
   await asTrack(items);
@@ -5875,8 +5906,22 @@ function asSelectedItems() {
     };
   }).filter(item => item.environmentSerial && item.orderNo);
 }
+async function asCreateTask(path, payload) {
+  const fingerprint = JSON.stringify([path, payload]);
+  AS_STATE.pendingCreates ||= {};
+  const key = AS_STATE.pendingCreates[fingerprint] ||= 'as-' + crypto.randomUUID();
+  const response = await cloudFetchJson(path, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({...payload, idempotencyKey:key}),
+  });
+  delete AS_STATE.pendingCreates[fingerprint];
+  return response;
+}
 async function asScan() {
-  if (AS_STATE.running) return;
+  if (AS_STATE.running || AS_STATE.starting) return;
+  AS_STATE.starting = true;
+  asSyncRuntimeControls();
+  try {
   const runtime = asRuntimeOptions();
   AS_STATE.mode = 'scan';   // 状态条落点：扫描的进度显示在 ② 卡片
   const serials = asSerials();
@@ -5893,18 +5938,7 @@ async function asScan() {
   try { executor = await cloudFormalExecutor('after.sale.scan.v1'); asRequireRuntimeControls(executor); }
   catch (e) { asSetPhase('执行器不可用', e.message || '无法发起扫描', false); return; }
   try {
-    const res = await cloudFetchJson('/v1/after-sale/scan', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        idempotencyKey: 'as-scan-' + Date.now() + '-'
-          + Math.random().toString(36).slice(2, 8),
-        executorId: executor.id,
-        browserMode: runtime.browserMode,
-        concurrency: runtime.concurrency,
-        environmentSerials: serials,
-      }),
-    });
+    const res = await asCreateTask('/v1/after-sale/scan', {executorId: executor.id, browserMode: runtime.browserMode, concurrency: runtime.concurrency, environmentSerials: serials});
     const data = (res || {}).data || {};
     AS_STATE.scanTaskId = data.taskId || null;
     AS_STATE.running = true;
@@ -5915,10 +5949,15 @@ async function asScan() {
     AS_STATE.rows = [];
     $('asScan').disabled = true; $('asStop').disabled = false;
     $('asScanRows').innerHTML = '<tr><td colspan="11" class="hint" style="text-align:center; padding:18px;">扫描中，正在逐个打开环境读取订单…</td></tr>';
+    asProgress({progressTotal:serials.length, progressCompleted:0, unit:'个环境'});
     asSetPhase('扫描运行中', `共 ${serials.length} 个环境 · 只读，不会改动订单`, true);
     asPoll();
   } catch (e) {
     asSetPhase('发起失败', String(e.message || e), false);
+  }
+  } finally {
+    AS_STATE.starting = false;
+    asSyncRuntimeControls();
   }
 }
 // 三处提交（③ 勾选提交 / 补提失败单 / 直接提交指定单 / 历史详情重提）共用这一个
@@ -5927,7 +5966,7 @@ async function asScan() {
 // 必须在**确认框之前**调用——否则用户点完「确认」才发现什么都没发生。
 // 四个入口（勾选提交/补提失败/直接提交指定单/历史重提）都过这里，asSubmitItems 也留一份。
 function asWriteEntryReady() {
-  if (AS_STATE.running) {
+  if (AS_STATE.running || AS_STATE.starting) {
     asSetPhase('已有任务在跑',
       '当前还有售后任务在执行，等它结束再发起（两批同时跑会互相占用环境）。', false);
     return false;
@@ -5944,6 +5983,9 @@ async function asSubmitItems(items, options) {
   const opts = options || {};
   const label = opts.label || '提交售后';
   if (!asWriteEntryReady()) return false;   // 最后一道闸：任何调用方都绕不过去
+  AS_STATE.starting = true;
+  asSyncRuntimeControls();
+  try {
   const runtime = asRuntimeOptions();
   AS_STATE.mode = 'claim';  // 状态条落点：提交的进度显示在 ③ 卡片（早于任何提示）
   if (!items.length) {
@@ -5954,19 +5996,7 @@ async function asSubmitItems(items, options) {
   try { executor = await cloudFormalExecutor('after.sale.claim.v1'); asRequireRuntimeControls(executor); }
   catch (e) { asSetPhase('执行器不可用', e.message || '无法发起售后提交', false); return false; }
   try {
-    const res = await cloudFetchJson('/v1/operation-runs/after-sale-claim', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        idempotencyKey: 'as-' + Date.now() + '-'
-          + Math.random().toString(36).slice(2, 8),
-        executorId: executor.id,
-        browserMode: runtime.browserMode,
-        concurrency: runtime.concurrency,
-        items,
-        retryFromRunId: opts.retryFromRunId || '',
-      }),
-    });
+    const res = await asCreateTask('/v1/operation-runs/after-sale-claim', {executorId: executor.id, browserMode: runtime.browserMode, concurrency: runtime.concurrency, items, retryFromRunId: opts.retryFromRunId || ''});
     const data = (res || {}).data || {};
     AS_STATE.runId = asRunIdOf(data);
     AS_STATE.runLabel = label;
@@ -5985,6 +6015,10 @@ async function asSubmitItems(items, options) {
   } catch (e) {
     asSetPhase('发起失败', String(e.message || e), false);
     return false;
+  }
+  } finally {
+    AS_STATE.starting = false;
+    asSyncRuntimeControls();
   }
 }
 async function asSubmit() {
@@ -6021,7 +6055,7 @@ function asSyncRetryButton(rows) {
   const button = $('asRetryFailed');
   if (!button) return;
   const count = asRecoverableClaimRows(rows || AS_STATE.claimRows).length;
-  button.disabled = !count || AS_STATE.running || AS_STATE.type !== 'refund';
+  button.disabled = !count || AS_STATE.running || AS_STATE.starting || AS_STATE.type !== 'refund';
   button.textContent = count ? `补提失败单（${count}）` : '补提失败单';
 }
 async function asRetryFailedClaims(rows, sourceRunId) {
@@ -6119,8 +6153,10 @@ async function asPoll() {
         AS_STATE.running = false;
         $('asScan').disabled = false; $('asStop').disabled = true;
         const claimable = rows.filter(r => r.claimable).length;
-        asSetPhase('扫描完成',
-          claimable ? `可申请 ${claimable} 单，勾选后点「提交售后」。`
+        const scanTitle = ({succeeded:'扫描完成', failed:'扫描失败', cancelled:'扫描已停止', uncertain:'扫描待核对'})[AS_STATE.status];
+        asSetPhase(scanTitle,
+          AS_STATE.status !== 'succeeded' ? '任务未完整完成，请查看各行结果后重试或核对。'
+            : claimable ? `可申请 ${claimable} 单，勾选后点「提交售后」。`
             : '本次没有可申请售后的订单，请查看各行的平台状态或核验说明。', false);
         asRenderScanRows(rows);
         AS_STATE.mode = '';
@@ -6148,10 +6184,11 @@ async function asPoll() {
         const open = rows.filter(r => ['submitted', 'reviewing', 'processing']
           .includes(String(r.phase || ''))).length;
         const bad = rows.filter(r => String(r.phase || '') === 'rejected').length;
+        const readFailures = rows.filter(r => ['fail','login','inuse'].includes(r.status)).length;
         const title = ({cancelled:'回访已停止', failed:'回访失败', uncertain:'回访待核对'})[AS_STATE.status]
-          || (completed < total ? '回访结束（结果未齐）' : '回访完成');
+          || (completed < total ? '回访结束（结果未齐）' : readFailures ? '回访完成（部分失败）' : '回访完成');
         asSetPhase(title,
-          `本次已处理 ${completed} / ${total} 单 · 未终态 ${open} 单`
+          `本次已处理 ${completed} / ${total} 单 · 读取失败 ${readFailures} 单 · 未终态 ${open} 单`
           + (bad ? ` · 已拒绝 ${bad} 单需人工` : ''), false);
       }
     } else if (AS_STATE.mode === 'claim' && AS_STATE.runId) {
@@ -6173,9 +6210,13 @@ async function asPoll() {
         const okCount = Number(data.successCount || 0);
         const head = (AS_STATE.runLabel && AS_STATE.runLabel !== '提交售后')
           ? AS_STATE.runLabel : '提交';
-        asSetPhase(bad ? head + '完成（部分失败）' : head + '完成',
-          bad ? `已受理 ${okCount} 单，失败 ${bad} 单（可点「补提失败单」重试，或在「异常与跳过详情」排查）。`
-            : `已受理 ${okCount} 单，退款审核中（结果 7 天内出）。`, false);
+        const terminalTitle = ({cancelled:head+'已停止', failed:head+'失败', uncertain:head+'待核对'})[AS_STATE.status]
+          || (bad ? head + '完成（部分失败）' : head + '完成');
+        asSetPhase(terminalTitle,
+          ['cancelled','failed','uncertain'].includes(AS_STATE.status)
+            ? `已受理 ${okCount} 单；请查看各行结果，未确认结果不要重复提交。`
+            : bad ? `已受理 ${okCount} 单，失败 ${bad} 单（可点「补提失败单」重试，或在「异常与跳过详情」排查）。`
+            : `已受理 ${okCount} 单，请回访退款进度，以平台实际处理结果为准。`, false);
         AS_STATE.mode = '';
         asSyncRetryButton(AS_STATE.claimRows);
       } else if (AS_STATE.stopRequested) {
@@ -6206,7 +6247,9 @@ $('asStop').onclick = async () => {
     if (AS_STATE.mode === 'claim' && AS_STATE.runId) {
       await cloudFetchJson('/v1/operation-runs/after-sale-claim/'
         + encodeURIComponent(AS_STATE.runId) + '/cancel', { method: 'POST' });
-    } else if (AS_STATE.scanTaskId) {
+    } else if (AS_STATE.mode === 'track' && AS_STATE.trackTaskId) {
+      await cloudFetchJson('/v1/after-sale/track/' + encodeURIComponent(AS_STATE.trackTaskId) + '/cancel', {method:'POST'});
+    } else if (AS_STATE.mode === 'scan' && AS_STATE.scanTaskId) {
       await cloudFetchJson('/v1/after-sale/scan/'
         + encodeURIComponent(AS_STATE.scanTaskId) + '/cancel', { method: 'POST' });
     }
@@ -6215,6 +6258,7 @@ $('asStop').onclick = async () => {
   }
 };
 $('asClearResult').onclick = () => {
+  if (AS_STATE.running || AS_STATE.starting) { toast('任务执行中，暂不能清空结果'); return; }
   AS_STATE.claimRows = []; AS_STATE.runId = null; AS_STATE.status = '';
   AS_STATE.claimItems = [];
   AS_STATE.runLabel = '';

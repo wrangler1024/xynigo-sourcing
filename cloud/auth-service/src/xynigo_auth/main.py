@@ -5435,6 +5435,43 @@ def create_app(
             },
         )
 
+    @app.post("/v1/after-sale/track/{task_id}/cancel")
+    def cancel_after_sale_track_task(
+        task_id: uuid.UUID,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        """裸 POST：前端不带 body，这里也不做 body 校验。"""
+        actor = authorize_request(
+            request,
+            session,
+            permission="assistant.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="assistant.after_sale.track.cancel",
+        )
+        tasks = executor_channel(session)
+        task = session.scalar(
+            select(ExecutorTask).where(
+                ExecutorTask.id == task_id,
+                ExecutorTask.tenant_id == actor.tenant.id,
+                ExecutorTask.task_type == "after.sale.track.v1",
+            )
+        )
+        if task is None:
+            raise HTTPException(status_code=404, detail="回访任务不存在")
+        # 已终态的任务 cancel_task 原样返回，不会把成功结果改成取消
+        tasks.cancel_task(
+            tenant_id=actor.tenant.id,
+            user_id=actor.user.id,
+            task_id=task.id,
+        )
+        session.refresh(task)
+        return {"ok": True, "data": {"taskId": str(task.id), "status": task.status,
+            "summary": tasks.after_sale_track_summary(task)}}
+
     @app.post("/v1/after-sale/scan/{task_id}/cancel")
     def cancel_after_sale_scan_task(
         task_id: uuid.UUID,

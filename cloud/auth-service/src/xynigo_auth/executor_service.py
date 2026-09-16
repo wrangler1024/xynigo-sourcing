@@ -578,6 +578,9 @@ class ExecutorChannelService:
                 and "after.sale.runtime-controls.v1" not in set(executor.capabilities or [])):
             raise ExecutorServiceError(
                 "executor_after_sale_runtime_upgrade_required", status_code=409)
+        if (task_type in {"after.sale.claim.v1", "after.sale.track.v1"}
+                and "after.sale.reliable-results.v1" not in set(executor.capabilities or [])):
+            raise ExecutorServiceError("executor_after_sale_reliability_upgrade_required", status_code=409)
         if task_type not in set(executor.capabilities or []):
             raise ExecutorServiceError("executor_capability_missing", status_code=409)
         if task_type in ENCRYPTED_TASK_TYPES and self.payload_cipher is None:
@@ -1393,7 +1396,12 @@ class ExecutorChannelService:
         if task.task_type not in BUSINESS_TASK_TYPES:
             return
         summary = body.resultSummary
-        if set(summary) - BUSINESS_RESULT_KEYS:
+        allowed_keys = BUSINESS_RESULT_KEYS
+        if task.task_type in {"after.sale.claim.v1", "after.sale.track.v1"}:
+            allowed_keys = allowed_keys | {"rows"}
+            if "rows" in summary and not isinstance(summary["rows"], list):
+                raise ExecutorServiceError("executor_result_invalid", status_code=422)
+        if set(summary) - allowed_keys:
             raise ExecutorServiceError("executor_result_invalid", status_code=422)
         run_status = str(summary.get("runStatus") or "")
         if run_status not in BUSINESS_RUN_STATUSES:
@@ -2161,6 +2169,9 @@ class ExecutorChannelService:
             )
             return
         elif task.task_type == "after.sale.track.v1":
+            # finish 与结果入库同事务，回执重试不会再次执行平台操作。
+            if result_summary is not None and "rows" in result_summary:
+                progress_snapshot = {"rows": result_summary["rows"]}
             # 回访同时保留任务级快照和当前跟踪记录；进度不能读取其他任务的结果。
             if progress_snapshot is not None:
                 self._upsert_after_sale_track(task, progress_snapshot, heartbeat_at)
@@ -2555,6 +2566,8 @@ class ExecutorChannelService:
             run.skipped_count = min(skipped_count, run.total_count)
         if stopped_count is not None:
             run.stopped_count = min(stopped_count, run.total_count)
+        if "rows" in summary:
+            progress_snapshot = {"rows": summary["rows"]}
         if progress_snapshot is not None:
             self._upsert_after_sale_claim_progress(
                 run, progress_snapshot, heartbeat_at
@@ -2652,9 +2665,18 @@ class ExecutorChannelService:
                 row.environment_serial = serial
             row.store_name = (item.storeName or row.store_name
                               or str(request_item.get("storeName") or ""))
+            refunds = {r["refundBillId"]: r for r in (row.refunds or [])}
+            if len({r.refundBillId for r in item.refunds}) != len(item.refunds):
+                raise ExecutorServiceError("executor_progress_snapshot_invalid", status_code=422,
+                                           diagnostic_reason="duplicate_refund_bill")
+            for refund in item.refunds:
+                old = refunds.get(refund.refundBillId, {})
+                refunds[refund.refundBillId] = {**old, **{
+                    k: v for k, v in refund.model_dump(mode="json").items() if v}}
+            row.refunds = list(refunds.values())
             row.status = item.status
             row.package_no = item.packageNo or None
-            row.refund_bill_id = item.refundBillId or None
+            row.refund_bill_id = item.refundBillId or row.refund_bill_id
             row.refund_path = item.refundPath or None
             row.refund_account = item.refundAccount or None
             # 展示字段兜底：老执行器的桥接层按固定字段重建条目，会把这两个字段丢掉
@@ -2757,15 +2779,16 @@ class ExecutorChannelService:
             record.order_no = row.orderNo or record.order_no
             record.environment_serial = row.environmentSerial or None
             record.store_name = row.storeName or None
-            record.phase = row.phase or None
-            record.phase_label = row.phaseLabel or None
-            record.countdown = row.countdown or None
-            record.refund_account = row.refundAccount or None
-            record.amount = row.amount or None
+            if row.status == "ok":
+                record.phase = row.phase or None
+                record.phase_label = row.phaseLabel or None
+                record.countdown = row.countdown or None
+                record.refund_account = row.refundAccount or None
+                record.amount = row.amount or None
             record.last_status = row.status
             record.last_error = row.errorSummary
             record.updated_at = now
-            if row.checkedAt:
+            if row.status == "ok" and row.checkedAt:
                 record.checked_at = _after_sale_at(row.checkedAt) or record.checked_at
         self.session.flush()
 

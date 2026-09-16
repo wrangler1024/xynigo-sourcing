@@ -41,6 +41,7 @@ AS_CAPABILITIES = [
     "after.sale.claim.v1",
     "after.sale.track.v1",
     "after.sale.runtime-controls.v1",
+    "after.sale.reliable-results.v1",
 ]
 CLIENT_VERSION = "0.17.20"
 JPEG = b"\xff\xd8synthetic-after-sale-screenshot\xff\xd9"

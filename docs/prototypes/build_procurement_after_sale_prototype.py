@@ -302,7 +302,7 @@ MOCK = r'''
     status: 'active',
     capabilities: [
       'after.sale.scan.v1', 'after.sale.claim.v1',
-      'after.sale.track.v1', 'after.sale.runtime-controls.v1',
+      'after.sale.track.v1', 'after.sale.runtime-controls.v1', 'after.sale.reliable-results.v1',
       'store.finance.inspect.v1', 'store.finance.lookup.v1',
       'logistics.query.v1', 'logistics.auto-site.v1',
       'environment.preview-bound.v1', 'environment.cloud-plan.v1',

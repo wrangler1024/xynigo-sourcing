@@ -313,13 +313,14 @@ PHASE_RULES = (
     ('rejected', ('rechazad', 'denegad', 'Reembolso rechazado')),
     ('reviewing', ('está en revisión', 'esta en revision', 'Termina en')),
     ('processing', ('Procesamiento de reembolsos',)),
+    ('submitted', ('Solicitud de reembolso aceptada',)),
 )
 PHASE_LABELS = {
     'submitted': '已受理', 'reviewing': '审核中', 'processing': '处理中',
     'refunded': '已退款', 'rejected': '已拒绝', 'overdue': '超期未出结果',
     'fail': '回访失败',
 }
-# 终态：回访到此为止，不再重复扫（批次自然收敛）
+# 平台业务终态：不代表禁止用户再次显式只读回访。
 TRACK_TERMINAL_PHASES = ('refunded', 'rejected')
 TRACK_OVERDUE_DAYS = 8   # 页面写明结果 7 天内给；超过即标超期
 
@@ -330,7 +331,7 @@ def classify_track_phase(timeline):
     for phase, needles in PHASE_RULES:
         if any(n in text for n in needles):
             return phase
-    return 'submitted'
+    return ''
 
 
 _JS_TO_REFUND_LABEL = (
@@ -848,7 +849,7 @@ class AfterSaleClaimer(object):
                % (ORIGIN, item['orderNo'], item['orderNo'], bill))
         page.goto(url, dom_timeout=45, settle_seconds=4.0)
         if self._login_required(page):
-            self._fail_track(bill, 'inuse', '买家端未登录（环境登录态缺失）')
+            self._fail_track(bill, 'login', '买家端未登录（环境登录态缺失）')
             return
         # 时间轴异步渲染：轮询到出文案再判阶段（这个后台渲染时间不稳定，别估 sleep）
         state = {}
@@ -860,9 +861,12 @@ class AfterSaleClaimer(object):
             time.sleep(0.8)
         timeline = state.get('timeline') or ''
         phase = classify_track_phase(timeline)
-        if phase == 'submitted' and state.get('fullText'):
+        if phase in ('', 'submitted') and state.get('fullText'):
             # 切片可能落在导航栏（页面标题大小写与预期不符时），用全文兜底再判一次
             phase = classify_track_phase(state['fullText'])
+        if not phase:
+            self._fail_track(bill, 'fail', '未读到可识别的退款阶段，请稍后重试')
+            return
         account = state.get('account') or ''
         if not account:
             account = self._read_refund_account(page, timeout=6)
@@ -954,13 +958,20 @@ class AfterSaleClaimer(object):
         leftover = []
         guard = 0
         while eligible and guard < 5:
+            if self._stop_event.is_set():
+                self._publish_claim(order_no, {'status': 'stopped'})
+                return
             guard += 1
             ok = self._submit_package(page, order_no)
             if not ok.get('ok'):
                 self._fail_claim(order_no, 'fail', ok.get('reason') or '提交失败',
                                  page)
                 return
+            self._record_refund(order_no, ok)
             submitted.append(ok)
+            if ok.get('verificationError'):
+                self._fail_claim(order_no, 'fail', ok['verificationError'], page)
+                return
             remaining = (ok.get('remaining') or [])
             if not remaining:
                 leftover = []
@@ -975,7 +986,7 @@ class AfterSaleClaimer(object):
         with self._lock:
             row = self._claim_rows.get(order_no) or {}
             row.update({
-                'status': 'ok',
+                'status': 'fail' if leftover else 'ok',
                 'packageNo': last.get('packageNo') or '',
                 'refundBillId': last.get('refundBillId') or '',
                 'refundPath': REFUND_PATH_LABEL,
@@ -1043,14 +1054,39 @@ class AfterSaleClaimer(object):
             return {'ok': False, 'reason': '提交后未跳转成功页：%s'
                     % (toast or page.url)[:160], 'packageNo': package_no}
         bill = refund_bill_id_from_url(page.url)
-        # 先做一次只读复核（本身要 1~3 秒），再读退款账户——实测 4588 那单就是
-        # 读得太早导致记空（复核时该区块已在页面上）。顺序反过来等于白赚一段渲染时间。
-        remaining = self._pre_info(page, order_no).get('eligible') or []
-        refund_account = self._read_refund_account(page)
-        return {'ok': True, 'packageNo': package_no,
-                'refundBillId': bill[1] if bill else '',
-                'refundAccount': refund_account,
-                'toast': toast[:120], 'remaining': remaining}
+        if not bill or not bill[1]:
+            return {'ok': False, 'reason': '已跳转退款页但未取得退款单号，请人工核对',
+                    'packageNo': package_no}
+        result = {'ok': True, 'packageNo': package_no, 'refundBillId': bill[1],
+                  'refundAccount': ''}
+        # 一旦平台生成退款单号就记录，后续读账户或资格失败不能丢失已受理凭证。
+        self._record_refund(order_no, result)
+        try:
+            result['remaining'] = self._pre_info(page, order_no).get('eligible') or []
+            result['refundAccount'] = self._read_refund_account(page)
+        except Exception as exc:
+            result['verificationError'] = '已受理，但后续核验失败：' + scrub_text(str(exc))[:140]
+        self._record_refund(order_no, result)
+        return result
+
+    def _record_refund(self, order_no, result):
+        bill = str(result.get('refundBillId') or '')
+        if not bill:
+            return
+        with self._lock:
+            row = self._claim_rows.setdefault(order_no, {'orderNo': order_no})
+            refunds = {r['refundBillId']: dict(r) for r in row.get('refunds', [])}
+            entry = refunds.get(bill, {})
+            entry.update({
+                'refundBillId': bill, 'packageNo': result.get('packageNo') or '',
+                'refundPath': REFUND_PATH_LABEL,
+                'refundAccount': result.get('refundAccount') or entry.get('refundAccount', ''),
+                'submittedAt': entry.get('submittedAt') or datetime.now(timezone.utc).isoformat(),
+            })
+            refunds[bill] = entry
+            row['refunds'] = list(refunds.values())
+            row.update(entry)
+            row['packageCount'] = len(refunds)
 
     @staticmethod
     def _click(page, selector):
@@ -1224,7 +1260,7 @@ class AfterSaleClaimer(object):
         raise RuntimeError('所有订单页数超出扫描上限，请人工核对，未确认扫描完整')
 
     def _scan_pre_info(self, page, order_no):
-        """扫描严格核验；不改变既有提交链的请求与异常处理。"""
+        """扫描与提交共用的只读资格核验。"""
         request_id = uuid.uuid4().hex
         request_json = json.dumps({'id': request_id, 'origin': ORIGIN,
                                    'orderNo': str(order_no)})
@@ -1250,39 +1286,8 @@ class AfterSaleClaimer(object):
                 pass
 
     def _pre_info(self, page, order_no):
-        """在页面上下文里调买家端只读接口，判该单当前可退包裹。
-
-        ``js_evaluate`` 走的是同步 Runtime.evaluate，拿不到 Promise 结果，
-        因此用「先发起请求挂到 window、再轮询读取」两步法。请求由页面自身
-        发起，登录 Cookie 与同源策略天然满足。
-        """
-        page.js_evaluate(
-            '(() => { window.__xyPre=null; window.__xyPreErr="";'
-            ' fetch("/bff-api/trade-api/refund_only/pre_info'
-            '?_ver=1.1.8&_lang=es", {method:"POST", credentials:"include",'
-            ' headers:{"Content-Type":"application/json"},'
-            ' body: JSON.stringify({billno: %s})})'
-            '.then(r=>r.json()).then(j=>{window.__xyPre=j;})'
-            '.catch(e=>{window.__xyPreErr=String((e&&e.message)||e);});'
-            ' return true; })()' % json.dumps(str(order_no)))
-        page.wait_for('(() => !!window.__xyPre || !!window.__xyPreErr)()',
-                      timeout=20)
-        data = page.js_evaluate(
-            '(() => { const j=window.__xyPre; if(!j) return null;'
-            ' const pm=(j.info||{}).package_module||{};'
-            ' const rm=(j.info||{}).reason_module||{};'
-            ' return {code:String(j.code||""), msg:String(j.msg||""),'
-            ' reasonId: rm.reason_id||"",'
-            ' eligible:(pm.package_list||[]).map(p=>({packageNo:'
-            'String(p.package_no||""), shippingNo:String(p.shipping_no||""),'
-            ' title:String(p.title||""),'
-            ' goodsImg:String(((p.item_list||[])[0]||{}).goods_img||"")})),'
-            ' blocked:(pm.disable_package_list||[]).map(p=>'
-            'String(p.package_no||""))}; })()') or {}
-        if not data:
-            error = page.js_evaluate('String(window.__xyPreErr||"")') or ''
-            raise RuntimeError('可售后性查询失败：%s' % (error or '无响应'))
-        return data
+        """提交前与提交后的只读核验复用严格响应校验。"""
+        return self._scan_pre_info(page, order_no)
 
     def _capture_screenshot(self, rows, key, page):
         if page is None:

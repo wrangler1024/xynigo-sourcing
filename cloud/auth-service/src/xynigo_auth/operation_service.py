@@ -3564,6 +3564,7 @@ def after_sale_claim_snapshot(session, run: AfterSaleClaimRun) -> dict:
             "status": row.status,
             "packageNo": row.package_no or "",
             "refundBillId": row.refund_bill_id or "",
+            "refunds": row.refunds or [],
             "refundPath": row.refund_path or "",
             "refundAccount": row.refund_account or "",
             "deliveredAt": row.delivered_at or "",

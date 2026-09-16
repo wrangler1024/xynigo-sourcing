@@ -1126,6 +1126,16 @@ class AfterSaleClaimRunCreateBody(BaseModel):
         return value
 
 
+class AfterSalePackageRefund(BaseModel):
+    """已生成的包裹退款凭证；旧单号字段仍保留兼容。"""
+    model_config = ConfigDict(extra="forbid")
+    refundBillId: str = Field(min_length=1, max_length=32)
+    packageNo: str = Field(default="", max_length=64)
+    refundPath: str = Field(default="", max_length=48)
+    refundAccount: str = Field(default="", max_length=40)
+    submittedAt: str = Field(default="", max_length=40)
+
+
 class AfterSaleClaimProgressRow(BaseModel):
     """One submitted order row inside a claim progress snapshot.
 
@@ -1152,6 +1162,7 @@ class AfterSaleClaimProgressRow(BaseModel):
     note: str | None = Field(default=None, max_length=200)
     errorSummary: str | None = Field(default=None, max_length=300)
     screenshotSha256: str | None = Field(default=None, max_length=64)
+    refunds: list[AfterSalePackageRefund] = Field(default_factory=list, max_length=100)
     packageCount: int | None = Field(default=None, ge=0, le=100_000)
 
 
@@ -1204,7 +1215,7 @@ class AfterSaleTrackRow(BaseModel):
     """One refund bill row inside tracking progress / snapshot.
 
     extra=forbid：闭集。刻意不含 timeline——平台时间轴原文只在执行器侧保留，
-    跟随导出取用，不占每轮进度上报的体积。
+    不上传、不落云端库，也不包含在云端导出中。
     """
 
     model_config = ConfigDict(extra="forbid")

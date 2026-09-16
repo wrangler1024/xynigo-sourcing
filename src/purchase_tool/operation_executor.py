@@ -381,8 +381,8 @@ class LocalOperationExecutor(object):
                 event, ensure_ascii=False, sort_keys=True,
                 separators=(',', ':'))
             if serialized != previous:
-                self._safe_report(report, **event)
-                previous = serialized
+                if self._safe_report(report, **event):
+                    previous = serialized
             if not bool(snapshot.get('running')):
                 break
             self.sleep(self.poll_interval)
@@ -628,7 +628,7 @@ class LocalOperationExecutor(object):
         'orderNo', 'environmentSerial', 'storeName', 'status', 'packageNo',
         'refundBillId', 'refundPath', 'refundAccount', 'deliveredAt',
         'goodsImg', 'durationSeconds', 'submittedAt',
-        'note', 'errorSummary', 'screenshotSha256',
+        'note', 'errorSummary', 'screenshotSha256', 'refunds',
     )
     _AFTER_SALE_ROW_ALLOWED_STATUS = frozenset({
         'ok', 'empty', 'skip', 'blocked', 'fail', 'login', 'inuse',
@@ -672,6 +672,11 @@ class LocalOperationExecutor(object):
                     limit = cls._AFTER_SALE_NULLABLE_TEXT[field]
                     row[field] = (str(value).strip()[:limit]
                                   if value is not None else None)
+                elif field == 'refunds':
+                    row[field] = [{k: str(r.get(k) or '')[:limit] for k, limit in
+                        {'refundBillId': 32, 'packageNo': 64, 'refundPath': 48,
+                         'refundAccount': 40, 'submittedAt': 40}.items()}
+                        for r in (value or []) if isinstance(r, dict)]
                 elif field == 'claimable':
                     row[field] = bool(value)
                 elif field == 'packageCount':
@@ -777,8 +782,8 @@ class LocalOperationExecutor(object):
                 event, ensure_ascii=False, sort_keys=True,
                 separators=(',', ':'))
             if serialized != previous:
-                self._safe_report(report, **event)
-                previous = serialized
+                if self._safe_report(report, **event):
+                    previous = serialized
             if not bool(snapshot.get('running')):
                 break
             self.sleep(self.poll_interval)
@@ -857,8 +862,8 @@ class LocalOperationExecutor(object):
                 event, ensure_ascii=False, sort_keys=True,
                 separators=(',', ':'))
             if serialized != previous:
-                self._safe_report(report, **event)
-                previous = serialized
+                if self._safe_report(report, **event):
+                    previous = serialized
             for row in rows:
                 order_no = str(row.get('orderNo') or '')
                 if (not order_no or order_no in reported_screenshots
@@ -876,6 +881,7 @@ class LocalOperationExecutor(object):
                 break
             self.sleep(self.poll_interval)
         summary = self._after_sale_summary(total, rows)
+        summary['rows'] = self._after_sale_rows(rows)
         return self._terminal_result('after_sale', summary)
 
     def _after_sale_screenshot_attachment(self, order_no):
@@ -919,7 +925,9 @@ class LocalOperationExecutor(object):
         failed = sum(
             row.get('status') in ('fail', 'login', 'inuse')
             for row in rows)
-        if stopped and not success and not failed:
+        if len(rows) != total or any(r.get('status') not in AFTER_SALE_TERMINAL_STATES for r in rows):
+            run_status = 'uncertain'
+        elif stopped and not success and not failed:
             run_status = 'cancelled'
         elif failed and success:
             run_status = 'partial_failure'
@@ -957,9 +965,8 @@ class LocalOperationExecutor(object):
     def _after_sale_track_rows(cls, snap_rows):
         """回访行投影成云端闭集。
 
-        注意 timeline（平台时间轴原文）**不上行**——它是排查用的长文本，只跟着
-        「完整导出」走本地落库，塞进进度快照会白占每轮上报的体积。需要时由导出
-        侧读库取。
+        timeline（平台时间轴原文）仅在执行器内存中用于判定和排查，
+        不上传、不落云端库，也不包含在云端导出中。
         """
         rows = []
         for raw in (snap_rows or []):
@@ -987,17 +994,19 @@ class LocalOperationExecutor(object):
 
     @staticmethod
     def _after_sale_track_summary(total, rows):
-        """回访批次汇总：阶段计数 + 行状态计数（终态口径供跟踪表冻结判断）。"""
+        """回访批次汇总：平台阶段计数与本次执行状态分别计算。"""
         rows = rows or []
         ok = sum(r.get('status') == 'ok' for r in rows)
         stopped = sum(r.get('status') == 'stopped' for r in rows)
-        failed = sum(r.get('status') in ('fail', 'inuse') for r in rows)
+        failed = sum(r.get('status') in ('fail', 'login', 'inuse') for r in rows)
         phases = {}
         for row in rows:
             key = str(row.get('phase') or '')
             if key:
                 phases[key] = phases.get(key, 0) + 1
-        if stopped and not ok and not failed:
+        if len(rows) != total or any(r.get('status') not in AFTER_SALE_TERMINAL_STATES for r in rows):
+            run_status = 'uncertain'
+        elif stopped and not ok and not failed:
             run_status = 'cancelled'
         elif failed and ok:
             run_status = 'partial_failure'
@@ -1078,12 +1087,13 @@ class LocalOperationExecutor(object):
             serialized = json.dumps(event, ensure_ascii=False, sort_keys=True,
                                     separators=(',', ':'))
             if serialized != previous:
-                self._safe_report(report, **event)
-                previous = serialized
+                if self._safe_report(report, **event):
+                    previous = serialized
             if not bool(snapshot.get('running')):
                 break
             self.sleep(self.poll_interval)
         summary = self._after_sale_track_summary(total, rows)
+        summary['rows'] = self._after_sale_track_rows(rows)
         return self._terminal_result('after_sale_track', summary)
 
     def _execute_logistics(self, payload, report, cancellation_event):

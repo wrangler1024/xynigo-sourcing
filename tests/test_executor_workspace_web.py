@@ -882,8 +882,8 @@ class AfterSaleClaimWiringTests(unittest.TestCase):
             '③ 表头顺序变了就必须同步改行模板与这里')
         cells = tpl[tpl.index('<td'):]
         markers = ['row.environmentSerial', 'row.orderNo', '${asThumbCell',
-                   'AFTER_SALE_TYPE', 'row.deliveredAt', 'row.refundBillId',
-                   'row.refundPath', 'row.refundAccount', 'asClaimPill',
+                   'AFTER_SALE_TYPE', 'row.deliveredAt', 'r.refundBillId',
+                   'r.refundPath', 'r.refundAccount', 'asClaimPill',
                    'row.submittedAt', 'row.errorSummary']
         order = [cells.index(k) for k in markers]
         self.assertEqual(order, sorted(order), '③ 行模板列序与表头不一致（会整列错位）')
@@ -1144,7 +1144,7 @@ class AfterSaleThreeRequirementsWiringTests(unittest.TestCase):
         html = self._html()
         track = self._fn(html, 'async function asTrackHistoryBatch(')
         self.assertIn('await asTrack(items)', track)
-        self.assertIn('r.refundBillId && r.orderNo', track.replace('row.', 'r.'))
+        self.assertIn('asTrackItemsFromRows(rows)', track)
         export = self._fn(html, 'async function asExportClaimHistory(')
         self.assertIn('asDownloadClaimBatch(runId', export)
         export = self._fn(html, 'async function asDownloadClaimBatch(')
@@ -1173,7 +1173,7 @@ class AfterSaleThreeRequirementsWiringTests(unittest.TestCase):
         html = self._html()
         # 闸门只有一处实现，四个入口都要在**确认框之前**过它
         gate = self._fn(html, 'function asWriteEntryReady(')
-        self.assertIn('if (AS_STATE.running) {', gate)
+        self.assertIn('if (AS_STATE.running || AS_STATE.starting) {', gate)
         self.assertIn('已有任务在跑', gate)
         self.assertIn("if (AS_STATE.type !== 'refund') {", gate)
         self.assertIn('该类型尚未实现', gate)
@@ -1340,9 +1340,9 @@ class WebCloudContractAlignmentTests(unittest.TestCase):
     def test_web_payload_keys_match_cloud_track_item(self):
         """Web 的 items 键必须是云端 AfterSaleTrackItem 的子集，且必填项齐全。"""
         html = LOCAL_HTML.read_text(encoding='utf-8')
-        body = html[html.index('async function asTrack('):]
+        body = html[html.index('function asTrackItemsFromRows('):]
         body = body[:body.index('\n}')]
-        keys = set(re.findall(r'(\w+):\s*r\.\w+', body))
+        keys = set(re.findall(r'(\w+):\s*(?:row|refund)\.\w+', body))
         fields = set(re.findall(r'^    (\w+):', self._contract_block(
             'AfterSaleTrackItem'), re.M))
         self.assertTrue(keys, '未解析到 Web 的 items 键')

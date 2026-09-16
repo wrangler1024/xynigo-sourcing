@@ -4661,6 +4661,8 @@ class Handler(BaseHTTPRequestHandler):
                         'orderNo': order_no,
                         'storeName': str(item.get('storeName') or '').strip(),
                         'packageNo': str(item.get('packageNo') or '').strip(),
+                        'deliveredAt': str(item.get('deliveredAt') or '')[:32],
+                        'goodsImg': str(item.get('goodsImg') or '')[:300],
                     })
                 browser_mode = str(body.get('browserMode') or 'headless')
                 self._json(STATE.after_sale.start_submit(

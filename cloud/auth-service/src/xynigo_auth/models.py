@@ -2361,6 +2361,7 @@ class AfterSaleClaimResult(Base):
     store_name: Mapped[str | None] = mapped_column(String(128))
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     package_no: Mapped[str | None] = mapped_column(String(64))
+    refunds: Mapped[list] = mapped_column(JSON, nullable=False, default=list, server_default="[]")
     refund_bill_id: Mapped[str | None] = mapped_column(String(32))
     refund_path: Mapped[str | None] = mapped_column(String(48))
     refund_account: Mapped[str | None] = mapped_column(String(40))
@@ -2399,7 +2400,7 @@ class AfterSaleRefundTracking(Base):
     """退款跟踪：一个退款单一行，按 refund_bill_id 唯一。
 
     与「提交结果」的分工是——提交结果＝我提交了什么（不可变）；本表＝平台后来怎么
-    处理（每次只读回访覆盖更新）。已退款/已拒绝为终态，回访侧不再扫，行冻结。
+    处理（每次成功只读回访更新）。已退款/已拒绝为业务终态，用户仍可显式回访；失败读取保留上次有效阶段。
     """
 
     __tablename__ = "after_sale_refund_tracking"

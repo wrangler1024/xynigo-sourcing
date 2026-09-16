@@ -83,16 +83,17 @@ def _row_values(row):
 def _claim_values(row):
     """提交结果一行。列序必须与 CLAIM_HEADERS 一一对应（测试钉列序）。"""
     status = str(row.get("status") or "").strip()
+    refunds = row.get("refunds") or [row]
     return [
         row.get("environmentSerial") or "",
         row.get("orderNo") or "",
         row.get("goodsImg") or "",
         AFTER_SALE_TYPE_LABEL,
         row.get("deliveredAt") or "",
-        row.get("refundBillId") or "",
-        row.get("refundPath") or "",
-        row.get("refundAccount") or "",
-        CLAIM_STATUS_LABELS.get(status, status),
+        "\n".join(str(r.get("refundBillId") or "") for r in refunds),
+        "\n".join(str(r.get("refundPath") or "") for r in refunds),
+        "\n".join(str(r.get("refundAccount") or "") for r in refunds),
+        (CLAIM_STATUS_LABELS.get(status, status) + (" · 部分包裹已受理" if status != "ok" and row.get("refunds") else "")),
         _timestamp_text(row.get("submittedAt")),
         row.get("note") or row.get("errorSummary") or "",
     ]
