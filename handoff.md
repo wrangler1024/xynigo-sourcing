@@ -1,125 +1,46 @@
 # Xynigo Sourcing 新会话交接
 
-交接时间：20260915（采购中心「售后处理」模块首版，待评审）
-分支/提交：`codex/after-sale-claim-v1` → `0a41c03`，基线 `origin/main` `6e42c37`（v0.17.20）
-状态：**已在独立 worktree 完成并自测，未推送、未合并、未发布**。worktree 路径 `~/Documents/xynigo-worktrees/after-sale-claim`。
+交接时间：**20260916 晚**（采购售后模块：四链已通、已上测试机；下一步交给 Codex 打磨）
+仓库/基线：`origin/main` **`ef66e32`**（worktree `~/Documents/xynigo-worktrees/merge-pf2`）
+模块交接文档：**`docs/20260915_采购售后模块交接.md`**（第 10 节＝当前线上事实，**第 11 节＝交给 Codex 的待办与接手须知**）
 
-## 0. 本次交付：买家端「包裹已送达未收到」售后申请
+> 0915 首版的说明已并入上面那份模块文档（第 1~7 节）；本文件只做「现在的状态 + 下一步」的索引。
 
-采购部对已下单买家号的「已送达但没收到货」订单需要在 SHEIN 买家端发起售后申请（退款原路退回）。人工动线是开环境→进订单列表→找到带售后入口的卡片→点进去→勾包裹→选路径→提交；本次把它产品化为采购中心的一个二级模块。
+## 1. 一句话现状
 
-**形态（Jeff 拍板）**：两步式「扫描 → 勾选 → 提交」，走云端 Run 链路，首版一次做完整三步。
+采购售后（丢件退款）模块的**四条链**——② 扫描可申请、③ 提交售后（含补提失败 / 直接提交指定单）、
+④ 退款跟踪回访（含导出）、③ 提交历史（列表 / 详情 / 回访本批 / 重提 / 批次导出）——**都已在测试机
+`xynigo.samforo.icu` 上线并核验**；本地 1082 passed / 5 skipped，云端套件全绿。
 
-## 1. 改动范围（12 文件，+2563/−1）
+## 2. 本轮交付（都有提交与测试）
 
-执行器侧
-- 新增 `src/purchase_tool/after_sale_claim.py`（`AfterSaleClaimer`，对标 `store_finance_inspect.py`）：扫描/提交两条批次链、环境占用四层策略、异常截图、随机单间停顿。
-- `src/purchase_tool/main.py`：新增 `/api/after-sale/{scan,submit,progress,stop,screenshot}` 五个路由（`assistant.access`）+ 实例化（`afterSaleHeadless` 默认 false = 可见窗口）。
-- `src/purchase_tool/operation_executor.py`：新增 `after.sale.scan.v1`（轮询上报订单级行）与 `after.sale.claim.v1`（轮询上报提交行+截图附件）两个业务任务，含行投影闭集与汇总口径（`blocked/skip/empty` 计 skipped 不计 failed）。
-- `src/purchase_tool/executor_channel.py`：两个新能力登记进 `SUPPORTED_CAPABILITIES` 与 `MODERN_ONLY_CAPABILITIES`。
+| 提交 | 内容 |
+|---|---|
+| 收口 `b482e1f` | 合并四条修复分支（④ 导出 / 状态条落点 / ③ 字段 / 迁移 0039）+ **桥接层透传** |
+| 三需求 `4bd73ff`…`254fe2c` | 补提失败（可恢复失败，排除 blocked）、直接提交指定单（粘贴解析）、提交历史（租户内互相可见）；评审「改后合并」，两项必修已闭合 |
+| `297544f` | ③ 的「恢复最近一批」只恢复**本人**批次（共享视图在历史弹层） |
+| `21a82cf` | 迁移 0039 revision id 缩短到 ≤32 字符（`alembic_version` 列宽，cherry-pick 自另一条线） |
+| `f48ac70` | 运行状态条按原型补成 **① 之上的 sticky 常驻条**（此前只有 CSS、没有标记与 JS） |
+| `ef66e32` | ③ 送达时间 / ④ 商品图改为**云端兜底**，不再依赖执行器版本 + 测试机数据回填 |
 
-云端侧
-- `models.py`：`AfterSaleClaimRun`（`after_sale_claim_runs`）+ `AfterSaleClaimResult`（`after_sale_claim_results`）；`ck_executor_task_type` 加入两个新任务类型。
-- `migrations/versions/0035_after_sale_claim.py`：`down_revision="0034_store_finance_lookup"`，建两表 + drop/recreate task_type 约束。
-- `operation_contract.py` / `operation_service.py` / `executor_service.py` / `executor_contract.py` / `main.py`：契约、Run 服务、同步回写、能力 Literal、7 条路由（扫描建任务不建 Run；提交建 Run；另有扫描取消 `/v1/after-sale/scan/{task_id}/cancel`）。
-- `web/index.html`（云端副本由同步脚本生成）。
+## 3. 唯一还卡体验的事：执行器 0.18.1
 
-Web 权威源
-- `src/purchase_tool/web/index.html`：CSS 块、二级 tab「售后处理」（`data-parent="procurement"`）、`FEATURE_MODULES.aftersale`、`afterSalePanel` 三张卡片、`as*` 前缀 JS 整段、`setFeaturePanel` 接线。
-- 已执行 `python cloud/auth-service/deploy/sync_web_workspace.py`，双副本字节一致（有契约测试守着）。
+桥接层透传（`_execute_after_sale_claim` 不再丢 `deliveredAt`/`goodsImg`）**已在 main**，但桌面端
+没发版，线上执行器仍是 0.18.0；云端兜底已经让这两列显示出来，所以**发版不是阻塞项**，但发版后
+回传行自带值、历史批次重提也能带上。两段式流程与注意事项见模块文档 §11.1。
 
-测试
-- `tests/test_after_sale_claim.py`（27 条）：卡片解析（含翻译插件插字）、成功页 URL 解析、批次状态机、路由归属、行投影与汇总口径、本地桥接脚本化 rpc 验证。
-- `tests/test_executor_workspace_web.py`：新增 `AfterSaleClaimWiringTests`（5 条）。
-- `cloud/auth-service/tests/test_after_sale_claim.py`（6 条）：扫描任务往返、提交 Run 幂等与落库、截图、取消。
+## 4. Codex 接手入口（按顺序读）
 
-## 2. 验证结果
+1. `docs/20260915_采购售后模块交接.md` §10（线上事实 / 两个断点 / 0039 坑 / 数据回填说明）
+2. 同文档 §11（待办清单、工程规矩与命令、两套测试跑法、部署与回退、关键文件地图）
+3. 需求原文：`docs/20260916_售后需求排期与暂缓.md`、`docs/20260916_需求_售后提交历史与从历史跟进.md`、
+   `docs/20260916_需求_售后直接提交指定单.md`（三份都已改为「已实现」）
+4. 原型定版：`docs/prototypes/20260915-procurement-after-sale-v2-multitype.md`（状态条与多类型设计）
 
-| 范围 | 命令 | 结果 |
-|---|---|---|
-| 本地 | `PYTHONPATH=src python -m pytest tests -q` | **1013 passed / 5 skipped** |
-| 云端 | `cloud/auth-service/.venv/bin/python -m pytest tests -q` | **全绿**（0 失败，含新增 6 条） |
-| 网页语法 | 抽出内联脚本 `node --check` | rc=0 |
-| 副本一致 | 字节比对 + `test_cloud_copy_is_synced_from_single_ui_source` | 一致 |
-| 迁移一致 | `models.py` 的 task_type check 字符串 vs 迁移 `NEW_TASK_TYPE_CHECK` | 逐字一致 |
+## 5. 三条最容易踩的坑（细节都在模块文档里）
 
-**真机验证（HubStudio + 真实买家号，只读）**
-- 扫描路径在环境 `4902`（ZH-MX-0829-077）、`4903/4904/4905`（078/079/081）跑通；`4904`、`4905` 命中可申请订单（各有 1 个可退包裹），验证了 `hasEntry` 识别与 `pre_info` 判定；脚本自开的环境扫完自动关闭，先前手动开着的环境保持打开（谁开谁关生效）。
-- 提交路径做了一次**只读演练**：在 `4904` 的订单 `GSH1RV13Y00NQUV` 上走完「进申请页 → 勾包裹 → Confirmar → 切到原路退回（checked=True）→ Presentar 可点」，**在点击 Presentar 前停住**，随后返回订单列表并关环境——未产生任何提交。
-
-## 3. 限制与未做
-
-1. **模块的提交路径未做真机落库验证**（演练止于 Presentar 前一步）。手动流程已于同日真机跑通并提交成功（环境 4902，退款单号 2390765181147136），模块用的是同一套选择器与步骤，但「点 Presentar → 跳 refundLabel → 成功识别」这一段在模块形态下仍未实跑。
-2. 多包裹订单的「循环再提」分支未真机验证（现有样本都是单包裹）。
-3. 未跑隔离 PostgreSQL 的迁移升降级验证（CONTRIBUTING 要求迁移用隔离 PG，普通单测不覆盖）。
-4. 未加导出（Excel/CSV）与「补提失败」重跑；未做 `failed_retry` 合并视图（店铺结算有，售后首版没做）。
-5. 未推送远端、未发布；线上/测试服务器均未部署。
-6. 已知既有测试波动：`tests/test_updater.py::test_network_or_github_failure_does_not_block_startup` 在本机全套连跑时偶发失败（单独跑与基线全量均通过，疑与真实 `~/Library/Application Support/XynigoSourcing` 状态目录及用例顺序有关），与本次改动无因果关系，未修。
-
-## 4. 评审要点（请未参与实现的一方重点看）
-
-1. `after_sale_claim.py` 的提交链：单包裹提交循环（`guard < 5`）、`_submit_package` 的每一步断言与失败提示是否够精确。
-2. `operation_executor.py` 的汇总口径：`blocked/skip/empty` 归 `skippedCount` 而非 `failedCount`——避免幂等重跑把整批误报失败。
-3. 云端 `_upsert_after_sale_claim_progress` 的行白名单校验（orderNo 必须在建 Run 清单内）。
-4. Web 侧「已提交过的订单不可勾选」这条幂等闸门（`canPick = orderNo && claimable && status==='ok'`）。
-5. 退款路径固定值：界面默认是 SHEIN 钱包，代码强制切「原路退回」，若业务口径变化需改 `REFUND_PATH_LABEL`。
-
-## 5. 关联记录
-
-业务侧经验（页面结构、四个坑、实测记录）已沉淀到私有业务仓：
-`shein-dropshipping-ops/自动化工具/HubStudio采购环境自动化/06-已送达未收到售后申请.md`，并更新了该目录 README 索引与 `04-踩坑速查表.md`。
-
----
-
-## 【续作要点】20260916 · 退款跟踪落地进度（上下文压缩后的接续入口）
-
-分支 `codex/after-sale-claim-v1`（23 个提交，**未推送**），worktree `~/Documents/xynigo-worktrees/after-sale-claim`。
-测试口径：本地 `PYTHONPATH=src /Users/jeff/Documents/xynigo-sourcing/.venv/bin/python -m pytest tests -q`；
-云端 `cd cloud/auth-service && .venv/bin/python -m pytest tests -p no:warnings`（venv 是 3.12，已建好）。
-
-### 已完成（按层）
-- **执行器**：`after_sale_claim.py` 扫描/提交/回访三条链；提交链真机 5 单成功（4904/4905/4585/4586/4588）；
-  回访链真机只读验证（4586/4904，阶段「审核中」、倒计时、退款账户 ****7935 / ****2813、金额全对）
-- **本地桥接**：`after.sale.scan.v1` / `after.sale.claim.v1` / `after.sale.track.v1`（operation_executor + executor_channel）
-- **云端**：`after_sale_claim_runs/_results`（迁移 0035/0036）、`after_sale_refund_tracking`（迁移 0037）；
-  路由含 scan/claim/track 三套；回访进度 upsert 进跟踪表，快照按退款单号读回
-- **Web（权威源）**：采购售后单类型两步式（扫描→勾选→提交）已接真实接口；②③ 表含商品图/送达时间/退款信用卡/操作时间；运行状态条（sticky + 终态收起 + 完整进度标签 + 预计还需）
-- **设计稿**：`docs/prototypes/20260915-procurement-after-sale-v2-multitype.html`（多类型三级菜单 + ④ 退款跟踪含迷你时间轴与导出），由真实页面注入 mock 生成
-
-### 唯一剩余：Web ④ 退款跟踪卡片接真实接口
-1. 权威源 `src/purchase_tool/web/index.html` 加 ④ 卡片（设计稿已是最终形态：列序 环境序号/订单号/商品图/退款单号/退款信用卡/退款金额/阶段/最近检查/处置 + 阶段迷你时间轴 + 导出 Excel 三变体）
-2. 发起 `POST /v1/after-sale/track`（body `{idempotencyKey, executorId, browserMode, items:[{environmentSerial,orderNo,refundBillId,storeName}]}`）
-3. 轮询 `GET /v1/after-sale/track/{taskId}` → `summary.rows`（跟踪表快照，含 phase/countdown/refundAccount/amount/checkedAt）
-4. `capability=after.sale.track.v1` 走 `cloudFormalExecutor`；跑完 `sync_web_workspace.py` + 重生成两个原型
-5. 导出待做：照 `store_finance_export.py` 建 `after_sale_track_export.py` + 路由 `…/export?variant=standard|full|open`
-
-### 硬约束与踩过的坑（勿重复）
-- 页面渲染比跳转慢且不稳定：**读值轮询到出值、点击验证生效再重试**，不要估 sleep（踩过三次：退款路径 6s、退款账户 2s、时间轴）
-- 退款单页时间轴**会列出尚未到达的步骤**，判当前阶段要用当前步骤信号（审核节点带「está en revisión」）
-- 重写既有表结构必须保留原节点 id（丢过 `asChkHead` 导致轮询全抛 null）；改完必跑「表头列数＝行单元格数」校验
-- 新增 ORM 表先翻同库写法：UUID 主键 `mapped_column(primary_key=True, default=uuid.uuid4)`、
-  时间戳 `server_default=func.now()`；新模型/契约要显式加进 `executor_service` 导入清单
-- 该后台的 `.refundAccount-info .status` 会渲染占位符 `Error`（平台自身问题），不是失败信号
-
-
----
-
-## 【已合并】20260916 · codex/after-sale-claim-v1 → main
-
-**合并方式**：快进（`git push origin codex/after-sale-claim-v1:main`），无 merge commit。
-**结果**：`6e42c37 → be44249`（28 个提交），origin/main 现为 `be44249`，分支与 main 同步（领先 0）。
-
-**评审**：三轮，未参与实现方（Cursor）结论——三项必须改全部闭合（`authorize()`、track 进入
-BUSINESS 含 finish/phaseCounts、③ 列数与列序）、无关模块 colspan 无残留、增量未引入新问题，
-判定「可以合并；Web ④ 工作台串跑允许合并后补」。
-
-**合并后待办（各自需单独授权）**
-1. **工作台串跑**（只读、不需授权，建议先做）：Web 点「刷新退款进度」→ 云端下发 → 执行器回访
-   → 落跟踪表 → Web 渲染阶段/倒计时/卡掩码。缺的是「工作台按钮到云端」那一跳，其余各段已有依据。
-2. **评审建议项**：`phaseCounts` 校验拒 bool（`isinstance(True, int)` 为真，会计成 1；执行器不会发
-   bool，风险低）。合并后修，避免让已评审的 SHA 与被合并的 SHA 不一致。
-3. **部署测试服务器**：重建 auth 镜像 + 在实例执行迁移 0037（含 `ck_executor_task_type` 重建，
-   PG 取 ACCESS EXCLUSIVE 锁，建议发布窗口做）。
-4. **同事执行器升级**：云端与执行器必须同发，老执行器没有 `after.sale.*`。
-
-**版本**：合并未改版本号（仍 v0.17.20），发布是另一条流程，需单独授权。
+1. **改 Web 忘了同步 / 重跑原型**：`sync_web_workspace.py`（双副本必须逐字节一致），以及两份原型
+   生成脚本；原型是生成时点的快照，忘了重跑就会「在浏览器里验的是旧代码」。
+2. **部署迁移必须先 `build migrate`**（迁移烘进镜像），否则报 `Can't locate revision`，极易误判成代码问题。
+3. **共享测试机上有同事的真机任务**：切换前必须排空（**连续两次为 0**），不要去杀别人的任务；
+   磁盘常年偏高（当前 78%），预检先清构建缓存。
