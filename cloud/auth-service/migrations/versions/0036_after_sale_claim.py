@@ -3,8 +3,8 @@
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0035_after_sale_claim"
-down_revision = "0034_store_finance_lookup"
+revision = "0036_after_sale_claim"
+down_revision = "0035_purchase_receipts"
 branch_labels = None
 depends_on = None
 

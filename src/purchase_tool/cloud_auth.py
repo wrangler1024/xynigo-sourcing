@@ -189,7 +189,7 @@ class CloudAuthClient(object):
     def _request(self, path, method='GET', payload=None, token=None,
                  executor_credential=None,
                  max_response_bytes=MAX_RESPONSE_BYTES,
-                 source='local_executor'):
+                 source='local_executor', timeout=None):
         data = None
         request_id = uuid.uuid4().hex
         headers = {
@@ -215,7 +215,7 @@ class CloudAuthClient(object):
             method=method,
         )
         try:
-            response = self.opener(request, timeout=self.timeout)
+            response = self.opener(request, timeout=self.timeout if timeout is None else timeout)
             with response:
                 raw = response.read(max_response_bytes + 1)
                 if len(raw) > max_response_bytes:
@@ -225,6 +225,7 @@ class CloudAuthClient(object):
                 return json.loads(raw.decode('utf-8'))
         except HTTPError as exc:
             code = 'auth_failed'
+            receipt_message = ''
             try:
                 raw = exc.read(MAX_RESPONSE_BYTES + 1)
                 payload = json.loads(raw.decode('utf-8')) if raw else {}
@@ -234,6 +235,8 @@ class CloudAuthClient(object):
                     if isinstance(payload, dict) else '')
                 if isinstance(detail, dict):
                     code = str(detail.get('code') or code)
+                    if path == '/v1/assistant/purchase-receipts' and code in {'receipt_conflict', 'receipt_target_forbidden', 'receipt_unavailable'}:
+                        receipt_message = str(detail.get('message') or '')[:300]
                 elif (isinstance(detail, list)
                       and path.startswith('/v1/purchase-orders/')):
                     issue_fields = {
@@ -253,7 +256,7 @@ class CloudAuthClient(object):
                 pass
             raise LocalAuthError(
                 code,
-                ERROR_MESSAGES.get(code) or '云端认证请求失败',
+                receipt_message or ERROR_MESSAGES.get(code) or '云端认证请求失败',
                 exc.code,
             ) from None
         except (URLError, TimeoutError, OSError):
@@ -548,6 +551,17 @@ class CloudAuthClient(object):
             max_response_bytes=MAX_DATA_SOURCE_REGISTRY_RESPONSE_BYTES,
             source='local_executor_data_source_sync',
         )
+
+    def purchase_receipt_request(self, session_token, payload):
+        try:
+            return self._request('/v1/assistant/purchase-receipts', method='POST',
+                payload=payload, token=session_token,
+                source='local_executor_purchase_receipt', timeout=90.0)
+        except LocalAuthError as exc:
+            if exc.status == 404:
+                raise LocalAuthError('receipt_service_upgrade_required',
+                    '云端尚未部署采购凭证接口，请先升级配套云端服务', 409) from None
+            raise
 
     def feishu_read_request(
             self, session_token, path, query, permission):
@@ -1211,6 +1225,16 @@ class LocalAuthService(object):
                 raise LocalAuthError(
                     'cloud_response_invalid', '组织数据源同步响应无效', 502)
             return result
+
+    def purchase_receipt_request(self, payload, expected_member=None):
+        with self.lock:
+            identity = self.require('assistant.access')
+            if expected_member is not None and identity['user']['id'] != expected_member:
+                raise LocalAuthError('authentication_required', '登录身份已变化，请重新读取', 401)
+            if not self.session_token:
+                raise LocalAuthError('authentication_required', status=401)
+            token = self.session_token
+        return self.client.purchase_receipt_request(token, payload)
 
     def feishu_read_request(self, path, query, permission):
         with self.lock:

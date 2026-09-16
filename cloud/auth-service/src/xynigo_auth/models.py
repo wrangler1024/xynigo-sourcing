@@ -2432,3 +2432,40 @@ class AfterSaleRefundTracking(Base):
         Index("ix_after_sale_track_tenant_phase", "tenant_id", "phase"),
         Index("ix_after_sale_track_tenant_checked", "tenant_id", "checked_at"),
     )
+class PurchaseReceipt(Base):
+    """Immutable evidence per submission; state alone advances during delivery."""
+    __tablename__ = 'purchase_receipts'
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('tenants.id'), nullable=False)
+    actor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('users.id'), nullable=False)
+    request_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[str] = mapped_column(String(24), nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    order_no: Mapped[str] = mapped_column(String(64), nullable=False)
+    amount: Mapped[str] = mapped_column(String(24), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    paid_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    reason: Mapped[str] = mapped_column(String(300), nullable=False)
+    image: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    image_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    image_cells: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    previous_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey('purchase_receipts.id'))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    __table_args__ = (UniqueConstraint('tenant_id', 'request_id', name='uq_purchase_receipt_request'),)
+
+
+class PurchaseReceiptSlot(Base):
+    """One serial submission lane per sheet task, shared by all executors."""
+    __tablename__ = 'purchase_receipt_slots'
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('tenants.id'), primary_key=True)
+    task_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    receipt_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey('purchase_receipts.id'))
+
+
+class PurchaseReceiptOrder(Base):
+    __tablename__ = 'purchase_receipt_orders'
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('tenants.id'), primary_key=True)
+    order_no: Mapped[str] = mapped_column(String(64), primary_key=True)
+    task_hash: Mapped[str] = mapped_column(String(64), nullable=False)

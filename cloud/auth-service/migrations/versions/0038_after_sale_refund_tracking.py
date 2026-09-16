@@ -8,8 +8,8 @@ timeline 存平台时间轴原文（只跟随导出取用，不进进度快照�
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0037_after_sale_refund_tracking"
-down_revision = "0036_after_sale_claim_fields"
+revision = "0038_after_sale_refund_tracking"
+down_revision = "0037_after_sale_claim_fields"
 branch_labels = None
 depends_on = None
 

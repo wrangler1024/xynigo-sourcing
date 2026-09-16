@@ -10,6 +10,7 @@ application access.
 from __future__ import annotations
 
 import base64
+from contextlib import nullcontext
 import re
 import threading
 import time
@@ -195,11 +196,13 @@ class FeishuSheetsGateway:
         app_secret: str,
         timeout_seconds: float = 20.0,
         transport: httpx.BaseTransport | None = None,
+        http_client: httpx.Client | None = None,
     ) -> None:
         self.app_id = str(app_id or "").strip()
         self.app_secret = str(app_secret or "")
         self.timeout_seconds = float(timeout_seconds)
         self.transport = transport
+        self.http_client = http_client
         self._token_lock = threading.Lock()
         self._token_value = ""
         self._token_expires_at = 0.0
@@ -216,9 +219,9 @@ class FeishuSheetsGateway:
             if not force and self._token_value and now < self._token_expires_at:
                 return self._token_value
             try:
-                with httpx.Client(
+                with (nullcontext(self.http_client) if self.http_client is not None else httpx.Client(
                     timeout=self.timeout_seconds, transport=self.transport
-                ) as client:
+                )) as client:
                     response = client.post(
                         TOKEN_ENDPOINT,
                         json={"app_id": self.app_id, "app_secret": self.app_secret},
@@ -311,9 +314,12 @@ class FeishuSheetsGateway:
         for attempt in range(2):
             token = self._tenant_token(force=attempt > 0)
             try:
-                with httpx.Client(
+                with (nullcontext(self.http_client) if self.http_client is not None else httpx.Client(
                     timeout=self.timeout_seconds, transport=self.transport
-                ) as client:
+                )) as client:
+                    metrics = getattr(self, "metrics", None)
+                    if metrics is not None:
+                        metrics["sheetHttpRequests"] += 1
                     response = client.request(
                         method,
                         OPEN_API_ORIGIN + path,
