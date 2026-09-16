@@ -580,7 +580,7 @@ class QueryOrchestrator(object):
     """
 
     def __init__(self, hub, log_dir=None, settle_seconds=6.0,
-                 env_interval=1.0, concurrency=1):
+                 env_interval=1.0, concurrency=2):
         self.hub = hub
         self.lock = threading.RLock()
         self._browser_state = threading.Condition(self.lock)
@@ -597,7 +597,7 @@ class QueryOrchestrator(object):
         self.log_dir = log_dir
         self.settle_seconds = settle_seconds
         self.env_interval = env_interval
-        self.concurrency = max(1, min(5, int(concurrency or 1)))
+        self.concurrency = max(1, min(5, int(concurrency or 2)))
         self.site = 'MX'
         self.browser_mode = 'headless'
         self.allow_open_environment = False

@@ -21,6 +21,8 @@ import ssl
 import threading
 import time
 
+from .concurrency import require_concurrency
+
 from .lark_openapi import LarkOpenApiClient
 from .redaction import scrub_text
 
@@ -635,20 +637,18 @@ class ProxyCheckJob(object):
             'message': str(last or '代理检测失败'),
         }, 2)
 
-    def start(self, asset_ids, concurrency=10, timeout=8):
+    def start(self, asset_ids, concurrency=2, timeout=8):
         asset_ids = list(dict.fromkeys(str(item or '').strip()
                                        for item in (asset_ids or []) if item))
         if not asset_ids:
             raise ValueError('至少选择一个代理 IP')
         if len(asset_ids) > MAX_PROXY_CHECK_ITEMS:
             raise ValueError('单批最多检测 %s 个代理 IP' % MAX_PROXY_CHECK_ITEMS)
+        concurrency = require_concurrency(concurrency)
         try:
-            concurrency = int(concurrency)
             timeout = float(timeout)
         except (TypeError, ValueError) as exc:
             raise ValueError('并发数或超时设置无效') from exc
-        if not 1 <= concurrency <= 20:
-            raise ValueError('并发数必须在 1-20 之间')
         if not 3 <= timeout <= 30:
             raise ValueError('超时必须在 3-30 秒之间')
         with self.lock:
@@ -1114,7 +1114,7 @@ class ResourceCenterService(object):
             'typeCatalog': [dict(item) for item in
                             snapshot['proxyTypeCatalog']],
             'checkDefaults': {
-                'concurrency': 10, 'timeoutSec': 8,
+                'concurrency': 2, 'timeoutSec': 8,
                 'retryCount': 1, 'maxItems': MAX_PROXY_CHECK_ITEMS,
             },
             'phase': 'P0/P1 本机只读检测',
@@ -1147,7 +1147,7 @@ class ResourceCenterService(object):
                     'sheets:spreadsheet:readonly 并授予 Webshare IP 总表访问权') from exc
             raise
 
-    def start_proxy_checks(self, asset_ids, concurrency=10, timeout=8):
+    def start_proxy_checks(self, asset_ids, concurrency=2, timeout=8):
         return self.check_job.start(asset_ids, concurrency, timeout)
 
     def stop_proxy_checks(self):

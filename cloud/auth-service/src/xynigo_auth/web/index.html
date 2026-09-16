@@ -646,20 +646,20 @@
   }
   #storeFinancePanel .card-title .table-actions { margin-left: auto; }
   #storeFinancePanel .business-summary { display: grid; grid-template-columns: repeat(8, minmax(0,1fr)); }
-  #storeFinancePanel .if-switch{width:32px;height:18px;padding:0;border:0;border-radius:20px;background:#c5ced8;cursor:pointer;position:relative;transition:background .15s;flex:none}
-  #storeFinancePanel .if-switch:before{content:"";position:absolute;width:14px;height:14px;top:2px;left:2px;border-radius:50%;background:#fff;box-shadow:0 1px 3px #0002;transition:transform .15s}
-  #storeFinancePanel .if-switch[aria-checked="true"]{background:#078487}
-  #storeFinancePanel .if-switch[aria-checked="true"]:before{transform:translateX(14px)}
-  #storeFinancePanel .if-switch:focus-visible{outline:2px solid #078487;outline-offset:3px}
-  #storeFinancePanel .if-switch:disabled{opacity:.5;cursor:not-allowed}
-  #storeFinancePanel .if-row{font-size:12px;font-weight:600;color:var(--navy-700)}
+  :is(#storeFinancePanel, #afterSalePanel) .if-switch{width:32px;height:18px;padding:0;border:0;border-radius:20px;background:#c5ced8;cursor:pointer;position:relative;transition:background .15s;flex:none}
+  :is(#storeFinancePanel, #afterSalePanel) .if-switch:before{content:"";position:absolute;width:14px;height:14px;top:2px;left:2px;border-radius:50%;background:#fff;box-shadow:0 1px 3px #0002;transition:transform .15s}
+  :is(#storeFinancePanel, #afterSalePanel) .if-switch[aria-checked="true"]{background:#078487}
+  :is(#storeFinancePanel, #afterSalePanel) .if-switch[aria-checked="true"]:before{transform:translateX(14px)}
+  :is(#storeFinancePanel, #afterSalePanel) .if-switch:focus-visible{outline:2px solid #078487;outline-offset:3px}
+  :is(#storeFinancePanel, #afterSalePanel) .if-switch:disabled{opacity:.5;cursor:not-allowed}
+  :is(#storeFinancePanel, #afterSalePanel) .if-row{font-size:12px;font-weight:600;color:var(--navy-700)}
   #storeFinancePanel .xyp2-help{font-size:11px;color:var(--navy-500);margin-top:8px}
   #storeFinancePanel .procurement-pagination-copy{font-size:11px;color:var(--navy-500)}
   #storeFinancePanel .action-row .resource-state{margin-top:0;padding:8px 12px;font-size:11px;color:var(--navy-500)}
   #storeFinancePanel .sf-filter-bar .hint{font-size:11px;color:var(--navy-500)}
-  #storeFinancePanel .chip[data-sf-conc]{margin-right:5px}
-  #storeFinancePanel .chip[data-sf-conc]:last-of-type{margin-right:0}
-  #storeFinancePanel .chip[data-sf-conc].active{background:var(--rhino-600);border-color:var(--rhino-600);color:#fff}
+  :is(#storeFinancePanel, #afterSalePanel) .chip:is([data-sf-conc], [data-as-concurrency]){margin-right:5px}
+  :is(#storeFinancePanel, #afterSalePanel) .chip:is([data-sf-conc], [data-as-concurrency]):last-of-type{margin-right:0}
+  :is(#storeFinancePanel, #afterSalePanel) .chip:is([data-sf-conc], [data-as-concurrency]).active{background:var(--rhino-600);border-color:var(--rhino-600);color:#fff}
   /* 进度文本与物流查询 #progressText 完全同款 */
   #storeFinancePanel #sfProgressText{font-size:11px;color:var(--navy-500);min-width:420px;text-align:right;white-space:nowrap}
 
@@ -2177,7 +2177,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
             <span class="hint">不弹浏览器窗口，异常回退有头并截图</span>
           </span>
           <span class="if-row">并发
-            <button class="chip active" data-sf-conc="2">2</button><button class="chip" data-sf-conc="3">3</button><button class="chip" data-sf-conc="5">5</button>
+            <button class="chip active" data-sf-conc="2" aria-pressed="true">2</button><button class="chip" data-sf-conc="3" aria-pressed="false">3</button><button class="chip" data-sf-conc="5" aria-pressed="false">5</button>
           </span>
         </div>
       </div>
@@ -2273,8 +2273,21 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         <span class="resource-state" id="asScopeState" style="margin-left:auto; margin-top:0">未扫描</span>
       </div>
       <div class="mode-bar" id="asTypeBar" role="group" aria-label="售后类型"></div>
-      <div class="resource-state" id="asTypeHint" style="margin:10px 0 0"></div>
+      <div class="resource-state" id="asTypeHint" style="margin:10px 0 12px"></div>
       <div class="query-phase-banner" id="asPlanBanner" hidden style="margin-top:12px"></div>
+      <div class="as-runtime-controls" style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin:12px 0">
+        <span class="if-row"><span id="asHeadlessLabel">无头模式</span>
+          <button type="button" class="if-switch" id="asHeadless" role="switch" aria-checked="true" aria-labelledby="asHeadlessLabel"></button>
+          <span class="hint">不弹浏览器窗口；关闭后显示窗口</span>
+        </span>
+        <div class="if-row" role="group" aria-label="售后环境并发数">
+          <span>并发</span>
+          <button class="chip active" type="button" data-as-concurrency="2" aria-pressed="true">2</button>
+          <button class="chip" type="button" data-as-concurrency="3" aria-pressed="false">3</button>
+          <button class="chip" type="button" data-as-concurrency="5" aria-pressed="false">5</button>
+        </div>
+        <span class="hint">扫描、提交、回访共用；同一环境内逐单执行</span>
+      </div>
       <div class="as-bar">
         <input type="search" id="asSerials" placeholder="环境序号，如 4902 4901 4897">
         <span class="hint">环境序号 · 空格/逗号分隔，最多 300 个</span>
@@ -2317,6 +2330,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         <div class="table-actions">
           <button class="btn sm" id="asClaimHistory">提交历史</button>
           <button class="btn sm" id="asRetryFailed" disabled>补提失败单</button>
+          <button class="btn sm" id="asClaimExport" title="导出当前批次已回传的提交结果" disabled>导出提交结果 Excel</button>
           <button class="btn sm" id="asClearResult">清空结果</button>
         </div>
       </div>
@@ -2359,7 +2373,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
           <summary>异常与跳过详情</summary>
           <div style="margin-top:10px; display:flex; flex-direction:column; gap:10px;" id="asErrList"></div>
         </details>
-        <p class="xyp2-help">扫描阶段用买家端只读接口判定「这个包裹现在还能不能申请售后」：已被提交过的包裹会被平台划入不可退，因此重复扫描不会重复提交。提交是写操作——每单逐条串行执行，单与单之间随机停顿，环境之间串行。</p>
+        <p class="xyp2-help">扫描阶段用买家端只读接口判定「这个包裹现在还能不能申请售后」：已被提交过的包裹会被平台划入不可退，因此重复扫描不会重复提交。提交是写操作——同一环境内逐单串行执行，单与单之间随机停顿，环境之间按所选并发数执行。</p>
       </div>
     </section>
 
@@ -2367,7 +2381,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
       <div class="card-title" style="padding:17px 19px 0;">
         <div>④ 退款跟踪 <span class="legend">退款单号为主键 · 只读回访平台侧处理进度 · 到终态即冻结</span></div>
         <div class="table-actions">
-          <button class="btn" id="asTrackExport">导出 Excel</button>
+          <button class="btn" id="asTrackExport">导出退款跟踪 Excel</button>
           <button class="btn primary" id="asTrack">刷新退款进度</button>
         </div>
       </div>
@@ -2960,10 +2974,10 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
     </section>
 
     <section class="card">
-      <div class="card-title">本机批量检测 <span class="legend">默认并发 10、超时 8 秒、失败自动复测 1 次；同 IP 只检测一次</span></div>
+      <div class="card-title">本机批量检测 <span class="legend">默认并发 2、超时 8 秒、失败自动复测 1 次；同 IP 只检测一次</span></div>
       <div class="proxy-check-bar">
         <div><div class="progress"><div class="bar" id="proxyCheckBar"></div></div><div class="hint" id="proxyCheckState" style="margin-top:7px">尚未开始检测</div></div>
-        <div class="proxy-check-settings"><div class="field"><label>并发数（1-20）</label><input class="env-text" id="proxyCheckConcurrency" inputmode="numeric" value="10"></div><div class="field"><label>超时秒数（3-30）</label><input class="env-text" id="proxyCheckTimeout" inputmode="numeric" value="8"></div></div>
+        <div class="proxy-check-settings"><div class="field"><label>并发数</label><select class="env-text" id="proxyCheckConcurrency"><option value="2">2</option><option value="3">3</option><option value="5">5</option></select></div><div class="field"><label>超时秒数（3-30）</label><input class="env-text" id="proxyCheckTimeout" inputmode="numeric" value="8"></div></div>
         <div class="table-actions"><button class="btn primary" id="btnProxyCheckSelected" type="button">检测已选</button><button class="btn" id="btnProxyCheckFiltered" type="button">检测当前筛选</button></div>
         <button class="btn danger" id="btnProxyCheckStop" type="button" disabled>停止</button>
       </div>
@@ -3068,15 +3082,15 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
           <input type="text" id="cfgPort" value="6873" inputmode="numeric">
         </div>
         <div class="settings-field">
-          <label>并发查询数（1-5）</label>
-          <input type="text" id="cfgConcurrency" value="2" inputmode="numeric">
+          <label>并发查询数</label>
+          <select id="cfgConcurrency"><option value="2">2</option><option value="3">3</option><option value="5">5</option></select>
         </div>
         <div class="settings-field full">
           <label>跨模块任务模式</label>
           <div class="query-col-checks">
             <label><input type="checkbox" id="cfgSafeParallel"> 开启安全并行：允许物流查询与一种环境创建任务同时运行</label>
           </div>
-          <div class="hint">同一环境仍禁止双开；注册、两个建环境批次和两个物流查询批次继续互斥。开启后建环境实际并发自动封顶为 3，首次发布默认关闭。</div>
+          <div class="hint">同一环境仍禁止双开；注册、两个建环境批次和两个物流查询批次继续互斥。开启后建环境实际并发封顶为 2，关闭时封顶为 3。</div>
         </div>
         <div class="settings-field full">
           <label>模块一 · 查询结果隐藏字段</label>
@@ -3098,8 +3112,8 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
           <div class="hint">通过 HubStudio Local API 无头、只读启动环境进程，页面不会弹出真实环境窗口。</div>
         </div>
         <div class="settings-field">
-          <label>建环境并发数（1-10）</label>
-          <input type="text" id="cfgEnvWorkers" value="5" inputmode="numeric">
+          <label>建环境并发数</label>
+          <select id="cfgEnvWorkers"><option value="2">2</option><option value="3">3</option><option value="5">5</option></select>
         </div>
         <div class="settings-field">
           <label>墨西哥站 HubStudio 采购分组</label>
@@ -4319,6 +4333,7 @@ function cloudApiError(payload, status) {
     executor_not_found:'本地执行器设备不存在或不属于当前组织',
     executor_offline:'所选本地执行器当前离线，请先启动执行器',
     executor_auto_site_required:'所选执行器尚不支持按环境自动识别站点，请更新桌面执行器后重试',
+    executor_after_sale_runtime_upgrade_required:'请先升级本地执行器，以支持售后无头模式和环境并发设置',
     executor_upgrade_required:'所选执行器版本过旧，请先在线更新到 v0.13.18 或更高版本',
     executor_hub_unavailable:'所选执行器尚未确认 HubStudio 可用，请先启动并检查 HubStudio',
     executor_revoked:'本地执行器设备已被撤销，请重新配对',
@@ -4724,11 +4739,15 @@ function sfWaitLookup(taskId) {
 }
 document.querySelectorAll('[data-sf-conc]').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('[data-sf-conc]').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
+    if (SF_STATE.running) return;
+    document.querySelectorAll('[data-sf-conc]').forEach(b => {
+      b.classList.toggle('active', b === btn);
+      b.setAttribute('aria-pressed', String(b === btn));
+    });
   });
 });
 $('sfHeadless').onclick = () => {
+  if (SF_STATE.running) return;
   const on = $('sfHeadless').getAttribute('aria-checked') === 'true';
   $('sfHeadless').setAttribute('aria-checked', String(!on));
 };
@@ -4777,7 +4796,12 @@ function sfPaintProgress(data) {
   $('sfProgressText').classList.toggle('query-outcome-complete',
     !!terminal && bad === 0);
 }
+function sfSyncRuntimeControls() {
+  $('sfHeadless').disabled = SF_STATE.running;
+  document.querySelectorAll('[data-sf-conc]').forEach(b => { b.disabled = SF_STATE.running; });
+}
 function sfSetPhase(title, text, spin) {
+  sfSyncRuntimeControls();
   $('sfPhaseBanner').hidden = false;
   $('sfPhaseSpin').hidden = !spin;
   $('sfPhaseTitle').textContent = title;
@@ -4955,6 +4979,7 @@ async function sfPoll() {
       $('sfExport').disabled = false; $('sfExportMenuBtn').disabled = false;
       $('sfRetryFail').disabled = !bad;
       SF_STATE.running = false;
+      sfSyncRuntimeControls();
       SF_STATE.stopRequested = false;
       if (bad && SF_STATE.retryCount < 2
           && ['completed', 'partial_failure'].includes(data.status)) {
@@ -5165,6 +5190,37 @@ const AS_STATE = {
   rows: [], selected: new Set(), claimRows: [], stopRequested: false,
   pollErrors: 0, etaBase: null, status: ''
 };
+function asRuntimeOptions() {
+  return {
+    browserMode: $('asHeadless').getAttribute('aria-checked') === 'true' ? 'headless' : 'visible',
+    concurrency: Number(document.querySelector('[data-as-concurrency].active')?.dataset.asConcurrency || 2),
+  };
+}
+function asSyncRuntimeControls() {
+  $('asHeadless').disabled = AS_STATE.running;
+  document.querySelectorAll('[data-as-concurrency]').forEach(button => {
+    button.disabled = AS_STATE.running;
+  });
+}
+$('asHeadless').onclick = () => {
+  if (AS_STATE.running) return;
+  const control = $('asHeadless');
+  control.setAttribute('aria-checked', String(control.getAttribute('aria-checked') !== 'true'));
+};
+document.querySelectorAll('[data-as-concurrency]').forEach(button => {
+  button.onclick = () => {
+    if (AS_STATE.running) return;
+    document.querySelectorAll('[data-as-concurrency]').forEach(item => {
+      item.classList.toggle('active', item === button);
+      item.setAttribute('aria-pressed', String(item === button));
+    });
+  };
+});
+function asRequireRuntimeControls(executor) {
+  if (!(executor.capabilities || []).includes('after.sale.runtime-controls.v1')) {
+    throw new Error('请先升级本地执行器，以支持售后无头模式和环境并发设置');
+  }
+}
 function asLoadList() {
   try { $('asSerials').value = localStorage.getItem(AS_LIST_KEY) || ''; }
   catch (e) {}
@@ -5180,12 +5236,15 @@ function asSerials() {
 // 刷新后恢复最近一次提交批次：④ 的回访对象取自已提交的行（有退款单号），
 // 而 ③ 只活在本页会话里——不恢复的话，刷新一次 ④ 就永远提示「无可回访」。
 async function asLoadLatestClaim() {
-  if ((AS_STATE.claimRows || []).length) return;
+  if (AS_STATE.running || AS_STATE.runId || (AS_STATE.claimRows || []).length) return;
   try {
     const res = await cloudFetchJson('/v1/operation-runs/after-sale-claim/latest');
     const data = (res || {}).data;
     const rows = (data && data.rows) || [];
     if (!rows.length) return;
+    // 请求返回前可能已发起新批次，不能让旧批次覆盖当前展示与导出对象。
+    if (AS_STATE.running || AS_STATE.runId || (AS_STATE.claimRows || []).length) return;
+    AS_STATE.runId = asRunIdOf(data);
     AS_STATE.claimRows = rows;
     asRenderClaimRows(rows);
     asSetPhase('已恢复最近提交批次',
@@ -5218,6 +5277,7 @@ function asStripToggle(collapsed) {
   if (button) button.textContent = collapsed ? '展开' : '收起';
 }
 function asSetPhase(title, text, spin) {
+  asSyncRuntimeControls();
   const banner = $('asPhaseBanner');
   banner.hidden = false;
   $('asPhaseSpin').hidden = !spin;
@@ -5366,6 +5426,7 @@ function asClaimRowHtml(row) {
 }
 function asRenderClaimRows(rows) {
   AS_STATE.claimRows = rows || [];
+  asSyncClaimExportButton();
   const tbody = $('asClaimRows');
   if (!AS_STATE.claimRows.length) {
     tbody.innerHTML = '<tr><td colspan="11" class="hint" style="text-align:center; padding:22px;">提交后此处逐步展示每单结果。</td></tr>';
@@ -5458,6 +5519,7 @@ async function asTrackManual() {
 }
 async function asTrack(explicitItems) {
   if (AS_STATE.running) return;
+  const runtime = asRuntimeOptions();
   AS_STATE.mode = 'track';  // 状态条落点：回访的进度显示在 ④ 卡片
   // 回访对象：优先用调用方显式给的（④ 的手工入口）；否则取 ③ 里已提交成功（有退款单号）的行
   const items = (Array.isArray(explicitItems) && explicitItems.length)
@@ -5473,7 +5535,7 @@ async function asTrack(explicitItems) {
     return;
   }
   let executor;
-  try { executor = await cloudFormalExecutor('after.sale.track.v1'); }
+  try { executor = await cloudFormalExecutor('after.sale.track.v1'); asRequireRuntimeControls(executor); }
   catch (e) { asSetPhase('执行器不可用', e.message || '无法发起回访', false); return; }
   try {
     const res = await cloudFetchJson('/v1/after-sale/track', {
@@ -5481,7 +5543,7 @@ async function asTrack(explicitItems) {
       body: JSON.stringify({
         idempotencyKey: 'as-track-' + Date.now() + '-'
           + Math.random().toString(36).slice(2, 8),
-        executorId: executor.id, browserMode: 'visible', items,
+        executorId: executor.id, browserMode: runtime.browserMode, concurrency: runtime.concurrency, items,
       }),
     });
     const data = (res || {}).data || {};
@@ -5695,11 +5757,27 @@ async function asRetryHistoryBatch() {
   // 与「回访本批」同款：新批次进度写在弹层后面的 ③，不关弹层就看不见
   if (started) asCloseClaimHistory();
 }
+function asSyncClaimExportButton() {
+  const button = $('asClaimExport');
+  button.disabled = button.dataset.exporting === 'true'
+    || !AS_STATE.runId || !(AS_STATE.claimRows || []).length;
+}
+async function asExportClaimResults() {
+  if (!AS_STATE.runId || !(AS_STATE.claimRows || []).length) {
+    toast('当前没有可导出的提交结果'); return;
+  }
+  return asDownloadClaimBatch(AS_STATE.runId, $('asClaimExport'));
+}
 async function asExportClaimHistory() {
   const runId = AS_HISTORY.runId;
   if (!runId) { toast('先打开一个批次再导出'); return; }
-  const button = $('asHistoryExport');
+  return asDownloadClaimBatch(runId, $('asHistoryExport'));
+}
+// 当前结果和历史详情共享同一批次导出，捕获点击时的 runId，不改历史选择状态。
+async function asDownloadClaimBatch(runId, button) {
+  if (button.dataset.exporting === 'true') return;
   const label = button.textContent;
+  button.dataset.exporting = 'true';
   button.disabled = true; button.textContent = '正在生成…';
   try {
     const response = await fetch(
@@ -5724,8 +5802,11 @@ async function asExportClaimHistory() {
     toast(String(error.message || error));
   } finally {
     button.disabled = false; button.textContent = label;
+    delete button.dataset.exporting;
+    asSyncClaimExportButton();
   }
 }
+$('asClaimExport').onclick = asExportClaimResults;
 $('asClaimHistory').onclick = asOpenClaimHistory;
 $('btnAsHistoryClose').onclick = asCloseClaimHistory;
 $('btnAsHistoryRefresh').onclick = () => asLoadClaimHistory({ reset: true });
@@ -5795,6 +5876,7 @@ function asSelectedItems() {
 }
 async function asScan() {
   if (AS_STATE.running) return;
+  const runtime = asRuntimeOptions();
   AS_STATE.mode = 'scan';   // 状态条落点：扫描的进度显示在 ② 卡片
   const serials = asSerials();
   if (!serials.length) {
@@ -5807,7 +5889,7 @@ async function asScan() {
   }
   asSaveList();
   let executor;
-  try { executor = await cloudFormalExecutor('after.sale.scan.v1'); }
+  try { executor = await cloudFormalExecutor('after.sale.scan.v1'); asRequireRuntimeControls(executor); }
   catch (e) { asSetPhase('执行器不可用', e.message || '无法发起扫描', false); return; }
   try {
     const res = await cloudFetchJson('/v1/after-sale/scan', {
@@ -5817,7 +5899,8 @@ async function asScan() {
         idempotencyKey: 'as-scan-' + Date.now() + '-'
           + Math.random().toString(36).slice(2, 8),
         executorId: executor.id,
-        browserMode: 'visible',
+        browserMode: runtime.browserMode,
+        concurrency: runtime.concurrency,
         environmentSerials: serials,
       }),
     });
@@ -5860,13 +5943,14 @@ async function asSubmitItems(items, options) {
   const opts = options || {};
   const label = opts.label || '提交售后';
   if (!asWriteEntryReady()) return false;   // 最后一道闸：任何调用方都绕不过去
+  const runtime = asRuntimeOptions();
   AS_STATE.mode = 'claim';  // 状态条落点：提交的进度显示在 ③ 卡片（早于任何提示）
   if (!items.length) {
     asSetPhase('等待发起', opts.emptyHint || '请先勾选要提交的订单。', false);
     return false;
   }
   let executor;
-  try { executor = await cloudFormalExecutor('after.sale.claim.v1'); }
+  try { executor = await cloudFormalExecutor('after.sale.claim.v1'); asRequireRuntimeControls(executor); }
   catch (e) { asSetPhase('执行器不可用', e.message || '无法发起售后提交', false); return false; }
   try {
     const res = await cloudFetchJson('/v1/operation-runs/after-sale-claim', {
@@ -5876,7 +5960,8 @@ async function asSubmitItems(items, options) {
         idempotencyKey: 'as-' + Date.now() + '-'
           + Math.random().toString(36).slice(2, 8),
         executorId: executor.id,
-        browserMode: 'visible',
+        browserMode: runtime.browserMode,
+        concurrency: runtime.concurrency,
         items,
         retryFromRunId: opts.retryFromRunId || '',
       }),
@@ -5893,7 +5978,7 @@ async function asSubmitItems(items, options) {
     asRenderClaimRows(asOrderedRows(AS_STATE.claimItems, [], 'orderNo'));
     $('asScan').disabled = true; $('asSubmit').disabled = true; $('asStop').disabled = false;
     asSetPhase(label + '中',
-      `共 ${items.length} 单 · 退款路径「原路退回」· 逐单串行提交，单间随机停顿`, true);
+      `共 ${items.length} 单 · 退款路径「原路退回」· ${runtime.concurrency} 个环境并发，同环境逐单提交`, true);
     asPoll();
     return true;
   } catch (e) {
@@ -9212,7 +9297,7 @@ async function pollProxyChecks() {
 async function startProxyChecks(assetIds) {
   if (!assetIds.length) { toast('请先选择至少一个代理 IP'); return; }
   if (assetIds.length > 200) { toast('单批最多检测 200 个代理 IP，请缩小筛选范围'); return; }
-  const concurrency = Number($('proxyCheckConcurrency').value || 10);
+  const concurrency = Number($('proxyCheckConcurrency').value || 2);
   const timeoutSec = Number($('proxyCheckTimeout').value || 8);
   try {
     const result = await api('/api/resources/proxies/check/start', {
@@ -15311,14 +15396,14 @@ async function loadLocalSettingsPage() {
     const cfg = await api('/api/config');
     localSettingsConfigRevision = String(cfg.configRevision || '');
     $('cfgPort').value = cfg.hubPort || 6873;
-    $('cfgConcurrency').value = cfg.concurrency || 2;
+    $('cfgConcurrency').value = ([2, 3, 5].includes(cfg.concurrency) ? cfg.concurrency : 2);
     safeParallelTasks = cfg.safeParallelTasks !== false;
     $('cfgSafeParallel').checked = safeParallelTasks;
     setHiddenQueryColumns(cfg.hiddenQueryColumns || []);
     $('cfgHideEnvName').checked = hiddenQueryColumns.has('envName');
     $('cfgHideIp').checked = hiddenQueryColumns.has('ip');
     $('cfgEnvVerify').value = String(cfg.verifySampleCount ?? 3);
-    $('cfgEnvWorkers').value = cfg.envCreateWorkers == null ? 5 : cfg.envCreateWorkers;
+    $('cfgEnvWorkers').value = [2, 3, 5].includes(cfg.envCreateWorkers) ? cfg.envCreateWorkers : 2;
     const rawPlan = cfg.importBuyerPlan || '1:新刚';
     $('cfgEnvAssign').value = planTemplateIsValid(rawPlan) ? rawPlan : '1:新刚';
     const purchaseTags = cfg.purchaseTags || {MX:cfg.purchaseTag || '', US:''};
@@ -15518,11 +15603,11 @@ $('btnCfgSave').onclick = async () => {
   const port = parseInt($('cfgPort').value.trim(), 10);
   if (!port || port < 1 || port > 65535) { toast('端口无效，请输入 1-65535 的数字'); return; }
   const conc = parseInt($('cfgConcurrency').value.trim(), 10);
-  if (!conc || conc < 1 || conc > 5) { toast('并发数请填 1-5 的整数（建议 2-3）'); return; }
+  if (![2, 3, 5].includes(conc)) { toast('并发数请选择 2、3 或 5'); return; }
   const verifyCount = Number($('cfgEnvVerify').value);
   if (!Number.isInteger(verifyCount) || verifyCount < 0 || verifyCount > 10) { toast('抽检数请填写 0–10 的整数'); return; }
   const envWorkers = parseInt($('cfgEnvWorkers').value.trim(), 10);
-  if (Number.isNaN(envWorkers) || envWorkers < 1 || envWorkers > 10) { toast('模块三建环境并发数请填 1-10'); return; }
+  if (![2, 3, 5].includes(envWorkers)) { toast('建环境并发数请选择 2、3 或 5'); return; }
   const importBuyerPlan = $('cfgEnvAssign').value.trim();
   if (!importBuyerPlan) { toast('模块三采购员分配模板不能为空'); return; }
   if (!planTemplateIsValid(importBuyerPlan)) { toast(`分配模板格式错误或含名单外采购员（名单：${envBuyers.map(b => `${b.name}-${b.code}`).join(' / ')}）`); return; }

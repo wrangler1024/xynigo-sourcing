@@ -53,7 +53,7 @@
     }]},
     update: {enabled:true, state:'current', installMode:'standard', currentVersion:'0.17.7', latestVersion:'0.17.7', message:'已是推荐版本'}
   };
-  var sampleConfig = {hubPort:6873, concurrency:2, envCreateWorkers:5, verifySampleCount:3, safeParallelTasks:true, queryBrowserMode:'headless', queryAllowOpenEnvironment:false, configRevision:'e5a931'};
+  var sampleConfig = {hubPort:6873, concurrency:2, envCreateWorkers:2, verifySampleCount:3, safeParallelTasks:true, queryBrowserMode:'headless', queryAllowOpenEnvironment:false, configRevision:'e5a931'};
   var sampleSources = {
     registryRevision:'sample-rev', teamDefaultDataSourceId:'ds-team',
     counts:{dataSourceCount:4,buyerProfileCount:4,environmentBindingCount:31,mappingConflictCount:0},
@@ -91,7 +91,7 @@
   var emptyStatus = {version:'—',localPort:'—',executor:{running:false,paired:false,displayName:'这台采购电脑',architecture:'—'},cloudChannel:{status:'offline'},hubStudio:{connected:false,localApiConnected:false,automationAvailable:false,status:'offline'},tasks:{activeCount:0,safeParallel:false,items:[]},update:{enabled:false,state:'disabled',message:'本机执行器尚未就绪'}};
   var emptySources = {registryRevision:'',teamDefaultDataSourceId:'',counts:{dataSourceCount:0,buyerProfileCount:0,environmentBindingCount:0,mappingConflictCount:0},dataSources:[],buyerProfiles:[],environmentBindings:[]};
   function currentStatus() { return state.status || (previewRole ? sampleStatus : emptyStatus); }
-  function currentConfig() { return state.config || (previewRole ? sampleConfig : {hubPort:6873,concurrency:2,envCreateWorkers:5,verifySampleCount:1,safeParallelTasks:true,queryBrowserMode:'headless',queryAllowOpenEnvironment:false,configRevision:''}); }
+  function currentConfig() { return state.config || (previewRole ? sampleConfig : {hubPort:6873,concurrency:2,envCreateWorkers:2,verifySampleCount:1,safeParallelTasks:true,queryBrowserMode:'headless',queryAllowOpenEnvironment:false,configRevision:''}); }
   function currentSources() { return state.sources || (previewRole ? sampleSources : emptySources); }
 
   function icon(name, extra) {
@@ -395,6 +395,10 @@
   function field(id, label, value, hint, type, disabled, placeholder) {
     return '<div class="field"><label for="' + id + '">' + label + '</label><input class="input" id="' + id + '" type="' + (type || 'text') + '" value="' + esc(value == null ? '' : value) + '" placeholder="' + esc(placeholder || '') + '"' + (disabled ? ' disabled' : '') + '><small>' + esc(hint || '') + '</small></div>';
   }
+  function concurrencyField(id, label, value, hint, disabled) {
+    var selected = [2,3,5].includes(value) ? value : 2;
+    return '<div class="field"><label for="' + id + '">' + label + '</label><select class="input" id="' + id + '"' + (disabled ? ' disabled' : '') + '>' + [2,3,5].map(function(n) { return '<option value="' + n + '"' + (n === selected ? ' selected' : '') + '>' + n + '</option>'; }).join('') + '</select><small>' + esc(hint || '') + '</small></div>';
+  }
   function renderSettings() {
     var cfg = currentConfig();
     var locked = !canConfigure();
@@ -406,7 +410,7 @@
       '<section class="card section-card span-2">' + sectionTitle('key','飞书企业应用连接','组织级配置由云端工作台统一管理','云端加密') + '<div class="section-body stack"><div class="connection-box"><span class="connection-check">' + icon('shield') + '</span><div><b>本机不保存 App ID 或 App Secret</b><span>企业应用凭证仅由超级管理员在云端配置一次；执行器通过授权代理读取所需数据，Secret 永不下发。</span></div>' + button('打开云端服务配置','open-cloud','arrow','primary') + '</div></div></section>' : '';
     return header('settings',actions) + '<div class="content two-column">' + readOnly +
       '<section class="card section-card">' + sectionTitle('gauge','运行参数','控制本机执行器并发、抽检与安全模式','仅保存在本机') + '<div class="section-body field-grid">' +
-      field('cfg-hub-port','HubStudio Local API 端口',cfg.hubPort || 6873,'范围 1–65535','number',locked) + field('cfg-concurrency','订单查询并发',cfg.concurrency || 2,'组织策略上限：5','number',locked) + field('cfg-env-workers','建环境并发',cfg.envCreateWorkers || 5,'当前有效值受安全并行策略封顶','number',locked) + field('cfg-verify','新建完成抽检数',cfg.verifySampleCount == null ? 1 : cfg.verifySampleCount,'0 表示不执行抽检','number',locked) +
+      field('cfg-hub-port','HubStudio Local API 端口',cfg.hubPort || 6873,'范围 1–65535','number',locked) + concurrencyField('cfg-concurrency','订单查询并发',cfg.concurrency,'默认 2，可选 2 / 3 / 5',locked) + concurrencyField('cfg-env-workers','建环境并发',cfg.envCreateWorkers,'默认 2；实际并发受安全并行策略封顶',locked) + field('cfg-verify','新建完成抽检数',cfg.verifySampleCount == null ? 1 : cfg.verifySampleCount,'0 表示不执行抽检','number',locked) +
       '<label class="toggle-row"><div><b>安全并行</b><p>允许物流查询与一种环境创建任务并行，同一环境仍禁止双开。</p></div><input id="cfg-safe" class="switch" type="checkbox"' + (cfg.safeParallelTasks !== false ? ' checked' : '') + (locked ? ' disabled' : '') + '></label></div></section>' +
       '<section class="card section-card">' + sectionTitle('monitor','物流查询高级设置','统一控制此电脑执行的全部物流查询','本机生效') + '<div class="section-body field-grid">' +
       '<div class="field"><label for="cfg-query-browser-mode">物流查询浏览器模式</label><select class="select" id="cfg-query-browser-mode"' + (locked ? ' disabled' : '') + '><option value="headless"' + (cfg.queryBrowserMode !== 'visible' ? ' selected' : '') + '>无头模式（推荐）</option><option value="visible"' + (cfg.queryBrowserMode === 'visible' ? ' selected' : '') + '>可见调试模式</option></select><small>物流查询统一使用本机设置；网页不再临时覆盖。可见模式会打开 HubStudio 窗口并限制为单并发。</small></div>' +

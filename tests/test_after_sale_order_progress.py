@@ -2,13 +2,14 @@
 from pathlib import Path
 import shutil
 import subprocess
+import threading
 import unittest
 
 from purchase_tool.after_sale_claim import AfterSaleClaimer
 
 
 class ExecutionOrderTests(unittest.TestCase):
-    def test_claim_and_track_preserve_interleaved_environment_order(self):
+    def test_claim_and_track_keep_display_order_with_grouped_execution(self):
         items = [dict(environmentSerial=env, orderNo=order, refundBillId='B'+order)
                  for env, order in [('A', 'Z'), ('A', 'Q'), ('B', 'M'), ('A', 'C')]]
         for mode in ['claim', 'track']:
@@ -31,8 +32,39 @@ class ExecutionOrderTests(unittest.TestCase):
                     claimer._track_env = visit
                     claimer._run_track(items, False)
                     rows = claimer.snapshot()['trackRows']
-                self.assertEqual(groups, [('A', ['Z', 'Q']), ('B', ['M']), ('A', ['C'])])
+                self.assertCountEqual(groups, [('A', ['Z', 'Q', 'C']), ('B', ['M'])])
                 self.assertEqual([r['orderNo'] for r in rows], ['Z', 'Q', 'M', 'C'])
+
+
+    def test_completion_can_differ_while_rows_keep_input_order(self):
+        items = [dict(environmentSerial=env, orderNo=env, refundBillId='B'+env)
+                 for env in ['A', 'B']]
+        for mode in ['claim', 'track']:
+            with self.subTest(mode=mode):
+                claimer = AfterSaleClaimer(None)
+                claimer._env_index = lambda _: {}
+                first_started = threading.Event()
+                second_done = threading.Event()
+                completed = []
+                def visit(serial, env, group, headless):
+                    if serial == 'A':
+                        first_started.set()
+                        self.assertTrue(second_done.wait(2))
+                    else:
+                        self.assertTrue(first_started.wait(2))
+                    row = group[0]
+                    if mode == 'claim':
+                        claimer._publish_claim(row['orderNo'], {'status': 'ok'})
+                    else:
+                        claimer._publish_track(row['refundBillId'], {'status': 'ok'})
+                    completed.append(serial)
+                    if serial == 'B':
+                        second_done.set()
+                setattr(claimer, '_' + mode + '_env_guarded', visit)
+                getattr(claimer, '_run_' + mode)(items, True)
+                self.assertEqual(completed, ['B', 'A'])
+                self.assertEqual([r['orderNo'] for r in
+                                  claimer.snapshot()[mode + 'Rows']], ['A', 'B'])
 
 
 @unittest.skipUnless(shutil.which('node'), 'Node.js is required for Web behavior tests')
@@ -67,6 +99,7 @@ const AS_TL_LABEL={reviewing:'审核中'};
 const asRenderScanRows=rows=>{AS_STATE.rows=rows;};
 const asRenderClaimRows=rows=>{AS_STATE.claimRows=rows;};
 const asSyncRetryButton=()=>{};
+const asSyncRuntimeControls=()=>{};
 let response,fetches=0;
 const cloudFetchJson=async()=>{fetches++;return {data:response};};
 '''

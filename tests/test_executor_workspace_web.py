@@ -1146,6 +1146,8 @@ class AfterSaleThreeRequirementsWiringTests(unittest.TestCase):
         self.assertIn('await asTrack(items)', track)
         self.assertIn('r.refundBillId && r.orderNo', track.replace('row.', 'r.'))
         export = self._fn(html, 'async function asExportClaimHistory(')
+        self.assertIn('asDownloadClaimBatch(runId', export)
+        export = self._fn(html, 'async function asDownloadClaimBatch(')
         self.assertIn("'/v1/operation-runs/after-sale-claim/history/'", export)
         self.assertIn("+ '/export'", export)
         self.assertIn('workspaceDownloadName(', export)
@@ -1232,6 +1234,16 @@ class AfterSaleThreeRequirementsWiringTests(unittest.TestCase):
 class AfterSaleTrackExportWiringTests(unittest.TestCase):
     """④ 导出接线：按钮落在卡片里，导出对象是「这一次回访」，下载复用既有助手。"""
 
+    def test_claim_export_handlers_keep_current_and_history_batches_separate(self):
+        import shutil
+        import subprocess
+        if not shutil.which('node'):
+            self.skipTest('Node.js is required for export handler checks')
+        result = subprocess.run(
+            ['node', str(ROOT / 'tests/fixtures/after_sale_export_ui.cjs')],
+            cwd=ROOT, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def _html(self):
         local = LOCAL_HTML.read_text(encoding="utf-8")
         self.assertEqual(local, CLOUD_HTML.read_text(encoding="utf-8"))
@@ -1249,7 +1261,7 @@ class AfterSaleTrackExportWiringTests(unittest.TestCase):
         actions = actions[:actions.index('</div>')]
         # 同一个 table-actions 里，导出是次要按钮、刷新仍是主按钮
         self.assertIn(
-            '<button class="btn" id="asTrackExport">导出 Excel</button>', actions)
+            '<button class="btn" id="asTrackExport">导出退款跟踪 Excel</button>', actions)
         self.assertIn(
             '<button class="btn primary" id="asTrack">刷新退款进度</button>',
             actions)

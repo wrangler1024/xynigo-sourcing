@@ -38,6 +38,7 @@ EXECUTOR_CAPABILITIES = Literal[
     "after.sale.scan.v1",
     "after.sale.claim.v1",
     "after.sale.track.v1",
+    "after.sale.runtime-controls.v1",
     "environment.create-bound.v1",
     "environment.create-backup.v1",
     "environment.retry-row.v1",
@@ -244,6 +245,8 @@ class ExecutorConfigWriteBody(StrictBody):
             item = value[key]
             if isinstance(item, bool) or not isinstance(item, int):
                 raise ValueError(f"{key} must be an integer")
+            if key in {"concurrency", "envCreateWorkers"} and item not in (2, 3, 5):
+                raise ValueError(f"{key} must be 2, 3 or 5")
             if item < minimum or item > maximum:
                 raise ValueError(f"{key} is outside the supported range")
         if "safeParallelTasks" in value and not isinstance(
