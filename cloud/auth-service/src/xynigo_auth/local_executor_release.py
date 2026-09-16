@@ -14,9 +14,9 @@ from urllib.parse import quote
 
 from . import __version__
 
-RELEASE_VERSION = "0.18.2"
+RELEASE_VERSION = "0.18.3"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-16T14:12:02Z"
+RELEASE_PUBLISHED_AT = "2026-09-16T16:14:35Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,10 +31,10 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.18.2-7d1c7bde9f67",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.18.2.exe",
-        "sha256": "e905780c11e98b0cfc82460280597e5c3de3c8c46f962c487e7598cf52f148cb",
-        "size": 15364231,
+        "runtimeId": "0.18.3-0b66449181a7",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.18.3.exe",
+        "sha256": "5f45b09d79c6723288ae52f1b204efae85400b52b08b85374c8ad1cfde63a95c",
+        "size": 15380141,
         "installMode": "standard_per_user",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_silent_installer",
@@ -50,10 +50,10 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.18.2-7d1c7bde9f67",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.18.2.pkg",
-        "sha256": "77c8a5bdf27ff4f53f1c023f25304be616081328823ed26c1ae7eecd577f672e",
-        "size": 14362281,
+        "runtimeId": "0.18.3-0b66449181a7",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.18.3.pkg",
+        "sha256": "9cc7f6d91da9f04354ad1429db29dc000b3af78a3e157ce6d0782da7bdc0fd0b",
+        "size": 14402136,
         "installMode": "standard_system_application",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_system_installer",
@@ -320,8 +320,10 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "新增采购售后可申请清单 Excel 导出，支持扫描中导出已返回结果，保留状态、备注和长编号。",
-            "优化扫描输入框及指定提交、回访输入区高度与对齐。",
-            "统一云端、工作台与 Windows/macOS 客户端为 v0.18.2，安装包包含最新售后功能及界面。"
+            "修复采购售后不可申请原因反馈，按实际退款凭证展示阶段与平台申请时间。",
+            "补齐提交后退款回执查询，结果不明进入待核对并阻止直接补提。",
+            "补采订单送达日期、全部商品图片、规格与件数，支持按日期及单件/多件筛选。",
+            "统一三张售后表格的滚动高度与任务进度，显示平均耗时和累计用时。",
+            "云端与 Windows/macOS 执行器统一升级为 v0.18.3。"
         ],
     }
