@@ -154,6 +154,90 @@ MOCK = r'''
 
   const state = { scanPolls: 0, claimPolls: 0, scanStartedAt: 0, claimStartedAt: 0 };
 
+  // 提交历史（合成）：三行＝三个批次；第二行「重提自」第一批，用来演示关联列
+  const CLAIM_HISTORY = [
+    {
+      runId: 'a1f0c3d2-0001-4000-8000-000000000001', status: 'partial_failure',
+      createdAt: '2026-09-16T02:12:31+00:00', actorName: '胡康凯',
+      actorUserId: 'proto-user-1',
+      executorName: '本机执行器（原型）', environmentCount: 3, totalCount: 3,
+      successCount: 2, skippedCount: 1, stoppedCount: 0, failedCount: 0,
+      retryFromRunId: '',
+    },
+    {
+      runId: 'a1f0c3d2-0002-4000-8000-000000000002', status: 'completed',
+      createdAt: '2026-09-16T02:31:07+00:00', actorName: '胡康凯',
+      actorUserId: 'proto-user-1',
+      executorName: '本机执行器（原型）', environmentCount: 1, totalCount: 1,
+      successCount: 1, skippedCount: 0, stoppedCount: 0, failedCount: 0,
+      retryFromRunId: 'a1f0c3d2-0001-4000-8000-000000000001',
+    },
+    {
+      runId: 'a1f0c3d2-0003-4000-8000-000000000003', status: 'partial_failure',
+      createdAt: '2026-09-15T09:40:52+00:00', actorName: '熊新刚',
+      actorUserId: 'proto-user-2',
+      executorName: '同事的 Windows 执行器', environmentCount: 2, totalCount: 4,
+      successCount: 2, skippedCount: 1, stoppedCount: 0, failedCount: 1,
+      retryFromRunId: '',
+    },
+  ];
+  const CLAIM_HISTORY_ROWS = {
+    'a1f0c3d2-0001-4000-8000-000000000001': [
+      {
+        orderNo: 'GSH1RV90A001B2', environmentSerial: '5121',
+        storeName: 'ZH-MX-0902-011', status: 'ok', packageNo: 'C26090200011045',
+        refundBillId: '2390765181147136', refundPath: 'Cuenta original de pago',
+        refundAccount: 'Tarjeta ****7935', deliveredAt: '04 Sep 2026 10:37:20',
+        submittedAt: '2026-09-16T02:12:03+00:00', note: '',
+        errorSummary: null, goodsImg: '',
+      },
+      {
+        orderNo: 'GSH1RV90A002C7', environmentSerial: '5122',
+        storeName: 'ZH-MX-0902-012', status: 'ok', packageNo: 'C26090200012017',
+        refundBillId: '2390765181147201', refundPath: 'Cuenta original de pago',
+        refundAccount: 'Tarjeta ****7935', deliveredAt: '03 Sep 2026 18:08:37',
+        submittedAt: '2026-09-16T02:12:31+00:00', note: '',
+        errorSummary: null, goodsImg: '',
+      },
+      {
+        orderNo: 'GSH1RV90A003D1', environmentSerial: '5123',
+        storeName: 'ZH-MX-0902-013', status: 'blocked', packageNo: '',
+        refundBillId: '', refundPath: '', refundAccount: '',
+        deliveredAt: '05 Sep 2026 09:12:04', submittedAt: null, note: '',
+        errorSummary: '该订单已无可申请售后的包裹（可能已提交过）',
+        goodsImg: '',
+      },
+    ],
+    'a1f0c3d2-0002-4000-8000-000000000002': [
+      {
+        orderNo: 'GSH1RV90A003D1', environmentSerial: '5123',
+        storeName: 'ZH-MX-0902-013', status: 'ok', packageNo: 'C26090200013008',
+        refundBillId: '2390765181147399', refundPath: 'Cuenta original de pago',
+        refundAccount: 'Tarjeta ****7935', deliveredAt: '05 Sep 2026 09:12:04',
+        submittedAt: '2026-09-16T02:31:07+00:00', note: '',
+        errorSummary: null, goodsImg: '',
+      },
+    ],
+    'a1f0c3d2-0003-4000-8000-000000000003': [
+      {
+        orderNo: 'GSH1RV90A004E9', environmentSerial: '5124',
+        storeName: 'ZH-MX-0902-014', status: 'ok', packageNo: 'C26090100014002',
+        refundBillId: '2390755181102884', refundPath: 'Cuenta original de pago',
+        refundAccount: 'Tarjeta ****4127', deliveredAt: '01 Sep 2026 15:19:09',
+        submittedAt: '2026-09-15T09:40:12+00:00', note: '',
+        errorSummary: null, goodsImg: '',
+      },
+      {
+        orderNo: 'GSH1RV90A005F3', environmentSerial: '5125',
+        storeName: 'ZH-MX-0902-015', status: 'fail', packageNo: '',
+        refundBillId: '', refundPath: '', refundAccount: '', deliveredAt: '',
+        submittedAt: null, note: '',
+        errorSummary: '打开申请页超时（30 秒内未出现包裹列表）',
+        goodsImg: '',
+      },
+    ],
+  };
+
   const json = (body, status = 200) => new Response(
     JSON.stringify(body), {
       status,
@@ -264,6 +348,42 @@ MOCK = r'''
       state.scanPolls = 0;
       return json({ ok: true, data: { taskId: 'proto-scan-1', status: 'queued',
                                       executorId: 'proto-exec-1' } }, 202);
+    }
+    if (/^\/v1\/operation-runs\/after-sale-claim\/history/.test(path)) {
+      // 提交历史：列表 / 详情（合成数据；导出按钮在原型里只回空壳）
+      const query = new URLSearchParams(
+        path.includes('?') ? path.slice(path.indexOf('?') + 1) : '');
+      const detailPath = path.split('?')[0].split('/history/')[1];
+      if (detailPath) {
+        const runId = detailPath.replace(/\/export$/, '');
+        const batch = CLAIM_HISTORY.find(item => item.runId === runId);
+        if (!batch) {
+          return json({ ok: false, detail: { code: 'after_sale_claim_run_not_found',
+                                              message: '售后批次不存在' } }, 404);
+        }
+        if (detailPath.endsWith('/export')) {
+          return json({ ok: true, data: { file: '售后提交结果_原型.xlsx' } });
+        }
+        return ok({ runId: batch.runId, status: batch.status,
+                    totalCount: batch.totalCount,
+                    successCount: batch.successCount,
+                    skippedCount: batch.skippedCount,
+                    stoppedCount: batch.stoppedCount,
+                    failedCount: batch.failedCount, stopRequested: false,
+                    batch, rows: CLAIM_HISTORY_ROWS[batch.runId] || [] });
+      }
+      const status = query.get('status') || '';
+      const actor = query.get('userId') || '';
+      const items = CLAIM_HISTORY.filter(
+        item => (!status || item.status === status)
+          && (!actor || item.actorUserId === actor));
+      return ok({
+        items, nextCursor: null, hasMore: false,
+        actors: [
+          { userId: 'proto-user-1', displayName: '胡康凯', status: 'active' },
+          { userId: 'proto-user-2', displayName: '熊新刚', status: 'active' },
+        ],
+      });
     }
     if (/^\/v1\/operation-runs\/after-sale-claim/.test(path)) {
       if (path.endsWith('/cancel')) {

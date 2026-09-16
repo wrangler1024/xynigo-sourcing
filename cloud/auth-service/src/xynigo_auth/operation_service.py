@@ -535,8 +535,13 @@ class OperationRunService:
         executors = self._after_sale_claim_executor_names(
             tenant_id, [run.executor_id for run in page]
         )
+        environment_counts = self._after_sale_claim_environment_counts(
+            [run.id for run in page]
+        )
         items = [
-            self._after_sale_claim_history_item(run, names, executors)
+            self._after_sale_claim_history_item(
+                run, names, executors, environment_counts
+            )
             for run in page
         ]
         return {
@@ -568,13 +573,40 @@ class OperationRunService:
         )
         snapshot = after_sale_claim_snapshot(self.session, run)
         snapshot["batch"] = self._after_sale_claim_history_item(
-            run, names, executors
+            run, names, executors,
+            self._after_sale_claim_environment_counts([run.id]),
         )
         return snapshot
+
+    def _after_sale_claim_environment_counts(self, run_ids: list) -> dict:
+        """批次环境数＝该批次结果行去重 environment_serial（不新增表/列）。
+
+        替代方案 request_summary.items 记的是「请求了多少个环境」，扫描/重提
+        都会带上，看似更稳；但它是**计划值**，与页面同排的「提交/已受理」等
+        实际值不同源，执行器整批没跑起来时会出现「提交 0 / 环境数 3」这种
+        对不上的组合。结果行虽然运行中是逐步补齐的（与其它计数一致），
+        但语义与表格其余列一致。
+        """
+        wanted = [run_id for run_id in run_ids if run_id is not None]
+        if not wanted:
+            return {}
+        from .models import AfterSaleClaimResult as ResultModel
+        return {
+            run_id: count
+            for run_id, count in self.session.execute(
+                select(
+                    ResultModel.run_id,
+                    func.count(func.distinct(ResultModel.environment_serial)),
+                )
+                .where(ResultModel.run_id.in_(wanted))
+                .group_by(ResultModel.run_id)
+            )
+        }
 
     def _after_sale_claim_history_item(
         self, run: AfterSaleClaimRun, actor_names: dict,
         executor_names: dict | None = None,
+        environment_counts: dict | None = None,
     ) -> dict[str, object]:
         summary = run.request_summary or {}
         return {
@@ -588,6 +620,7 @@ class OperationRunService:
             "actorName": actor_names.get(run.actor_user_id, ""),
             "executorId": str(run.executor_id) if run.executor_id else "",
             "executorName": (executor_names or {}).get(run.executor_id, ""),
+            "environmentCount": (environment_counts or {}).get(run.id, 0),
             "totalCount": run.total_count,
             "successCount": run.success_count,
             "skippedCount": run.skipped_count,

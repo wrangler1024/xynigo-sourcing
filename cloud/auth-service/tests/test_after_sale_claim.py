@@ -1131,4 +1131,77 @@ def test_after_sale_claim_history_scope_paging_detail_export(tmp_path) -> None:
         break
 
 
+def test_after_sale_claim_history_environment_count(tmp_path) -> None:
+    """批次「环境数」＝结果行去重 environment_serial（不是请求里的环境数）。
+
+    同一环境的多个订单只能算一个环境；还没有结果行时是 0（与同排的
+    提交/已受理等实际值同源），所以这里要同时钉住 0 和去重后 2 两种取值。
+    """
+    for web_client, device_client, ids, database in _e2e_setup(tmp_path):
+        executor_id, credential = ids["executorId"], ids["credential"]
+        heartbeat(device_client, credential, capabilities=AS_CAPABILITIES,
+                  client_version=CLIENT_VERSION)
+
+        created = web_client.post(
+            "/v1/operation-runs/after-sale-claim",
+            json={
+                "idempotencyKey": "as-claim-envcount-000001",
+                "executorId": executor_id,
+                "items": [
+                    {"environmentSerial": "4589", "orderNo": "GSH1A"},
+                    {"environmentSerial": "4589", "orderNo": "GSH1B"},
+                    {"environmentSerial": "4590", "orderNo": "GSH1C"},
+                ],
+            },
+            headers=CSRF,
+        )
+        assert created.status_code == 202, created.text
+        run_id = created.json()["data"]["runId"]
+
+        def history_item():
+            items = web_client.get(
+                "/v1/operation-runs/after-sale-claim/history"
+            ).json()["data"]["items"]
+            return next(item for item in items if item["runId"] == run_id)
+
+        # 还没跑：请求里有 2 个环境 3 单，但结果行数为 0 → 环境数 0
+        assert history_item()["environmentCount"] == 0
+        assert history_item()["totalCount"] == 3
+
+        task_id, lease_token = _lease_and_start(
+            device_client, credential, expect_type="after.sale.claim.v1")
+        progress = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/progress",
+            json={
+                "leaseToken": lease_token,
+                "phase": "after_sale.claim.running",
+                "current": 3,
+                "total": 3,
+                "snapshot": {"rows": [
+                    _claim_row("GSH1A", "4589"),
+                    _claim_row("GSH1B", "4589"),
+                    _claim_row("GSH1C", "4590"),
+                ]},
+            },
+            headers=device_headers(credential),
+        )
+        assert progress.status_code == 200, progress.text
+
+        item = history_item()
+        assert item["environmentCount"] == 2, (
+            "同一环境的两个订单只能算一个环境："
+            f"{item['environmentCount']} != 2")
+        assert item["totalCount"] == 3, "单数照旧按行计，不跟着环境数走"
+        # 详情与列表同一口径（弹层表头读的是 batch.environmentCount）
+        detail = web_client.get(
+            f"/v1/operation-runs/after-sale-claim/history/{run_id}")
+        assert detail.status_code == 200, detail.text
+        assert detail.json()["data"]["batch"]["environmentCount"] == 2
+        # ③ 的实时快照不吃这个字段（它是批次表头字段，不是提交行字段）
+        live = web_client.get(
+            f"/v1/operation-runs/after-sale-claim/{run_id}").json()["data"]
+        assert "environmentCount" not in live
+        break
+
+
 # ===== 提交：建 Run（幂等）→ 进度 + 截图 → 终态快照 =====
