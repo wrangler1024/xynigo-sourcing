@@ -5231,7 +5231,22 @@ document.querySelectorAll('[data-as-concurrency]').forEach(button => {
     });
   };
 });
-function asRequireRuntimeControls(executor) {
+async function asRequireRuntimeControls(executor) {
+  const required = ['after.sale.runtime-controls.v1'];
+  if (AS_STATE.mode !== 'scan') required.push('after.sale.reliable-results.v1');
+  // An upgraded device can still have old capabilities in this page's cache.
+  // Refresh the same device before reporting an upgrade requirement.
+  if (required.some(cap => !(executor.capabilities || []).includes(cap))) {
+    const payload = await cloudFetchJson('/v1/executors');
+    const devices = Array.isArray(payload.items) ? payload.items : [];
+    const refreshed = devices.find(item => item.id === executor.id);
+    if (!refreshed || refreshed.status === 'revoked' || refreshed.connectivity !== 'online') {
+      throw new Error('本地执行器当前离线或不可用，请检查运行环境');
+    }
+    executor = refreshed;
+    localExecutorDevices = devices;
+    renderLocalExecutorDevices();
+  }
   if (AS_STATE.mode !== 'scan' && !(executor.capabilities || []).includes('after.sale.reliable-results.v1')) {
     throw new Error('请升级执行器以支持完整退款记录和可靠回传');
   }
@@ -5575,7 +5590,7 @@ async function asTrack(explicitItems) {
     return;
   }
   let executor;
-  try { executor = await cloudFormalExecutor('after.sale.track.v1'); asRequireRuntimeControls(executor); }
+  try { executor = await cloudFormalExecutor('after.sale.track.v1'); await asRequireRuntimeControls(executor); }
   catch (e) { asSetPhase('执行器不可用', e.message || '无法发起回访', false); return; }
   try {
     const res = await asCreateTask('/v1/after-sale/track', {executorId: executor.id, browserMode: runtime.browserMode, concurrency: runtime.concurrency, items});
@@ -5976,7 +5991,7 @@ async function asScan() {
   }
   asSaveList();
   let executor;
-  try { executor = await cloudFormalExecutor('after.sale.scan.v1'); asRequireRuntimeControls(executor); }
+  try { executor = await cloudFormalExecutor('after.sale.scan.v1'); await asRequireRuntimeControls(executor); }
   catch (e) { asSetPhase('执行器不可用', e.message || '无法发起扫描', false); return; }
   try {
     const res = await asCreateTask('/v1/after-sale/scan', {executorId: executor.id, browserMode: runtime.browserMode, concurrency: runtime.concurrency, environmentSerials: serials});
@@ -6035,7 +6050,7 @@ async function asSubmitItems(items, options) {
     return false;
   }
   let executor;
-  try { executor = await cloudFormalExecutor('after.sale.claim.v1'); asRequireRuntimeControls(executor); }
+  try { executor = await cloudFormalExecutor('after.sale.claim.v1'); await asRequireRuntimeControls(executor); }
   catch (e) { asSetPhase('执行器不可用', e.message || '无法发起售后提交', false); return false; }
   try {
     const res = await asCreateTask('/v1/operation-runs/after-sale-claim', {executorId: executor.id, browserMode: runtime.browserMode, concurrency: runtime.concurrency, items, retryFromRunId: opts.retryFromRunId || ''});
