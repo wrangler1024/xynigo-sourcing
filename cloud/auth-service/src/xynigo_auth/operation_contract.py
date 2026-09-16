@@ -1033,6 +1033,14 @@ AfterSaleRowStatus = Literal[
 ]
 
 
+class AfterSaleOrderItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    goodsImg: str = Field(default="", max_length=300)
+    name: str = Field(default="", max_length=200)
+    specification: str = Field(default="", max_length=200)
+    quantity: int | None = Field(default=None, ge=1, le=100_000)
+
+
 class AfterSaleScanRow(BaseModel):
     """One order row inside an after-sale scan snapshot.
 
@@ -1054,6 +1062,14 @@ class AfterSaleScanRow(BaseModel):
     trackingNo: str = Field(default="", max_length=64)
     # 商品缩略图地址（SHEIN 商品图 CDN），来自 pre_info 的 item_list[].goods_img
     goodsImg: str = Field(default="", max_length=300)
+    durationSeconds: int | None = Field(default=None, ge=0, le=86_400_000)
+    itemCount: int | None = Field(default=None, ge=1, le=100_000)
+    itemCountSource: str = Field(default="", max_length=32)
+    goodsItems: list[AfterSaleOrderItem] = Field(default_factory=list, max_length=100)
+    goodsImages: list[Annotated[str, Field(max_length=300)]] = Field(default_factory=list, max_length=100)
+    deliveredDate: str = Field(default="", max_length=10)
+    deliveryDateStatus: str = Field(default="unknown", max_length=24)
+    deliveryNote: str = Field(default="", max_length=200)
     reasonCode: str = Field(default="", max_length=64)
     platformStatus: str = Field(default="", max_length=240)
     reasonSource: str = Field(default="", max_length=32)

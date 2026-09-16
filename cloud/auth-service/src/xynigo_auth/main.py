@@ -5220,6 +5220,8 @@ def create_app(
             "status": task.status,
             "executorId": str(task.executor_id),
             "summary": summary,
+            "startedAt": (task.started_at or task.created_at).replace(tzinfo=UTC).isoformat(),
+            "completedAt": task.finished_at.replace(tzinfo=UTC).isoformat() if task.finished_at else None,
             "lastRuns": after_sale_last_claims(
                 session, actor.tenant.id, store_names),
         }
@@ -5381,6 +5383,8 @@ def create_app(
         return {"ok": True, "data": {
             "taskId": str(task.id), "status": task.status,
             "executorId": str(task.executor_id),
+            "startedAt": (task.started_at or task.created_at).replace(tzinfo=UTC).isoformat(),
+            "completedAt": task.finished_at.replace(tzinfo=UTC).isoformat() if task.finished_at else None,
             "summary": snapshot}}
 
     @app.get("/v1/after-sale/scan/{task_id}/export")

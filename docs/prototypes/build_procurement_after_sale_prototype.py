@@ -81,6 +81,10 @@ MOCK = r'''
     },
   ];
 
+  // Explicit synthetic complete/partial delivery facts for local filter regression.
+  Object.assign(SCAN_ROWS[0], {itemCount:1,itemCountSource:'order_card',deliveredDate:'2026-09-04',deliveryDateStatus:'complete',durationSeconds:24});
+  Object.assign(SCAN_ROWS[1], {itemCount:2,itemCountSource:'order_card',deliveredDate:'2026-09-03',deliveryDateStatus:'complete',durationSeconds:36});
+  Object.assign(SCAN_ROWS[2], {itemCount:3,itemCountSource:'order_card',deliveredDate:'',deliveryDateStatus:'unknown',deliveryNote:'合成示例：多包裹日期不完整，待核对',durationSeconds:30});
   const CLAIM_SEQUENCE = [
     { status: 'running', rows: [] },
     {

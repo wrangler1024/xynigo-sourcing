@@ -1059,7 +1059,7 @@ class AfterSaleRunStripWiringTests(unittest.TestCase):
         phase = html[html.index('function asSetPhase('):]
         phase = phase[:phase.index('\n}\n')]
         self.assertIn('asStripToggle(false)', phase)
-        self.assertLess(phase.index("if (!spin && AS_STATE.mode === 'scan') return"),
+        self.assertLess(phase.index("if (!spin && AS_STATE.mode === 'scan') {"),
                         phase.index('setTimeout(() => asStripToggle(true), 2200)'))
         self.assertIn('setTimeout(() => asStripToggle(true), 2200)', phase)
         self.assertIn('asStripTerminal', phase)

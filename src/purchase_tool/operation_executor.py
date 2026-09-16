@@ -624,6 +624,8 @@ class LocalOperationExecutor(object):
         'deliveredAt', 'amount', 'status', 'claimable', 'packageCount',
         'trackingNo', 'goodsImg', 'errorSummary', 'screenshotSha256',
         'reasonCode', 'platformStatus', 'reasonSource', 'checkedAt',
+        'durationSeconds', 'itemCount', 'itemCountSource', 'goodsImages', 'goodsItems',
+        'deliveredDate', 'deliveryDateStatus', 'deliveryNote',
     )
     _AFTER_SALE_CLAIM_ROW_FIELDS = (
         'orderNo', 'environmentSerial', 'storeName', 'status', 'packageNo',
@@ -641,6 +643,7 @@ class LocalOperationExecutor(object):
         'refundBillId': 32, 'refundPath': 48, 'trackingNo': 64,
         'refundAccount': 40, 'goodsImg': 300,
         'submittedAt': 40, 'note': 200,
+        'itemCountSource': 32, 'deliveredDate': 10, 'deliveryDateStatus': 24, 'deliveryNote': 200,
         'reasonCode': 64, 'platformStatus': 240, 'reasonSource': 32, 'checkedAt': 40,
     }
     _AFTER_SALE_NULLABLE_TEXT = {'errorSummary': 300, 'screenshotSha256': 64}
@@ -679,6 +682,12 @@ class LocalOperationExecutor(object):
                         {'refundBillId': 32, 'packageNo': 64, 'refundPath': 48,
                          'refundAccount': 40, 'submittedAt': 40}.items()}
                         for r in (value or []) if isinstance(r, dict)]
+                elif field == 'goodsItems':
+                    row[field] = [{'name': str(i.get('name') or '')[:200], 'specification': str(i.get('specification') or '')[:200], 'goodsImg': str(i.get('goodsImg') or '')[:300], 'quantity': i.get('quantity') if isinstance(i.get('quantity'), int) and not isinstance(i.get('quantity'), bool) and 1 <= i['quantity'] <= 100000 else None} for i in (value or [])[:100] if isinstance(i, dict)]
+                elif field == 'goodsImages':
+                    row[field] = [str(v)[:300] for v in (value or [])[:100]]
+                elif field == 'itemCount':
+                    row[field] = value if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 100000 else None
                 elif field == 'claimable':
                     row[field] = bool(value)
                 elif field == 'packageCount':
@@ -709,6 +718,7 @@ class LocalOperationExecutor(object):
                 'status': env.get('status'),
                 'errorSummary': env.get('errorSummary'),
                 'screenshotSha256': env.get('screenshotSha256'),
+                'durationSeconds': env.get('durationSeconds'),
             }
             orders = env.get('orders') or []
             if not orders:
@@ -723,6 +733,13 @@ class LocalOperationExecutor(object):
                     status=order.get('status') or base['status'],
                     errorSummary=order.get('note', base['errorSummary']) or None,
                     orderNo=order.get('orderNo') or '',
+                    goodsItems=order.get('goodsItems') or [],
+                    itemCount=order.get('itemCount'),
+                    itemCountSource=order.get('itemCountSource') or '',
+                    goodsImages=order.get('goodsImages') or [],
+                    deliveredDate=order.get('deliveredDate') or '',
+                    deliveryDateStatus=order.get('deliveryDateStatus') or 'unknown',
+                    deliveryNote=order.get('deliveryNote') or '',
                     reasonCode=order.get('reasonCode') or '',
                     platformStatus=order.get('platformStatus') or '',
                     reasonSource=order.get('reasonSource') or '',

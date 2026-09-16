@@ -46,6 +46,7 @@ from datetime import datetime, timezone
 
 from .cdp import CdpClient, CdpError
 from .redaction import scrub_text
+from .after_sale_display import order_item_summary, delivery_summary
 
 ORIGIN = 'https://www.shein.com.mx'
 # 从「所有订单」开始：运输中、已送达和退款单可能落在不同分类。
@@ -69,7 +70,7 @@ ORDER_NO_RE = re.compile(r'N[úu]m\.?\s*de\s*pedido\s*([A-Z0-9]{6,})', re.I)
 # 已交付给 04 Sep 2026 14:36:41」），因此中间允许非数字字符占位。
 DELIVERED_RE = re.compile(
     r'Entregado a[^0-9]{0,24}'
-    r'([0-9]{2}\s*[A-Za-zÀ-ÿ]{3}\s*[0-9]{4}(?:\s*[0-9:]{4,8})?)', re.I)
+    r'([0-9]{1,2}\s*[A-Za-zÀ-ÿ]{3,15}\.?\s*[0-9]{4}(?:\s*[0-9:]{4,8})?)', re.I)
 AMOUNT_RE = re.compile(r'\$MXN\s*([\d,]+\.?\d*)')
 REFUND_DONE_RE = re.compile(
     r'Procesamiento de reembolsos|En revisi[óo]n vendedor', re.I)
@@ -121,6 +122,10 @@ _JS_SCAN_ORDERS = ('(() => {' + _JS_NORM + '''
     out.push({text: t.slice(0, 2400), hasEntry: entry,
       statusText: status ? status.innerText : '',
       statusDetail: [...li.querySelectorAll('.status-ctn_text')].map(n => n.innerText.trim()).filter(Boolean).join(' / '),
+      itemCount: (() => { const m=t.match(/(?:^|\\n)\\s*(\\d+)\\s+Art[ií]culos?\\b/i); return m ? Number(m[1]) : null; })(),
+      goodsImages: [...li.querySelectorAll('img.crop-image-container__img')].map(i=>i.getAttribute('src') || '').filter(Boolean),
+      goodsItems: [...li.querySelectorAll('img.crop-image-container__img')].map(i=>({
+        goodsImg:i.getAttribute('src') || '', name:i.getAttribute('alt') || '', quantity:null, specification:''})),
       delivered: delivered,
       deliveredAt: delivered && when ? when.innerText.trim() : '',
       goodsImg: img ? (img.getAttribute('src') || '') : ''});
@@ -703,6 +708,7 @@ class AfterSaleClaimer(object):
                     'Entregado a ' + str(card.get('deliveredAt') or ''))
                 if delivery and not parsed['deliveredAt']:
                     parsed['deliveredAt'] = delivery.group(1).strip()
+                parsed.update(order_item_summary(card))
                 parsed['packages'] = []
                 parsed['blockedPackages'] = []
                 parsed['claimable'] = False
@@ -733,6 +739,7 @@ class AfterSaleClaimer(object):
                         parsed['status'] = 'fail'
                         parsed['reasonCode'] = 'eligibility_read_failed'
                         parsed['note'] = scrub_text('可申请性核验失败：%s' % exc)[:200]
+                parsed.update(delivery_summary(card, parsed))
                 candidates.append(parsed)
             with self._lock:
                 row = self._scan_rows.get(serial) or {}
@@ -1267,10 +1274,18 @@ class AfterSaleClaimer(object):
             # 日期始终缺失也不据此排除有入口的订单，可申请性仍以接口为准。
             scan_js = _JS_SCAN_ORDERS % json.dumps(ORDER_ENTRY_KEY)
             page.wait_for('(() => { const rows=%s; return rows.every('
-                          'r => !r.delivered || !!r.deliveredAt); })()'
+                          'r => !(r.delivered || r.hasEntry) || !!r.deliveredAt); })()'
                           % scan_js, timeout=12)
             state = page.js_evaluate(_JS_ORDER_LIST_STATE) or {}
             raw_cards = page.js_evaluate(scan_js)
+            if isinstance(raw_cards, list) and any(r.get('delivered') and not r.get('deliveredAt') for r in raw_cards):
+                # One bounded re-read; a timeout is recorded as missing rather than fabricated.
+                page.wait_for('(() => { const rows=%s; return rows.every('
+                              'r => !r.delivered || !!r.deliveredAt); })()' % scan_js, timeout=4)
+                retry_cards = page.js_evaluate(scan_js)
+                if isinstance(retry_cards, list):
+                    raw_cards = retry_cards
+                state = page.js_evaluate(_JS_ORDER_LIST_STATE) or {}
             if not state.get('ready') or not isinstance(raw_cards, list):
                 raise RuntimeError('所有订单列表读取失败，请重试扫描')
             if not raw_cards and not state.get('empty'):
@@ -1286,6 +1301,9 @@ class AfterSaleClaimer(object):
                     card, hasEntry=bool(card.get('hasEntry') or previous.get('hasEntry')),
                     delivered=bool(card.get('delivered') or previous.get('delivered')),
                     deliveredAt=card.get('deliveredAt') or previous.get('deliveredAt') or '',
+                    itemCount=card.get('itemCount') if card.get('itemCount') is not None else previous.get('itemCount'),
+                    goodsImages=card.get('goodsImages') or previous.get('goodsImages') or [],
+                    goodsItems=card.get('goodsItems') or previous.get('goodsItems') or [],
                     statusDetail=card.get('statusDetail') or previous.get('statusDetail') or '',
                     goodsImg=card.get('goodsImg') or previous.get('goodsImg') or '')
             if not state.get('next'):
