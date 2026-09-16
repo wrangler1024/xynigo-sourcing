@@ -2609,8 +2609,15 @@ class ExecutorChannelService:
             row.refund_bill_id = item.refundBillId or None
             row.refund_path = item.refundPath or None
             row.refund_account = item.refundAccount or None
-            row.delivered_at = item.deliveredAt or None
-            row.goods_img = item.goodsImg or None
+            # 展示字段兜底：老执行器的桥接层按固定字段重建条目，会把这两个字段丢掉
+            # （0.17/0.18.0 都如此），而云端清单（request_summary）里本来就有——
+            # 不该因为同事没升级桌面端就把 ③ 的送达时间、④ 的商品图留空。
+            row.delivered_at = (item.deliveredAt
+                                or str(request_item.get("deliveredAt") or "")
+                                or None)
+            row.goods_img = (item.goodsImg
+                             or str(request_item.get("goodsImg") or "")
+                             or None)
             row.duration_seconds = item.durationSeconds
             submitted_at = _after_sale_at(item.submittedAt)
             if submitted_at is not None:

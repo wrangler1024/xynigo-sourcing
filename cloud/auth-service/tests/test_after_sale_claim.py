@@ -752,6 +752,73 @@ def test_after_sale_track_create_progress_and_whitelist(tmp_path) -> None:
         break
 
 
+def test_claim_progress_falls_back_to_request_display_fields(tmp_path) -> None:
+    """③ 的送达时间 / ④ 的商品图：执行器没上报时，云端用自己清单里的值兜底。
+
+    真机踩过：老执行器的桥接层按固定字段重建条目（0.17/0.18.0 都如此），
+    把 deliveredAt/goodsImg 丢掉，于是 ③ 两列恒空、④ 缩略图恒空——而这两个值
+    Web 已经发过来了、云端清单里就有。这里断言「执行器一个字都不报」也能落库。
+    """
+    for web_client, device_client, ids, database in _e2e_setup(tmp_path):
+        executor_id, credential = ids["executorId"], ids["credential"]
+        heartbeat(device_client, credential, capabilities=AS_CAPABILITIES,
+                  client_version=CLIENT_VERSION)
+
+        created = web_client.post(
+            "/v1/operation-runs/after-sale-claim",
+            json={
+                "idempotencyKey": "as-claim-fallback-000001",
+                "executorId": executor_id,
+                "items": [{
+                    "environmentSerial": "4589", "orderNo": "GSH1FALLBACK",
+                    "deliveredAt": "04 Sep 2026 16:56:59",
+                    "goodsImg": "//img.ltwebstatic.com/v4/j/pi/fallback.jpg",
+                }],
+            },
+            headers=CSRF,
+        )
+        assert created.status_code == 202, created.text
+        run_id = created.json()["data"]["runId"]
+        task_id, lease_token = _lease_and_start(
+            device_client, credential, expect_type="after.sale.claim.v1")
+
+        # 执行器上报的行里**故意不带**这两个字段（模拟老桥接层）
+        progress = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/progress",
+            json={
+                "leaseToken": lease_token,
+                "phase": "after_sale.claim.running",
+                "current": 1, "total": 1,
+                "snapshot": {"rows": [{
+                    "orderNo": "GSH1FALLBACK", "environmentSerial": "4589",
+                    "status": "ok", "refundBillId": "2390000000000001",
+                    "refundPath": "Cuenta original de pago",
+                    "submittedAt": "2026-09-16T06:16:50+00:00",
+                    "note": "", "errorSummary": None,
+                    "packageNo": "", "refundAccount": "****0212",
+                    "durationSeconds": 6, "screenshotSha256": "",
+                }]},
+            },
+            headers=device_headers(credential),
+        )
+        assert progress.status_code == 200, progress.text
+
+        with database.session_factory() as session:
+            from xynigo_auth.models import AfterSaleClaimResult
+            row = session.scalar(select(AfterSaleClaimResult).where(
+                AfterSaleClaimResult.run_id == uuid.UUID(run_id)))
+            assert row.goods_img == "//img.ltwebstatic.com/v4/j/pi/fallback.jpg"
+            assert row.delivered_at == "04 Sep 2026 16:56:59"
+
+        # 快照（③ 的渲染来源）同样带着这两个字段
+        snap = web_client.get(
+            f"/v1/operation-runs/after-sale-claim/{run_id}").json()["data"]
+        assert snap["rows"][0]["goodsImg"] == (
+            "//img.ltwebstatic.com/v4/j/pi/fallback.jpg")
+        assert snap["rows"][0]["deliveredAt"] == "04 Sep 2026 16:56:59"
+        break
+
+
 # ===== 退款跟踪导出：本任务清单内的行 → xlsx（列序 + 授权） =====
 def test_after_sale_track_export_workbook_and_auth(tmp_path) -> None:
     """④ 导出：内容是本次回访任务清单内的行，未登录必须拦在授权层。
