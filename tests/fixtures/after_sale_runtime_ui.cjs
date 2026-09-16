@@ -7,7 +7,7 @@ const state={running:false,type:'refund',claimRows:[], selected:new Set()};
 const requests=[];
 let capability=true, hook=()=>{};
 let ctx;
-ctx=vm.createContext({TextEncoder,AS_STATE:state,AS_TYPES:[], $:node, document:{
+ctx=vm.createContext({TextEncoder,AS_STATE:state,AS_TYPES:[],AS_HISTORY:{detail:null},asTrackItemsFromRows:()=>[],asSetOrderView:()=>{}, $:node, document:{
  querySelector:()=>chips.find(c=>c.active),querySelectorAll:()=>chips},
  cloudFormalExecutor:async()=>{hook();return {id:'executor',capabilities:capability?['after.sale.runtime-controls.v1','after.sale.reliable-results.v1','after.sale.receipt-recovery.v1','after.sale.claim-evidence.v1']:[]};},
  cloudFetchJson:async(path,request)=>{requests.push({path,body:JSON.parse(request.body)});return {data:{taskId:'task',runId:'run'}};},

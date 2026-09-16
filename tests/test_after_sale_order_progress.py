@@ -72,7 +72,8 @@ class WebOrderProgressTests(unittest.TestCase):
     def test_actual_web_functions_keep_order_progress_and_scan_expansion(self):
         html = (Path(__file__).resolve().parents[1] / 'src/purchase_tool/web/index.html').read_text(encoding='utf-8')
         functions = []
-        for name in ['asItemCount', 'asFilteredRows', 'asSelectedItems', 'asOrderedRows', 'asProgress', 'asStripToggle',
+        for name in ['asOrderIdentity', 'asSubmissionForRow','asSubmissionProtections','asSubmissionHasEvidence','asOrderRefundRows', 'asSubmissionBlocksSelection', 'asCanSelectScanRow',
+                     'asItemCount', 'asFilteredRows', 'asSelectedItems', 'asOrderedRows', 'asProgress', 'asStripToggle',
                      'asSetPhase', 'asRenderTrackRows', 'asPoll']:
             signature = ('async function ' if name == 'asPoll' else 'function ') + name + '('
             start = html.index(signature)

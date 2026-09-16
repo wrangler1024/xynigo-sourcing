@@ -8,7 +8,7 @@ const ctx=vm.createContext({TextEncoder,AS_STATE:state,AS_TYPES:[], $:node,crypt
  cloudFormalExecutor:async()=>{await hold;return {id:'EXEC'};},asRequireRuntimeControls:()=>{},
  cloudFetchJson:async(path,options)=>{calls.push({path,body:options?.body?JSON.parse(options.body):null});if(fail)throw Error('lost response');return response;},
  asSetPhase:(title,text)=>{node('asPhaseTitle').textContent=title;},asSaveList:()=>{},asSerials:()=>['ENV'],
- asRenderClaimRows:()=>{},asRenderTrackRows:()=>{},asRenderScanRows:()=>{},asProgress:()=>{},asPoll:()=>{},asSyncRetryButton:()=>{},
+ asRenderClaimRows:()=>{},asRenderTrackRows:()=>{},asRenderScanRows:()=>{},asSetOrderView:()=>{},asProgress:()=>{},asPoll:()=>{},asSyncRetryButton:()=>{},
  asRunIdOf:d=>d.runId,toast:()=>{},console});
 for(const name of ['asSyncScanExportButton','asCreateTask','asWriteEntryReady','asScan','asTrack','asSubmitItems','asOrderedRows','asTrackItemsFromRows','asParseManualBills','asTrackManual']){
  const m=new RegExp('(?:async )?function '+name+'\\([^]*?\\n}').exec(html);assert.ok(m,name);vm.runInContext(m[0],ctx);
@@ -80,7 +80,7 @@ const run=code=>vm.runInContext(code,ctx);
 
  vm.runInContext(/const AS_CLAIM_PILL = \{[^]*?\n};/.exec(html)[0],ctx);
  vm.runInContext(/const AS_RECOVERABLE_CLAIM_STATUS = [^]*?;/.exec(html)[0],ctx);
- for(const name of ['asItemCount','asClaimNeedsReconciliation','asClaimPill','asClaimReasonHtml','asRecoverableClaimRows','asReconcileScanRows']) vm.runInContext(new RegExp('function '+name+'\\([^]*?\\n}').exec(html)[0],ctx);
+ for(const name of ['asOrderIdentity','asSubmissionForRow','asSubmissionProtections','asSubmissionHasEvidence','asOrderRefundRows','asSubmissionBlocksSelection','asCanSelectScanRow','asItemCount','asClaimNeedsReconciliation','asClaimPill','asClaimReasonHtml','asRecoverableClaimRows','asReconcileScanRows']) vm.runInContext(new RegExp('function '+name+'\\([^]*?\\n}').exec(html)[0],ctx);
  const legacy={orderNo:'ORDER',environmentSerial:'ENV',status:'fail',errorSummary:'提交后未跳转成功页'};
  ctx.legacy=legacy;
  assert.equal(run('asRecoverableClaimRows([legacy]).length'),0);
@@ -92,6 +92,6 @@ const run=code=>vm.runInContext(code,ctx);
  assert.match(precise,/12345/);assert.match(precise,/7 Sep 2026/);assert.match(precise,/提交前已有记录/);
  assert.doesNotMatch(run('asClaimReasonHtml({status:"blocked",errorSummary:"可能已提交过"})'),/可能已提交过/);
  state.rows=[{orderNo:'ORDER',environmentSerial:'ENV',claimable:true,status:'ok'}];state.selected=new Set(['ORDER']);
- run('asReconcileScanRows([legacy])');assert.equal(state.rows[0].claimable,false);assert.equal(state.selected.size,0);
+ run('asReconcileScanRows([legacy])');assert.equal(state.rows[0].claimable,true);assert.equal(run('asCanSelectScanRow(AS_STATE.rows[0])'),false);
  console.log('task lifecycle, idempotency, package fan-out and validation PASS');
 })().catch(e=>{console.error(e);process.exitCode=1;});

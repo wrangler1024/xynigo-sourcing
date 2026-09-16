@@ -25,10 +25,10 @@ const context = vm.createContext({
   document:{body:{appendChild:()=>{}},createElement:()=>({
     click(){downloads.push(this.download);},remove(){}})},
   asRenderClaimRows:rows=>{state.claimRows=rows;vm.runInContext('asSyncClaimExportButton()',context);},
-  asSetPhase:()=>{},
+  asSetPhase:()=>{},asProgress:()=>{},asSyncRuntimeControls:()=>{},asPoll:()=>{state.pollCalls=(state.pollCalls||0)+1;},
 });
 for (const name of ['asRunIdOf','asSyncClaimExportButton','asDownloadClaimBatch',
-  'asExportClaimResults','asExportClaimHistory','asLoadLatestClaim']) {
+  'asExportClaimResults','asExportClaimHistory','asLoadLatestClaim','asOrderedRows']) {
   const match = new RegExp('(?:async )?function '+name+'\\([^]*?\\n}').exec(html);
   assert.ok(match, name);
   vm.runInContext(match[0],context);
@@ -66,5 +66,20 @@ const run = code=>vm.runInContext(code,context);
   state.runId='new-run';state.claimRows=[{orderNo:'SYNTH-NEW'}];
   restore({data:{runId:'old-run',rows:[{orderNo:'SYNTH-OLD'}]}});await restoring;
   assert.equal(state.runId,'new-run');assert.equal(state.claimRows[0].orderNo,'SYNTH-NEW');
+  // Refresh restores polling for a running batch without changing the chosen tab.
+  state.runId=null;state.claimRows=[];state.orderView='pending';
+  latest=async()=>({data:{runId:'active',status:'running',createdAt:'2026-09-01T00:00:00Z',rows:[{orderNo:'SYNTH-1',status:'queued'}]}});
+  await run('asLoadLatestClaim()');
+  assert.equal(state.mode,'claim');assert.equal(state.running,true);assert.equal(state.pollCalls,1);
+  assert.equal(state.orderView,'pending');assert.equal(state.claimItems.length,0);
+  assert.equal(run('asOrderedRows(AS_STATE.claimItems,[{orderNo:"SYNTH-1"},{orderNo:"SYNTH-2"}],"orderNo").length'),2,'later rows are not dropped');
+  assert.equal(node('asStop').disabled,false);
+  state.runId=null;state.claimRows=[];state.running=false;
+  latest=async()=>({data:{runId:'empty-active',status:'queued',progressTotal:3,rows:[]}});
+  await run('asLoadLatestClaim()');
+  assert.equal(state.runId,'empty-active');assert.equal(state.running,true);assert.equal(state.pollCalls,2);
+  // An in-flight create owns the UI even before a run ID exists.
+  state.runId=null;state.claimRows=[];state.running=false;state.starting=true;
+  await run('asLoadLatestClaim()');assert.equal(state.runId,null);
   console.log('PASS: current/history scope, restored run identity, empty state, failed download, duplicate clicks and late responses');
 })().catch(error=>{console.error(error);process.exitCode=1;});

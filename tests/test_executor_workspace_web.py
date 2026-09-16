@@ -816,10 +816,12 @@ class AfterSaleClaimWiringTests(unittest.TestCase):
         self.assertIn("退款路径固定「原路退回」", html)
 
     def test_only_claimable_rows_are_selectable(self):
-        # 已提交过的订单（平台划入不可退）不得可勾选，这是幂等的第一道闸门
-        self.assertIn(
-            "const canPick = !!orderNo && row.claimable === true",
-            LOCAL_HTML.read_text(encoding="utf-8"))
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        helper = html[html.index('function asCanSelectScanRow('):]
+        helper = helper[:helper.index('\n}')]
+        self.assertIn("row.claimable === true && row.status === 'ok'", helper)
+        self.assertIn('!asSubmissionBlocksSelection(asSubmissionForRow(row))', helper)
+        self.assertTrue('const canPick = asCanSelectScanRow(row);' in html)
 
     def test_after_sale_type_is_visible_in_field_and_both_tables(self):
         """本期类型固定「丢件退款」：必须在选择区与两张表里都看得见。
@@ -868,7 +870,7 @@ class AfterSaleClaimWiringTests(unittest.TestCase):
         # 行模板抽成了 asClaimRowHtml：③ 与「历史详情」共用一套，列序只在一处定义
         tpl = html[html.index('function asClaimRowHtml('):]
         tpl = tpl[:tpl.index('\n}')]
-        self.assertIn('AS_STATE.claimRows.map(asClaimRowHtml)', html)
+        self.assertTrue('visible.map(asClaimRowHtml)' in html)
         self.assertIn('rows.map(asClaimRowHtml)', html,
                       '历史详情必须复用 ③ 的行模板，不得另写一份（列序会漂）')
         cells = tpl.count('<td') + tpl.count('${asScanGoodsHtml')
@@ -1037,7 +1039,7 @@ class AfterSaleRunStripWiringTests(unittest.TestCase):
         for node in ('id="asProgress"', 'id="asProgressText"', 'id="asStop"'):
             self.assertIn(node, strip, f'{node} 应在状态条里')
         card_one = html[html.index('① 选择范围'):]
-        card_one = card_one[:card_one.index('② 可申请清单')]
+        card_one = card_one[:card_one.index('② 订单处理')]
         for node in ('id="asProgress"', 'id="asProgressText"', 'id="asStop"'):
             self.assertNotIn(node, card_one, f'{node} 不该在 ① 卡里再留一份')
 

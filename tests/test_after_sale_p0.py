@@ -250,7 +250,8 @@ def test_missing_detail_warning_clears_after_fields_are_read():
 
 def test_web_product_rows_keep_all_images_quantities_and_action_time():
     html=Path('src/purchase_tool/web/index.html').read_text(encoding='utf-8')
-    names=['asItemCount','asGoodsImages','asScanGoodsHtml','asSelectedItems','asClaimRowHtml',
+    names=['asOrderIdentity','asSubmissionForRow','asSubmissionProtections','asSubmissionHasEvidence','asOrderRefundRows','asSubmissionBlocksSelection','asCanSelectScanRow',
+           'asItemCount','asGoodsImages','asScanGoodsHtml','asSelectedItems','asClaimRowHtml',
            'asClaimNeedsReconciliation','asClaimPill','asClaimReasonHtml','asRecoverableClaimRows']
     functions=[]
     for name in names:

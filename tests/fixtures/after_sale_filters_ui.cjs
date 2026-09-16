@@ -3,7 +3,7 @@ const html=fs.readFileSync('src/purchase_tool/web/index.html','utf8');
 const nodes=new Map(),node=id=>{if(!nodes.has(id))nodes.set(id,{value:'',textContent:'',style:{}});return nodes.get(id)};
 const state={rows:[],selected:new Set(),startedAt:Date.now()-120000,endedAt:null};
 const ctx=vm.createContext({AS_STATE:state,$:node,Date,asEtaText:()=>''});
-for(const name of ['asItemCount','asFilteredRows','asSelectedItems','asProgress']){
+for(const name of ['asOrderIdentity','asSubmissionForRow','asSubmissionProtections','asSubmissionHasEvidence','asOrderRefundRows','asSubmissionBlocksSelection','asCanSelectScanRow','asItemCount','asFilteredRows','asSelectedItems','asProgress']){
  const m=new RegExp('function '+name+'\\([^]*?\\n}').exec(html);assert(m,name);vm.runInContext(m[0],ctx);
 }
 const run=s=>vm.runInContext(s,ctx);
