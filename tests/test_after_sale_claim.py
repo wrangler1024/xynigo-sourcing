@@ -87,6 +87,44 @@ class OrderCardParsingTests(unittest.TestCase):
             'https://www.shein.com.mx/user/orders/list?status_type=3'))
 
 
+class TrackPhaseTests(unittest.TestCase):
+    """退款跟踪的阶段判定：四种真实文案 + 终态口径。"""
+
+    def test_classify_matches_real_page_text(self):
+        from purchase_tool.after_sale_claim import classify_track_phase as c
+        self.assertEqual(c('Reembolsos procesados $MXN189.52 reembolso está siendo '
+                           'procesado por la institución bancaria'), 'refunded')
+        self.assertEqual(c('Solicitud de reembolso aceptada Reseña de SHEIN/Vendedor '
+                           'Termina en 23:57:21'), 'reviewing')
+        # 时间轴会列出尚未到达的步骤：审核中时「Procesamiento」那行也在文本里，
+        # 但当前步骤是审核——必须判 reviewing，不能被后面的步骤串带偏（踩过的坑）
+        self.assertEqual(c('Solicitud de reembolso aceptada 15 Sep 2026 Reseña de '
+                           'SHEIN/Vendedor está en revisión. Termina en 23:48:25 '
+                           'Historial de negociación Procesamiento de reembolsos de SHEIN'),
+                         'reviewing')
+        self.assertEqual(c('Procesamiento de reembolsos de SHEIN'), 'processing')
+        self.assertEqual(c('Solicitud de reembolso aceptada'), 'submitted')
+
+    def test_terminal_phases_stop_revisiting(self):
+        from purchase_tool import after_sale_claim as m
+        self.assertIn('refunded', m.TRACK_TERMINAL_PHASES)
+        self.assertIn('rejected', m.TRACK_TERMINAL_PHASES)
+        self.assertNotIn('reviewing', m.TRACK_TERMINAL_PHASES)
+
+    def test_start_track_requires_bill_and_order(self):
+        from purchase_tool.after_sale_claim import AfterSaleClaimer
+        claimer = AfterSaleClaimer(_FakeHub([]))
+        claimer._run_track = lambda items, headless: None
+        result = claimer.start_track([
+            {'environmentSerial': '4586', 'orderNo': 'GSH1', 'refundBillId': '2390833880014851'},
+            {'environmentSerial': '4586', 'orderNo': 'GSH1', 'refundBillId': ''},
+            {'environmentSerial': '', 'orderNo': 'GSH1', 'refundBillId': '1'},
+        ])
+        self.assertEqual(result['mode'], 'track')
+        self.assertEqual(result['total'], 1)
+        self.assertIn('trackRows', claimer.snapshot())
+
+
 class FallbackTabReportingTests(unittest.TestCase):
     """主标签扫不到候选时补扫其余标签，并把「为什么没有」说清楚。
 

@@ -273,6 +273,7 @@ AUTH_PERMISSION_BY_PATH = {
     '/api/store-finance/screenshot': 'assistant.access',
     '/api/after-sale/scan': 'assistant.access',
     '/api/after-sale/submit': 'assistant.access',
+    '/api/after-sale/track': 'assistant.access',
     '/api/after-sale/progress': 'assistant.access',
     '/api/after-sale/stop': 'assistant.access',
     '/api/after-sale/screenshot': 'assistant.access',
@@ -4669,6 +4670,29 @@ class Handler(BaseHTTPRequestHandler):
                     })
                 browser_mode = str(body.get('browserMode') or 'visible')
                 self._json(STATE.after_sale.start_submit(
+                    clean,
+                    'visible' if browser_mode == 'visible' else 'headless'))
+            elif path == '/api/after-sale/track':
+                items = body.get('items')
+                if (not isinstance(items, list) or not items
+                        or len(items) > 500):
+                    raise ValueError('退款跟踪缺少退款单或超出上限')
+                clean = []
+                for item in items:
+                    if not isinstance(item, dict):
+                        raise ValueError('退款跟踪条目格式错误')
+                    serial = str(item.get('environmentSerial') or '').strip()
+                    order_no = str(item.get('orderNo') or '').strip()
+                    bill = str(item.get('refundBillId') or '').strip()
+                    if not (serial and order_no and bill):
+                        raise ValueError('退款跟踪缺少环境序号/订单号/退款单号')
+                    clean.append({
+                        'environmentSerial': serial, 'orderNo': order_no,
+                        'refundBillId': bill,
+                        'storeName': str(item.get('storeName') or '').strip(),
+                    })
+                browser_mode = str(body.get('browserMode') or 'visible')
+                self._json(STATE.after_sale.start_track(
                     clean,
                     'visible' if browser_mode == 'visible' else 'headless'))
             elif path == '/api/after-sale/stop':

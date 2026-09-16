@@ -220,6 +220,54 @@ _JS_REFUND_ACCOUNT = (
     ' const t=String(e.innerText||"").replace(/\\s+/g," ").trim();'
     ' return /^[*0-9\\s-]{4,24}$/.test(t) ? t : ""; })()')
 
+# 退款跟踪：退款单页的进度时间轴与金额。只读回访用，绝不点任何按钮。
+# 阶段文案实测（真机）：受理「Solicitud de reembolso aceptada」→ 审核中
+# 「Reseña de SHEIN/Vendedor」+倒计时 →「Procesamiento de reembolsos de SHEIN」；
+# 终态「Reembolsos procesados / Reembolsado」（退款已处理，银行侧 5-15 工作日）。
+_JS_TRACK_STATE = ('(() => {' + _JS_NORM + '''
+  const cl = s => String(s||"").replace(/[\u4e00-\u9fa5]+/g," ")
+    .replace(/\s+/g," ").trim();
+  const body = cl(document.body ? document.body.innerText : "");
+  const i = body.toLowerCase().indexOf("solicitud de reembolso");
+  const timeline = i >= 0 ? body.slice(i, i + 600) : body.slice(0, 600);
+  const amount = (body.match(/\\$MXN ?([\d,]+\.\d{2})/g) || []).slice(0, 3);
+  const countdown = (body.match(/Termina en ([0-9:\\s]{4,12})/) || [])[1] || "";
+  const acc = document.querySelector(".refundAccount-info .tip");
+  const accText = acc ? String(acc.innerText||"").replace(/\s+/g," ").trim() : "";
+  return { timeline: timeline, fullText: body.slice(0, 2400),
+           amounts: amount, countdown: countdown.trim(),
+           account: /^[*0-9\\s-]{4,24}$/.test(accText) ? accText : "" }; })()''')
+
+# 顺序即优先级。注意：退款单页的时间轴**会把所有步骤都列出来**（含尚未到达的
+# 「Procesamiento de reembolsos de SHEIN」），所以不能按「某串是否出现」判当前步骤——
+# 那是踩过的坑。当前步骤的可靠信号是节点上的状态文案（审核节点带「está en revisión」
+# 与 24 小时倒计时）。因此 reviewing 必须排在 processing 之前，且只认当前步骤文案。
+PHASE_RULES = (
+    ('refunded', ('Reembolsos procesados', 'Reembolsado',
+                  'reembolso está siendo procesado')),
+    ('rejected', ('rechazad', 'denegad', 'Reembolso rechazado')),
+    ('reviewing', ('está en revisión', 'esta en revision', 'Termina en')),
+    ('processing', ('Procesamiento de reembolsos',)),
+)
+PHASE_LABELS = {
+    'submitted': '已受理', 'reviewing': '审核中', 'processing': '处理中',
+    'refunded': '已退款', 'rejected': '已拒绝', 'overdue': '超期未出结果',
+    'fail': '回访失败',
+}
+# 终态：回访到此为止，不再重复扫（批次自然收敛）
+TRACK_TERMINAL_PHASES = ('refunded', 'rejected')
+TRACK_OVERDUE_DAYS = 8   # 页面写明结果 7 天内给；超过即标超期
+
+
+def classify_track_phase(timeline):
+    """从退款单页时间轴文案判定阶段（终态优先，避免被历史文案带偏）。"""
+    text = str(timeline or '')
+    for phase, needles in PHASE_RULES:
+        if any(n in text for n in needles):
+            return phase
+    return 'submitted'
+
+
 _JS_TO_REFUND_LABEL = (
     '(() => location.href.indexOf("' + REFUND_LABEL_MARK + '") >= 0)()')
 
@@ -275,6 +323,7 @@ class AfterSaleClaimer(object):
         self._stop_event = threading.Event()
         self._scan_rows = {}
         self._claim_rows = {}
+        self._track_rows = {}
         self._screenshots = {}
 
     # ---- 对外入口（本地 HTTP 端点消费） ----
@@ -304,6 +353,24 @@ class AfterSaleClaimer(object):
             })
         return self._start('claim', cleaned, browser_mode, headless)
 
+    def start_track(self, items, browser_mode=None, headless=None):
+        """启动一批只读回访（退款跟踪）：items=[{environmentSerial, orderNo, refundBillId}]。"""
+        cleaned = []
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            serial = str(item.get('environmentSerial') or '').strip()
+            order_no = str(item.get('orderNo') or '').strip()
+            bill = str(item.get('refundBillId') or '').strip()
+            if not (serial and order_no and bill):
+                continue
+            cleaned.append({
+                'environmentSerial': serial, 'orderNo': order_no,
+                'refundBillId': bill,
+                'storeName': str(item.get('storeName') or '').strip()[:128],
+            })
+        return self._start('track', cleaned, browser_mode, headless)
+
     def request_stop(self):
         self._stop_event.set()
         return {'stopRequested': True}
@@ -313,6 +380,7 @@ class AfterSaleClaimer(object):
         with self._lock:
             scan_rows = [dict(r) for r in self._scan_rows.values()]
             claim_rows = [dict(r) for r in self._claim_rows.values()]
+            track_rows = [dict(r) for r in self._track_rows.values()]
             running = self._running
             mode = self._mode
         scan_rows.sort(key=lambda r: (str(r.get('environmentSerial') or ''),
@@ -325,7 +393,7 @@ class AfterSaleClaimer(object):
             row['screenshotStatus'] = 'ok' if row.get('screenshotSha256') \
                 else ''
         return {'running': running, 'mode': mode, 'rows': scan_rows,
-                'claimRows': claim_rows}
+                'claimRows': claim_rows, 'trackRows': track_rows}
 
     def screenshot_bytes(self, key):
         with self._lock:
@@ -345,6 +413,9 @@ class AfterSaleClaimer(object):
             if mode == 'scan':
                 self._scan_rows = {}
                 keys = [str(s) for s in items if str(s or '').strip()]
+            elif mode == 'track':
+                self._track_rows = {}
+                keys = [item['refundBillId'] for item in items]
             else:
                 self._claim_rows = {}
                 keys = [item['orderNo'] for item in items]
@@ -361,6 +432,8 @@ class AfterSaleClaimer(object):
             headless = self.headless if browser_mode != 'visible' else False
             if mode == 'scan':
                 self._run_scan(items, headless)
+            elif mode == 'track':
+                self._run_track(items, headless)
             else:
                 self._run_claim(items, headless)
         except Exception as exc:  # 批次级异常也要把 running 落回 False
@@ -595,6 +668,117 @@ class AfterSaleClaimer(object):
                 row = self._claim_rows.get(item['orderNo'])
                 if row and row.get('status') in CLAIM_RUNNING_STATES:
                     row['status'] = 'stopped'
+
+    def _run_track(self, items, headless):
+        """按环境分组只读回访；环境之间串行，单与单之间轻停顿。"""
+        env_index = self._env_index([i['environmentSerial'] for i in items])
+        with self._lock:
+            for item in items:
+                self._track_rows[item['refundBillId']] = {
+                    'refundBillId': item['refundBillId'],
+                    'orderNo': item['orderNo'],
+                    'environmentSerial': item['environmentSerial'],
+                    'storeName': item.get('storeName')
+                    or (env_index.get(item['environmentSerial'], {})
+                        .get('containerName')) or '',
+                    'status': 'queued', 'phase': '', 'phaseLabel': '',
+                    'timeline': '', 'countdown': '', 'refundAccount': '',
+                    'amount': '', 'checkedAt': '', 'note': '',
+                    'errorSummary': None, 'durationSeconds': None,
+                }
+        grouped = {}
+        for item in items:
+            grouped.setdefault(item['environmentSerial'], []).append(item)
+        for serial, group in grouped.items():
+            if self._stop_event.is_set():
+                break
+            self._track_env(serial, env_index.get(serial, {}), group, headless)
+        with self._lock:
+            for item in items:
+                row = self._track_rows.get(item['refundBillId'])
+                if row and row.get('status') in ('queued', 'running'):
+                    row['status'] = 'stopped'
+
+    def _track_env(self, serial, env, items, headless):
+        page = None
+        opened_by_me = False
+        try:
+            page, opened_by_me = self._open_env(env, serial, headless)
+            for index, item in enumerate(items):
+                if self._stop_event.is_set():
+                    return
+                if index:
+                    time.sleep(random.uniform(2.0, 5.0))  # 只读，轻停顿即可
+                try:
+                    self._track_one(page, item)
+                except Exception as exc:
+                    self._fail_track(
+                        item['refundBillId'], 'fail',
+                        scrub_text('%s: %s' % (type(exc).__name__,
+                                               str(exc)))[:200])
+        finally:
+            if opened_by_me:
+                self._stop_env(env, serial)
+
+    def _track_one(self, page, item):
+        """回访单个退款单：读进度时间轴判阶段 + 读退款账户。只读，不点任何按钮。"""
+        started = time.time()
+        bill = item['refundBillId']
+        self._publish_track(bill, {'status': 'running'})
+        url = ('%s/orders/refundLabel/%s?refund_bill_id_list=%s_%s'
+               % (ORIGIN, item['orderNo'], item['orderNo'], bill))
+        page.goto(url, dom_timeout=45, settle_seconds=4.0)
+        if self._login_required(page):
+            self._fail_track(bill, 'inuse', '买家端未登录（环境登录态缺失）')
+            return
+        # 时间轴异步渲染：轮询到出文案再判阶段（这个后台渲染时间不稳定，别估 sleep）
+        state = {}
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            state = page.js_evaluate(_JS_TRACK_STATE) or {}
+            if state.get('timeline'):
+                break
+            time.sleep(0.8)
+        timeline = state.get('timeline') or ''
+        phase = classify_track_phase(timeline)
+        if phase == 'submitted' and state.get('fullText'):
+            # 切片可能落在导航栏（页面标题大小写与预期不符时），用全文兜底再判一次
+            phase = classify_track_phase(state['fullText'])
+        account = state.get('account') or ''
+        if not account:
+            account = self._read_refund_account(page, timeout=6)
+        note = ''
+        if phase == 'rejected':
+            note = '需人工：到买家端看 Historial de negociación 的拒绝理由后决定是否申诉'
+        elif phase not in TRACK_TERMINAL_PHASES:
+            note = '未终态，下次回访继续跟'
+        amounts = state.get('amounts') or []
+        with self._lock:
+            row = self._track_rows.get(bill) or {}
+            row.update({
+                'status': 'ok', 'phase': phase,
+                'phaseLabel': PHASE_LABELS.get(phase, phase),
+                'timeline': timeline[:400],
+                'countdown': state.get('countdown') or '',
+                'refundAccount': account,
+                'amount': (amounts[0] if amounts else '').replace('$MXN', '').strip(),
+                'checkedAt': datetime.now(timezone.utc).isoformat(),
+                'note': note, 'errorSummary': None,
+                'durationSeconds': int(time.time() - started),
+            })
+            self._track_rows[bill] = row
+
+    def _fail_track(self, bill, status, reason):
+        with self._lock:
+            row = self._track_rows.get(bill) or {}
+            row.update({'status': status, 'errorSummary': reason})
+            self._track_rows[bill] = row
+
+    def _publish_track(self, bill, patch):
+        with self._lock:
+            row = self._track_rows.get(bill) or {}
+            row.update(patch)
+            self._track_rows[bill] = row
 
     def _claim_env_guarded(self, serial, env, items, headless):
         try:
