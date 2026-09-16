@@ -998,7 +998,7 @@ class WebCloudContractAlignmentTests(unittest.TestCase):
     def test_web_payload_keys_match_cloud_track_item(self):
         """Web 的 items 键必须是云端 AfterSaleTrackItem 的子集，且必填项齐全。"""
         html = LOCAL_HTML.read_text(encoding='utf-8')
-        body = html[html.index('async function asTrack()'):]
+        body = html[html.index('async function asTrack('):]
         body = body[:body.index('\n}')]
         keys = set(re.findall(r'(\w+):\s*r\.\w+', body))
         fields = set(re.findall(r'^    (\w+):', self._contract_block(
