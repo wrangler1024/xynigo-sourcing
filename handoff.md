@@ -100,3 +100,26 @@ Web 权威源
 - 新增 ORM 表先翻同库写法：UUID 主键 `mapped_column(primary_key=True, default=uuid.uuid4)`、
   时间戳 `server_default=func.now()`；新模型/契约要显式加进 `executor_service` 导入清单
 - 该后台的 `.refundAccount-info .status` 会渲染占位符 `Error`（平台自身问题），不是失败信号
+
+
+---
+
+## 【已合并】20260916 · codex/after-sale-claim-v1 → main
+
+**合并方式**：快进（`git push origin codex/after-sale-claim-v1:main`），无 merge commit。
+**结果**：`6e42c37 → be44249`（28 个提交），origin/main 现为 `be44249`，分支与 main 同步（领先 0）。
+
+**评审**：三轮，未参与实现方（Cursor）结论——三项必须改全部闭合（`authorize()`、track 进入
+BUSINESS 含 finish/phaseCounts、③ 列数与列序）、无关模块 colspan 无残留、增量未引入新问题，
+判定「可以合并；Web ④ 工作台串跑允许合并后补」。
+
+**合并后待办（各自需单独授权）**
+1. **工作台串跑**（只读、不需授权，建议先做）：Web 点「刷新退款进度」→ 云端下发 → 执行器回访
+   → 落跟踪表 → Web 渲染阶段/倒计时/卡掩码。缺的是「工作台按钮到云端」那一跳，其余各段已有依据。
+2. **评审建议项**：`phaseCounts` 校验拒 bool（`isinstance(True, int)` 为真，会计成 1；执行器不会发
+   bool，风险低）。合并后修，避免让已评审的 SHA 与被合并的 SHA 不一致。
+3. **部署测试服务器**：重建 auth 镜像 + 在实例执行迁移 0037（含 `ck_executor_task_type` 重建，
+   PG 取 ACCESS EXCLUSIVE 锁，建议发布窗口做）。
+4. **同事执行器升级**：云端与执行器必须同发，老执行器没有 `after.sale.*`。
+
+**版本**：合并未改版本号（仍 v0.17.20），发布是另一条流程，需单独授权。

@@ -4015,6 +4015,13 @@ def after_sale_tracking_snapshot(session, tenant_id, refund_bill_ids) -> dict:
         select(Model).where(Model.tenant_id == tenant_id,
                             Model.refund_bill_id.in_(bills))
     ).all()
+    # 商品图不在跟踪表：按订单号从提交结果表取（同单同图），避免为展示再存一份
+    from .models import AfterSaleClaimResult as ClaimResultModel
+    images = dict(session.execute(
+        select(ClaimResultModel.order_no, ClaimResultModel.goods_img).where(
+            ClaimResultModel.tenant_id == tenant_id,
+            ClaimResultModel.goods_img.is_not(None))
+    ).all())
     rows = [{
         "refundBillId": r.refund_bill_id,
         "orderNo": r.order_no or "",
@@ -4026,6 +4033,7 @@ def after_sale_tracking_snapshot(session, tenant_id, refund_bill_ids) -> dict:
         "countdown": r.countdown or "",
         "refundAccount": r.refund_account or "",
         "amount": r.amount or "",
+        "goodsImg": images.get(r.order_no) or "",
         "checkedAt": r.checked_at.isoformat() if r.checked_at else "",
         "note": (r.last_error or "") or "",
         "errorSummary": r.last_error,

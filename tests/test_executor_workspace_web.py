@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 import unittest
 
@@ -948,3 +949,50 @@ class AfterSaleThumbnailWiringTests(unittest.TestCase):
     def test_thumbnails_are_lazy_and_referrer_free(self):
         html = self._html()
         self.assertIn('loading="lazy" referrerpolicy="no-referrer"', html)
+
+
+class WebCloudContractAlignmentTests(unittest.TestCase):
+    """Web 发出的报文与读取的字段，必须与云端契约对齐。
+
+    这类错（前端读一个契约里没有的字段、或发的键云端不认）不会让任何一侧的
+    单测失败——两边各自自洽，只有串跑才会暴露。实测抓到：④ 前端读
+    `row.goodsImg`，而云端行契约里没有该字段 → 缩略图恒空。故常驻此检查。
+    """
+
+    CLOUD_CONTRACT = (LOCAL_HTML.parents[3] / 'cloud' / 'auth-service' / 'src'
+                      / 'xynigo_auth' / 'operation_contract.py')
+
+    def _contract_block(self, name):
+        text = self.CLOUD_CONTRACT.read_text(encoding='utf-8')
+        start = text.index(f'class {name}')
+        rest = text[start:]
+        nxt = rest.find('\n\nclass ')
+        return rest[:nxt] if nxt > 0 else rest
+
+    def test_web_payload_keys_match_cloud_track_item(self):
+        """Web 的 items 键必须是云端 AfterSaleTrackItem 的子集，且必填项齐全。"""
+        html = LOCAL_HTML.read_text(encoding='utf-8')
+        body = html[html.index('async function asTrack()'):]
+        body = body[:body.index('\n}')]
+        keys = set(re.findall(r'(\w+):\s*r\.\w+', body))
+        fields = set(re.findall(r'^    (\w+):', self._contract_block(
+            'AfterSaleTrackItem'), re.M))
+        self.assertTrue(keys, '未解析到 Web 的 items 键')
+        self.assertTrue(fields, '未解析到云端 AfterSaleTrackItem 字段')
+        self.assertFalse(keys - fields,
+                         f'Web 发了契约没定义的键：{sorted(keys - fields)}')
+        for required in ('environmentSerial', 'orderNo', 'refundBillId'):
+            self.assertIn(required, keys)
+
+    def test_web_reads_only_contracted_track_row_fields(self):
+        """Web 渲染 ④ 时读到的每个行字段，云端行契约都必须提供。"""
+        html = LOCAL_HTML.read_text(encoding='utf-8')
+        tpl = html[html.index('AS_STATE.trackRows.map('):]
+        tpl = tpl[:tpl.index("}).join('')")]
+        reads = set(re.findall(r'row\.(\w+)', tpl))
+        fields = set(re.findall(r'^    (\w+):', self._contract_block(
+            'AfterSaleTrackRow'), re.M))
+        self.assertTrue(reads and fields)
+        missing = sorted(reads - fields)
+        self.assertFalse(missing,
+                         f'④ 读了云端契约没有的字段（会恒为空）：{missing}')

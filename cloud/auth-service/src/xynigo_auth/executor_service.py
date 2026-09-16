@@ -1415,7 +1415,9 @@ class ExecutorChannelService:
         phase_counts = summary.get("phaseCounts")
         if phase_counts is not None and (
             not isinstance(phase_counts, dict)
-            or any(not isinstance(k, str) or not isinstance(v, int) or v < 0
+            or any(not isinstance(k, str)
+                   or isinstance(v, bool)          # bool 是 int 子类，必须显式拒
+                   or not isinstance(v, int) or v < 0
                    for k, v in phase_counts.items())
         ):
             raise ExecutorServiceError("executor_result_invalid", status_code=422)

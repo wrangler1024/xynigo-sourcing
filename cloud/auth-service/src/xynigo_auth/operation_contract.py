@@ -1203,6 +1203,8 @@ class AfterSaleTrackRow(BaseModel):
     countdown: str = Field(default="", max_length=24)
     refundAccount: str = Field(default="", max_length=40)
     amount: str = Field(default="", max_length=24)
+    # 商品图地址不在跟踪表里，由快照从提交结果表按订单号回填（同单同图，不重复存）
+    goodsImg: str = Field(default="", max_length=300)
     checkedAt: str = Field(default="", max_length=40)
     note: str | None = Field(default=None, max_length=200)
     errorSummary: str | None = Field(default=None, max_length=300)
