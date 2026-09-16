@@ -2292,6 +2292,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
       <div class="card-title" style="padding:17px 19px 0;">
         <div>④ 退款跟踪 <span class="legend">退款单号为主键 · 只读回访平台侧处理进度 · 到终态即冻结</span></div>
         <div class="table-actions">
+          <button class="btn" id="asTrackExport">导出 Excel</button>
           <button class="btn primary" id="asTrack">刷新退款进度</button>
         </div>
       </div>
@@ -5314,8 +5315,40 @@ async function asTrack(explicitItems) {
     asSetPhase('发起失败', String(e.message || e), false);
   }
 }
+// 导出的是「本页 ④ 这一次回访」读到的行——按回访任务取，不重跑回访。
+async function asExportTrack() {
+  const taskId = AS_STATE.trackTaskId;
+  if (!taskId) { toast('先点「刷新退款进度」或「回访指定单」，再导出'); return; }
+  const button = $('asTrackExport');
+  const label = button.textContent;
+  button.disabled = true; button.textContent = '正在生成…';
+  try {
+    const response = await fetch(
+      '/v1/after-sale/track/' + encodeURIComponent(taskId) + '/export',
+      {credentials:'same-origin', headers:{'Accept':'application/octet-stream',
+        'X-Xynigo-Source':'cloud_web_workspace'}});
+    if (!response.ok) {
+      let payload = {};
+      try { payload = await response.json(); } catch (_) {}
+      throw cloudApiError(payload, response.status);
+    }
+    const blob = await response.blob();
+    const filename = workspaceDownloadName(
+      response.headers.get('Content-Disposition'), '退款跟踪结果.xlsx');
+    const url = URL.createObjectURL(blob), link = document.createElement('a');
+    link.href = url; link.download = filename;
+    document.body.appendChild(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast(`已生成 ${filename}，请查看浏览器下载记录`);
+  } catch (error) {
+    toast(String(error.message || error));
+  } finally {
+    button.disabled = false; button.textContent = label;
+  }
+}
 $('asTrack').onclick = () => asTrack();
 $('asTrackManual').onclick = asTrackManual;
+$('asTrackExport').onclick = asExportTrack;
 
 function asSyncSelection() {
   const pickable = AS_STATE.rows.filter(r => r.orderNo && r.claimable

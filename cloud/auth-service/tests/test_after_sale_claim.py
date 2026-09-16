@@ -10,9 +10,14 @@ from __future__ import annotations
 import base64
 import hashlib
 import uuid
+from io import BytesIO
+from urllib.parse import quote
 
 from fastapi.testclient import TestClient
+from openpyxl import load_workbook
 from sqlalchemy import select
+
+from xynigo_auth.after_sale_export import HEADERS as EXPORT_HEADERS
 
 from test_executor_channel import (
     CSRF,
@@ -740,6 +745,94 @@ def test_after_sale_track_create_progress_and_whitelist(tmp_path) -> None:
         assert terminal.status_code == 200, terminal.text
         assert terminal.json()["data"]["status"] in (
             "succeeded", "completed"), terminal.text
+        break
+
+
+# ===== 退款跟踪导出：本任务清单内的行 → xlsx（列序 + 授权） =====
+def test_after_sale_track_export_workbook_and_auth(tmp_path) -> None:
+    """④ 导出：内容是本次回访任务清单内的行，未登录必须拦在授权层。
+
+    盯两类问题：导出列与工作台 ④ 表头漂移（整列错位自查抓不到），
+    以及路由漏授权（第一轮评审在同类路由上抓到过 authorize 写错）。
+    """
+    for web_client, device_client, ids, database in _e2e_setup(tmp_path):
+        executor_id, credential = ids["executorId"], ids["credential"]
+        heartbeat(device_client, credential, capabilities=AS_CAPABILITIES,
+                  client_version=CLIENT_VERSION)
+
+        created = web_client.post(
+            "/v1/after-sale/track",
+            json={
+                "idempotencyKey": "as-track-export-000001",
+                "executorId": executor_id,
+                "items": [
+                    {"environmentSerial": "4586", "orderNo": "GSH0001",
+                     "refundBillId": "2390833880014851"},
+                    {"environmentSerial": "4904", "orderNo": "GSH0002",
+                     "refundBillId": "2390783198795777"},
+                ],
+            },
+            headers=CSRF,
+        )
+        assert created.status_code == 202, created.text
+        task_id = created.json()["data"]["taskId"]
+        leased_id, lease_token = _lease_and_start(
+            device_client, credential, expect_type="after.sale.track.v1")
+        assert leased_id == task_id
+
+        progress = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/progress",
+            json={
+                "leaseToken": lease_token,
+                "phase": "after_sale.track.running",
+                "current": 2,
+                "total": 2,
+                "snapshot": {"rows": [
+                    _track_row("2390833880014851", order_no="GSH0001",
+                               serial="4586", phase="refunded",
+                               account="****2813", amount="35.26"),
+                    _track_row("2390783198795777", order_no="GSH0002",
+                               serial="4904"),
+                ]},
+            },
+            headers=device_headers(credential),
+        )
+        assert progress.status_code == 200, progress.text
+
+        exported = web_client.get(f"/v1/after-sale/track/{task_id}/export")
+        assert exported.status_code == 200, exported.text
+        assert exported.headers["content-type"].startswith(
+            "application/vnd.openxmlformats-officedocument"
+            ".spreadsheetml.sheet")
+        assert quote("退款跟踪结果_") in exported.headers["content-disposition"]
+        assert exported.headers["x-xynigo-row-count"] == "2"
+
+        sheet = load_workbook(BytesIO(exported.content)).active
+        assert [cell.value for cell in sheet[1]] == list(EXPORT_HEADERS)
+        assert sheet.max_row == 3
+        # 逐行成对校验：订单号与退款单号必须同属一行（错位就是把两列拆开了）
+        assert {
+            sheet.cell(row=index, column=2).value:
+            sheet.cell(row=index, column=4).value for index in (2, 3)
+        } == {"GSH0001": "2390833880014851",
+              "GSH0002": "2390783198795777"}
+        assert {
+            sheet.cell(row=index, column=7).value for index in (2, 3)
+        } == {"审核中", "已退款"}
+        # 商品图来自提交结果表：本用例没提交过，保持空列
+        assert [sheet.cell(row=index, column=3).value
+                for index in (2, 3)] == [None, None]
+
+        # 别的任务导不出来：不在清单里的任务号一律 404
+        assert web_client.get(
+            f"/v1/after-sale/track/{uuid.uuid4()}/export"
+        ).status_code == 404
+
+        # 未登录必须 401
+        web_client.cookies.clear()
+        assert web_client.get(
+            f"/v1/after-sale/track/{task_id}/export"
+        ).status_code == 401
         break
 
 

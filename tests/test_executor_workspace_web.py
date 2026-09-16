@@ -977,6 +977,55 @@ class AfterSaleThumbnailWiringTests(unittest.TestCase):
         self.assertIn('loading="lazy" referrerpolicy="no-referrer"', html)
 
 
+class AfterSaleTrackExportWiringTests(unittest.TestCase):
+    """④ 导出接线：按钮落在卡片里，导出对象是「这一次回访」，下载复用既有助手。"""
+
+    def _html(self):
+        local = LOCAL_HTML.read_text(encoding="utf-8")
+        self.assertEqual(local, CLOUD_HTML.read_text(encoding="utf-8"))
+        return local
+
+    def _body(self):
+        html = self._html()
+        body = html[html.index('async function asExportTrack()'):]
+        return html, body[:body.index('\n}\n')]
+
+    def test_export_button_sits_in_track_card(self):
+        html = self._html()
+        marker = html.index('id="asTrackExport"')
+        actions = html[html.rindex('<div class="table-actions">', 0, marker):]
+        actions = actions[:actions.index('</div>')]
+        # 同一个 table-actions 里，导出是次要按钮、刷新仍是主按钮
+        self.assertIn(
+            '<button class="btn" id="asTrackExport">导出 Excel</button>', actions)
+        self.assertIn(
+            '<button class="btn primary" id="asTrack">刷新退款进度</button>',
+            actions)
+        self.assertLess(actions.index('asTrackExport'), actions.index('id="asTrack"'))
+        self.assertIn("$('asTrackExport').onclick = asExportTrack;", html)
+
+    def test_export_targets_current_track_task(self):
+        """导出的是本页 ④ 这次回访的任务，不重跑回访、也不吃输入框里的原文。"""
+        _html, body = self._body()
+        self.assertIn('const taskId = AS_STATE.trackTaskId;', body)
+        self.assertIn("'/v1/after-sale/track/' + encodeURIComponent(taskId) "
+                      "+ '/export'", body)
+        self.assertNotIn('asTrackBills', body)
+
+    def test_export_without_track_task_asks_for_refresh_first(self):
+        _html, body = self._body()
+        self.assertIn("if (!taskId)", body)
+        self.assertIn('刷新退款进度', body)
+
+    def test_export_reuses_cloud_download_helpers(self):
+        """下载与报错都走既有助手，不再自造一套（错误文案才不会漂移）。"""
+        _html, body = self._body()
+        self.assertIn("credentials:'same-origin'", body)
+        self.assertIn('cloudApiError(payload, response.status)', body)
+        self.assertIn('workspaceDownloadName(', body)
+        self.assertIn("'X-Xynigo-Source':'cloud_web_workspace'", body)
+
+
 class WebCloudContractAlignmentTests(unittest.TestCase):
     """Web 发出的报文与读取的字段，必须与云端契约对齐。
 
@@ -1022,3 +1071,28 @@ class WebCloudContractAlignmentTests(unittest.TestCase):
         missing = sorted(reads - fields)
         self.assertFalse(missing,
                          f'④ 读了云端契约没有的字段（会恒为空）：{missing}')
+
+    def test_track_export_route_matches_web_url(self):
+        """导出 URL 与云端路由必须同一条；路径漂移只会表现为线上 404。"""
+        html = LOCAL_HTML.read_text(encoding='utf-8')
+        main = (self.CLOUD_CONTRACT.parent / 'main.py').read_text(
+            encoding='utf-8')
+        self.assertIn(
+            '@app.get("/v1/after-sale/track/{task_id}/export")', main)
+        self.assertIn(
+            "'/v1/after-sale/track/' + encodeURIComponent(taskId) + '/export'",
+            html)
+
+    def test_track_export_columns_match_workbench_table(self):
+        """导出列 = 工作台 ④ 表头，列序逐项相同（整列错位的防线）。"""
+        html = LOCAL_HTML.read_text(encoding='utf-8')
+        head = html[html.index('<table id="asTrackTable">'):]
+        head = head[:head.index('</tr>')]
+        columns = re.findall(r'<th[^>]*>([^<]+)</th>', head)
+        source = (self.CLOUD_CONTRACT.parent / 'after_sale_export.py').read_text(
+            encoding='utf-8')
+        block = source[source.index('HEADERS = ('):]
+        block = block[:block.index(')')]
+        headers = re.findall(r'"([^"]+)"', block)
+        self.assertTrue(columns and headers)
+        self.assertEqual(columns, headers)
