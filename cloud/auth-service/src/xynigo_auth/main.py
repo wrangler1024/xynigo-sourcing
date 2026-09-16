@@ -417,6 +417,14 @@ def as_utc(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
+def plan_error_detail(exc: CloudEnvironmentPlanError) -> dict[str, object]:
+    """HTTP detail for a plan failure, carrying machine-readable diagnostics."""
+    detail: dict[str, object] = {"code": exc.code, "message": str(exc)}
+    if exc.diagnostics:
+        detail["diagnostics"] = exc.diagnostics
+    return detail
+
+
 def create_app(
     settings: Settings | None = None,
     oauth_client: OAuthClient | None = None,
@@ -2581,7 +2589,12 @@ def create_app(
             session.commit()
             raise HTTPException(
                 status_code=exc.status,
-                detail={"code": exc.code, "message": str(exc)},
+                detail=plan_error_detail(exc),
+                headers=(
+                    {"Retry-After": str(exc.retry_after)}
+                    if exc.retry_after
+                    else None
+                ),
             ) from exc
         _add_audit(
             session,
@@ -2604,6 +2617,83 @@ def create_app(
                 "reused": result["reused"],
                 "uploadBytesApprox": len(body.contentBase64) * 3 // 4,
             },
+            **_request_log_context(request),
+        )
+        session.commit()
+        return result
+
+    @app.post("/v1/environment-plans/{cloud_plan_id}/release")
+    def release_environment_plan(
+        cloud_plan_id: str,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        """Drop a short-lived plan the operator no longer needs.
+
+        The plan quota is shared by the whole organization, so a plan left
+        behind by an abandoned upload used to consume a slot for the full TTL.
+        Releasing is idempotent: the operator can always press it again.
+        """
+        action = "resource.environment.plan.release"
+        actor = authorize_request(
+            request,
+            session,
+            permission="resource.environment.create",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action=action,
+        )
+        if environment_plan_service is None:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "environment_plan_cloud_disabled",
+                    "message": "云端买家号解析加密能力尚未启用",
+                },
+            )
+        try:
+            result = environment_plan_service.release(
+                session,
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                cloud_plan_id=cloud_plan_id,
+            )
+        except CloudEnvironmentPlanError as exc:
+            session.rollback()
+            _add_audit(
+                session,
+                request_id=request.state.request_id,
+                action=action,
+                result="denied",
+                outcome="not_found" if exc.status == 404 else "business_conflict",
+                tenant_id=actor.tenant.id,
+                actor_user_id=actor.user.id,
+                business_object_type="environment_account_plan",
+                business_object_id=cloud_plan_id,
+                failure_reason=exc.code,
+                details={"reason": exc.code},
+                **_request_log_context(request),
+            )
+            session.commit()
+            raise HTTPException(
+                status_code=exc.status,
+                detail=plan_error_detail(exc),
+            ) from exc
+        _add_audit(
+            session,
+            request_id=request.state.request_id,
+            action=action,
+            result="success",
+            tenant_id=actor.tenant.id,
+            actor_user_id=actor.user.id,
+            business_object_type="environment_account_plan",
+            business_object_id=result["cloudPlanId"],
+            change_summary={"released": result["released"]},
+            details={"alreadyReleased": result["alreadyReleased"]},
             **_request_log_context(request),
         )
         session.commit()
@@ -2659,7 +2749,7 @@ def create_app(
             session.rollback()
             raise HTTPException(
                 status_code=exc.status,
-                detail={"code": exc.code, "message": str(exc)},
+                detail=plan_error_detail(exc),
             ) from exc
         runs = OperationRunService(session)
         try:
@@ -3004,7 +3094,10 @@ def create_app(
             **_request_log_context(request),
         )
         session.commit()
-        raise HTTPException(status_code=exc.status, detail={"code": exc.code, "message": str(exc)})
+        detail: dict[str, object] = {"code": exc.code, "message": str(exc)}
+        if exc.diagnostics:
+            detail["diagnostics"] = exc.diagnostics
+        raise HTTPException(status_code=exc.status, detail=detail)
 
     def checkout_success(
         request: Request,
@@ -3844,6 +3937,7 @@ def create_app(
         if not unchanged:
             plan_record = None
             plan_accounts = None
+            assignments: list[dict[str, Any]] = []
             cleanup_blocked_refs: list[str] = []
             channel = executor_channel(session)
             verify_count = environment_verification_settings(channel, actor, run)
@@ -3893,8 +3987,82 @@ def create_app(
                     session.rollback()
                     raise HTTPException(
                         status_code=exc.status,
-                        detail={"code": exc.code, "message": str(exc)},
+                        detail=plan_error_detail(exc),
                     ) from exc
+                assignments = [
+                    item.model_dump(mode="json") for item in body.assignments
+                ]
+                skipped_conflicts: list[dict[str, object]] = []
+                if body.skipConflictingRows and plan_accounts:
+                    conflicts = runs.environment_plan_conflicts(
+                        tenant_id=actor.tenant.id,
+                        run=run,
+                        plan_accounts=plan_accounts,
+                    )
+                    if conflicts:
+                        conflict_indexes = {
+                            int(item["rowNumber"]) - 1 for item in conflicts
+                        }
+                        buyers = [
+                            label
+                            for item in assignments
+                            for label in [item["purchaserLabel"]] * int(item["count"])
+                        ]
+                        if len(buyers) != len(plan_accounts):
+                            purchase_error(
+                                request,
+                                session,
+                                actor,
+                                action,
+                                PurchaseServiceError(
+                                    "environment_assignment_invalid",
+                                    "采购员分配数量无效",
+                                    422,
+                                ),
+                                business_object_id=body.idempotencyKey,
+                            )
+                        kept_indexes = [
+                            index for index in range(len(plan_accounts))
+                            if index not in conflict_indexes
+                        ]
+                        plan_accounts = [plan_accounts[index] for index in kept_indexes]
+                        assignments = runs.collapse_assignments(
+                            [buyers[index] for index in kept_indexes]
+                        )
+                        skipped_conflicts = [
+                            {
+                                "rowNumber": item["rowNumber"],
+                                "emailMasked": item["emailMasked"],
+                                "orderMasked": item["orderMasked"],
+                                "environmentName": item["environmentName"],
+                                "batchLabel": item["batchLabel"],
+                            }
+                            for item in conflicts
+                        ]
+                        if not plan_accounts:
+                            purchase_error(
+                                request,
+                                session,
+                                actor,
+                                action,
+                                PurchaseServiceError(
+                                    "environment_plan_all_conflicting",
+                                    "本批全部买家号都已有环境，没有可创建的行",
+                                    409,
+                                    diagnostics=runs.conflict_diagnostics(
+                                        conflicts, len(conflicts)
+                                    ),
+                                ),
+                                business_object_id=body.idempotencyKey,
+                            )
+                        run.total_count = len(plan_accounts)
+                        run.progress_total = len(plan_accounts)
+                        summary = dict(run.request_summary or {})
+                        summary["skippedConflictRows"] = skipped_conflicts
+                        summary["skippedConflictCount"] = len(skipped_conflicts)
+                        summary["assignments"] = assignments
+                        run.request_summary = summary
+                        run.updated_at = utcnow()
                 account_refs = {
                     hashlib.sha256(
                         str(item.get("email") or "")
@@ -3926,10 +4094,7 @@ def create_app(
                     planned_environment_names = runs.reserve_environment_names(
                         run=run,
                         plan_accounts=plan_accounts or [],
-                        assignments=[
-                            item.model_dump(mode="json")
-                            for item in body.assignments
-                        ],
+                        assignments=assignments,
                     )
                 except PurchaseServiceError as exc:
                     session.rollback()
@@ -3946,6 +4111,9 @@ def create_app(
                 if body.mode == "bound"
                 else "environment.create-backup.v1"
             )
+            if body.mode == "bound" and run.total_count != body.totalCount:
+                # Rows dropped by the duplicate guard must not inflate the sample.
+                verify_count = min(int(verify_count or 0), run.total_count)
             task_payload = {
                 "runId": str(run.id),
                 "taskId": str(run.root_run_id or run.id),
@@ -3957,12 +4125,17 @@ def create_app(
                 "environmentGroup": body.environmentGroup,
                 "cloudPlanId": body.cloudPlanId,
                 "buyerLabel": body.buyerLabel,
-                "totalCount": body.totalCount,
+                "totalCount": run.total_count,
                 "verifySampleCount": verify_count,
                 "ipVerificationProgress": 1,
-                "assignments": [
-                    item.model_dump(mode="json") for item in body.assignments
-                ],
+                "assignments": (
+                    assignments
+                    if body.mode == "bound"
+                    else [
+                        item.model_dump(mode="json")
+                        for item in body.assignments
+                    ]
+                ),
                 "inventoryCacheFresh": runs.environment_inventory_cache_status(
                     tenant_id=actor.tenant.id
                 )["fresh"],
@@ -3990,6 +4163,14 @@ def create_app(
             run.phase = "queued"
             run.updated_at = utcnow()
         result = runs.environment_snapshot(run, unchanged=unchanged)
+        skipped_conflict_count = int(
+            (run.request_summary or {}).get("skippedConflictCount") or 0
+        )
+        if skipped_conflict_count and not unchanged:
+            result["skippedConflictCount"] = skipped_conflict_count
+            result["skippedConflictRows"] = list(
+                (run.request_summary or {}).get("skippedConflictRows") or []
+            )
         _add_audit(
             session,
             request_id=request.state.request_id,
@@ -4003,6 +4184,7 @@ def create_app(
                 "status": run.status,
                 "totalCount": run.total_count,
                 "unchanged": unchanged,
+                "skippedConflictCount": skipped_conflict_count,
             },
             details={
                 "latestRunId": str(run.id),
@@ -4291,7 +4473,7 @@ def create_app(
                         )
                     except CloudEnvironmentPlanError as exc:
                         raise PurchaseServiceError(
-                            exc.code, str(exc), exc.status
+                            exc.code, str(exc), exc.status, exc.diagnostics
                         ) from exc
                     takeover_cleanup_blocked = sorted(
                         runs.acquire_environment_account_guards(

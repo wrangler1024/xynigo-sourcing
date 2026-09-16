@@ -47,9 +47,19 @@ def _as_aware(value: datetime) -> datetime:
 
 
 class CloudEnvironmentPlanError(RuntimeError):
-    def __init__(self, code: str, message: str, *, status: int = 422) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        status: int = 422,
+        diagnostics: dict[str, Any] | None = None,
+        retry_after: int | None = None,
+    ) -> None:
         self.code = code
         self.status = status
+        self.diagnostics = diagnostics
+        self.retry_after = retry_after
         super().__init__(message)
 
 
@@ -125,6 +135,100 @@ class CloudEnvironmentPlanService:
         return len(records)
 
     @staticmethod
+    def _released_reason(record: EnvironmentAccountPlan) -> str | None:
+        summary = record.preview_summary or {}
+        reason = str(summary.get("releasedBy") or "").strip()
+        return reason or None
+
+    @classmethod
+    def _release_record(
+        cls, record: EnvironmentAccountPlan, *, reason: str
+    ) -> EnvironmentAccountPlan:
+        """Terminal state for a plan the operator no longer needs.
+
+        Reuses the existing "expired" status so the quota counter and every
+        guard keep working, and records why it ended so the next attempt gets
+        an accurate message instead of a bare "已过期".
+        """
+        record.status = "expired"
+        record.encrypted_payload = None
+        summary = dict(record.preview_summary or {})
+        summary["releasedBy"] = reason
+        summary["releasedAt"] = utcnow().isoformat()
+        record.preview_summary = summary
+        return record
+
+    def release(
+        self,
+        session: Session,
+        *,
+        tenant_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        cloud_plan_id: object,
+        reason: str = "user",
+    ) -> dict[str, Any]:
+        record = session.scalar(
+            select(EnvironmentAccountPlan)
+            .where(
+                EnvironmentAccountPlan.id == self._parse_cloud_plan_id(cloud_plan_id),
+                EnvironmentAccountPlan.tenant_id == tenant_id,
+                EnvironmentAccountPlan.created_by_user_id == actor_user_id,
+            )
+            .with_for_update()
+        )
+        if record is None:
+            raise CloudEnvironmentPlanError(
+                "environment_plan_not_found",
+                "解析计划不存在或不属于当前用户",
+                status=404,
+            )
+        already_released = record.status == "expired"
+        if not already_released:
+            self._release_record(record, reason=reason)
+            session.flush()
+        return {
+            "cloudPlanId": str(record.id),
+            "released": not already_released,
+            "releasedBy": self._released_reason(record) or reason,
+            "alreadyReleased": already_released,
+        }
+
+    def _supersede_live_plans(
+        self,
+        session: Session,
+        *,
+        tenant_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+        site: str,
+        environment_group: str,
+        keep_plan_id: uuid.UUID,
+    ) -> int:
+        """Release this user's earlier live plans for the same site and group.
+
+        One operator only ever submits one plan per site+group at a time; the
+        superseded plans used to sit in the quota for the full TTL, so a run of
+        retry uploads locked the whole organization out.
+        """
+        records = list(
+            session.scalars(
+                select(EnvironmentAccountPlan).where(
+                    EnvironmentAccountPlan.tenant_id == tenant_id,
+                    EnvironmentAccountPlan.created_by_user_id == actor_user_id,
+                    EnvironmentAccountPlan.status == "parsed",
+                    EnvironmentAccountPlan.expires_at > utcnow(),
+                    EnvironmentAccountPlan.site == site,
+                    EnvironmentAccountPlan.environment_group == environment_group,
+                    EnvironmentAccountPlan.id != keep_plan_id,
+                )
+            )
+        )
+        for record in records:
+            self._release_record(record, reason="superseded")
+        if records:
+            session.flush()
+        return len(records)
+
+    @staticmethod
     def _parse_cloud_plan_id(value: object) -> uuid.UUID:
         try:
             return uuid.UUID(str(value or ""))
@@ -161,9 +265,31 @@ class CloudEnvironmentPlanService:
             record.encrypted_payload = None
             session.flush()
             raise CloudEnvironmentPlanError(
-                "environment_plan_expired", "解析计划已过期，请重新选择 xlsx", status=410
+                *self._inactive_plan_error(record),
+                status=self._inactive_plan_status(record),
             )
         return record
+
+    @classmethod
+    def _inactive_plan_error(cls, record: EnvironmentAccountPlan) -> tuple[str, str]:
+        """Name the actual reason a plan can no longer be submitted."""
+        reason = cls._released_reason(record)
+        if reason == "superseded":
+            return (
+                "environment_plan_superseded",
+                "该解析计划已被同站点分组的新一次文件解析取代，请重新选择 xlsx",
+            )
+        if reason == "user":
+            return (
+                "environment_plan_released",
+                "该解析计划已放弃，请重新选择 xlsx",
+            )
+        return ("environment_plan_expired", "解析计划已过期，请重新选择 xlsx")
+
+    @classmethod
+    def _inactive_plan_status(cls, record: EnvironmentAccountPlan) -> int:
+        reason = cls._released_reason(record)
+        return 409 if reason in {"superseded", "user"} else 410
 
     def _accounts(self, record: EnvironmentAccountPlan) -> list[object]:
         if not record.encrypted_payload:
@@ -367,6 +493,14 @@ class CloudEnvironmentPlanService:
                 "并发解析计划状态已变化，请重试上传",
                 status=409,
             ) from retry_exc
+        self._supersede_live_plans(
+            session,
+            tenant_id=tenant_id,
+            actor_user_id=actor_user_id,
+            site=reusable.site,
+            environment_group=reusable.environment_group,
+            keep_plan_id=reusable.id,
+        )
         return self._public_result(reusable, reused=True)
 
     def parse(
@@ -435,6 +569,14 @@ class CloudEnvironmentPlanService:
                     source_hash=source_hash,
                     cause=exc,
                 )
+            self._supersede_live_plans(
+                session,
+                tenant_id=tenant_id,
+                actor_user_id=actor_user_id,
+                site=normalized_site,
+                environment_group=normalized_group,
+                keep_plan_id=reusable.id,
+            )
             return self._public_result(reusable, reused=True)
         active_count = int(
             session.scalar(
@@ -447,10 +589,34 @@ class CloudEnvironmentPlanService:
             or 0
         )
         if active_count >= self.max_active_plans_per_tenant:
+            next_expiry = session.scalar(
+                select(func.min(EnvironmentAccountPlan.expires_at)).where(
+                    EnvironmentAccountPlan.tenant_id == tenant_id,
+                    EnvironmentAccountPlan.status == "parsed",
+                    EnvironmentAccountPlan.expires_at > utcnow(),
+                )
+            )
+            retry_after = 60
+            if next_expiry is not None:
+                remaining = (_as_aware(next_expiry) - utcnow()).total_seconds()
+                retry_after = max(1, int(remaining) + 1)
+            minutes = max(1, -(-retry_after // 60))
             raise CloudEnvironmentPlanError(
                 "environment_plan_limit",
-                "当前组织的短时解析计划过多，请等待旧计划过期后重试",
+                "当前组织的短时解析计划过多，请在约"
+                f" {minutes} 分钟后重试（也可以先在解析结果处点“放弃本次解析”释放名额）",
                 status=429,
+                diagnostics={
+                    "limit": self.max_active_plans_per_tenant,
+                    "activePlans": active_count,
+                    "retryAfterSeconds": retry_after,
+                    "nextExpiryAt": (
+                        _as_aware(next_expiry).isoformat()
+                        if next_expiry is not None
+                        else None
+                    ),
+                },
+                retry_after=retry_after,
             )
         try:
             accounts = parse_vendor_workbook(BytesIO(source))
@@ -543,6 +709,14 @@ class CloudEnvironmentPlanService:
                 source_hash=source_hash,
                 cause=exc,
             )
+        self._supersede_live_plans(
+            session,
+            tenant_id=tenant_id,
+            actor_user_id=actor_user_id,
+            site=normalized_site,
+            environment_group=normalized_group,
+            keep_plan_id=record.id,
+        )
         return self._public_result(record, reused=False)
 
     def load_for_execution(

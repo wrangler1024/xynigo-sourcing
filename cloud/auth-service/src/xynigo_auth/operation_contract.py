@@ -80,6 +80,13 @@ class EnvironmentCreationRunCreateBody(EnvironmentSiteConfirmationBody):
     assignments: list[PurchaserAllocationSummary] = Field(
         default_factory=list, max_length=100
     )
+    skipConflictingRows: StrictBool = Field(
+        default=False,
+        description=(
+            "Operator-confirmed retry after a duplicate-blocked submit: drop "
+            "the rows that already own an environment and create the rest."
+        ),
+    )
 
     @field_validator("environmentGroup", "buyerLabel")
     @classmethod

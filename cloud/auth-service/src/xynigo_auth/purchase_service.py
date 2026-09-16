@@ -9,6 +9,7 @@ import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
@@ -33,10 +34,21 @@ from .purchase_contract import (
 
 
 class PurchaseServiceError(Exception):
-    """业务失败。code 给前端/API 识别，status 是 HTTP 状态码。"""
-    def __init__(self, code: str, message: str, status: int) -> None:
+    """业务失败。code 给前端/API 识别，status 是 HTTP 状态码。
+
+    diagnostics 是可选的机器可读补充（例如建环境判重命中的具体行），只允许
+    放脱敏后的结构化数据；前端通过 error.diagnostics 读取，不参与文案拼接。
+    """
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        status: int,
+        diagnostics: dict[str, Any] | None = None,
+    ) -> None:
         self.code = code
         self.status = status
+        self.diagnostics = diagnostics
         super().__init__(message)
 
 

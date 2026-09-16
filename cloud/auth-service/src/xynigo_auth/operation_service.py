@@ -823,13 +823,13 @@ class OperationRunService:
         value = str(account.get("orderNo") or "").strip().casefold()
         return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
 
-    def _conflict_task_labels(
+    def _conflict_label_map(
         self, tenant_id: uuid.UUID, run_ids: Iterable[uuid.UUID | None]
-    ) -> list[str]:
-        """Stable 创建历史 task labels (root id prefixes) for conflict runs."""
+    ) -> dict[uuid.UUID, str]:
+        """创建历史 task label per run id, resolved in one query."""
         wanted = {run_id for run_id in run_ids if run_id is not None}
         if not wanted:
-            return []
+            return {}
         rows_ = self.session.execute(
             select(
                 EnvironmentCreationRun.id,
@@ -839,11 +839,18 @@ class OperationRunService:
                 EnvironmentCreationRun.id.in_(wanted),
             )
         ).all()
-        labels = {str(root_id or run_id)[:8] for run_id, root_id in rows_}
-        if len(rows_) < len(wanted):
-            found = {run_id for run_id, _ in rows_}
-            labels.update(str(run_id)[:8] for run_id in wanted - found)
-        return sorted(labels)
+        mapping = {
+            run_id: str(root_id or run_id)[:8] for run_id, root_id in rows_
+        }
+        for run_id in wanted - set(mapping):
+            mapping[run_id] = str(run_id)[:8]
+        return mapping
+
+    def _conflict_task_labels(
+        self, tenant_id: uuid.UUID, run_ids: Iterable[uuid.UUID | None]
+    ) -> list[str]:
+        """Stable 创建历史 task labels (root id prefixes) for conflict runs."""
+        return sorted(set(self._conflict_label_map(tenant_id, run_ids).values()))
 
     def _conflict_batch_hint(
         self, tenant_id: uuid.UUID, run_ids: Iterable[uuid.UUID | None]
@@ -853,6 +860,115 @@ class OperationRunService:
             return ""
         shown = "、".join(labels[:3]) + (" 等" if len(labels) > 3 else "")
         return f"（原批次任务 {shown}，可在创建历史搜索核对）"
+
+    CONFLICT_ROW_LIMIT = 50
+
+    @staticmethod
+    def _mask_order(value: object) -> str:
+        token = str(value or "")
+        if len(token) <= 8:
+            return "*" * len(token)
+        return token[:4] + "***" + token[-4:]
+
+    def environment_plan_conflicts(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        run: EnvironmentCreationRun,
+        plan_accounts: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Rows that already own an environment, mirroring the submit guards.
+
+        ``reserve_environment_names`` refuses the whole batch when a single row
+        is already bound.  Operators otherwise have to guess which rows to
+        delete from the xlsx, so the same check is exposed per row: the caller
+        reports the rows (masked) and may drop exactly those rows on request.
+        """
+        if not plan_accounts:
+            return []
+        account_refs = [self._account_ref(item) for item in plan_accounts]
+        order_refs = [self._source_order_ref(item) for item in plan_accounts]
+        inventory_rows = list(self.session.scalars(
+            select(HubEnvironmentInventory).where(
+                HubEnvironmentInventory.tenant_id == tenant_id,
+                or_(
+                    HubEnvironmentInventory.account_ref.in_(account_refs),
+                    HubEnvironmentInventory.source_order_ref.in_(order_refs),
+                ),
+            )
+        ))
+        observations = {}
+        for row in self.session.scalars(
+            select(HubEnvironmentObservation).where(
+                HubEnvironmentObservation.tenant_id == tenant_id,
+                HubEnvironmentObservation.source_order_ref.in_(order_refs),
+            )
+        ):
+            observations.setdefault(row.source_order_ref, row.environment_name)
+        conflicts: dict[int, dict[str, Any]] = {}
+        matched_runs: dict[int, uuid.UUID] = {}
+        order_observations: dict[int, str] = {}
+        for index, account in enumerate(plan_accounts):
+            account_ref = self._account_ref(account)
+            order_ref = self._source_order_ref(account)
+            matched = [
+                row for row in inventory_rows
+                if (
+                    (row.account_ref == account_ref or row.source_order_ref == order_ref)
+                    and row.source_run_id != run.id
+                    and row.state != "deleted"
+                )
+            ]
+            if matched or order_ref in observations:
+                conflicts[index] = {
+                    "rowNumber": index + 1,
+                    "emailMasked": mask_email(str(account.get("email") or "")),
+                    "orderMasked": self._mask_order(account.get("orderNo")),
+                    "reasons": [],
+                    "environmentName": matched[0].environment_name if matched else None,
+                    "environmentGroup": matched[0].environment_group if matched else None,
+                    "site": matched[0].site if matched else None,
+                    "batchLabel": None,
+                }
+                if matched:
+                    conflicts[index]["reasons"].append("environment_bound")
+                    if matched[0].source_run_id is not None:
+                        matched_runs[index] = matched[0].source_run_id
+                if order_ref in observations:
+                    conflicts[index]["reasons"].append("environment_observed")
+                    order_observations[index] = observations[order_ref]
+        labels = self._conflict_label_map(tenant_id, matched_runs.values())
+        for index, payload in conflicts.items():
+            if index in matched_runs:
+                payload["batchLabel"] = labels.get(matched_runs[index])
+            if index in order_observations:
+                payload["environmentName"] = (
+                    payload["environmentName"] or order_observations[index]
+                )
+        return [conflicts[index] for index in sorted(conflicts)]
+
+    @classmethod
+    def conflict_diagnostics(
+        cls, conflicts: list[dict[str, Any]], total_rows: int
+    ) -> dict[str, Any]:
+        return {
+            "totalRows": total_rows,
+            "conflictCount": len(conflicts),
+            "skippableRows": len(conflicts),
+            "rows": conflicts[: cls.CONFLICT_ROW_LIMIT],
+            "truncated": len(conflicts) > cls.CONFLICT_ROW_LIMIT,
+        }
+
+    @staticmethod
+    def collapse_assignments(labels: list[str]) -> list[dict[str, Any]]:
+        """Rebuild purchaser assignments after rows were dropped."""
+        collapsed: list[dict[str, Any]] = []
+        for label in labels:
+            if collapsed and collapsed[-1]["purchaserLabel"] == label:
+                collapsed[-1]["count"] += 1
+            else:
+                collapsed.append({"purchaserLabel": label, "count": 1})
+        return collapsed
 
     def environment_inventory_cache_status(
         self, *, tenant_id: uuid.UUID, now: datetime | None = None
@@ -1244,6 +1360,14 @@ class OperationRunService:
             if row.source_run_id != run.id and row.state != "deleted"
         ]
         if blocking:
+            conflicts = [
+                item for item in self.environment_plan_conflicts(
+                    tenant_id=run.tenant_id,
+                    run=run,
+                    plan_accounts=plan_accounts,
+                )
+                if "environment_bound" in item["reasons"]
+            ]
             raise PurchaseServiceError(
                 "environment_account_already_bound",
                 "买家号或号商单号已存在 HubStudio 环境，请勿跨设备重复创建"
@@ -1252,6 +1376,7 @@ class OperationRunService:
                     (row.source_run_id for row in blocking)
                 ),
                 409,
+                diagnostics=self.conflict_diagnostics(conflicts, len(plan_accounts)),
             )
         reusable = {
             row.account_ref: row for row in existing
@@ -1265,11 +1390,20 @@ class OperationRunService:
         ))
         if observed_environments:
             shown = "、".join(sorted(set(observed_environments))[:3])
+            conflicts = [
+                item for item in self.environment_plan_conflicts(
+                    tenant_id=run.tenant_id,
+                    run=run,
+                    plan_accounts=plan_accounts,
+                )
+                if "environment_observed" in item["reasons"]
+            ]
             raise PurchaseServiceError(
                 "environment_account_already_bound",
                 "买家号或号商单号已存在 HubStudio 环境，请勿跨设备重复创建"
                 f"（环境 {shown}）",
                 409,
+                diagnostics=self.conflict_diagnostics(conflicts, len(plan_accounts)),
             )
 
         now = utcnow()
