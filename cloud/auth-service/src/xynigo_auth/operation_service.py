@@ -3518,7 +3518,13 @@ def after_sale_claim_snapshot(session, run: AfterSaleClaimRun) -> dict:
         select(ResultModel).where(ResultModel.run_id == run.id)
     ).all()
     result_rows = []
-    for row in sorted(rows, key=lambda item: item.order_no or ""):
+    order_index = {
+        str(item.get("orderNo") or ""): index
+        for index, item in enumerate((run.request_summary or {}).get("items") or [])
+        if isinstance(item, dict)
+    }
+    for row in sorted(rows, key=lambda item: (
+            order_index.get(item.order_no, len(order_index)), item.order_no or "")):
         result_rows.append({
             "orderNo": row.order_no,
             "environmentSerial": row.environment_serial or "",
@@ -4197,6 +4203,8 @@ def after_sale_tracking_snapshot(session, tenant_id, refund_bill_ids) -> dict:
         select(Model).where(Model.tenant_id == tenant_id,
                             Model.refund_bill_id.in_(bills))
     ).all()
+    bill_index = {bill: index for index, bill in enumerate(bills)}
+    records.sort(key=lambda record: bill_index[record.refund_bill_id])
     # 商品图不在跟踪表：按订单号从提交结果表取（同单同图），避免为展示再存一份
     from .models import AfterSaleClaimResult as ClaimResultModel
     images = dict(session.execute(

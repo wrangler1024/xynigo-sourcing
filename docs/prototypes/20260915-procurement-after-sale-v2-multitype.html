@@ -2204,7 +2204,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
     <!-- 运行状态条（原型定版）：扫描 / 提交 / 回访 三段共用一条，放在 ① 之上、sticky 常驻（原型定版的位置）。
          必须是面板级而不是放进卡片——卡片内 sticky 会被卡片边界带走，往下滚就看不见了。
          装的是阶段横幅 + 进度条 + 进度文本 + 停止；节点与 asSetPhase/asProgress 的接线不变。
-         终态自动收起，折成一行只留标题与「展开」。 -->
+         扫描完成后保持当前展开/收起状态，由用户手动控制。 -->
     <div id="asRunStrip">
       <div class="query-phase-banner" id="asPhaseBanner" hidden>
         <span class="spinner" id="asPhaseSpin" hidden aria-hidden="true"></span>
@@ -5395,6 +5395,7 @@ const AS_LIST_KEY = 'afterSaleEnvList';
 const AS_STATE = {
   mode: '', type: 'refund', scanTaskId: null, runId: null, runLabel: '',
   trackTaskId: null, timer: null, running: false,
+  polling: false, claimItems: [], trackItems: [],
   rows: [], selected: new Set(), claimRows: [], stopRequested: false,
   pollErrors: 0, etaBase: null, status: ''
 };
@@ -5440,7 +5441,7 @@ function asRunIdOf(data) {
   return d.runId || (d.run && (d.run.id || d.run.runId)) || null;
 }
 // 运行状态条（#asRunStrip）是三段操作共用的那一条：显示/进度/停止都在里面，
-// 终态自动收起（折成一行只留标题与「展开」），长会话不占纵向空间。
+// 扫描终态不再自动收起；其他阶段保留既有终态折叠行为。
 const asStripTerminal = title => /完成|失败|已停止|不可用/.test(String(title || ''));
 let asStripCollapseTimer = null;
 function asStripToggle(collapsed) {
@@ -5460,7 +5461,9 @@ function asSetPhase(title, text, spin) {
     clearTimeout(asStripCollapseTimer);
     asStripCollapseTimer = null;
   }
-  // 终态才收起：先让用户看到完成文案，2.2 秒后再折；跑动中一律展开
+  // 扫描完成保留用户选择，不定时折叠，也不强制展开用户手动收起的卡片。
+  if (!spin && AS_STATE.mode === 'scan') return;
+  // 其他阶段终态延迟折叠；新操作开始时展开。
   if (!spin && asStripTerminal(title)) {
     asStripCollapseTimer = setTimeout(() => asStripToggle(true), 2200);
   } else {
@@ -5468,9 +5471,9 @@ function asSetPhase(title, text, spin) {
   }
 }
 function asProgress(data) {
-  const total = Math.max(Number(data.progressTotal || 0),
-    (data.rows || []).length, Number(data.totalCount || 0));
-  const done = Number(data.progressCompleted || 0);
+  const total = Math.max(0, Number(data.progressTotal ?? data.totalCount
+    ?? (data.rows || []).length) || 0);
+  const done = Math.min(total, Math.max(0, Number(data.progressCompleted || 0)));
   $('asBar').style.width = (total ? Math.round(done / total * 100) : 0) + '%';
   const durations = (data.rows || []).map(r => Number(r.durationSeconds || 0))
     .filter(v => v > 0);
@@ -5658,7 +5661,9 @@ function asRenderTrackRows(rows) {
       <td class="as-order" style="font-size:12px">${esc(row.refundBillId || '')}</td>
       <td class="sub-text">${esc(row.refundAccount || '—')}</td>
       <td>${esc(row.amount || '—')}</td>
-      <td>${asTimeline(phase)}<span class="as-tl-label">${esc(row.phaseLabel || AS_TL_LABEL[phase] || '—')}</span></td>
+      <td>${['queued', 'running', 'stopped', 'fail', 'login', 'inuse'].includes(row.status)
+        ? `<span class="as-tl-label">${esc(({queued:'等待', running:'回访中', stopped:'已停止', fail:'回访失败', login:'未登录', inuse:'环境不可用'})[row.status])}</span>`
+        : `${asTimeline(phase)}<span class="as-tl-label">${esc(row.phaseLabel || AS_TL_LABEL[phase] || '—')}</span>`}</td>
       <td>${esc(row.countdown || '—')}</td>
       <td class="sub-text">${esc((row.checkedAt || '').replace('T', ' ').slice(5, 16) || '—')}</td>
       <td class="hint">${esc(row.note || row.errorSummary || '—')}</td></tr>`;
@@ -5719,10 +5724,12 @@ async function asTrack(explicitItems) {
     AS_STATE.stopRequested = false;
     AS_STATE.pollErrors = 0;
     AS_STATE.etaBase = null;
+    AS_STATE.trackItems = items.map(item => ({...item}));
     AS_STATE.trackRows = [];
     AS_STATE.trackTotal = items.length;
     $('asTrack').disabled = true; $('asStop').disabled = false;
-    asRenderTrackRows([]);
+    asRenderTrackRows(asOrderedRows(AS_STATE.trackItems, [], 'refundBillId'));
+    asProgress({progressTotal: items.length, progressCompleted: 0, unit: '单'});
     asSetPhase('回访运行中', `共 ${items.length} 个退款单 · 只读，不动订单与退款数据`, true);
     asPoll();
   } catch (e) {
@@ -6004,15 +6011,15 @@ function asSyncSelection() {
     : '扫描完成后勾选要提交的订单。';
 }
 function asSelectedItems() {
-  const byOrder = new Map(AS_STATE.rows.map(r => [r.orderNo, r]));
-  return [...AS_STATE.selected].map(orderNo => {
-    const row = byOrder.get(orderNo) || {};
+  // 清单从上到下发起，复选框的点击先后不改变执行顺序。
+  return AS_STATE.rows.filter(row => AS_STATE.selected.has(row.orderNo)
+    && row.claimable && row.status === 'ok').map(row => {
     // 送达时间与商品图在 ② 扫描时已经读到，必须随提交单一起带上：
     // 执行器只把它们透传进 ③ 的行与云端结果表，不带就是空列
     // （③ 的送达时间恒为「—」、商品图恒为空就是这么来的）。
     return {
       environmentSerial: row.environmentSerial || '',
-      orderNo: orderNo,
+      orderNo: row.orderNo,
       storeName: row.storeName || '',
       packageNo: '',
       deliveredAt: row.deliveredAt || '',
@@ -6115,8 +6122,9 @@ async function asSubmitItems(items, options) {
     AS_STATE.stopRequested = false;
     AS_STATE.pollErrors = 0;
     AS_STATE.etaBase = null;
+    AS_STATE.claimItems = items.map(item => ({...item}));
     AS_STATE.claimRows = [];
-    asRenderClaimRows([]);
+    asRenderClaimRows(asOrderedRows(AS_STATE.claimItems, [], 'orderNo'));
     $('asScan').disabled = true; $('asSubmit').disabled = true; $('asStop').disabled = false;
     asSetPhase(label + '中',
       `共 ${items.length} 单 · 退款路径「原路退回」· 逐单串行提交，单间随机停顿`, true);
@@ -6227,19 +6235,28 @@ async function asDirectSubmit() {
   if (!confirm(notes.join('\n') + '\n\n确认继续？')) return;
   await asSubmitItems(parsed.items, { label: '提交指定单' });
 }
+function asOrderedRows(items, rows, key) {
+  if (!items || !items.length) return rows || [];
+  const results = new Map((rows || []).map(row => [row[key], row]));
+  return items.map(item => ({...item, status:'queued', ...(results.get(item[key]) || {})}));
+}
 async function asPoll() {
+  if (AS_STATE.polling) return;
+  AS_STATE.polling = true;
   try {
     if (AS_STATE.mode === 'scan' && AS_STATE.scanTaskId) {
+      const taskId = AS_STATE.scanTaskId;
       const res = await cloudFetchJson('/v1/after-sale/scan/'
         + encodeURIComponent(AS_STATE.scanTaskId));
       const data = (res || {}).data || {};
+      if (AS_STATE.mode !== 'scan' || AS_STATE.scanTaskId !== taskId) return;
       const summary = data.summary || {};
       const rows = summary.rows || [];
       asRenderScanRows(rows);
       // 进度按「环境」计：一个环境可能产出多行订单，用去重后的环境数
       const envTotal = Number(summary.totalCount || 0);
       const envDone = new Set(rows
-        .filter(r => ['ok', 'empty', 'skip', 'fail', 'login', 'inuse',
+        .filter(r => ['ok', 'empty', 'skip', 'blocked', 'fail', 'login', 'inuse',
           'stopped'].includes(String(r.status || '')))
         .map(r => String(r.environmentSerial || ''))).size;
       asProgress({ progressTotal: envTotal, progressCompleted: envDone,
@@ -6254,15 +6271,21 @@ async function asPoll() {
           claimable ? `可申请 ${claimable} 单，勾选后点「提交售后」。`
             : '本次没有可申请售后的订单，请查看各行的平台状态或核验说明。', false);
         asRenderScanRows(rows);
+        AS_STATE.mode = '';
       }
     } else if (AS_STATE.mode === 'track' && AS_STATE.trackTaskId) {
+      const taskId = AS_STATE.trackTaskId;
       const res = await cloudFetchJson('/v1/after-sale/track/'
         + encodeURIComponent(AS_STATE.trackTaskId));
       const data = (res || {}).data || {};
-      const rows = (data.summary || {}).rows || [];
+      if (AS_STATE.mode !== 'track' || AS_STATE.trackTaskId !== taskId) return;
+      const summary = data.summary || {};
+      const rows = asOrderedRows(AS_STATE.trackItems, summary.rows || [], 'refundBillId');
       asRenderTrackRows(rows);
-      const total = Number((AS_STATE.trackTotal || rows.length)) || rows.length;
-      asProgress({ progressTotal: total, progressCompleted: rows.length,
+      const total = Number(summary.progressTotal ?? AS_STATE.trackTotal ?? rows.length);
+      // 新云端给的是任务级进度。旧云端没有该字段时不拿共享历史行凑完成数。
+      const completed = Number(summary.progressCompleted || 0);
+      asProgress({ progressTotal: total, progressCompleted: completed,
         rows, unit: '单' });
       AS_STATE.pollErrors = 0;
       AS_STATE.status = String(data.status || '');
@@ -6273,15 +6296,19 @@ async function asPoll() {
         const open = rows.filter(r => ['submitted', 'reviewing', 'processing']
           .includes(String(r.phase || ''))).length;
         const bad = rows.filter(r => String(r.phase || '') === 'rejected').length;
-        asSetPhase('回访完成',
-          `已回访 ${rows.length} 单 · 未终态 ${open} 单`
+        const title = ({cancelled:'回访已停止', failed:'回访失败', uncertain:'回访待核对'})[AS_STATE.status]
+          || (completed < total ? '回访结束（结果未齐）' : '回访完成');
+        asSetPhase(title,
+          `本次已处理 ${completed} / ${total} 单 · 未终态 ${open} 单`
           + (bad ? ` · 已拒绝 ${bad} 单需人工` : ''), false);
       }
     } else if (AS_STATE.mode === 'claim' && AS_STATE.runId) {
+      const runId = AS_STATE.runId;
       const res = await cloudFetchJson('/v1/operation-runs/after-sale-claim/'
         + encodeURIComponent(AS_STATE.runId));
       const data = (res || {}).data || {};
-      asRenderClaimRows(data.rows || []);
+      if (AS_STATE.mode !== 'claim' || AS_STATE.runId !== runId) return;
+      asRenderClaimRows(asOrderedRows(AS_STATE.claimItems, data.rows || [], 'orderNo'));
       asProgress(data);
       AS_STATE.pollErrors = 0;
       AS_STATE.status = String(data.status || '');
@@ -6313,6 +6340,8 @@ async function asPoll() {
       asSetPhase('状态刷新失败',
         '已连续多次无法获取售后进度（会话可能已过期或网络中断）；刷新页面后可在「提交结果」查看。', false);
     }
+  } finally {
+    AS_STATE.polling = false;
   }
 }
 $('asScan').onclick = asScan;
@@ -6335,6 +6364,7 @@ $('asStop').onclick = async () => {
 };
 $('asClearResult').onclick = () => {
   AS_STATE.claimRows = []; AS_STATE.runId = null; AS_STATE.status = '';
+  AS_STATE.claimItems = [];
   AS_STATE.runLabel = '';
   $('asClaimRows').innerHTML = '<tr><td colspan="11" class="hint" style="text-align:center; padding:22px;">已清空。</td></tr>';
   $('asPhaseBanner').hidden = true;
@@ -16974,6 +17004,7 @@ initializeAuth();
       // 终态判定：不转圈且标题是收尾语气
       const terminal = !spin && /完成|失败|已停止|不可用/.test(String(title || ''));
       if (stripCollapseTimer) { clearTimeout(stripCollapseTimer); stripCollapseTimer = null; }
+      if (!spin && typeof AS_STATE !== 'undefined' && AS_STATE.mode === 'scan') return;
       if (!terminal) { asStripToggle(false); return; }
       stripCollapseTimer = setTimeout(() => asStripToggle(true), 2200);
     };

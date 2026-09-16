@@ -2001,6 +2001,49 @@ class ExecutorChannelService:
                 for item in items if isinstance(item, dict)
                 and str(item.get("refundBillId") or "").strip()]
 
+    def after_sale_track_summary(self, task: ExecutorTask) -> dict[str, Any]:
+        """按请求清单顺序展示本次回访；共享跟踪记录不能充当本次完成数。"""
+        from .operation_service import after_sale_tracking_snapshot
+        try:
+            items = self._request_payload(task).get("items") or []
+        except ExecutorServiceError:
+            items = []
+        items = [item for item in items if isinstance(item, dict) and item.get("refundBillId")]
+        bills = [str(item["refundBillId"]) for item in items]
+        latest = after_sale_tracking_snapshot(self.session, task.tenant_id, bills)
+        images = {row["refundBillId"]: row.get("goodsImg") or "" for row in latest["rows"]}
+        progress = task.progress_summary
+        if isinstance(progress, dict):
+            source_rows = progress.get("rows") or []
+        elif task.status in TERMINAL_TASK_STATUSES:
+            # 部署前结束的历史任务没有任务级行快照，保留旧导出兼容。
+            source_rows = latest["rows"]
+        else:
+            source_rows = []
+        by_bill = {row["refundBillId"]: row for row in source_rows
+                   if isinstance(row, dict) and row.get("refundBillId")}
+        rows = []
+        for item in items:
+            bill = str(item["refundBillId"])
+            row = AfterSaleTrackRow(
+                refundBillId=bill, orderNo=item.get("orderNo") or "",
+                environmentSerial=item.get("environmentSerial") or "",
+                storeName=item.get("storeName") or "", status="queued",
+            ).model_dump(mode="json")
+            row.update(by_bill.get(bill) or {})
+            row["goodsImg"] = row.get("goodsImg") or images.get(bill) or ""
+            rows.append(row)
+        counts: dict[str, int] = {}
+        for row in rows:
+            if row.get("phase"):
+                counts[row["phase"]] = counts.get(row["phase"], 0) + 1
+        completed = sum(row.get("status") in {
+            "ok", "fail", "login", "inuse", "blocked", "skip", "empty"
+        } for row in rows)
+        return {"rows": rows, "counts": counts,
+                "progressCompleted": completed, "progressTotal": len(items),
+                "stoppedCount": sum(row.get("status") == "stopped" for row in rows)}
+
     def _request_payload(self, task: ExecutorTask) -> dict[str, Any]:
         """解密业务任务的请求载荷（与领取任务同源，只读不改状态）。"""
         envelope = task.payload_envelope or {}
@@ -2113,8 +2156,7 @@ class ExecutorChannelService:
             )
             return
         elif task.task_type == "after.sale.track.v1":
-            # 回访不建 Run：进度行直接 upsert 进跟踪表（表按 refund_bill_id 唯一，
-            # 每次覆盖更新，终态行由回访侧不再重扫而自然冻结）。
+            # 回访同时保留任务级快照和当前跟踪记录；进度不能读取其他任务的结果。
             if progress_snapshot is not None:
                 self._upsert_after_sale_track(task, progress_snapshot, heartbeat_at)
             return
@@ -2646,8 +2688,8 @@ class ExecutorChannelService:
         """回访进度行 upsert 进 after_sale_refund_tracking。
 
         闭集用 AfterSaleTrackRow 校验；refundBillId 必须落在该任务请求清单内，
-        避免串批次覆盖别人的行。timeline 不在行契约内（刻意），故不落库到进度；
-        它由导出侧回读执行器，不进每轮上报体积。
+        避免串批次覆盖别人的行。任务级快照保存本次行及计数来源；
+        timeline 不在行契约内，不保存也不导出平台时间轴原文。
         """
         if not isinstance(snapshot, dict) or "rows" not in snapshot \
                 or set(snapshot) - {"rows", "screenshots"}:
@@ -2671,10 +2713,29 @@ class ExecutorChannelService:
             for item in (payload.get("items") or [])
             if isinstance(item, dict)
         }
-        if allowed and not {r.refundBillId for r in rows}.issubset(allowed):
+        if (len(rows) != len({r.refundBillId for r in rows})
+                or not {r.refundBillId for r in rows}.issubset(allowed)):
             raise ExecutorServiceError(
                 "executor_progress_snapshot_invalid", status_code=422,
                 diagnostic_reason="refund_bill_outside_task")
+        requested = {str(item.get("refundBillId") or ""): item
+                     for item in (payload.get("items") or []) if isinstance(item, dict)}
+        for row in rows:
+            item = requested[row.refundBillId]
+            if ((row.orderNo and row.orderNo != item.get("orderNo"))
+                    or (row.environmentSerial and row.environmentSerial != item.get("environmentSerial"))):
+                raise ExecutorServiceError(
+                    "executor_progress_snapshot_invalid", status_code=422,
+                    diagnostic_reason="refund_bill_identity_mismatch")
+        previous = task.progress_summary if isinstance(task.progress_summary, dict) else {}
+        per_task = {row["refundBillId"]: row for row in previous.get("rows", [])}
+        for row in rows:
+            item = requested[row.refundBillId]
+            row.orderNo = row.orderNo or str(item.get("orderNo") or "")
+            row.environmentSerial = row.environmentSerial or str(item.get("environmentSerial") or "")
+            row.storeName = row.storeName or str(item.get("storeName") or "")
+            per_task[row.refundBillId] = row.model_dump(mode="json")
+        task.progress_summary = {"rows": [per_task[bill] for bill in requested if bill in per_task]}
         for row in rows:
             record = self.session.scalar(
                 select(AfterSaleRefundTracking).where(

@@ -431,6 +431,7 @@ DESIGN_PATCH = r'''
       // 终态判定：不转圈且标题是收尾语气
       const terminal = !spin && /完成|失败|已停止|不可用/.test(String(title || ''));
       if (stripCollapseTimer) { clearTimeout(stripCollapseTimer); stripCollapseTimer = null; }
+      if (!spin && typeof AS_STATE !== 'undefined' && AS_STATE.mode === 'scan') return;
       if (!terminal) { asStripToggle(false); return; }
       stripCollapseTimer = setTimeout(() => asStripToggle(true), 2200);
     };

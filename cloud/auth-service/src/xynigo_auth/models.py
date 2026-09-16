@@ -2008,7 +2008,7 @@ class ExecutorTask(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     result_code: Mapped[str | None] = mapped_column(String(128))
     result_summary: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-    # 非 Run 型业务任务（after.sale.scan.v1）的最近一次进度快照：任务表本身
+    # 非 Run 型扫描/退款回访任务的最近一次进度快照：任务表本身
     # 没有进度列，快照又必须在建 Run 之外可查，因此单独一列存投影后的行。
     progress_summary: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

@@ -991,7 +991,7 @@ class AfterSaleThumbnailWiringTests(unittest.TestCase):
 
 
 class AfterSaleRunStripWiringTests(unittest.TestCase):
-    """运行状态条：三段操作共用一条，放在 ① 之上、sticky 常驻、终态自动收起。
+    """运行状态条：三段共用、面板级 sticky；扫描终态仅手动折叠。
 
     来自原型定版（docs/prototypes/20260915-procurement-after-sale-v2-multitype.md
     §「动态操作进度放哪里」）。踩过的两个坑都写成断言：
@@ -1051,14 +1051,16 @@ class AfterSaleRunStripWiringTests(unittest.TestCase):
         self.assertIn('#afterSalePanel .as-strip-progress { margin-left: auto;',
                       html)
 
-    def test_set_phase_no_longer_reparents_and_collapses_on_terminal(self):
-        """状态条不再按阶段换落点；终态延迟 2.2 秒收起，跑动中保持展开。"""
+    def test_scan_terminal_bypasses_automatic_collapse(self):
+        """扫描终态在定时折叠前返回，其他阶段保留原行为。"""
         html = self._html()
         self.assertNotIn('AS_PHASE_ANCHORS', html)
         self.assertNotIn('asPhaseAnchor', html)
         phase = html[html.index('function asSetPhase('):]
         phase = phase[:phase.index('\n}\n')]
         self.assertIn('asStripToggle(false)', phase)
+        self.assertLess(phase.index("if (!spin && AS_STATE.mode === 'scan') return"),
+                        phase.index('setTimeout(() => asStripToggle(true), 2200)'))
         self.assertIn('setTimeout(() => asStripToggle(true), 2200)', phase)
         self.assertIn('asStripTerminal', phase)
         self.assertIn('/完成|失败|已停止|不可用/', html)

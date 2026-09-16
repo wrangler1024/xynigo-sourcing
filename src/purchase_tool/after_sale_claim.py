@@ -41,6 +41,7 @@ import threading
 import time
 import uuid
 from datetime import datetime, timezone
+from itertools import groupby
 
 from .cdp import CdpClient, CdpError
 from .redaction import scrub_text
@@ -503,7 +504,7 @@ class AfterSaleClaimer(object):
         for row in scan_rows:
             row['screenshotStatus'] = 'ok' if row.get('screenshotSha256') \
                 else ''
-        claim_rows.sort(key=lambda r: str(r.get('orderNo') or ''))
+        # 字典按请求清单插入，保持实际执行顺序，不能再按订单号重排。
         for row in claim_rows:
             row['screenshotStatus'] = 'ok' if row.get('screenshotSha256') \
                 else ''
@@ -735,11 +736,9 @@ class AfterSaleClaimer(object):
                     'screenshotSha256': None,
                     'screenshotStatus': '',
                 }
-        # 同环境的多单合并到一次环境打开里跑完，避免反复开关环境。
-        grouped = {}
-        for item in items:
-            grouped.setdefault(item['environmentSerial'], []).append(item)
-        for serial, group in grouped.items():
+        # 仅合并相邻的同环境订单，A/B/A 必须仍按 A/B/A 执行。
+        for serial, adjacent in groupby(items, key=lambda item: item['environmentSerial']):
+            group = list(adjacent)
             if self._stop_event.is_set():
                 break
             env = env_index.get(serial, {})
@@ -756,7 +755,7 @@ class AfterSaleClaimer(object):
                     row['status'] = 'stopped'
 
     def _run_track(self, items, headless):
-        """按环境分组只读回访；环境之间串行，单与单之间轻停顿。"""
+        """按清单顺序只读回访；仅复用相邻同环境订单的浏览器。"""
         env_index = self._env_index([i['environmentSerial'] for i in items])
         with self._lock:
             for item in items:
@@ -772,10 +771,8 @@ class AfterSaleClaimer(object):
                     'amount': '', 'checkedAt': '', 'note': '',
                     'errorSummary': None, 'durationSeconds': None,
                 }
-        grouped = {}
-        for item in items:
-            grouped.setdefault(item['environmentSerial'], []).append(item)
-        for serial, group in grouped.items():
+        for serial, adjacent in groupby(items, key=lambda item: item['environmentSerial']):
+            group = list(adjacent)
             if self._stop_event.is_set():
                 break
             self._track_env(serial, env_index.get(serial, {}), group, headless)

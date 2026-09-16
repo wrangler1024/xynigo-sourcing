@@ -5330,6 +5330,8 @@ def create_app(
             },
             idempotency_key=body.idempotencyKey,
         )
+        if task.progress_summary is None and task.status == "queued":
+            task.progress_summary = {"rows": []}
         _add_audit(
             session,
             request_id=request.state.request_id,
@@ -5372,8 +5374,7 @@ def create_app(
         )
         if task is None:
             raise HTTPException(status_code=404, detail="回访任务不存在")
-        bills = executor_channel(session).after_sale_track_requested_bills(task)
-        snapshot = after_sale_tracking_snapshot(session, actor.tenant.id, bills)
+        snapshot = executor_channel(session).after_sale_track_summary(task)
         return {"ok": True, "data": {
             "taskId": str(task.id), "status": task.status,
             "executorId": str(task.executor_id),
@@ -5404,8 +5405,7 @@ def create_app(
         )
         if task is None:
             raise HTTPException(status_code=404, detail="回访任务不存在")
-        bills = executor_channel(session).after_sale_track_requested_bills(task)
-        snapshot = after_sale_tracking_snapshot(session, actor.tenant.id, bills)
+        snapshot = executor_channel(session).after_sale_track_summary(task)
         content, filename, mime = build_after_sale_track_export(snapshot["rows"])
         _add_audit(
             session,
