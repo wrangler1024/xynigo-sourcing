@@ -1130,7 +1130,7 @@ class AfterSaleThreeRequirementsWiringTests(unittest.TestCase):
         """指定单：分隔符容错 + 字段不足要报出来，不静默丢弃。"""
         html = self._html()
         parse = self._fn(html, 'function asParseDirectOrders(')
-        self.assertIn('split(/[;\\n]+/)', parse)
+        self.assertIn('split(/[;；\\n]+/)', parse)
         self.assertIn('split(/[\\s,，、]+/)', parse)
         self.assertIn('invalid.push(', parse)
         self.assertIn('duplicates.push(', parse)

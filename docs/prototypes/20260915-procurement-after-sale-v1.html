@@ -5805,7 +5805,7 @@ function asRenderTrackRows(rows) {
 // 之所以要这个入口：④ 原来只认「本页 ③ 里提交过的单」，于是同事换个浏览器/换台机就
 // 看不到那批单、也回访不了别人提交的单——回访对象不该被提交流程绑死。
 function asParseManualBills(text) {
-  return String(text || '').split(/[;\n]+/).map(g => g.trim()).filter(Boolean)
+  return String(text || '').split(/[;；\n]+/).map(g => g.trim()).filter(Boolean)
     .map(group => {
       const parts = group.split(/[\s,，]+/).filter(Boolean);
       if (parts.length < 3) return null;
@@ -6348,7 +6348,7 @@ async function asRetryFailedClaims(rows, sourceRunId) {
 // 直接提交指定单：一组＝`环境序号 订单号`，分号/换行分组，空格与中英文逗号都当分隔。
 // 字段不足的组要报出来，不静默丢弃（需求 §4）。
 function asParseDirectOrders(text) {
-  const groups = String(text || '').split(/[;\n]+/).map(g => g.trim())
+  const groups = String(text || '').split(/[;；\n]+/).map(g => g.trim())
     .filter(Boolean);
   const items = [], invalid = [], duplicates = [], trimmed = [];
   const seen = new Set();
