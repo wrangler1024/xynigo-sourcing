@@ -869,11 +869,20 @@ class AfterSaleClaimWiringTests(unittest.TestCase):
         tpl = tpl[:tpl.index("}).join('')")]
         cells = tpl.count('<td') + tpl.count('${asThumbCell')
         self.assertEqual(cells, 11, '③ 行模板单元格数与表头不一致（会整列错位）')
-        # 只数个数拦不住列序错（曾把状态列留在第 6 位）：这里钉死关键顺序
-        order = [tpl.index(k) for k in (
-            'row.refundBillId', 'row.refundPath', 'row.refundAccount', 'asClaimPill')]
-        self.assertEqual(order, sorted(order),
-                         '③ 列序必须与表头一致：退款单号 → 退款路径 → 退款信用卡 → 状态')
+        # 只数个数拦不住列序错（曾把状态列留在第 6 位）：这里按表头顺序逐个钉行模板
+        # （从第一个 <td 起算，否则会把 tr 上的 data-as-claim 属性计入）
+        expected = ['环境序号', '订单号', '商品图', '售后类型', '送达时间', '退款单号',
+                    '退款路径', '退款信用卡', '状态', '操作时间', '备注']
+        self.assertEqual(
+            re.findall(r'<th[^>]*>([^<]+)</th>', claim_block), expected,
+            '③ 表头顺序变了就必须同步改行模板与这里')
+        cells = tpl[tpl.index('<td'):]
+        markers = ['row.environmentSerial', 'row.orderNo', '${asThumbCell',
+                   'AFTER_SALE_TYPE', 'row.deliveredAt', 'row.refundBillId',
+                   'row.refundPath', 'row.refundAccount', 'asClaimPill',
+                   'row.submittedAt', 'row.errorSummary']
+        order = [cells.index(k) for k in markers]
+        self.assertEqual(order, sorted(order), '③ 行模板列序与表头不一致（会整列错位）')
         # ④ 的行模板同理（含 timelineCell 自带 td）
         track_block = html[html.index('id="asTrackTable"'):]
         track_block = track_block[:track_block.index('</table>')]
@@ -977,6 +986,118 @@ class AfterSaleThumbnailWiringTests(unittest.TestCase):
         self.assertIn('loading="lazy" referrerpolicy="no-referrer"', html)
 
 
+class AfterSaleStatusAnchorWiringTests(unittest.TestCase):
+    """运行状态条只有一条（② 扫描 / ③ 提交 / ④ 回访 共用），所以必须按阶段换落点。
+
+    它原先固定写在 ③ 提交结果里，扫描时进度条出现在 ③ 下面，看着像提交的进度。
+    这里按「卡片顺序」钉住四个锚点的位置，防止再被写死回某一张卡片。
+    """
+
+    def _html(self):
+        local = LOCAL_HTML.read_text(encoding="utf-8")
+        self.assertEqual(local, CLOUD_HTML.read_text(encoding="utf-8"))
+        return local
+
+    def test_one_status_bar_node_only(self):
+        html = self._html()
+        self.assertEqual(html.count('id="asPhaseBanner"'), 1)
+        self.assertEqual(html.count('id="asPhaseTitle"'), 1)
+
+    def test_anchors_sit_in_the_stage_cards_they_belong_to(self):
+        html = self._html()
+        panel = html[html.index('id="afterSalePanel"'):]
+        marks = [
+            ('① 选择范围', 'asPhaseAnchorIdle'),
+            ('② 可申请清单', 'asPhaseAnchorScan'),
+            ('③ 提交结果', 'asPhaseAnchorClaim'),
+            ('④ 退款跟踪', 'asPhaseAnchorTrack'),
+        ]
+        # 每个锚点都必须落在本阶段的卡片标题之后、下一阶段标题之前
+        for index, (title, anchor) in enumerate(marks):
+            start = panel.index(title)
+            end = (panel.index(marks[index + 1][0])
+                   if index + 1 < len(marks) else len(panel))
+            self.assertIn(f'id="{anchor}"', panel[start:end],
+                          f'{anchor} 不在「{title}」卡片里')
+
+    def test_claim_anchor_wraps_the_shared_banner(self):
+        html = self._html()
+        block = html[html.index('id="asPhaseAnchorClaim"'):]
+        block = block[:block.index('id="asPhaseAnchorTrack"')]
+        self.assertIn('id="asPhaseBanner"', block)
+
+    def test_set_phase_reparents_banner_to_current_stage(self):
+        html = self._html()
+        body = html[html.index('const AS_PHASE_ANCHORS = {'):]
+        body = body[:body.index('\n}\n')]
+        for key in ('idle', 'scan', 'claim', 'track'):
+            self.assertIn(f'{key}:', body)
+        self.assertIn('anchor.appendChild(banner)', body)
+        self.assertIn('stage || AS_STATE.mode', body)
+
+    def test_each_flow_sets_its_stage_before_first_message(self):
+        html = self._html()
+        for func, mode in (('async function asScan()', 'scan'),
+                           ('async function asSubmit()', 'claim'),
+                           ('async function asTrack(', 'track')):
+            body = html[html.index(func):]
+            body = body[:body.index('\n}\n')]
+            # 入口就要设好阶段：否则首条报错（如「执行器不可用」）会落到上一个阶段的卡片
+            head = body[body.index('AS_STATE.running'):
+                        body.index('AS_STATE.running = true')]
+            self.assertIn(f"AS_STATE.mode = '{mode}'", head)
+
+
+class AfterSaleTrackExportWiringTests(unittest.TestCase):
+    """④ 导出接线：按钮落在卡片里，导出对象是「这一次回访」，下载复用既有助手。"""
+
+    def _html(self):
+        local = LOCAL_HTML.read_text(encoding="utf-8")
+        self.assertEqual(local, CLOUD_HTML.read_text(encoding="utf-8"))
+        return local
+
+    def _body(self):
+        html = self._html()
+        body = html[html.index('async function asExportTrack()'):]
+        return html, body[:body.index('\n}\n')]
+
+    def test_export_button_sits_in_track_card(self):
+        html = self._html()
+        marker = html.index('id="asTrackExport"')
+        actions = html[html.rindex('<div class="table-actions">', 0, marker):]
+        actions = actions[:actions.index('</div>')]
+        # 同一个 table-actions 里，导出是次要按钮、刷新仍是主按钮
+        self.assertIn(
+            '<button class="btn" id="asTrackExport">导出 Excel</button>', actions)
+        self.assertIn(
+            '<button class="btn primary" id="asTrack">刷新退款进度</button>',
+            actions)
+        self.assertLess(actions.index('asTrackExport'), actions.index('id="asTrack"'))
+        self.assertIn("$('asTrackExport').onclick = asExportTrack;", html)
+
+    def test_export_targets_current_track_task(self):
+        """导出的是本页 ④ 这次回访的任务，不重跑回访、也不吃输入框里的原文。"""
+        _html, body = self._body()
+        self.assertIn('const taskId = AS_STATE.trackTaskId;', body)
+        self.assertIn("'/v1/after-sale/track/' + encodeURIComponent(taskId) "
+                      "+ '/export'", body)
+        self.assertNotIn('asTrackBills', body)
+
+    def test_export_without_track_task_asks_for_refresh_first(self):
+        _html, body = self._body()
+        self.assertIn("if (!taskId)", body)
+        self.assertIn('刷新退款进度', body)
+
+    def test_export_reuses_cloud_download_helpers(self):
+        """下载与报错都走既有助手，不再自造一套（错误文案才不会漂移）。"""
+        _html, body = self._body()
+        self.assertIn("credentials:'same-origin'", body)
+        self.assertIn('cloudApiError(payload, response.status)', body)
+        self.assertIn('workspaceDownloadName(', body)
+        self.assertIn("'X-Xynigo-Source':'cloud_web_workspace'", body)
+
+
+
 class WebCloudContractAlignmentTests(unittest.TestCase):
     """Web 发出的报文与读取的字段，必须与云端契约对齐。
 
@@ -1010,6 +1131,25 @@ class WebCloudContractAlignmentTests(unittest.TestCase):
         for required in ('environmentSerial', 'orderNo', 'refundBillId'):
             self.assertIn(required, keys)
 
+    def test_web_claim_items_carry_delivered_at_and_goods_img(self):
+        """③ 的送达时间与商品图靠提交单从扫描清单带下来。
+
+        这两个字段在云端契约里是可选的（default=""），漏发**不会报错**——
+        只会静默变成空列（③ 上线当天送达时间恒「—」、商品图恒空就是这么来的）。
+        所以这里不仅查「发的键是否是契约子集」，还点名要求这两个字段必须在。
+        """
+        html = LOCAL_HTML.read_text(encoding='utf-8')
+        body = html[html.index('function asSelectedItems()'):]
+        body = body[:body.index('\n}')]
+        fields = set(re.findall(r'^    (\w+):', self._contract_block(
+            'AfterSaleClaimItem'), re.M))
+        keys = set(re.findall(r'^      (\w+):', body, re.M))
+        self.assertTrue(keys, '未解析到 asSelectedItems 的键')
+        self.assertFalse(keys - fields,
+                         f'Web 发了契约没定义的键：{sorted(keys - fields)}')
+        for required in ('environmentSerial', 'orderNo', 'deliveredAt', 'goodsImg'):
+            self.assertIn(required, keys)
+
     def test_web_reads_only_contracted_track_row_fields(self):
         """Web 渲染 ④ 时读到的每个行字段，云端行契约都必须提供。"""
         html = LOCAL_HTML.read_text(encoding='utf-8')
@@ -1022,6 +1162,31 @@ class WebCloudContractAlignmentTests(unittest.TestCase):
         missing = sorted(reads - fields)
         self.assertFalse(missing,
                          f'④ 读了云端契约没有的字段（会恒为空）：{missing}')
+
+    def test_track_export_route_matches_web_url(self):
+        """导出 URL 与云端路由必须同一条；路径漂移只会表现为线上 404。"""
+        html = LOCAL_HTML.read_text(encoding='utf-8')
+        main = (self.CLOUD_CONTRACT.parent / 'main.py').read_text(
+            encoding='utf-8')
+        self.assertIn(
+            '@app.get("/v1/after-sale/track/{task_id}/export")', main)
+        self.assertIn(
+            "'/v1/after-sale/track/' + encodeURIComponent(taskId) + '/export'",
+            html)
+
+    def test_track_export_columns_match_workbench_table(self):
+        """导出列 = 工作台 ④ 表头，列序逐项相同（整列错位的防线）。"""
+        html = LOCAL_HTML.read_text(encoding='utf-8')
+        head = html[html.index('<table id="asTrackTable">'):]
+        head = head[:head.index('</tr>')]
+        columns = re.findall(r'<th[^>]*>([^<]+)</th>', head)
+        source = (self.CLOUD_CONTRACT.parent / 'after_sale_export.py').read_text(
+            encoding='utf-8')
+        block = source[source.index('HEADERS = ('):]
+        block = block[:block.index(')')]
+        headers = re.findall(r'"([^"]+)"', block)
+        self.assertTrue(columns and headers)
+        self.assertEqual(columns, headers)
 
 
 class EnvironmentConflictSkipWiringTests(unittest.TestCase):

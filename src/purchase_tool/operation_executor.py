@@ -801,6 +801,11 @@ class LocalOperationExecutor(object):
                 'orderNo': order_no,
                 'storeName': str(item.get('storeName') or '').strip()[:128],
                 'packageNo': str(item.get('packageNo') or '').strip()[:64],
+                # 送达时间与商品图是扫描阶段带下来的展示字段，提交链本身不用，
+                # 但重建条目时必须透传——否则 ③ 的这两列永远是空的（云端契约与
+                # 本地投影都已就绪，断点只在 Web 与这一跳）。
+                'deliveredAt': str(item.get('deliveredAt') or '').strip()[:32],
+                'goodsImg': str(item.get('goodsImg') or '').strip()[:300],
             })
         if len(clean) > 500:
             raise OperationExecutionError(
