@@ -5566,10 +5566,17 @@ def create_app(
             authorization=authorization,
             audit_action="assistant.after_sale.claim.view",
         )
+        # ③ 打开页面时的「恢复最近一批」只恢复**本人**的：③ 是个人工作区，
+        # 共享视图在提交历史弹层（`/history` 才是租户内互相可见）。
+        # 只看 tenant 的话，刷新后会恢复同事刚提交的批次，看着像自己的。
         run = session.scalar(
             select(AfterSaleClaimRun)
-            .where(AfterSaleClaimRun.tenant_id == actor.tenant.id)
-            .order_by(AfterSaleClaimRun.created_at.desc())
+            .where(
+                AfterSaleClaimRun.tenant_id == actor.tenant.id,
+                AfterSaleClaimRun.actor_user_id == actor.user.id,
+            )
+            .order_by(AfterSaleClaimRun.created_at.desc(),
+                      AfterSaleClaimRun.id.desc())
             .limit(1)
         )
         if run is None:

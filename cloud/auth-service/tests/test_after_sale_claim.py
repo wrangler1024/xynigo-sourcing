@@ -879,7 +879,8 @@ def test_after_sale_claim_history_scope_paging_detail_export(tmp_path) -> None:
                         display_name="同事甲", status="active")
             session.add(peer)
             session.flush()
-            moment = datetime.now(timezone.utc) - timedelta(minutes=5)
+            # 把同事的批次设成**更新**：/latest 若按租户取就会取到它，用例才有区分度
+            moment = datetime.now(timezone.utc) + timedelta(minutes=5)
             peer_run = AfterSaleClaimRun(
                 id=uuid.uuid4(), tenant_id=tenant_id, actor_user_id=peer.id,
                 source_run_key="as-claim-history-peer-0001",
@@ -904,6 +905,13 @@ def test_after_sale_claim_history_scope_paging_detail_export(tmp_path) -> None:
         assert runs[first_run_id]["totalCount"] == 1
         assert runs[first_run_id]["actorName"] != ""
         assert [actor["displayName"] for actor in data["actors"]] != []
+
+        # ③ 的「恢复最近一批」只恢复本人的：同事的批次更新，也不能被恢复
+        latest = web_client.get(
+            "/v1/operation-runs/after-sale-claim/latest")
+        assert latest.status_code == 200, latest.text
+        assert latest.json()["data"]["runId"] == first_run_id, (
+            "③ 恢复最近一批必须是本人的（共享视图在历史弹层）")
 
         # 分页：limit=1 拿第一页 + 游标，第二页不重不漏
         page_one = web_client.get(
