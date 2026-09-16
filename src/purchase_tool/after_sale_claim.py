@@ -740,8 +740,10 @@ class AfterSaleClaimer(object):
             return {'ok': False, 'reason': '提交后未跳转成功页：%s'
                     % (toast or page.url)[:160], 'packageNo': package_no}
         bill = refund_bill_id_from_url(page.url)
-        refund_account = self._read_refund_account(page)
+        # 先做一次只读复核（本身要 1~3 秒），再读退款账户——实测 4588 那单就是
+        # 读得太早导致记空（复核时该区块已在页面上）。顺序反过来等于白赚一段渲染时间。
         remaining = self._pre_info(page, order_no).get('eligible') or []
+        refund_account = self._read_refund_account(page)
         return {'ok': True, 'packageNo': package_no,
                 'refundBillId': bill[1] if bill else '',
                 'refundAccount': refund_account,
@@ -756,7 +758,7 @@ class AfterSaleClaimer(object):
         except CdpError:
             return False
 
-    def _read_refund_account(self, page, timeout=8):
+    def _read_refund_account(self, page, timeout=15):
         """读退款账户（原路退回落到哪张卡）的掩码，取不到返回空串。
 
         实测坑：该区块是跳到成功页之后约 2 秒才渲染出来的，落地瞬间读会是空；
