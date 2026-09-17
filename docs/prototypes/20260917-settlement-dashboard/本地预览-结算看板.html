@@ -1524,6 +1524,10 @@
   .settle-badge.ok { background: var(--rhino-100); color: var(--rhino-700); }
   .settle-badge.warn { background: var(--parcel-100); color: #90600c; }
   .settle-badge.fail { background: #fdecec; color: #b4232a; }
+  /* 分页控件收紧：全局 .procurement-pagination-actions 的 8px 间距 +
+     页码指示器 min-width 88px 会把「上一页」「下一页」推开一大段 */
+  .settle-pagination .procurement-pagination-actions { gap: 6px; }
+  .settle-pagination .procurement-pagination-actions span { min-width: 56px; }
   /* 分页内的每页条数下拉：覆盖全局 select 的 220px 宽 / 42px 高，
      与相邻 btn-mini 同高、贴内容宽度（与店铺授权模块分页控件保持一致） */
   .settle-pagination select { width: auto; min-height: 0; height: 26px; box-sizing: border-box; padding: 0 6px; border: 1px solid #d6e0e8; border-radius: 8px; background: #fff; font-size: 11px; color: var(--navy-900, #16324a); }
