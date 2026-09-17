@@ -3610,6 +3610,9 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
       <div class="procurement-pagination">
         <span class="procurement-pagination-copy" id="settlePageInfo">—</span>
         <div class="procurement-pagination-actions">
+          <select id="settlePageSize" aria-label="每页显示店铺数">
+            <option value="10">10 条</option><option value="30">30 条</option><option value="50">50 条</option>
+          </select>
           <button class="btn-mini" id="btnSettlePrev" type="button" disabled>上一页</button>
           <span id="settlePageIndicator">—</span>
           <button class="btn-mini" id="btnSettleNext" type="button" disabled>下一页</button>
@@ -13704,13 +13707,27 @@ function setFeaturePanel(module) {
  */
 let settleDashboardLoaded = false;
 const SETTLE_CURRENCY_LABELS = { MXN: '墨西哥比索', USD: '美元' };
-const SETTLE_PAGE_SIZE = 8;
-const SETTLE_STATE = { currency: 'ALL', page: 1, stores: null, refreshedAt: null };
+const SETTLE_PAGE_SIZES = [10, 30, 50];
+const SETTLE_PAGE_SIZE_KEY = 'xynigo.settleDashboard.pageSize';
+const SETTLE_STATE = {
+  currency: 'ALL', page: 1, pageSize: 10, stores: null, refreshedAt: null
+};
+
+function settleLoadPageSize() {
+  try {
+    const v = Number(localStorage.getItem(SETTLE_PAGE_SIZE_KEY));
+    if (SETTLE_PAGE_SIZES.includes(v)) SETTLE_STATE.pageSize = v;
+  } catch (e) { /* 忽略本地存储异常 */ }
+}
+
+function settleSavePageSize(v) {
+  try { localStorage.setItem(SETTLE_PAGE_SIZE_KEY, String(v)); } catch (e) { /* 忽略 */ }
+}
 
 function settleMockStores() {
   const fresh = Date.now() - 4 * 60 * 1000;
   const stale = Date.now() - 34 * 60 * 1000;
-  return [
+  const rows = [
     { name: '样例店铺 01 · 拉美站', mode: 'SHEIN 自营', currency: 'MXN',
       inTransit: 4820.50, unsettled: 945.16, nextSettle: 945.16,
       nextPayDate: '2026-09-21', settled: 48620.35, at: fresh, status: 'ok', note: '' },
@@ -13746,6 +13763,31 @@ function settleMockStores() {
       inTransit: 0.00, unsettled: 88.40, nextSettle: 88.40,
       nextPayDate: '2026-09-21', settled: 12260.85, at: fresh, status: 'ok', note: '' }
   ];
+  // 原型需要足够行数才能体现每页 10/30/50 条的差别，故补齐到 36 家；
+  // 取值按下标确定性生成（不用随机数），保证每次刷新与截图可复现。
+  const duePool = ['2026-09-21', '2026-09-28'];
+  for (let i = 11; i <= 36; i += 1) {
+    const mxn = i % 3 !== 0;                 // 约 2/3 为比索店
+    const currency = mxn ? 'MXN' : 'USD';
+    const base = mxn ? 900 + i * 137.25 : 55 + i * 21.40;
+    const idle = i % 7 === 0;                // 少数店铺当前无在途/待结算
+    const amount = idle ? 0 : Number((base * 0.42).toFixed(2));
+    const flagged = i % 11 === 0;
+    rows.push({
+      name: `样例店铺 ${String(i).padStart(2, '0')} · ${mxn ? '拉美站' : '北美站'}`,
+      mode: i % 4 === 0 ? 'SHEIN 半托管' : 'SHEIN 自营',
+      currency,
+      inTransit: idle ? 0 : Number((base * 3.10).toFixed(2)),
+      unsettled: amount,
+      nextSettle: amount,
+      nextPayDate: idle ? '' : duePool[i % 2],
+      settled: Number((base * (12 + (i % 5)) * 1.80).toFixed(2)),
+      at: fresh,
+      status: flagged ? 'warn' : 'ok',
+      note: flagged ? '对账单存在支出行，订单侧不回更；已按对账单轧差修正' : ''
+    });
+  }
+  return rows;
 }
 
 function settleMoney(value) {
@@ -13866,10 +13908,11 @@ function settleRenderTable() {
   const body = $('settleStoreTbody');
   if (!body) return;
   const stores = settleScopedStores();
-  const pages = Math.max(1, Math.ceil(stores.length / SETTLE_PAGE_SIZE));
+  const pageSize = SETTLE_STATE.pageSize;
+  const pages = Math.max(1, Math.ceil(stores.length / pageSize));
   if (SETTLE_STATE.page > pages) SETTLE_STATE.page = pages;
-  const start = (SETTLE_STATE.page - 1) * SETTLE_PAGE_SIZE;
-  const rows = stores.slice(start, start + SETTLE_PAGE_SIZE);
+  const start = (SETTLE_STATE.page - 1) * pageSize;
+  const rows = stores.slice(start, start + pageSize);
   if (!rows.length) {
     body.innerHTML = '<tr><td colspan="10" class="admin-empty">当前币种下没有已授权店铺</td></tr>';
   } else {
@@ -14021,17 +14064,30 @@ function refreshSettlementDashboard() {
 }
 
 function initSettlementDashboard() {
+  settleLoadPageSize();
   refreshSettlementDashboard();
   $('btnSettleExport').onclick = () => exportSettlementDashboard();
   $('btnSettleRefresh').onclick = () => {
     refreshSettlementDashboard();
     toast('结算看板已刷新（原型演示数据）');
   };
+  const sizeSel = $('settlePageSize');
+  if (sizeSel) {
+    sizeSel.value = String(SETTLE_STATE.pageSize);
+    sizeSel.onchange = () => {
+      const picked = Number(sizeSel.value);
+      SETTLE_STATE.pageSize = SETTLE_PAGE_SIZES.includes(picked) ? picked : 10;
+      settleSavePageSize(SETTLE_STATE.pageSize);
+      SETTLE_STATE.page = 1; // 每页条数变化后回到第 1 页，避免停在不存在的页码
+      settleRenderTable();
+    };
+  }
   $('btnSettlePrev').onclick = () => {
     if (SETTLE_STATE.page > 1) { SETTLE_STATE.page -= 1; settleRenderTable(); }
   };
   $('btnSettleNext').onclick = () => {
-    const pages = Math.max(1, Math.ceil(settleScopedStores().length / SETTLE_PAGE_SIZE));
+    const pages = Math.max(1,
+      Math.ceil(settleScopedStores().length / SETTLE_STATE.pageSize));
     if (SETTLE_STATE.page < pages) { SETTLE_STATE.page += 1; settleRenderTable(); }
   };
 }
