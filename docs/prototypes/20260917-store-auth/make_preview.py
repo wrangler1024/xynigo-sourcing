@@ -31,7 +31,12 @@ UNLOCK = """
     var shell = document.getElementById('appShell'); if (shell) shell.removeAttribute('inert');
     try {
       if (!authIdentity) {
-        authIdentity = { name: 'Jeff（原型预览）', roles: ['super_admin'], permissions: [], workspaceAccess: true };
+        authIdentity = {
+          name: 'Jeff（原型预览）',
+          roles: ['super_admin'],
+          permissions: ['system.shein_store.read', 'system.shein_store.manage'],
+          workspaceAccess: true,
+        };
         authReady = true;
       }
     } catch (e) {}
