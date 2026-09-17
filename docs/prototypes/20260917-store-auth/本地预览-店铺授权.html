@@ -14178,11 +14178,11 @@ function setFeaturePanel(module) {
   } else if (module === 'sheinstoreauth' && !sheinStoreAuthPageLoaded) {
     sheinStoreAuthPageLoaded = true;
     if (sheinAuthCloud === null) {
-      // 首次进入先探测：接口可达（含 401/403 未登录未授权）即云端模式；
-      // file:// 静态预览或接口不存在时回退本地 Mock。
+      // 首次进入先探测：接口可达（200，或 401/403 未登录未授权、503 未配置——
+      // 三者都证明后端存在）即云端模式；404、网络错误、file:// 静态预览回退本地 Mock。
       cloudFetchJson('/v1/shein-auth/stores?pageSize=1')
         .then(() => { sheinAuthCloud = true; })
-        .catch(e => { sheinAuthCloud = !(e && (e.status === 401 || e.status === 403 || e.status === 503)); })
+        .catch(e => { sheinAuthCloud = !!(e && (e.status === 401 || e.status === 403 || e.status === 503)); })
         .finally(() => initSheinStoreAuthPage());
     } else {
       initSheinStoreAuthPage();
