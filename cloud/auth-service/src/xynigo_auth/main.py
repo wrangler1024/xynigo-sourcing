@@ -143,6 +143,7 @@ from .operation_contract import (
     AfterSaleClaimRunCreateBody,
     AfterSaleScanCreateBody,
     AfterSaleTrackCreateBody,
+    AfterSaleTrackResolveBody,
     EnvironmentCreationRunBody,
     EnvironmentCreationRunCreateBody,
     EnvironmentPlanDryRunBody,
@@ -5306,6 +5307,27 @@ def create_app(
             raise HTTPException(status_code=404, detail="扫描任务不存在")
         return {"ok": True, "data": _after_sale_scan_payload(
             session, actor, executor_channel(session), task)}
+
+    @app.post("/v1/after-sale/track/resolve")
+    def resolve_after_sale_track_scope(
+        body: AfterSaleTrackResolveBody,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ):
+        from .after_sale_track_resolver import resolve_after_sale_track_items
+
+        actor = authorize_request(
+            request, session, permission="assistant.access",
+            session_token=session_token, authorization=authorization,
+            audit_action="assistant.after_sale.track.resolve",
+        )
+        try:
+            data = resolve_after_sale_track_items(session, actor.tenant.id, body.environmentSerials)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        return {"ok": True, "data": data}
 
     @app.post("/v1/after-sale/track", status_code=status.HTTP_202_ACCEPTED)
     def create_after_sale_track_task(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import json
+import re
 from typing import Annotated, Any, Literal
 import uuid
 
@@ -1228,6 +1229,23 @@ class AfterSaleClaimScreenshot(BaseModel):
     contentType: str = Field(default="image/jpeg", max_length=64)
     size: int | None = Field(default=None, ge=0)
 
+
+
+class AfterSaleTrackResolveBody(BaseModel):
+    """Resolve known refund identities without creating an executor task."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    environmentSerials: list[Annotated[str, Field(max_length=64)]] = Field(
+        min_length=1, max_length=300)
+
+    @field_validator("environmentSerials")
+    @classmethod
+    def normalize_serials(cls, value: list[str]) -> list[str]:
+        cleaned = [serial.strip() for serial in value]
+        if any(not re.fullmatch(r"[0-9]+", serial) for serial in cleaned):
+            raise ValueError("请填写数字环境序号，每次最多 300 个环境")
+        return list(dict.fromkeys(cleaned))
 
 
 class AfterSaleTrackItem(BaseModel):

@@ -797,6 +797,11 @@
   #afterSalePanel .as-manual-controls textarea:focus { outline:none; border-color:var(--rhino-500); box-shadow:0 0 0 3px rgba(32,174,179,.12); }
   #afterSalePanel .as-manual-controls .btn { box-sizing:border-box; width:100%; height:44px; min-height:44px; margin:0; justify-content:center; white-space:nowrap; border-radius:9px; }
   #afterSalePanel .as-manual-help { margin:8px 0 0; color:var(--navy-500); font-size:11px; line-height:1.6; }
+  #afterSalePanel .as-manual-heading { display:flex; align-items:center; flex-wrap:wrap; gap:8px 16px; margin-bottom:8px; }
+  #afterSalePanel .as-manual-heading .as-manual-label { margin:0; }
+  #afterSalePanel .as-manual-heading select { width:auto; max-width:100%; padding:5px 9px; font-size:12px; border:1px solid var(--line); border-radius:8px; background:var(--surface); }
+  .as-track-match-list { max-height:45vh; overflow:auto; margin:12px 0; }
+  .as-track-match-list p { padding:8px 0; border-bottom:1px solid var(--line); }
   @media(max-width:600px) {
     #afterSalePanel .as-manual-entry { padding:12px; }
     #afterSalePanel .as-manual-controls { grid-template-columns:minmax(0,1fr); gap:8px; }
@@ -2493,12 +2498,15 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         </div>
       </div>
       <div class="as-manual-entry">
-        <label class="as-manual-label" for="asTrackBills">指定退款单回访</label>
+        <div class="as-manual-heading">
+          <label class="as-manual-label" id="asTrackInputLabel" for="asTrackBills">按环境回访</label>
+          <select id="asTrackInputMode" aria-label="回访输入方式"><option value="environments">按环境序号</option><option value="bills">按退款单（完整信息）</option></select>
+        </div>
         <div class="as-manual-controls">
-          <textarea id="asTrackBills" rows="1" placeholder="环境序号 订单号 退款单号；…" aria-describedby="asTrackManualHelp" autocomplete="off" spellcheck="false"></textarea>
+          <textarea id="asTrackBills" rows="1" placeholder="输入环境序号，以空格、逗号、分号或换行分隔" aria-describedby="asTrackManualHelp" autocomplete="off" spellcheck="false"></textarea>
           <button class="btn" id="asTrackManual" type="button">回访指定单</button>
         </div>
-        <p class="as-manual-help" id="asTrackManualHelp">每组填环境序号、订单号、退款单号，以空格分隔；多组用中英文分号或换行分隔。只读查询，可回访历史订单，无需本页提交记录。</p>
+        <p class="as-manual-help" id="asTrackManualHelp">按输入顺序匹配这些环境在系统中的历史退款单，核对清单后只读回访。每次最多 300 个环境、500 个退款单；系统未记录的退款单可切换“按退款单（完整信息）”。</p>
       </div>
       <div style="padding: 0 19px;">
         <div class="table-scroll as-list-scroll">
@@ -5317,6 +5325,7 @@ function asSyncRuntimeControls() {
   const busy = AS_STATE.running || AS_STATE.starting;
   $('asHeadless').disabled = busy;
   ['asTrack', 'asTrackManual', 'asClearResult'].forEach(id => { $(id).disabled = busy; });
+  ['asTrackInputMode', 'asTrackBills'].forEach(id => { $(id).disabled = busy; });
   $('asScan').disabled = busy || AS_STATE.type !== 'refund';
   $('asSubmit').disabled = busy || AS_STATE.type !== 'refund' || !AS_STATE.selected.size;
   asSyncWriteButtons();
@@ -6016,10 +6025,14 @@ function asParseManualBills(text) {
 }
 async function asTrackManual() {
   if (AS_STATE.running || AS_STATE.starting) return;
+  if ($('asTrackInputMode').value === 'environments') {
+    await asTrackEnvironments();
+    return;
+  }
   const parsed = asParseManualBills($('asTrackBills').value);
   if (parsed.invalid.length || parsed.duplicates.length) {
     asSetPhase('请检查回访清单',
-      `格式错误 ${parsed.invalid.length} 组，重复退款单 ${parsed.duplicates.length} 组：`
+      `每组需填写“环境序号 订单号 退款单号”。仅有环境序号时请切换“按环境序号”。格式错误 ${parsed.invalid.length} 组，重复退款单 ${parsed.duplicates.length} 组：`
       + [...parsed.invalid, ...parsed.duplicates].join(' / '), false);
     return;
   }
@@ -6028,6 +6041,74 @@ async function asTrackManual() {
     return;
   }
   await asTrack(parsed.items);
+}
+function asParseTrackEnvironments(text) {
+  const tokens = String(text || '').split(/[\s,，;；]+/).filter(Boolean);
+  const invalid = tokens.filter(serial => !/^[0-9]{1,64}$/.test(serial));
+  return {serials:[...new Set(tokens)], invalid};
+}
+function asSyncTrackInputMode() {
+  const byEnvironment = $('asTrackInputMode').value === 'environments';
+  $('asTrackInputLabel').textContent = byEnvironment ? '按环境回访' : '指定退款单回访';
+  $('asTrackBills').placeholder = byEnvironment
+    ? '输入环境序号，以空格、逗号、分号或换行分隔' : '环境序号 订单号 退款单号；…';
+  $('asTrackManualHelp').textContent = byEnvironment
+    ? '按输入顺序匹配这些环境在系统中的历史退款单，核对清单后只读回访。每次最多 300 个环境、500 个退款单；系统未记录的退款单可切换“按退款单（完整信息）”。'
+    : '每组填环境序号、订单号、退款单号，以空格分隔；多组用中英文分号或换行分隔。只读查询，可回访历史订单，无需本页提交记录。';
+}
+function asConfirmTrackMatches(data) {
+  return new Promise(resolve => {
+    const items = data.items || [], environments = data.environments || [];
+    const dialog = document.createElement('dialog');
+    dialog.className = 'as-product-dialog';
+    dialog.setAttribute('aria-label', '核对回访范围');
+    let accepted = false;
+    dialog.innerHTML = '<h3>核对回访范围</h3><p>输入 '+environments.length+' 个环境，匹配 '
+      +items.length+' 个退款单。只读查询平台进度，不提交售后。</p>'
+      +'<div class="as-track-match-list">'+environments.map(env => {
+        const bills = items.filter(item => item.environmentSerial === env.environmentSerial);
+        return '<p><b>环境 '+esc(env.environmentSerial)+'</b> · '+bills.length+' 个退款单'
+          +(env.note ? '<br><span class="hint">'+esc(env.note)+'</span>' : '')
+          +bills.map(item => '<br><span class="sub-text">'+esc(item.orderNo)+' · '+esc(item.refundBillId)+'</span>').join('')+'</p>';
+      }).join('')+'</div><div class="actions"><button class="btn" data-cancel>返回修改</button>'
+      +'<button class="btn primary" data-confirm'+(items.length ? '' : ' disabled')+'>回访已匹配的 '+items.length+' 单</button></div>';
+    dialog.querySelector('[data-cancel]').onclick = () => dialog.close();
+    dialog.querySelector('[data-confirm]').onclick = () => { accepted = true; dialog.close(); };
+    dialog.addEventListener('close', () => { dialog.remove(); resolve(accepted); }, {once:true});
+    document.body.appendChild(dialog);
+    dialog.showModal();
+  });
+}
+async function asTrackEnvironments() {
+  if (AS_STATE.running || AS_STATE.starting) return;
+  const {serials, invalid} = asParseTrackEnvironments($('asTrackBills').value);
+  if (!serials.length || invalid.length || serials.length > 300) {
+    asSetPhase('请检查环境序号', invalid.length
+      ? '环境序号仅支持数字，请用空格、逗号、分号或换行分隔；完整订单信息请切换“按退款单（完整信息）”。'
+      : serials.length > 300 ? '每次最多 300 个环境，请分批回访。' : '请先输入需要回访的环境序号。', false);
+    return;
+  }
+  AS_STATE.starting = true;
+  asSyncRuntimeControls();
+  let items = [];
+  try {
+    asSetPhase('正在匹配退款单', '共 '+serials.length+' 个环境，正在读取系统历史记录。', true);
+    const response = await cloudFetchJson('/v1/after-sale/track/resolve', {
+      method:'POST', body:JSON.stringify({environmentSerials:serials}),
+    });
+    const data = response?.data;
+    if (!Array.isArray(data?.items) || !Array.isArray(data?.environments)) throw new Error('退款单匹配响应不完整，请重试。');
+    asSetPhase(data.items.length ? '退款单匹配完成' : '没有匹配到可回访的退款单',
+      '共 '+serials.length+' 个环境，匹配 '+data.items.length+' 个退款单；请核对匹配清单。', false);
+    if (await asConfirmTrackMatches(data)) items = data.items;
+    else asSetPhase('回访未开始', '已关闭匹配清单，本次未发起回访任务。', false);
+  } catch (error) {
+    asSetPhase('退款单匹配失败', String(error.message || error), false);
+  } finally {
+    AS_STATE.starting = false;
+    asSyncRuntimeControls();
+  }
+  if (items.length) await asTrack(items);
 }
 function asTrackItemsFromRows(rows) {
   const seen = new Set(), items = [];
@@ -6158,6 +6239,7 @@ async function asExportTrack() {
 }
 $('asTrack').onclick = () => asTrack();
 $('asTrackManual').onclick = asTrackManual;
+$('asTrackInputMode').onchange = asSyncTrackInputMode;
 $('asTrackExport').onclick = asExportTrack;
 
 // ===== 提交历史（本次提交与退款跟踪共用）=====
