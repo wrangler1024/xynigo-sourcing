@@ -13726,7 +13726,7 @@ function settleMockStores() {
     { name: '样例店铺 05 · 北美站', mode: 'SHEIN 自营', currency: 'USD',
       inTransit: null, unsettled: null, nextSettle: null,
       nextPayDate: '', settled: null, at: stale, status: 'fail',
-      note: '店铺凭证失效，需重新授权后恢复采集' },
+      note: '店铺凭证失效，需重新授权后恢复同步' },
     { name: '样例店铺 06 · 拉美站', mode: 'SHEIN 自营', currency: 'MXN',
       inTransit: 2210.30, unsettled: 1580.66, nextSettle: 1580.66,
       nextPayDate: '2026-09-28', settled: 4470.00, at: fresh, status: 'warn',
@@ -13831,7 +13831,7 @@ function settleRenderStatus() {
     `<span>数据时间 <b>${settleTime(SETTLE_STATE.refreshedAt)}</b></span>`,
     `<span>店铺覆盖 <b>${okCount} / ${stores.length}</b> 家成功</span>`,
     `<span>币种 <b>${currencies.length ? currencies.join(' · ') : '—'}</b></span>`,
-    failCount ? `<span>采集失败 <b>${failCount}</b> 家（见下方异常区）</span>` : '',
+    failCount ? `<span>同步失败 <b>${failCount}</b> 家（见下方异常区）</span>` : '',
     '<span>口径：对账单为主、订单级交叉校验</span>'
   ].filter(Boolean).join('');
 }
@@ -13872,7 +13872,7 @@ function settleRenderTable() {
   if (!rows.length) {
     body.innerHTML = '<tr><td colspan="10" class="admin-empty">当前币种下没有已授权店铺</td></tr>';
   } else {
-    const badge = { ok: ['ok', '正常'], warn: ['warn', '有差异'], fail: ['fail', '采集失败'] };
+    const badge = { ok: ['ok', '正常'], warn: ['warn', '有差异'], fail: ['fail', '同步失败'] };
     body.innerHTML = rows.map(store => {
       const [cls, label] = badge[store.status] || badge.ok;
       return `<tr>
@@ -13910,13 +13910,13 @@ function settleRenderAlerts() {
       `<div class="settle-alert warn"><span>⚠</span><span><strong>${store.name}</strong>：${store.note}</span></div>`));
   }
   if (fails.length) {
-    blocks.push('<div class="settle-alerts-title">采集失败（未计入汇总）</div>');
+    blocks.push('<div class="settle-alerts-title">同步失败（未计入汇总）</div>');
     fails.forEach(store => blocks.push(
       `<div class="settle-alert fail"><span>✕</span><span><strong>${store.name}</strong>：${store.note}</span></div>`));
   }
   if (!blocks.length) {
     blocks.push('<div class="settle-alerts-title">对账差异</div>');
-    blocks.push('<div class="settle-alert"><span>✓</span><span>当前范围内无差异、无采集失败。</span></div>');
+    blocks.push('<div class="settle-alert"><span>✓</span><span>当前范围内无差异、无同步失败。</span></div>');
   }
   host.innerHTML = blocks.join('');
 }
