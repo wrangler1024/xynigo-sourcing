@@ -2443,14 +2443,17 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         </div>
       </div>
 
-      <!-- 不扫描也能提交：粘贴「环境序号 订单号」，提交前执行器仍会现场体检可退性 -->
+      <!-- 按环境实时扫描后确认提交；完整订单输入仍逐单核验可退性。 -->
       <div class="as-manual-entry">
-        <label class="as-manual-label" for="asDirectOrders">指定订单提交</label>
-        <div class="as-manual-controls">
-          <textarea id="asDirectOrders" rows="1" placeholder="环境序号 订单号；环境序号 订单号" aria-describedby="asDirectHelp" autocomplete="off" spellcheck="false"></textarea>
-          <button class="btn" id="asDirectSubmit" type="button">直接提交</button>
+        <div class="as-manual-heading">
+          <label class="as-manual-label" for="asDirectOrders">指定订单提交</label>
+          <select id="asDirectInputMode" aria-label="指定提交输入方式"><option value="environments">按环境序号</option><option value="orders">按订单号（完整信息）</option></select>
         </div>
-        <p class="as-manual-help" id="asDirectHelp">每组填环境序号、订单号，以空格分隔；多组用中英文分号或换行分隔。提交前仍会核验可申请状态；需先查看金额和包裹数，可使用上方扫描。</p>
+        <div class="as-manual-controls">
+          <textarea id="asDirectOrders" rows="1" placeholder="输入环境序号，以空格、逗号、分号或换行分隔" aria-describedby="asDirectHelp" autocomplete="off" spellcheck="false"></textarea>
+          <button class="btn" id="asDirectSubmit" type="button">按环境提交</button>
+        </div>
+        <p class="as-manual-help" id="asDirectHelp">先实时扫描这些环境的可申请订单，核对清单后提交售后。每次最多 300 个环境、500 单；按环境提交不受待处理列表的日期或件数筛选影响。</p>
       </div>
 
       <div class="business-summary" id="asBizSummary" style="padding-top:4px;">
@@ -5295,6 +5298,7 @@ function asSyncWriteButtons() {
   const busy = AS_STATE.type !== 'refund' || AS_STATE.running || AS_STATE.starting;
   const direct = $('asDirectSubmit');
   if (direct) direct.disabled = busy;
+  ['asDirectInputMode', 'asDirectOrders'].forEach(id => { const node = $(id); if (node) node.disabled = busy; });
   const historyRetry = $('asHistoryRetry');
   if (historyRetry) {
     const count = asRecoverableClaimRows(
@@ -5311,6 +5315,7 @@ const AS_STATE = {
   mode: '', type: 'refund', scanTaskId: null, runId: null, runLabel: '',
   orderView: 'pending', claimFilter: 'all', submissions: new Map(), detailKey: '',
   trackTaskId: null, timer: null, running: false,
+  directSubmitScan: null,
   starting: false, pendingCreates: {}, polling: false, claimItems: [], trackItems: [],
   rows: [], selected: new Set(), claimRows: [], stopRequested: false,
   pollErrors: 0, etaBase: null, startedAt: null, endedAt: null, progressSnapshot: null, status: ''
@@ -6535,14 +6540,15 @@ async function asCreateTask(path, payload) {
   delete AS_STATE.pendingCreates[fingerprint];
   return response;
 }
-async function asScan() {
+async function asScan(options = {}) {
   if (AS_STATE.running || AS_STATE.starting) return;
   AS_STATE.starting = true;
   asSyncRuntimeControls();
   try {
   const runtime = asRuntimeOptions();
   AS_STATE.mode = 'scan';   // 状态条落点：扫描的进度显示在 ② 卡片
-  const serials = asSerials();
+  AS_STATE.directSubmitScan = null;
+  const serials = options.environmentSerials || asSerials();
   if (!serials.length) {
     asSetPhase('等待发起', '请先填入买家号环境序号。', false);
     return;
@@ -6558,7 +6564,11 @@ async function asScan() {
   try {
     const res = await asCreateTask('/v1/after-sale/scan', {executorId: executor.id, browserMode: runtime.browserMode, concurrency: runtime.concurrency, environmentSerials: serials});
     const data = (res || {}).data || {};
+    if (!data.taskId) throw new Error('扫描任务未返回编号，请重试。');
     AS_STATE.scanTaskId = data.taskId || null;
+    if (options.forDirectSubmit) AS_STATE.directSubmitScan = {
+      taskId:data.taskId, serials:serials.slice(), executorId:executor.id,
+    };
     asSetOrderView('pending', true);
     AS_STATE.running = true;
     AS_STATE.stopRequested = false;
@@ -6571,7 +6581,8 @@ async function asScan() {
     $('asScan').disabled = true; $('asStop').disabled = false;
     $('asScanRows').innerHTML = '<tr><td colspan="12" class="hint" style="text-align:center; padding:18px;"><span class="as-status-active">扫描中</span>，正在逐个打开环境读取订单…</td></tr>';
     asProgress({progressTotal:serials.length, progressCompleted:0, unit:'个环境'});
-    asSetPhase('扫描运行中', `共 ${serials.length} 个环境 · 只读，不会改动订单`, true);
+    asSetPhase(options.forDirectSubmit ? '提交前扫描中' : '扫描运行中',
+      `共 ${serials.length} 个环境 · 只读，不会改动订单`+(options.forDirectSubmit ? '；完成后需核对订单并确认提交。' : ''), true);
     asPoll();
   } catch (e) {
     asSetPhase('发起失败', String(e.message || e), false);
@@ -6616,6 +6627,10 @@ async function asSubmitItems(items, options) {
   let executor;
   try { executor = await cloudFormalExecutor('after.sale.claim.v1'); await asRequireRuntimeControls(executor); }
   catch (e) { asSetPhase('执行器不可用', e.message || '无法发起售后提交', false); return false; }
+  if (opts.expectedExecutorId && executor.id !== opts.expectedExecutorId) {
+    asSetPhase('执行器已变化', '当前执行器与扫描时不同，请重新按环境扫描并核对后提交。', false);
+    return false;
+  }
   try {
     const res = await asCreateTask('/v1/operation-runs/after-sale-claim', {executorId: executor.id, browserMode: runtime.browserMode, concurrency: runtime.concurrency, items, retryFromRunId: opts.retryFromRunId || ''});
     const data = (res || {}).data || {};
@@ -6745,6 +6760,18 @@ function asParseDirectOrders(text) {
   return { items, invalid, duplicates, trimmed };
 }
 async function asDirectSubmit() {
+  if ($('asDirectInputMode').value === 'environments') {
+    if (!asWriteEntryReady()) return;
+    const {serials, invalid} = asParseTrackEnvironments($('asDirectOrders').value);
+    if (!serials.length || invalid.length || serials.length > 300) {
+      asSetPhase('请检查环境序号', invalid.length
+        ? '请只填数字环境序号，用空格、逗号、分号或换行分隔；完整订单信息请切换“按订单号（完整信息）”。'
+        : serials.length > 300 ? '每次最多 300 个环境，请分批处理。' : '请先输入要提交售后的环境序号。', false);
+      return;
+    }
+    await asScan({environmentSerials:serials, forDirectSubmit:true});
+    return;
+  }
   const parsed = asParseDirectOrders($('asDirectOrders').value);
   if (parsed.invalid.length) {
     asSetPhase('格式有误',
@@ -6767,6 +6794,92 @@ async function asDirectSubmit() {
   notes.push('执行器会先现场体检可退性：不能退的记为 blocked（已跳过），不会重复退款。');
   if (!confirm(notes.join('\n') + '\n\n确认继续？')) return;
   await asSubmitItems(parsed.items, { label: '提交指定单' });
+}
+function asSyncDirectInputMode() {
+  const byEnvironment = $('asDirectInputMode').value === 'environments';
+  $('asDirectOrders').placeholder = byEnvironment ? '输入环境序号，以空格、逗号、分号或换行分隔' : '环境序号 订单号；环境序号 订单号';
+  $('asDirectSubmit').textContent = byEnvironment ? '按环境提交' : '直接提交';
+  $('asDirectHelp').textContent = byEnvironment
+    ? '先实时扫描这些环境的可申请订单，核对清单后提交售后。每次最多 300 个环境、500 单；按环境提交不受待处理列表的日期或件数筛选影响。'
+    : '每组填环境序号、订单号，以空格分隔；多组用中英文分号或换行分隔。提交前仍会核验可申请状态；需先查看金额和包裹数，可使用上方扫描。';
+}
+function asEnvironmentClaimPreview(serials, rows) {
+  const owners = new Map(), grouped = new Map();
+  for (const row of rows) {
+    if (!serials.includes(row.environmentSerial)) continue;
+    const order = String(row.orderNo || '').trim().toUpperCase();
+    if (order) { if (!owners.has(order)) owners.set(order,new Set()); owners.get(order).add(row.environmentSerial); }
+    const key = asOrderIdentity(row);
+    if (!grouped.has(key)) grouped.set(key,[]);
+    grouped.get(key).push(row);
+  }
+  const eligible = [], environments = serials.map(serial => {
+    const details = [];
+    for (const group of grouped.values()) {
+      const row = group[0]; if (row.environmentSerial !== serial) continue;
+      const order = String(row.orderNo || '').trim().toUpperCase();
+      const conflict = order && owners.get(order)?.size > 1;
+      const canSubmit = !conflict && group.every(asCanSelectScanRow);
+      if (canSubmit) eligible.push(row);
+      const rejected = group.find(item => !asCanSelectScanRow(item)) || row;
+      details.push({row, canSubmit, reason:canSubmit ? '' : conflict ? '同一订单出现在多个环境，需先核对归属'
+        : rejected.errorSummary || rejected.note || (row.claimable ? '已有提交记录或核验未完成，请先核对' : '当前没有可申请的订单')});
+    }
+    return {environmentSerial:serial, details};
+  });
+  return {environments, items:asClaimItemsFromRows(eligible)};
+}
+function asConfirmEnvironmentClaims(preview) {
+  return new Promise(resolve => {
+    const dialog = document.createElement('dialog'); dialog.className = 'as-product-dialog';
+    dialog.setAttribute('aria-label','核对按环境提交'); let accepted = false;
+    const count = preview.items.length, allowed = count > 0 && count <= 500;
+    dialog.innerHTML = '<h3>核对按环境提交</h3><p>本次实时扫描 '+preview.environments.length+' 个环境，可申请 '+count+' 单。'
+      +'确认后将申请丢件退款，退款原路退回；提交前仍会逐单核验。</p>'
+      +'<p class="hint">本清单不受待处理列表筛选影响。需要按日期或件数选单时，请返回列表筛选并勾选。'
+      +(count > 500 ? ' 本批超过 500 单，请分批选择。' : '')+'</p>'
+      +'<div class="as-track-match-list">'+preview.environments.map(env => '<p><b>环境 '+esc(env.environmentSerial)+'</b>'
+        +(env.details.length ? env.details.map(({row,canSubmit,reason}) => '<br><b>'+esc(row.orderNo || '无订单')+'</b> · '
+          +(canSubmit ? '可提交 · '+esc(row.deliveredDate || row.deliveredAt || '送达日期待核对')+' · '
+            +(asItemCount(row) === null ? '件数待核对' : asItemCount(row)+' 件')
+            : '不纳入本次提交：'+esc(reason))).join('') : '<br>未取得该环境的扫描结果，不纳入提交')+'</p>').join('')
+      +'</div><div class="actions"><button class="btn" data-cancel>返回列表</button><button class="btn primary" data-confirm'
+      +(allowed ? '' : ' disabled')+'>确认提交 '+count+' 单</button></div>';
+    dialog.querySelector('[data-cancel]').onclick = () => dialog.close();
+    dialog.querySelector('[data-confirm]').onclick = () => { accepted = allowed; dialog.close(); };
+    dialog.addEventListener('close', () => { dialog.remove(); resolve(accepted); }, {once:true});
+    document.body.appendChild(dialog); dialog.showModal();
+  });
+}
+async function asFinishEnvironmentSubmit(taskId, rows, status) {
+  const intent = AS_STATE.directSubmitScan;
+  if (!intent || intent.taskId !== taskId) return;
+  AS_STATE.directSubmitScan = null;
+  if (status !== 'succeeded' || AS_STATE.stopRequested) {
+    asSetPhase('未提交售后', '提交前扫描未完整完成或已请求停止，本次不会发起退款申请，请核对后重新操作。', false);
+    return;
+  }
+  if (!asWriteEntryReady()) return;
+  AS_STATE.starting = true; asSyncRuntimeControls();
+  let preview;
+  let accepted = false;
+  try {
+    preview = asEnvironmentClaimPreview(intent.serials, rows);
+    const signature = JSON.stringify(preview);
+    accepted = await asConfirmEnvironmentClaims(preview);
+    if (accepted && (AS_STATE.scanTaskId !== taskId || signature
+        !== JSON.stringify(asEnvironmentClaimPreview(intent.serials, AS_STATE.rows)))) {
+      accepted = false; toast('扫描清单或提交状态已变化，请重新核对后提交。');
+    }
+  } catch (error) {
+    asSetPhase('清单核对失败', String(error.message || error)+'；本次未提交售后。', false);
+    return;
+  } finally {
+    AS_STATE.starting = false; asSyncRuntimeControls();
+  }
+  if (accepted && preview.items.length <= 500) {
+    await asSubmitItems(preview.items, {label:'按环境提交', expectedExecutorId:intent.executorId});
+  } else asSetPhase('未提交售后', '本次未发起退款申请，可在待处理订单中筛选、勾选后提交。', false);
 }
 function asOrderedRows(items, rows, key) {
   if (!items || !items.length) return rows || [];
@@ -6807,6 +6920,7 @@ async function asPoll() {
             : '本次没有可申请售后的订单，请查看各行的平台状态或核验说明。', false);
         asRenderScanRows(rows);
         AS_STATE.mode = '';
+        if (AS_STATE.directSubmitScan) await asFinishEnvironmentSubmit(taskId, rows, AS_STATE.status);
       }
     } else if (AS_STATE.mode === 'track' && AS_STATE.trackTaskId) {
       const taskId = AS_STATE.trackTaskId;
@@ -6878,6 +6992,7 @@ async function asPoll() {
   } catch (e) {
     AS_STATE.pollErrors += 1;
     if (AS_STATE.pollErrors >= 5 && AS_STATE.running) {
+      AS_STATE.directSubmitScan = null;
       asSetPhase('状态刷新失败',
         '已连续多次无法获取售后进度（会话可能已过期或网络中断）；刷新页面后可在「本次提交」查看。', false);
     }
@@ -6889,6 +7004,7 @@ $('asScan').onclick = asScan;
 $('asSubmit').onclick = asSubmit;
 $('asStop').onclick = async () => {
   if (!AS_STATE.running) return;
+  AS_STATE.directSubmitScan = null;
   AS_STATE.stopRequested = true;
   asSetPhase('正在停止', '已请求停止；在途订单完成后终止。', true);
   try {
@@ -6926,6 +7042,7 @@ $('asDirectSubmit').onclick = () => {
   if ($('asDirectSubmit').disabled) return;
   return asDirectSubmit();
 };
+$('asDirectInputMode').onchange = asSyncDirectInputMode;
 $('asPickClaimable').onclick = () => {
   AS_STATE.selected = new Set(asFilteredRows()
     .filter(asCanSelectScanRow)

@@ -1071,7 +1071,7 @@ class AfterSaleRunStripWiringTests(unittest.TestCase):
     def test_each_flow_sets_its_stage_before_first_message(self):
         html = self._html()
         # 提交的阶段落在共用入口 asSubmitItems 里（asSubmit/补提/指定单/历史重提都走它）
-        for func, mode in (('async function asScan()', 'scan'),
+        for func, mode in (('async function asScan(', 'scan'),
                            ('async function asSubmitItems(', 'claim'),
                            ('async function asTrack(', 'track')):
             body = html[html.index(func):]
