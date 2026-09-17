@@ -14,9 +14,9 @@ from urllib.parse import quote
 
 from . import __version__
 
-RELEASE_VERSION = "0.18.5"
+RELEASE_VERSION = "0.18.6"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-16T20:36:29Z"
+RELEASE_PUBLISHED_AT = "2026-09-17T03:09:02Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,10 +31,10 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.18.5-f6118fe12f82",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.18.5.exe",
-        "sha256": "eba7b3805d4125efd044ea5c2e624cea18004b166636ab78505024302af4eda5",
-        "size": 15376892,
+        "runtimeId": "0.18.6-9b9fd67e1152",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.18.6.exe",
+        "sha256": "8bab4a3bd2c41130d4ec72fca74b2995cdfe4f7868936a54b442669aafaa3d99",
+        "size": 15382563,
         "installMode": "standard_per_user",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_silent_installer",
@@ -50,10 +50,10 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.18.5-f6118fe12f82",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.18.5.pkg",
-        "sha256": "e2b65d3243eefb40c83c97cb7a22e8742e571cd165c8e4aaaf193429cf3fb9cf",
-        "size": 11739773,
+        "runtimeId": "0.18.6-9b9fd67e1152",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.18.6.pkg",
+        "sha256": "efda531033c5777598ea27b9de28e82d20d7d34dfea05316277744329949ca3a",
+        "size": 11743577,
         "installMode": "standard_system_application",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_system_installer",
@@ -320,10 +320,10 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "修复退款信用卡延迟加载造成的缺失，提交核验和退款回访等待有效账户信息并校验退款单身份。",
-            "可申请清单、提交结果、提交历史及退款跟踪 Excel 导出增加单元格边框和多商品图片；图片读取失败时保留原图链接及说明。",
-            "退款路径不再展示“其他退款渠道（名称未取得）”占位文本，真实渠道名称继续保留。",
-            "采购售后任务旋转图标与执行状态文字保持同一行，收起时仍可识别运行状态。",
-            "云端与 Windows/macOS 执行器统一升级至 v0.18.5，保留 test 渠道。",
+            "指定订单提交支持只输入环境序号：实时扫描可申请订单，核对清单并确认后提交，保留完整订单输入方式。",
+            "指定回访支持只输入环境序号：跨历史批次匹配已记录退款单，展示匹配结果和缺失原因，确认后只读回访。",
+            "支持环境去重、输入顺序、多订单及多退款单；退款单归属冲突时提示核对并排除。",
+            "提交保留商品多图及件数，停止、取消、扫描失败、清单变化或执行器切换时阻止误提交。",
+            "云端与 Windows/macOS 安装包统一为 v0.18.6，保持 test 渠道；本次无数据库迁移或新增执行器能力。",
         ],
     }
