@@ -6092,6 +6092,8 @@ async function asTrackEnvironments() {
   asSyncRuntimeControls();
   let items = [];
   try {
+    AS_STATE.startedAt = null; AS_STATE.endedAt = null; AS_STATE.etaBase = null;
+    asProgress({progressTotal:0, progressCompleted:0, unit:'单'});
     asSetPhase('正在匹配退款单', '共 '+serials.length+' 个环境，正在读取系统历史记录。', true);
     const response = await cloudFetchJson('/v1/after-sale/track/resolve', {
       method:'POST', body:JSON.stringify({environmentSerials:serials}),

@@ -1,11 +1,12 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const html=fs.readFileSync('src/purchase_tool/web/index.html','utf8');
 const nodes=new Map(),node=id=>{if(!nodes.has(id))nodes.set(id,{value:'',textContent:'',placeholder:''});return nodes.get(id);};
-let calls=[],tracked=[],choice=true,hold=Promise.resolve(),fail=false,preview;
+let calls=[],tracked=[],choice=true,hold=Promise.resolve(),fail=false,preview,progress;
 const state={running:false,starting:false};
 const match={items:[{environmentSerial:'900002',orderNo:'ORDER',refundBillId:'BILL',storeName:''}],
  environments:[{environmentSerial:'900002',billCount:1,note:''},{environmentSerial:'900001',billCount:0,note:'系统没有记录'}]};
 const ctx=vm.createContext({AS_STATE:state,$:node,asSyncRuntimeControls:()=>{},
+ asProgress:data=>progress=data,
  asSetPhase:(title,note)=>{node('phase').textContent=title;node('note').textContent=note;},
  cloudFetchJson:async(path,opts)=>{calls.push({path,body:JSON.parse(opts.body)});await hold;if(fail)throw Error('读取失败');return {data:match};},
  asConfirmTrackMatches:async data=>{preview=data;return choice;},
@@ -23,6 +24,8 @@ const run=code=>vm.runInContext(code,ctx);
  assert.equal(run('asParseTrackEnvironments(twenty).serials.length'),20);
  let release;hold=new Promise(r=>release=r);
  const first=run('asTrackManual()');await run('asTrackManual()');
+ assert.equal(progress.progressTotal,0);assert.equal(progress.progressCompleted,0);
+ assert.equal(state.startedAt,null);assert.equal(state.endedAt,null);
  assert.equal(state.starting,true);assert.equal(calls.length,1);release();await first;
  assert.equal(calls[0].path,'/v1/after-sale/track/resolve');
  assert.equal(calls[0].body.environmentSerials.join(','),'900002,900001,900003,900004,900005,900006');
