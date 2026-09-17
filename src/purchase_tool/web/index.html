@@ -3589,6 +3589,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         <span>对账结算 · 结算看板 <span class="legend">SHEIN 开放平台接口只读汇总 · 全店资金在途与结算进度</span></span>
         <span class="settle-toolbar">
           <span class="settle-currency" id="settleCurrencyTabs" role="group" aria-label="币种筛选"></span>
+          <button class="btn" id="btnSettleExport" type="button">导出 Excel</button>
           <button class="btn" id="btnSettleRefresh" type="button">刷新数据</button>
         </span>
       </div>
@@ -3601,7 +3602,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
             <th>店铺</th><th>类型</th><th>币种</th>
             <th class="num">在途资金</th><th class="num">待结算资金</th>
             <th class="num">下次结算</th><th>预计打款日</th>
-            <th class="num">已结算（本期）</th><th>数据时间</th><th>状态</th>
+            <th class="num">已结算（历史累计）</th><th>数据时间</th><th>状态</th>
           </tr></thead>
           <tbody id="settleStoreTbody"><tr><td colspan="10" class="admin-empty">尚未刷新</td></tr></tbody>
         </table>
@@ -13712,24 +13713,24 @@ function settleMockStores() {
   return [
     { name: '样例店铺 01 · 拉美站', mode: 'SHEIN 自营', currency: 'MXN',
       inTransit: 4820.50, unsettled: 945.16, nextSettle: 945.16,
-      nextPayDate: '2026-09-21', settled: 3255.68, at: fresh, status: 'ok', note: '' },
+      nextPayDate: '2026-09-21', settled: 48620.35, at: fresh, status: 'ok', note: '' },
     { name: '样例店铺 02 · 拉美站', mode: 'SHEIN 自营', currency: 'MXN',
       inTransit: 12760.00, unsettled: 2310.44, nextSettle: 2310.44,
-      nextPayDate: '2026-09-21', settled: 8120.90, at: fresh, status: 'warn',
+      nextPayDate: '2026-09-21', settled: 132480.60, at: fresh, status: 'warn',
       note: '订单级聚合比对账单净额高 114.16，属结算调整行未在订单侧回更，已按对账单轧差取值' },
     { name: '样例店铺 03 · 北美站', mode: 'SHEIN 自营', currency: 'USD',
       inTransit: 0.00, unsettled: 0.00, nextSettle: 0.00,
-      nextPayDate: '', settled: 1540.22, at: fresh, status: 'ok', note: '' },
+      nextPayDate: '', settled: 31845.90, at: fresh, status: 'ok', note: '' },
     { name: '样例店铺 04 · 拉美站', mode: 'SHEIN 半托管', currency: 'MXN',
       inTransit: 3390.75, unsettled: 612.08, nextSettle: 612.08,
-      nextPayDate: '2026-09-28', settled: 2004.15, at: fresh, status: 'ok', note: '' },
+      nextPayDate: '2026-09-28', settled: 27430.75, at: fresh, status: 'ok', note: '' },
     { name: '样例店铺 05 · 北美站', mode: 'SHEIN 自营', currency: 'USD',
       inTransit: null, unsettled: null, nextSettle: null,
       nextPayDate: '', settled: null, at: stale, status: 'fail',
       note: '店铺凭证失效，需重新授权后恢复同步' },
     { name: '样例店铺 06 · 拉美站', mode: 'SHEIN 自营', currency: 'MXN',
       inTransit: 2210.30, unsettled: 1580.66, nextSettle: 1580.66,
-      nextPayDate: '2026-09-28', settled: 4470.00, at: fresh, status: 'warn',
+      nextPayDate: '2026-09-28', settled: 65210.40, at: fresh, status: 'warn',
       note: '对账单存在支出行 28.52，订单侧不回更；已按对账单轧差修正' },
     { name: '样例店铺 07 · 拉美站', mode: 'SHEIN 自营', currency: 'MXN',
       inTransit: null, unsettled: null, nextSettle: null,
@@ -13737,13 +13738,13 @@ function settleMockStores() {
       note: '对账单时间窗越界（gsfs99401），已按 7 天整片重试' },
     { name: '样例店铺 08 · 北美站', mode: 'SHEIN 半托管', currency: 'USD',
       inTransit: 450.00, unsettled: 128.90, nextSettle: 128.90,
-      nextPayDate: '2026-09-21', settled: 320.00, at: fresh, status: 'ok', note: '' },
+      nextPayDate: '2026-09-21', settled: 9840.25, at: fresh, status: 'ok', note: '' },
     { name: '样例店铺 09 · 拉美站', mode: 'SHEIN 自营', currency: 'MXN',
       inTransit: 1890.20, unsettled: 476.30, nextSettle: 476.30,
-      nextPayDate: '2026-09-28', settled: 1180.55, at: fresh, status: 'ok', note: '' },
+      nextPayDate: '2026-09-28', settled: 15980.10, at: fresh, status: 'ok', note: '' },
     { name: '样例店铺 10 · 北美站', mode: 'SHEIN 自营', currency: 'USD',
       inTransit: 0.00, unsettled: 88.40, nextSettle: 88.40,
-      nextPayDate: '2026-09-21', settled: 604.10, at: fresh, status: 'ok', note: '' }
+      nextPayDate: '2026-09-21', settled: 12260.85, at: fresh, status: 'ok', note: '' }
   ];
 }
 
@@ -13845,7 +13846,7 @@ function settleRenderCards() {
     { title: '在途资金', hint: '已发货未签收（订单级）', groups: settleGroupSum(okStores, 'inTransit') },
     { title: '待结算资金', hint: '对账单待结算按收支轧差', groups: settleGroupSum(okStores, 'unsettled') },
     { title: '下次结算金额', hint: '按预计打款日分批', groups: settleGroupSum(okStores, 'nextSettle'), due: true },
-    { title: '已结算资金', hint: '报账单已付款聚合', groups: settleGroupSum(okStores, 'settled') }
+    { title: '已结算资金', hint: '报账单已付款历史累计', groups: settleGroupSum(okStores, 'settled') }
   ];
   host.innerHTML = cards.map(card => {
     const rows = card.groups.length
@@ -13929,6 +13930,90 @@ function settleRenderAll() {
   settleRenderAlerts();
 }
 
+/* 导出：原型由前端生成 CSV（UTF-8 BOM，Excel 双击可直接打开）。
+ * 正式实现沿用仓内先例（巡检 store_finance_export.py）由云端生成 xlsx，
+ * 列序与汇总行结构以本函数为准；导出范围为当前币种筛选下的全部店铺
+ * （非当前页），失败行保留并标注状态，金额留空不参与汇总。 */
+function settleCsvCell(value) {
+  const text = value === null || value === undefined ? '' : String(value);
+  return /[",\n\r]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+}
+
+function settleStamp() {
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+}
+
+function settleFullTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+    `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+const SETTLE_EXPORT_HEADERS = ['店铺', '类型', '币种', '在途资金', '待结算资金',
+  '下次结算', '预计打款日', '已结算（历史累计）', '数据时间', '状态', '说明'];
+
+function buildSettlementExportRows() {
+  const stores = settleScopedStores();
+  const rows = [SETTLE_EXPORT_HEADERS.slice()];
+  const statusLabel = { ok: '正常', warn: '有差异', fail: '同步失败' };
+  stores.forEach(store => {
+    rows.push([
+      store.name, store.mode, store.currency,
+      store.inTransit, store.unsettled, store.nextSettle,
+      store.nextPayDate || '', store.settled,
+      settleFullTime(store.at), statusLabel[store.status] || '正常', store.note || ''
+    ]);
+  });
+  const okStores = settleOkStores(stores);
+  const dueDates = settleGroupDueDates(okStores);
+  const sumOf = key => new Map(
+    settleGroupSum(okStores, key).map(group => [group.currency, group.total]));
+  const byInTransit = sumOf('inTransit');
+  const byUnsettled = sumOf('unsettled');
+  const byNextSettle = sumOf('nextSettle');
+  const bySettled = sumOf('settled');
+  const pick = (map, currency) => (map.has(currency) ? map.get(currency) : '');
+  rows.push([]);
+  rows.push(['汇总（按币种分列，不做折算与跨币种合计）']);
+  // 汇总行的列位与上方明细表对齐（币种落在第 3 列、各金额落在第 4–8 列），
+  // 财务在 Excel 里可直接对标读数，而不是另一套列结构。
+  rows.push(['', '', '币种', '在途资金', '待结算资金', '下次结算',
+    '预计最早打款日', '已结算（历史累计）', '', '', '']);
+  settleCurrencies().forEach(currency => {
+    const dues = (dueDates.get(currency) || []).slice().sort();
+    rows.push([
+      '', '', currency,
+      pick(byInTransit, currency), pick(byUnsettled, currency),
+      pick(byNextSettle, currency), dues[0] || '', pick(bySettled, currency),
+      '', '', ''
+    ]);
+  });
+  rows.push([]);
+  rows.push([`数据时间：${settleFullTime(SETTLE_STATE.refreshedAt)}`,
+    `店铺：成功 ${okStores.length} / 共 ${stores.length} 家`,
+    `币种范围：${SETTLE_STATE.currency === 'ALL' ? '全部' : SETTLE_STATE.currency}`]);
+  return { rows, storeCount: stores.length };
+}
+
+function exportSettlementDashboard() {
+  const { rows, storeCount } = buildSettlementExportRows();
+  const csv = rows.map(row => row.map(settleCsvCell).join(',')).join('\r\n');
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `结算看板_${settleStamp()}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast(`已导出 ${storeCount} 家店铺（原型导出 CSV，正式版为 xlsx）`);
+}
+
 function refreshSettlementDashboard() {
   SETTLE_STATE.stores = settleMockStores();
   SETTLE_STATE.refreshedAt = Date.now();
@@ -13937,6 +14022,7 @@ function refreshSettlementDashboard() {
 
 function initSettlementDashboard() {
   refreshSettlementDashboard();
+  $('btnSettleExport').onclick = () => exportSettlementDashboard();
   $('btnSettleRefresh').onclick = () => {
     refreshSettlementDashboard();
     toast('结算看板已刷新（原型演示数据）');
