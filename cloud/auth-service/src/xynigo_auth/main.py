@@ -971,12 +971,22 @@ def create_app(
             authorization=authorization,
             audit_action="shein_store.link.create",
         )
+        target_store_id = None
+        if body.storeId:
+            try:
+                target_store_id = uuid.UUID(body.storeId)
+            except (ValueError, TypeError) as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail={"code": "shein_store_id_invalid"},
+                ) from exc
         payload = _shein_auth_call(
             lambda: _shein_auth_service().create_link(
                 session,
                 tenant_id=actor.tenant.id,
                 user_id=actor.user.id,
                 mode=body.mode,
+                target_store_id=target_store_id,
             )
         )
         session.commit()

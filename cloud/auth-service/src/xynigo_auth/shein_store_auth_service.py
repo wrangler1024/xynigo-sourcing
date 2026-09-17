@@ -14,7 +14,8 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .models import SheinAuthEvent, SheinAuthLink, SheinAuthorizedStore
@@ -54,9 +55,29 @@ def _as_utc(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
+# query-store-info 只保留白名单字段入库：平台若以后返回敏感字段，
+# 不会以明文 JSON 躺在库里（评审后补项）。
+STORE_INFO_FIELDS = (
+    "merchantId", "merchant_id", "storeName", "store_name",
+    "storeCode", "store_code", "site", "region", "currency",
+)
+
+
+def _filtered_store_info(store_info: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in (store_info or {}).items()
+        if key in STORE_INFO_FIELDS
+    }
+
+
 def _mask_temp_token(token: str) -> str:
     value = str(token or "")
-    return f"{value[:4]}…{value[-4:]}" if len(value) > 12 else "****"
+    if len(value) <= 8:
+        return "****"
+    return f"{value[:2]}****{value[-2:]}"
+
+
 
 
 def _store_payload(store: SheinAuthorizedStore) -> dict[str, Any]:
@@ -129,12 +150,16 @@ class SheinStoreAuthService:
     ) -> dict[str, Any]:
         if mode not in ("self", "semi"):
             raise SheinStoreAuthError("shein_auth_mode_invalid", "店铺类型无效", 422)
-        if not self.client.configured:
+        if not self.client.configured or not self.redirect_base:
             raise SheinStoreAuthError(
                 "shein_auth_not_configured",
                 "SHEIN 开放平台应用凭证未配置，请联系管理员检查部署配置",
                 503,
             )
+        target_label = "（新店铺）"
+        if target_store_id is not None:
+            target = self._require_store(session, tenant_id, target_store_id)
+            target_label = target.store_name
         state = "xy" + "".join(
             secrets.choice(STATE_ALPHABET) for _ in range(30)
         )
@@ -155,10 +180,10 @@ class SheinStoreAuthService:
             actor_user_id=user_id,
             action="link",
             store_id=target_store_id,
-            store_label="（新店铺）" if not target_store_id else "重新授权",
+            store_label=target_label,
             ok=True,
-            note=f"生成{'SHEIN 自营' if mode == 'self' else 'SHEIN 半托管'}授权链接，"
-                 f"state 尾号 {state[-6:]}",
+            note=f"生成{'SHEIN 自营' if mode == 'self' else 'SHEIN 半托管'}"
+                 f"授权链接（{LINK_TTL_MINUTES} 分钟内有效）",
         )
         session.flush()
         redirect_b64 = base64.b64encode(self.redirect_base.encode()).decode()
@@ -175,23 +200,32 @@ class SheinStoreAuthService:
 
     # ---- 回调换钥 ----
 
-    def complete_callback(
-        self,
-        session: Session,
-        *,
-        temp_token: str,
-        state: str,
-    ) -> dict[str, Any]:
+    def _claim_link(self, session: Session, state: str) -> SheinAuthLink:
+        """原子消费 state（评审必须改 #2）。
+
+        先短事务 UPDATE ... WHERE consumed_at IS NULL，rowcount 判定胜者；
+        并发回调只有一个能拿到（串行 409 由既有分支覆盖，失败也计入一次性）。
+        换钥的联网调用放在事务外，避免长时间持行锁。
+        """
         link = session.scalar(
             select(SheinAuthLink).where(SheinAuthLink.state == str(state))
         )
-        tenant_id = link.tenant_id if link else None
         if link is None:
+            session.rollback()
             raise SheinStoreAuthError(
                 "shein_auth_state_unknown", "授权链接无效或已过期", 404
             )
         now = datetime.now(UTC)
-        if link.consumed_at is not None:
+        claimed = session.execute(
+            update(SheinAuthLink)
+            .where(
+                SheinAuthLink.id == link.id,
+                SheinAuthLink.consumed_at.is_(None),
+            )
+            .values(consumed_at=now)
+        ).rowcount
+        session.commit()
+        if not claimed:
             raise SheinStoreAuthError(
                 "shein_auth_state_reused", "授权链接已使用，请重新生成", 409
             )
@@ -199,7 +233,59 @@ class SheinStoreAuthService:
             raise SheinStoreAuthError(
                 "shein_auth_state_expired", "授权链接已过期，请重新生成", 410
             )
-        link.consumed_at = now
+        return link
+
+    def _match_store_row(
+        self,
+        session: Session,
+        *,
+        tenant_id: uuid.UUID,
+        mode: str,
+        target_store_id: uuid.UUID | None,
+        open_key_id: str,
+        merchant_id: str,
+    ) -> SheinAuthorizedStore | None:
+        """绑定匹配（评审必须改 #1，禁止用 open_key_id[:16] 冒充商家ID）：
+
+        1) 重新授权链接带目标店 → 直接定位该行；
+        2) 按 openKeyId（换钥必返且同店同应用稳定）匹配；
+        3) 平台给出真实商家ID 时按其 + 模式匹配（openKeyId 轮换场景兜底）。
+        """
+        if target_store_id is not None:
+            record = session.get(SheinAuthorizedStore, target_store_id)
+            if record is not None and record.tenant_id == tenant_id:
+                return record
+        record = session.scalar(
+            select(SheinAuthorizedStore).where(
+                SheinAuthorizedStore.tenant_id == tenant_id,
+                SheinAuthorizedStore.open_key_id == open_key_id,
+            )
+        )
+        if record is not None:
+            return record
+        if merchant_id:
+            return session.scalar(
+                select(SheinAuthorizedStore).where(
+                    SheinAuthorizedStore.tenant_id == tenant_id,
+                    SheinAuthorizedStore.merchant_id == merchant_id,
+                    SheinAuthorizedStore.mode == mode,
+                )
+            )
+        return None
+
+    def complete_callback(
+        self,
+        session: Session,
+        *,
+        temp_token: str,
+        state: str,
+    ) -> dict[str, Any]:
+        link = self._claim_link(session, state)
+        link_tenant_id = link.tenant_id
+        link_actor_id = link.created_by_user_id
+        link_target_id = link.target_store_id
+        link_mode = link.mode
+        link_app_id = link.app_id
 
         failure: SheinOpenApiClientError | None = None
         open_key_id = secret_key = ""
@@ -210,10 +296,10 @@ class SheinStoreAuthService:
         if failure is not None:
             self._event(
                 session,
-                tenant_id=link.tenant_id,
-                actor_user_id=link.created_by_user_id,
+                tenant_id=link_tenant_id,
+                actor_user_id=link_actor_id,
                 action="callback",
-                store_id=link.target_store_id,
+                store_id=link_target_id,
                 store_label="（换钥失败）",
                 ok=False,
                 note=f"tempToken {_mask_temp_token(temp_token)} 换钥失败："
@@ -226,9 +312,10 @@ class SheinStoreAuthService:
                     "平台临时令牌已过期（10 分钟内有效），请重新生成授权链接",
                     410,
                 ) from failure
+            # 平台原文留在服务端（事件/异常内），HTTP 只回稳定错误码与固定文案。
             raise SheinStoreAuthError(
                 "shein_token_exchange_failed",
-                f"换取店铺密钥失败：{failure.message}",
+                "换取店铺密钥失败，请重新生成授权链接",
                 502,
             ) from failure
 
@@ -250,17 +337,15 @@ class SheinStoreAuthService:
             or store_info.get("store_name")
             or ""
         ).strip()
-        if not merchant_id:
-            # query-store-info 拿不到商家ID 时退回 openKeyId 前 16 位作匹配键，
-            # 后续验证连接成功会补齐。
-            merchant_id = open_key_id[:16]
 
-        record = session.scalar(
-            select(SheinAuthorizedStore).where(
-                SheinAuthorizedStore.tenant_id == link.tenant_id,
-                SheinAuthorizedStore.merchant_id == merchant_id,
-                SheinAuthorizedStore.mode == link.mode,
-            )
+        now = datetime.now(UTC)
+        record = self._match_store_row(
+            session,
+            tenant_id=link_tenant_id,
+            mode=link_mode,
+            target_store_id=link_target_id,
+            open_key_id=open_key_id,
+            merchant_id=merchant_id,
         )
         try:
             ciphertext = self.cipher.encrypt_secret(secret_key)
@@ -270,36 +355,64 @@ class SheinStoreAuthService:
             ) from exc
         if record is None:
             record = SheinAuthorizedStore(
-                tenant_id=link.tenant_id,
-                merchant_id=merchant_id,
-                store_name=platform_name or f"店铺 {merchant_id}",
+                tenant_id=link_tenant_id,
+                merchant_id=merchant_id,  # 允许暂缺（空串），验证连接成功时回填
+                store_name=(
+                    platform_name
+                    or (f"店铺 {merchant_id}" if merchant_id else "待命名店铺")
+                ),
                 open_key_id=open_key_id,
                 secret_ciphertext=ciphertext,
-                app_id=link.app_id,
-                mode=link.mode,
+                app_id=link_app_id,
+                mode=link_mode,
                 first_authorized_at=now,
                 latest_authorized_at=now,
                 status="pending",
-                store_info=store_info,
-                created_by_user_id=link.created_by_user_id,
+                store_info=_filtered_store_info(store_info),
+                created_by_user_id=link_actor_id,
             )
             session.add(record)
             event_note = "首次授权成功，密钥已加密保存"
         else:
             record.open_key_id = open_key_id
             record.secret_ciphertext = ciphertext
-            record.app_id = link.app_id
+            record.app_id = link_app_id
             record.latest_authorized_at = now
             record.status = "pending"
-            record.store_info = store_info
+            record.store_info = _filtered_store_info(store_info)
+            if merchant_id:
+                record.merchant_id = merchant_id
             if platform_name:
                 record.store_name = platform_name
             event_note = "重新授权成功，密钥已轮换（旧密钥失效）"
-        session.flush()
+        try:
+            session.flush()
+        except IntegrityError:
+            # 并发插入同一 openKeyId：回滚后按唯一键改走更新路径（评审后补项）。
+            session.rollback()
+            record = session.scalar(
+                select(SheinAuthorizedStore).where(
+                    SheinAuthorizedStore.tenant_id == link_tenant_id,
+                    SheinAuthorizedStore.open_key_id == open_key_id,
+                )
+            )
+            if record is None:
+                raise SheinStoreAuthError(
+                    "shein_store_conflict", "店铺授权写入冲突，请重试", 409
+                )
+            record.secret_ciphertext = ciphertext
+            record.latest_authorized_at = now
+            record.status = "pending"
+            if merchant_id:
+                record.merchant_id = merchant_id
+            if platform_name:
+                record.store_name = platform_name
+            session.flush()
+            event_note = "重新授权成功，密钥已轮换（旧密钥失效）"
         self._event(
             session,
-            tenant_id=link.tenant_id,
-            actor_user_id=link.created_by_user_id,
+            tenant_id=link_tenant_id,
+            actor_user_id=link_actor_id,
             action="callback",
             store_id=record.id,
             store_label=record.store_name,
@@ -378,12 +491,44 @@ class SheinStoreAuthService:
                 open_key_id=record.open_key_id, secret_key=secret_key
             )
             record.status = "ok"
-            record.store_info = store_info
+            record.store_info = _filtered_store_info(store_info)
             note = "店铺信息接口验证通过"
             ok = True
+            # 验证成功回填商家ID / 店铺名（首绑时店铺信息接口未必可用）；
+            # 若同租户同模式已存在同一商家ID 的重复行（历史裂行），合并到本行。
+            verified_merchant = str(
+                store_info.get("merchantId")
+                or store_info.get("merchant_id")
+                or ""
+            ).strip()
+            verified_name = str(
+                store_info.get("storeName")
+                or store_info.get("store_name")
+                or ""
+            ).strip()
+            if verified_merchant:
+                duplicate = session.scalar(
+                    select(SheinAuthorizedStore).where(
+                        SheinAuthorizedStore.tenant_id == tenant_id,
+                        SheinAuthorizedStore.merchant_id == verified_merchant,
+                        SheinAuthorizedStore.mode == record.mode,
+                        SheinAuthorizedStore.id != record.id,
+                    )
+                )
+                record.merchant_id = verified_merchant
+                if duplicate is not None:
+                    duplicate_name = duplicate.store_name
+                    session.delete(duplicate)
+                    note = f"验证通过；合并重复授权行「{duplicate_name}」"
+            if verified_name and (
+                not record.store_name
+                or record.store_name.startswith("待命名")
+                or record.store_name.startswith("店铺 ")
+            ):
+                record.store_name = verified_name
         except SheinOpenApiClientError as exc:
             record.status = "expired"
-            note = f"验证失败：{exc.code} {exc.message}"[:300]
+            note = f"验证失败：{exc.code}"[:300]
             ok = False
         record.last_verified_at = datetime.now(UTC)
         self._event(

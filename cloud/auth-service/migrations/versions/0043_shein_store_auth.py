@@ -16,7 +16,8 @@ def upgrade():
         sa.Column("tenant_id", sa.Uuid(),
                   sa.ForeignKey("tenants.id", ondelete="CASCADE"),
                   nullable=False),
-        sa.Column("merchant_id", sa.String(64), nullable=False),
+        sa.Column("merchant_id", sa.String(64), nullable=False,
+                  server_default=""),
         sa.Column("store_name", sa.String(128), nullable=False),
         sa.Column("open_key_id", sa.String(64), nullable=False),
         sa.Column("secret_ciphertext", sa.Text(), nullable=False),
@@ -39,8 +40,15 @@ def upgrade():
                            name="ck_shein_store_mode"),
         sa.CheckConstraint("status IN ('pending', 'ok', 'expired')",
                            name="ck_shein_store_status"),
-        sa.UniqueConstraint("tenant_id", "merchant_id", "mode",
-                            name="uq_shein_store_tenant_merchant_mode"),
+        # 匹配键用 openKeyId：换钥必然返回、且同店同应用跨重新授权稳定；
+        # 商家ID 可能因店铺信息接口失败而暂缺，不能作唯一键（评审结论 20260917）。
+        sa.UniqueConstraint("tenant_id", "open_key_id",
+                            name="uq_shein_store_tenant_open_key"),
+    )
+    op.create_index(
+        "ix_shein_store_tenant_merchant",
+        "shein_authorized_stores",
+        ["tenant_id", "merchant_id"],
     )
     op.create_index(
         "ix_shein_store_tenant_latest",

@@ -60,9 +60,20 @@ def aes_encrypt_hex(plain: str, app_secret: str) -> str:
     return (encryptor.update(data) + encryptor.finalize()).hex()
 
 
-def shein_transport(temp_token_effect: dict[str, str] | None = None):
-    """Fake SHEIN 网关：get-by-token + query-store-info，验证签名头存在。"""
-    effects = temp_token_effect or {}
+def shein_transport(
+    *,
+    expired_tokens: tuple[str, ...] = (),
+    store_info_fail_times: int = 0,
+    token_open_keys: dict[str, str] | None = None,
+):
+    """Fake SHEIN 网关：get-by-token + query-store-info，验证签名头存在。
+
+    store_info_fail_times：前 N 次店铺信息查询返回业务错误（模拟接口闪断，
+    用于验证「信息接口失败不裂行」的回归场景）。
+    token_open_keys：tempToken → openKeyId 映射（模拟平台换钥轮换）。
+    """
+    failures_left = {"count": store_info_fail_times}
+    open_key_map = token_open_keys or {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers.get("x-lt-appid") or request.headers.get(
@@ -71,22 +82,26 @@ def shein_transport(temp_token_effect: dict[str, str] | None = None):
         assert request.headers.get("x-lt-signature"), "签名头缺失"
         if request.url.path == "/open-api/auth/get-by-token":
             token = json.loads(request.content)["tempToken"]
-            if token in effects:
-                code = effects[token]
+            if token in expired_tokens:
                 return httpx.Response(
-                    200, json={"code": code, "msg": "failed", "data": None}
+                    200, json={"code": "33051002", "msg": "failed", "data": None}
                 )
             return httpx.Response(200, json={
                 "code": "0",
                 "msg": "ok",
                 "data": {
-                    "openKeyId": OPEN_KEY_ID,
+                    "openKeyId": open_key_map.get(token, OPEN_KEY_ID),
                     "secretKey": aes_encrypt_hex(SECRET_PLAIN, APP_SECRET),
                 },
             })
         if request.url.path == (
             "/open-api/openapi-business-backend/query-store-info"
         ):
+            if failures_left["count"] > 0:
+                failures_left["count"] -= 1
+                return httpx.Response(
+                    200, json={"code": "500", "msg": "internal", "data": None}
+                )
             if request.headers.get("x-lt-openKeyId") == "BAD":
                 return httpx.Response(
                     200, json={"code": "500", "msg": "sign error", "data": None}
@@ -269,7 +284,7 @@ def test_client_maps_expired_temp_token_code() -> None:
         gateway="https://openapi.example.test",
         app_id=APP_ID,
         app_secret=APP_SECRET,
-        transport=shein_transport({"expired-token-000": "33051002"}),
+        transport=shein_transport(expired_tokens=("expired-token-000",)),
     )
     try:
         client.exchange_temp_token("expired-token-000")
@@ -396,7 +411,7 @@ def test_state_single_use_unknown_and_expiry(tmp_path) -> None:
 
 def test_temp_token_platform_expiry_maps_to_event_failure(tmp_path) -> None:
     app, database, _ids = build_shein_app(
-        tmp_path, transport=shein_transport({"dead-token-000000": "33051002"})
+        tmp_path, transport=shein_transport(expired_tokens=("dead-token-000000",))
     )
     with TestClient(app) as client:
         link = client.post(
@@ -564,3 +579,123 @@ def test_store_table_column_order_pinned() -> None:
         "id", "tenant_id", "actor_user_id", "action", "store_id",
         "store_label", "ok", "note", "created_at",
     ]
+
+
+# ---- 评审必须改项回归（20260917 Cursor 评审） ----
+
+
+def test_store_info_failure_then_reauth_stays_single_row(tmp_path) -> None:
+    """评审必须改 #1：信息接口闪断不得把同店拆成两行，也不得用 openKeyId 冒充商家ID。
+
+    首次换钥成功但店铺信息失败 → 行 A（merchant_id 为空、openKeyId 已落）；
+    再次授权（同 openKeyId，平台信息恢复）→ 仍是一行，并回填真实商家ID。
+    """
+    app, database, _ids = build_shein_app(
+        tmp_path, transport=shein_transport(store_info_fail_times=1)
+    )
+    with TestClient(app) as client:
+        link1 = client.post(
+            "/v1/shein-auth/link", json={"mode": "self"}, headers=admin_headers()
+        ).json()
+        first = client.post(
+            "/v1/shein-auth/callback",
+            json={"tempToken": "temp-token-first", "state": link1["state"]},
+        )
+        assert first.status_code == 200, first.text
+        assert first.json()["store"]["merchantId"] == "", (
+            "商家ID 暂缺时必须是空值，不得用 openKeyId 前缀冒充"
+        )
+        with database.session_factory() as session:
+            rows = session.scalars(select(SheinAuthorizedStore)).all()
+            assert len(rows) == 1 and rows[0].merchant_id == ""
+
+        link2 = client.post(
+            "/v1/shein-auth/link", json={"mode": "self"}, headers=admin_headers()
+        ).json()
+        second = client.post(
+            "/v1/shein-auth/callback",
+            json={"tempToken": "temp-token-second", "state": link2["state"]},
+        )
+        assert second.status_code == 200
+        with database.session_factory() as session:
+            rows = session.scalars(select(SheinAuthorizedStore)).all()
+            assert len(rows) == 1, f"信息接口失败后重新授权裂行：{len(rows)} 行"
+            assert rows[0].merchant_id == "18301880", "重新授权应回填真实商家ID"
+
+
+def test_reauth_with_store_id_updates_target_row_even_if_openkey_rotates(
+    tmp_path,
+) -> None:
+    """评审必须改 #1：重新授权带 storeId 时，即便平台签发新 openKeyId 也更新该行。"""
+    app, database, _ids = build_shein_app(
+        tmp_path,
+        transport=shein_transport(token_open_keys={
+            "temp-token-second": "ROTATED0KEY0ID0000000000000000001",
+        }),
+    )
+    with TestClient(app) as client:
+        link1 = client.post(
+            "/v1/shein-auth/link", json={"mode": "self"}, headers=admin_headers()
+        ).json()
+        store = client.post(
+            "/v1/shein-auth/callback",
+            json={"tempToken": "temp-token-first", "state": link1["state"]},
+        ).json()["store"]
+
+        reauth = client.post(
+            "/v1/shein-auth/link",
+            json={"mode": "self", "storeId": store["id"]},
+            headers=admin_headers(),
+        ).json()
+        second = client.post(
+            "/v1/shein-auth/callback",
+            json={"tempToken": "temp-token-second", "state": reauth["state"]},
+        )
+        assert second.status_code == 200
+        assert second.json()["store"]["id"] == store["id"]
+        with database.session_factory() as session:
+            rows = session.scalars(select(SheinAuthorizedStore)).all()
+            assert len(rows) == 1
+            assert rows[0].open_key_id == "ROTATED0KEY0ID0000000000000000001"
+
+
+def test_failed_exchange_still_consumes_state_once(tmp_path) -> None:
+    """评审必须改 #2：换钥失败也计入一次性消费，重放必须 409（不能重试刷）。"""
+    app, _database, _ids = build_shein_app(
+        tmp_path, transport=shein_transport(expired_tokens=("expired-token-000",))
+    )
+    with TestClient(app) as client:
+        link = client.post(
+            "/v1/shein-auth/link", json={"mode": "self"}, headers=admin_headers()
+        ).json()
+        first = client.post(
+            "/v1/shein-auth/callback",
+            json={"tempToken": "expired-token-000", "state": link["state"]},
+        )
+        assert first.status_code == 410
+        replay = client.post(
+            "/v1/shein-auth/callback",
+            json={"tempToken": "expired-token-000", "state": link["state"]},
+        )
+        assert replay.status_code == 409, "失败路径的 state 也必须已消费"
+
+
+def test_zero_order_placeholder_merchant_and_verify_backfills(tmp_path) -> None:
+    """信息缺失时占位名可读；验证成功后回填商家ID 与真实店名。"""
+    app, database, _ids = build_shein_app(
+        tmp_path, transport=shein_transport(store_info_fail_times=1)
+    )
+    with TestClient(app) as client:
+        link = client.post(
+            "/v1/shein-auth/link", json={"mode": "self"}, headers=admin_headers()
+        ).json()
+        store = client.post(
+            "/v1/shein-auth/callback",
+            json={"tempToken": "temp-token-x", "state": link["state"]},
+        ).json()["store"]
+        assert store["name"] == "待命名店铺"
+        verified = client.post(
+            f"/v1/shein-auth/stores/{store['id']}/verify", headers=admin_headers()
+        ).json()
+        assert verified["merchantId"] == "18301880"
+        assert verified["name"] == "观潮"

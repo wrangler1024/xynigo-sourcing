@@ -2515,9 +2515,11 @@ class SheinAuthorizedStore(Base):
     )
 
     __table_args__ = (
+        # 匹配键=openKeyId（换钥必返且同店同应用稳定）；商家ID 可能因店铺信息
+        # 接口失败而暂缺，不作唯一键（评审结论 20260917）。
         UniqueConstraint(
-            "tenant_id", "merchant_id", "mode",
-            name="uq_shein_store_tenant_merchant_mode",
+            "tenant_id", "open_key_id",
+            name="uq_shein_store_tenant_open_key",
         ),
         CheckConstraint(
             "mode IN ('self', 'semi')", name="ck_shein_store_mode"
@@ -2527,6 +2529,7 @@ class SheinAuthorizedStore(Base):
             name="ck_shein_store_status",
         ),
         Index("ix_shein_store_tenant_latest", "tenant_id", "latest_authorized_at"),
+        Index("ix_shein_store_tenant_merchant", "tenant_id", "merchant_id"),
     )
 
 

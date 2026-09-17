@@ -1,15 +1,22 @@
 """SHEIN open-platform gateway client: signing, token exchange, store info.
 
 契约依据 20260916-17 生产真机实测（docs/20260917_需求_SHEIN开放平台店铺授权模块.md）：
-- 签名：VALUE=`{identity}&{timestamp}&{path}`，KEY=secret+RandomKey，
+
+已生产实证（观潮真店手动流程，可信任）：
+- 店铺级签名：VALUE=`openKeyId&{timestamp}&{path}`，KEY=secretKey+RandomKey，
   HMAC-SHA256 → hex 小写 → base64，signature=RandomKey+base64(hex)；
-  timestamp 为毫秒。应用级身份=appid（头 x-lt-appid），店铺级=openKeyId
-  （头 x-lt-openKeyId）。
-- 换钥：POST /open-api/auth/get-by-token，body {"tempToken"}，用应用凭证
-  签名；返回 openKeyId + AES-128-CBC 加密的 secretKey。
+  timestamp 为毫秒；头 x-lt-openKeyId/x-lt-timestamp/x-lt-signature。
 - 解密：key=APP_Secret UTF-8 前 16 字节，IV=固定种子 ``space-station-de``，
   PKCS7 去填充，得 32 位十六进制串。
-- tempToken 一次性、10 分钟有效，过期平台返回 code=33051002。
+
+⚠️ UNVERIFIED（合成假设，联调首日必须用观潮真机响应校准，失败先对契约而非改实现）：
+- 应用级签名：假定与店铺级同构，仅身份字段换成 appid（头 x-lt-appid）。
+- `exchange_temp_token` 的响应结构：假定 ``{"code":"0","msg":...,"data":
+  {"openKeyId":...,"secretKey":<hex AES 密文>}}``。
+- tempToken 一次性、10 分钟有效；过期错误码假定为 code=33051002。
+- `query_store_info` 的商家ID/店铺名字段名：假定 merchantId / storeName
+  （代码同时兼容 snake_case 变体）。
+
 应用凭证只从部署配置注入，不落库不落日志。
 """
 

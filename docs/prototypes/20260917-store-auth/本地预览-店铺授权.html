@@ -4192,6 +4192,7 @@ const FEATURE_MODULES = {
   },
   sheinstoreauth: {
     label: '店铺授权', primary: 'system',
+    requiredPermissionsAny: ['system.shein_store.read', 'system.shein_store.manage'],
     summary: '管理 SHEIN 开放平台店铺授权：生成授权链接、绑定自营与半托管店铺凭证（密钥加密保存），为订单、额度与财务模块供数。'
   }
 };
@@ -4327,6 +4328,11 @@ const PERMISSION_MENU_GROUPS = [
         id: 'sessionmanagement', label: '登录会话', badge: '共享权限',
         note: '当前与“成员管理”共用成员管理权限。',
         codes: ['system.member.manage']
+      },
+      {
+        id: 'sheinstoreauth', label: '店铺授权', badge: '测试版本',
+        note: '查看与验证连接用「查看」权限；生成链接、改名、删除限管理员（管理权限）。',
+        codes: ['system.shein_store.read', 'system.shein_store.manage']
       },
       {
         id: 'localexecutor', label: '本地执行器', badge: 'P1',
@@ -13664,6 +13670,12 @@ function sheinAuthIsAdmin() {
   return hasRole('admin') || hasRole('super_admin');
 }
 
+/* 云端按权限码收口（评审必须改 #6）：manage=生成链接/改名/重新授权/删除；
+   mock 预览（本地无权限体系）沿用管理员角色判定。 */
+function sheinAuthCanManage() {
+  return sheinAuthCloud ? hasPermission('system.shein_store.manage') : sheinAuthIsAdmin();
+}
+
 function sheinAuthFmt(ts) {
   if (!ts) return '—';
   const d = new Date(ts);
@@ -13697,7 +13709,7 @@ function sheinAuthFilteredStores() {
 function sheinAuthRenderStores() {
   const tbody = $('sheinAuthTbody');
   if (!tbody) return;
-  const admin = sheinAuthIsAdmin();
+  const admin = sheinAuthCanManage();
   const rows = sheinAuthFilteredStores();
   const total = sheinAuthCloud ? (sheinStoreAuthState.total || 0) : rows.length;
   const pages = Math.max(1, Math.ceil(total / sheinAuthPageSize));
@@ -13712,13 +13724,13 @@ function sheinAuthRenderStores() {
       : '<tr><td colspan="9" class="admin-empty">尚未读取授权店铺</td></tr>';
   } else {
   tbody.innerHTML = pageRows.map(s => `
-    <tr data-store-id="${s.id}">
+    <tr data-store-id="${esc(s.id)}">
       <td><span class="shein-auth-name">${sheinStoreAuthState.editingId === s.id
-        ? `<input id="sheinAuthRenameInput" value="${s.name}" maxlength="30" style="padding:4px 8px;border:1px solid #cfe3e6;border-radius:6px;width:120px">`
-        : `${s.name}<button data-act="rename" title="修改店铺名称" type="button">✎</button>`}</span></td>
+        ? `<input id="sheinAuthRenameInput" value="${esc(s.name)}" maxlength="30" style="padding:4px 8px;border:1px solid #cfe3e6;border-radius:6px;width:120px">`
+        : `${esc(s.name)}<button data-act="rename" title="修改店铺名称" type="button">✎</button>`}</span></td>
       <td><span class="shein-auth-type ${s.mode}">${SHEIN_AUTH_APPS[s.mode] ? SHEIN_AUTH_APPS[s.mode].label : s.mode}</span></td>
-      <td>${s.merchantId}</td>
-      <td><span class="shein-auth-key">${s.openKeyId}</span></td>
+      <td>${esc(s.merchantId)}</td>
+      <td><span class="shein-auth-key">${esc(s.openKeyId)}</span></td>
       <td>${sheinAuthFmt(s.firstAt)}</td>
       <td>${sheinAuthFmt(s.latestAt)}</td>
       <td>${sheinAuthFmt(s.lastVerifiedAt)}</td>
@@ -13758,17 +13770,17 @@ function sheinAuthRenderEvents() {
   tbody.innerHTML = sheinStoreAuthState.events.map(ev => `
     <tr>
       <td>${sheinAuthFmt(ev.at)}</td>
-      <td>${ev.actionLabel || names[ev.action] || ev.action}</td>
-      <td>${ev.store}</td>
+      <td>${esc(ev.actionLabel || names[ev.action] || ev.action)}</td>
+      <td>${esc(ev.store)}</td>
       <td>${ev.ok ? '<span class="badge ok">成功</span>' : '<span class="badge fail">失败</span>'}</td>
-      <td>${ev.note}</td>
+      <td>${esc(ev.note)}</td>
     </tr>`).join('');
 }
 
 function sheinAuthRender() {
   sheinAuthRenderStores();
   sheinAuthRenderEvents();
-  const admin = sheinAuthIsAdmin();
+  const admin = sheinAuthCanManage();
   const createBtn = $('btnSheinAuthCreate');
   if (createBtn) createBtn.disabled = !admin;
   const guide = $('sheinAuthGuide');
@@ -13877,7 +13889,7 @@ function initSheinStoreAuthPage() {
 
   const createBtn = $('btnSheinAuthCreate');
   if (createBtn) createBtn.onclick = () => {
-    if (!sheinAuthIsAdmin()) { toast('仅管理员可发起店铺授权'); return; }
+    if (!sheinAuthCanManage()) { toast('仅管理员可发起店铺授权'); return; }
     sheinAuthPrompt('生成店铺授权链接', [
       { id: 'ssaMode', label: '店铺类型', type: 'select', options: [
         { value: 'self', label: 'SHEIN 自营（Xynigo ERP（自运营）应用）' },
@@ -13977,7 +13989,13 @@ function initSheinStoreAuthPage() {
   const prevBtn = $('btnSheinAuthPrev');
   if (prevBtn) prevBtn.onclick = () => { if (sheinAuthPage > 1) { sheinAuthPage -= 1; sheinAuthCloud ? sheinAuthCloudRefreshStores() : sheinAuthRenderStores(); } };
   const nextBtn = $('btnSheinAuthNext');
-  if (nextBtn) nextBtn.onclick = () => { sheinAuthPage += 1; sheinAuthRenderStores(); };
+  if (nextBtn) nextBtn.onclick = () => {
+    const total = sheinAuthCloud ? (sheinStoreAuthState.total || 0) : sheinAuthFilteredStores().length;
+    const pages = Math.max(1, Math.ceil(total / sheinAuthPageSize));
+    if (sheinAuthPage >= pages) return;
+    sheinAuthPage += 1;
+    sheinAuthCloud ? sheinAuthCloudRefreshStores() : sheinAuthRenderStores();
+  };
 
   sheinAuthLoadPageSize();
   const sizeSel = $('sheinAuthPageSize');
@@ -13987,7 +14005,8 @@ function initSheinStoreAuthPage() {
       sheinAuthPageSize = Number(sizeSel.value) || 10;
       sheinAuthSavePageSize(sheinAuthPageSize);
       sheinAuthPage = 1;
-      sheinAuthRenderStores();
+      // 云端每页条数变化必须重新拉数（评审必须改 #4）。
+      sheinAuthCloud ? sheinAuthCloudRefreshStores() : sheinAuthRenderStores();
     };
   }
 
@@ -14060,7 +14079,8 @@ function initSheinStoreAuthPage() {
       }, 700);
     } else if (act === 'reauth') {
       if (sheinAuthCloud) {
-        cloudFetchJson('/v1/shein-auth/link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: store.mode }) })
+        // 带 storeId：回调优先更新该行，店铺信息接口失败也不会裂行（评审必须改 #1）。
+        cloudFetchJson('/v1/shein-auth/link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: store.mode, storeId: store.id }) })
           .then(payload => {
             sheinStoreAuthState.pendingLink = { url: payload.url, state: payload.state, mode: store.mode };
             $('sheinAuthLinkInput').value = payload.url;
@@ -14078,7 +14098,7 @@ function initSheinStoreAuthPage() {
       $('sheinAuthLinkBox').hidden = false;
       toast(`已为「${store.name}」生成重新授权链接`);
     } else if (act === 'delete') {
-      if (!sheinAuthIsAdmin()) { toast('仅管理员可删除店铺授权'); return; }
+      if (!sheinAuthCanManage()) { toast('仅管理员可删除店铺授权'); return; }
       sheinAuthConfirm('删除店铺授权', `确定删除「${store.name}」的授权吗？删除后财务与订单模块将无法获取该店铺数据；可随时重新授权恢复。`, () => {
         if (sheinAuthCloud) {
           cloudFetchJson(`/v1/shein-auth/stores/${store.id}`, { method: 'DELETE' })
@@ -14178,12 +14198,22 @@ function setFeaturePanel(module) {
   } else if (module === 'sheinstoreauth' && !sheinStoreAuthPageLoaded) {
     sheinStoreAuthPageLoaded = true;
     if (sheinAuthCloud === null) {
-      // 首次进入先探测：接口可达（200，或 401/403 未登录未授权、503 未配置——
-      // 三者都证明后端存在）即云端模式；404、网络错误、file:// 静态预览回退本地 Mock。
-      cloudFetchJson('/v1/shein-auth/stores?pageSize=1')
-        .then(() => { sheinAuthCloud = true; })
-        .catch(e => { sheinAuthCloud = !!(e && (e.status === 401 || e.status === 403 || e.status === 503)); })
-        .finally(() => initSheinStoreAuthPage());
+      // 云端工作台（CLOUD_WEB_MODE）强制走真实接口，绝不落回带假数据的 Mock
+      // （评审必须改 #3：生产一旦 5xx/超时就显示假店并可点「模拟回调」）。
+      // 本地预览（file:// 或 localhost 静态服务）才允许 Mock：
+      // 拿到任意 HTTP 状态码（含 5xx）都视为后端存在；仅 404 或请求未发出回退。
+      if (CLOUD_WEB_MODE) {
+        sheinAuthCloud = true;
+        initSheinStoreAuthPage();
+      } else if (location.protocol === 'file:') {
+        sheinAuthCloud = false;
+        initSheinStoreAuthPage();
+      } else {
+        cloudFetchJson('/v1/shein-auth/stores?pageSize=1')
+          .then(() => { sheinAuthCloud = true; })
+          .catch(e => { sheinAuthCloud = !!(e && typeof e.status === 'number' && e.status !== 404); })
+          .finally(() => initSheinStoreAuthPage());
+      }
     } else {
       initSheinStoreAuthPage();
     }
@@ -14198,6 +14228,8 @@ function setFeaturePanel(module) {
   const params = new URLSearchParams(location.search);
   const tempToken = params.get('tempToken') || '';
   const state = params.get('state') || '';
+  // 立刻从地址栏抹掉令牌：避免进浏览器历史/Referer/站点日志（评审后补项）。
+  try { history.replaceState(null, '', location.pathname); } catch (e) {}
   const finish = () => { try { sessionStorage.setItem('sheinAuthCallbackDone', '1'); } catch (e) {} setTimeout(() => location.replace('/'), 1200); };
   if (!tempToken || !state) {
     console.warn('shein-auth callback missing params');

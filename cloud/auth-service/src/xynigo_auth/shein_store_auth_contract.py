@@ -9,6 +9,9 @@ STORE_MODES = ("self", "semi")
 
 class SheinAuthLinkBody(BaseModel):
     mode: str = Field(default="self", pattern="^(self|semi)$")
+    # 重新授权时带目标店 id：回调优先更新该行，避免店铺信息接口失败的
+    # 场景把同店拆成两行（评审必须改 #1）。
+    storeId: str = Field(default="", max_length=64)
 
 
 class SheinAuthCallbackBody(BaseModel):
