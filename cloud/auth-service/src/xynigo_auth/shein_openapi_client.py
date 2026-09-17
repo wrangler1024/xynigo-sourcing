@@ -45,6 +45,21 @@ class SheinOpenApiClientError(RuntimeError):
         self.message = message
 
 
+# RandomKey 必须**恰好 5 位**（平台《API签名指南》明文「5位随机字符串」）。
+# 平台按固定前 5 位切分签名来重建 KEY，长度不对就会切错前缀 →
+# `openapi00001 签名错误:生成的签名不正确`。20260917 生产真机实测：
+# 8 位随机串稳定失败、换 5 位立刻 HTTP 200 code=0。
+# 这一条只能靠打真网关发现——自签自验的合成用例里长度永远自洽。
+RANDOM_KEY_LENGTH = 5
+_RANDOM_KEY_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
+
+
+def _random_key() -> str:
+    return "".join(
+        secrets.choice(_RANDOM_KEY_ALPHABET) for _ in range(RANDOM_KEY_LENGTH)
+    )
+
+
 def sign_headers(
     *,
     identity_header: str,
@@ -52,9 +67,16 @@ def sign_headers(
     secret: str,
     path: str,
 ) -> dict[str, str]:
-    """构造网关签名请求头（应用级与店铺级共用算法）。"""
+    """构造网关签名请求头（应用级与店铺级共用算法）。
+
+    算法（以开放平台《API签名指南》为准，20260917 逐条核对）：
+    VALUE = OpenKeyId & Timestamp & Path
+    KEY   = SecretKey + RandomKey（RandomKey 恰好 5 位）
+    Hex   = HMAC-SHA256(VALUE, KEY) 小写十六进制
+    Signature = RandomKey + Base64(Hex)
+    """
     timestamp = str(int(time.time() * 1000))
-    random_key = secrets.token_hex(4)
+    random_key = _random_key()
     value = f"{identity}&{timestamp}&{path}"
     digest = hmac.new(
         (secret + random_key).encode("utf-8"), value.encode("utf-8"),
