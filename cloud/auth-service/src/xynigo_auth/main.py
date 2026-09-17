@@ -112,7 +112,11 @@ from .purchase_receipt import ReceiptBody, ReceiptError, execute as execute_rece
 from .purchase_receipt_gateway import ReceiptGatewayFactory
 from .shein_openapi_client import SheinOpenApiClient
 from .shein_settlement_contract import settlement_summary_payload
-from .shein_settlement_sync import SheinSettlementSyncService
+from .shein_settlement_sync import (
+    SheinSettlementSyncBusy,
+    SheinSettlementSyncService,
+    SheinSettlementSyncWorker,
+)
 from .shein_store_auth_contract import (
     SheinAuthCallbackBody,
     SheinAuthLinkBody,
@@ -499,6 +503,14 @@ def create_app(
         if buyer_credential_key
         else None
     )
+    if shein_settlement_sync_service is not None and settings.settlement_sync_enabled:
+        settlement_sync_worker = SheinSettlementSyncWorker(
+            session_factory=database.session_factory,
+            service=shein_settlement_sync_service,
+            interval_seconds=settings.settlement_sync_interval_seconds,
+            stale_after_seconds=settings.settlement_sync_stale_seconds,
+            log=lambda message: logger.info(message),
+        )
     environment_plan_service = (
         CloudEnvironmentPlanService(
             cipher=EnvironmentPlanCipher(buyer_credential_key),
@@ -511,6 +523,7 @@ def create_app(
         else None
     )
     operation_sync_worker = None
+    settlement_sync_worker = None
     if settings.feishu_operation_sync_enabled:
         operation_sync_worker = FeishuOperationSyncWorker(
             session_factory=database.session_factory,
@@ -565,6 +578,8 @@ def create_app(
     async def lifespan(_app: FastAPI):
         if operation_sync_worker is not None:
             operation_sync_worker.start()
+        if settlement_sync_worker is not None:
+            settlement_sync_worker.start()
         if purchase_sync_worker is not None:
             purchase_sync_worker.start()
         if procurement_import_worker is not None:
@@ -576,6 +591,8 @@ def create_app(
                 procurement_import_worker.stop()
             if purchase_sync_worker is not None:
                 purchase_sync_worker.stop()
+            if settlement_sync_worker is not None:
+                settlement_sync_worker.stop()
             if operation_sync_worker is not None:
                 operation_sync_worker.stop()
             receipt_gateway_factory.close()
@@ -597,6 +614,7 @@ def create_app(
     app.state.data_source_registry_service = data_source_registry_service
     app.state.environment_plan_service = environment_plan_service
     app.state.operation_sync_worker = operation_sync_worker
+    app.state.settlement_sync_worker = settlement_sync_worker
     app.state.purchase_sync_worker = purchase_sync_worker
     app.state.procurement_import_service = procurement_import_service
     app.state.procurement_import_worker = procurement_import_worker
@@ -1209,10 +1227,17 @@ def create_app(
             authorization=authorization,
             audit_action="finance.settlement.sync",
         )
-        outcome = _settlement_service().run(
-            session, tenant_id=actor.tenant.id, trigger="manual",
-            user_id=actor.user.id,
-        )
+        try:
+            outcome = _settlement_service().run(
+                session, tenant_id=actor.tenant.id, trigger="manual",
+                user_id=actor.user.id,
+                stale_after_seconds=settings.settlement_sync_stale_seconds,
+            )
+        except SheinSettlementSyncBusy as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"code": exc.code, "message": exc.message},
+            ) from exc
         session.commit()
         return {
             "runId": str(outcome.run_id),

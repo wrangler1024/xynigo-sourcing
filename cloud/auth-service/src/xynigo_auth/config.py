@@ -51,6 +51,13 @@ class Settings(BaseSettings):
     procurement_import_enabled: bool = False
     procurement_import_plan_ttl_seconds: int = 30 * 60
     procurement_import_worker_interval_seconds: int = 2
+
+    # 结算看板定时同步：默认关（避免部署即对外打网关），联调/上线时按需开启。
+    # 间隔默认 6 小时（需求文档 §4.4 拍板）；下限 60 秒防止误配置打爆平台限流。
+    settlement_sync_enabled: bool = False
+    settlement_sync_interval_seconds: int = 6 * 60 * 60
+    # 超过此时长仍处于 running 的同步记录视为异常中断，可被新一轮接管
+    settlement_sync_stale_seconds: int = 2 * 60 * 60
     procurement_import_max_active_plans_per_tenant: int = 5
     environment_plan_ttl_seconds: int = 30 * 60
     environment_plan_max_active_plans_per_tenant: int = 5

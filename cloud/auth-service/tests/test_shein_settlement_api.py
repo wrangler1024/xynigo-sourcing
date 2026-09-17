@@ -295,3 +295,29 @@ def test_repeated_sync_is_idempotent_at_api_level(tmp_path):
     # 重复同步不应把金额翻倍
     assert body["stores"][0]["inTransitAmount"] == "88.80"
     assert body["stores"][0]["nearestPayoutAmount"] == "500.25"
+
+
+def test_concurrent_sync_returns_409(tmp_path):
+    """已有同步在跑时，再点一次刷新应返回 409 而不是两边同时打平台。
+
+    手动刷新与定时任务共用一个闸门——这是"同店不并发取数"的落点。
+    """
+    from sqlalchemy import select as _select
+
+    from xynigo_auth.main import utcnow as _utcnow
+    from xynigo_auth.models import SheinSettlementSyncRun
+
+    app, database = build_app(tmp_path)
+    with TestClient(app) as client:
+        assert client.post("/v1/finance/settlement/sync",
+                           headers=admin_headers()).status_code == 200
+        # 人为把刚那轮改回 running，模拟"正在跑"
+        with database.session_factory() as session:
+            run = session.execute(_select(SheinSettlementSyncRun)).scalars().one()
+            run.status = "running"
+            run.finished_at = None
+            session.commit()
+        again = client.post("/v1/finance/settlement/sync",
+                            headers=admin_headers())
+        assert again.status_code == 409
+        assert again.json()["detail"]["code"] == "shein_settlement_sync_busy"

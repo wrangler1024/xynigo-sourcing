@@ -18,6 +18,7 @@
 """
 from __future__ import annotations
 
+import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -80,6 +81,17 @@ class SheinSettlementSyncError(RuntimeError):
         self.code = code
         self.message = message
         self.status_code = status_code
+
+
+class SheinSettlementSyncBusy(SheinSettlementSyncError):
+    """同一租户已有同步在跑：手动刷新与定时任务共用一个闸门，避免同店并发取数。"""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "shein_settlement_sync_busy",
+            "已有同步任务进行中，请稍后再试",
+            status_code=409,
+        )
 
 
 @dataclass
@@ -528,13 +540,71 @@ class SheinSettlementSyncService:
             picked.setdefault(row.currency, str(row.rate))
         return picked
 
+    def active_run(
+        self, session: Session, *, tenant_id: uuid.UUID,
+        stale_after_seconds: int = 2 * 60 * 60,
+        now: datetime | None = None,
+    ) -> SheinSettlementSyncRun | None:
+        """当前是否已有进行中的同步（超过 stale 阈值的视为异常中断、不再阻塞）。
+
+        SQLite 里时间列读回来是 naive，比较前统一按平台时区解释——否则
+        `TypeError: can't compare offset-naive and offset-aware datetimes`，
+        或错误地把新记录判成"还没开始"。
+        """
+        moment = now or datetime.now(PLATFORM_TZ)
+        rows = session.execute(
+            select(SheinSettlementSyncRun).where(
+                SheinSettlementSyncRun.tenant_id == tenant_id,
+                SheinSettlementSyncRun.status == "running",
+            ).order_by(SheinSettlementSyncRun.started_at.desc())
+        ).scalars().all()
+        for row in rows:
+            age = (moment - _as_platform_tz(row.started_at)).total_seconds()
+            if age < max(60, int(stale_after_seconds)):
+                return row
+        return None
+
+    def recover_stale_runs(
+        self, session: Session, *, tenant_id: uuid.UUID,
+        stale_after_seconds: int = 2 * 60 * 60,
+        now: datetime | None = None,
+    ) -> int:
+        """把异常中断（进程被杀等）留下的 running 记录标为 failed，避免永久占闸门。"""
+        moment = now or datetime.now(PLATFORM_TZ)
+        rows = session.execute(
+            select(SheinSettlementSyncRun).where(
+                SheinSettlementSyncRun.tenant_id == tenant_id,
+                SheinSettlementSyncRun.status == "running",
+            )
+        ).scalars().all()
+        recovered = 0
+        for row in rows:
+            age = (moment - _as_platform_tz(row.started_at)).total_seconds()
+            if age >= max(60, int(stale_after_seconds)):
+                row.status = "failed"
+                row.finished_at = moment
+                detail = dict(row.detail or {})
+                detail["recovered"] = "同步超过预期时长仍未结束，已标记为失败"
+                row.detail = detail
+                recovered += 1
+        if recovered:
+            session.flush()
+        return recovered
+
     def run(
         self, session: Session, *, tenant_id: uuid.UUID, trigger: str = "manual",
         store_ids: list[uuid.UUID] | None = None,
         user_id: uuid.UUID | None = None, now: datetime | None = None,
+        stale_after_seconds: int = 2 * 60 * 60,
     ) -> SyncRunOutcome:
         """跑一轮同步。逐店串行、按店隔离失败（并发留到有限流实测数据后再开）。"""
         moment = now or datetime.now(PLATFORM_TZ)
+        # 同店互斥：手动刷新与定时任务共用这一个闸门
+        if self.active_run(
+            session, tenant_id=tenant_id,
+            stale_after_seconds=stale_after_seconds, now=moment,
+        ) is not None:
+            raise SheinSettlementSyncBusy()
         query = select(SheinAuthorizedStore).where(
             SheinAuthorizedStore.tenant_id == tenant_id,
             SheinAuthorizedStore.status != "expired",
@@ -565,7 +635,10 @@ class SheinSettlementSyncService:
         failed = len(outcomes) - ok
         run.store_ok = ok
         run.store_failed = failed
-        run.finished_at = datetime.now(PLATFORM_TZ)
+        # 两个时钟不能混用：started_at 取自 moment（可能是注入的测试时钟），
+        # finished_at 若取真实当前时间，"到期才跑"的判断就会在测试里失控（也会在
+        # 时钟回拨等场景下算错时长）。注入时钟时两者都取注入值。
+        run.finished_at = datetime.now(PLATFORM_TZ) if now is None else moment
         run.status = (
             "succeeded" if failed == 0
             else ("failed" if ok == 0 else "partial")
@@ -691,3 +764,118 @@ def upsert_fx_rate(
         row.source = source
     session.flush()
     return row
+
+
+class SheinSettlementSyncWorker:
+    """结算看板定时同步：每 N 小时对到期租户跑一轮（默认 6 小时）。
+
+    设计要点：
+    - **到期才跑**：以该租户最近一次成功/部分成功的同步时间为准，未到间隔就跳过。
+      这样容器重启不会重复同步，也不会因为多进程/重复调度而多打平台。
+    - **与手动刷新共用闸门**：真正开跑前仍由 service.run() 做同店互斥，两路撞车
+      时后来的那路收到 busy 并安静跳过（不记失败、不影响下一周期）。
+    - **单租户失败不影响其他租户**：循环内逐租户兜异常。
+    - 线程 + stop 事件，与仓内既有 worker（feishu_operation_sync / purchase_sync）同构。
+    """
+
+    def __init__(
+        self, *, session_factory, service: SheinSettlementSyncService,
+        interval_seconds: int = 6 * 60 * 60,
+        stale_after_seconds: int = 2 * 60 * 60,
+        initial_delay_seconds: int = 60,
+        log=None,
+    ) -> None:
+        self.session_factory = session_factory
+        self.service = service
+        self.interval_seconds = max(60, int(interval_seconds))
+        self.stale_after_seconds = max(60, int(stale_after_seconds))
+        self.initial_delay_seconds = max(0, int(initial_delay_seconds))
+        self._log = log or (lambda message: None)
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=5)
+
+    def _loop(self) -> None:
+        if self._stop.wait(self.initial_delay_seconds):
+            return
+        while not self._stop.is_set():
+            try:
+                self.run_once()
+            except Exception as exc:  # noqa: BLE001 - 循环不能因单轮异常退出
+                self._log(f"settlement sync worker run failed: {type(exc).__name__}")
+            if self._stop.wait(self.interval_seconds):
+                return
+
+    def due_tenants(self, session: Session, *, now: datetime) -> list[uuid.UUID]:
+        """到期（距上次成功同步已超过 interval）的租户列表。"""
+        tenant_ids = [
+            row for row in session.execute(
+                select(SheinAuthorizedStore.tenant_id).where(
+                    SheinAuthorizedStore.status != "expired",
+                ).distinct()
+            ).scalars().all()
+        ]
+        due: list[uuid.UUID] = []
+        for tenant_id in tenant_ids:
+            last = session.execute(
+                select(func.max(SheinSettlementSyncRun.finished_at)).where(
+                    SheinSettlementSyncRun.tenant_id == tenant_id,
+                    SheinSettlementSyncRun.status.in_(("succeeded", "partial")),
+                )
+            ).scalar()
+            if last is None:
+                due.append(tenant_id)
+                continue
+            age = (now - _as_platform_tz(last)).total_seconds()
+            if age >= self.interval_seconds:
+                due.append(tenant_id)
+        return due
+
+    def run_once(self, *, now: datetime | None = None) -> int:
+        """跑一轮到期租户；返回实际执行的租户数（便于测试与日志）。"""
+        moment = now or datetime.now(PLATFORM_TZ)
+        executed = 0
+        with self.session_factory() as session:
+            try:
+                due = self.due_tenants(session, now=moment)
+            except Exception as exc:  # noqa: BLE001
+                session.rollback()
+                self._log(f"settlement sync worker lookup failed: {type(exc).__name__}")
+                return 0
+        for tenant_id in due:
+            with self.session_factory() as session:
+                try:
+                    self.service.recover_stale_runs(
+                        session, tenant_id=tenant_id,
+                        stale_after_seconds=self.stale_after_seconds, now=moment,
+                    )
+                    outcome = self.service.run(
+                        session, tenant_id=tenant_id, trigger="schedule",
+                        now=moment, stale_after_seconds=self.stale_after_seconds,
+                    )
+                    session.commit()
+                except SheinSettlementSyncBusy:
+                    # 手动刷新正在跑同一租户——跳过即可，不是错误
+                    session.rollback()
+                    continue
+                except Exception as exc:  # noqa: BLE001 - 单租户失败不影响其他租户
+                    session.rollback()
+                    self._log(
+                        f"settlement sync worker tenant failed: {type(exc).__name__}")
+                    continue
+                executed += 1
+                self._log(
+                    f"settlement sync done tenant={tenant_id} status={outcome.status} "
+                    f"ok={outcome.store_ok} failed={outcome.store_failed}")
+        return executed
