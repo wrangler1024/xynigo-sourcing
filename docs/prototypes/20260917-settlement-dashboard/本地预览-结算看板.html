@@ -1514,15 +1514,8 @@
   .settle-native-row .cur { color: var(--navy-500); font-size: 10px; font-weight: 800; }
   .settle-native-row .amt { color: var(--navy-700); font-size: 12px; font-weight: 850; font-variant-numeric: tabular-nums; }
   .settle-native-row .due { color: var(--rhino-700); font-size: 10px; font-weight: 800; }
-  /* 「下次结算金额」卡片：按预计打款日逐批列出 */
-  .settle-schedule-row { padding: 6px 0; }
-  .settle-schedule-row + .settle-schedule-row { border-top: 1px dashed var(--line); }
-  .settle-schedule-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-  .settle-schedule-head .date { color: var(--navy-700); font-size: 11px; font-weight: 900; }
-  .settle-schedule-head .amt { color: var(--navy-950); font-size: 13px; font-weight: 900; font-variant-numeric: tabular-nums; }
-  .settle-schedule-head .due { margin-left: 5px; color: var(--rhino-700); font-size: 9px; font-weight: 800; }
-  .settle-schedule-native { margin-top: 3px; color: var(--navy-500); font-size: 10px; font-variant-numeric: tabular-nums; }
-  .settle-schedule-more { margin-top: 5px; color: var(--navy-500); font-size: 10px; }
+  .settle-card-due { margin-top: 4px; color: var(--rhino-700); font-size: 10px; font-weight: 800; }
+  .settle-more { color: var(--navy-500); font-size: 9px; font-weight: 800; }
   .settle-fx { margin-top: 10px; padding: 9px 11px; border-radius: 10px; background: #fbfcfd; border: 1px solid var(--line); color: var(--navy-500); font-size: 10px; line-height: 1.7; }
   .settle-fx b { color: var(--navy-700); font-size: 10px; }
   .settle-card-none { margin-top: 10px; color: var(--navy-500); font-size: 11px; }
@@ -13924,10 +13917,20 @@ function settlePayoutSchedule(stores) {
   }).sort((a, b) => a.date.localeCompare(b.date));
 }
 
-/** 该店的预计打款日列表（表格与导出用）：多批时全部列出，不取最早。 */
+/** 该店最近的预计打款日（纯文本，表格与导出共用）。
+ * 列内只放最近一个打款日——把未来所有日期都铺进列里会把表格撑乱，
+ * 完整排期在导出文件的「结算排期」区块。 */
 function settleStorePayDates(store) {
   const dates = (store.settleDates || []).slice().sort();
-  return dates.length ? dates.join(' / ') : '—';
+  return dates.length ? dates[0] : '—';
+}
+
+/** 表格用：最近打款日 + 后续批次数提示（有后续才显示）。 */
+function settleStorePayDatesHtml(store) {
+  const dates = (store.settleDates || []).slice().sort();
+  if (!dates.length) return '—';
+  const more = dates.length - 1;
+  return dates[0] + (more > 0 ? ` <span class="settle-more">+${more} 批</span>` : '');
 }
 
 /** 该店「下次结算」= 最近一个打款日的那一批金额（不是全部待结算）。
@@ -13986,60 +13989,33 @@ function settleRenderStatus() {
   ].filter(Boolean).join('');
 }
 
-/** 「下次结算金额」卡片按打款日逐批呈现：主数字仍是全部待结算的人民币合计，
- * 但下方必须分批列明——每个打款日各自有一个金额，而不是共用一个"最早打款日"。 */
-const SETTLE_SCHEDULE_LIMIT = 3;
-
-function settleScheduleRows(card) {
-  const schedule = card.schedule || [];
-  if (!schedule.length) {
-    return '<div class="settle-card-none">当前范围内无可计入店铺</div>';
-  }
-  const shown = schedule.slice(0, SETTLE_SCHEDULE_LIMIT);
-  const rows = shown.map((batch, index) => {
-    const native = batch.groups
-      .map(group => `${group.currency} ${settleMoney(group.total)}`).join(' · ');
-    const tag = index === 0 ? '<span class="due">最近一批</span>' : '';
-    return '<div class="settle-schedule-row">' +
-      `<div class="settle-schedule-head"><span class="date">${batch.date.slice(5)}</span>` +
-      `<span><span class="amt">¥ ${settleMoney(batch.cny)}</span>${tag}</span></div>` +
-      `<div class="settle-schedule-native">${native}</div></div>`;
-  }).join('');
-  const hidden = schedule.length - shown.length;
-  const tail = hidden
-    ? `<div class="settle-schedule-more">另有 ${hidden} 批，最远至 ` +
-      `${schedule[schedule.length - 1].date.slice(5)}</div>`
-    : '';
-  return rows + tail;
-}
-
+/** 「下次结算金额」卡片只呈现**最近一批**：金额取最近打款日那一批，
+ * 并标注该打款日。未来所有批次不在页面上铺开（会把看板撑乱）——
+ * 完整排期只放在导出文件的「结算排期」区块里，需要时再查。 */
 function settleRenderCards() {
   const host = $('settleSummaryCards');
   if (!host) return;
   const okStores = settleOkStores(settleScopedStores());
   const schedule = settlePayoutSchedule(okStores);
+  const nearest = schedule.length ? schedule[0] : null;
   const cards = [
     { title: '在途资金', hint: '已发货未签收（订单级）', groups: settleGroupSum(okStores, 'inTransit') },
     { title: '待结算资金', hint: '对账单待结算按收支轧差（全部）', groups: settleGroupSum(okStores, 'unsettled') },
-    { title: '下次结算金额', hint: '仅最近一批', kind: 'schedule',
-      groups: schedule.length ? schedule[0].groups : [], schedule },
+    { title: '下次结算金额', hint: '仅最近一批', groups: nearest ? nearest.groups : [],
+      due: nearest ? `预计打款 ${nearest.date}` : '' },
     { title: '已结算资金', hint: '报账单已付款历史累计', groups: settleGroupSum(okStores, 'settled') }
   ];
   host.innerHTML = cards.map(card => {
     const cny = settleCnyTotal(card.groups);
     const cnyLine = card.groups.length
-      ? `<div class="settle-card-cny">¥ ${settleMoney(cny)}<small>人民币合计</small></div>`
+      ? `<div class="settle-card-cny">¥ ${settleMoney(cny)}<small>人民币合计</small></div>` +
+        (card.due ? `<div class="settle-card-due">${card.due}</div>` : '')
       : '';
-    let rows;
-    if (card.kind === 'schedule') {
-      rows = settleScheduleRows(card);
-    } else {
-      rows = card.groups.length
-        ? card.groups.map(group =>
-          `<div class="settle-native-row"><span class="cur">${group.currency}</span>` +
-          `<span class="amt">${settleMoney(group.total)}</span></div>`).join('')
-        : '<div class="settle-card-none">当前范围内无可计入店铺</div>';
-    }
+    const rows = card.groups.length
+      ? card.groups.map(group =>
+        `<div class="settle-native-row"><span class="cur">${group.currency}</span>` +
+        `<span class="amt">${settleMoney(group.total)}</span></div>`).join('')
+      : '<div class="settle-card-none">当前范围内无可计入店铺</div>';
     return `<div class="settle-card"><div class="settle-card-head"><b>${card.title}</b>` +
       `<small>${card.hint}</small></div>${cnyLine}` +
       `<div class="settle-card-native">${rows}</div></div>`;
@@ -14076,7 +14052,7 @@ function settleRenderTable() {
         <td class="num">${settleMoney(store.inTransit)}</td>
         <td class="num">${settleMoney(store.unsettled)}</td>
         <td class="num">${settleMoney(settleNearestBatchAmount(store))}</td>
-        <td>${settleStorePayDates(store)}</td>
+        <td>${settleStorePayDatesHtml(store)}</td>
         <td class="num">${settleMoney(store.settled)}</td>
         <td>${settleTime(store.at)}</td>
         <td><span class="settle-badge ${cls}">${label}</span></td>
@@ -14157,7 +14133,7 @@ function buildSettlementExportRows() {
     rows.push([
       store.name, store.mode, store.currency,
       store.inTransit, store.unsettled, settleNearestBatchAmount(store),
-      (store.settleDates || []).slice().sort().join(' / '),
+      settleStorePayDates(store) === '—' ? '' : settleStorePayDates(store),
       store.settled,
       settleFullTime(store.at), statusLabel[store.status] || '正常', store.note || ''
     ]);
