@@ -1516,6 +1516,8 @@
   .settle-native-row .due { color: var(--rhino-700); font-size: 10px; font-weight: 800; }
   .settle-card-due { margin-top: 4px; color: var(--rhino-700); font-size: 10px; font-weight: 800; }
   .settle-more { color: var(--navy-500); font-size: 9px; font-weight: 800; }
+  /* 打款日 + 「+N 批」提示不换行，避免「批」字被折到第二行 */
+  .settle-table td.pay-date { white-space: nowrap; }
   .settle-fx { margin-top: 10px; padding: 9px 11px; border-radius: 10px; background: #fbfcfd; border: 1px solid var(--line); color: var(--navy-500); font-size: 10px; line-height: 1.7; }
   .settle-fx b { color: var(--navy-700); font-size: 10px; }
   .settle-card-none { margin-top: 10px; color: var(--navy-500); font-size: 11px; }
@@ -14052,7 +14054,7 @@ function settleRenderTable() {
         <td class="num">${settleMoney(store.inTransit)}</td>
         <td class="num">${settleMoney(store.unsettled)}</td>
         <td class="num">${settleMoney(settleNearestBatchAmount(store))}</td>
-        <td>${settleStorePayDatesHtml(store)}</td>
+        <td class="pay-date">${settleStorePayDatesHtml(store)}</td>
         <td class="num">${settleMoney(store.settled)}</td>
         <td>${settleTime(store.at)}</td>
         <td><span class="settle-badge ${cls}">${label}</span></td>
