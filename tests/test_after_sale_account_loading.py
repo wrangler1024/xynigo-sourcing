@@ -9,6 +9,14 @@ from purchase_tool import after_sale_receipts as receipts
 URL = 'https://www.shein.com.mx/orders/refundLabel/ORDER?refund_bill_id=12345'
 
 
+@pytest.fixture(autouse=True)
+def confirmed_phase(monkeypatch):
+    # Card-loading timing is independent of the separately tested node reader.
+    monkeypatch.setattr(receipts, 'read_refund_phase', lambda *args, **kwargs: {
+        'phase':'reviewing', 'phaseLabel':'审核中', 'phaseEvidence':None,
+        'note':'未终态，下次回访继续跟'})
+
+
 def clock(monkeypatch):
     now = [0.0]
     monkeypatch.setattr(receipts.time, 'monotonic', lambda: now[0])

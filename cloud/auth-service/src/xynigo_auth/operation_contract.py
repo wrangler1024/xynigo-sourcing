@@ -1158,6 +1158,36 @@ class AfterSaleClaimRunCreateBody(BaseModel):
         return value
 
 
+class AfterSalePhaseEvidence(BaseModel):
+    """Bounded evidence from the current node, not the complete page/timeline."""
+    model_config = ConfigDict(extra="forbid")
+    source: Literal["timeline_nodes_v1"]
+    step: int = Field(ge=1, le=5, strict=True)
+    title: str = Field(min_length=1, max_length=240)
+    detail: str = Field(default="", max_length=800)
+    canSupplement: bool = Field(default=False, strict=True)
+    reason: str = Field(default="", max_length=300)
+    reasonSource: Literal["", "current_node", "negotiation_history"] = ""
+
+    @model_validator(mode="after")
+    def validate_reason(self):
+        if bool(self.reason) != bool(self.reasonSource):
+            raise ValueError("A review reason requires its observed source")
+        if self.step != 2 and (self.canSupplement or self.reason):
+            raise ValueError("Review evidence belongs to the review node")
+        return self
+
+    def require_phase(self, phase):
+        expected = {1:{"submitted"}, 2:{"reviewing","review_failed","evidence_required"},
+                    3:{"processing"}, 4:{"shein_refunded"}, 5:{"bank_processed"}}
+        if phase not in expected[self.step]:
+            raise ValueError("Current node and phase do not agree")
+        if self.canSupplement != (phase == "evidence_required"):
+            raise ValueError("Supplement action requires a confirmed failed review")
+        if phase == "reviewing" and self.reason:
+            raise ValueError("Previous rejection cannot overwrite an active review")
+
+
 class AfterSalePackageRefund(BaseModel):
     """已生成的包裹退款凭证；旧单号字段仍保留兼容。"""
     model_config = ConfigDict(extra="forbid")
@@ -1168,6 +1198,7 @@ class AfterSalePackageRefund(BaseModel):
     source: str = Field(default="", max_length=32)
     phase: str = Field(default="", max_length=24)
     phaseLabel: str = Field(default="", max_length=24)
+    phaseEvidence: AfterSalePhaseEvidence | None = None
     applicationTimeText: str = Field(default="", max_length=64)
     timeZone: str = Field(default="", max_length=64)
     submittedAt: str = Field(default="", max_length=40)
@@ -1175,6 +1206,12 @@ class AfterSalePackageRefund(BaseModel):
     applicationAt: str = Field(default="", max_length=40)
     reasonId: str = Field(default="", max_length=32)
     packageNos: list[Annotated[str, Field(max_length=64)]] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_phase_evidence(self):
+        if self.phaseEvidence:
+            self.phaseEvidence.require_phase(self.phase)
+        return self
 
 
 class AfterSaleClaimProgressRow(BaseModel):
@@ -1283,8 +1320,7 @@ class AfterSaleTrackCreateBody(BaseModel):
 class AfterSaleTrackRow(BaseModel):
     """One refund bill row inside tracking progress / snapshot.
 
-    extra=forbid：闭集。刻意不含 timeline——平台时间轴原文只在执行器侧保留，
-    不上传、不落云端库，也不包含在云端导出中。
+    extra=forbid：闭集。不含完整 timeline，只接收有界的当前节点证据。
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -1296,6 +1332,7 @@ class AfterSaleTrackRow(BaseModel):
     status: AfterSaleRowStatus
     phase: str = Field(default="", max_length=24)
     phaseLabel: str = Field(default="", max_length=24)
+    phaseEvidence: AfterSalePhaseEvidence | None = None
     countdown: str = Field(default="", max_length=24)
     refundAccount: str = Field(default="", max_length=40)
     amount: str = Field(default="", max_length=24)
@@ -1305,3 +1342,13 @@ class AfterSaleTrackRow(BaseModel):
     note: str | None = Field(default=None, max_length=200)
     errorSummary: str | None = Field(default=None, max_length=300)
     durationSeconds: int | None = Field(default=None, ge=0, le=86_400_000)
+
+    @model_validator(mode="after")
+    def validate_phase_evidence(self):
+        if self.phaseEvidence:
+            self.phaseEvidence.require_phase(self.phase)
+            if self.status == "ok":
+                moment = datetime.fromisoformat(self.checkedAt.replace("Z", "+00:00"))
+                if moment.tzinfo is None:
+                    raise ValueError("Phase evidence requires a timezone-aware observation")
+        return self

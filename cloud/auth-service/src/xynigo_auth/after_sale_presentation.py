@@ -18,6 +18,18 @@ def masked_refund_account(value):
     return '****' + text[-4:] if re.fullmatch(r'[*•●xX]{2,}\d{4}', text) else ''
 
 
+def review_note(refund):
+    evidence = refund.get('phaseEvidence') or {}
+    if not evidence or refund.get('phase') not in ('review_failed', 'evidence_required'):
+        return ''
+    reason = str(evidence.get('reason') or '')
+    if reason.casefold() == 'comprobantes insuficientes':
+        reason = '凭证不足（%s）' % reason
+    return ('平台审核未通过；' + ('原因：'+reason if reason else '具体原因尚未取得，请查看平台协商记录')
+            + ('；可补充凭证重新审核' if evidence.get('canSupplement')
+               else '；本次未确认可补充凭证入口'))[:200]
+
+
 def present_refund(refund):
     result = dict(refund)
     result['refundPath'] = display_refund_path(result.get('refundPath'))

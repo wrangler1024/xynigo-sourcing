@@ -666,7 +666,7 @@
   /* ===== 小犀助手 · 采购售后（丢件退款） ===== */
   /* 售后三张表的商品缩略图：复用 .procurement-image-thumb，只按密集表格调小一档 */
   #afterSalePanel .procurement-image-thumb { width: 34px; height: 44px; margin-left: 0; border-radius: 8px; box-shadow: none; }
-  /* 退款跟踪的阶段迷你时间轴：四节点（已受理→审核中→处理中→已退款），当前节点高亮 */
+  /* 退款跟踪：五个实际节点，审核异常停留在第二节点。 */
   #afterSalePanel .as-tl { display:inline-flex; align-items:center; gap:0; }
   #afterSalePanel .as-tl i { width:8px; height:8px; border-radius:50%; background:#d7e0e8; flex:none; }
   #afterSalePanel .as-tl u { width:14px; height:2px; background:#d7e0e8; flex:none; }
@@ -675,6 +675,10 @@
   #afterSalePanel .as-tl i.cur { background:var(--rhino-600); box-shadow:0 0 0 3px rgba(32,174,179,.18); }
   #afterSalePanel .as-tl i.bad { background:#d9534f; box-shadow:0 0 0 3px rgba(217,83,79,.16); }
   #afterSalePanel .as-tl-label { margin-left:8px; font-size:12px; font-weight:700; white-space:nowrap; }
+  #afterSalePanel .as-review-alert { display:inline-block; color:#a83d24; background:#fff0e8; border:1px solid #f2c4b4; border-radius:7px; padding:5px 8px; font-weight:700; }
+  #afterSalePanel .as-review-note { color:#a83d24; font-weight:600; }
+  #afterSalePanel .as-track-filters { display:flex; align-items:center; flex-wrap:wrap; gap:10px; padding:12px 19px; }
+  #afterSalePanel .as-platform-evidence { max-width:360px; white-space:normal; overflow-wrap:anywhere; }
   /* 运行状态条：sticky 压在工作台滚动区（main）顶部，视觉上落在顶栏下方 */
   #afterSalePanel #asRunStrip { position: sticky; top: 8px; z-index: 6; }
   #afterSalePanel #asRunStrip .query-phase-banner { margin-bottom: 0; flex-wrap: wrap; }
@@ -2511,6 +2515,11 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         </div>
         <p class="as-manual-help" id="asTrackManualHelp">按输入顺序匹配这些环境在系统中的历史退款单，核对清单后只读回访。每次最多 300 个环境、500 个退款单；系统未记录的退款单可切换“按退款单（完整信息）”。</p>
       </div>
+      <div class="as-track-filters">
+        <label for="asTrackFilter">退款状态</label>
+        <select id="asTrackFilter"><option value="all">全部</option><option value="evidence_required">待补充凭证</option><option value="review_failed">审核未通过（全部）</option><option value="unconfirmed">本次状态未确认</option></select>
+        <span class="hint" id="asTrackFilterHint"></span>
+      </div>
       <div style="padding: 0 19px;">
         <div class="table-scroll as-list-scroll">
           <table id="asTrackTable">
@@ -2524,7 +2533,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         </div>
       </div>
       <div style="padding: 12px 19px 17px;">
-        <p class="xyp2-help">回访只读：复用提交时的环境，逐个退款单读平台侧阶段（已受理 → 审核中 → 处理中 → 已退款／已拒绝），可按需重复回访；读取失败不会覆盖上次有效阶段。退款信用卡为回访读到的原卡掩码，取不到显示 —。被拒的行到买家端看「Historial de negociación」的拒绝理由后再决定是否申诉。</p>
+        <p class="xyp2-help">回访只读：复用提交时的环境，逐个退款单读平台侧阶段（已受理 → 审核 → SHEIN处理退款 → SHEIN退款成功 → 金融机构处理退款），可按需重复回访；读取失败不会覆盖上次有效阶段。退款信用卡为回访读到的原卡掩码，取不到显示 —。审核未通过的行显示具体原因；只有平台提供补证入口才标记待补充凭证。历史状态未重新核验时不会推定金融机构已完成。</p>
       </div>
     </section>
   </div>
@@ -4457,6 +4466,7 @@ function cloudApiError(payload, status) {
     executor_offline:'所选本地执行器当前离线，请先启动执行器',
     executor_auto_site_required:'所选执行器尚不支持按环境自动识别站点，请更新桌面执行器后重试',
     executor_after_sale_reliability_upgrade_required:'请升级执行器以支持完整退款记录和可靠回传',
+    executor_after_sale_phase_upgrade_required:'请升级执行器以准确读取五步退款进度及审核补证状态',
     executor_after_sale_evidence_upgrade_required:'请升级执行器以支持提交回执核验、完整商品信息和操作完成时间',
     executor_after_sale_receipt_upgrade_required:'请升级执行器以支持退款凭证补查和重复提交保护',
     after_sale_receipt_reconciliation_required:'订单有待核对的提交结果，请先核对已有退款记录，不能直接补提',
@@ -5359,6 +5369,7 @@ document.querySelectorAll('[data-as-concurrency]').forEach(button => {
 async function asRequireRuntimeControls(executor) {
   const required = ['after.sale.runtime-controls.v1'];
   if (AS_STATE.mode !== 'scan') required.push('after.sale.reliable-results.v1');
+  if (AS_STATE.mode === 'track') required.push('after.sale.phase-evidence.v1');
   if (AS_STATE.mode === 'claim') required.push('after.sale.receipt-recovery.v1', 'after.sale.claim-evidence.v1');
   // An upgraded device can still have old capabilities in this page's cache.
   // Refresh the same device before reporting an upgrade requirement.
@@ -5381,6 +5392,9 @@ async function asRequireRuntimeControls(executor) {
   }
   if (AS_STATE.mode === 'claim' && !(executor.capabilities || []).includes('after.sale.claim-evidence.v1')) {
     throw new Error('请升级执行器以支持提交回执核验、完整商品信息和操作完成时间');
+  }
+  if (AS_STATE.mode === 'track' && !(executor.capabilities || []).includes('after.sale.phase-evidence.v1')) {
+    throw new Error('请升级执行器以准确读取五步退款进度及审核补证状态');
   }
   if (!(executor.capabilities || []).includes('after.sale.runtime-controls.v1')) {
     throw new Error('请先升级本地执行器，以支持售后无头模式和环境并发设置');
@@ -5973,48 +5987,74 @@ function asClaimPillText(status) {
   const entry = AS_CLAIM_PILL[String(status || '')];
   return entry ? entry[1] : String(status || '');
 }
-// 阶段迷你时间轴：四节点固定顺序，当前节点高亮；已拒绝把末节点标红
-const AS_TL_ORDER = ['submitted', 'reviewing', 'processing', 'refunded'];
-const AS_TL_LABEL = { submitted: '已受理', reviewing: '审核中', processing: '处理中',
-  refunded: '已退款', rejected: '已拒绝', overdue: '超期未出结果' };
-function asTimeline(phase) {
-  const rejected = phase === 'rejected';
-  const idx = rejected ? AS_TL_ORDER.length - 1
-    : Math.max(0, AS_TL_ORDER.indexOf(phase));
-  let html = '<span class="as-tl">';
-  for (let i = 0; i < AS_TL_ORDER.length; i++) {
-    if (i) html += `<u class="${i <= idx ? 'done' : ''}"></u>`;
-    const cls = rejected && i === idx ? 'bad'
-      : (i < idx ? 'done' : (i === idx ? 'cur' : ''));
-    html += `<i class="${cls}"></i>`;
+// Five normal stages; review exceptions remain at node two.
+const AS_TL_ORDER = ['submitted', 'reviewing', 'processing', 'shein_refunded', 'bank_processed'];
+const AS_TL_LABEL = {submitted:'已受理', reviewing:'审核中', processing:'SHEIN处理中',
+  shein_refunded:'SHEIN退款成功', bank_processed:'金融机构已处理',
+  review_failed:'审核未通过', evidence_required:'审核未通过 · 待补充凭证',
+  refunded:'历史退款状态 · 待回访', rejected:'历史拒绝状态 · 待回访', overdue:'超期未出结果'};
+function asReviewFailed(phase) { return ['review_failed','evidence_required'].includes(phase); }
+function asTrackPhaseLabel(row) {
+  const phase=String(row.phase || '');
+  return AS_TL_LABEL[phase] || row.phaseLabel || '平台阶段待核对';
+}
+function asTimeline(phase, evidence) {
+  const bad=asReviewFailed(phase), legacy=['refunded','rejected','overdue'].includes(phase);
+  const idx=legacy ? -1 : bad ? 1 : AS_TL_ORDER.indexOf(phase);
+  const names=AS_TL_ORDER.map(p=>AS_TL_LABEL[p]);
+  let html='<span class="as-tl" role="img" aria-label="'+esc(names.join(' → ')+'；当前：'+(AS_TL_LABEL[phase] || '未确认'))+'">';
+  for(let i=0;i<AS_TL_ORDER.length;i++) {
+    if(i)html+=`<u class="${i<=idx?'done':''}"></u>`;
+    html+=`<i title="${esc(names[i])}" class="${i===idx && bad?'bad':i<idx?'done':i===idx?'cur':''}"></i>`;
   }
-  return html + '</span>';
+  return html+'</span>';
+}
+function asTrackEvidence(row) {
+  const e=row.phaseEvidence;
+  if(!e)return row.phase ? '<div class="hint">历史状态，尚未按当前节点重新核验</div>' : '';
+  return '<details class="as-platform-evidence"><summary>平台依据</summary>'
+    +'<div>当前节点：'+esc(e.title || '')+'</div><div>'+esc(e.detail || '')+'</div>'
+    +(e.reason?'<div>审核原因：'+esc(e.reason)+'</div>':'')+'</details>';
+}
+function asTrackStageCell(row) {
+  const phase=String(row.phase || ''), bad=asReviewFailed(phase);
+  const label='<span class="'+(bad?'as-review-alert':'as-tl-label')+'">'+esc(asTrackPhaseLabel(row))+'</span>';
+  if(row.status==='ok')return asTimeline(phase,row.phaseEvidence)+label;
+  const title=({queued:'等待',running:'回访中',stopped:'已停止'})[row.status] || '本次状态未确认';
+  return '<span class="as-tl-label'+(row.status==='running'?' as-status-active':'')+'">'+esc(title)+'</span>'
+    +(phase?'<div class="hint">上次成功读取：'+label+'</div>':'');
 }
 function asRenderTrackRows(rows) {
-  AS_STATE.trackRows = rows || [];
-  const tbody = $('asTrackRows');
-  if (!AS_STATE.trackRows.length) {
-    tbody.innerHTML = '<tr><td colspan="10" class="hint" style="text-align:center; padding:22px;">点「刷新退款进度」回访已提交的退款单（只读）。</td></tr>';
+  AS_STATE.trackRows=rows || [];
+  const filter=$('asTrackFilter')?.value || 'all';
+  const selected=AS_STATE.trackRows.filter(row=>filter==='all'
+    || (filter==='evidence_required' && row.phase==='evidence_required')
+    || (filter==='review_failed' && asReviewFailed(row.phase))
+    || (filter==='unconfirmed' && !['ok','queued','running','stopped'].includes(row.status)));
+  const hint=$('asTrackFilterHint');
+  if(hint)hint.textContent='显示 '+selected.length+' / '+AS_STATE.trackRows.length+' 单；异常筛选包含保留的上次状态，导出包含本批全部结果。';
+  const tbody=$('asTrackRows');
+  if(!selected.length) {
+    tbody.innerHTML='<tr><td colspan="10" class="hint" style="text-align:center; padding:22px;">'
+      +(AS_STATE.trackRows.length?'当前筛选下没有退款单。':'点「刷新退款进度」回访已提交的退款单（只读）。')+'</td></tr>';
     return;
   }
-  tbody.innerHTML = AS_STATE.trackRows.map(row => {
-    const phase = String(row.phase || '');
-    const bad = phase === 'rejected' || phase === 'overdue';
-    return `<tr${bad ? ' class="tr-bad"' : ''}>
+  tbody.innerHTML=selected.map(row=>{
+    const bad=asReviewFailed(row.phase) || ['rejected','overdue'].includes(row.phase);
+    return `<tr${bad?' class="tr-bad"':''}>
       <td class="sub-text">${esc(row.environmentSerial || '')}</td>
       <td class="as-order">${esc(row.orderNo || '')}</td>
       ${asThumbCell(row.goodsImg)}
       <td class="as-order" style="font-size:12px">${esc(row.refundBillId || '')}</td>
       <td class="sub-text">${esc(row.refundAccount || '—')}</td>
       <td>${esc(row.amount || '—')}</td>
-      <td>${['queued', 'running', 'stopped', 'fail', 'login', 'inuse'].includes(row.status)
-        ? `<span class="as-tl-label${row.status === 'running' ? ' as-status-active' : ''}">${esc(({queued:'等待', running:'回访中', stopped:'已停止', fail:'回访失败', login:'未登录', inuse:'环境不可用'})[row.status])}</span>`
-        : `${asTimeline(phase)}<span class="as-tl-label">${esc(row.phaseLabel || AS_TL_LABEL[phase] || '—')}</span>`}</td>
-      <td>${esc(row.countdown || '—')}</td>
-      <td class="sub-text">${esc((row.checkedAt || '').replace('T', ' ').slice(5, 16) || '—')}</td>
-      <td class="hint">${esc(row.note || row.errorSummary || '—')}</td></tr>`;
+      <td>${asTrackStageCell(row)}</td>
+      <td>${row.status==='ok'?esc(row.countdown || '—'):'—'}</td>
+      <td class="sub-text">${row.checkedAt?'最近有效读取：<br>'+esc(row.checkedAt.replace('T',' ').slice(0,19)):'—'}</td>
+      <td class="hint${bad?' as-review-note':''}">${row.errorSummary && row.status!=='ok'?'<div>本次未确认：'+esc(row.errorSummary)+'</div>':''}${esc(row.note || '')}${asTrackEvidence(row)}</td></tr>`;
   }).join('');
 }
+$('asTrackFilter').onchange=()=>asRenderTrackRows(AS_STATE.trackRows);
 // 手工指定的回访单：`环境序号 订单号 退款单号` 一组，多组用分号/换行隔开。
 // 指定退款单可直接回访，不依赖本页的提交批次。
 function asParseManualBills(text) {
@@ -6945,15 +6985,15 @@ async function asPoll() {
         AS_STATE.running = false;
         AS_STATE.mode = '';
         $('asTrack').disabled = false; $('asStop').disabled = true;
-        const open = rows.filter(r => ['submitted', 'reviewing', 'processing']
+        const open = rows.filter(r => ['submitted', 'reviewing', 'processing', 'shein_refunded', 'review_failed', 'evidence_required']
           .includes(String(r.phase || ''))).length;
-        const bad = rows.filter(r => String(r.phase || '') === 'rejected').length;
+        const bad = rows.filter(r => asReviewFailed(r.phase) || r.phase === 'rejected').length;
         const readFailures = rows.filter(r => ['fail','login','inuse'].includes(r.status)).length;
         const title = ({cancelled:'回访已停止', failed:'回访失败', uncertain:'回访待核对'})[AS_STATE.status]
           || (completed < total ? '回访结束（结果未齐）' : readFailures ? '回访完成（部分失败）' : '回访完成');
         asSetPhase(title,
           `本次已处理 ${completed} / ${total} 单 · 读取失败 ${readFailures} 单 · 未终态 ${open} 单`
-          + (bad ? ` · 已拒绝 ${bad} 单需人工` : ''), false);
+          + (bad ? ` · 已拒绝 ${bad} 单审核异常需人工处理` : ''), false);
       }
     } else if (AS_STATE.mode === 'claim' && AS_STATE.runId) {
       const runId = AS_STATE.runId;
