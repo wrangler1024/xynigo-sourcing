@@ -1174,16 +1174,14 @@ class AuthRouteGuardTests(unittest.TestCase):
             urlopen(rejected, timeout=3)
         self.assertEqual(caught.exception.code, 401)
 
-    def test_regular_member_cannot_write_device_runtime_config(self):
+    def test_regular_member_device_config_only_requires_login(self):
         calls = []
 
         def require(permission=None, role=None):
             calls.append((permission, role))
-            if permission == 'system.integration.manage':
-                raise LocalAuthError('permission_denied', status=403)
             return {
                 'user': {'id': 'member-test'},
-                'roles': ['operator'],
+                'roles': ['member'],
                 'permissions': [],
             }
 
@@ -1193,13 +1191,17 @@ class AuthRouteGuardTests(unittest.TestCase):
             data=b'{}', method='POST',
             headers={'Content-Type': 'application/json'},
         )
-        with self.assertRaises(HTTPError) as denied:
-            urlopen(request, timeout=3)
-        self.assertEqual(denied.exception.code, 403)
-        payload = json.loads(denied.exception.read().decode('utf-8'))
-        self.assertEqual(payload['code'], 'permission_denied')
-        self.assertIn(
-            ('system.integration.manage', 'super_admin'), calls)
+        # 裸 STATE 无法走完保存链路；本用例只验证角色闸门已移除：
+        # 已登录成员不再收到 401/403，且鉴权仅剩登录检查本身。
+        try:
+            with urlopen(request, timeout=3) as response:
+                self.assertEqual(response.status, 200)
+        except HTTPError as outcome:
+            self.assertNotIn(outcome.code, (401, 403))
+        self.assertTrue(calls)
+        self.assertTrue(
+            all(permission is None and role is None
+                for permission, role in calls))
 
     def test_business_log_route_requires_login_and_forwards_only_relative_path(self):
         forwarded = []

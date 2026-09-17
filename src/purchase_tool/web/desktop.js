@@ -126,7 +126,8 @@
     return permissions.indexOf(permission) >= 0;
   }
   function canConfigure() {
-    return roleInfo().superAdmin && hasPermission('system.integration.manage');
+    // 本机配置向所有登录成员开放（20260917 产品决策），不再按角色锁定。
+    return Boolean(state.identity);
   }
   function updateBusy(update) {
     return updateBusyStates.indexOf(String(update && update.state || '')) >= 0;
