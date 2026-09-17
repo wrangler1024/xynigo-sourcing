@@ -21,7 +21,7 @@ SHEIN 开放平台卖家自研资质与应用「Xynigo ERP（自运营）」均�
 
 | 文件 | 内容 |
 |---|---|
-| `cloud/auth-service/migrations/versions/0043_shein_store_auth.py`（新增） | 三张表：`shein_authorized_stores`（凭证+密文）/ `shein_auth_links`（一次性 state）/ `shein_auth_events`（事件，令牌只存掩码）；时间列全 server_default |
+| `cloud/auth-service/migrations/versions/0044_shein_store_auth.py`（新增） | 三张表：`shein_authorized_stores`（凭证+密文）/ `shein_auth_links`（一次性 state）/ `shein_auth_events`（事件，令牌只存掩码）；时间列全 server_default |
 | `cloud/auth-service/src/xynigo_auth/shein_openapi_client.py`（新增） | HMAC 签名（应用级 x-lt-appid / 店铺级 x-lt-openKeyId）、`exchange_temp_token`、AES-128-CBC 解密（IV=`space-station-de`）、`query_store_info` |
 | `cloud/auth-service/src/xynigo_auth/shein_store_auth_crypto.py`（新增） | secretKey Fernet 加密（复用部署密钥 `buyer_credential_encryption_key`，照 BuyerCredentialCipher 先例） |
 | `cloud/auth-service/src/xynigo_auth/shein_store_auth_service.py`（新增） | 业务逻辑：链接生成/回调换钥 upsert（键=tenant+merchant_id+mode）/列表搜索分页/验证/改名/删除/事件 |

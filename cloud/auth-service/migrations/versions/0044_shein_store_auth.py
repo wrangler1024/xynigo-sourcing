@@ -3,8 +3,9 @@
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0043_shein_store_auth"
-down_revision = "0042_after_sale_result_facts"
+revision = "0044_shein_store_auth"
+# 并行线（售后阶段证据）先占用 0043，本迁移按仓内惯例由后者重编号接在其后。
+down_revision = "0043_after_sale_phase_evidence"
 branch_labels = None
 depends_on = None
 
