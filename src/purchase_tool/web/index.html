@@ -1490,6 +1490,7 @@
   .shein-auth-toolbar input[type="search"]:focus { border-color: var(--primary, #2f6fed); }
   .shein-auth-toolbar .btn { height: 32px; box-sizing: border-box; padding: 0 12px; font-size: 12px; display: inline-flex; align-items: center; justify-content: center; }
   .shein-auth-pagination { margin-top: 12px; }
+  .shein-auth-pagination select { width: auto; min-height: 0; height: 26px; box-sizing: border-box; padding: 0 6px; border: 1px solid #d6e0e8; border-radius: 8px; background: #fff; font-size: 11px; color: var(--navy-900, #16324a); }
   .shein-auth-guide { margin-top: 14px; }
   .shein-auth-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
   .shein-auth-step { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border: 1px solid #e3ecf1; border-radius: 10px; background: #f8fbfd; font-size: 12px; }
@@ -3618,6 +3619,9 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
       <div class="procurement-pagination shein-auth-pagination">
         <span class="procurement-pagination-copy" id="sheinAuthPageInfo">第 1 页 · 共 0 家</span>
         <div class="procurement-pagination-actions">
+          <select id="sheinAuthPageSize" aria-label="每页显示店铺数">
+            <option value="10">10 条</option><option value="30">30 条</option><option value="50">50 条</option>
+          </select>
           <button class="btn-mini" id="btnSheinAuthPrev" type="button" disabled>上一页</button>
           <span id="sheinAuthPageIndicator">1 / 1 页</span>
           <button class="btn-mini" id="btnSheinAuthNext" type="button" disabled>下一页</button>
@@ -13594,8 +13598,19 @@ const SHEIN_AUTH_APPS = {
   semi: { label: '半托管', appid: 'SEMI_APPID_PENDING' }
 };
 const SHEIN_AUTH_STORE_KEY = 'xynigoSheinStoreAuthProtoV2';
-const SHEIN_AUTH_PAGE_SIZE = 10;
+let sheinAuthPageSize = 10;
 let sheinAuthPage = 1;
+
+function sheinAuthLoadPageSize() {
+  try {
+    const v = Number(localStorage.getItem('xynigo.sheinAuth.pageSize'));
+    if ([10, 30, 50].includes(v)) sheinAuthPageSize = v;
+  } catch (e) { /* 忽略本地存储异常 */ }
+}
+
+function sheinAuthSavePageSize(v) {
+  try { localStorage.setItem('xynigo.sheinAuth.pageSize', String(v)); } catch (e) { /* 忽略 */ }
+}
 
 function sheinStoreAuthSeed() {
   const now = Date.now();
@@ -13682,10 +13697,10 @@ function sheinAuthRenderStores() {
   if (!tbody) return;
   const admin = sheinAuthIsAdmin();
   const rows = sheinAuthFilteredStores();
-  const pages = Math.max(1, Math.ceil(rows.length / SHEIN_AUTH_PAGE_SIZE));
+  const pages = Math.max(1, Math.ceil(rows.length / sheinAuthPageSize));
   if (sheinAuthPage > pages) sheinAuthPage = pages;
   if (sheinAuthPage < 1) sheinAuthPage = 1;
-  const pageRows = rows.slice((sheinAuthPage - 1) * SHEIN_AUTH_PAGE_SIZE, sheinAuthPage * SHEIN_AUTH_PAGE_SIZE);
+  const pageRows = rows.slice((sheinAuthPage - 1) * sheinAuthPageSize, sheinAuthPage * sheinAuthPageSize);
   if (!pageRows.length) {
     tbody.innerHTML = sheinStoreAuthState.stores.length
       ? '<tr><td colspan="9" class="admin-empty">没有符合条件的店铺：调整搜索词或类型筛选</td></tr>'
@@ -13898,6 +13913,18 @@ function initSheinStoreAuthPage() {
   if (prevBtn) prevBtn.onclick = () => { if (sheinAuthPage > 1) { sheinAuthPage -= 1; sheinAuthRenderStores(); } };
   const nextBtn = $('btnSheinAuthNext');
   if (nextBtn) nextBtn.onclick = () => { sheinAuthPage += 1; sheinAuthRenderStores(); };
+
+  sheinAuthLoadPageSize();
+  const sizeSel = $('sheinAuthPageSize');
+  if (sizeSel) {
+    sizeSel.value = String(sheinAuthPageSize);
+    sizeSel.onchange = () => {
+      sheinAuthPageSize = Number(sizeSel.value) || 10;
+      sheinAuthSavePageSize(sheinAuthPageSize);
+      sheinAuthPage = 1;
+      sheinAuthRenderStores();
+    };
+  }
 
   const refreshBtn = $('btnSheinAuthRefresh');
   if (refreshBtn) refreshBtn.onclick = () => { sheinAuthRender(); toast('已刷新'); };
