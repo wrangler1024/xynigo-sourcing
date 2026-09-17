@@ -1484,10 +1484,11 @@
   .settings-view[data-settings-view="organizationaccess"] { display: flex; flex-direction: column; gap: 16px; }
 
   /* 店铺授权（SHEIN 开放平台） */
-  .shein-auth-toolbar { display: inline-flex; align-items: center; gap: 8px; }
-  .shein-auth-toolbar select { padding: 6px 10px; border: 1px solid #d6e0e8; border-radius: 8px; background: #fff; font-size: 12px; color: var(--navy-900, #16324a); }
-  .shein-auth-toolbar input[type="search"] { width: 210px; padding: 6px 10px; border: 1px solid #d6e0e8; border-radius: 8px; background: #fff; font-size: 12px; color: var(--navy-900, #16324a); outline: none; }
+  .shein-auth-toolbar { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; }
+  .shein-auth-toolbar select { width: auto; min-height: 0; height: 32px; box-sizing: border-box; padding: 0 8px; border: 1px solid #d6e0e8; border-radius: 8px; background: #fff; font-size: 12px; color: var(--navy-900, #16324a); }
+  .shein-auth-toolbar input[type="search"] { width: 210px; height: 32px; box-sizing: border-box; padding: 0 10px; border: 1px solid #d6e0e8; border-radius: 8px; background: #fff; font-size: 12px; color: var(--navy-900, #16324a); outline: none; }
   .shein-auth-toolbar input[type="search"]:focus { border-color: var(--primary, #2f6fed); }
+  .shein-auth-toolbar .btn { height: 32px; box-sizing: border-box; padding: 0 12px; font-size: 12px; display: inline-flex; align-items: center; justify-content: center; }
   .shein-auth-pagination { margin-top: 12px; }
   .shein-auth-guide { margin-top: 14px; }
   .shein-auth-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
