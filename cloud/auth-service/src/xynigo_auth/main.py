@@ -111,6 +111,8 @@ from .local_executor_release import (
 from .purchase_receipt import ReceiptBody, ReceiptError, execute as execute_receipt
 from .purchase_receipt_gateway import ReceiptGatewayFactory
 from .shein_openapi_client import SheinOpenApiClient
+from .shein_settlement_contract import settlement_summary_payload
+from .shein_settlement_sync import SheinSettlementSyncService
 from .shein_store_auth_contract import (
     SheinAuthCallbackBody,
     SheinAuthLinkBody,
@@ -472,19 +474,27 @@ def create_app(
     data_source_registry_service = TenantDataSourceRegistryService(
         DataSourceRegistryCipher(buyer_credential_key)
     )
+    shein_openapi_client = SheinOpenApiClient(
+        gateway=settings.shein_openapi_gateway,
+        app_id=settings.shein_openapi_app_id,
+        app_secret=settings.shein_openapi_app_secret.get_secret_value(),
+        transport=shein_openapi_transport,
+    )
     shein_store_auth_service = (
         SheinStoreAuthService(
             cipher=SheinStoreSecretCipher(buyer_credential_key),
-            client=SheinOpenApiClient(
-                gateway=settings.shein_openapi_gateway,
-                app_id=settings.shein_openapi_app_id,
-                app_secret=(
-                    settings.shein_openapi_app_secret.get_secret_value()
-                ),
-                transport=shein_openapi_transport,
-            ),
+            client=shein_openapi_client,
             empower_host=settings.shein_auth_empower_host,
             redirect_base=settings.shein_auth_redirect_base,
+        )
+        if buyer_credential_key
+        else None
+    )
+    # 结算看板：与店铺授权共用同一 client 与密钥解密器（凭证只有一份）
+    shein_settlement_sync_service = (
+        SheinSettlementSyncService(
+            client=shein_openapi_client,
+            cipher=SheinStoreSecretCipher(buyer_credential_key),
         )
         if buyer_credential_key
         else None
@@ -953,6 +963,14 @@ def create_app(
                 detail={"code": exc.code, "message": exc.message},
             ) from exc
 
+    def _settlement_service() -> SheinSettlementSyncService:
+        if shein_settlement_sync_service is None:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "shein_settlement_not_configured"},
+            )
+        return shein_settlement_sync_service
+
     @app.post("/v1/shein-auth/link")
     def shein_auth_create_link(
         body: SheinAuthLinkBody,
@@ -1148,6 +1166,69 @@ def create_app(
                 store_id=store_id,
             )
         )
+
+    # ---- 财务中心 · 对账结算（结算看板）----
+    # 读与同步暂共用 finance.access；细粒度读写拆分见需求文档 §8 P1。
+    @app.get("/v1/finance/settlement/summary")
+    def settlement_summary(
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="finance.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="finance.settlement.summary",
+        )
+        summary = _settlement_service().build_summary(
+            session, tenant_id=actor.tenant.id)
+        return settlement_summary_payload(summary)
+
+    @app.post("/v1/finance/settlement/sync")
+    def settlement_sync(
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        """手动触发一次同步。定时任务走同一条路（trigger=schedule）。"""
+        actor = authorize_request(
+            request,
+            session,
+            permission="finance.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="finance.settlement.sync",
+        )
+        outcome = _settlement_service().run(
+            session, tenant_id=actor.tenant.id, trigger="manual",
+            user_id=actor.user.id,
+        )
+        session.commit()
+        return {
+            "runId": str(outcome.run_id),
+            "status": outcome.status,
+            "storeTotal": outcome.store_total,
+            "storeOk": outcome.store_ok,
+            "storeFailed": outcome.store_failed,
+            "stores": [
+                {
+                    "storeId": str(item.store_id),
+                    "storeName": item.store_name,
+                    "status": item.status,
+                    "error": item.error_summary,
+                }
+                for item in outcome.stores
+            ],
+        }
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
