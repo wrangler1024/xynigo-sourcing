@@ -144,6 +144,7 @@ from .operation_contract import (
     AfterSaleScanCreateBody,
     AfterSaleTrackCreateBody,
     AfterSaleTrackResolveBody,
+    AfterSaleDiscoveredTrackValidateBody,
     EnvironmentCreationRunBody,
     EnvironmentCreationRunCreateBody,
     EnvironmentPlanDryRunBody,
@@ -5246,16 +5247,20 @@ def create_app(
             audit_action=action,
         )
         tasks = executor_channel(session)
+        scan_payload: dict[str, object] = {
+            "browserMode": body.browserMode,
+            "concurrency": body.concurrency,
+            "environmentSerials": list(body.environmentSerials),
+        }
+        if body.purpose == "refund_discovery":
+            # 只在平台查找时写入 purpose：旧请求的载荷与幂等含义保持不变。
+            scan_payload["purpose"] = "refund_discovery"
         task = tasks.create_config_task(
             tenant_id=actor.tenant.id,
             user_id=actor.user.id,
             executor_id=body.executorId,
             task_type="after.sale.scan.v1",
-            payload={
-                "browserMode": body.browserMode,
-                "concurrency": body.concurrency,
-                "environmentSerials": list(body.environmentSerials),
-            },
+            payload=scan_payload,
             idempotency_key=body.idempotencyKey,
         )
         _add_audit(
@@ -5327,6 +5332,27 @@ def create_app(
             data = resolve_after_sale_track_items(session, actor.tenant.id, body.environmentSerials)
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
+        return {"ok": True, "data": data}
+
+    @app.post("/v1/after-sale/track/validate-discovered")
+    def validate_discovered_after_sale_track(
+        body: AfterSaleDiscoveredTrackValidateBody,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[str | None, Cookie(alias=settings.cookie_name)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ):
+        """平台发现的退款身份与本租户历史核对；冲突单排除并解释。"""
+        from .after_sale_track_resolver import validate_discovered_refund_identities
+
+        actor = authorize_request(
+            request, session, permission="assistant.access",
+            session_token=session_token, authorization=authorization,
+            audit_action="assistant.after_sale.track.validate_discovered",
+        )
+        data = validate_discovered_refund_identities(
+            session, actor.tenant.id,
+            [item.model_dump(mode="json") for item in body.items])
         return {"ok": True, "data": data}
 
     @app.post("/v1/after-sale/track", status_code=status.HTTP_202_ACCEPTED)
@@ -5435,7 +5461,13 @@ def create_app(
         )
         if task is None:
             raise HTTPException(status_code=404, detail="扫描任务不存在")
-        snapshot = executor_channel(session).after_sale_scan_summary(task)
+        channel = executor_channel(session)
+        if channel._after_sale_scan_purpose(task) == "refund_discovery":
+            # 可申请清单导出只对普通扫描有意义；平台查找任务的结果在退款
+            # 跟踪区展示与导出，不混入可申请清单。
+            raise HTTPException(
+                status_code=409, detail="平台查找任务不导出可申请清单，请从退款跟踪结果导出")
+        snapshot = channel.after_sale_scan_summary(task)
         try:
             content, filename, mime = build_after_sale_scan_export(snapshot["rows"])
         except AfterSaleExportBusy as exc:
@@ -5461,7 +5493,7 @@ def create_app(
                 "Content-Disposition": (
                     f"attachment; filename*=UTF-8''{quote(filename)}"
                 ),
-                "X-Content-Type-Options": "nosniff",
+                "X-Content-Options": "nosniff",
                 "X-Xynigo-Row-Count": str(len(snapshot["rows"])),
             },
         )

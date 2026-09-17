@@ -1,7 +1,8 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const html=fs.readFileSync('src/purchase_tool/web/index.html','utf8');
 const nodes=new Map(),node=id=>{if(!nodes.has(id))nodes.set(id,{value:'',textContent:'',placeholder:''});return nodes.get(id);};
-let calls=[],tracked=[],choice=true,hold=Promise.resolve(),fail=null,preview,progress;
+let calls=[],tracked=[],choice='history',hold=Promise.resolve(),fail=null,preview,progress;
+let discovery={executor:null,disabledReason:'测试环境不支持平台查找'};
 const state={running:false,starting:false};
 const match={items:[{environmentSerial:'900002',orderNo:'ORDER',refundBillId:'BILL',storeName:''}],
  environments:[{environmentSerial:'900002',billCount:1,note:''},{environmentSerial:'900001',billCount:0,note:'系统没有记录'}]};
@@ -17,6 +18,7 @@ const ctx=vm.createContext({AS_STATE:state,$:node,asSyncRuntimeControls:()=>{},
   await hold;
   return new Response(JSON.stringify(fail || {data:match}),{status:fail?422:200});
  },
+ asDiscoveryExecutor:async()=>discovery,
  asConfirmTrackMatches:async data=>{preview=data;return choice;},
  asTrack:async items=>{assert.equal(state.starting,false);tracked.push(items);},
  esc:s=>String(s||'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'),console});
@@ -42,7 +44,10 @@ const run=code=>vm.runInContext(code,ctx);
  assert.equal(calls[0].body.environmentSerials.join(','),'900002,900001,900003,900004,900005,900006');
  assert.equal(preview.environments[1].billCount,0);assert.equal(tracked.length,1);
  assert.deepEqual(tracked[0],match.items);assert.equal(state.starting,false);
- hold=Promise.resolve();choice=false;tracked=[];await run('asTrackManual()');assert.equal(tracked.length,0);
+ hold=Promise.resolve();choice='';tracked=[];await run('asTrackManual()');assert.equal(tracked.length,0);
+ choice='discover';await run('asTrackManual()');assert.equal(tracked.length,0);
+ assert.equal(node('phase').textContent,'平台查找不可用');
+ choice='history';
  fail={detail:'匹配退款单超过上限，请缩小环境范围'};await run('asTrackManual()');assert.equal(state.starting,false);assert.equal(tracked.length,0);
  assert.equal(node('phase').textContent,'退款单匹配失败');
  assert.equal(node('note').textContent,fail.detail);
@@ -68,6 +73,6 @@ const run=code=>vm.runInContext(code,ctx);
  ctx.unsafe={items:[],environments:[{environmentSerial:'<img>',note:'<script>'}]};
  const pending=run('asConfirmTrackMatches(unsafe)');
  assert.match(dialog.innerHTML,/data-confirm disabled/);assert.ok(!dialog.innerHTML.includes('<script>'));
- assert.ok(dialog.innerHTML.includes('&lt;img&gt;'));closed();assert.equal(await pending,false);
+ assert.ok(dialog.innerHTML.includes('&lt;img&gt;'));closed();assert.equal(await pending,'');
  console.log('environment tracking UI workflow passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});

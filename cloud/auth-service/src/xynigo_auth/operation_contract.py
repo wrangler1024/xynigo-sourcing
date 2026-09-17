@@ -1034,6 +1034,13 @@ AfterSaleRowStatus = Literal[
     "stopped", "queued", "running", "uncertain", "verifying",
 ]
 
+# 平台查找（refund_discovery）的环境级枚举闭集：整个环境是否查完。
+# 与行级状态分开——同环境多单时订单行可以先到终态，环境只有全部订单
+# 读完后才离开 running。空串是普通扫描行的缺省值。
+AfterSaleDiscoveryEnvironmentStatus = Literal[
+    "", "queued", "running", "ok", "failed", "stopped",
+]
+
 
 class AfterSaleOrderItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -1078,6 +1085,12 @@ class AfterSaleScanRow(BaseModel):
     checkedAt: str = Field(default="", max_length=40)
     errorSummary: str | None = Field(default=None, max_length=300)
     screenshotSha256: str | None = Field(default=None, max_length=64)
+    # 平台查找（refund_discovery）专用投影字段：普通扫描行不携带（缺省），
+    # 发现模式行的校验（非可申请语义、环境状态一致性）在执行器服务层做。
+    refundBillIds: list[Annotated[str, Field(
+        min_length=1, max_length=32, pattern=r"^[0-9]{1,32}$")]] = Field(
+            default_factory=list, max_length=100)
+    environmentStatus: AfterSaleDiscoveryEnvironmentStatus = ""
 
 
 class AfterSaleScanCreateBody(BaseModel):
@@ -1091,6 +1104,9 @@ class AfterSaleScanCreateBody(BaseModel):
     browserMode: Literal["headless", "visible"] = "headless"
     concurrency: ConcurrencyChoice = 2
     environmentSerials: list[str] = Field(min_length=1, max_length=300)
+    # 缺省 claimable_orders 保持旧行为；refund_discovery 是只读平台查找，
+    # 需要执行器声明 after.sale.refund-discovery.v1 能力。
+    purpose: Literal["claimable_orders", "refund_discovery"] = "claimable_orders"
 
     @field_validator("environmentSerials")
     @classmethod
@@ -1307,6 +1323,34 @@ class AfterSaleTrackCreateBody(BaseModel):
     browserMode: Literal["headless", "visible"] = "headless"
     concurrency: ConcurrencyChoice = 2
     items: list[AfterSaleTrackItem] = Field(min_length=1, max_length=500)
+
+    @field_validator("items")
+    @classmethod
+    def unique_bills(cls, value):
+        bills = [item.refundBillId for item in value]
+        if len(bills) != len(set(bills)):
+            raise ValueError("同一批次内 refundBillId 不能重复")
+        return value
+
+
+class AfterSaleDiscoveredTrackItem(BaseModel):
+    """One refund identity discovered on the platform, before track dispatch."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    environmentSerial: str = Field(min_length=1, max_length=64)
+    orderNo: str = Field(min_length=1, max_length=32)
+    refundBillId: str = Field(min_length=1, max_length=32,
+                              pattern=r"^[0-9]{1,32}$")
+    storeName: str = Field(default="", max_length=128)
+
+
+class AfterSaleDiscoveredTrackValidateBody(BaseModel):
+    """Validate discovered refund identities against tenant history."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[AfterSaleDiscoveredTrackItem] = Field(min_length=1, max_length=500)
 
     @field_validator("items")
     @classmethod

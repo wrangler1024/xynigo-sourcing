@@ -50,14 +50,14 @@ CLIENT_VERSION = "0.17.20"
 JPEG = b"\xff\xd8synthetic-after-sale-screenshot\xff\xd9"
 
 
-def _e2e_setup(tmp_path):
+def _e2e_setup(tmp_path, capabilities=None):
     app, database, _oauth = build_test_app(tmp_path)
     with TestClient(app) as web_client, TestClient(app) as device_client:
         login(web_client)
         paired = pair(
             device_client,
             create_pairing_code(web_client),
-            capabilities=AS_CAPABILITIES,
+            capabilities=capabilities if capabilities is not None else AS_CAPABILITIES,
         )
         yield web_client, device_client, {
             "executorId": str(paired["executorId"]),

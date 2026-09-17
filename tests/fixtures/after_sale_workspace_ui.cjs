@@ -11,6 +11,7 @@ const context=vm.createContext({AS_STATE:state,$:node,console,
  esc:v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),
  safeProcurementImageUrl:v=>String(v||'').startsWith('https://img.ltwebstatic.com/')?v:'',
  asRefreshOrderDetail:()=>{},asSyncScanExportButton:()=>{},asSyncClaimExportButton:()=>{},asSyncRetryButton:()=>{},
+ asDiscoveryClearPersisted:()=>{},
  AFTER_SALE_TYPE:'丢件退款',Date});
 const run=s=>vm.runInContext(s,context);
 for(const name of ['AS_SCAN_PILL','AS_CLAIM_PILL','AS_RECOVERABLE_CLAIM_STATUS']){

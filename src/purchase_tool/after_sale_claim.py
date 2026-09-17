@@ -48,7 +48,8 @@ from .cdp import CdpClient, CdpError
 from .redaction import scrub_text
 from .after_sale_display import order_item_summary, delivery_summary
 from .after_sale_receipts import (refund_bill_id_from_url, read_refund_receipts,
-    read_current_receipt, receipt_reason, read_refund_account, REFUND_ACCOUNT_JS)
+    read_current_receipt, receipt_reason, read_refund_account, REFUND_ACCOUNT_JS,
+    discover_refund_bills)
 from .after_sale_submit_evidence import install_observer, read_observer, REMOVE_OBSERVER
 from .after_sale_order_detail import read_order_detail_facts
 from .after_sale_phase import (TRACK_STATE_JS, PHASE_LABELS, classify_phase_state,
@@ -87,6 +88,10 @@ MAX_ORDER_LIST_PAGES = 100
 
 SCAN_RUNNING_STATES = ('queued', 'running')
 CLAIM_RUNNING_STATES = ('queued', 'running')
+# 平台查找（refund_discovery）：环境枚举是否完成的独立闭集，与行级
+# AFTER_SALE_ROW_ALLOWED_STATUS 分开——同环境多单时订单行可以先到终态，
+# 环境只有全部订单读完后才离开 running。
+DISCOVER_ENV_TERMINAL_STATES = ('ok', 'failed', 'stopped')
 
 # 提交成功后前端跳转的落地页，URL 里带 refund_bill_id_list=<单号>_<退款单ID>
 REFUND_LABEL_MARK = '/orders/refundLabel/'
@@ -430,6 +435,7 @@ class AfterSaleClaimer(object):
         self._scan_rows = {}
         self._claim_rows = {}
         self._track_rows = {}
+        self._discover_rows = {}
         self._screenshots = {}
 
     # ---- 对外入口（本地 HTTP 端点消费） ----
@@ -482,6 +488,16 @@ class AfterSaleClaimer(object):
             })
         return self._start('track', cleaned, browser_mode, headless, concurrency)
 
+    def start_discover(self, serials, browser_mode=None, headless=None,
+                       concurrency=2):
+        """启动一批只读平台查找：对每个环境枚举全部订单并发现退款单号。
+
+        只读：不调用 pre_info、不触碰任何提交入口。产出供回访任务使用的
+        固定退款身份（环境序号、订单号、退款单号）。
+        """
+        return self._start('discover', serials, browser_mode, headless,
+                           concurrency)
+
     def request_stop(self):
         self._stop_event.set()
         return {'stopRequested': True}
@@ -492,6 +508,7 @@ class AfterSaleClaimer(object):
             scan_rows = [dict(r) for r in self._scan_rows.values()]
             claim_rows = [dict(r) for r in self._claim_rows.values()]
             track_rows = [dict(r) for r in self._track_rows.values()]
+            discover_rows = [dict(r) for r in self._discover_rows.values()]
             running = self._running
             mode = self._mode
         scan_rows.sort(key=lambda r: (str(r.get('environmentSerial') or ''),
@@ -504,7 +521,8 @@ class AfterSaleClaimer(object):
             row['screenshotStatus'] = 'ok' if row.get('screenshotSha256') \
                 else ''
         return {'running': running, 'mode': mode, 'rows': scan_rows,
-                'claimRows': claim_rows, 'trackRows': track_rows}
+                'claimRows': claim_rows, 'trackRows': track_rows,
+                'discoverRows': discover_rows}
 
     def screenshot_bytes(self, key):
         with self._lock:
@@ -529,6 +547,9 @@ class AfterSaleClaimer(object):
             if mode == 'scan':
                 self._scan_rows = {}
                 keys = [str(s) for s in items if str(s or '').strip()]
+            elif mode == 'discover':
+                self._discover_rows = {}
+                keys = [str(s) for s in items if str(s or '').strip()]
             elif mode == 'track':
                 self._track_rows = {}
                 keys = [item['refundBillId'] for item in items]
@@ -549,6 +570,8 @@ class AfterSaleClaimer(object):
                         else self.headless)
             if mode == 'scan':
                 self._run_scan(items, headless)
+            elif mode == 'discover':
+                self._run_discover(items, headless)
             elif mode == 'track':
                 self._run_track(items, headless)
             else:
@@ -755,6 +778,160 @@ class AfterSaleClaimer(object):
             self._scan_rows[serial] = row
         if page is not None:
             self._capture_screenshot(self._scan_rows, serial, page)
+
+    # ---- 平台查找（只读发现，refund_discovery） ----
+
+    def _run_discover(self, serials, headless):
+        env_index = self._env_index(serials)
+        with self._lock:
+            for serial in serials:
+                env = env_index.get(serial, {})
+                self._discover_rows[serial] = {
+                    'environmentSerial': serial,
+                    'environmentId': str(env.get('containerCode') or ''),
+                    'storeName': env.get('containerName') or serial,
+                    'accountName': self._account_name(env),
+                    'status': 'queued',
+                    'environmentStatus': 'queued',
+                    'orders': [],
+                    'orderNo': '',
+                    'deliveredAt': '',
+                    'amount': '',
+                    'packages': [],
+                    'claimable': False,
+                    'errorSummary': None,
+                    'screenshotSha256': None,
+                    'screenshotStatus': '',
+                }
+        self._run_environment_jobs([
+            (serial, env_index.get(serial, {}), self._discover_one_guarded,
+             (serial, env_index.get(serial, {}), headless))
+            for serial in serials
+        ], stagger=self._stagger)
+        with self._lock:
+            for serial in serials:
+                row = self._discover_rows.get(serial)
+                if row and (row.get('status') in SCAN_RUNNING_STATES
+                            or row.get('environmentStatus') not in
+                            DISCOVER_ENV_TERMINAL_STATES):
+                    row['status'] = 'stopped'
+                    row['environmentStatus'] = 'stopped'
+                    row['errorSummary'] = (row.get('errorSummary')
+                                           or '发现已停止，未确认该环境全部退款记录')
+
+    def _discover_one_guarded(self, serial, env, headless):
+        try:
+            self._discover_one(serial, env, headless)
+        except Exception as exc:  # 单环境异常不拖垮整批
+            self._log('发现异常 %s: %s' % (serial, exc))
+
+    def _discover_one(self, serial, env, headless):
+        started = time.time()
+        page = None
+        opened_by_me = False
+        try:
+            page, opened_by_me = self._open_env(env, serial, headless)
+            self._publish_discover(serial, {'status': 'running',
+                                            'environmentStatus': 'running'})
+            page.goto(ORDERS_LIST_URL, dom_timeout=45, settle_seconds=8.0)
+            if self._login_required(page):
+                self._fail_discover(
+                    serial, 'login', 'failed',
+                    '买家端未登录（环境登录态缺失，请先登录该环境）',
+                    started=started)
+                return
+            if self._stop_event.is_set():
+                raise RuntimeError('发现已停止，未确认订单列表')
+            cards = self._read_all_order_cards(page)
+            orders = []
+            failed_orders = 0
+            for card in cards:
+                if self._stop_event.is_set():
+                    raise RuntimeError('发现已停止，未确认该环境全部订单')
+                parsed = parse_order_card(card.get('text') or '')
+                if not parsed:
+                    raise RuntimeError(
+                        '订单卡片格式无法识别，请人工核对所有订单页')
+                order = {
+                    'orderNo': parsed['orderNo'],
+                    'status': 'running',
+                    'refundBillIds': [],
+                    'note': '',
+                    'deliveredAt': parsed.get('deliveredAt') or '',
+                    'amount': parsed.get('amount') or '',
+                    'goodsImg': str(card.get('goodsImg') or '')[:300],
+                    'checkedAt': datetime.now(timezone.utc).isoformat(),
+                }
+                orders.append(order)
+                self._publish_discover(
+                    serial, {'orders': [dict(o) for o in orders]})
+                try:
+                    bills = discover_refund_bills(
+                        page, parsed['orderNo'],
+                        stop_check=self._stop_event.is_set)
+                except Exception as exc:
+                    order['status'] = 'fail'
+                    order['note'] = scrub_text(
+                        '退款记录读取失败：%s' % exc)[:200]
+                    failed_orders += 1
+                else:
+                    order['status'] = 'ok'
+                    order['refundBillIds'] = bills
+                self._publish_discover(
+                    serial, {'orders': [dict(o) for o in orders]})
+            stopped = self._stop_event.is_set()
+            with self._lock:
+                row = self._discover_rows.get(serial) or {}
+                row.update({
+                    'status': ('stopped' if stopped else
+                               'fail' if failed_orders else
+                               'ok' if orders else 'empty'),
+                    'environmentStatus': ('stopped' if stopped else
+                                          'failed' if failed_orders else 'ok'),
+                    'orders': orders,
+                    'orderNo': orders[0]['orderNo'] if orders else '',
+                    'deliveredAt': orders[0]['deliveredAt'] if orders else '',
+                    'amount': orders[0]['amount'] if orders else '',
+                    'durationSeconds': int(time.time() - started),
+                    'errorSummary': (
+                        '发现已停止，未确认该环境全部退款记录' if stopped else
+                        '%d 个订单的退款记录读取失败' % failed_orders
+                        if failed_orders else
+                        None if orders else '所有订单列表为空'),
+                })
+                self._discover_rows[serial] = row
+        except Exception as exc:
+            stopped = self._stop_event.is_set()
+            self._fail_discover(
+                serial, 'stopped' if stopped else 'fail',
+                'stopped' if stopped else 'failed',
+                scrub_text('%s: %s' % (type(exc).__name__, str(exc)))[:200],
+                page=page, started=started)
+        finally:
+            if opened_by_me:
+                self._stop_env(env, serial)
+
+    def _fail_discover(self, serial, status, environment_status, reason,
+                       page=None, started=None):
+        with self._lock:
+            row = self._discover_rows.get(serial) or {}
+            row.update({
+                'status': status,
+                'environmentStatus': environment_status,
+                'errorSummary': reason,
+                'orders': row.get('orders') or [],
+                'durationSeconds': (int(time.time() - started)
+                                    if started else None),
+            })
+            self._discover_rows[serial] = row
+        if page is not None:
+            self._capture_screenshot(self._discover_rows, serial, page)
+
+    def _publish_discover(self, serial, patch):
+        with self._lock:
+            row = self._discover_rows.get(serial) or {}
+            row.update(patch)
+            self._discover_rows[serial] = row
 
     # ---- 提交（写操作） ----
 

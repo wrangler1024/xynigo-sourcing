@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -626,6 +627,9 @@ class LocalOperationExecutor(object):
         'reasonCode', 'platformStatus', 'reasonSource', 'checkedAt',
         'durationSeconds', 'itemCount', 'itemCountSource', 'goodsImages', 'goodsItems',
         'deliveredDate', 'deliveryDateStatus', 'deliveryNote',
+        # 平台查找（refund_discovery）专用：普通扫描行不含这些键（投影按
+        # 「源行有键才输出」工作），不会污染共享扫描契约。
+        'refundBillIds', 'environmentStatus',
     )
     _AFTER_SALE_CLAIM_ROW_FIELDS = (
         'orderNo', 'environmentSerial', 'storeName', 'status', 'packageNo',
@@ -637,6 +641,10 @@ class LocalOperationExecutor(object):
     _AFTER_SALE_ROW_ALLOWED_STATUS = frozenset({
         'ok', 'empty', 'skip', 'blocked', 'fail', 'login', 'inuse',
         'stopped', 'queued', 'running', 'uncertain', 'verifying',
+    })
+    # 平台查找（refund_discovery）的环境级枚举闭集，与行级状态分开。
+    _AFTER_SALE_DISCOVERY_ENV_STATUSES = frozenset({
+        'queued', 'running', 'ok', 'failed', 'stopped',
     })
     _AFTER_SALE_TEXT_LIMITS = {
         'environmentSerial': 64, 'storeName': 128, 'accountName': 64,
@@ -705,6 +713,15 @@ class LocalOperationExecutor(object):
                     row[field] = [{'name': str(i.get('name') or '')[:200], 'specification': str(i.get('specification') or '')[:200], 'goodsImg': str(i.get('goodsImg') or '')[:300], 'quantity': i.get('quantity') if isinstance(i.get('quantity'), int) and not isinstance(i.get('quantity'), bool) and 1 <= i['quantity'] <= 100000 else None} for i in (value or [])[:100] if isinstance(i, dict)]
                 elif field == 'goodsImages':
                     row[field] = [str(v)[:300] for v in (value or [])[:100]]
+                elif field == 'refundBillIds':
+                    # 只传平台真实返回的退款单号（数字 1~32 位），非法值不
+                    # 生成、不修补；超过单订单上限截断并由上层计数兜底。
+                    row[field] = [str(v)[:32] for v in (value or [])
+                                  if re.fullmatch(r'\d{1,32}', str(v or ''))][:100]
+                elif field == 'environmentStatus':
+                    text = str(value or '').strip()
+                    row[field] = (text if text in cls._AFTER_SALE_DISCOVERY_ENV_STATUSES
+                                  else '')
                 elif field == 'itemCount':
                     row[field] = value if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 100000 else None
                 elif field == 'claimable':
@@ -775,7 +792,18 @@ class LocalOperationExecutor(object):
         return rows
 
     def _execute_after_sale_scan(self, payload, report, cancellation_event):
-        """售前扫描：本地只读跑批，轮询进度并把订单级行增量上报。"""
+        """售后扫描：本地只读跑批，轮询进度并把订单级行增量上报。
+
+        purpose=refund_discovery 时走平台查找分支；缺省（或
+        claimable_orders）保持原有载荷与行为，旧云端请求不受影响。
+        """
+        purpose = payload.get('purpose')
+        if purpose == 'refund_discovery':
+            return self._execute_after_sale_discovery(
+                payload, report, cancellation_event)
+        if purpose not in (None, '', 'claimable_orders'):
+            raise OperationExecutionError(
+                'operation_payload_invalid', '售后扫描用途无效')
         serials = payload.get('environmentSerials')
         if (not isinstance(serials, list) or not serials
                 or any(not str(item or '').strip() for item in serials)):
@@ -835,6 +863,126 @@ class LocalOperationExecutor(object):
             'totalCount': total,
             'claimableCount': sum(1 for row in rows
                                   if row.get('claimable')),
+        })
+
+    @staticmethod
+    def _flatten_discover_rows(env_rows):
+        """平台查找：环境级快照 → 订单级行，无订单环境留一行明确空结果。
+
+        每行带 environmentStatus（同环境一致）；订单行附 refundBillIds。
+        行级 status 取订单自身状态（running/ok/fail），环境终态由
+        environmentStatus 表达——同一环境第一单完成不会提前完成环境进度。
+        """
+        rows = []
+        for env in env_rows or []:
+            base = {
+                'environmentSerial': env.get('environmentSerial'),
+                'storeName': env.get('storeName'),
+                'accountName': env.get('accountName'),
+                'environmentStatus': env.get('environmentStatus') or '',
+                'errorSummary': env.get('errorSummary'),
+                'screenshotSha256': env.get('screenshotSha256'),
+                'durationSeconds': env.get('durationSeconds'),
+            }
+            orders = env.get('orders') or []
+            if not orders:
+                rows.append(dict(base, status=env.get('status'), orderNo='',
+                                 deliveredAt='', amount='', claimable=False,
+                                 packageCount=0, trackingNo=''))
+                continue
+            for order in orders:
+                rows.append(dict(
+                    base,
+                    status=order.get('status') or env.get('status'),
+                    errorSummary=order.get('note') or base['errorSummary'] or None,
+                    orderNo=order.get('orderNo') or '',
+                    refundBillIds=order.get('refundBillIds') or [],
+                    deliveredAt=order.get('deliveredAt') or '',
+                    amount=order.get('amount') or '',
+                    goodsImg=order.get('goodsImg') or '',
+                    checkedAt=order.get('checkedAt') or '',
+                    claimable=False,
+                    packageCount=0,
+                    trackingNo='',
+                ))
+        return rows
+
+    def _execute_after_sale_discovery(self, payload, report,
+                                      cancellation_event):
+        """平台查找退款单：只读枚举全部输入环境的订单与退款身份。
+
+        进度按「环境」计（environmentStatus 离开 queued/running 才算完成），
+        与回访阶段按「退款单」计数的分母不同，不能混用。
+        """
+        serials = payload.get('environmentSerials')
+        if (not isinstance(serials, list) or not serials
+                or any(not str(item or '').strip() for item in serials)):
+            raise OperationExecutionError(
+                'operation_payload_invalid', '平台查找缺少环境序号')
+        serials = [str(item).strip() for item in serials]
+        if len(serials) > 300:
+            raise OperationExecutionError(
+                'operation_payload_invalid', '单批平台查找环境数量超出上限')
+        browser_mode = str(payload.get('browserMode') or 'headless')
+        concurrency = payload.get('concurrency', 2)
+        if type(concurrency) is not int or concurrency not in (2, 3, 5):
+            raise OperationExecutionError('operation_payload_invalid', '售后环境并发数必须为 2、3、5 中的整数')
+        self._request('POST', '/api/after-sale/refund-discovery', {
+            'serials': serials,
+            'browserMode': browser_mode, 'concurrency': concurrency,
+        })
+        total = len(serials)
+        selected = set(serials)
+        stop_sent = False
+        previous = None
+        env_rows = []
+        while True:
+            snapshot = self._request('GET', '/api/after-sale/progress')
+            if cancellation_event.is_set() and not stop_sent:
+                try:
+                    self._request('POST', '/api/after-sale/stop', {})
+                except OperationExecutionError:
+                    pass
+                stop_sent = True
+            env_rows = [row for row in (snapshot.get('discoverRows') or [])
+                        if str(row.get('environmentSerial') or '') in selected]
+            completed = sum(
+                str(row.get('environmentStatus') or '') in
+                ('ok', 'failed', 'stopped') for row in env_rows)
+            event = {
+                'phase': ('after_sale.discovery.running'
+                          if snapshot.get('running')
+                          else 'after_sale.discovery.completed'),
+                'current': min(total, completed),
+                'total': total,
+                'snapshot': {'rows': self._after_sale_rows(
+                    self._flatten_discover_rows(env_rows))},
+            }
+            serialized = json.dumps(
+                event, ensure_ascii=False, sort_keys=True,
+                separators=(',', ':'))
+            if serialized != previous:
+                if self._safe_report(report, **event):
+                    previous = serialized
+            if not bool(snapshot.get('running')):
+                break
+            self.sleep(self.poll_interval)
+        rows = self._after_sale_rows(self._flatten_discover_rows(env_rows))
+        bills = []
+        for row in rows:
+            for bill in row.get('refundBillIds') or []:
+                if bill not in bills:
+                    bills.append(bill)
+        completed = sum(
+            str(row.get('environmentStatus') or '') in
+            ('ok', 'failed', 'stopped') for row in env_rows)
+        return ('succeeded', 'after_sale_discovery_completed', {
+            'rows': rows,
+            'totalCount': total,
+            'claimableCount': 0,
+            'refundCount': len(bills),
+            'progressCompleted': min(total, completed),
+            'progressTotal': total,
         })
 
     def _execute_after_sale_claim(self, payload, report, cancellation_event):

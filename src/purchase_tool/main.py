@@ -277,6 +277,7 @@ AUTH_PERMISSION_BY_PATH = {
     '/api/after-sale/scan': 'assistant.access',
     '/api/after-sale/submit': 'assistant.access',
     '/api/after-sale/track': 'assistant.access',
+    '/api/after-sale/refund-discovery': 'assistant.access',
     '/api/after-sale/progress': 'assistant.access',
     '/api/after-sale/stop': 'assistant.access',
     '/api/after-sale/screenshot': 'assistant.access',
@@ -4689,6 +4690,22 @@ class Handler(BaseHTTPRequestHandler):
                     })
                 browser_mode = str(body.get('browserMode') or 'headless')
                 self._json(STATE.after_sale.start_track(
+                    clean,
+                    browser_mode, concurrency=body.get('concurrency', 2)))
+            elif path == '/api/after-sale/refund-discovery':
+                # 平台查找：只读发现环境内订单与退款单号，供回访任务使用。
+                serials = body.get('serials')
+                if (not isinstance(serials, list) or not serials
+                        or len(serials) > 300):
+                    raise ValueError('平台查找缺少环境序号或超出上限')
+                clean = []
+                for item in serials:
+                    text = str(item or '').strip()
+                    if not (text and text.isascii() and text.isdigit()):
+                        raise ValueError('平台查找环境序号必须为数字')
+                    clean.append(text)
+                browser_mode = str(body.get('browserMode') or 'headless')
+                self._json(STATE.after_sale.start_discover(
                     clean,
                     browser_mode, concurrency=body.get('concurrency', 2)))
             elif path == '/api/after-sale/stop':
