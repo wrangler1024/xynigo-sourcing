@@ -71,11 +71,11 @@ class SheinOpenApiClientError(RuntimeError):
         self.message = message
 
 
-# RandomKey 必须**恰好 5 位**（平台签名规则文档明文「5位随机字符串」）。
-# 平台按固定前 5 位切分签名来重建 KEY，长度不对就会切错前缀 → 报
-# `openapi00001 签名错误:生成的签名不正确`。20260917 实测：8 位随机串
-# 稳定失败、5 位立刻通过（两种长度下 Python 与浏览器 WebCrypto 算出的
-# 签名都逐字节一致，所以问题不在算法而在长度）。
+# RandomKey 必须**恰好 5 位**（平台《API签名指南》明文「5位随机字符串」）。
+# 平台按固定前 5 位切分签名来重建 KEY，长度不对就会切错前缀 →
+# `openapi00001 签名错误:生成的签名不正确`。20260917 生产真机实测：
+# 8 位随机串稳定失败、换 5 位立刻 HTTP 200 code=0。
+# 这一条只能靠打真网关发现——自签自验的合成用例里长度永远自洽。
 RANDOM_KEY_LENGTH = 5
 _RANDOM_KEY_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
 
@@ -95,7 +95,7 @@ def sign_headers(
 ) -> dict[str, str]:
     """构造网关签名请求头（应用级与店铺级共用算法）。
 
-    算法（以开放平台《SHEIN开放平台API签名指南》为准，20260917 逐条核对）：
+    算法（以开放平台《API签名指南》为准，20260917 逐条核对）：
     VALUE = OpenKeyId & Timestamp & Path
     KEY   = SecretKey + RandomKey（RandomKey 恰好 5 位）
     Hex   = HMAC-SHA256(VALUE, KEY) 小写十六进制
