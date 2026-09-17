@@ -10,8 +10,8 @@
 
 ## 评审对象
 
-- 分支 `codex/shein-store-auth-module-design`（已推送 origin），提交范围 `a455663..42dc8d5`（11 个提交，基线 `origin/main`）
-- **开发在主检出 `/Users/jeff/Documents/xynigo-sourcing` 上进行**（本分支独占该工作区，已推送）。请在独立 worktree 检出评审，勿动主检出。
+- 分支 `codex/shein-store-auth-module-design`（已推送 origin），提交范围 `a455663..916bc39`（12 个提交，基线 `origin/main`）
+- **本地主检出 `/Users/jeff/Documents/xynigo-sourcing` 就停在该分支（工作区干净）——直接在主检出上只读评审源码即可，无需另建 worktree。不要切分支、不要改动任何文件。**
 
 ## 背景
 
@@ -55,9 +55,8 @@ SHEIN 开放平台卖家自研资质与应用「Xynigo ERP（自运营）」均�
 ## 怎么跑
 
 ```bash
-# 云端套件（含新增 12 条；全量 390 passed）
-cd /path/to/worktree/cloud/auth-service
-uv sync --extra test
+# 云端套件（含新增 12 条；全量 390 passed）——直接在主检出上跑
+cd /Users/jeff/Documents/xynigo-sourcing/cloud/auth-service
 uv run pytest -q
 
 # 前端语法
