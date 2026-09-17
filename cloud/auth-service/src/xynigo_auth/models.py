@@ -2476,3 +2476,120 @@ class PurchaseReceiptOrder(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('tenants.id'), primary_key=True)
     order_no: Mapped[str] = mapped_column(String(64), primary_key=True)
     task_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class SheinAuthorizedStore(Base):
+    """SHEIN 开放平台店铺授权凭证；secretKey 仅密文保存，永不回传。"""
+
+    __tablename__ = "shein_authorized_stores"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    store_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    open_key_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    secret_ciphertext: Mapped[str] = mapped_column(Text, nullable=False)
+    app_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    first_authorized_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    latest_authorized_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    last_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    store_info: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "merchant_id", "mode",
+            name="uq_shein_store_tenant_merchant_mode",
+        ),
+        CheckConstraint(
+            "mode IN ('self', 'semi')", name="ck_shein_store_mode"
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'ok', 'expired')",
+            name="ck_shein_store_status",
+        ),
+        Index("ix_shein_store_tenant_latest", "tenant_id", "latest_authorized_at"),
+    )
+
+
+class SheinAuthLink(Base):
+    """一次性授权 state：绑定租户与发起人，短时效，回调校验后即消费。"""
+
+    __tablename__ = "shein_auth_links"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    created_by_user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    state: Mapped[str] = mapped_column(String(128), nullable=False)
+    mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    app_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_store_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("shein_authorized_stores.id", ondelete="SET NULL")
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("state", name="uq_shein_auth_link_state"),
+        CheckConstraint("mode IN ('self', 'semi')", name="ck_shein_auth_link_mode"),
+        Index("ix_shein_auth_link_tenant_created", "tenant_id", "created_at"),
+    )
+
+
+class SheinAuthEvent(Base):
+    """授权与验证事件流水；令牌只存掩码，密钥永不入库。"""
+
+    __tablename__ = "shein_auth_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    store_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("shein_authorized_stores.id", ondelete="SET NULL")
+    )
+    store_label: Mapped[str] = mapped_column(String(128), nullable=False)
+    ok: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    note: Mapped[str] = mapped_column(String(300), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "action IN ('link', 'callback', 'verify', 'rename', 'delete')",
+            name="ck_shein_auth_event_action",
+        ),
+        Index("ix_shein_auth_event_tenant_created", "tenant_id", "created_at"),
+    )
