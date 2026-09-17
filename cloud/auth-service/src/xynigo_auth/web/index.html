@@ -4486,7 +4486,8 @@ function cloudApiError(payload, status) {
     operation_parent_run_active:'原物流查询仍在执行，请稍后重试',
     operation_run_active:'查询仍在执行，完成后才能导出'
   };
-  const serverMessage = String((detail && detail.message) || (payload && payload.error) || '');
+  const serverMessage = String((typeof detail === 'string' ? detail : detail && detail.message)
+    || (payload && payload.error) || '');
   const genericMessage = known[code];
   const errorMessage = genericMessage && serverMessage
       && serverMessage !== code && serverMessage !== genericMessage
@@ -6101,7 +6102,8 @@ async function asTrackEnvironments() {
     asProgress({progressTotal:0, progressCompleted:0, unit:'单'});
     asSetPhase('正在匹配退款单', '共 '+serials.length+' 个环境，正在读取系统历史记录。', true);
     const response = await cloudFetchJson('/v1/after-sale/track/resolve', {
-      method:'POST', body:JSON.stringify({environmentSerials:serials}),
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({environmentSerials:serials}),
     });
     const data = response?.data;
     if (!Array.isArray(data?.items) || !Array.isArray(data?.environments)) throw new Error('退款单匹配响应不完整，请重试。');
