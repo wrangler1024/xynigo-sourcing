@@ -1,12 +1,37 @@
 """Tenant-scoped, read-only discovery of already known refund identities."""
 
-from sqlalchemy import select
+from sqlalchemy import case, cast, func, literal, select, true, union_all
+from sqlalchemy.dialects.postgresql import JSONB
 
 from .models import AfterSaleClaimResult, AfterSaleRefundTracking
 
 
 MAX_HISTORY_ROWS = 5000
 MAX_TRACK_ITEMS = 500
+
+
+def _claim_identities(session, tenant_id, serials=None):
+    """Project refund IDs in SQL, not entire receipt/account JSON documents."""
+    claim = AfterSaleClaimResult
+    conditions = [claim.tenant_id == tenant_id]
+    if serials is not None:
+        conditions.append(claim.environment_serial.in_(serials))
+    if session.get_bind().dialect.name == "postgresql":
+        raw = cast(claim.refunds, JSONB)
+        array = case((func.jsonb_typeof(raw) == "array", raw),
+                     else_=cast(literal("[]"), JSONB))
+        entries = func.jsonb_array_elements(array).table_valued("value").alias("receipt")
+        bill = entries.c.value.op("->>")("refundBillId")
+    else:
+        array = case((func.json_type(claim.refunds) == "array", claim.refunds), else_="[]")
+        entries = func.json_each(array).table_valued("value", "type").alias("receipt")
+        bill = case((entries.c.type == "object",
+                     func.json_extract(entries.c.value, "$.refundBillId")), else_=None)
+    columns = [claim.environment_serial, claim.order_no, claim.store_name]
+    primary = select(*columns, claim.refund_bill_id).where(*conditions)
+    packages = select(*columns, bill.label("refund_bill_id")).select_from(claim).join(
+        entries, true()).where(*conditions)
+    return union_all(primary, packages).subquery()
 
 
 def resolve_after_sale_track_items(session, tenant_id, serials):
@@ -17,7 +42,7 @@ def resolve_after_sale_track_items(session, tenant_id, serials):
     identities = {}
 
     def collect(serial, order, bill, store):
-        order = str(order or "").strip().upper()
+        order = str(order or "").strip()
         bill = str(bill or "").strip()
         if not order:
             incomplete[serial] += 1
@@ -34,39 +59,50 @@ def resolve_after_sale_track_items(session, tenant_id, serials):
         if len(identities) > MAX_TRACK_ITEMS:
             raise ValueError("匹配超过 500 个退款单，请减少环境数量，或从提交历史选择批次回访；本次未发起任务。")
 
-    # Project only identity fields: never load screenshots, account details or
-    # entire submission snapshots just to resolve a tracking scope.
     claim = AfterSaleClaimResult
-    claims = session.execute(select(
-        claim.environment_serial, claim.order_no, claim.refund_bill_id,
-        claim.refunds, claim.store_name,
-    ).where(claim.tenant_id == tenant_id, claim.environment_serial.in_(serials))
-        .order_by(claim.created_at.desc(), claim.id.desc()).limit(MAX_HISTORY_ROWS + 1)).all()
     track = AfterSaleRefundTracking
-    tracks = session.execute(select(
+    record_count = 0
+    for model in (claim, track):
+        bounded = select(model.id).where(
+            model.tenant_id == tenant_id, model.environment_serial.in_(serials)
+        ).limit(MAX_HISTORY_ROWS + 1).subquery()
+        record_count += session.scalar(select(func.count()).select_from(bounded))
+    if record_count > MAX_HISTORY_ROWS:
+        raise ValueError("这些环境的历史记录超过查询上限，请减少环境数量，或从提交历史选择批次回访；本次未发起任务。")
+
+    scoped = _claim_identities(session, tenant_id, serials)
+    query = select(scoped).distinct().order_by(scoped.c.order_no, scoped.c.refund_bill_id)
+    # Small batches also bound the driver buffer when a large historical JSON
+    # array contains repeated receipt IDs. Only four short strings cross to Python.
+    with session.execute(query.execution_options(yield_per=100)) as records:
+        for serial, order, store, bill in records:
+            collect(serial, order, bill, store)
+    tracks = select(
         track.environment_serial, track.order_no, track.refund_bill_id, track.store_name,
     ).where(track.tenant_id == tenant_id, track.environment_serial.in_(serials))
-        .order_by(track.created_at.desc(), track.id.desc()).limit(MAX_HISTORY_ROWS + 1)).all()
-    if len(claims) + len(tracks) > MAX_HISTORY_ROWS:
-        raise ValueError("这些环境的历史记录超过查询上限，请减少环境数量，或从提交历史选择批次回访；本次未发起任务。")
-    for serial, order, primary_bill, refunds, store in claims:
-        # Keep both the legacy primary bill and every package's receipt.
-        bills = [primary_bill] + [r.get("refundBillId") for r in (refunds or [])
-                                  if isinstance(r, dict)]
-        for bill in dict.fromkeys(str(b or "").strip() for b in bills):
+    with session.execute(tracks.execution_options(yield_per=100)) as records:
+        for serial, order, bill, store in records:
             collect(serial, order, bill, store)
-    for serial, order, bill, store in tracks:
-        collect(serial, order, bill, store)
 
-    # A tracking record already bound to a different identity must not be
-    # rebound by an old claim snapshot, even outside the requested environments.
+    # Validate the same bill's identity across ALL tenant history. Selection
+    # of one environment cannot hide a conflict in another environment.
     blocked = set()
     if identities:
+        global_claims = _claim_identities(session, tenant_id)
+        query = select(global_claims.c.refund_bill_id, global_claims.c.environment_serial,
+                       global_claims.c.order_no).where(
+                           global_claims.c.refund_bill_id.in_(identities)).distinct()
+        with session.execute(query.execution_options(yield_per=100)) as records:
+            for bill, serial, order in records:
+                if (serial, order) not in identities[bill]:
+                    blocked.add(bill)
+        # Preserve established tracking bindings too, including records outside
+        # the selected environments and legacy records without an environment.
         bindings = session.execute(select(
             track.refund_bill_id, track.environment_serial, track.order_no,
         ).where(track.tenant_id == tenant_id, track.refund_bill_id.in_(identities))).all()
         for bill, serial, order in bindings:
-            order = str(order or "").strip().upper()
+            order = str(order or "")
             if (serial and (serial, order) not in identities[bill]) or (
                     not serial and order and any(key[1] != order for key in identities[bill])):
                 blocked.add(bill)

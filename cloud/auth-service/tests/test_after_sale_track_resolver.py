@@ -52,7 +52,7 @@ def test_resolves_all_batches_packages_and_tracking_in_input_order_without_write
         claim(session, tenant, user, '900001', 'SYNTH-A')
         claim(session, tenant, user, '900004', 'SYNTH-NO-BILL')
         session.add(AfterSaleRefundTracking(tenant_id=tenant, environment_serial='900003',
-            order_no='SYNTH-C', refund_bill_id='C1', phase='refunded', last_status='ok'))
+            order_no='synth-c', refund_bill_id='C1', phase='refunded', last_status='ok'))
         other = Tenant(feishu_tenant_key='synthetic-resolver-other')
         session.add(other); session.flush()
         claim(session, other.id, user, '900001', 'FOREIGN', 'FOREIGN-BILL')
@@ -68,6 +68,7 @@ def test_resolves_all_batches_packages_and_tracking_in_input_order_without_write
     assert response.status_code == 200, response.text
     data = response.json()['data']
     assert [r['refundBillId'] for r in data['items']] == ['C1','B1','B2','A1']
+    assert data['items'][0]['orderNo'] == 'synth-c', 'preserve the established tracking identity exactly'
     assert data['billCount'] == 4 and data['environmentCount'] == 5
     assert data['matchedEnvironmentCount'] == 3
     assert [e['status'] for e in data['environments']] == ['matched']*3+['unmatched']*2
@@ -107,6 +108,33 @@ def test_conflicting_bill_identity_is_excluded_even_when_tracking_env_not_select
     assert [item['refundBillId'] for item in data['items']] == ['SAFE']
     assert [e['status'] for e in data['environments']] == ['partial','unmatched']
     assert all('归属不一致' in e['note'] for e in data['environments'])
+    for serial in ['900001', '900002']:
+        single = web.post('/v1/after-sale/track/resolve', headers=CSRF,
+                         json={'environmentSerials':[serial]}).json()['data']
+        assert all(item['refundBillId'] != 'CONFLICT' for item in single['items'])
+        assert '归属不一致' in single['environments'][0]['note']
+
+
+def test_package_identity_projection_and_conflicts_outside_selected_environment(context):
+    web, _, ids, database = context
+    with database.session_factory() as session:
+        tenant, user = identity(session, ids)
+        claim(session, tenant, user, '900001', 'SYNTH-A', refunds=[
+            {'refundBillId':'ARRAY-CONFLICT', 'detailsNote':'x'*1_000_000,
+             'refundAccount':'unused-synthetic-account'}])
+        claim(session, tenant, user, '900002', 'SYNTH-B', refunds=[
+            {'refundBillId':'ARRAY-CONFLICT'}])
+        session.commit()
+        # Database projection never returns the receipt JSON/account/diagnostics.
+        rows = session.execute(select(resolver._claim_identities(session, tenant, ['900001']))).all()
+        assert rows and all(len(row) == 4 for row in rows)
+        assert max(len(str(value)) for row in rows for value in row) < 128
+    response = web.post('/v1/after-sale/track/resolve', headers=CSRF,
+                        json={'environmentSerials':['900001']})
+    assert response.status_code == 200
+    assert response.json()['data']['items'] == []
+    assert '归属不一致' in response.json()['data']['environments'][0]['note']
+    assert 'unused-synthetic-account' not in response.text
 
 
 def test_validation_auth_and_limits_do_not_create_partial_tasks(context, monkeypatch):
