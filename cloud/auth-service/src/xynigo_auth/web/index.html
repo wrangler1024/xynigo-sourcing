@@ -1501,7 +1501,8 @@
   .settle-card { padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
   .settle-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
   .settle-card-head b { color: var(--navy-950); font-size: 12px; }
-  .settle-card-head small { color: var(--navy-500); font-size: 10px; }
+  .settle-card-head small { color: var(--navy-500); font-size: 10px; white-space: nowrap; }
+  .settle-hint-due { color: var(--rhino-700); font-weight: 900; }
   .settle-card-rows { margin-top: 10px; display: grid; gap: 7px; }
   .settle-card-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
   .settle-card-row .cur { color: var(--navy-500); font-size: 10px; font-weight: 800; }
@@ -1509,12 +1510,12 @@
   .settle-card-row .due { color: var(--rhino-700); font-size: 10px; font-weight: 800; }
   .settle-card-cny { margin-top: 9px; color: var(--navy-950); font-size: 21px; font-weight: 900; font-variant-numeric: tabular-nums; }
   .settle-card-cny small { margin-left: 6px; color: var(--navy-500); font-size: 10px; font-weight: 800; }
-  .settle-card-native { margin-top: 9px; display: grid; gap: 4px; padding-top: 9px; border-top: 1px dashed var(--line); }
+    /* 固定两行高度：各卡币种数不一致时（如某币种无待结算）卡片仍等高、币种行仍对齐 */
+  .settle-card-native { margin-top: 9px; min-height: 38px; display: grid; gap: 4px; padding-top: 9px; border-top: 1px dashed var(--line); align-content: start; }
   .settle-native-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
   .settle-native-row .cur { color: var(--navy-500); font-size: 10px; font-weight: 800; }
   .settle-native-row .amt { color: var(--navy-700); font-size: 12px; font-weight: 850; font-variant-numeric: tabular-nums; }
   .settle-native-row .due { color: var(--rhino-700); font-size: 10px; font-weight: 800; }
-  .settle-card-due { margin-top: 4px; color: var(--rhino-700); font-size: 10px; font-weight: 800; }
   .settle-more { color: var(--navy-500); font-size: 9px; font-weight: 800; }
   /* 打款日 + 「+N 批」提示不换行，避免「批」字被折到第二行 */
   .settle-table td.pay-date { white-space: nowrap; }
@@ -14004,22 +14005,25 @@ function settleRenderCards() {
     { title: '在途资金', hint: '已发货未签收（订单级）', groups: settleGroupSum(okStores, 'inTransit') },
     { title: '待结算资金', hint: '对账单待结算按收支轧差（全部）', groups: settleGroupSum(okStores, 'unsettled') },
     { title: '下次结算金额', hint: '仅最近一批', groups: nearest ? nearest.groups : [],
-      due: nearest ? `预计打款 ${nearest.date}` : '' },
+      due: nearest ? nearest.date.slice(5) : '' },
     { title: '已结算资金', hint: '报账单已付款历史累计', groups: settleGroupSum(okStores, 'settled') }
   ];
   host.innerHTML = cards.map(card => {
     const cny = settleCnyTotal(card.groups);
     const cnyLine = card.groups.length
-      ? `<div class="settle-card-cny">¥ ${settleMoney(cny)}<small>人民币合计</small></div>` +
-        (card.due ? `<div class="settle-card-due">${card.due}</div>` : '')
+      ? `<div class="settle-card-cny">¥ ${settleMoney(cny)}<small>人民币合计</small></div>`
       : '';
     const rows = card.groups.length
       ? card.groups.map(group =>
         `<div class="settle-native-row"><span class="cur">${group.currency}</span>` +
         `<span class="amt">${settleMoney(group.total)}</span></div>`).join('')
       : '<div class="settle-card-none">当前范围内无可计入店铺</div>';
+    // 打款日放卡片头部（hint 位）而不是金额下方：多出一行会把这张卡的
+    // 币种行比其他三张压低一截，四张卡就不再齐平。
+    const dueHtml = card.due
+      ? ` · <span class="settle-hint-due">预计 ${card.due}</span>` : '';
     return `<div class="settle-card"><div class="settle-card-head"><b>${card.title}</b>` +
-      `<small>${card.hint}</small></div>${cnyLine}` +
+      `<small>${card.hint}${dueHtml}</small></div>${cnyLine}` +
       `<div class="settle-card-native">${rows}</div></div>`;
   }).join('');
   const fxNote = $('settleFxNote');
