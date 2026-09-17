@@ -893,7 +893,7 @@ class AfterSaleClaimWiringTests(unittest.TestCase):
         track_block = html[html.index('id="asTrackTable"'):]
         track_block = track_block[:track_block.index('</table>')]
         self.assertEqual(track_block.count('<th') - track_block.count('<thead'), 10)
-        track_tpl = html[html.index('AS_STATE.trackRows.map('):]
+        track_tpl = html[html.index('tbody.innerHTML=selected.map('):]
         track_tpl = track_tpl[:track_tpl.index("}).join('')")]
         # ④ 的 timeline 是包在显式 <td> 里的，只额外算商品图那格
         track_cells = track_tpl.count('<td') + track_tpl.count('${asThumbCell')
@@ -904,7 +904,7 @@ class AfterSaleClaimWiringTests(unittest.TestCase):
         self.assertIn("cloudFormalExecutor('after.sale.track.v1')", html)
         self.assertIn("'/v1/after-sale/track'", html)
         self.assertIn("'/v1/after-sale/track/'", html)
-        self.assertIn("const AS_TL_ORDER = ['submitted', 'reviewing', 'processing', 'refunded']", html)
+        self.assertIn("const AS_TL_ORDER = ['submitted', 'reviewing', 'processing', 'shein_refunded', 'bank_processed']", html)
 
     def test_track_accepts_manually_specified_bills(self):
         """④ 必须能回访「指定单」——不依赖提交记录。
@@ -1376,8 +1376,7 @@ class WebCloudContractAlignmentTests(unittest.TestCase):
     def test_web_reads_only_contracted_track_row_fields(self):
         """Web 渲染 ④ 时读到的每个行字段，云端行契约都必须提供。"""
         html = LOCAL_HTML.read_text(encoding='utf-8')
-        tpl = html[html.index('AS_STATE.trackRows.map('):]
-        tpl = tpl[:tpl.index("}).join('')")]
+        tpl = html[html.index('function asTrackPhaseLabel('):html.index('// 手工指定的回访单：')]
         reads = set(re.findall(r'row\.(\w+)', tpl))
         fields = set(re.findall(r'^    (\w+):', self._contract_block(
             'AfterSaleTrackRow'), re.M))

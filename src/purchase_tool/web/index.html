@@ -5993,7 +5993,9 @@ const AS_TL_LABEL = {submitted:'已受理', reviewing:'审核中', processing:'S
   shein_refunded:'SHEIN退款成功', bank_processed:'金融机构已处理',
   review_failed:'审核未通过', evidence_required:'审核未通过 · 待补充凭证',
   refunded:'历史退款状态 · 待回访', rejected:'历史拒绝状态 · 待回访', overdue:'超期未出结果'};
-function asReviewFailed(phase) { return ['review_failed','evidence_required'].includes(phase); }
+function asReviewFailed(phase) {
+  return ['review_failed','evidence_required'].includes(phase);
+}
 function asTrackPhaseLabel(row) {
   const phase=String(row.phase || '');
   return AS_TL_LABEL[phase] || row.phaseLabel || '平台阶段待核对';

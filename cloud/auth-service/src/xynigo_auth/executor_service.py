@@ -2804,6 +2804,9 @@ class ExecutorChannelService:
                     diagnostic_reason="refund_tracking_identity_mismatch")
         previous = task.progress_summary if isinstance(task.progress_summary, dict) else {}
         per_task = {row["refundBillId"]: row for row in previous.get("rows", [])}
+        frozen_failures = set()
+        fact_defaults = dict(phase="", phaseLabel="", phaseEvidence=None, note="",
+                             countdown="", amount="", refundAccount="", checkedAt="")
         for row in rows:
             item = requested[row.refundBillId]
             row.orderNo = row.orderNo or str(item.get("orderNo") or "")
@@ -2813,18 +2816,31 @@ class ExecutorChannelService:
             # Freeze the last successful observation into this task's failed row;
             # a later task must not change an older batch/export retrospectively.
             record = stored.get(row.refundBillId)
-            if row.status != "ok" and record and record.phase and record.checked_at:
-                current.update(phase=record.phase, phaseLabel=record.phase_label or "",
-                    phaseEvidence=record.phase_evidence, note=record.note or "",
-                    countdown=record.countdown or "", amount=record.amount or "",
-                    refundAccount=record.refund_account or "",
-                    checkedAt=record.checked_at.isoformat())
+            if row.status != "ok":
+                prior = per_task.get(row.refundBillId) or {}
+                current.update(fact_defaults)
+                if prior.get("status") in {"fail", "login", "inuse", "blocked", "skip", "empty", "stopped"}:
+                    # Replayed progress/final receipts keep this task's original
+                    # observation, including the absence of any trusted facts.
+                    current.update({key: prior.get(key, default) for key, default in fact_defaults.items()})
+                    frozen_failures.add(row.refundBillId)
+                elif (record and record.environment_serial == row.environmentSerial
+                        and record.order_no == row.orderNo and record.phase and record.checked_at):
+                    current.update(phase=record.phase, phaseLabel=record.phase_label or "",
+                        phaseEvidence=record.phase_evidence, note=record.note or "",
+                        countdown=record.countdown or "", amount=record.amount or "",
+                        refundAccount=record.refund_account or "",
+                        checkedAt=record.checked_at.isoformat())
             per_task[row.refundBillId] = current
         task.progress_summary = {"rows": [per_task[bill] for bill in requested if bill in per_task]}
         for row in rows:
+            if row.refundBillId in frozen_failures:
+                # A replay is not a new observation and must not overwrite the
+                # shared status/error after another task has refreshed it.
+                continue
             record = stored.get(row.refundBillId)
             observed_at = _after_sale_at(row.checkedAt) if row.status == "ok" else None
-            if (record and observed_at and record.checked_at
+            if (record and record.environment_serial and observed_at and record.checked_at
                     and observed_at.astimezone(UTC) < (record.checked_at.astimezone(UTC)
                         if record.checked_at.tzinfo else record.checked_at.replace(tzinfo=UTC))):
                 # Preserve this task's observation, but do not roll the shared

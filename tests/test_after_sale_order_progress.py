@@ -74,7 +74,7 @@ class WebOrderProgressTests(unittest.TestCase):
         functions = []
         for name in ['asOrderIdentity', 'asSubmissionForRow','asSubmissionProtections','asSubmissionHasEvidence','asOrderRefundRows', 'asSubmissionBlocksSelection', 'asCanSelectScanRow',
                      'asItemCount', 'asFilteredRows', 'asSelectedItems', 'asOrderedRows', 'asProgress', 'asStripToggle',
-                     'asSetPhase', 'asRenderTrackRows', 'asPoll']:
+                     'asSetPhase', 'asReviewFailed', 'asTrackPhaseLabel', 'asTrackEvidence', 'asTrackStageCell', 'asRenderTrackRows', 'asPoll']:
             signature = ('async function ' if name == 'asPoll' else 'function ') + name + '('
             start = html.index(signature)
             functions.append(html[start:html.index('\n}', start)+2])

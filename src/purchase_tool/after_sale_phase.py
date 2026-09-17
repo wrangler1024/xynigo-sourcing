@@ -21,6 +21,7 @@ STEP_TITLES = (
 
 TRACK_STATE_JS = r'''(() => {
   const clean = s => String(s || '').replace(/[\u4e00-\u9fa5]+/g,' ').replace(/\s+/g,' ').trim();
+  const cleanLines = s => String(s || '').split(/\r?\n/).map(clean).filter(Boolean).join('\n');
   const visible = e => !!e && !!e.getClientRects().length;
   const roots = [...document.querySelectorAll('.return-steps')].filter(visible);
   const body = document.body?.innerText || '';
@@ -30,9 +31,10 @@ TRACK_STATE_JS = r'''(() => {
     const flags = ['active','finish','wait'].filter(k => title?.classList.contains('is-'+k));
     const detail = e.querySelector('.return-step-item__collapse');
     return {title:clean(title?.textContent).slice(0,240), state:flags.length===1?flags[0]:'',
-      visible:visible(title), detail:clean(visible(detail)?detail.innerText:'').slice(0,800),
-      canSupplement:[...e.querySelectorAll('button,a,[role=button],[class*=btn]')].some(n =>
-        visible(n) && !n.disabled && n.getAttribute('aria-disabled')!=='true' &&
+      visible:visible(title), detail:cleanLines(visible(detail)?detail.innerText:'').slice(0,800),
+      canSupplement:[...e.querySelectorAll('button,a[href],[role=button]')].some(n =>
+        visible(n) && !n.disabled && !n.matches(':disabled') &&
+        !n.closest('[disabled],[aria-disabled="true"],[inert]') &&
         /^subir comprobante(?:s)?$/i.test(clean(n.innerText)))};
   }) : [];
   return {orderNo:location.pathname.split('/').filter(Boolean).pop(), refundBillId:bill, steps,
@@ -97,7 +99,8 @@ def classify_phase_state(state):
 def latest_rejection_reason(text, bill):
     """Only the newest dated event may explain the current failed review."""
     text = re.sub(r'[\u4e00-\u9fa5]+', ' ', str(text or ''))
-    if not re.search(r'Código del Reembolso\s*[:：]\s*'+re.escape(bill)+r'\b', text, re.I):
+    bills = re.findall(r'Código del Reembolso\s*[:：]\s*(\d+)\b', text, re.I)
+    if not bills or set(bills) != {bill}:
         return ''
     # The observed dialog lists actor / event / reason / platform-local date.
     # Dates are compared within one page, without guessing a timezone.
@@ -106,7 +109,12 @@ def latest_rejection_reason(text, bill):
               'jul':7,'aug':8,'ago':8,'sep':9,'oct':10,'nov':11,'dec':12,'dic':12}
     events, block, actor = [], [], ''
     for line in lines:
+        if not line:
+            continue
         if normalize(line) in ('vendedor', 'shein', 'vendedor/shein', 'usuario'):
+            if actor:
+                # A newer event without a recognized date cannot be discarded.
+                return ''
             actor, block = normalize(line), []
         elif actor:
             m = re.fullmatch(r'(\d{1,2}) ([A-Za-z]{3}) (\d{4}) (\d{2}):(\d{2}):(\d{2})', line)
@@ -119,6 +127,11 @@ def latest_rejection_reason(text, bill):
                 actor, block = '', []
             else:
                 block.append(line)
+        elif events or not (normalize(line) in ('historial de negociacion', 'ver detalles >', 'ver detalles')
+                or re.fullmatch(r'Código del Reembolso\s*[:：]\s*'+re.escape(bill), line, re.I)
+                or re.fullmatch(r'Plazo de la solicitud\s*[:：]\s*\d{1,2} [A-Za-z]{3} \d{4} \d{2}:\d{2}:\d{2}', line, re.I)):
+            # Unknown actors, dates or trailing content may be newer evidence.
+            return ''
     if actor or not events:
         return ''
     newest = max(e[0] for e in events)

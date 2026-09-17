@@ -146,3 +146,37 @@ def test_new_receipt_observation_clears_stale_failed_review_details():
     record=c._claim_rows['ORDER']['refunds'][0]
     assert record['phase']=='reviewing' and record['detailsNote']==''
     assert record['phaseEvidence']['reason']==''
+
+
+@pytest.mark.parametrize('unparsed', [
+    'Usuario\nSubir comprobante\n',
+    'Usuario\nSubir comprobante\n17 September 2026 01:00:00\n',
+    'Otro actor\nNueva revisión\n17 Sep 2026 01:00:00\n',
+])
+def test_unparsed_new_event_never_reuses_old_rejection_reason(unparsed):
+    failed='Vendedor\nRevisión fallida\nReembolso rechazado: Comprobantes insuficientes\n16 Sep 2026 21:30:53\n'
+    assert latest_rejection_reason(history(unparsed+failed),'12345')==''
+    assert latest_rejection_reason(history(failed+unparsed),'12345')==''
+
+
+def test_conflicting_bill_in_history_discards_reason_and_known_metadata_is_allowed():
+    failed='Vendedor\nRevisión fallida\nReembolso rechazado: Comprobantes insuficientes\n16 Sep 2026 21:30:53'
+    text=history('Plazo de la solicitud: 16 Sep 2026 13:55:40\nVer detalles >\n'+failed)
+    assert latest_rejection_reason(text,'12345')=='Comprobantes insuficientes'
+    assert latest_rejection_reason(text+'\nCódigo del Reembolso: 99999','12345')==''
+
+
+def test_dom_reader_ignores_disabled_supplement_controls_and_keeps_reason_lines():
+    import json
+    import subprocess
+    from pathlib import Path
+    result=subprocess.run(['node','tests/fixtures/after_sale_phase_dom.cjs'],
+        input=json.dumps({'js':TRACK_STATE_JS,'titles':TITLES}),
+        cwd=Path(__file__).resolve().parents[1],capture_output=True,text=True)
+    assert result.returncode==0,result.stdout+result.stderr
+    states=json.loads(result.stdout)
+    assert classify_phase_state(states[0])['phase']=='evidence_required'
+    for raw in states[1:]:
+        classified=classify_phase_state(raw)
+        assert classified['phase']=='review_failed'
+        assert classified['phaseEvidence']['reason']=='Comprobantes insuficientes'

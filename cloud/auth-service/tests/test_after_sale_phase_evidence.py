@@ -151,3 +151,84 @@ def test_submission_receipt_rejects_mismatched_current_node():
     from xynigo_auth.operation_contract import AfterSalePackageRefund
     with pytest.raises(ValidationError,match='node and phase'):
         AfterSalePackageRefund(refundBillId='12345',phase='processing',phaseEvidence=evidence())
+
+
+@pytest.fixture
+def tracking_store(monkeypatch):
+    """Real SQL persistence; task payload decryption is outside these replay cases."""
+    import uuid
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from xynigo_auth.models import ExecutorTask
+    from xynigo_auth.executor_service import ExecutorChannelService
+    engine=create_engine('sqlite://')
+    AfterSaleRefundTracking.__table__.create(engine)
+    with Session(engine) as session:
+        service=ExecutorChannelService(session)
+        task=ExecutorTask(id=uuid.uuid4(),tenant_id=uuid.uuid4(),progress_summary={})
+        monkeypatch.setattr(service,'_request_payload',lambda task: {'items':[
+            {k:row()[k] for k in ('refundBillId','orderNo','environmentSerial')}]})
+        yield service,session,task
+    engine.dispose()
+
+
+def observe(service, task, value):
+    from datetime import datetime, timezone
+    service._upsert_after_sale_track(task,{'rows':[value]},datetime.now(timezone.utc))
+    return deepcopy(task.progress_summary['rows'][0])
+
+
+def failed_row():
+    return {k:row()[k] for k in ('refundBillId','orderNo','environmentSerial')} | {
+        'status':'fail','errorSummary':'本次页面未完整加载'}
+
+
+def reviewed_row():
+    fresh=deepcopy(row())
+    fresh.update(phase='reviewing',phaseLabel='审核中',note='正在重新审核',checkedAt='2026-01-02T10:00:00+00:00')
+    fresh['phaseEvidence'].update(detail='En revisión',canSupplement=False,reason='',reasonSource='')
+    return fresh
+
+
+def test_legacy_unknown_environment_never_leaks_into_task_failure(tracking_store):
+    service,session,task=tracking_store
+    observe(service,task,row())
+    record=session.scalar(select(AfterSaleRefundTracking))
+    record.environment_serial=None
+    record.refund_account='****9999'
+    session.flush()
+    task.progress_summary={}
+    failed=observe(service,task,failed_row())
+    assert not any(failed.get(key) for key in ('phase','phaseEvidence','refundAccount','checkedAt','note'))
+    assert record.phase is None and record.refund_account is None
+
+
+@pytest.mark.parametrize('had_prior_facts',[True,False])
+def test_failure_replay_keeps_original_task_facts_and_leaves_newer_shared_observation(tracking_store,had_prior_facts):
+    from xynigo_auth.models import ExecutorTask
+    service,session,task_a=tracking_store
+    if had_prior_facts:
+        observe(service,task_a,row())
+        task_a.progress_summary={}
+    frozen=observe(service,task_a,failed_row())
+    task_b=ExecutorTask(tenant_id=task_a.tenant_id,progress_summary={})
+    observe(service,task_b,reviewed_row())
+    assert observe(service,task_a,failed_row())==frozen
+    record=session.scalar(select(AfterSaleRefundTracking))
+    assert record.phase=='reviewing' and record.last_status=='ok' and not record.last_error
+    assert record.phase_evidence['reason']==''
+    if had_prior_facts:
+        assert frozen['phase']=='evidence_required'
+    else:
+        assert frozen['phase']=='' and not frozen['checkedAt']
+
+
+@pytest.mark.parametrize('status,label',[
+    ('queued','等待回访'),('running','回访中'),('stopped','已停止'),('fail','本次状态未确认')])
+def test_unconfirmed_export_distinguishes_current_execution_and_last_success(status,label):
+    from xynigo_auth.after_sale_export import _row_values
+    values=_row_values({**row(),'status':status,'countdown':'12:00:00'})
+    assert values[6]==label+'；上次成功读取：审核未通过 · 待补充凭证'
+    assert values[7]==''
+    assert values[8]=='2026-01-01 10:00'
+    assert '凭证不足' in values[9]

@@ -90,8 +90,9 @@ def _phase_text(row):
     phase = str(row.get("phase") or "").strip()
     label = str(row.get("phaseLabel") or "").strip()
     label = PHASE_LABELS.get(phase, label or phase)
-    if row.get('status') in ('fail','login','inuse','blocked','skip','empty'):
-        return '本次状态未确认' + ('；上次：'+label if label else '')
+    if row.get('status') not in (None, 'ok'):
+        current = {'queued':'等待回访', 'running':'回访中', 'stopped':'已停止'}.get(row.get('status'), '本次状态未确认')
+        return current + ('；上次成功读取：'+label if label else '')
     return label
 
 
