@@ -129,7 +129,7 @@ def test_five_node_review_exception_ui():
     import subprocess
     from pathlib import Path
     result=subprocess.run(['node','tests/fixtures/after_sale_phase_ui.cjs'],
-                          cwd=Path(__file__).resolve().parents[1],capture_output=True,text=True)
+                          cwd=Path(__file__).resolve().parents[1],capture_output=True,text=True,encoding='utf-8')
     assert result.returncode==0,result.stdout+result.stderr
 
 
@@ -172,7 +172,7 @@ def test_dom_reader_ignores_disabled_supplement_controls_and_keeps_reason_lines(
     from pathlib import Path
     result=subprocess.run(['node','tests/fixtures/after_sale_phase_dom.cjs'],
         input=json.dumps({'js':TRACK_STATE_JS,'titles':TITLES}),
-        cwd=Path(__file__).resolve().parents[1],capture_output=True,text=True)
+        cwd=Path(__file__).resolve().parents[1],capture_output=True,text=True,encoding='utf-8')
     assert result.returncode==0,result.stdout+result.stderr
     states=json.loads(result.stdout)
     assert classify_phase_state(states[0])['phase']=='evidence_required'
