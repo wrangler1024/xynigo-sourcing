@@ -1507,6 +1507,15 @@
   .settle-card-row .cur { color: var(--navy-500); font-size: 10px; font-weight: 800; }
   .settle-card-row .amt { color: var(--navy-950); font-size: 17px; font-weight: 900; font-variant-numeric: tabular-nums; }
   .settle-card-row .due { color: var(--rhino-700); font-size: 10px; font-weight: 800; }
+  .settle-card-cny { margin-top: 9px; color: var(--navy-950); font-size: 21px; font-weight: 900; font-variant-numeric: tabular-nums; }
+  .settle-card-cny small { margin-left: 6px; color: var(--navy-500); font-size: 10px; font-weight: 800; }
+  .settle-card-native { margin-top: 9px; display: grid; gap: 4px; padding-top: 9px; border-top: 1px dashed var(--line); }
+  .settle-native-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .settle-native-row .cur { color: var(--navy-500); font-size: 10px; font-weight: 800; }
+  .settle-native-row .amt { color: var(--navy-700); font-size: 12px; font-weight: 850; font-variant-numeric: tabular-nums; }
+  .settle-native-row .due { color: var(--rhino-700); font-size: 10px; font-weight: 800; }
+  .settle-fx { margin-top: 10px; padding: 9px 11px; border-radius: 10px; background: #fbfcfd; border: 1px solid var(--line); color: var(--navy-500); font-size: 10px; line-height: 1.7; }
+  .settle-fx b { color: var(--navy-700); font-size: 10px; }
   .settle-card-none { margin-top: 10px; color: var(--navy-500); font-size: 11px; }
   .settle-table td.num, .settle-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
   .settle-table td:first-child { min-width: 168px; white-space: nowrap; }
@@ -3596,9 +3605,10 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
           <button class="btn" id="btnSettleRefresh" type="button">刷新数据</button>
         </span>
       </div>
-      <div class="credential-note">数据取自 SHEIN 开放平台财务与订单接口（只读）。<strong>各币种分列展示，不做汇率折算、不做跨币种合计。</strong>「不可提现 / 可提现 / 提现中」属卖家后台资金账户口径，开放平台财务接口不提供，本看板不含该口径。</div>
+      <div class="credential-note">数据取自 SHEIN 开放平台财务与订单接口（只读），<strong>每 6 小时自动同步一次</strong>，也可随时手动刷新。汇总卡片按维护汇率折算人民币，同时保留各币种原币金额；店铺明细表为原币口径，可与平台后台逐单回溯核对。「不可提现 / 可提现 / 提现中」属卖家后台资金账户口径，开放平台财务接口不提供，本看板不含该口径。</div>
       <div class="settle-status" id="settleStatusBar"></div>
       <div class="settle-cards" id="settleSummaryCards"></div>
+      <div class="settle-fx" id="settleFxNote"></div>
       <div class="table-wrap settle-table">
         <table class="admin-table">
           <thead><tr>
@@ -4110,7 +4120,7 @@ const FEATURE_MODULES = {
   },
   settledashboard: {
     label: '对账结算', primary: 'finance', requiredPermission: 'finance.access',
-    summary: '汇总所有已授权 SHEIN 店铺的在途资金、待结算资金、下次结算与预计打款日、已结算资金；各币种分列，不做汇率折算。'
+    summary: '汇总所有已授权 SHEIN 店铺的在途资金、待结算资金、下次结算与预计打款日、已结算资金；按维护汇率折算人民币合计，同时保留各币种原币金额。'
   },
   aftersale: {
     label: '采购售后', primary: 'procurement', requiredPermission: 'assistant.access',
@@ -13705,13 +13715,27 @@ function setFeaturePanel(module) {
  *   在途资金   = Σ estimatedGrossIncome（orderStatus=4 已发货未签收，订单级）
  *   待结算资金 = 对账单 checkStatus=1 按收支轧差（收入 − 支出）
  *   下次结算   = 同上净额，按 estimatePayTime 分批
- *   已结算资金 = 报账单 reportStatus=2 聚合 income
- *   各币种分列展示，不做汇率折算、不做跨币种合计。
- */
+ *   已结算资金 = 报账单 reportStatus=2 聚合 income（历史全量累计）
+ *   每 6 小时自动同步一次，页面同时支持手动同步（刷新数据）
+ *   汇总卡片按维护汇率折算人民币合计，并保留各币种原币金额；
+ *   店铺明细表为原币口径，便于与平台后台逐单核对。
+ *   汇率来源与维护方式待财务确认 -> 文档 §6。 */
 let settleDashboardLoaded = false;
 const SETTLE_CURRENCY_LABELS = { MXN: '墨西哥比索', USD: '美元' };
 const SETTLE_PAGE_SIZES = [10, 30, 50];
 const SETTLE_PAGE_SIZE_KEY = 'xynigo.settleDashboard.pageSize';
+
+/* 折算汇率：**示例值**。汇率来源与维护方式待财务确认（见需求文档 §6），
+ * 生产实现应由云端维护汇率表并随快照一并留存——否则历史快照的人民币口径
+ * 会随汇率变动而漂移，跨日趋势失去可比性。 */
+const SETTLE_FX = {
+  MXN: { rate: 0.3915, label: '墨西哥比索' },
+  USD: { rate: 7.1080, label: '美元' }
+};
+const SETTLE_FX_DATE = '2026-09-17';
+/* 每 6 小时自动同步一次；手动刷新随时可用（见需求文档 §4.4）。 */
+const SETTLE_SYNC_INTERVAL_HOURS = 6;
+
 const SETTLE_STATE = {
   currency: 'ALL', page: 1, pageSize: 10, stores: null, refreshedAt: null
 };
@@ -13824,15 +13848,33 @@ function settleOkStores(stores) {
   return stores.filter(store => store.status !== 'fail');
 }
 
-/** 按币种分组求和；返回 [{currency, total}]，不做跨币种合计。 */
+/** 按币种分组求和；返回 [{currency, total, cny}]。cny 为按维护汇率折人民币，
+ * 汇率缺失时 cny 为 null（该币种不参与人民币合计，避免静默按 1:1 计入）。 */
 function settleGroupSum(stores, key) {
   const buckets = new Map();
   stores.forEach(store => {
     const value = store[key];
     if (value === null || value === undefined) return;
-    buckets.set(store.currency, (buckets.get(store.currency) || 0) + value);
+    const entry = buckets.get(store.currency) ||
+      { currency: store.currency, total: 0, cny: 0 };
+    entry.total += value;
+    const fx = SETTLE_FX[store.currency];
+    if (fx && typeof fx.rate === 'number') entry.cny += value * fx.rate;
+    else entry.cny = null;
+    buckets.set(store.currency, entry);
   });
-  return [...buckets.entries()].map(([currency, total]) => ({ currency, total }));
+  return [...buckets.values()];
+}
+
+/** 一组按币种分组结果折人民币合计；任一币种缺汇率则返回 null。 */
+function settleCnyTotal(groups) {
+  if (!groups.length) return null;
+  let sum = 0;
+  for (const group of groups) {
+    if (group.cny === null || group.cny === undefined) return null;
+    sum += group.cny;
+  }
+  return sum;
 }
 
 function settleGroupDueDates(stores) {
@@ -13873,8 +13915,12 @@ function settleRenderStatus() {
   const okCount = settleOkStores(stores).length;
   const failCount = stores.length - okCount;
   const currencies = settleCurrencies();
+  const nextSync = SETTLE_STATE.refreshedAt
+    ? settleTime(SETTLE_STATE.refreshedAt + SETTLE_SYNC_INTERVAL_HOURS * 3600 * 1000)
+    : '—';
   host.innerHTML = [
     `<span>数据时间 <b>${settleTime(SETTLE_STATE.refreshedAt)}</b></span>`,
+    `<span>每 <b>${SETTLE_SYNC_INTERVAL_HOURS}</b> 小时自动同步 · 下次 <b>${nextSync}</b></span>`,
     `<span>店铺覆盖 <b>${okCount} / ${stores.length}</b> 家成功</span>`,
     `<span>币种 <b>${currencies.length ? currencies.join(' · ') : '—'}</b></span>`,
     failCount ? `<span>同步失败 <b>${failCount}</b> 家（见下方异常区）</span>` : '',
@@ -13894,17 +13940,30 @@ function settleRenderCards() {
     { title: '已结算资金', hint: '报账单已付款历史累计', groups: settleGroupSum(okStores, 'settled') }
   ];
   host.innerHTML = cards.map(card => {
+    const cny = settleCnyTotal(card.groups);
+    const cnyLine = card.groups.length
+      ? `<div class="settle-card-cny">¥ ${settleMoney(cny)}<small>人民币合计</small></div>`
+      : '';
     const rows = card.groups.length
       ? card.groups.map(group => {
         const dues = card.due ? (dueDates.get(group.currency) || []).slice().sort() : [];
         const dueText = dues.length ? `<span class="due">预计 ${dues[0]}</span>` : '';
-        return `<div class="settle-card-row"><span class="cur">${group.currency}</span>` +
+        return `<div class="settle-native-row"><span class="cur">${group.currency}</span>` +
           `<span><span class="amt">${settleMoney(group.total)}</span> ${dueText}</span></div>`;
       }).join('')
       : '<div class="settle-card-none">当前范围内无可计入店铺</div>';
     return `<div class="settle-card"><div class="settle-card-head"><b>${card.title}</b>` +
-      `<small>${card.hint}</small></div><div class="settle-card-rows">${rows}</div></div>`;
+      `<small>${card.hint}</small></div>${cnyLine}` +
+      `<div class="settle-card-native">${rows}</div></div>`;
   }).join('');
+  const fxNote = $('settleFxNote');
+  if (fxNote) {
+    const pairs = Object.keys(SETTLE_FX).map(code =>
+      `1 ${code} = ${SETTLE_FX[code].rate.toFixed(4)} CNY`).join(' · ');
+    fxNote.innerHTML = `<b>折算汇率（${SETTLE_FX_DATE}）</b>：${pairs}。` +
+      '卡片人民币金额按上述汇率折算；币种原币金额同列保留，可回溯核对。' +
+      '汇率来源与维护方式待财务确认。';
+  }
 }
 
 function settleRenderTable() {
@@ -14016,15 +14075,22 @@ function buildSettlementExportRows() {
   });
   const okStores = settleOkStores(stores);
   const dueDates = settleGroupDueDates(okStores);
-  const sumOf = key => new Map(
-    settleGroupSum(okStores, key).map(group => [group.currency, group.total]));
-  const byInTransit = sumOf('inTransit');
-  const byUnsettled = sumOf('unsettled');
-  const byNextSettle = sumOf('nextSettle');
-  const bySettled = sumOf('settled');
-  const pick = (map, currency) => (map.has(currency) ? map.get(currency) : '');
+  const groupsInTransit = settleGroupSum(okStores, 'inTransit');
+  const groupsUnsettled = settleGroupSum(okStores, 'unsettled');
+  const groupsNextSettle = settleGroupSum(okStores, 'nextSettle');
+  const groupsSettled = settleGroupSum(okStores, 'settled');
+  const pick = (groups, currency) => {
+    const hit = groups.find(group => group.currency === currency);
+    // 金额求和是浮点累加，直接用会把 29547.730000000003 这类脏数写进 Excel；
+    // 页面显示被千分位格式化掩盖，导出不会，所以汇总处一律落到分。
+    return hit ? Number(hit.total.toFixed(2)) : '';
+  };
+  const cnyOf = groups => {
+    const total = settleCnyTotal(groups);
+    return total === null ? '' : Number(total.toFixed(2));
+  };
   rows.push([]);
-  rows.push(['汇总（按币种分列，不做折算与跨币种合计）']);
+  rows.push(['汇总（币种分列；末行为按维护汇率折算的人民币合计）']);
   // 汇总行的列位与上方明细表对齐（币种落在第 3 列、各金额落在第 4–8 列），
   // 财务在 Excel 里可直接对标读数，而不是另一套列结构。
   rows.push(['', '', '币种', '在途资金', '待结算资金', '下次结算',
@@ -14033,15 +14099,22 @@ function buildSettlementExportRows() {
     const dues = (dueDates.get(currency) || []).slice().sort();
     rows.push([
       '', '', currency,
-      pick(byInTransit, currency), pick(byUnsettled, currency),
-      pick(byNextSettle, currency), dues[0] || '', pick(bySettled, currency),
+      pick(groupsInTransit, currency), pick(groupsUnsettled, currency),
+      pick(groupsNextSettle, currency), dues[0] || '', pick(groupsSettled, currency),
       '', '', ''
     ]);
   });
+  rows.push([
+    '', '', '折人民币', cnyOf(groupsInTransit), cnyOf(groupsUnsettled),
+    cnyOf(groupsNextSettle), '', cnyOf(groupsSettled), '', '', ''
+  ]);
   rows.push([]);
   rows.push([`数据时间：${settleFullTime(SETTLE_STATE.refreshedAt)}`,
     `店铺：成功 ${okStores.length} / 共 ${stores.length} 家`,
-    `币种范围：${SETTLE_STATE.currency === 'ALL' ? '全部' : SETTLE_STATE.currency}`]);
+    `币种范围：${SETTLE_STATE.currency === 'ALL' ? '全部' : SETTLE_STATE.currency}`,
+    `自动同步：每 ${SETTLE_SYNC_INTERVAL_HOURS} 小时一次`]);
+  rows.push([`折算汇率（${SETTLE_FX_DATE}）：` + Object.keys(SETTLE_FX)
+    .map(code => `1 ${code} = ${SETTLE_FX[code].rate.toFixed(4)} CNY`).join(' · ')]);
   return { rows, storeCount: stores.length };
 }
 
