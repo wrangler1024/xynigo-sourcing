@@ -5886,21 +5886,33 @@ def create_app(
             )
         if not unchanged:
             executor_tasks = executor_channel(session)
-            task = executor_tasks.create_config_task(
-                tenant_id=actor.tenant.id,
-                user_id=actor.user.id,
-                executor_id=body.executorId,
-                task_type="after.sale.claim.v1",
-                payload={
+            if body.environmentSerials:
+                # 按环境单遍直提：报文不带订单清单，执行器现场发现并提交；
+                # 派发前已由 create_config_task 校验 claim-environment 能力位。
+                task_payload = {
+                    "runId": str(run.id),
+                    "runKey": run.source_run_key,
+                    "browserMode": body.browserMode,
+                    "concurrency": body.concurrency,
+                    "environmentSerials": list(body.environmentSerials),
+                }
+            else:
+                task_payload = {
                     "runId": str(run.id),
                     "runKey": run.source_run_key,
                     "browserMode": body.browserMode,
                     "concurrency": body.concurrency,
                     "items": [
                         item.model_dump(mode="json", exclude={"goodsImages", "goodsItems", "itemCount"})
-                        for item in body.items
+                        for item in (body.items or [])
                     ],
-                },
+                }
+            task = executor_tasks.create_config_task(
+                tenant_id=actor.tenant.id,
+                user_id=actor.user.id,
+                executor_id=body.executorId,
+                task_type="after.sale.claim.v1",
+                payload=task_payload,
                 idempotency_key=f"operation:{body.idempotencyKey}",
                 commit=False,
             )
@@ -5925,6 +5937,8 @@ def create_app(
                 # 重提来源批次也进审计：历史列表/详情读的是 request_summary，
                 # 审计留一份「这批是从哪批重提的」可追溯记录
                 "retryFromRunId": body.retryFromRunId,
+                "submitMode": ("environments" if body.environmentSerials
+                               else "orders"),
             },
             **_request_log_context(request),
         )

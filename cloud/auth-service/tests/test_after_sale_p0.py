@@ -112,7 +112,24 @@ def test_new_empty_optional_metadata_preserves_pre_upgrade_idempotency_hash():
     from xynigo_auth.operation_service import _payload_hash
     body=AfterSaleClaimRunCreateBody(executorId=uuid.UUID(int=1),idempotencyKey='synthetic-p0-key',
         items=[{'environmentSerial':'ENV','orderNo':'SYNTH'}])
+    # 旧版契约里没有这些键：按单请求的规范形式必须与升级前逐字节一致，
+    # 否则老幂等键重放会被判成「同键不同请求」而 409。新增的 environmentSerials
+    # 在按单请求里是 None，同样要从规范形式里剔除。
     old=body.model_dump(mode='json');old.pop('retryFromRunId')
+    old.pop('environmentSerials')
     for key in ('goodsImages','goodsItems','itemCount'):old['items'][0].pop(key)
     canonical=json.dumps(old,ensure_ascii=False,sort_keys=True,separators=(',',':'))
+    assert _payload_hash(body)==hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def test_environment_scope_hashes_without_null_items():
+    """按环境直提的哈希只吃 environmentSerials，不吃 null 的 items。"""
+    import hashlib,json,uuid
+    from xynigo_auth.operation_contract import AfterSaleClaimRunCreateBody
+    from xynigo_auth.operation_service import _payload_hash
+    body=AfterSaleClaimRunCreateBody(executorId=uuid.UUID(int=1),
+        idempotencyKey='synthetic-p0-env',environmentSerials=['4902','4901'])
+    payload=body.model_dump(mode='json');payload.pop('retryFromRunId')
+    payload.pop('items')
+    canonical=json.dumps(payload,ensure_ascii=False,sort_keys=True,separators=(',',':'))
     assert _payload_hash(body)==hashlib.sha256(canonical.encode()).hexdigest()

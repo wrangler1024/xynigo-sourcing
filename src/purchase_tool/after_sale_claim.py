@@ -430,6 +430,7 @@ class AfterSaleClaimer(object):
         self._scan_rows = {}
         self._claim_rows = {}
         self._track_rows = {}
+        self._claim_env_rows = {}
         self._screenshots = {}
 
     # ---- 对外入口（本地 HTTP 端点消费） ----
@@ -482,6 +483,28 @@ class AfterSaleClaimer(object):
             })
         return self._start('track', cleaned, browser_mode, headless, concurrency)
 
+    def start_claim_environments(self, serials, browser_mode=None,
+                                 headless=None, concurrency=2):
+        """按环境单遍直提（写操作）：环境只打开一遍。
+
+        与「扫描→勾选→提交」两遍走的差异：读到带售后入口的订单就现场
+        核验并直接提交；没有入口的环境跳过并回报原因，不再先出全量清单
+        等人工确认。幂等仍由提交前 pre_info 体检保证。
+        """
+        cleaned = []
+        seen = set()
+        for item in serials or []:
+            text = str(item or '').strip()
+            if not text:
+                continue
+            key = text.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(text)
+        return self._start('claim_env', cleaned, browser_mode, headless,
+                           concurrency)
+
     def request_stop(self):
         self._stop_event.set()
         return {'stopRequested': True}
@@ -492,6 +515,7 @@ class AfterSaleClaimer(object):
             scan_rows = [dict(r) for r in self._scan_rows.values()]
             claim_rows = [dict(r) for r in self._claim_rows.values()]
             track_rows = [dict(r) for r in self._track_rows.values()]
+            env_rows = [dict(r) for r in self._claim_env_rows.values()]
             running = self._running
             mode = self._mode
         scan_rows.sort(key=lambda r: (str(r.get('environmentSerial') or ''),
@@ -504,7 +528,8 @@ class AfterSaleClaimer(object):
             row['screenshotStatus'] = 'ok' if row.get('screenshotSha256') \
                 else ''
         return {'running': running, 'mode': mode, 'rows': scan_rows,
-                'claimRows': claim_rows, 'trackRows': track_rows}
+                'claimRows': claim_rows, 'trackRows': track_rows,
+                'claimEnvRows': env_rows}
 
     def screenshot_bytes(self, key):
         with self._lock:
@@ -532,6 +557,11 @@ class AfterSaleClaimer(object):
             elif mode == 'track':
                 self._track_rows = {}
                 keys = [item['refundBillId'] for item in items]
+            elif mode == 'claim_env':
+                # 订单行在执行中按发现动态生成；环境行先行建齐供进度统计
+                self._claim_rows = {}
+                self._claim_env_rows = {}
+                keys = list(items)
             else:
                 self._claim_rows = {}
                 keys = [item['orderNo'] for item in items]
@@ -551,6 +581,8 @@ class AfterSaleClaimer(object):
                 self._run_scan(items, headless)
             elif mode == 'track':
                 self._run_track(items, headless)
+            elif mode == 'claim_env':
+                self._run_claim_environments(items, headless)
             else:
                 self._run_claim(items, headless)
         except Exception as exc:  # 批次级异常也要把 running 落回 False
@@ -926,25 +958,199 @@ class AfterSaleClaimer(object):
                 if index:
                     # 同一环境内逐单串行并随机停顿，贴近人工节奏
                     time.sleep(random.uniform(*self._order_stagger))
-                try:
-                    self._claim_one(page, serial, item)
-                except Exception as exc:
-                    order_no = item['orderNo']
-                    reason = scrub_text('%s: %s' % (type(exc).__name__, str(exc)))[:200]
-                    if self._claim_rows.get(order_no, {}).get('_writeAttempted'):
-                        self._uncertain_claim(page, order_no, reason)
-                    else:
-                        self._fail_claim(order_no, 'fail', reason, page)
-                finally:
-                    row = self._claim_rows.get(item['orderNo'], {})
-                    if row.get('_startedAt'):
-                        self._publish_claim(item['orderNo'], {
-                            'durationSeconds': int(time.time() - row['_startedAt']),
-                            'operationCompletedAt': row.get('operationCompletedAt') or datetime.now(timezone.utc).isoformat(),
-                        })
+                self._claim_item_guarded(page, serial, item)
         finally:
             if opened_by_me:
                 self._stop_env(env, serial)
+
+    def _claim_item_guarded(self, page, serial, item):
+        """单条提交的异常隔离：写入意图不明的失败不许当成普通失败补提。"""
+        order_no = item['orderNo']
+        try:
+            self._claim_one(page, serial, item)
+        except Exception as exc:
+            reason = scrub_text('%s: %s' % (type(exc).__name__, str(exc)))[:200]
+            if self._claim_rows.get(order_no, {}).get('_writeAttempted'):
+                self._uncertain_claim(page, order_no, reason)
+            else:
+                self._fail_claim(order_no, 'fail', reason, page)
+        finally:
+            row = self._claim_rows.get(order_no, {})
+            if row.get('_startedAt'):
+                self._publish_claim(order_no, {
+                    'durationSeconds': int(time.time() - row['_startedAt']),
+                    'operationCompletedAt': row.get('operationCompletedAt') or datetime.now(timezone.utc).isoformat(),
+                })
+
+    # ---- 按环境单遍直提（写操作） ----
+
+    def _run_claim_environments(self, serials, headless):
+        env_index = self._env_index(serials)
+        with self._lock:
+            for serial in serials:
+                env = env_index.get(serial) or {}
+                self._claim_env_rows[serial] = {
+                    'environmentSerial': serial,
+                    'environmentId': str(env.get('containerCode') or ''),
+                    'storeName': env.get('containerName') or serial,
+                    'accountName': self._account_name(env),
+                    'status': 'queued',
+                    'entryCount': 0, 'submittedCount': 0,
+                    'blockedCount': 0, 'failedCount': 0,
+                    'note': '', 'errorSummary': None,
+                    'durationSeconds': None,
+                }
+        self._run_environment_jobs([
+            (serial, env_index.get(serial) or {}, self._claim_env_one_guarded,
+             (serial, env_index.get(serial) or {}, headless))
+            for serial in serials
+        ], stagger=self._stagger)
+        with self._lock:
+            for serial in serials:
+                row = self._claim_env_rows.get(serial) or {}
+                if row.get('status') in ('queued', 'running'):
+                    row['status'] = 'stopped'
+                self._claim_env_rows[serial] = row
+
+    def _claim_env_one_guarded(self, serial, env, headless):
+        try:
+            self._claim_env_one(serial, env, headless)
+        except Exception as exc:  # 单环境异常不拖垮整批
+            self._log('按环境直提异常 %s: %s' % (serial, exc))
+
+    def _claim_env_one(self, serial, env, headless):
+        """一个环境的单遍直提：读订单列表 → 有入口的订单现场核验并提交。
+
+        没有售后入口的环境不留订单行，只在环境级记 skip 与原因；有入口
+        但资格核验全被拒的环境记 blocked。可退性最终以提交前 pre_info
+        体检为准，这里的入口判断只是「要不要进申请页」。
+        """
+        started = time.time()
+        page = None
+        opened_by_me = False
+        try:
+            with self._lock:
+                row = self._claim_env_rows.get(serial) or {}
+                row['status'] = 'running'
+                self._claim_env_rows[serial] = row
+            page, opened_by_me = self._open_env(env, serial, headless)
+            page.goto(ORDERS_LIST_URL, dom_timeout=45, settle_seconds=8.0)
+            if self._login_required(page):
+                self._finish_env_row(
+                    serial, 'login', started,
+                    errorSummary='买家端未登录（环境登录态缺失，请先登录该环境）')
+                return
+            cards = self._read_all_order_cards(page)
+            candidates = []
+            for card in cards:
+                parsed = parse_order_card(card.get('text') or '')
+                if not parsed:
+                    raise RuntimeError('订单卡片格式无法识别，请人工核对所有订单页')
+                if not card.get('hasEntry'):
+                    continue
+                candidates.append((card, parsed))
+            with self._lock:
+                row = self._claim_env_rows.get(serial) or {}
+                row['entryCount'] = len(candidates)
+                self._claim_env_rows[serial] = row
+            if not candidates:
+                self._finish_env_row(serial, 'skip', started,
+                                     note='未发现丢件退款入口，环境跳过')
+                return
+            for index, (card, parsed) in enumerate(candidates):
+                if self._stop_event.is_set():
+                    break
+                if index:
+                    # 同环境逐单串行并随机停顿，与勾选提交同一节奏
+                    time.sleep(random.uniform(*self._order_stagger))
+                item = self._env_claim_item(serial, env, page, card, parsed)
+                # 按单提交的行走建批次时初始化；直提的行是动态发现的，
+                # 身份字段必须在这里先落，否则上行投影缺 orderNo 会被云端拒收
+                self._publish_claim(parsed['orderNo'], {
+                    'orderNo': parsed['orderNo'],
+                    'environmentSerial': serial,
+                    'storeName': str(env.get('containerName') or serial)[:128],
+                })
+                self._claim_item_guarded(page, serial, item)
+                after = (self._claim_rows.get(parsed['orderNo'], {})
+                         .get('status'))
+                self._count_env_result(serial, after)
+            with self._lock:
+                row = self._claim_env_rows.get(serial) or {}
+            if row.get('submittedCount'):
+                status = 'ok'
+            elif row.get('failedCount'):
+                status = 'fail'
+            elif row.get('blockedCount'):
+                status = 'blocked'
+            else:
+                status = 'stopped'
+            note = ''
+            if status == 'blocked':
+                note = '入口订单均无可申请丢件退款包裹（已跳过，未重复提交）'
+            elif status == 'stopped':
+                note = '已停止，剩余订单未处理'
+            self._finish_env_row(serial, status, started, note=note)
+        except Exception as exc:
+            self._finish_env_row(
+                serial, 'fail', started, errorSummary=
+                scrub_text('%s: %s' % (type(exc).__name__, str(exc)))[:200])
+        finally:
+            if opened_by_me:
+                self._stop_env(env, serial)
+
+    def _env_claim_item(self, serial, env, page, card, parsed):
+        """从卡片与详情页拼提交条目；详情读不到不挡提交，字段留待核对。"""
+        parsed = dict(parsed)
+        parsed['goodsImg'] = str(card.get('goodsImg') or '')[:300]
+        summary = {}
+        try:
+            detail = read_order_detail_facts(page, parsed['orderNo'])
+            summary = order_item_summary(dict(card, **detail))
+            if detail.get('deliveredAt'):
+                parsed['deliveredAt'] = detail['deliveredAt']
+            if detail.get('goodsImages'):
+                parsed['goodsImg'] = str(detail['goodsImages'][0])[:300]
+        except Exception:
+            # 展示字段缺失不改变可退性，未知值保持未知，绝不推断
+            summary = {}
+        return {
+            'environmentSerial': serial,
+            'orderNo': parsed['orderNo'],
+            'storeName': str(env.get('containerName') or serial)[:128],
+            'packageNo': '',
+            'deliveredAt': str(parsed.get('deliveredAt') or '')[:32],
+            'goodsImg': str(parsed.get('goodsImg') or '')[:300],
+            **{key: value for key, value in summary.items()
+               if key in ('goodsImages', 'goodsItems', 'itemCount')},
+        }
+
+    def _count_env_result(self, serial, status):
+        with self._lock:
+            row = self._claim_env_rows.get(serial) or {}
+            if status == 'ok':
+                row['submittedCount'] = row.get('submittedCount', 0) + 1
+            elif status in ('blocked', 'skip', 'empty'):
+                row['blockedCount'] = row.get('blockedCount', 0) + 1
+            elif status in ('fail', 'login', 'inuse', 'uncertain',
+                            'verifying'):
+                row['failedCount'] = row.get('failedCount', 0) + 1
+            self._claim_env_rows[serial] = row
+
+    def _finish_env_row(self, serial, status, started=None, note='',
+                        errorSummary=None):
+        with self._lock:
+            row = self._claim_env_rows.get(serial) or {}
+            row.update({
+                'status': status,
+                'note': str(note or '')[:200],
+                'errorSummary': (scrub_text(str(errorSummary))[:300]
+                                 if errorSummary else None),
+                'durationSeconds': (int(time.time() - started)
+                                    if started else None),
+            })
+            self._claim_env_rows[serial] = row
+
 
     def _claim_one(self, page, serial, item):
         order_no = item['orderNo']
@@ -1296,6 +1502,9 @@ class AfterSaleClaimer(object):
         with self._lock:
             row = self._claim_rows.get(order_no) or {}
             row.update(patch)
+            # 行键就是订单号：身份字段随行保留（直提的行是执行中新建的，
+            # 少了它上行投影会缺 orderNo，云端闭集会拒收）
+            row.setdefault('orderNo', order_no)
             self._claim_rows[order_no] = row
 
     def _publish_scan(self, serial, patch):

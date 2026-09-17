@@ -1132,8 +1132,35 @@ class AfterSaleClaimItem(BaseModel):
         return value.strip().upper() if isinstance(value, str) else value
 
 
+class AfterSaleClaimEnvironmentRow(BaseModel):
+    """One environment outcome inside a by-environment claim Run.
+
+    按环境直提时订单号事先未知，「这个环境有没有售后入口、提交了几单」
+    用环境级行单独承载；订单号仍是执行中动态发现后走订单行落库。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    environmentSerial: str = Field(min_length=1, max_length=64)
+    environmentId: str = Field(default="", max_length=64)
+    storeName: str = Field(default="", max_length=128)
+    accountName: str = Field(default="", max_length=64)
+    status: AfterSaleRowStatus
+    entryCount: int = Field(default=0, ge=0, le=100_000)
+    submittedCount: int = Field(default=0, ge=0, le=100_000)
+    blockedCount: int = Field(default=0, ge=0, le=100_000)
+    failedCount: int = Field(default=0, ge=0, le=100_000)
+    note: str = Field(default="", max_length=200)
+    errorSummary: str | None = Field(default=None, max_length=300)
+    durationSeconds: int | None = Field(default=None, ge=0)
+
+
 class AfterSaleClaimRunCreateBody(BaseModel):
-    """Safe cloud request for a durable after-sale claim Run."""
+    """Safe cloud request for a durable after-sale claim Run.
+
+    两种范围二选一：``items``＝按订单提交（完整信息清单）；
+    ``environmentSerials``＝按环境单遍直提（执行器现场发现可申请订单）。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -1142,20 +1169,43 @@ class AfterSaleClaimRunCreateBody(BaseModel):
     executorId: uuid.UUID
     browserMode: Literal["headless", "visible"] = "headless"
     concurrency: ConcurrencyChoice = 2
-    items: list[AfterSaleClaimItem] = Field(min_length=1, max_length=500)
+    items: list[AfterSaleClaimItem] | None = Field(
+        default=None, min_length=1, max_length=500)
+    environmentSerials: list[Annotated[str, Field(min_length=1, max_length=64)]] | None = Field(
+        default=None, min_length=1, max_length=300)
     # 重提来源批次（③ 补提失败 / 历史详情重提）：只用于展示「重提自哪一批」，
     # 不参与幂等（幂等仍只看 idempotencyKey 与 payload_hash）。
     retryFromRunId: str = Field(default="", max_length=64)
 
     @field_validator("items")
     @classmethod
-    def unique_orders(cls, value: list[AfterSaleClaimItem]) -> list[AfterSaleClaimItem]:
+    def unique_orders(cls, value: list[AfterSaleClaimItem] | None) -> list[AfterSaleClaimItem] | None:
+        if value is None:
+            return value
         order_numbers = [item.orderNo for item in value]
         if len(order_numbers) != len(set(order_numbers)):
             raise ValueError("同一批次内 orderNo 不能重复")
         if len(json.dumps([item.model_dump(mode="json") for item in value], ensure_ascii=False).encode()) > 1_500_000:
             raise ValueError("本批商品明细过多，请减少订单后分批提交")
         return value
+
+    @field_validator("environmentSerials")
+    @classmethod
+    def unique_environments(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return value
+        cleaned = [serial.strip() for serial in value]
+        if any(not serial for serial in cleaned):
+            raise ValueError("environmentSerials 不能为空串")
+        if len(cleaned) != len({serial.casefold() for serial in cleaned}):
+            raise ValueError("同一批次内 environmentSerials 不能重复")
+        return cleaned
+
+    @model_validator(mode="after")
+    def exactly_one_scope(self):
+        if bool(self.items) == bool(self.environmentSerials):
+            raise ValueError("items 与 environmentSerials 必须二选一")
+        return self
 
 
 class AfterSalePhaseEvidence(BaseModel):

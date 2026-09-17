@@ -52,6 +52,7 @@ from .models import (
 from .operation_contract import (
     AfterSaleClaimProgressRow,
     AfterSaleClaimScreenshot,
+    AfterSaleClaimEnvironmentRow,
     AfterSaleScanRow,
     AfterSaleTrackRow,
     EnvironmentPlanParseResult,
@@ -73,6 +74,9 @@ from .workspace_rpc import workspace_rpc_is_local_config
 PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 ACTIVE_TASK_STATUSES = frozenset({"queued", "leased", "running", "cancel_requested"})
 MAX_QUEUED_WORKSPACE_RPC_TASKS = 32
+# 按环境直提的订单行数上限：订单号执行中才揭晓，无法用建 Run 清单数兜底，
+# 用宽松常数防失控执行器刷爆结果表（300 环境 × 高峰订单量仍远够）。
+AFTER_SALE_ENV_ROW_CAP = 2000
 BUSINESS_TASK_TYPES = frozenset(
     {
         "logistics.query.v1",
@@ -587,6 +591,12 @@ class ExecutorChannelService:
         if (task_type == "after.sale.claim.v1"
                 and "after.sale.claim-evidence.v1" not in set(executor.capabilities or [])):
             raise ExecutorServiceError("executor_after_sale_evidence_upgrade_required", status_code=409)
+        if (task_type == "after.sale.claim.v1"
+                and payload.get("environmentSerials")
+                and "after.sale.claim-environment.v1" not in set(executor.capabilities or [])):
+            # 按环境单遍直提是新协议：老执行器不认识 environmentSerials 报文，
+            # 必须在派发前挡下，不能让它到本地才报 payload_invalid。
+            raise ExecutorServiceError("executor_after_sale_environment_upgrade_required", status_code=409)
         if (task_type == "after.sale.track.v1"
                 and "after.sale.phase-evidence.v1" not in set(executor.capabilities or [])):
             raise ExecutorServiceError("executor_after_sale_phase_upgrade_required", status_code=409)
@@ -1411,7 +1421,11 @@ class ExecutorChannelService:
             if "rows" in summary and not isinstance(summary["rows"], list):
                 raise ExecutorServiceError("executor_result_invalid", status_code=422)
         if task.task_type == "after.sale.claim.v1":
-            allowed_keys = allowed_keys | {"uncertainCount"}
+            allowed_keys = allowed_keys | {"uncertainCount", "environments"}
+            if "environments" in summary and (
+                    not isinstance(summary["environments"], list)
+                    or any(not isinstance(item, dict) for item in summary["environments"])):
+                raise ExecutorServiceError("executor_result_invalid", status_code=422)
         if set(summary) - allowed_keys:
             raise ExecutorServiceError("executor_result_invalid", status_code=422)
         run_status = str(summary.get("runStatus") or "")
@@ -2569,20 +2583,31 @@ class ExecutorChannelService:
                 max(0, progress_current), max(0, run.progress_total)
             )
         summary = result_summary or {}
+        # 按环境直提：total_count 是环境数，而成功/失败等计数是订单数——
+        # 订单数天然可能大于环境数，不能用 total_count 去截。
+        env_mode = (run.request_summary or {}).get("mode") == "environments"
         success_count = _safe_nonnegative_int(summary.get("successCount"))
         failed_count = _safe_nonnegative_int(summary.get("failedCount"))
         skipped_count = _safe_nonnegative_int(summary.get("skippedCount"))
         stopped_count = _safe_nonnegative_int(summary.get("stoppedCount"))
         if success_count is not None:
-            run.success_count = min(success_count, run.total_count)
+            run.success_count = (success_count if env_mode
+                                 else min(success_count, run.total_count))
         if failed_count is not None:
-            run.failed_count = min(failed_count, run.total_count)
+            run.failed_count = (failed_count if env_mode
+                                else min(failed_count, run.total_count))
         if skipped_count is not None:
-            run.skipped_count = min(skipped_count, run.total_count)
+            run.skipped_count = (skipped_count if env_mode
+                                 else min(skipped_count, run.total_count))
         if stopped_count is not None:
-            run.stopped_count = min(stopped_count, run.total_count)
-        if "rows" in summary:
-            progress_snapshot = {"rows": summary["rows"]}
+            run.stopped_count = (stopped_count if env_mode
+                                 else min(stopped_count, run.total_count))
+        if "rows" in summary or "environments" in summary:
+            progress_snapshot = {
+                "rows": summary.get("rows") or [],
+                **({"environments": summary["environments"]}
+                   if "environments" in summary else {}),
+            }
         if progress_snapshot is not None:
             self._upsert_after_sale_claim_progress(
                 run, progress_snapshot, heartbeat_at
@@ -2596,13 +2621,16 @@ class ExecutorChannelService:
     ) -> None:
         """增量 upsert 售后提交结果行（含异常截图二进制）。
 
-        行闭集与建 Run 清单双向对照：orderNo 必须在 request_summary.items
-        内、环境序号必须与清单一致，截图只能挂在本批次的提交行上。
+        行闭集与建 Run 清单双向对照：按单提交时 orderNo 必须在
+        request_summary.items 内、环境序号必须与清单一致；按环境直提时
+        订单号是执行中动态发现的，改查「环境序号在计划清单内」。截图只能
+        挂在本批次的提交行上。
         """
-        if not set(snapshot).issubset({"rows", "screenshots"}) \
+        if not set(snapshot).issubset({"rows", "screenshots", "environments"}) \
                 or "rows" not in snapshot \
                 or not isinstance(snapshot.get("rows"), list) \
-                or not isinstance(snapshot.get("screenshots", []), list):
+                or not isinstance(snapshot.get("screenshots", []), list) \
+                or not isinstance(snapshot.get("environments", []), list):
             raise ExecutorServiceError(
                 "executor_progress_snapshot_invalid", status_code=422,
                 diagnostic_reason="snapshot_shape_invalid")
@@ -2615,13 +2643,23 @@ class ExecutorChannelService:
                 AfterSaleClaimScreenshot.model_validate(item)
                 for item in snapshot.get("screenshots", [])
             ]
+            env_rows = [
+                AfterSaleClaimEnvironmentRow.model_validate(item)
+                for item in snapshot.get("environments", [])
+            ]
         except ValidationError as exc:
             raise ExecutorServiceError(
                 "executor_progress_snapshot_invalid", status_code=422,
                 diagnostic_reason="row_or_screenshot_schema_invalid") from exc
+        summary = run.request_summary or {}
+        env_mode = summary.get("mode") == "environments"
+        planned_serials = {
+            str(item).strip().casefold()
+            for item in (summary.get("environmentSerials") or [])
+        } if env_mode else None
         items = {
             str(item.get("orderNo") or ""): item
-            for item in ((run.request_summary or {}).get("items") or [])
+            for item in (summary.get("items") or [])
             if isinstance(item, dict)
         }
         order_numbers = [row.orderNo for row in rows]
@@ -2633,13 +2671,30 @@ class ExecutorChannelService:
             != str(items[row.orderNo]["environmentSerial"])
             for row in rows
         )
+        env_row_out_of_scope = (
+            env_mode
+            and any(str(row.environmentSerial or "").strip().casefold()
+                    not in planned_serials for row in rows)
+        ) if planned_serials is not None else False
+        env_snapshot_out_of_scope = (
+            env_mode
+            and any(str(row.environmentSerial or "").strip().casefold()
+                    not in planned_serials for row in env_rows)
+        ) if planned_serials is not None else False
         invalid_reason = (
-            "row_count_exceeds_task" if len(rows) > run.total_count else
+            "row_count_exceeds_task"
+            if (len(rows) > AFTER_SALE_ENV_ROW_CAP if env_mode
+                else len(rows) > run.total_count) else
             "duplicate_order_no"
             if len(order_numbers) != len(set(order_numbers)) else
             "order_outside_task"
-            if items and not set(order_numbers).issubset(set(items)) else
+            if items and not env_mode
+            and not set(order_numbers).issubset(set(items)) else
             "environment_mismatch" if environment_mismatch else
+            "environment_outside_task"
+            if env_row_out_of_scope or env_snapshot_out_of_scope else
+            "environment_snapshot_exceeds_task"
+            if len(env_rows) > 300 else
             "screenshot_scope_invalid"
             if (len(screenshot_orders) != len(set(screenshot_orders))
                 or not set(screenshot_orders).issubset(set(order_numbers)))
@@ -2649,6 +2704,11 @@ class ExecutorChannelService:
             raise ExecutorServiceError(
                 "executor_progress_snapshot_invalid", status_code=422,
                 diagnostic_reason=invalid_reason)
+        if env_mode:
+            # 环境级结果是整批快照（≤300 行），直接整体替换落库
+            run.environment_results = [
+                item.model_dump(mode="json") for item in env_rows
+            ]
         existing = {
             row.order_no: row
             for row in self.session.scalars(

@@ -26,6 +26,7 @@ const context = vm.createContext({
     click(){downloads.push(this.download);},remove(){}})},
   asRenderClaimRows:rows=>{state.claimRows=rows;vm.runInContext('asSyncClaimExportButton()',context);},
   asSetPhase:()=>{},asProgress:()=>{},asSyncRuntimeControls:()=>{},asPoll:()=>{state.pollCalls=(state.pollCalls||0)+1;},
+ asRenderEnvOutcomes:()=>{}
 });
 for (const name of ['asRunIdOf','asSyncClaimExportButton','asDownloadClaimBatch',
   'asExportClaimResults','asExportClaimHistory','asLoadLatestClaim','asOrderedRows']) {

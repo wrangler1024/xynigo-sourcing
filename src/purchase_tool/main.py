@@ -276,6 +276,7 @@ AUTH_PERMISSION_BY_PATH = {
     '/api/store-finance/screenshot': 'assistant.access',
     '/api/after-sale/scan': 'assistant.access',
     '/api/after-sale/submit': 'assistant.access',
+    '/api/after-sale/claim-environments': 'assistant.access',
     '/api/after-sale/track': 'assistant.access',
     '/api/after-sale/progress': 'assistant.access',
     '/api/after-sale/stop': 'assistant.access',
@@ -4666,6 +4667,21 @@ class Handler(BaseHTTPRequestHandler):
                     })
                 browser_mode = str(body.get('browserMode') or 'headless')
                 self._json(STATE.after_sale.start_submit(
+                    clean,
+                    browser_mode, concurrency=body.get('concurrency', 2)))
+            elif path == '/api/after-sale/claim-environments':
+                serials = body.get('serials')
+                if (not isinstance(serials, list) or not serials
+                        or len(serials) > 300):
+                    raise ValueError('售后直提缺少环境序号或超出上限')
+                clean = []
+                for item in serials:
+                    text = str(item or '').strip()
+                    if not text:
+                        raise ValueError('售后直提环境序号无效')
+                    clean.append(text)
+                browser_mode = str(body.get('browserMode') or 'headless')
+                self._json(STATE.after_sale.start_claim_environments(
                     clean,
                     browser_mode, concurrency=body.get('concurrency', 2)))
             elif path == '/api/after-sale/track':

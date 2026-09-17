@@ -2301,6 +2301,11 @@ class AfterSaleClaimRun(Base):
     skipped_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     stopped_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     request_summary: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    # 按环境直提批次的环境级结果（AfterSaleClaimEnvironmentRow 闭集的 JSON 列表）；
+    # 按单提交恒为 []。订单行仍在 after_sale_claim_results，本列不替代它。
+    environment_results: Mapped[list] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]"
+    )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     source: Mapped[str] = mapped_column(String(64), nullable=False)

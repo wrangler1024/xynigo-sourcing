@@ -9,6 +9,7 @@ const ctx=vm.createContext({TextEncoder,AS_STATE:state,AS_TYPES:[], $:node,crypt
  cloudFetchJson:async(path,options)=>{calls.push({path,body:options?.body?JSON.parse(options.body):null});if(fail)throw Error('lost response');return response;},
  asSetPhase:(title,text)=>{node('asPhaseTitle').textContent=title;},asSaveList:()=>{},asSerials:()=>['ENV'],
  asRenderClaimRows:()=>{},asRenderTrackRows:()=>{},asRenderScanRows:()=>{},asSetOrderView:()=>{},asProgress:()=>{},asPoll:()=>{},asSyncRetryButton:()=>{},
+ asRenderEnvOutcomes:()=>{},
  asRunIdOf:d=>d.runId,toast:()=>{},console});
 for(const name of ['asSyncScanExportButton','asCreateTask','asWriteEntryReady','asScan','asTrack','asSubmitItems','asOrderedRows','asTrackItemsFromRows','asParseManualBills','asTrackManual']){
  const m=new RegExp('(?:async )?function '+name+'\\([^]*?\\n}').exec(html);assert.ok(m,name);vm.runInContext(m[0],ctx);

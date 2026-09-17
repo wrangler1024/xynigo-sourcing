@@ -1,98 +1,95 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const html=fs.readFileSync('src/purchase_tool/web/index.html','utf8');
-const nodes=new Map(),node=id=>{if(!nodes.has(id))nodes.set(id,{value:'',textContent:'',disabled:false,innerHTML:'',dataset:{}});return nodes.get(id);};
-let calls=[],choice=false,preview,executor='EXEC',response={},failPoll=false,hold=Promise.resolve();
-const state={type:'refund',running:false,starting:false,polling:false,selected:new Set(),pendingCreates:{},submissions:new Map(),rows:[],claimRows:[],pollErrors:0};
-const context={AS_STATE:state,AS_TYPES:[],AS_RECOVERABLE_CLAIM_STATUS:['fail','login','inuse','stopped'],$:node,
+const nodes=new Map(),node=id=>{if(!nodes.has(id))nodes.set(id,{value:'',textContent:'',disabled:false,innerHTML:'',hidden:true,dataset:{}});return nodes.get(id);};
+let calls=[],allow=true,capability='',executor='EXEC',phaseNote='';
+const state={type:'refund',running:false,starting:false,polling:false,selected:new Set(),pendingCreates:{},
+  submissions:new Map(),rows:[],claimRows:[],claimItems:[],pollErrors:0,envSerials:null,environments:[]};
+const context={AS_STATE:state,AS_TYPES:[],$ : node,
  TextEncoder,crypto:require('node:crypto').webcrypto,console,
- asSyncRuntimeControls:()=>{},asSyncScanExportButton:()=>{},asSetOrderView:()=>{},asSaveList:()=>{},
- asRuntimeOptions:()=>({browserMode:'headless',concurrency:3}),asRequireRuntimeControls:async()=>{},
- cloudFormalExecutor:async()=>{await hold;return {id:executor};},
+ esc:value=>String(value??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'),
+ asSyncRuntimeControls:()=>{},asSyncRetryButton:()=>{},asRequireRuntimeControls:async()=>{},
+ asRuntimeOptions:()=>({browserMode:'headless',concurrency:3}),
+ cloudFormalExecutor:async cap=>{capability=cap;return {id:executor};},
  cloudFetchJson:async(path,opts)=>{
-  if(!opts){if(failPoll)throw Error('offline');return response;}
-  calls.push({path,body:opts.body?JSON.parse(opts.body):null});return {data:{taskId:'SCAN',runId:'RUN'}};
+  if(!opts)return {data:{}};
+  calls.push({path,body:opts.body?JSON.parse(opts.body):null});
+  return {data:{taskId:'SCAN',runId:'RUN-1'}};
  },
- asSetPhase:(title,note)=>{node('phase').textContent=title;node('note').textContent=note;},asProgress:()=>{},
- asRenderScanRows:rows=>state.rows=rows,asRenderClaimRows:rows=>state.claimRows=rows,asSyncRetryButton:()=>{},
+ asSetPhase:(title,note)=>{phaseNote=note;node('phase').textContent=note;},asProgress:()=>{},
+ asSetOrderView:()=>{},asRenderClaimRows:rows=>{state.claimRows=rows;},
  asPoll:()=>{},toast:message=>node('toast').textContent=message,
- asConfirmEnvironmentClaims:async data=>{preview=data;return typeof choice==='function'?choice():choice;},
- asFilteredRows:()=>{throw Error('direct environment scope must not inherit list filters');},confirm:()=>true,
+ confirm:()=>allow,asSaveList:()=>{},asSyncScanExportButton:()=>{},
 };
 const ctx=vm.createContext(context),run=code=>vm.runInContext(code,ctx);
 function load(name){const match=new RegExp('(?:async )?function '+name+'\\([^]*?\\n}').exec(html);assert.ok(match,name);vm.runInContext(match[0],ctx);}
 for(const name of ['asParseTrackEnvironments','asSerials','asParseDirectOrders','asDirectSubmit','asScan','asCreateTask',
- 'asWriteEntryReady','asSubmitItems','asRunIdOf','asOrderedRows','asItemCount','asClaimItemsFromRows','asOrderIdentity',
- 'asSubmissionForRow','asSubmissionProtections','asSubmissionBlocksSelection','asCanSelectScanRow','asClaimNeedsReconciliation',
- 'asRecoverableClaimRows','asEnvironmentClaimPreview','asFinishEnvironmentSubmit','asSyncDirectInputMode'])load(name);
-const pollSource=/async function asPoll\([^]*?\n}/.exec(html)[0];
+ 'asWriteEntryReady','asSubmitItems','asSubmitByEnvironment','asRenderEnvOutcomes','asRunIdOf','asOrderedRows',
+ 'asSyncDirectInputMode'])load(name);
 const stopStart=html.indexOf("$('asStop').onclick =");
 vm.runInContext(html.slice(stopStart,html.indexOf('\n};',stopStart)+3),ctx);
-const row=(env,order,extra={})=>({environmentSerial:env,orderNo:order,status:'ok',claimable:true,
- goodsImages:['https://img.ltwebstatic.com/synthetic-a.jpg','https://img.ltwebstatic.com/synthetic-b.jpg'],
- goodsItems:[{name:'Synthetic',quantity:2}],itemCount:2,deliveredAt:'2026-09-01',...extra});
-const rows=[row('900001','SYNTH-A'),row('900002','SYNTH-B'),row('900002','SYNTH-C'),
- row('900001','SYNTH-BLOCKED',{status:'blocked',claimable:false,errorSummary:'审核中'}),
- row('900001','SYNTH-PROTECTED')];
 function reset(){Object.assign(state,{type:'refund',running:false,starting:false,polling:false,mode:'',rows:[],claimRows:[],
- selected:new Set(),submissions:new Map(),pendingCreates:{},directSubmitScan:null,stopRequested:false,pollErrors:0});
- calls=[];choice=false;executor='EXEC';failPoll=false;hold=Promise.resolve();preview=null;ctx.asPoll=()=>{};
- node('asDirectInputMode').value='environments';node('asDirectOrders').value='900002 900001 900002';node('asSerials').value='999999';}
-async function complete(status='succeeded',dataRows=rows){
- response={data:{status,summary:{totalCount:2,rows:dataRows}}};vm.runInContext(pollSource,ctx);await run('asPoll()');
-}
+ claimItems:[],selected:new Set(),submissions:new Map(),pendingCreates:{},runId:null,runLabel:'',envSerials:null,
+ environments:[],stopRequested:false,pollErrors:0});
+ calls=[];allow=true;capability='';executor='EXEC';phaseNote='';
+ node('asDirectInputMode').value='environments';node('asDirectOrders').value='900002 900001 900002';}
 const claims=()=>calls.filter(c=>c.path==='/v1/operation-runs/after-sale-claim');
 (async()=>{
- reset();let release;hold=new Promise(r=>release=r);
- const first=run('asDirectSubmit()'),second=run('asDirectSubmit()');assert.equal(state.starting,true);release();await Promise.all([first,second]);
- assert.equal(calls.length,1);assert.equal(calls[0].path,'/v1/after-sale/scan');
- assert.equal(calls[0].body.environmentSerials.join(','),'900002,900001');
- assert.equal(calls[0].body.browserMode,'headless');assert.equal(calls[0].body.concurrency,3);assert.equal(claims().length,0);
- assert.equal(node('asSerials').value,'999999');await complete();assert.equal(claims().length,0,'cancel never writes');
- assert.equal(state.directSubmitScan,null);assert.equal(state.starting,false);
+ // 单遍直提：一次确认后直接建提交 Run，不再先扫描、不再出核对清单
+ reset();await run('asDirectSubmit()');
+ assert.equal(capability,'after.sale.claim-environment.v1');
+ assert.equal(calls.length,1);
+ assert.equal(claims().length,1);
+ assert.equal(claims()[0].body.environmentSerials.join(','),'900002,900001');
+ assert.equal(claims()[0].body.environmentSerials.length,2);
+ assert.equal(claims()[0].body.browserMode,'headless');assert.equal(claims()[0].body.concurrency,3);
+ assert.ok(!calls.some(c=>c.path==='/v1/after-sale/scan'),'direct submit must not scan first');
+ assert.equal(state.runLabel,'按环境提交');assert.equal(state.starting,false);
+ assert.equal(JSON.stringify(state.envSerials),JSON.stringify(['900002','900001']));
+ assert.equal(node('asEnvOutcomes').hidden,true);
 
- reset();state.submissions.set(run('asOrderIdentity({environmentSerial:"900001",orderNo:"SYNTH-PROTECTED"})'),
-  {row:{status:'ok',refundBillId:'OLD-BILL'},protections:[{runId:'OLD',row:{status:'ok'}}]});
- await run('asDirectSubmit()');choice=true;await complete();
- assert.equal(claims().length,1);const items=claims()[0].body.items;
- assert.equal(items.map(i=>i.orderNo).join(','),'SYNTH-B,SYNTH-C,SYNTH-A');
- assert.equal(items[0].goodsImages.length,2);assert.equal(items[0].goodsItems[0].quantity,2);assert.equal(items[0].itemCount,2);
- assert.equal(preview.environments[1].details.filter(r=>!r.canSubmit).length,2);
- await run('asFinishEnvironmentSubmit("SCAN",AS_STATE.rows,"succeeded")');assert.equal(claims().length,1,'one scan can only confirm once');
+ // 环境结果条：环境级反馈按状态着色，空列表隐藏
+ run('asRenderEnvOutcomes([{environmentSerial:"900001",status:"ok",submittedCount:2},'
+   +'{environmentSerial:"900002",status:"skip",note:"未发现丢件退款入口"}])');
+ assert.equal(node('asEnvOutcomes').hidden,false);
+ assert.match(node('asEnvOutcomes').innerHTML,/900001/);
+ assert.match(node('asEnvOutcomes').innerHTML,/无售后入口/);
+ assert.match(node('asEnvOutcomes').innerHTML,/提交2/);
+ run('asRenderEnvOutcomes([])');
+ assert.equal(node('asEnvOutcomes').hidden,true);
 
- for(const status of ['failed','cancelled','uncertain']){
-  reset();await run('asDirectSubmit()');choice=true;await complete(status);assert.equal(claims().length,0);assert.equal(preview,null);
- }
- reset();await run('asDirectSubmit()');choice=true;await node('asStop').onclick();await complete();
- assert.equal(claims().length,0);assert.equal(preview,null,'stop disarms even if scan finishes successfully');
- assert.ok(calls.some(c=>c.path==='/v1/after-sale/scan/SCAN/cancel'));
- reset();await run('asDirectSubmit()');choice=true;failPoll=true;vm.runInContext(pollSource,ctx);
- for(let i=0;i<5;i++)await run('asPoll()');assert.equal(state.directSubmitScan,null);
- failPoll=false;await complete();assert.equal(claims().length,0);assert.equal(preview,null);
-
- reset();await run('asDirectSubmit()');choice=()=>{executor='OTHER';return true;};await complete();
- assert.equal(claims().length,0);assert.equal(node('phase').textContent,'执行器已变化');
-  reset();await run('asDirectSubmit()');choice=()=>{state.rows=[];return true;};await complete();
-  assert.equal(claims().length,0);assert.match(node('toast').textContent,/已变化/);
-  reset();await run('asDirectSubmit()');choice=()=>{state.rows[0].amount='changed';return true;};
-  await complete('succeeded',rows.map(r=>({...r,amount:'100'})));assert.equal(claims().length,0,'in-place row mutation invalidates confirmation');
- reset();await run('asDirectSubmit()');state.directSubmitScan=null;choice=true;await complete();
- assert.equal(claims().length,0,'ordinary/reloaded scan never auto-submits');
- reset();await run('asScan()');choice=true;await complete();assert.equal(preview,null);assert.equal(claims().length,0);
-
- for(const invalid of ['','ENV ORDER',Array.from({length:301},(_,i)=>String(i)).join(' ')]){
-  reset();node('asDirectOrders').value=invalid;await run('asDirectSubmit()');assert.equal(calls.length,0);
+ // 拒绝确认 / 非法输入 / 超上限 / 规划类型：都不许发写请求
+ reset();allow=false;await run('asDirectSubmit()');assert.equal(calls.length,0);
+ for(const [input,marker] of [['','请先输入'],['ENV ORDER','只填数字'],
+   [Array.from({length:301},(_,i)=>String(i)).join(' '),'300']]){
+  reset();node('asDirectOrders').value=input;await run('asDirectSubmit()');
+  assert.equal(calls.length,0,input);assert.match(node('phase').textContent,new RegExp(marker));
  }
  reset();state.type='planned';await run('asDirectSubmit()');assert.equal(calls.length,0);
- reset();node('asDirectInputMode').value='orders';node('asDirectOrders').value='900001 SYNTH-A；900002 SYNTH-B';
- run('asSyncDirectInputMode()');assert.equal(node('asDirectSubmit').textContent,'直接提交');await run('asDirectSubmit()');
- assert.equal(claims().length,1);assert.equal(claims()[0].body.items.length,2);assert.equal(calls.length,1);
 
- // Conflicting environment ownership and contradictory duplicate rows are excluded.
- reset();ctx.conflicting=[row('900001','SAME'),row('900002','SAME'),row('900001','DIFFERENT'),
-   row('900001','DIFFERENT',{status:'blocked',claimable:false})];
- const conflict=run('asEnvironmentClaimPreview(["900001","900002"],conflicting)');assert.equal(conflict.items.length,0);
- reset();await run('asDirectSubmit()');choice=true;await complete('succeeded',[]);assert.equal(claims().length,0);
- reset();await run('asDirectSubmit()');choice=true;
- await complete('succeeded',Array.from({length:501},(_,i)=>row('900001','SYNTH-'+i)));assert.equal(claims().length,0);
- console.log('PASS: environment scan -> explicit confirmation -> protected claim, cancellation, failure, stale scope and executor guards');
+ // 起跑互斥：starting 期间的第二次点击不产生第二份报文
+ reset();let release;const hold=new Promise(r=>release=r);
+ context.cloudFormalExecutor=async()=>{await hold;capability='after.sale.claim-environment.v1';return {id:executor};};
+ const first=run('asDirectSubmit()'),second=run('asDirectSubmit()');
+ assert.equal(state.starting,true);release();await Promise.all([first,second]);
+ assert.equal(claims().length,1);
+ context.cloudFormalExecutor=async cap=>{capability=cap;return {id:executor};};
+
+ // 运行中点停止：走提交 Run 的 cancel，与按单提交同一条路
+ reset();await run('asDirectSubmit()');assert.equal(claims().length,1);
+ await node('asStop').onclick();
+ assert.ok(calls.some(c=>c.path==='/v1/operation-runs/after-sale-claim/RUN-1/cancel'));
+
+ // 帮助文案必须带环境上限提示
+ reset();run('asSyncDirectInputMode()');
+ assert.match(node('asDirectHelp').textContent,/最多 300 个环境/);
+ assert.equal(node('asDirectSubmit').textContent,'按环境提交');
+
+ // 按订单号（完整信息）入口保持不变
+ reset();node('asDirectInputMode').value='orders';node('asDirectOrders').value='900001 SYNTH-A；900002 SYNTH-B';
+ run('asSyncDirectInputMode()');assert.equal(node('asDirectSubmit').textContent,'直接提交');
+ await run('asDirectSubmit()');
+ assert.equal(claims().length,1);assert.equal(claims()[0].body.items.length,2);
+ assert.equal(claims()[0].body.environmentSerials,undefined);
+ assert.equal(calls.length,1);
+ console.log('PASS: environment submit is single-pass direct write with env outcomes and 300-env cap');
 })().catch(error=>{console.error(error);process.exitCode=1;});

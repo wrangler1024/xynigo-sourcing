@@ -131,6 +131,40 @@ def test_bridge_and_real_http_handler_keep_runtime_options(task, route, key, opt
     assert callback.call_args.kwargs['concurrency'] == options.get('concurrency', 2)
 
 
+@pytest.mark.parametrize('options', [{}, {'browserMode': 'visible', 'concurrency': 3}])
+def test_env_direct_submit_keeps_runtime_options(options):
+    """按环境直提走本地新路由，browserMode/并发照旧透传。"""
+    from purchase_tool import main
+    callbacks = {'start_claim_environments': Mock(return_value={'running': False})}
+    state = SimpleNamespace(after_sale=SimpleNamespace(**callbacks))
+
+    def rpc(request):
+        if request['method'] == 'GET':
+            return {'responseType': 'json', 'httpStatus': 200,
+                    'body': {'running': False, 'rows': [], 'claimRows': [],
+                             'claimEnvRows': [], 'trackRows': []}}
+        handler = main.Handler.__new__(main.Handler)
+        handler.path = request['path']
+        handler._body = lambda **kwargs: request['body']
+        handler._require_same_origin = lambda: None
+        handler._internal_executor_rpc_allowed = lambda: False
+        handler._require_auth = lambda path: {}
+        output = []
+        handler._json = lambda value, status=200: output.append((value, status))
+        with patch.object(main, 'STATE', state):
+            handler.do_POST()
+        value, status = output[0]
+        return {'responseType': 'json', 'httpStatus': status, 'body': value}
+
+    payload = dict(options, environmentSerials=['A', 'B'])
+    LocalOperationExecutor(rpc, sleep_fn=lambda _: None).execute(
+        'after.sale.claim.v1', payload, lambda **event: None, threading.Event())
+    callback = callbacks['start_claim_environments']
+    assert callback.call_args.args[0] == ['A', 'B']
+    assert callback.call_args.args[1] == options.get('browserMode', 'headless')
+    assert callback.call_args.kwargs['concurrency'] == options.get('concurrency', 2)
+
+
 def test_headless_request_overrides_legacy_visible_config():
     claimer = AfterSaleClaimer(None, headless=False)
     claimer._run_scan = Mock()

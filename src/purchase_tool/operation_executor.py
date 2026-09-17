@@ -92,6 +92,11 @@ class LocalOperationExecutor(object):
             return self._execute_after_sale_scan(
                 payload, report, cancellation_event)
         if task_type == 'after.sale.claim.v1':
+            # 只能二选一：带环境清单且没有订单清单 = 按环境直提；
+            # 同时出现时按订单清单走旧路径（老报文多带无关键也不改变语义）。
+            if payload.get('environmentSerials') and not payload.get('items'):
+                return self._execute_after_sale_claim_environments(
+                    payload, report, cancellation_event)
             return self._execute_after_sale_claim(
                 payload, report, cancellation_event)
         if task_type == 'after.sale.track.v1':
@@ -927,6 +932,99 @@ class LocalOperationExecutor(object):
         summary['rows'] = self._after_sale_rows(rows, claim=True)
         return self._terminal_result('after_sale', summary)
 
+    def _execute_after_sale_claim_environments(self, payload, report,
+                                               cancellation_event):
+        """售后按环境直提：环境只开一遍，动态发现订单并现场提交。
+
+        与按单提交的差异：订单号事先未知，进度以「环境」为单位（订单行
+        随发现动态出现在快照里）；环境级结果单独投影到 environments。
+        """
+        raw_serials = payload.get('environmentSerials')
+        if (not isinstance(raw_serials, list) or not raw_serials
+                or any(not str(item or '').strip() for item in raw_serials)):
+            raise OperationExecutionError(
+                'operation_payload_invalid', '售后直提缺少环境序号')
+        serials = []
+        seen = set()
+        for item in raw_serials:
+            text = str(item).strip()
+            key = text.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            serials.append(text)
+        if len(serials) > 300:
+            raise OperationExecutionError(
+                'operation_payload_invalid', '单批售后直提环境数量超出上限')
+        browser_mode = str(payload.get('browserMode') or 'headless')
+        concurrency = payload.get('concurrency', 2)
+        if type(concurrency) is not int or concurrency not in (2, 3, 5):
+            raise OperationExecutionError('operation_payload_invalid', '售后环境并发数必须为 2、3、5 中的整数')
+        self._request('POST', '/api/after-sale/claim-environments', {
+            'serials': serials,
+            'browserMode': browser_mode, 'concurrency': concurrency,
+        })
+        total = len(serials)
+        selected = set(serials)
+        stop_sent = False
+        previous = None
+        reported_screenshots = set()
+        rows = []
+        env_rows = []
+        while True:
+            snapshot = self._request('GET', '/api/after-sale/progress')
+            if cancellation_event.is_set() and not stop_sent:
+                try:
+                    self._request('POST', '/api/after-sale/stop', {})
+                except OperationExecutionError:
+                    pass
+                stop_sent = True
+            # 订单行是执行中动态发现的，不能按预选清单过滤
+            rows = list(snapshot.get('claimRows') or [])
+            env_rows = [row for row in (snapshot.get('claimEnvRows') or [])
+                        if str(row.get('environmentSerial') or '') in selected]
+            completed = sum(
+                row.get('status') in AFTER_SALE_TERMINAL_STATES
+                for row in env_rows)
+            event = {
+                'phase': ('after_sale.claim.running'
+                          if snapshot.get('running')
+                          else 'after_sale.claim.completed'),
+                'current': min(total, completed),
+                'total': total,
+                'snapshot': {
+                    'rows': self._after_sale_rows(rows, claim=True),
+                    'environments': self._after_sale_env_rows(env_rows),
+                },
+            }
+            serialized = json.dumps(
+                event, ensure_ascii=False, sort_keys=True,
+                separators=(',', ':'))
+            if serialized != previous:
+                if self._safe_report(report, **event):
+                    previous = serialized
+            for row in rows:
+                order_no = str(row.get('orderNo') or '')
+                if (not order_no or order_no in reported_screenshots
+                        or row.get('screenshotStatus') != 'ok'):
+                    continue
+                attachment = self._after_sale_screenshot_attachment(order_no)
+                if attachment is None:
+                    continue
+                attachment_event = dict(event)
+                attachment_event['snapshot'] = {
+                    **event['snapshot'], 'screenshots': [attachment]}
+                if self._safe_report(report, **attachment_event):
+                    reported_screenshots.add(order_no)
+            if not bool(snapshot.get('running')):
+                break
+            self.sleep(self.poll_interval)
+        summary = self._after_sale_environment_summary(
+            total, env_rows, rows)
+        summary['rows'] = self._after_sale_rows(rows, claim=True)
+        summary['environments'] = self._after_sale_env_rows(env_rows)
+        return self._terminal_result('after_sale', summary)
+
     def _after_sale_screenshot_attachment(self, order_no):
         result = self.rpc_executor({
             'method': 'GET',
@@ -994,6 +1092,96 @@ class LocalOperationExecutor(object):
             'errorCode': '',
             'errorSummary': '',
         }
+
+    @staticmethod
+    def _after_sale_environment_summary(total, env_rows, order_rows):
+        """按环境直提的批次汇总：进度按「环境」计，成败计数按「订单」计。
+
+        环境级跳过（无入口）不与订单级 skipped 混算——它随 environments
+        行单独回传与落库；成功/失败订单数为 0 而全部环境 skip 时整批仍算
+        completed（跳过不是故障，与按单提交的 blocked 口径一致）。
+        """
+        env_rows = env_rows or []
+        order_rows = order_rows or []
+        success = sum(row.get('status') == 'ok' for row in order_rows)
+        stopped = sum(row.get('status') == 'stopped' for row in order_rows)
+        skipped = sum(row.get('status') in ('blocked', 'skip', 'empty')
+                      for row in order_rows)
+        failed = sum(row.get('status') in ('fail', 'login', 'inuse')
+                     for row in order_rows)
+        uncertain = sum(row.get('status') == 'uncertain'
+                        for row in order_rows)
+        env_done = sum(row.get('status') in AFTER_SALE_TERMINAL_STATES
+                       for row in env_rows)
+        env_stopped = sum(row.get('status') == 'stopped'
+                          for row in env_rows)
+        if (uncertain
+                or len(env_rows) != total
+                or any(row.get('status') not in AFTER_SALE_TERMINAL_STATES
+                       for row in env_rows)
+                or any(row.get('status') not in AFTER_SALE_TERMINAL_STATES
+                       for row in order_rows)):
+            run_status = 'uncertain'
+        elif env_stopped and not success and not failed:
+            run_status = 'cancelled'
+        elif failed and success:
+            run_status = 'partial_failure'
+        elif failed:
+            run_status = 'failed'
+        else:
+            run_status = 'completed'
+        return {
+            'runStatus': run_status,
+            'phase': 'after_sale.' + run_status,
+            'progressCompleted': min(total, env_done),
+            'progressTotal': total,
+            'totalCount': total,
+            'successCount': success,
+            'failedCount': failed,
+            'skippedCount': skipped,
+            'stoppedCount': stopped,
+            'uncertainCount': uncertain,
+            'errorCode': '',
+            'errorSummary': '',
+        }
+
+    _AFTER_SALE_ENV_ROW_FIELDS = (
+        'environmentSerial', 'environmentId', 'storeName', 'accountName',
+        'status', 'entryCount', 'submittedCount', 'blockedCount',
+        'failedCount', 'note', 'errorSummary', 'durationSeconds',
+    )
+    _AFTER_SALE_ENV_TEXT_LIMITS = {
+        'environmentSerial': 64, 'environmentId': 64, 'storeName': 128,
+        'accountName': 64, 'note': 200,
+    }
+
+    @classmethod
+    def _after_sale_env_rows(cls, raw_rows):
+        """环境级结果投影成云端闭集：与订单行分开承载「无入口即跳过」。"""
+        rows = []
+        for raw in (raw_rows or []):
+            row = {}
+            for field in cls._AFTER_SALE_ENV_ROW_FIELDS:
+                if field not in raw:
+                    continue
+                value = raw.get(field)
+                if field == 'status':
+                    status = str(value or '').strip()
+                    row[field] = (status if status in
+                                  cls._AFTER_SALE_ROW_ALLOWED_STATUS
+                                  else 'running')
+                elif field == 'errorSummary':
+                    row[field] = (str(value).strip()[:300]
+                                  if value is not None else None)
+                elif field == 'durationSeconds' and value is not None:
+                    row[field] = max(0, int(value))
+                elif field in cls._AFTER_SALE_ENV_TEXT_LIMITS:
+                    row[field] = str(
+                        value or '')[:cls._AFTER_SALE_ENV_TEXT_LIMITS[field]]
+                else:
+                    row[field] = max(0, int(value or 0))
+            rows.append(row)
+        return rows
 
     _AFTER_SALE_TRACK_ROW_FIELDS = (
         'refundBillId', 'orderNo', 'environmentSerial', 'storeName', 'status',

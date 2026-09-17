@@ -43,6 +43,7 @@ AS_CAPABILITIES = [
     "after.sale.runtime-controls.v1",
     "after.sale.receipt-recovery.v1",
     "after.sale.claim-evidence.v1",
+    "after.sale.claim-environment.v1",
     "after.sale.phase-evidence.v1",
     "after.sale.reliable-results.v1",
 ]
@@ -1292,3 +1293,240 @@ def test_after_sale_claim_history_environment_count(tmp_path) -> None:
 
 
 # ===== 提交：建 Run（幂等）→ 进度 + 截图 → 终态快照 =====
+
+
+# ===== 按环境单遍直提：动态发现订单 + 环境级结果落库 =====
+def _env_row(serial: str, *, status: str, submitted: int = 0,
+             blocked: int = 0, failed: int = 0, entry: int = 0,
+             note: str = "") -> dict[str, object]:
+    """执行器投影后的环境行（闭集，字段与 AfterSaleClaimEnvironmentRow 对齐）。"""
+    return {
+        "environmentSerial": serial,
+        "environmentId": "C" + serial,
+        "storeName": "合成店铺-" + serial,
+        "accountName": "buyer@example.test",
+        "status": status,
+        "entryCount": entry,
+        "submittedCount": submitted,
+        "blockedCount": blocked,
+        "failedCount": failed,
+        "note": note,
+        "errorSummary": None,
+        "durationSeconds": 55,
+    }
+
+
+def test_after_sale_claim_environments_direct_write_and_env_results(tmp_path) -> None:
+    for web_client, device_client, ids, database in _e2e_setup(tmp_path):
+        executor_id, credential = ids["executorId"], ids["credential"]
+        heartbeat(device_client, credential, capabilities=AS_CAPABILITIES,
+                  client_version=CLIENT_VERSION)
+        serials = ["4589", "4590", "4591", "4592"]
+        body = {
+            "idempotencyKey": "as-claim-env-e2e-000001",
+            "executorId": executor_id,
+            "browserMode": "visible",
+            "environmentSerials": serials,
+        }
+        created = web_client.post(
+            "/v1/operation-runs/after-sale-claim", json=body, headers=CSRF)
+        assert created.status_code == 202, created.text
+        snapshot = created.json()["data"]
+        run_id = snapshot["runId"]
+        # 进度以环境计；订单事先未知，因此不挂计划清单
+        assert snapshot["totalCount"] == 4
+        assert snapshot["progressTotal"] == 4
+        assert snapshot["submitMode"] == "environments"
+        assert snapshot["environments"] == []
+        assert snapshot["rows"] == []
+
+        replay = web_client.post(
+            "/v1/operation-runs/after-sale-claim", json=body, headers=CSRF)
+        assert replay.status_code == 202, replay.text
+        assert replay.json()["data"]["runId"] == run_id
+
+        task_id, lease_token = _lease_and_start(
+            device_client, credential, expect_type="after.sale.claim.v1")
+
+        # 订单号执行中动态发现：不在任何请求清单里，也必须能落库
+        progress = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/progress",
+            json={
+                "leaseToken": lease_token,
+                "phase": "after_sale.claim.running",
+                "current": 2,
+                "total": 4,
+                "snapshot": {
+                    "rows": [
+                        _claim_row("GSH1A", "4589"),
+                        _claim_row("GSH1B", "4589"),
+                        _claim_row("GSH1C", "4590"),
+                        _claim_row("GSH1D", "4590", status="blocked"),
+                    ],
+                    "environments": [
+                        _env_row("4589", status="ok", submitted=2, entry=2),
+                        _env_row("4590", status="ok", submitted=1, blocked=1,
+                                 entry=2),
+                        _env_row("4591", status="running", entry=0),
+                        _env_row("4592", status="queued", entry=0),
+                    ],
+                },
+            },
+            headers=device_headers(credential),
+        )
+        assert progress.status_code == 200, progress.text
+
+        partial = web_client.get(
+            f"/v1/operation-runs/after-sale-claim/{run_id}").json()["data"]
+        assert partial["submitMode"] == "environments"
+        assert len(partial["rows"]) == 4
+        assert {row["environmentSerial"] for row in partial["rows"]} == {
+            "4589", "4590"}
+        envs = {row["environmentSerial"]: row for row in partial["environments"]}
+        assert envs["4589"]["status"] == "ok"
+        assert envs["4589"]["submittedCount"] == 2
+        assert envs["4591"]["status"] == "running"
+
+        # 环境行必须在计划清单内：串批次的环境不许混进来
+        out_of_scope = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/progress",
+            json={
+                "leaseToken": lease_token,
+                "phase": "after_sale.claim.running",
+                "current": 2,
+                "total": 4,
+                "snapshot": {"rows": [
+                    {**_claim_row("GSH1Z", "9999")}]},
+            },
+            headers=device_headers(credential),
+        )
+        assert out_of_scope.status_code == 422, out_of_scope.text
+        # 422 不能落脏行：环境清单外的订单号仍不得出现
+        after_reject = web_client.get(
+            f"/v1/operation-runs/after-sale-claim/{run_id}").json()["data"]
+        assert "GSH1Z" not in {row["orderNo"] for row in after_reject["rows"]}
+
+        # 终态：订单数多于环境数也不能被截断（success 5 > total 4）
+        finished = device_client.post(
+            f"/v1/executor-channel/tasks/{task_id}/finish",
+            json={
+                "leaseToken": lease_token,
+                "outcome": "succeeded",
+                "resultCode": "after_sale_completed",
+                "resultSummary": {
+                    "runStatus": "completed",
+                    "phase": "after_sale.completed",
+                    "totalCount": 4,
+                    "progressTotal": 4,
+                    "progressCompleted": 4,
+                    "successCount": 5,
+                    "failedCount": 0,
+                    "skippedCount": 1,
+                    "stoppedCount": 0,
+                    "uncertainCount": 0,
+                    "rows": [
+                        _claim_row("GSH1A", "4589"),
+                        _claim_row("GSH1B", "4589"),
+                        _claim_row("GSH1C", "4590"),
+                        _claim_row("GSH1D", "4590", status="blocked"),
+                        _claim_row("GSH1E", "4590"),
+                        _claim_row("GSH1F", "4590"),
+                    ],
+                    "environments": [
+                        _env_row("4589", status="ok", submitted=2, entry=2),
+                        _env_row("4590", status="ok", submitted=3, blocked=1,
+                                 entry=4),
+                        _env_row("4591", status="skip", entry=0,
+                                 note="未发现丢件退款入口，环境跳过"),
+                        _env_row("4592", status="skip", entry=0,
+                                 note="未发现丢件退款入口，环境跳过"),
+                    ],
+                },
+            },
+            headers=device_headers(credential),
+        )
+        assert finished.status_code == 200, finished.text
+
+        final = web_client.get(
+            f"/v1/operation-runs/after-sale-claim/{run_id}").json()["data"]
+        assert final["status"] == "completed"
+        assert final["successCount"] == 5, "订单级计数不能被环境数截断"
+        assert final["skippedCount"] == 1
+        envs = {row["environmentSerial"]: row for row in final["environments"]}
+        assert envs["4591"]["status"] == "skip"
+        assert "入口" in envs["4591"]["note"]
+        assert len(envs) == 4
+
+        # 历史列表/详情：submitMode 透出，环境级结果随详情返回
+        history = web_client.get(
+            "/v1/operation-runs/after-sale-claim/history").json()["data"]
+        item = next(entry for entry in history["items"]
+                    if entry["runId"] == run_id)
+        assert item["submitMode"] == "environments"
+        detail = web_client.get(
+            f"/v1/operation-runs/after-sale-claim/history/{run_id}").json()["data"]
+        assert detail["batch"]["submitMode"] == "environments"
+        assert len(detail["environments"]) == 4
+        break
+
+
+def test_after_sale_claim_environments_requires_capability_and_valid_scope(tmp_path) -> None:
+    for web_client, device_client, ids, _database in _e2e_setup(tmp_path):
+        executor_id, credential = ids["executorId"], ids["credential"]
+        base = {
+            "idempotencyKey": "as-claim-env-e2e-000002",
+            "executorId": executor_id,
+            "browserMode": "visible",
+        }
+        # 两种范围二选一：都给 / 都不给都必须被契约拦下
+        both = web_client.post("/v1/operation-runs/after-sale-claim", headers=CSRF,
+                              json={**base, "environmentSerials": ["4589"],
+                                    "items": [{"environmentSerial": "4589",
+                                               "orderNo": "GSH1A"}]})
+        assert both.status_code == 422, both.text
+        neither = web_client.post("/v1/operation-runs/after-sale-claim",
+                                 headers=CSRF, json=dict(base))
+        assert neither.status_code == 422, neither.text
+        duplicated = web_client.post(
+            "/v1/operation-runs/after-sale-claim", headers=CSRF,
+            json={**base, "environmentSerials": ["4589", "4589"]})
+        assert duplicated.status_code == 422, duplicated.text
+
+        # 老执行器（无 claim-environment 能力位）不能接直提任务
+        legacy = [cap for cap in AS_CAPABILITIES
+                  if cap != "after.sale.claim-environment.v1"]
+        heartbeat(device_client, credential, capabilities=legacy,
+                  client_version=CLIENT_VERSION)
+        denied = web_client.post(
+            "/v1/operation-runs/after-sale-claim", headers=CSRF,
+            json={**base, "environmentSerials": ["4589"]})
+        assert denied.status_code == 409, denied.text
+        assert "executor_after_sale_environment_upgrade_required" in denied.text
+        break
+
+
+def test_env_results_migration_defaults_existing_rows():
+    """0044 迁移：老批次补空列表默认值，不破坏既有行。"""
+    import runpy
+    from pathlib import Path
+    import sqlalchemy as sa
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    migration = runpy.run_path(str(Path(__file__).resolve().parents[1]
+                                   / 'migrations/versions'
+                                   / '0044_after_sale_env_results.py'))
+    assert len(migration['revision']) <= 32
+    engine = sa.create_engine('sqlite://')
+    with engine.begin() as connection:
+        connection.execute(sa.text(
+            'CREATE TABLE after_sale_claim_runs (id INTEGER PRIMARY KEY)'))
+        connection.execute(sa.text(
+            'INSERT INTO after_sale_claim_runs (id) VALUES (1)'))
+        with Operations.context(MigrationContext.configure(connection)):
+            migration['upgrade']()
+        value = connection.execute(sa.text(
+            'SELECT environment_results FROM after_sale_claim_runs'
+            ' WHERE id=1')).scalar()
+        assert value == '[]'
+        with Operations.context(MigrationContext.configure(connection)):
+            migration['downgrade']()
