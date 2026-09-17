@@ -611,8 +611,14 @@ class SheinSettlementSyncService:
 
     def build_summary(
         self, session: Session, *, tenant_id: uuid.UUID,
+        currency: str = "",
     ) -> SettlementSummary:
-        """从库里的最新事实组装看板数据（不触发任何网络调用）。"""
+        """从库里的最新事实组装看板数据（不触发任何网络调用）。
+
+        `currency` 传空=全部币种。**筛选放在服务端**：合计口径（尤其"下次结算
+        取最近一批"）依赖全局排期，前端按币种自行挑数会在跨币种打款日不同时
+        算错最近批次。
+        """
         stores = session.execute(
             select(SheinAuthorizedStore).where(
                 SheinAuthorizedStore.tenant_id == tenant_id,
@@ -634,11 +640,13 @@ class SheinSettlementSyncService:
                     SheinPayoutBatch.store_id == store.id,
                 ).order_by(SheinPayoutBatch.pay_date)
             ).scalars().all()
-            currency = (snapshot.currency if snapshot else "") or (
+            store_currency = (snapshot.currency if snapshot else "") or (
                 batches[0].currency if batches else "")
+            if currency and currency != store_currency:
+                continue
             inputs.append(StoreSettlementInput(
                 store_id=str(store.id), store_name=store.store_name,
-                mode=store.mode, currency=currency,
+                mode=store.mode, currency=store_currency,
                 status="ok" if snapshot and snapshot.status == "ok" else "fail",
                 error_summary=(
                     snapshot.error_summary if snapshot else "尚未同步"
@@ -654,6 +662,7 @@ class SheinSettlementSyncService:
                                 amount=Decimal(row.amount))
                     for row in batches),
                 payment_method=snapshot.payment_method if snapshot else None,
+                synced_at=snapshot.synced_at if snapshot else None,
             ))
         return build_settlement_summary(
             inputs, self.current_fx_rates(session, tenant_id=tenant_id))

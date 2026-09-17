@@ -14344,12 +14344,12 @@ function setFeaturePanel(module) {
     sessionManagementPageLoaded = true;
     loadSessionManagement().catch(() => { sessionManagementPageLoaded = false; });
   } else if (module === 'settledashboard') {
-    // 原型阶段每次进入都按最新 Mock 渲染；后端接入后改为按刷新按钮与定时任务取数
+    // 首次进入探测后端并读数据；再次进入直接重读（数据可能已被定时任务刷新）
     if (!settleDashboardLoaded) {
-      initSettlementDashboard();
       settleDashboardLoaded = true;
+      enterSettlementDashboard();
     } else {
-      settleRenderAll();
+      settleLoad();
     }
     sheinStoreAuthPageLoaded = true;
     if (sheinAuthCloud === null) {
@@ -14375,37 +14375,31 @@ function setFeaturePanel(module) {
   }
 }
 
-/* ===== 财务中心 · 对账结算（结算看板）· 前端静态原型 =====
- * 数据层为本地 Mock（原型演示数据，店铺名一律用「样例店铺」前缀，不含真实
- * 店铺名/商家ID/金额）；后端接口就绪后替换为 /v1/finance/settlement/* 调用，
+/* ===== 财务中心 · 对账结算（结算看板）· 云端接口 + 本地预览兜底 =====
+ * 云端工作台走真实接口：
+ *   GET  /v1/finance/settlement/summary?currency=<币种|空>  只读看板数据
+ *   POST /v1/finance/settlement/sync                        手动同步（写操作）
  * 权限沿用 finance.access。
- * 口径依据 docs/20260917_需求_财务中心结算看板.md（20260917 真机实测 + 拍板）：
- *   在途资金   = Σ estimatedGrossIncome（orderStatus=4 已发货未签收，订单级）
- *   待结算资金 = 对账单 checkStatus=1 按收支轧差（收入 − 支出）
- *   下次结算   = 同上净额，按 estimatePayTime 分批
- *   已结算资金 = 报账单 reportStatus=2 聚合 income（历史全量累计）
- *   每 6 小时自动同步一次，页面同时支持手动同步（刷新数据）
- *   汇总卡片按维护汇率折算人民币合计，并保留各币种原币金额；
- *   店铺明细表为原币口径，便于与平台后台逐单核对。
- *   汇率来源与维护方式待财务确认 -> 文档 §6。 */
+ *
+ * **前端不做任何聚合**：四指标、按打款日分批、人民币折算、缺汇率置空、
+ * 失败店铺剔除，全部由服务端口径层算好（口径与回归位见
+ * docs/20260917_需求_财务中心结算看板.md 与 test_shein_settlement_service.py）。
+ * 这里只做格式化与分页——分页是纯展示关注点，不是口径。
+ * 币种筛选也走服务端：跨币种打款日不同时，"下次结算取最近一批"依赖全局
+ * 排期，前端按币种自行挑数会算错。
+ *
+ * 本地静态预览（file:// 或后端不可达）回退到 SETTLE_MOCK_PAYLOAD 固定样例，
+ * 仅用于界面评审，不代表生产口径。
+ */
 let settleDashboardLoaded = false;
+let settleCloudMode = null; // null=未探测 true=云端接口 false=本地样例
 const SETTLE_CURRENCY_LABELS = { MXN: '墨西哥比索', USD: '美元' };
 const SETTLE_PAGE_SIZES = [10, 30, 50];
 const SETTLE_PAGE_SIZE_KEY = 'xynigo.settleDashboard.pageSize';
-
-/* 折算汇率：**示例值**。汇率来源与维护方式待财务确认（见需求文档 §6），
- * 生产实现应由云端维护汇率表并随快照一并留存——否则历史快照的人民币口径
- * 会随汇率变动而漂移，跨日趋势失去可比性。 */
-const SETTLE_FX = {
-  MXN: { rate: 0.3915, label: '墨西哥比索' },
-  USD: { rate: 7.1080, label: '美元' }
-};
-const SETTLE_FX_DATE = '2026-09-17';
-/* 每 6 小时自动同步一次；手动刷新随时可用（见需求文档 §4.4）。 */
 const SETTLE_SYNC_INTERVAL_HOURS = 6;
-
 const SETTLE_STATE = {
-  currency: 'ALL', page: 1, pageSize: 10, stores: null, refreshedAt: null
+  currency: 'ALL', page: 1, pageSize: 10,
+  payload: null, syncing: false, error: '',
 };
 
 function settleLoadPageSize() {
@@ -14419,214 +14413,192 @@ function settleSavePageSize(v) {
   try { localStorage.setItem(SETTLE_PAGE_SIZE_KEY, String(v)); } catch (e) { /* 忽略 */ }
 }
 
-function settleMockStores() {
-  const fresh = Date.now() - 4 * 60 * 1000;
-  const stale = Date.now() - 34 * 60 * 1000;
-  const rows = [
-    { name: '样例店铺 01 · 拉美站', mode: 'SHEIN 自营', currency: 'MXN',
-      inTransit: 4820.50, unsettled: 945.16,
-      settleDates: ['2026-09-21', '2026-09-28'], settled: 48620.35, at: fresh, status: 'ok', note: '' },
-    { name: '样例店铺 02 · 拉美站', mode: 'SHEIN 自营', currency: 'MXN',
-      inTransit: 12760.00, unsettled: 2310.44,
-      settleDates: ['2026-09-21'], settled: 132480.60, at: fresh, status: 'warn',
-      note: '订单级聚合比对账单净额高 114.16，属结算调整行未在订单侧回更，已按对账单轧差取值' },
-    { name: '样例店铺 03 · 北美站', mode: 'SHEIN 自营', currency: 'USD',
-      inTransit: 0.00, unsettled: 0.00, settleDates: [], settled: 31845.90, at: fresh, status: 'ok', note: '' },
-    { name: '样例店铺 04 · 拉美站', mode: 'SHEIN 半托管', currency: 'MXN',
-      inTransit: 3390.75, unsettled: 612.08,
-      settleDates: ['2026-09-28'], settled: 27430.75, at: fresh, status: 'ok', note: '' },
-    { name: '样例店铺 05 · 北美站', mode: 'SHEIN 自营', currency: 'USD',
-      inTransit: null, unsettled: null, settleDates: [], settled: null, at: stale, status: 'fail',
-      note: '店铺凭证失效，需重新授权后恢复同步' },
-    { name: '样例店铺 06 · 拉美站', mode: 'SHEIN 自营', currency: 'MXN',
-      inTransit: 2210.30, unsettled: 1580.66,
-      settleDates: ['2026-09-21', '2026-09-28'], settled: 65210.40, at: fresh, status: 'warn',
-      note: '对账单存在支出行 28.52，订单侧不回更；已按对账单轧差修正' },
-    { name: '样例店铺 07 · 拉美站', mode: 'SHEIN 自营', currency: 'MXN',
-      inTransit: null, unsettled: null, settleDates: [], settled: null, at: stale, status: 'fail',
-      note: '对账单时间窗越界（gsfs99401），已按 7 天整片重试' },
-    { name: '样例店铺 08 · 北美站', mode: 'SHEIN 半托管', currency: 'USD',
-      inTransit: 450.00, unsettled: 128.90,
-      settleDates: ['2026-09-21'], settled: 9840.25, at: fresh, status: 'ok', note: '' },
-    { name: '样例店铺 09 · 拉美站', mode: 'SHEIN 自营', currency: 'MXN',
-      inTransit: 1890.20, unsettled: 476.30,
-      settleDates: ['2026-09-28'], settled: 15980.10, at: fresh, status: 'ok', note: '' },
-    { name: '样例店铺 10 · 北美站', mode: 'SHEIN 自营', currency: 'USD',
-      inTransit: 0.00, unsettled: 88.40,
-      settleDates: ['2026-09-21'], settled: 12260.85, at: fresh, status: 'ok', note: '' }
-  ];
-  // 原型需要足够行数才能体现每页 10/30/50 条的差别，故补齐到 36 家；
-  // 取值按下标确定性生成（不用随机数），保证每次刷新与截图可复现。
-  const duePool = ['2026-09-21', '2026-09-28'];
-  for (let i = 11; i <= 36; i += 1) {
-    const mxn = i % 3 !== 0;                 // 约 2/3 为比索店
-    const currency = mxn ? 'MXN' : 'USD';
-    const base = mxn ? 900 + i * 137.25 : 55 + i * 21.40;
-    const idle = i % 7 === 0;                // 少数店铺当前无在途/待结算
-    const amount = idle ? 0 : Number((base * 0.42).toFixed(2));
-    const flagged = i % 11 === 0;
-    rows.push({
-      name: `样例店铺 ${String(i).padStart(2, '0')} · ${mxn ? '拉美站' : '北美站'}`,
-      mode: i % 4 === 0 ? 'SHEIN 半托管' : 'SHEIN 自营',
-      currency,
-      inTransit: idle ? 0 : Number((base * 3.10).toFixed(2)),
-      unsettled: amount,
-      // 约 1/3 的店铺跨两个打款日，用来暴露"按日分批"的汇总行为
-      settleDates: idle ? [] : (i % 3 === 0 ? [duePool[0], duePool[1]] : [duePool[i % 2]]),
-      settled: Number((base * (12 + (i % 5)) * 1.80).toFixed(2)),
-      at: fresh,
-      status: flagged ? 'warn' : 'ok',
-      note: flagged ? '对账单存在支出行，订单侧不回更；已按对账单轧差修正' : ''
-    });
-  }
-  return rows;
+/* 本地预览样例：与接口同构的固定载荷（不做任何计算）。
+ * 仅 file:// 或后端不可达时使用；云端模式绝不落回这份假数据。 */
+function settleMockPayload() {
+  const now = new Date();
+  const iso = new Date(now.getTime() - 5 * 60000).toISOString();
+  const g = (cur, total, cny) => ({ currency: cur, total, cny });
+  const store = (name, mode, cur, o) => Object.assign({
+    storeId: name, storeName: name, mode, currency: cur,
+    status: 'ok', error: '', paymentMethod: 1,
+    inTransitAmount: null, unsettledAmount: null,
+    nearestPayoutAmount: null, nearestPayDate: null,
+    payDates: [], settledCumulativeAmount: null, syncedAt: iso,
+  }, o);
+  return {
+    syncedAt: iso,
+    currencies: ['MXN', 'USD'],
+    storeTotal: 6, storeOk: 5, storeFailed: 1,
+    cards: {
+      in_transit: { key: 'in_transit', title: '在途资金', hint: '已发货未签收（订单级）',
+        groups: [g('MXN', '199432.82', '78077.95'), g('USD', '14750.30', '104845.13')],
+        cnyTotal: '182923.08', nearestPayDate: null },
+      unsettled: { key: 'unsettled', title: '待结算资金', hint: '对账单待结算按收支轧差（全部）',
+        groups: [g('MXN', '29547.73', '11568.45'), g('USD', '2154.76', '15315.03')],
+        cnyTotal: '26883.48', nearestPayDate: null },
+      nearest_payout: { key: 'nearest_payout', title: '下次结算金额', hint: '仅最近一批',
+        groups: [g('MXN', '14866.97', '5820.42'), g('USD', '1476.66', '10495.80')],
+        cnyTotal: '16316.22', nearestPayDate: '2026-09-21' },
+      settled_cumulative: { key: 'settled_cumulative', title: '已结算资金', hint: '报账单已付款历史累计',
+        groups: [g('MXN', '2046053.30', '801029.87'), g('USD', '180858.52', '1285542.36')],
+        cnyTotal: '2086572.23', nearestPayDate: null },
+    },
+    schedule: [
+      { payDate: '2026-09-21', cny: '16316.22',
+        groups: [g('MXN', '14866.97', '5820.42'), g('USD', '1476.66', '10495.80')] },
+      { payDate: '2026-09-28', cny: '10567.26',
+        groups: [g('MXN', '14680.76', '5747.52'), g('USD', '678.10', '4819.74')] },
+    ],
+    stores: [
+      store('样例店铺 01 · 拉美站', 'SHEIN 自营', 'MXN',
+        { inTransitAmount: '4820.50', unsettledAmount: '945.16',
+          nearestPayoutAmount: '614.35', nearestPayDate: '2026-09-21',
+          payDates: ['2026-09-21', '2026-09-28'], settledCumulativeAmount: '48620.35' }),
+      store('样例店铺 02 · 拉美站', 'SHEIN 自营', 'MXN',
+        { inTransitAmount: '12760.00', unsettledAmount: '2310.44',
+          nearestPayoutAmount: '2310.44', nearestPayDate: '2026-09-21',
+          payDates: ['2026-09-21'], settledCumulativeAmount: '132480.60',
+          status: 'warn' }),
+      store('样例店铺 03 · 北美站', 'SHEIN 自营', 'USD',
+        { inTransitAmount: '0.00', unsettledAmount: null,
+          settledCumulativeAmount: '31845.90' }),
+      store('样例店铺 04 · 拉美站', 'SHEIN 半托管', 'MXN',
+        { inTransitAmount: '3390.75', unsettledAmount: '612.08',
+          nearestPayoutAmount: '612.08', nearestPayDate: '2026-09-28',
+          payDates: ['2026-09-28'], settledCumulativeAmount: '27430.75' }),
+      store('样例店铺 05 · 北美站', 'SHEIN 自营', 'USD',
+        { status: 'fail', error: '接口错误：签名错误:生成的签名不正确',
+          syncedAt: new Date(now.getTime() - 34 * 60000).toISOString() }),
+      store('样例店铺 06 · 拉美站', 'SHEIN 自营', 'MXN',
+        { inTransitAmount: '2210.30', unsettledAmount: '1580.66',
+          nearestPayoutAmount: '1027.43', nearestPayDate: '2026-09-21',
+          payDates: ['2026-09-21', '2026-09-28'],
+          settledCumulativeAmount: '65210.40', status: 'warn' }),
+    ],
+    alerts: [
+      { kind: 'diff', storeName: '样例店铺 02 · 拉美站',
+        message: '订单级聚合比对账单净额高 114.16，属结算调整行未在订单侧回更' },
+      { kind: 'sync_fail', storeName: '样例店铺 05 · 北美站',
+        message: '接口错误：签名错误:生成的签名不正确' },
+    ],
+  };
 }
+
+function settleFilterMockPayload(payload, currency) {
+  /* 本地样例的币种筛选：纯挑选，不重算——避免在客户端复制口径逻辑。
+     代价是"下次结算最近一批"仍按全局排期（跨币种时可能不精确），
+     这正是筛选要放服务端的原因，云端模式没有这个问题。 */
+  if (!currency || currency === 'ALL') return payload;
+  const pick = (groups) => groups.filter((item) => item.currency === currency);
+  const cards = {};
+  Object.keys(payload.cards).forEach((key) => {
+    const card = payload.cards[key];
+    const groups = pick(card.groups);
+    cards[key] = Object.assign({}, card, {
+      groups,
+      cnyTotal: groups.length ? groups[0].cny : null,
+    });
+  });
+  return Object.assign({}, payload, {
+    cards,
+    schedule: payload.schedule.map((row) =>
+      Object.assign({}, row, { groups: pick(row.groups) }))
+      .filter((row) => row.groups.length),
+    stores: payload.stores.filter((s) => s.currency === currency),
+    alerts: payload.alerts.filter((a) =>
+      payload.stores.some((s) => s.storeName === a.storeName && s.currency === currency)),
+    currencies: [currency],
+  });
+}
+
+async function settleFetchSummary() {
+  const currency = SETTLE_STATE.currency === 'ALL' ? '' : SETTLE_STATE.currency;
+  if (settleCloudMode) {
+    const query = currency ? `?currency=${encodeURIComponent(currency)}` : '';
+    return cloudFetchJson(`/v1/finance/settlement/summary${query}`);
+  }
+  return settleFilterMockPayload(settleMockPayload(), SETTLE_STATE.currency);
+}
+
+async function settleLoad() {
+  SETTLE_STATE.error = '';
+  try {
+    SETTLE_STATE.payload = await settleFetchSummary();
+  } catch (e) {
+    SETTLE_STATE.error = (e && e.message) || '读取结算数据失败';
+  }
+  settleRenderAll();
+}
+
+async function settleTriggerSync() {
+  if (SETTLE_STATE.syncing) return;
+  SETTLE_STATE.syncing = true;
+  settleRenderStatus();
+  $('btnSettleRefresh').disabled = true;
+  try {
+    if (settleCloudMode) {
+      const run = await cloudFetchJson('/v1/finance/settlement/sync', { method: 'POST' });
+      const failed = Number(run.storeFailed || 0);
+      toast(failed
+        ? `同步完成：${run.storeOk} 家成功、${failed} 家失败（详见异常区）`
+        : `同步完成：${run.storeOk} 家店铺全部成功`);
+      await settleLoad();
+    } else {
+      await settleLoad();
+      toast('本地预览：已重新载入样例数据（未调用后端）');
+    }
+  } catch (e) {
+    toast((e && e.message) || '同步失败');
+  } finally {
+    SETTLE_STATE.syncing = false;
+    $('btnSettleRefresh').disabled = false;
+    settleRenderStatus();
+  }
+}
+
+/* ---------- 展示层：只格式化服务端算好的值，不做聚合 ---------- */
 
 function settleMoney(value) {
-  if (value === null || value === undefined) return '—';
-  return Number(value).toLocaleString('zh-CN',
-    { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // 接口已把金额序列化为两位小数字符串；null 表示无数据（显示「—」），
+  // 不是 0——「没同步」和「确实是 0」必须分得开。
+  if (value === null || value === undefined || value === '') return '—';
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '—';
+  return num.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function settleTime(ts) {
-  if (!ts) return '—';
-  const d = new Date(ts);
-  const pad = n => String(n).padStart(2, '0');
+function settleTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  const pad = (n) => String(n).padStart(2, '0');
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function settleScopedStores() {
-  const all = SETTLE_STATE.stores || [];
-  if (SETTLE_STATE.currency === 'ALL') return all;
-  return all.filter(store => store.currency === SETTLE_STATE.currency);
-}
-
 function settleCurrencies() {
-  const seen = [];
-  (SETTLE_STATE.stores || []).forEach(store => {
-    if (!seen.includes(store.currency)) seen.push(store.currency);
-  });
-  return seen;
-}
-
-function settleOkStores(stores) {
-  return stores.filter(store => store.status !== 'fail');
-}
-
-/** 按币种分组求和；返回 [{currency, total, cny}]。cny 为按维护汇率折人民币，
- * 汇率缺失时 cny 为 null（该币种不参与人民币合计，避免静默按 1:1 计入）。 */
-function settleGroupSum(stores, key) {
-  const buckets = new Map();
-  stores.forEach(store => {
-    const value = store[key];
-    if (value === null || value === undefined) return;
-    const entry = buckets.get(store.currency) ||
-      { currency: store.currency, total: 0, cny: 0 };
-    entry.total += value;
-    const fx = SETTLE_FX[store.currency];
-    if (fx && typeof fx.rate === 'number') entry.cny += value * fx.rate;
-    else entry.cny = null;
-    buckets.set(store.currency, entry);
-  });
-  return [...buckets.values()];
-}
-
-/** 一组按币种分组结果折人民币合计；任一币种缺汇率则返回 null。 */
-function settleCnyTotal(groups) {
-  if (!groups.length) return null;
-  let sum = 0;
-  for (const group of groups) {
-    if (group.cny === null || group.cny === undefined) return null;
-    sum += group.cny;
-  }
-  return sum;
-}
-
-/** 该店待结算金额按预计打款日拆成批次。
- * 对账单的 estimatePayTime 是**逐单/逐批**的，同一店铺会出现多个打款日
- * （实测同一店有 09-21 / 09-28 两批），所以待结算金额天然是分期的，
- * 不能把全部金额配一个"最早打款日"——那等于暗示钱都在那天到账。 */
-function settleStoreBatches(store) {
-  const total = store.unsettled;
-  const dates = (store.settleDates || []).slice().sort();
-  if (total === null || total === undefined || !total || !dates.length) return [];
-  if (dates.length === 1) return [{ date: dates[0], amount: Number(total.toFixed(2)) }];
-  // 原型按 65/35 拆分做演示；真实值逐批取自对账单（按 estimatePayTime 分组求和）
-  const head = Number((total * 0.65).toFixed(2));
-  const rest = Number((total - head).toFixed(2));
-  return [{ date: dates[0], amount: head }, { date: dates[dates.length - 1], amount: rest }];
-}
-
-/** 全店按预计打款日聚合：每个打款日一行，行内再按币种拆分，并给出该批折人民币。
- * 返回按日期升序，便于卡片直接按"最近一批 → 后续批次"呈现。 */
-function settlePayoutSchedule(stores) {
-  const buckets = new Map();
-  stores.forEach(store => {
-    settleStoreBatches(store).forEach(batch => {
-      const entry = buckets.get(batch.date) || { date: batch.date, byCurrency: new Map() };
-      entry.byCurrency.set(store.currency,
-        (entry.byCurrency.get(store.currency) || 0) + batch.amount);
-      buckets.set(batch.date, entry);
-    });
-  });
-  return [...buckets.values()].map(entry => {
-    const groups = [...entry.byCurrency.entries()].map(([currency, total]) => {
-      const amount = Number(total.toFixed(2));
-      const fx = SETTLE_FX[currency];
-      return { currency, total: amount, cny: fx ? amount * fx.rate : null };
-    });
-    return { date: entry.date, groups, cny: settleCnyTotal(groups) };
-  }).sort((a, b) => a.date.localeCompare(b.date));
-}
-
-/** 该店最近的预计打款日（纯文本，表格与导出共用）。
- * 列内只放最近一个打款日——把未来所有日期都铺进列里会把表格撑乱，
- * 完整排期在导出文件的「结算排期」区块。 */
-function settleStorePayDates(store) {
-  const dates = (store.settleDates || []).slice().sort();
-  return dates.length ? dates[0] : '—';
-}
-
-/** 表格用：最近打款日 + 后续批次数提示（有后续才显示）。 */
-function settleStorePayDatesHtml(store) {
-  const dates = (store.settleDates || []).slice().sort();
-  if (!dates.length) return '—';
-  const more = dates.length - 1;
-  return dates[0] + (more > 0 ? ` <span class="settle-more">+${more} 批</span>` : '');
-}
-
-/** 该店「下次结算」= 最近一个打款日的那一批金额（不是全部待结算）。
- * 「待结算资金」是全部 checkStatus=1 净额；「下次结算金额」只取最近一批，
- * 两者口径不同、数值也不同——若都取全量，两张卡片会是同一个数。 */
-function settleNearestBatchAmount(store) {
-  const batches = settleStoreBatches(store);
-  return batches.length ? batches[0].amount : null;
-}
-
-/** 某币种涉及的打款日列表（导出汇总行用）。 */
-function settleCurrencyPayDates(schedule, currency) {
-  const dates = schedule
-    .filter(batch => batch.groups.some(group => group.currency === currency))
-    .map(batch => batch.date);
-  return dates.length ? dates.join(' / ') : '';
+  const payload = SETTLE_STATE.payload;
+  return payload ? payload.currencies || [] : [];
 }
 
 function settleRenderCurrencyTabs() {
   const host = $('settleCurrencyTabs');
   if (!host) return;
-  const currencies = settleCurrencies();
   const chips = [{ code: 'ALL', label: '全部币种' }].concat(
-    currencies.map(code => ({ code, label: code })));
-  host.innerHTML = chips.map(chip => {
+    settleCurrencies().map((code) => ({ code, label: code })));
+  host.innerHTML = chips.map((chip) => {
     const active = SETTLE_STATE.currency === chip.code ? ' active' : '';
     const title = SETTLE_CURRENCY_LABELS[chip.code] || '';
-    return `<button type="button" class="settle-currency-chip${active}" data-settle-currency="${chip.code}" title="${title}">${chip.label}</button>`;
+    return `<button type="button" class="settle-currency-chip${active}" ` +
+      `data-settle-currency="${chip.code}" title="${title}">${chip.label}</button>`;
   }).join('');
-  host.querySelectorAll('[data-settle-currency]').forEach(btn => {
-    btn.onclick = () => {
+  host.querySelectorAll('[data-settle-currency]').forEach((btn) => {
+    btn.onclick = async () => {
+      if (SETTLE_STATE.currency === btn.dataset.settleCurrency) return;
       SETTLE_STATE.currency = btn.dataset.settleCurrency;
       SETTLE_STATE.page = 1;
-      settleRenderAll();
+      // 币种筛选走服务端：合计口径依赖全局排期，前端挑数会算错最近批次
+      await settleLoad();
     };
   });
 }
@@ -14634,92 +14606,106 @@ function settleRenderCurrencyTabs() {
 function settleRenderStatus() {
   const host = $('settleStatusBar');
   if (!host) return;
-  const stores = settleScopedStores();
-  const okCount = settleOkStores(stores).length;
-  const failCount = stores.length - okCount;
+  const payload = SETTLE_STATE.payload;
+  if (!payload) {
+    host.innerHTML = `<span>${SETTLE_STATE.error || '正在读取…'}</span>`;
+    return;
+  }
+  const ok = Number(payload.storeOk || 0);
+  const total = Number(payload.storeTotal || 0);
+  const failed = Number(payload.storeFailed || 0);
   const currencies = settleCurrencies();
-  const nextSync = SETTLE_STATE.refreshedAt
-    ? settleTime(SETTLE_STATE.refreshedAt + SETTLE_SYNC_INTERVAL_HOURS * 3600 * 1000)
+  const nextSync = payload.syncedAt
+    ? settleTime(new Date(new Date(payload.syncedAt).getTime()
+        + SETTLE_SYNC_INTERVAL_HOURS * 3600 * 1000).toISOString())
     : '—';
-  host.innerHTML = [
-    `<span>数据时间 <b>${settleTime(SETTLE_STATE.refreshedAt)}</b></span>`,
+  const parts = [
+    `<span>数据时间 <b>${settleTime(payload.syncedAt)}</b></span>`,
     `<span>每 <b>${SETTLE_SYNC_INTERVAL_HOURS}</b> 小时自动同步 · 下次 <b>${nextSync}</b></span>`,
-    `<span>店铺覆盖 <b>${okCount} / ${stores.length}</b> 家成功</span>`,
+    `<span>店铺覆盖 <b>${ok} / ${total}</b> 家成功</span>`,
     `<span>币种 <b>${currencies.length ? currencies.join(' · ') : '—'}</b></span>`,
-    failCount ? `<span>同步失败 <b>${failCount}</b> 家（见下方异常区）</span>` : '',
-    '<span>口径：对账单为主、订单级交叉校验</span>'
-  ].filter(Boolean).join('');
+  ];
+  if (failed) parts.push(`<span>同步失败 <b>${failed}</b> 家（见下方异常区）</span>`);
+  if (SETTLE_STATE.syncing) parts.push('<span><b>正在同步…</b></span>');
+  if (SETTLE_STATE.error) parts.push(`<span>${SETTLE_STATE.error}</span>`);
+  parts.push('<span>口径：对账单为主、订单级交叉校验</span>');
+  host.innerHTML = parts.join('');
 }
 
-/** 「下次结算金额」卡片只呈现**最近一批**：金额取最近打款日那一批，
- * 并标注该打款日。未来所有批次不在页面上铺开（会把看板撑乱）——
- * 完整排期只放在导出文件的「结算排期」区块里，需要时再查。 */
 function settleRenderCards() {
   const host = $('settleSummaryCards');
   if (!host) return;
-  const okStores = settleOkStores(settleScopedStores());
-  const schedule = settlePayoutSchedule(okStores);
-  const nearest = schedule.length ? schedule[0] : null;
-  const cards = [
-    { title: '在途资金', hint: '已发货未签收（订单级）', groups: settleGroupSum(okStores, 'inTransit') },
-    { title: '待结算资金', hint: '对账单待结算按收支轧差（全部）', groups: settleGroupSum(okStores, 'unsettled') },
-    { title: '下次结算金额', hint: '仅最近一批', groups: nearest ? nearest.groups : [],
-      due: nearest ? nearest.date.slice(5) : '' },
-    { title: '已结算资金', hint: '报账单已付款历史累计', groups: settleGroupSum(okStores, 'settled') }
-  ];
-  host.innerHTML = cards.map(card => {
-    const cny = settleCnyTotal(card.groups);
-    const cnyLine = card.groups.length
-      ? `<div class="settle-card-cny">¥ ${settleMoney(cny)}<small>人民币合计</small></div>`
+  const payload = SETTLE_STATE.payload;
+  if (!payload) { host.innerHTML = ''; return; }
+  const order = ['in_transit', 'unsettled', 'nearest_payout', 'settled_cumulative'];
+  host.innerHTML = order.map((key) => {
+    const card = payload.cards[key];
+    if (!card) return '';
+    const hasData = card.groups.length > 0;
+    const cnyLine = hasData
+      ? `<div class="settle-card-cny">¥ ${settleMoney(card.cnyTotal)}<small>人民币合计</small></div>`
       : '';
-    const rows = card.groups.length
-      ? card.groups.map(group =>
+    const rows = hasData
+      ? card.groups.map((group) =>
         `<div class="settle-native-row"><span class="cur">${group.currency}</span>` +
         `<span class="amt">${settleMoney(group.total)}</span></div>`).join('')
       : '<div class="settle-card-none">当前范围内无可计入店铺</div>';
-    // 打款日放卡片头部（hint 位）而不是金额下方：多出一行会把这张卡的
-    // 币种行比其他三张压低一截，四张卡就不再齐平。
-    const dueHtml = card.due
-      ? ` · <span class="settle-hint-due">预计 ${card.due}</span>` : '';
+    // 打款日放卡片头部（hint 位）：多一行会把这张卡的币种行压低一截，四张卡不再齐平
+    const dueHtml = card.nearestPayDate
+      ? ` · <span class="settle-hint-due">预计 ${card.nearestPayDate.slice(5)}</span>` : '';
     return `<div class="settle-card"><div class="settle-card-head"><b>${card.title}</b>` +
       `<small>${card.hint}${dueHtml}</small></div>${cnyLine}` +
       `<div class="settle-card-native">${rows}</div></div>`;
   }).join('');
   const fxNote = $('settleFxNote');
   if (fxNote) {
-    const pairs = Object.keys(SETTLE_FX).map(code =>
-      `1 ${code} = ${SETTLE_FX[code].rate.toFixed(4)} CNY`).join(' · ');
-    fxNote.innerHTML = `<b>折算汇率（${SETTLE_FX_DATE}）</b>：${pairs}。` +
-      '卡片人民币金额按上述汇率折算；币种原币金额同列保留，可回溯核对。' +
-      '汇率来源与维护方式待财务确认。';
+    const missing = [];
+    Object.values(payload.cards).forEach((card) => {
+      card.groups.forEach((group) => {
+        if (group.cny === null && missing.indexOf(group.currency) < 0) {
+          missing.push(group.currency);
+        }
+      });
+    });
+    fxNote.innerHTML = '汇率口径：<b>中国银行当日汇率</b>。卡片人民币金额按当日汇率折算，' +
+      '币种原币金额同列保留可回溯核对；汇率随每日快照固化，历史值不随汇率变动重算。' +
+      (missing.length
+        ? `<b>当前缺少 ${missing.join(' / ')} 汇率，对应人民币合计显示「—」（不按 1:1 计入）。</b>`
+        : '');
   }
 }
 
 function settleRenderTable() {
   const body = $('settleStoreTbody');
   if (!body) return;
-  const stores = settleScopedStores();
+  const payload = SETTLE_STATE.payload;
+  const stores = payload ? payload.stores || [] : [];
   const pageSize = SETTLE_STATE.pageSize;
   const pages = Math.max(1, Math.ceil(stores.length / pageSize));
   if (SETTLE_STATE.page > pages) SETTLE_STATE.page = pages;
   const start = (SETTLE_STATE.page - 1) * pageSize;
   const rows = stores.slice(start, start + pageSize);
   if (!rows.length) {
-    body.innerHTML = '<tr><td colspan="10" class="admin-empty">当前币种下没有已授权店铺</td></tr>';
+    body.innerHTML = '<tr><td colspan="10" class="admin-empty">当前范围内没有已授权店铺</td></tr>';
   } else {
     const badge = { ok: ['ok', '正常'], warn: ['warn', '有差异'], fail: ['fail', '同步失败'] };
-    body.innerHTML = rows.map(store => {
+    body.innerHTML = rows.map((store) => {
       const [cls, label] = badge[store.status] || badge.ok;
+      const payDates = store.payDates || [];
+      const more = payDates.length - 1;
+      const payDateCell = payDates.length
+        ? payDates[0] + (more > 0 ? ` <span class="settle-more">+${more} 批</span>` : '')
+        : '—';
       return `<tr>
-        <td><strong>${store.name}</strong></td>
-        <td>${store.mode}</td>
-        <td>${store.currency}</td>
-        <td class="num">${settleMoney(store.inTransit)}</td>
-        <td class="num">${settleMoney(store.unsettled)}</td>
-        <td class="num">${settleMoney(settleNearestBatchAmount(store))}</td>
-        <td class="pay-date">${settleStorePayDatesHtml(store)}</td>
-        <td class="num">${settleMoney(store.settled)}</td>
-        <td>${settleTime(store.at)}</td>
+        <td><strong>${store.storeName}</strong></td>
+        <td>${store.mode === 'semi' ? 'SHEIN 半托管' : 'SHEIN 自营'}</td>
+        <td>${store.currency || '—'}</td>
+        <td class="num">${settleMoney(store.inTransitAmount)}</td>
+        <td class="num">${settleMoney(store.unsettledAmount)}</td>
+        <td class="num">${settleMoney(store.nearestPayoutAmount)}</td>
+        <td class="pay-date">${payDateCell}</td>
+        <td class="num">${settleMoney(store.settledCumulativeAmount)}</td>
+        <td>${settleTime(store.syncedAt)}</td>
         <td><span class="settle-badge ${cls}">${label}</span></td>
       </tr>`;
     }).join('');
@@ -14735,19 +14721,20 @@ function settleRenderTable() {
 function settleRenderAlerts() {
   const host = $('settleAlerts');
   if (!host) return;
-  const stores = settleScopedStores();
-  const warns = stores.filter(store => store.status === 'warn');
-  const fails = stores.filter(store => store.status === 'fail');
+  const payload = SETTLE_STATE.payload;
+  const alerts = payload ? payload.alerts || [] : [];
+  const warns = alerts.filter((a) => a.kind === 'diff');
+  const fails = alerts.filter((a) => a.kind === 'sync_fail');
   const blocks = [];
   if (warns.length) {
     blocks.push('<div class="settle-alerts-title">对账差异（订单级聚合 vs 对账单净额）</div>');
-    warns.forEach(store => blocks.push(
-      `<div class="settle-alert warn"><span>⚠</span><span><strong>${store.name}</strong>：${store.note}</span></div>`));
+    warns.forEach((a) => blocks.push(
+      `<div class="settle-alert warn"><span>⚠</span><span><strong>${a.storeName}</strong>：${a.message}</span></div>`));
   }
   if (fails.length) {
     blocks.push('<div class="settle-alerts-title">同步失败（未计入汇总）</div>');
-    fails.forEach(store => blocks.push(
-      `<div class="settle-alert fail"><span>✕</span><span><strong>${store.name}</strong>：${store.note}</span></div>`));
+    fails.forEach((a) => blocks.push(
+      `<div class="settle-alert fail"><span>✕</span><span><strong>${a.storeName}</strong>：${a.message}</span></div>`));
   }
   if (!blocks.length) {
     blocks.push('<div class="settle-alerts-title">对账差异</div>');
@@ -14764,10 +14751,10 @@ function settleRenderAll() {
   settleRenderAlerts();
 }
 
-/* 导出：原型由前端生成 CSV（UTF-8 BOM，Excel 双击可直接打开）。
- * 正式实现沿用仓内先例（巡检 store_finance_export.py）由云端生成 xlsx，
- * 列序与汇总行结构以本函数为准；导出范围为当前币种筛选下的全部店铺
- * （非当前页），失败行保留并标注状态，金额留空不参与汇总。 */
+/* ---------- 导出 ----------
+ * 只把服务端算好的载荷写成表格，**不复算任何合计**。
+ * 原型用前端 CSV（UTF-8 BOM，Excel 可直接打开）；
+ * 正式实现沿用巡检 store_finance_export.py 由云端出 xlsx，列序以本函数为准。 */
 function settleCsvCell(value) {
   const text = value === null || value === undefined ? '' : String(value);
   return /[",\n\r]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
@@ -14775,92 +14762,73 @@ function settleCsvCell(value) {
 
 function settleStamp() {
   const d = new Date();
-  const pad = n => String(n).padStart(2, '0');
+  const pad = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
-}
-
-function settleFullTime(ts) {
-  if (!ts) return '';
-  const d = new Date(ts);
-  const pad = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
-    `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 const SETTLE_EXPORT_HEADERS = ['店铺', '类型', '币种', '在途资金', '待结算资金',
   '下次结算', '预计打款日', '已结算（历史累计）', '数据时间', '状态', '说明'];
 
 function buildSettlementExportRows() {
-  const stores = settleScopedStores();
+  const payload = SETTLE_STATE.payload || {};
+  const stores = payload.stores || [];
   const rows = [SETTLE_EXPORT_HEADERS.slice()];
   const statusLabel = { ok: '正常', warn: '有差异', fail: '同步失败' };
-  stores.forEach(store => {
+  stores.forEach((store) => {
     rows.push([
-      store.name, store.mode, store.currency,
-      store.inTransit, store.unsettled, settleNearestBatchAmount(store),
-      settleStorePayDates(store) === '—' ? '' : settleStorePayDates(store),
-      store.settled,
-      settleFullTime(store.at), statusLabel[store.status] || '正常', store.note || ''
+      store.storeName, store.mode === 'semi' ? 'SHEIN 半托管' : 'SHEIN 自营',
+      store.currency || '',
+      store.inTransitAmount, store.unsettledAmount, store.nearestPayoutAmount,
+      (store.payDates || []).join(' / '), store.settledCumulativeAmount,
+      store.syncedAt ? store.syncedAt.slice(0, 16).replace('T', ' ') : '',
+      statusLabel[store.status] || '正常', store.error || '',
     ]);
   });
-  const okStores = settleOkStores(stores);
-  const schedule = settlePayoutSchedule(okStores);
-  const groupsInTransit = settleGroupSum(okStores, 'inTransit');
-  const groupsUnsettled = settleGroupSum(okStores, 'unsettled');
-  const groupsNearest = schedule.length ? schedule[0].groups : [];
-  const groupsSettled = settleGroupSum(okStores, 'settled');
-  const pick = (groups, currency) => {
-    const hit = groups.find(group => group.currency === currency);
-    // 金额求和是浮点累加，直接用会把 29547.730000000003 这类脏数写进 Excel；
-    // 页面显示被千分位格式化掩盖，导出不会，所以汇总处一律落到分。
-    return hit ? Number(hit.total.toFixed(2)) : '';
-  };
-  const cnyOf = groups => {
-    const total = settleCnyTotal(groups);
-    return total === null ? '' : Number(total.toFixed(2));
-  };
   rows.push([]);
-  rows.push(['汇总（币种分列；末行为按维护汇率折算的人民币合计）']);
-  // 汇总行的列位与上方明细表对齐（币种落在第 3 列、各金额落在第 4–8 列），
-  // 财务在 Excel 里可直接对标读数，而不是另一套列结构。
-  rows.push(['', '', '币种', '在途资金', '待结算资金', '下次结算',
-    '后续打款日', '已结算（历史累计）', '', '', '']);
-  settleCurrencies().forEach(currency => {
-    rows.push([
-      '', '', currency,
-      pick(groupsInTransit, currency), pick(groupsUnsettled, currency),
-      pick(groupsNearest, currency),
-      settleCurrencyPayDates(schedule, currency), pick(groupsSettled, currency),
-      '', '', ''
-    ]);
+  rows.push(['汇总（值取自服务端口径层，非本文件计算）']);
+  rows.push(['', '', '币种', '在途资金', '待结算资金', '下次结算', '',
+    '已结算（历史累计）', '', '', '']);
+  const cardGroups = (key) => (payload.cards && payload.cards[key]
+    ? payload.cards[key].groups : []);
+  const currencySet = [];
+  ['in_transit', 'unsettled', 'settled_cumulative'].forEach((key) => {
+    cardGroups(key).forEach((group) => {
+      if (currencySet.indexOf(group.currency) < 0) currencySet.push(group.currency);
+    });
   });
-  rows.push([
-    '', '', '折人民币', cnyOf(groupsInTransit), cnyOf(groupsUnsettled),
-    cnyOf(groupsNearest), '', cnyOf(groupsSettled), '', '', ''
-  ]);
-  // 结算排期：按预计打款日逐批列明（与卡片一致）——把所有待结算金额配一个
-  // "最早打款日"会误导财务以为钱都在那天到账。
+  currencySet.sort().forEach((currency) => {
+    const pick = (key) => {
+      const hit = cardGroups(key).find((group) => group.currency === currency);
+      return hit ? hit.total : '';
+    };
+    rows.push(['', '', currency, pick('in_transit'), pick('unsettled'),
+      pick('nearest_payout'), '', pick('settled_cumulative'), '', '', '']);
+  });
+  const cnyOf = (key) => {
+    const card = payload.cards && payload.cards[key];
+    return card ? card.cnyTotal : '';
+  };
+  rows.push(['', '', '折人民币', cnyOf('in_transit'), cnyOf('unsettled'),
+    cnyOf('nearest_payout'), '', cnyOf('settled_cumulative'), '', '', '']);
   rows.push([]);
-  rows.push(['结算排期（按预计打款日，取自对账单 estimatePayTime）']);
-  rows.push(['', '', '打款日', '该批折人民币', '该批币种:原币金额', '', '', '', '', '', '']);
-  schedule.forEach(batch => {
-    const native = batch.groups
-      .map(group => `${group.currency}:${settleMoney(group.total)}`).join(' ');
-    rows.push(['', '', batch.date, Number(batch.cny.toFixed(2)), native, '', '', '', '', '', '']);
+  rows.push(['结算排期（按预计打款日，服务端口径）']);
+  rows.push(['', '', '打款日', '该批币种:原币金额', '', '', '', '', '', '', '']);
+  (payload.schedule || []).forEach((row) => {
+    const native = row.groups
+      .map((group) => `${group.currency}:${settleMoney(group.total)}`).join(' ');
+    rows.push(['', '', row.payDate, native, '', '', '', '', '', '', '']);
   });
   rows.push([]);
-  rows.push([`数据时间：${settleFullTime(SETTLE_STATE.refreshedAt)}`,
-    `店铺：成功 ${okStores.length} / 共 ${stores.length} 家`,
+  rows.push([`数据时间：${payload.syncedAt ? payload.syncedAt.slice(0, 16).replace('T', ' ') : ''}`,
+    `店铺：成功 ${payload.storeOk || 0} / 共 ${payload.storeTotal || 0} 家`,
     `币种范围：${SETTLE_STATE.currency === 'ALL' ? '全部' : SETTLE_STATE.currency}`,
-    `自动同步：每 ${SETTLE_SYNC_INTERVAL_HOURS} 小时一次`]);
-  rows.push([`折算汇率（${SETTLE_FX_DATE}）：` + Object.keys(SETTLE_FX)
-    .map(code => `1 ${code} = ${SETTLE_FX[code].rate.toFixed(4)} CNY`).join(' · ')]);
+    `数据来源：${settleCloudMode ? '云端接口' : '本地预览样例'}`]);
   return { rows, storeCount: stores.length };
 }
 
 function exportSettlementDashboard() {
   const { rows, storeCount } = buildSettlementExportRows();
-  const csv = rows.map(row => row.map(settleCsvCell).join(',')).join('\r\n');
+  const csv = rows.map((row) => row.map(settleCsvCell).join(',')).join('\r\n');
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -14870,23 +14838,13 @@ function exportSettlementDashboard() {
   link.click();
   document.body.removeChild(link);
   setTimeout(() => URL.revokeObjectURL(url), 1000);
-  toast(`已导出 ${storeCount} 家店铺（原型导出 CSV，正式版为 xlsx）`);
+  toast(`已导出 ${storeCount} 家店铺（原型导出 CSV，正式版为云端 xlsx）`);
 }
 
-function refreshSettlementDashboard() {
-  SETTLE_STATE.stores = settleMockStores();
-  SETTLE_STATE.refreshedAt = Date.now();
-  settleRenderAll();
-}
+/* ---------- 初始化 ---------- */
 
 function initSettlementDashboard() {
   settleLoadPageSize();
-  refreshSettlementDashboard();
-  $('btnSettleExport').onclick = () => exportSettlementDashboard();
-  $('btnSettleRefresh').onclick = () => {
-    refreshSettlementDashboard();
-    toast('结算看板已刷新（原型演示数据）');
-  };
   const sizeSel = $('settlePageSize');
   if (sizeSel) {
     sizeSel.value = String(SETTLE_STATE.pageSize);
@@ -14894,18 +14852,40 @@ function initSettlementDashboard() {
       const picked = Number(sizeSel.value);
       SETTLE_STATE.pageSize = SETTLE_PAGE_SIZES.includes(picked) ? picked : 10;
       settleSavePageSize(SETTLE_STATE.pageSize);
-      SETTLE_STATE.page = 1; // 每页条数变化后回到第 1 页，避免停在不存在的页码
+      SETTLE_STATE.page = 1; // 每页条数变化后回第 1 页，避免停在不存在的页码
       settleRenderTable();
     };
   }
+  $('btnSettleExport').onclick = () => exportSettlementDashboard();
+  $('btnSettleRefresh').onclick = () => { settleTriggerSync(); };
   $('btnSettlePrev').onclick = () => {
     if (SETTLE_STATE.page > 1) { SETTLE_STATE.page -= 1; settleRenderTable(); }
   };
   $('btnSettleNext').onclick = () => {
-    const pages = Math.max(1,
-      Math.ceil(settleScopedStores().length / SETTLE_STATE.pageSize));
+    const payload = SETTLE_STATE.payload;
+    const total = payload ? (payload.stores || []).length : 0;
+    const pages = Math.max(1, Math.ceil(total / SETTLE_STATE.pageSize));
     if (SETTLE_STATE.page < pages) { SETTLE_STATE.page += 1; settleRenderTable(); }
   };
+  return settleLoad();
+}
+
+async function enterSettlementDashboard() {
+  if (settleCloudMode === null) {
+    // 云端工作台强制走真实接口，绝不落回样例数据；仅本地预览允许回退。
+    if (CLOUD_WEB_MODE) {
+      settleCloudMode = true;
+    } else if (location.protocol === 'file:') {
+      settleCloudMode = false;
+    } else {
+      await cloudFetchJson('/v1/finance/settlement/summary?currency=')
+        .then(() => { settleCloudMode = true; })
+        .catch((e) => {
+          settleCloudMode = !!(e && typeof e.status === 'number' && e.status !== 404);
+        });
+    }
+  }
+  return initSettlementDashboard();
 }
 /* SHEIN 授权回调页：/shein-auth/callback?tempToken=...&state=...
  * 店铺主账号同意授权后由平台 302 到此；后端回调端点不要求工作台登录态

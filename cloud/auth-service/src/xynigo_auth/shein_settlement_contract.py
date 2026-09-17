@@ -79,7 +79,14 @@ def _store(store: StoreSettlementInput) -> dict[str, Any]:
         "payDates": sorted({batch.pay_date.isoformat()
                             for batch in store.payout_batches}),
         "settledCumulativeAmount": _money(store.settled_cumulative_amount),
+        "syncedAt": store.synced_at.isoformat() if store.synced_at else None,
     }
+
+
+def _latest_synced_at(summary: SettlementSummary) -> str | None:
+    """整体数据时间=各店最近同步时间的最大值（展示用，不参与口径）。"""
+    stamps = [store.synced_at for store in summary.stores if store.synced_at]
+    return max(stamps).isoformat() if stamps else None
 
 
 def settlement_summary_payload(summary: SettlementSummary) -> dict[str, Any]:
@@ -93,6 +100,7 @@ def settlement_summary_payload(summary: SettlementSummary) -> dict[str, Any]:
             for alert in summary.alerts
         ],
         "currencies": list(summary.currencies),
+        "syncedAt": _latest_synced_at(summary),
         "storeTotal": summary.store_total,
         "storeOk": summary.store_ok,
         "storeFailed": summary.store_failed,

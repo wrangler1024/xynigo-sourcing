@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 
 CENT = Decimal("0.01")
@@ -77,6 +77,8 @@ class StoreSettlementInput:
     # 收款方式：1 直接打款 / 2 钱包充值。钱包充值店的「已结算」只代表钱进
     # SHEIN 平台钱包、未进公司账户，现金可用性口径不同。
     payment_method: int | None = None
+    # 该店最近一次同步时间（展示用；不参与任何汇总口径）
+    synced_at: datetime | None = None
 
     @property
     def ok(self) -> bool:

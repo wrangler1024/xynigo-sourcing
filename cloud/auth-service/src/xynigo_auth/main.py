@@ -1173,6 +1173,7 @@ def create_app(
     def settlement_summary(
         request: Request,
         session: SessionDep,
+        currency: str = "",
         session_token: Annotated[
             str | None, Cookie(alias=settings.cookie_name)
         ] = None,
@@ -1187,7 +1188,7 @@ def create_app(
             audit_action="finance.settlement.summary",
         )
         summary = _settlement_service().build_summary(
-            session, tenant_id=actor.tenant.id)
+            session, tenant_id=actor.tenant.id, currency=currency.strip())
         return settlement_summary_payload(summary)
 
     @app.post("/v1/finance/settlement/sync")
