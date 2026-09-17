@@ -5441,7 +5441,7 @@ const AS_STATE = {
   mode: '', type: 'refund', scanTaskId: null, runId: null, runLabel: '',
   orderView: 'pending', claimFilter: 'all', submissions: new Map(), detailKey: '',
   trackTaskId: null, timer: null, running: false,
-  envSerials: null, environments: [],
+  envSerials: null, envMode: false, environments: [],
   starting: false, pendingCreates: {}, polling: false, claimItems: [], trackItems: [],
   rows: [], selected: new Set(), claimRows: [], stopRequested: false,
   pollErrors: 0, etaBase: null, startedAt: null, endedAt: null, progressSnapshot: null, status: ''
@@ -5547,6 +5547,7 @@ async function asLoadLatestClaim() {
     // Restored rows may be only a partial response. Keep accepting the server's ordered rows.
     AS_STATE.claimItems = [];
     AS_STATE.runLabel = envMode ? '按环境提交' : '提交售后';
+    AS_STATE.envMode = envMode;
     AS_STATE.envSerials = envMode
       ? (data.environments || []).map(row => String(row.environmentSerial || ''))
       : null;
@@ -5561,7 +5562,7 @@ async function asLoadLatestClaim() {
     }
     asRenderClaimRows(rows);
     if (active) {
-      asProgress({...data, unit: envMode ? '个环境' : '单'});
+      asProgress({...data, unit: AS_STATE.envMode ? '个环境' : '单'});
       asSetPhase('已恢复运行中的提交批次', envMode
         ? `共 ${data.progressTotal ?? data.totalCount ?? 0} 个环境，已返回 ${rows.length} 单明细，正在持续更新结果`
         : `共 ${data.progressTotal ?? data.totalCount ?? rows.length} 单，已返回 ${rows.length} 单明细，正在持续更新结果`, true);
@@ -6839,6 +6840,7 @@ async function asSubmitItems(items, options) {
     AS_STATE.claimFilter = 'all';
     AS_STATE.runLabel = label;
     AS_STATE.envSerials = envSerials;
+    AS_STATE.envMode = !!envSerials;
     AS_STATE.environments = [];
     AS_STATE.running = true;
     AS_STATE.stopRequested = false;
@@ -7128,7 +7130,7 @@ async function asPoll() {
       if (AS_STATE.mode !== 'claim' || AS_STATE.runId !== runId) return;
       asRenderClaimRows(asOrderedRows(AS_STATE.claimItems, data.rows || [], 'orderNo'));
       asRenderEnvOutcomes(data.environments || []);
-      asProgress({...data, unit: AS_STATE.envSerials ? '个环境' : '单'});
+      asProgress({...data, unit: AS_STATE.envMode ? '个环境' : '单'});
       AS_STATE.pollErrors = 0;
       AS_STATE.status = String(data.status || '');
       const done = ['completed', 'partial_failure', 'failed', 'cancelled',
@@ -7140,10 +7142,11 @@ async function asPoll() {
         const okCount = Number(data.successCount || 0);
         const head = (AS_STATE.runLabel && AS_STATE.runLabel !== '提交售后')
           ? AS_STATE.runLabel : '提交';
-        const terminalTitle = ({cancelled:head+'已停止', failed:head+'失败', uncertain:head+'待核对'})[AS_STATE.status]
+        const terminalTitle = ({cancelled:head+'已停止', failed:head+'失败',
+          uncertain:head+'待核对', partial_failure:head + '完成（部分失败）'})[AS_STATE.status]
           || (bad ? head + '完成（部分失败）' : head + '完成');
         // 按环境直提：补充环境级反馈（无入口跳过的环境不在订单行里）
-        const envRowsNow = AS_STATE.envSerials ? (data.environments || []) : [];
+        const envRowsNow = AS_STATE.envMode ? (data.environments || []) : [];
         const envNote = envRowsNow
           .filter(row => ['skip', 'blocked'].includes(String(row.status || ''))).length;
         const envBad = envRowsNow
@@ -7158,6 +7161,7 @@ async function asPoll() {
             : `已受理 ${okCount} 单${envSuffix}，请回访退款进度，以平台实际处理结果为准。`, false);
         AS_STATE.mode = '';
         AS_STATE.envSerials = null;
+        AS_STATE.envMode = false;
         asSyncRetryButton(AS_STATE.claimRows);
       } else if (AS_STATE.stopRequested) {
         asSetPhase('正在停止', `已请求停止，在途订单完成后终止（已完成 ${data.progressCompleted ?? 0} / ${data.progressTotal ?? 0}）。`, true);
@@ -7204,9 +7208,11 @@ $('asClearResult').onclick = () => {
   AS_STATE.claimItems = [];
   AS_STATE.claimFilter = 'all';
   AS_STATE.runLabel = '';
+  AS_STATE.envMode = false; AS_STATE.envSerials = null;
   $('asClaimRows').innerHTML = '<tr><td colspan="11" class="hint" style="text-align:center; padding:22px;">已清空。</td></tr>';
   $('asPhaseBanner').hidden = true;
   $('asBar').style.width = '0%'; $('asProgressText').textContent = '未开始';
+  asRenderEnvOutcomes([]);
   asRenderClaimRows([]);
 };
 $('asStripToggle').onclick = () => asStripToggle(

@@ -1650,7 +1650,7 @@ class AfterSaleClaimer(object):
             previous_signature = state.get('signature')
             if not self._click(page, '.j-order-list .sui-pagination__next'):
                 raise RuntimeError('所有订单列表翻页失败，请重试')
-        raise RuntimeError('所有订单页数超出扫描上限，请人工核对，未确认扫描完整')
+        raise RuntimeError('所有订单页数超出列表读取上限，请人工核对，未确认读取完整')
 
     def _scan_pre_info(self, page, order_no):
         """扫描与提交共用的只读资格核验。"""

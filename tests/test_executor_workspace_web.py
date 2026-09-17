@@ -1489,6 +1489,27 @@ class WebCloudContractAlignmentTests(unittest.TestCase):
         # 共用一套 pill 渲染，避免两处文案漂移
         self.assertIn('function asEnvOutcomePills(', html)
 
+    def test_environment_mode_flag_and_partial_failure_title(self):
+        """复评未闭合项的两条护栏：横幅标题与进度单位不能只看「有没有值」。
+
+        - 环境失败 + 订单成功时 run 是 partial_failure，横幅标题必须一致
+          （不能因为 failedCount=0 就写「完成」）。
+        - 进度单位/环境失败句必须看模式标志：运行中恢复时 environments 可能
+          还没回传，用 envSerials.length 判断会退回「单」。
+        """
+        html = LOCAL_HTML.read_text(encoding='utf-8')
+        poll = html[html.index('} else if (AS_STATE.mode === \'claim\''):]
+        poll = poll[:poll.index('\n    }\n')]
+        self.assertIn('partial_failure:head + \'完成（部分失败）\'', poll)
+        self.assertIn("unit: AS_STATE.envMode ? '个环境' : '单'", poll)
+        self.assertIn('AS_STATE.envMode ? (data.environments || []) : []', poll)
+        submit = html[html.index('async function asSubmitItems('):]
+        submit = submit[:submit.index('\n}\n')]
+        self.assertIn('AS_STATE.envMode = !!envSerials;', submit)
+        restore = html[html.index('async function asLoadLatestClaim('):]
+        restore = restore[:restore.index('\n}\n')]
+        self.assertIn('AS_STATE.envMode = envMode;', restore)
+
     def test_history_routes_match_web_urls(self):
         """历史列表/详情/导出的 URL 必须与云端路由对上（路径漂移只会是 404）。"""
         html = LOCAL_HTML.read_text(encoding='utf-8')
