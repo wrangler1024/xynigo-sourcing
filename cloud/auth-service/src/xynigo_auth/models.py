@@ -2598,3 +2598,201 @@ class SheinAuthEvent(Base):
         ),
         Index("ix_shein_auth_event_tenant_created", "tenant_id", "created_at"),
     )
+
+# ===== 财务中心 · 结算看板（SHEIN 开放平台纯接口方案）=====
+# 口径依据 docs/20260917_需求_财务中心结算看板.md（20260917 真机实测 + 拍板）。
+# 关键点：在途必须靠本地订单台账（订单列表窗口 ≤48h，直接查会漏单）；
+# 待结算金额天然按预计打款日分批，快照要按日留存并把当日汇率一并固化，
+# 否则回看历史时用今天的汇率重算，历史值每次都在变。
+
+
+class SheinSettlementOrder(Base):
+    """订单状态台账：在途口径的来源。
+
+    订单列表接口的时间窗 ≤48h，一张 5 天前发货仍未签收的单若 48h 内无更新
+    就不会出现在窗口里 → 直接查会漏计在途。首次按 48h 分片回溯建账，
+    之后只拉增量 upsert，在途 = 本表中 order_status=4 的预计收入合计。
+    """
+
+    __tablename__ = "shein_settlement_orders"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    store_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("shein_authorized_stores.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    order_no: Mapped[str] = mapped_column(String(64), nullable=False)
+    order_status: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), nullable=False)
+    estimated_gross_income: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 4)
+    )
+    order_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    update_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_synced_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "store_id", "order_no",
+                         name="uq_shein_settle_order"),
+        Index("ix_shein_settle_order_store_status",
+              "tenant_id", "store_id", "order_status"),
+    )
+
+
+class SheinSettlementSnapshot(Base):
+    """店铺级结算快照：每次同步一条，按日落库，供汇总与趋势回溯。
+
+    人民币口径不落库、由汇率表折算——但 fx_rate 快照必须随快照留存，
+    这样历史某天的人民币值才可复算且不会随汇率漂移。
+    """
+
+    __tablename__ = "shein_settlement_snapshots"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    store_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("shein_authorized_stores.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    sync_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("shein_settlement_sync_runs.id", ondelete="SET NULL")
+    )
+    snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
+    synced_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    currency: Mapped[str] = mapped_column(String(8), nullable=False)
+    in_transit_amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 4))
+    unsettled_amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 4))
+    settled_cumulative_amount: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 4)
+    )
+    nearest_pay_date: Mapped[date | None] = mapped_column(Date)
+    nearest_pay_amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 4))
+    # 报账单收款方式：1 直接打款 / 2 钱包充值。钱包充值店的「已结算」只代表
+    # 钱进 SHEIN 平台钱包、未进公司账户，资金可用性上与直接打款不等价。
+    payment_method: Mapped[int | None] = mapped_column(Integer)
+    receiver_account: Mapped[str] = mapped_column(String(128), nullable=False,
+                                                  server_default="")
+    fx_rate_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    error_summary: Mapped[str] = mapped_column(String(300), nullable=False,
+                                               server_default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("status IN ('ok', 'fail')", name="ck_shein_settle_snap_status"),
+        Index("ix_shein_settle_snap_store_date",
+              "tenant_id", "store_id", "snapshot_date"),
+    )
+
+
+class SheinPayoutBatch(Base):
+    """待结算金额按对账单 estimatePayTime 分批的结果。
+
+    各店打款日不一致（同店自身也会有多批），所以金额是按日期的序列而非
+    单一数值；同店同币种同日期唯一，重复同步走 upsert。
+    """
+
+    __tablename__ = "shein_payout_batches"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    store_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("shein_authorized_stores.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    pay_date: Mapped[date] = mapped_column(Date, nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    synced_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "store_id", "pay_date", "currency",
+                         name="uq_shein_payout_batch"),
+        Index("ix_shein_payout_batch_date", "tenant_id", "pay_date"),
+    )
+
+
+class SheinFxRate(Base):
+    """折算汇率：1 单位外币 = rate 人民币。
+
+    汇率来源与维护方式待财务确认（需求文档 §6）；本表只提供承载与审计，
+    不预设来源。缺汇率的币种不得按 1:1 静默计入——聚合层会返回 None。
+    """
+
+    __tablename__ = "shein_fx_rates"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    currency: Mapped[str] = mapped_column(String(8), nullable=False)
+    rate: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False)
+    effective_date: Mapped[date] = mapped_column(Date, nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False,
+                                        server_default="manual")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "currency", "effective_date",
+                         name="uq_shein_fx_rate"),
+    )
+
+
+class SheinSettlementSyncRun(Base):
+    """同步运行记录：每 6 小时定时与手动刷新共用，用于进度与并发保护。"""
+
+    __tablename__ = "shein_settlement_sync_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    trigger: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    store_total: Mapped[int] = mapped_column(Integer, nullable=False,
+                                             server_default="0")
+    store_ok: Mapped[int] = mapped_column(Integer, nullable=False,
+                                          server_default="0")
+    store_failed: Mapped[int] = mapped_column(Integer, nullable=False,
+                                              server_default="0")
+    detail: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("trigger IN ('manual', 'schedule')",
+                        name="ck_shein_settle_run_trigger"),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'succeeded', 'partial', 'failed')",
+            name="ck_shein_settle_run_status",
+        ),
+        Index("ix_shein_settle_run_tenant_status", "tenant_id", "status"),
+    )

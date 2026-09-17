@@ -34,6 +34,30 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 TOKEN_PATH = "/open-api/auth/get-by-token"
 STORE_INFO_PATH = "/open-api/openapi-business-backend/query-store-info"
+
+# ---- 财务 / 订单域（结算看板用）----
+REPORT_ORDER_LIST_PATH = "/open-api/finance/report-order-list"
+CHECK_ORDER_LIST_PATH = "/open-api/finance/get-check-order-list"
+CHECK_ORDER_DETAIL_PATH = "/open-api/finance/get-check-order-detail"
+ORDER_LIST_PATH = "/open-api/order/order-list"
+ORDER_DETAIL_PATH = "/open-api/order/order-detail"
+SITE_LIST_PATH = "/goods/query-site-list"
+
+# 网关响应封装按接口族不同：换钥/店铺信息走 `data`，财务与订单域走 `info`
+# （开放平台文档响应示例：{"code":"0","msg":"OK","info":{…},"bbl":{},"traceId":…}）。
+# 两段都接受、info 优先；都缺时把实际键名带进错误信息，首次联调即可自诊断。
+_ENVELOPE_KEYS = ("info", "data")
+
+# 查询窗口上限（实测）：对账单按生成时间 ≤7 天整、毫秒越界报 gsfs99401；订单列表 ≤48h。
+CHECK_ORDER_MAX_WINDOW_DAYS = 7
+ORDER_LIST_MAX_WINDOW_HOURS = 48
+
+# 单次批量上限（文档口径）
+ORDER_DETAIL_MAX_BATCH = 30
+CHECK_ORDER_LIST_PAGE_MAX = 30
+ORDER_LIST_PAGE_MAX = 30
+BZ_ORDER_NO_MAX = 100
+
 TEMP_TOKEN_EXPIRED_CODE = "33051002"
 _TIMEOUT = httpx.Timeout(15.0, connect=10.0)
 
@@ -119,9 +143,20 @@ class SheinOpenApiClient:
     def configured(self) -> bool:
         return bool(self.gateway and self.app_id and self.app_secret)
 
-    def _post(
-        self, *, path: str, identity: str, secret: str,
-        identity_header: str, body: dict[str, Any],
+    def _unwrap(self, payload: dict[str, Any], *, path: str) -> dict[str, Any]:
+        for key in _ENVELOPE_KEYS:
+            section = payload.get(key)
+            if isinstance(section, dict):
+                return section
+        raise SheinOpenApiClientError(
+            "shein_gateway_data_invalid",
+            f"{path} 响应缺少业务数据段（实际顶层键：{sorted(payload.keys())}）",
+        )
+
+    def _request(
+        self, *, method: str, path: str, identity: str, secret: str,
+        identity_header: str, body: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         headers = sign_headers(
             identity_header=identity_header,
@@ -130,11 +165,17 @@ class SheinOpenApiClient:
             path=path,
         )
         headers["Content-Type"] = "application/json"
+        request = {"headers": headers}
+        if params is not None:
+            request["params"] = params
+        if body is not None:
+            # GET 端点（如对账单详情）签名仍按 path 计算，参数走 query。
+            request["json"] = body
         try:
             with httpx.Client(
                 base_url=self.gateway, timeout=_TIMEOUT, transport=self._transport,
             ) as client:
-                response = client.post(path, json=body, headers=headers)
+                response = client.request(method, path, **request)
         except httpx.HTTPError as exc:
             raise SheinOpenApiClientError(
                 "shein_gateway_unreachable", "SHEIN 网关暂时无法访问"
@@ -155,12 +196,143 @@ class SheinOpenApiClient:
                 str(payload.get("code") or "shein_gateway_code_unknown"),
                 str(payload.get("msg") or payload.get("message") or "SHEIN 网关业务错误"),
             )
-        data = payload.get("data")
-        if not isinstance(data, dict):
-            raise SheinOpenApiClientError(
-                "shein_gateway_data_invalid", "SHEIN 网关返回数据缺失"
-            )
-        return data
+        return self._unwrap(payload, path=path)
+
+    def _post(
+        self, *, path: str, identity: str, secret: str,
+        identity_header: str, body: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self._request(
+            method="POST", path=path, identity=identity, secret=secret,
+            identity_header=identity_header, body=body,
+        )
+
+    def _get(
+        self, *, path: str, identity: str, secret: str,
+        identity_header: str, params: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self._request(
+            method="GET", path=path, identity=identity, secret=secret,
+            identity_header=identity_header, params=params,
+        )
+
+    # ---- 财务域 ----
+
+    def query_report_orders(
+        self, *, open_key_id: str, secret_key: str,
+        page: int = 1, page_size: int = 30,
+        report_order_no: str | None = None,
+        report_status: int | None = None,
+        completed_pay_date: str | None = None,
+        completed_pay_time_start: str | None = None,
+        completed_pay_time_end: str | None = None,
+    ) -> dict[str, Any]:
+        """报账单列表（已结算 reportStatus=2 / 即将付款 =1 / 异常 =3）。
+
+        结算看板的「历史累计已结算」按 reportStatus=2 全量回填后聚合。
+        文档明确本接口限流 20 次/秒（非订单类的 100）。
+        """
+        body: dict[str, Any] = {"page": int(page), "pageSize": int(page_size)}
+        for key, value in (
+            ("reportOrderNo", report_order_no),
+            ("reportStatus", report_status),
+            ("completedPayDate", completed_pay_date),
+            ("completedPayTimeStart", completed_pay_time_start),
+            ("completedPayTimeEnd", completed_pay_time_end),
+        ):
+            if value is not None and value != "":
+                body[key] = value
+        return self._post(
+            path=REPORT_ORDER_LIST_PATH, identity=open_key_id,
+            secret=secret_key, identity_header="x-lt-openKeyId", body=body,
+        )
+
+    def query_check_orders(
+        self, *, open_key_id: str, secret_key: str,
+        start_add_time: str, end_add_time: str,
+        page: int = 1, page_size: int = 30,
+        check_status: int | None = None,
+        bz_order_nos: list[str] | None = None,
+        report_order_nos: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """对账单列表（待结算 / 下次打款）。
+
+        窗口按**对账单生成时间**计算且必须 ≤7 天整，毫秒越界即报 gsfs99401
+        ——分片时请把边界取到整秒（见 service 层的分片函数）。
+        """
+        body: dict[str, Any] = {
+            "page": int(page), "pageSize": int(page_size),
+            "startAddTime": start_add_time, "endAddTime": end_add_time,
+        }
+        if check_status is not None:
+            body["checkStatus"] = int(check_status)
+        if bz_order_nos:
+            body["bzOrderNos"] = list(bz_order_nos)[:BZ_ORDER_NO_MAX]
+        if report_order_nos:
+            body["reportOrderNos"] = list(report_order_nos)
+        return self._post(
+            path=CHECK_ORDER_LIST_PATH, identity=open_key_id,
+            secret=secret_key, identity_header="x-lt-openKeyId", body=body,
+        )
+
+    def get_check_order_detail(
+        self, *, open_key_id: str, secret_key: str, check_order_no: str
+    ) -> dict[str, Any]:
+        """对账单详情：返回 itemList 逐 SKU 费用拆分（佣金/服务费/税费等）。
+
+        有了它，逐单精确对账不必再依赖无权限的 report-sales-detail。
+        注意本接口是 **GET**，对账单单号走 query 参数。
+        """
+        return self._get(
+            path=CHECK_ORDER_DETAIL_PATH, identity=open_key_id, secret=secret_key,
+            identity_header="x-lt-openKeyId",
+            params={"checkOrderNo": str(check_order_no or "").strip()},
+        )
+
+    # ---- 订单域 ----
+
+    def query_orders(
+        self, *, open_key_id: str, secret_key: str,
+        query_type: int, start_time: str, end_time: str,
+        page: int = 1, page_size: int = 30,
+        order_status: int | None = None,
+    ) -> dict[str, Any]:
+        """订单列表：只返回单号、状态、时间（金额需再调订单详情）。
+
+        queryType 1=按下单时间 / 2=按更新时间；窗口 ≤48h（UTC+8）。
+        在途口径依赖本地状态台账——按更新时间滚动增量，全量回溯见 service 层。
+        """
+        body: dict[str, Any] = {
+            "queryType": int(query_type),
+            "startTime": start_time, "endTime": end_time,
+            "page": int(page), "pageSize": int(page_size),
+        }
+        if order_status is not None:
+            body["orderStatus"] = int(order_status)
+        return self._post(
+            path=ORDER_LIST_PATH, identity=open_key_id,
+            secret=secret_key, identity_header="x-lt-openKeyId", body=body,
+        )
+
+    def query_order_details(
+        self, *, open_key_id: str, secret_key: str, order_nos: list[str]
+    ) -> dict[str, Any]:
+        """订单详情（含 estimatedGrossIncome 预计收入）。单次 ≤30 单号。"""
+        batch = [str(no) for no in order_nos][:ORDER_DETAIL_MAX_BATCH]
+        return self._post(
+            path=ORDER_DETAIL_PATH, identity=open_key_id,
+            secret=secret_key, identity_header="x-lt-openKeyId",
+            body={"orderNoList": batch},
+        )
+
+    def query_site_list(
+        self, *, open_key_id: str, secret_key: str
+    ) -> dict[str, Any]:
+        """店铺站点与站点币种——多币种折算时币种口径的权威来源。"""
+        return self._get(
+            path=SITE_LIST_PATH, identity=open_key_id, secret=secret_key,
+            identity_header="x-lt-openKeyId", params={},
+        )
 
     def exchange_temp_token(self, temp_token: str) -> tuple[str, str]:
         """tempToken → (openKeyId, secretKey 明文)。tempToken 只在本次调用使用。"""
