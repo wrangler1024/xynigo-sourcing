@@ -1485,6 +1485,41 @@
   .permission-menu-badge { padding: 3px 6px; border-radius: 999px; background: var(--parcel-100); color: #90600c; font-size: 8px; font-weight: 900; white-space: nowrap; }
   .member-role-checks { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .member-role-checks label { display: inline-flex; align-items: center; gap: 5px; }
+  /* 财务中心 · 对账结算（结算看板）· 各币种分列，不做折算 */
+  .settle-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .settle-toolbar .btn { min-height: 32px; padding: 6px 12px; font-size: 11px; }
+  .settle-currency { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .settle-currency-chip {
+    min-height: 32px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 10px;
+    background: #fff; color: var(--navy-700); font-size: 11px; font-weight: 800; cursor: pointer;
+  }
+  .settle-currency-chip:hover { border-color: #9fd5d8; background: var(--rhino-100); color: var(--rhino-700); }
+  .settle-currency-chip.active { border-color: var(--rhino-500); background: var(--rhino-100); color: var(--rhino-700); }
+  .settle-status { margin-top: 12px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 11px; color: var(--navy-500); }
+  .settle-status b { color: var(--navy-950); font-size: 11px; }
+  .settle-cards { margin-top: 14px; display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(228px, 1fr)); }
+  .settle-card { padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+  .settle-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .settle-card-head b { color: var(--navy-950); font-size: 12px; }
+  .settle-card-head small { color: var(--navy-500); font-size: 10px; }
+  .settle-card-rows { margin-top: 10px; display: grid; gap: 7px; }
+  .settle-card-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .settle-card-row .cur { color: var(--navy-500); font-size: 10px; font-weight: 800; }
+  .settle-card-row .amt { color: var(--navy-950); font-size: 17px; font-weight: 900; font-variant-numeric: tabular-nums; }
+  .settle-card-row .due { color: var(--rhino-700); font-size: 10px; font-weight: 800; }
+  .settle-card-none { margin-top: 10px; color: var(--navy-500); font-size: 11px; }
+  .settle-table td.num, .settle-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .settle-table td:first-child { min-width: 168px; white-space: nowrap; }
+  .settle-table td:last-child { min-width: 92px; }
+  .settle-badge { padding: 2px 7px; border-radius: 999px; font-size: 9px; font-weight: 900; white-space: nowrap; }
+  .settle-badge.ok { background: var(--rhino-100); color: var(--rhino-700); }
+  .settle-badge.warn { background: var(--parcel-100); color: #90600c; }
+  .settle-badge.fail { background: #fdecec; color: #b4232a; }
+  .settle-alerts { margin-top: 16px; display: grid; gap: 8px; }
+  .settle-alerts-title { color: var(--navy-950); font-size: 12px; font-weight: 900; }
+  .settle-alert { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; display: flex; align-items: flex-start; gap: 8px; font-size: 11px; line-height: 1.65; color: var(--navy-700); }
+  .settle-alert.warn { border-color: #f0d9a8; background: #fffaf0; }
+  .settle-alert.fail { border-color: #f3c9c9; background: #fff6f6; }
   .settings-view[data-settings-view="organizationaccess"] { display: flex; flex-direction: column; gap: 16px; }
   .organization-tabs { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .organization-tab {
@@ -1883,7 +1918,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         <button class="secondary-tab" data-parent="operations" data-planned="异常工单" disabled hidden>异常工单<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="operations" data-planned="协同记录" disabled hidden>协同记录<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="finance" data-planned="应付管理" disabled hidden>应付管理<span class="secondary-status planned">规划</span></button>
-        <button class="secondary-tab" data-parent="finance" data-planned="对账结算" disabled hidden>对账结算<span class="secondary-status planned">规划</span></button>
+        <button class="secondary-tab" data-parent="finance" data-module="settledashboard" hidden>对账结算<span class="secondary-status">新增</span></button>
         <button class="secondary-tab" data-parent="finance" data-planned="费用管理" disabled hidden>费用管理<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="finance" data-planned="财务报表" disabled hidden>财务报表<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="resources" data-module="buyerlib" hidden>买家号库<span class="secondary-status">新增</span></button>
@@ -3548,6 +3583,39 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         </table>
       </div>
     </section>
+
+    <section class="card settings-view" data-settings-view="settledashboard" hidden>
+      <div class="card-title table-title-row">
+        <span>对账结算 · 结算看板 <span class="legend">SHEIN 开放平台接口只读汇总 · 全店资金在途与结算进度</span></span>
+        <span class="settle-toolbar">
+          <span class="settle-currency" id="settleCurrencyTabs" role="group" aria-label="币种筛选"></span>
+          <button class="btn" id="btnSettleRefresh" type="button">刷新数据</button>
+        </span>
+      </div>
+      <div class="credential-note">数据取自 SHEIN 开放平台财务与订单接口（只读）。<strong>各币种分列展示，不做汇率折算、不做跨币种合计。</strong>「不可提现 / 可提现 / 提现中」属卖家后台资金账户口径，开放平台财务接口不提供，本看板不含该口径。</div>
+      <div class="settle-status" id="settleStatusBar"></div>
+      <div class="settle-cards" id="settleSummaryCards"></div>
+      <div class="table-wrap settle-table">
+        <table class="admin-table">
+          <thead><tr>
+            <th>店铺</th><th>类型</th><th>币种</th>
+            <th class="num">在途资金</th><th class="num">待结算资金</th>
+            <th class="num">下次结算</th><th>预计打款日</th>
+            <th class="num">已结算（本期）</th><th>数据时间</th><th>状态</th>
+          </tr></thead>
+          <tbody id="settleStoreTbody"><tr><td colspan="10" class="admin-empty">尚未刷新</td></tr></tbody>
+        </table>
+      </div>
+      <div class="procurement-pagination">
+        <span class="procurement-pagination-copy" id="settlePageInfo">—</span>
+        <div class="procurement-pagination-actions">
+          <button class="btn-mini" id="btnSettlePrev" type="button" disabled>上一页</button>
+          <span id="settlePageIndicator">—</span>
+          <button class="btn-mini" id="btnSettleNext" type="button" disabled>下一页</button>
+        </div>
+      </div>
+      <div class="settle-alerts" id="settleAlerts"></div>
+    </section>
   </div>
 
   <section class="vi-note" aria-label="Xynigo 品牌介绍">
@@ -3969,7 +4037,7 @@ const PRIMARY_MODULES = {
     planning: '运营中心已纳入产品规划，具体数据口径和业务流程将在需求确认后接入。'
   },
   finance: {
-    label: '财务中心', hint: '应付 · 对账 · 费用 · 报表', defaultModule: null,
+    label: '财务中心', hint: '应付 · 对账 · 费用 · 报表', defaultModule: 'settledashboard',
     requiredPermission: 'finance.access',
     summary: '统一规划应付、对账、费用与财务报表能力。',
     planning: '财务中心已预留产品入口，后续将结合财务权限与审批流程分阶段建设。'
@@ -4032,6 +4100,10 @@ const FEATURE_MODULES = {
   storefinance: {
     label: '店铺结算查询', primary: 'assistant', requiredPermission: 'assistant.access',
     summary: '批量自动登录采集 SHEIN 店铺后台结算与资金数据，导出《店铺结算汇总表》交财务。全程只读。'
+  },
+  settledashboard: {
+    label: '对账结算', primary: 'finance', requiredPermission: 'finance.access',
+    summary: '汇总所有已授权 SHEIN 店铺的在途资金、待结算资金、下次结算与预计打款日、已结算资金；各币种分列，不做汇率折算。'
   },
   aftersale: {
     label: '采购售后', primary: 'procurement', requiredPermission: 'assistant.access',
@@ -4158,7 +4230,12 @@ const PERMISSION_MENU_GROUPS = [
     id: 'finance', label: '财务中心', secondary: [
       {
         id: 'moduleentry', label: '模块入口', badge: '规划入口',
-        note: '控制财务中心入口可见；应付、对账与报表功能尚未开发。',
+        note: '控制财务中心入口可见；应付、费用与报表功能尚未开发。',
+        codes: ['finance.access']
+      },
+      {
+        id: 'settledashboard', label: '对账结算', badge: '新增',
+        note: '当前与财务中心入口共用「财务中心访问」权限；后续按查看与刷新拆分细粒度权限。',
         codes: ['finance.access']
       }
     ]
@@ -13530,7 +13607,8 @@ function setFeaturePanel(module) {
   const info = FEATURE_MODULES[module];
   if (!info) return;
   const isSettingsModule = [
-    'localsettings', 'larkconnection', 'organizationaccess', 'sessionmanagement'
+    'localsettings', 'larkconnection', 'organizationaccess', 'sessionmanagement',
+    'settledashboard'
   ].includes(module);
   activeModule = module;
   if (module !== 'localexecutor') scheduleLocalExecutorDeviceRefresh();
@@ -13601,7 +13679,275 @@ function setFeaturePanel(module) {
   } else if (module === 'sessionmanagement' && !sessionManagementPageLoaded) {
     sessionManagementPageLoaded = true;
     loadSessionManagement().catch(() => { sessionManagementPageLoaded = false; });
+  } else if (module === 'settledashboard') {
+    // 原型阶段每次进入都按最新 Mock 渲染；后端接入后改为按刷新按钮与定时任务取数
+    if (!settleDashboardLoaded) {
+      initSettlementDashboard();
+      settleDashboardLoaded = true;
+    } else {
+      settleRenderAll();
+    }
   }
+}
+
+/* ===== 财务中心 · 对账结算（结算看板）· 前端静态原型 =====
+ * 数据层为本地 Mock（原型演示数据，店铺名一律用「样例店铺」前缀，不含真实
+ * 店铺名/商家ID/金额）；后端接口就绪后替换为 /v1/finance/settlement/* 调用，
+ * 权限沿用 finance.access。
+ * 口径依据 docs/20260917_需求_财务中心结算看板.md（20260917 真机实测 + 拍板）：
+ *   在途资金   = Σ estimatedGrossIncome（orderStatus=4 已发货未签收，订单级）
+ *   待结算资金 = 对账单 checkStatus=1 按收支轧差（收入 − 支出）
+ *   下次结算   = 同上净额，按 estimatePayTime 分批
+ *   已结算资金 = 报账单 reportStatus=2 聚合 income
+ *   各币种分列展示，不做汇率折算、不做跨币种合计。
+ */
+let settleDashboardLoaded = false;
+const SETTLE_CURRENCY_LABELS = { MXN: '墨西哥比索', USD: '美元' };
+const SETTLE_PAGE_SIZE = 8;
+const SETTLE_STATE = { currency: 'ALL', page: 1, stores: null, refreshedAt: null };
+
+function settleMockStores() {
+  const fresh = Date.now() - 4 * 60 * 1000;
+  const stale = Date.now() - 34 * 60 * 1000;
+  return [
+    { name: '样例店铺 01 · 拉美站', mode: 'SHEIN 自营', currency: 'MXN',
+      inTransit: 4820.50, unsettled: 945.16, nextSettle: 945.16,
+      nextPayDate: '2026-09-21', settled: 3255.68, at: fresh, status: 'ok', note: '' },
+    { name: '样例店铺 02 · 拉美站', mode: 'SHEIN 自营', currency: 'MXN',
+      inTransit: 12760.00, unsettled: 2310.44, nextSettle: 2310.44,
+      nextPayDate: '2026-09-21', settled: 8120.90, at: fresh, status: 'warn',
+      note: '订单级聚合比对账单净额高 114.16，属结算调整行未在订单侧回更，已按对账单轧差取值' },
+    { name: '样例店铺 03 · 北美站', mode: 'SHEIN 自营', currency: 'USD',
+      inTransit: 0.00, unsettled: 0.00, nextSettle: 0.00,
+      nextPayDate: '', settled: 1540.22, at: fresh, status: 'ok', note: '' },
+    { name: '样例店铺 04 · 拉美站', mode: 'SHEIN 半托管', currency: 'MXN',
+      inTransit: 3390.75, unsettled: 612.08, nextSettle: 612.08,
+      nextPayDate: '2026-09-28', settled: 2004.15, at: fresh, status: 'ok', note: '' },
+    { name: '样例店铺 05 · 北美站', mode: 'SHEIN 自营', currency: 'USD',
+      inTransit: null, unsettled: null, nextSettle: null,
+      nextPayDate: '', settled: null, at: stale, status: 'fail',
+      note: '店铺凭证失效，需重新授权后恢复采集' },
+    { name: '样例店铺 06 · 拉美站', mode: 'SHEIN 自营', currency: 'MXN',
+      inTransit: 2210.30, unsettled: 1580.66, nextSettle: 1580.66,
+      nextPayDate: '2026-09-28', settled: 4470.00, at: fresh, status: 'warn',
+      note: '对账单存在支出行 28.52，订单侧不回更；已按对账单轧差修正' },
+    { name: '样例店铺 07 · 拉美站', mode: 'SHEIN 自营', currency: 'MXN',
+      inTransit: null, unsettled: null, nextSettle: null,
+      nextPayDate: '', settled: null, at: stale, status: 'fail',
+      note: '对账单时间窗越界（gsfs99401），已按 7 天整片重试' },
+    { name: '样例店铺 08 · 北美站', mode: 'SHEIN 半托管', currency: 'USD',
+      inTransit: 450.00, unsettled: 128.90, nextSettle: 128.90,
+      nextPayDate: '2026-09-21', settled: 320.00, at: fresh, status: 'ok', note: '' },
+    { name: '样例店铺 09 · 拉美站', mode: 'SHEIN 自营', currency: 'MXN',
+      inTransit: 1890.20, unsettled: 476.30, nextSettle: 476.30,
+      nextPayDate: '2026-09-28', settled: 1180.55, at: fresh, status: 'ok', note: '' },
+    { name: '样例店铺 10 · 北美站', mode: 'SHEIN 自营', currency: 'USD',
+      inTransit: 0.00, unsettled: 88.40, nextSettle: 88.40,
+      nextPayDate: '2026-09-21', settled: 604.10, at: fresh, status: 'ok', note: '' }
+  ];
+}
+
+function settleMoney(value) {
+  if (value === null || value === undefined) return '—';
+  return Number(value).toLocaleString('zh-CN',
+    { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function settleTime(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  const pad = n => String(n).padStart(2, '0');
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function settleScopedStores() {
+  const all = SETTLE_STATE.stores || [];
+  if (SETTLE_STATE.currency === 'ALL') return all;
+  return all.filter(store => store.currency === SETTLE_STATE.currency);
+}
+
+function settleCurrencies() {
+  const seen = [];
+  (SETTLE_STATE.stores || []).forEach(store => {
+    if (!seen.includes(store.currency)) seen.push(store.currency);
+  });
+  return seen;
+}
+
+function settleOkStores(stores) {
+  return stores.filter(store => store.status !== 'fail');
+}
+
+/** 按币种分组求和；返回 [{currency, total}]，不做跨币种合计。 */
+function settleGroupSum(stores, key) {
+  const buckets = new Map();
+  stores.forEach(store => {
+    const value = store[key];
+    if (value === null || value === undefined) return;
+    buckets.set(store.currency, (buckets.get(store.currency) || 0) + value);
+  });
+  return [...buckets.entries()].map(([currency, total]) => ({ currency, total }));
+}
+
+function settleGroupDueDates(stores) {
+  const buckets = new Map();
+  stores.forEach(store => {
+    if (!store.nextPayDate || !store.nextSettle) return;
+    const list = buckets.get(store.currency) || [];
+    list.push(store.nextPayDate);
+    buckets.set(store.currency, list);
+  });
+  return buckets;
+}
+
+function settleRenderCurrencyTabs() {
+  const host = $('settleCurrencyTabs');
+  if (!host) return;
+  const currencies = settleCurrencies();
+  const chips = [{ code: 'ALL', label: '全部币种' }].concat(
+    currencies.map(code => ({ code, label: code })));
+  host.innerHTML = chips.map(chip => {
+    const active = SETTLE_STATE.currency === chip.code ? ' active' : '';
+    const title = SETTLE_CURRENCY_LABELS[chip.code] || '';
+    return `<button type="button" class="settle-currency-chip${active}" data-settle-currency="${chip.code}" title="${title}">${chip.label}</button>`;
+  }).join('');
+  host.querySelectorAll('[data-settle-currency]').forEach(btn => {
+    btn.onclick = () => {
+      SETTLE_STATE.currency = btn.dataset.settleCurrency;
+      SETTLE_STATE.page = 1;
+      settleRenderAll();
+    };
+  });
+}
+
+function settleRenderStatus() {
+  const host = $('settleStatusBar');
+  if (!host) return;
+  const stores = settleScopedStores();
+  const okCount = settleOkStores(stores).length;
+  const failCount = stores.length - okCount;
+  const currencies = settleCurrencies();
+  host.innerHTML = [
+    `<span>数据时间 <b>${settleTime(SETTLE_STATE.refreshedAt)}</b></span>`,
+    `<span>店铺覆盖 <b>${okCount} / ${stores.length}</b> 家成功</span>`,
+    `<span>币种 <b>${currencies.length ? currencies.join(' · ') : '—'}</b></span>`,
+    failCount ? `<span>采集失败 <b>${failCount}</b> 家（见下方异常区）</span>` : '',
+    '<span>口径：对账单为主、订单级交叉校验</span>'
+  ].filter(Boolean).join('');
+}
+
+function settleRenderCards() {
+  const host = $('settleSummaryCards');
+  if (!host) return;
+  const okStores = settleOkStores(settleScopedStores());
+  const dueDates = settleGroupDueDates(okStores);
+  const cards = [
+    { title: '在途资金', hint: '已发货未签收（订单级）', groups: settleGroupSum(okStores, 'inTransit') },
+    { title: '待结算资金', hint: '对账单待结算按收支轧差', groups: settleGroupSum(okStores, 'unsettled') },
+    { title: '下次结算金额', hint: '按预计打款日分批', groups: settleGroupSum(okStores, 'nextSettle'), due: true },
+    { title: '已结算资金', hint: '报账单已付款聚合', groups: settleGroupSum(okStores, 'settled') }
+  ];
+  host.innerHTML = cards.map(card => {
+    const rows = card.groups.length
+      ? card.groups.map(group => {
+        const dues = card.due ? (dueDates.get(group.currency) || []).slice().sort() : [];
+        const dueText = dues.length ? `<span class="due">预计 ${dues[0]}</span>` : '';
+        return `<div class="settle-card-row"><span class="cur">${group.currency}</span>` +
+          `<span><span class="amt">${settleMoney(group.total)}</span> ${dueText}</span></div>`;
+      }).join('')
+      : '<div class="settle-card-none">当前范围内无可计入店铺</div>';
+    return `<div class="settle-card"><div class="settle-card-head"><b>${card.title}</b>` +
+      `<small>${card.hint}</small></div><div class="settle-card-rows">${rows}</div></div>`;
+  }).join('');
+}
+
+function settleRenderTable() {
+  const body = $('settleStoreTbody');
+  if (!body) return;
+  const stores = settleScopedStores();
+  const pages = Math.max(1, Math.ceil(stores.length / SETTLE_PAGE_SIZE));
+  if (SETTLE_STATE.page > pages) SETTLE_STATE.page = pages;
+  const start = (SETTLE_STATE.page - 1) * SETTLE_PAGE_SIZE;
+  const rows = stores.slice(start, start + SETTLE_PAGE_SIZE);
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="10" class="admin-empty">当前币种下没有已授权店铺</td></tr>';
+  } else {
+    const badge = { ok: ['ok', '正常'], warn: ['warn', '有差异'], fail: ['fail', '采集失败'] };
+    body.innerHTML = rows.map(store => {
+      const [cls, label] = badge[store.status] || badge.ok;
+      return `<tr>
+        <td><strong>${store.name}</strong></td>
+        <td>${store.mode}</td>
+        <td>${store.currency}</td>
+        <td class="num">${settleMoney(store.inTransit)}</td>
+        <td class="num">${settleMoney(store.unsettled)}</td>
+        <td class="num">${settleMoney(store.nextSettle)}</td>
+        <td>${store.nextPayDate || '—'}</td>
+        <td class="num">${settleMoney(store.settled)}</td>
+        <td>${settleTime(store.at)}</td>
+        <td><span class="settle-badge ${cls}">${label}</span></td>
+      </tr>`;
+    }).join('');
+  }
+  $('settlePageInfo').textContent = stores.length
+    ? `第 ${SETTLE_STATE.page} 页 · 共 ${stores.length} 家`
+    : '暂无数据';
+  $('settlePageIndicator').textContent = `${SETTLE_STATE.page} / ${pages} 页`;
+  $('btnSettlePrev').disabled = SETTLE_STATE.page <= 1;
+  $('btnSettleNext').disabled = SETTLE_STATE.page >= pages;
+}
+
+function settleRenderAlerts() {
+  const host = $('settleAlerts');
+  if (!host) return;
+  const stores = settleScopedStores();
+  const warns = stores.filter(store => store.status === 'warn');
+  const fails = stores.filter(store => store.status === 'fail');
+  const blocks = [];
+  if (warns.length) {
+    blocks.push('<div class="settle-alerts-title">对账差异（订单级聚合 vs 对账单净额）</div>');
+    warns.forEach(store => blocks.push(
+      `<div class="settle-alert warn"><span>⚠</span><span><strong>${store.name}</strong>：${store.note}</span></div>`));
+  }
+  if (fails.length) {
+    blocks.push('<div class="settle-alerts-title">采集失败（未计入汇总）</div>');
+    fails.forEach(store => blocks.push(
+      `<div class="settle-alert fail"><span>✕</span><span><strong>${store.name}</strong>：${store.note}</span></div>`));
+  }
+  if (!blocks.length) {
+    blocks.push('<div class="settle-alerts-title">对账差异</div>');
+    blocks.push('<div class="settle-alert"><span>✓</span><span>当前范围内无差异、无采集失败。</span></div>');
+  }
+  host.innerHTML = blocks.join('');
+}
+
+function settleRenderAll() {
+  settleRenderCurrencyTabs();
+  settleRenderStatus();
+  settleRenderCards();
+  settleRenderTable();
+  settleRenderAlerts();
+}
+
+function refreshSettlementDashboard() {
+  SETTLE_STATE.stores = settleMockStores();
+  SETTLE_STATE.refreshedAt = Date.now();
+  settleRenderAll();
+}
+
+function initSettlementDashboard() {
+  refreshSettlementDashboard();
+  $('btnSettleRefresh').onclick = () => {
+    refreshSettlementDashboard();
+    toast('结算看板已刷新（原型演示数据）');
+  };
+  $('btnSettlePrev').onclick = () => {
+    if (SETTLE_STATE.page > 1) { SETTLE_STATE.page -= 1; settleRenderTable(); }
+  };
+  $('btnSettleNext').onclick = () => {
+    const pages = Math.max(1, Math.ceil(settleScopedStores().length / SETTLE_PAGE_SIZE));
+    if (SETTLE_STATE.page < pages) { SETTLE_STATE.page += 1; settleRenderTable(); }
+  };
 }
 
 function syncPrimaryNavigation(primary) {

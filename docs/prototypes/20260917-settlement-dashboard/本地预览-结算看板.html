@@ -17661,5 +17661,40 @@ document.addEventListener('click', event => {
 initializeProcurementImportLayout();
 initializeAuth();
 </script>
+
+<script>
+/* ===== 静态原型本地预览专用（仅此副本，不进产品源码） =====
+   无后端时：屏蔽登录锁、隐藏登录门、注入管理员 mock 身份、自动打开对账结算。
+   身份每次 tick 强制覆盖——应用的引导流程会在解锁后才写入真实身份，
+   若只在 authIdentity 为空时注入，会被随后的无权限身份覆盖而打不开页面。 */
+(function () {
+  var MOCK = {
+    name: 'Jeff（原型预览）',
+    roles: ['super_admin'],
+    permissions: ['finance.access'],
+    workspaceAccess: true,
+  };
+  function unlock() {
+    try { window.lockWorkspace = function () {}; } catch (e) {}
+    try { if (typeof lockWorkspace === 'function') lockWorkspace = function () {}; } catch (e) {}
+    document.body.classList.remove('auth-locked');
+    var gate = document.getElementById('authGate'); if (gate) gate.hidden = true;
+    var shell = document.getElementById('appShell'); if (shell) shell.removeAttribute('inert');
+    try { authIdentity = MOCK; authReady = true; } catch (e) {}
+    try { if (window.authIdentity !== undefined) window.authIdentity = MOCK; } catch (e) {}
+  }
+  unlock();
+  var n = 0;
+  var timer = setInterval(function () {
+    unlock();
+    if (++n > 60) clearInterval(timer);
+  }, 250);
+  function openProto() { unlock(); try { openFeatureTab('settledashboard'); } catch (e) {} }
+  window.addEventListener('load', openProto);
+  setTimeout(openProto, 600);
+  setTimeout(openProto, 1500);
+  setTimeout(openProto, 3000);
+})();
+</script>
 </body>
 </html>
