@@ -1514,7 +1514,7 @@ def test_env_results_migration_defaults_existing_rows():
     from alembic.operations import Operations
     migration = runpy.run_path(str(Path(__file__).resolve().parents[1]
                                    / 'migrations/versions'
-                                   / '0044_after_sale_env_results.py'))
+                                   / '0045_after_sale_env_results.py'))
     assert len(migration['revision']) <= 32
     engine = sa.create_engine('sqlite://')
     with engine.begin() as connection:

@@ -2,8 +2,9 @@
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0044_after_sale_env_results"
-down_revision = "0043_after_sale_phase_evidence"
+revision = "0045_after_sale_env_results"
+# 并行线的 0044（SHEIN 店铺授权）已先合入 main，本迁移顺延为 0045 接在其后。
+down_revision = "0044_shein_store_auth"
 branch_labels = None
 depends_on = None
 
