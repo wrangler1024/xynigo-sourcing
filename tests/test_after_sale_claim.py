@@ -541,6 +541,73 @@ class ClaimEnvironmentBatchTests(unittest.TestCase):
         statuses = [r['status'] for r in claimer.snapshot()['claimEnvRows']]
         self.assertEqual(statuses, ['stopped', 'stopped'])
 
+    def test_stop_during_list_read_is_stopped_not_skip(self):
+        """列表被停止打断读到的是残缺列表：写操作里绝不算「没有入口」。"""
+        claimer, _hub = self._claimer(['51'])
+        claimer._open_env = lambda env, serial, headless: (
+            _FakePage(serial), False)
+        claimer._login_required = lambda page: False
+
+        def half_read(page):
+            claimer._stop_event.set()   # 翻页中途被停止
+            return []                   # 残缺列表（可能就是空的）
+
+        claimer._read_all_order_cards = half_read
+        claimer.start_claim_environments(['51'])
+        self._wait(claimer)
+        row = claimer.snapshot()['claimEnvRows'][0]
+        self.assertEqual(row['status'], 'stopped')
+        self.assertIn('未确认', row['note'])
+        self.assertEqual(claimer.snapshot()['claimRows'], [])
+
+    def test_stop_mid_candidates_marks_env_stopped_not_ok(self):
+        """环境内还有候选没跑完时，哪怕已提交成功也不能报 ok。"""
+        cards = [{'text': CARD_DELIVERED, 'hasEntry': True, 'goodsImg': '',
+                  'deliveredAt': ''},
+                 {'text': CARD_DELIVERED.replace('GSH1RV329000RBM',
+                                                 'GSH1RV329000RBN'),
+                  'hasEntry': True, 'goodsImg': '', 'deliveredAt': ''}]
+        claimer, _hub = self._claimer(['61'])
+        claimer._open_env = lambda env, serial, headless: (
+            _FakePage(serial), False)
+        claimer._login_required = lambda page: False
+        claimer._read_all_order_cards = lambda page: cards
+        claimer._env_claim_item = lambda serial, env, page, card, parsed: {
+            'environmentSerial': serial, 'orderNo': parsed['orderNo'],
+            'storeName': '', 'packageNo': ''}
+        calls = []
+
+        def fake_claim_one(page, serial, item):
+            calls.append(item['orderNo'])
+            claimer._publish_claim(item['orderNo'], {'status': 'ok'})
+            claimer._stop_event.set()   # 第一单提交后收到停止
+
+        claimer._claim_one = fake_claim_one
+        claimer.start_claim_environments(['61'])
+        self._wait(claimer)
+        rows = {r['environmentSerial']: r for r in
+                claimer.snapshot()['claimEnvRows']}
+        self.assertEqual(len(calls), 1, '停止后不得再开新提交')
+        self.assertEqual(rows['61']['status'], 'stopped')
+        self.assertEqual(rows['61']['submittedCount'], 1, '已提交的计数保留')
+        self.assertIn('剩余 1 单未处理', rows['61']['note'])
+
+    def test_batch_end_safety_net_closes_stuck_rows(self):
+        """批末安全网：verifying→uncertain、queued/running→stopped。"""
+        claimer, _hub = self._claimer(['71'])
+
+        def stub(serial, env, headless):
+            claimer._publish_claim('GSH1A', {'status': 'running'})
+            claimer._publish_claim('GSH1B', {'status': 'verifying'})
+
+        claimer._claim_env_one = stub
+        claimer.start_claim_environments(['71'])
+        self._wait(claimer)
+        rows = {r['orderNo']: r for r in claimer.snapshot()['claimRows']}
+        self.assertEqual(rows['GSH1A']['status'], 'stopped')
+        self.assertEqual(rows['GSH1B']['status'], 'uncertain')
+        self.assertIn('不可直接补提', rows['GSH1B']['errorSummary'])
+
 
 class BridgeClaimEnvironmentTests(unittest.TestCase):
     """云端任务 → 按环境直提：环境级快照与「跳过不算失败」的汇总口径。"""
@@ -653,6 +720,35 @@ class BridgeClaimEnvironmentTests(unittest.TestCase):
         self.assertEqual(summary['runStatus'], 'completed')
         self.assertEqual(summary['successCount'], 0)
 
+    def test_env_level_failures_participate_in_terminal_status(self):
+        """环境级 fail/login 不产生订单行，必须自己把批次打失败/部分失败。"""
+        # 10 个环境全部未登录、零订单行 → failed，不是 completed
+        summary = LocalOperationExecutor._after_sale_environment_summary(
+            3, [{'environmentSerial': s, 'status': 'login'}
+                for s in ('1', '2', '3')], [])
+        self.assertEqual(summary['runStatus'], 'failed')
+        # 9 个无入口 + 1 个读取失败 → failed（跳过不能把故障稀释成完成）
+        summary = LocalOperationExecutor._after_sale_environment_summary(
+            10, [*[{'environmentSerial': str(i), 'status': 'skip'}
+                   for i in range(9)],
+                 {'environmentSerial': '9', 'status': 'fail'}], [])
+        self.assertEqual(summary['runStatus'], 'failed')
+        # 环境读取失败与成功订单并存 → partial_failure
+        summary = LocalOperationExecutor._after_sale_environment_summary(
+            2, [{'environmentSerial': '4904', 'status': 'ok'},
+                {'environmentSerial': '4905', 'status': 'login'}],
+            [{'orderNo': 'A', 'status': 'ok'}])
+        self.assertEqual(summary['runStatus'], 'partial_failure')
+        # 全 blocked（有订单行、零成功零失败）仍是 completed
+        summary = LocalOperationExecutor._after_sale_environment_summary(
+            1, [{'environmentSerial': '4904', 'status': 'blocked'}],
+            [{'orderNo': 'A', 'status': 'blocked'}])
+        self.assertEqual(summary['runStatus'], 'completed')
+        # 环境被停止且无任何成功/故障 → cancelled
+        summary = LocalOperationExecutor._after_sale_environment_summary(
+            1, [{'environmentSerial': '4904', 'status': 'stopped'}], [])
+        self.assertEqual(summary['runStatus'], 'cancelled')
+
     def test_env_row_projection_clamps_and_drops_unknown_fields(self):
         rows = LocalOperationExecutor._after_sale_env_rows([{
             'environmentSerial': '4904', 'environmentId': 'C1',
@@ -668,6 +764,11 @@ class BridgeClaimEnvironmentTests(unittest.TestCase):
         self.assertEqual(len(rows[0]['note']), 200)
         self.assertIsNone(rows[0]['errorSummary'])
         self.assertEqual(rows[0]['durationSeconds'], 12)
+        # 排队/进行中没跑完就是没跑完：None 不能被收成 0 秒
+        pending = LocalOperationExecutor._after_sale_env_rows(
+            [{'environmentSerial': '4905', 'status': 'queued',
+              'durationSeconds': None}])
+        self.assertIsNone(pending[0]['durationSeconds'])
         # 未知状态回落到 running，不能把非法状态带上行
         fallback = LocalOperationExecutor._after_sale_env_rows(
             [{'environmentSerial': '1', 'status': 'made-up'}])

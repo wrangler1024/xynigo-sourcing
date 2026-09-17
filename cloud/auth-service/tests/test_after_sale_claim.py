@@ -1463,10 +1463,14 @@ def test_after_sale_claim_environments_direct_write_and_env_results(tmp_path) ->
         item = next(entry for entry in history["items"]
                     if entry["runId"] == run_id)
         assert item["submitMode"] == "environments"
+        # 环境数＝计划环境数；全 skip 批次没有订单行，旧口径会显示 0
+        assert item["environmentCount"] == 4
         detail = web_client.get(
             f"/v1/operation-runs/after-sale-claim/history/{run_id}").json()["data"]
         assert detail["batch"]["submitMode"] == "environments"
         assert len(detail["environments"]) == 4
+        # 环境数＝计划环境数（全 skip 批次没有任何订单行，不能报成 0）
+        assert detail["batch"]["environmentCount"] == 4
         break
 
 
@@ -1506,7 +1510,7 @@ def test_after_sale_claim_environments_requires_capability_and_valid_scope(tmp_p
 
 
 def test_env_results_migration_defaults_existing_rows():
-    """0044 迁移：老批次补空列表默认值，不破坏既有行。"""
+    """0045 迁移：老批次补空列表默认值，不破坏既有行。"""
     import runpy
     from pathlib import Path
     import sqlalchemy as sa

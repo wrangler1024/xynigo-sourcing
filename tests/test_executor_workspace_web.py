@@ -1466,6 +1466,29 @@ class WebCloudContractAlignmentTests(unittest.TestCase):
         self.assertIn('"submitMode":', service)
         self.assertIn('"environments": (', service)
 
+    def test_environment_results_survive_restore_and_history_detail(self):
+        """环境级结果必须在「恢复批次」与「历史详情」两条路上都看得见。
+
+        直提批次可能一行订单都没有（全 skip / 全未登录），只按 rows 判断恢复
+        会让这批结果整个消失；历史详情只写 meta 计数也看不到各环境原因。
+        """
+        html = LOCAL_HTML.read_text(encoding='utf-8')
+        restore = html[html.index('async function asLoadLatestClaim('):]
+        restore = restore[:restore.index('\n}\n')]
+        self.assertIn('data?.environments', restore)
+        self.assertIn('!restoreEnvs.length', restore,
+                      '恢复条件必须把环境级结果算进去')
+        detail = html[html.index('function asRenderClaimHistoryDetail('):]
+        detail = detail[:detail.index('\n}\n')]
+        self.assertIn('asEnvOutcomePills(', detail)
+        self.assertIn("$('asHistoryEnvOutcomes')", detail)
+        self.assertIn('读取失败', detail)
+        self.assertIn('已停止', detail)
+        # 弹层里必须有承载节点，否则渲染无处可去
+        self.assertIn('id="asHistoryEnvOutcomes"', html)
+        # 共用一套 pill 渲染，避免两处文案漂移
+        self.assertIn('function asEnvOutcomePills(', html)
+
     def test_history_routes_match_web_urls(self):
         """历史列表/详情/导出的 URL 必须与云端路由对上（路径漂移只会是 404）。"""
         html = LOCAL_HTML.read_text(encoding='utf-8')

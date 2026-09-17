@@ -23,7 +23,7 @@ const context={AS_STATE:state,AS_TYPES:[],$ : node,
 const ctx=vm.createContext(context),run=code=>vm.runInContext(code,ctx);
 function load(name){const match=new RegExp('(?:async )?function '+name+'\\([^]*?\\n}').exec(html);assert.ok(match,name);vm.runInContext(match[0],ctx);}
 for(const name of ['asParseTrackEnvironments','asSerials','asParseDirectOrders','asDirectSubmit','asScan','asCreateTask',
- 'asWriteEntryReady','asSubmitItems','asSubmitByEnvironment','asRenderEnvOutcomes','asRunIdOf','asOrderedRows',
+ 'asWriteEntryReady','asSubmitItems','asSubmitByEnvironment','asRenderEnvOutcomes','asEnvOutcomePills','asRunIdOf','asOrderedRows',
  'asSyncDirectInputMode'])load(name);
 const stopStart=html.indexOf("$('asStop').onclick =");
 vm.runInContext(html.slice(stopStart,html.indexOf('\n};',stopStart)+3),ctx);

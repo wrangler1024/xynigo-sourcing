@@ -2,6 +2,9 @@
 
 > 本文件是给评审方（Cursor）的提示词，可整段复制。**本地直评**：直接在本机 worktree 只读评审，
 > 不用 GitHub PR、不用 fetch、不改代码。
+>
+> **首轮评审已完成（结论「改后合并」），四项必修与建议项整改记录见
+> `docs/20260917_售后按环境单遍直提.md` §7；复评看相对功能提交 `07de7c6` 的增量即可。**
 
 请评审本轮改动：③「按环境提交」从「先扫描 → 人工核对清单 → 再提交」**改为单遍直提**。
 这同时是**写操作语义变更 + 本地执行器新增一条运行模式 + 云端协议扩展 + 一次迁移**。
@@ -142,13 +145,9 @@ PYTHONPATH=$PWD/src ~/Documents/xynigo-sourcing/cloud/auth-service/.venv/bin/pyt
 `PYTHONPATH` 必须指到本 worktree 的 `src`，否则评的是别的源码（本单开发期就踩过：能力位枚举对不上、
 测试挂起）。
 
-**CI 现状（如实说明，评审时不要误判）**：本分支与 `main` 的最新 CI 都是红的，但失败**只出现在
-`python scripts/audit_public_release.py` 一步**，条目全部来自随 main 合入的另一条线文档
-`docs/20260917_需求_SHEIN开放平台店铺授权模块.md`（法人名 + 3 个非本机 IP），**与本单文件无关**
-（本单 rebase 前的两次运行 `35210559884`、`35212173699` 全绿）。本单相关的实际检查在最近一次运行里
-都已通过：三个 Python 版本的 `pytest`、`cloud-tests`、`windows-standard-installer`、`windows-updater`；
-红的是各 job 共用的那条 audit 步骤（含 `package-smoke`、`macos-package`）。**合并前需先由该文件所属
-工作线清理，否则任何分支的 CI 都无法转绿。**
+**CI 现状**：分支已 rebase 到含脱敏修复的 `origin/main`，`python scripts/audit_public_release.py`
+本地通过、CI（push 触发：3.9/3.11/3.12 单测、cloud-tests、双平台打包）在本分支最新提交上运行。
+评审只看代码时可直接采用本机两套全量的结果（见上）。
 
 ## 真机验证清单（本单未做，评审通过后按序执行）
 

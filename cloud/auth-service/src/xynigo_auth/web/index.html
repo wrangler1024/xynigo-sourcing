@@ -2477,7 +2477,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         </div>
       </div>
 
-      <!-- 按环境实时扫描后确认提交；完整订单输入仍逐单核验可退性。 -->
+      <!-- 按环境单遍直提（一次确认后逐个环境发现并提交）；完整订单输入仍逐单核验可退性。 -->
       <div class="as-manual-entry">
         <div class="as-manual-heading">
           <label class="as-manual-label" for="asDirectOrders">指定订单提交</label>
@@ -3783,6 +3783,8 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
             <button class="btn" id="asHistoryExport" type="button">导出 Excel</button>
           </div>
         </div>
+        <!-- 按环境直提的环境级结果：无入口/未登录/失败的环境没有订单行，只有这里能看到 -->
+        <div id="asHistoryEnvOutcomes" class="as-env-outcomes" hidden style="padding:0 19px 8px; display:flex; flex-wrap:wrap; gap:6px;"></div>
         <div class="query-history-detail-table"><table style="min-width:1250px"><thead><tr>
           <th>环境序号</th><th>订单号</th><th style="width:46px">商品图</th><th>售后类型</th><th>送达时间</th><th>退款单号</th><th>退款路径</th><th>退款信用卡</th><th>状态</th><th>操作时间</th><th>备注</th>
         </tr></thead><tbody id="asHistoryDetailBody"></tbody></table></div>
@@ -4581,6 +4583,7 @@ function cloudApiError(payload, status) {
     executor_after_sale_phase_upgrade_required:'请升级执行器以准确读取五步退款进度及审核补证状态',
     executor_after_sale_evidence_upgrade_required:'请升级执行器以支持提交回执核验、完整商品信息和操作完成时间',
     executor_after_sale_receipt_upgrade_required:'请升级执行器以支持退款凭证补查和重复提交保护',
+    executor_after_sale_environment_upgrade_required:'请升级执行器以支持「按环境提交」（单遍直提）；升级前该入口不可用，其它提交方式不受影响',
     after_sale_receipt_reconciliation_required:'订单有待核对的提交结果，请先核对已有退款记录，不能直接补提',
     executor_after_sale_runtime_upgrade_required:'请先升级本地执行器，以支持售后无头模式和环境并发设置',
     executor_upgrade_required:'所选执行器版本过旧，请先在线更新到 v0.13.18 或更高版本',
@@ -5532,7 +5535,10 @@ async function asLoadLatestClaim() {
     const data = (res || {}).data;
     const rows = (data && data.rows) || [];
     const active = ['created','queued','leased','running'].includes(data?.status);
-    if (!asRunIdOf(data) || (!active && !rows.length)) return;
+    const restoreEnvs = Array.isArray(data?.environments) ? data.environments : [];
+    // 按环境直提的批次可能一行订单都没有（全 skip / 全未登录），
+    // 环境级结果就是它的全部结果，不能因为 rows 为空就不恢复
+    if (!asRunIdOf(data) || (!active && !rows.length && !restoreEnvs.length)) return;
     // 请求返回前可能已发起新批次，不能让旧批次覆盖当前展示与导出对象。
     if (AS_STATE.starting || AS_STATE.running || AS_STATE.runId || (AS_STATE.claimRows || []).length) return;
     const envMode = data?.submitMode === 'environments';
@@ -5563,8 +5569,10 @@ async function asLoadLatestClaim() {
       asPoll();
       return;
     }
-    asSetPhase('已恢复最近提交批次',
-      `共 ${rows.length} 单（有退款单号的可在③退款跟踪中回访）`, false);
+    asSetPhase('已恢复最近提交批次', envMode
+      ? `按环境直提 ${data.progressTotal ?? data.totalCount ?? restoreEnvs.length} 个环境`
+        + (rows.length ? `，已返回 ${rows.length} 单明细` : '，本批没有订单行（环境级结果见下）')
+      : `共 ${rows.length} 单（有退款单号的可在③退款跟踪中回访）`, false);
   } catch (e) {
     // 本地模式没有该路由（404）：静默跳过，不影响页面其它功能
   }
@@ -6520,6 +6528,8 @@ async function asOpenClaimHistoryDetail(runId) {
   $('asHistoryDetailMeta').textContent = '正在读取批次详情…';
   $('asHistoryDetailBody').innerHTML =
     '<tr><td colspan="11" class="query-history-empty">正在读取…</td></tr>';
+  const envBox = $('asHistoryEnvOutcomes');
+  if (envBox) { envBox.hidden = true; envBox.innerHTML = ''; }
   try {
     const res = await cloudFetchJson(
       '/v1/operation-runs/after-sale-claim/history/' + encodeURIComponent(runId));
@@ -6546,17 +6556,36 @@ function asRenderClaimHistoryDetail(data) {
     esc(String(batch.createdAt || '').replace('T', ' ').slice(0, 16)),
   ];
   if (envMode && (data.environments || []).length) {
-    const skipped = data.environments
+    const envRows = data.environments;
+    const skipped = envRows
       .filter(row => ['skip', 'blocked'].includes(String(row.status || ''))).length;
+    const bad = envRows
+      .filter(row => ['fail', 'login', 'inuse'].includes(String(row.status || ''))).length;
+    const stopped = envRows
+      .filter(row => String(row.status || '') === 'stopped').length;
     if (skipped) bits.push(`${skipped} 个环境无可申请售后`);
+    if (bad) bits.push(`${bad} 个环境读取失败`);
+    if (stopped) bits.push(`${stopped} 个环境已停止`);
   }
   if (batch.retryFromRunId) {
     bits.push(`重提自 ${esc(asShortRef(batch.retryFromRunId))}`);
   }
   $('asHistoryDetailMeta').innerHTML = bits.join(' · ');
+  // 环境级结果逐条展示：无入口/未登录/读取失败/已停止的环境没有订单行，
+  // 只靠订单行详情会把它们整个丢掉
+  const envBox = $('asHistoryEnvOutcomes');
+  if (envBox) {
+    const envRows = envMode ? (data.environments || []) : [];
+    envBox.hidden = !envRows.length;
+    envBox.innerHTML = envRows.length
+      ? '<span class="hint" style="align-self:center">环境结果</span> '
+        + asEnvOutcomePills(envRows) : '';
+  }
   $('asHistoryDetailBody').innerHTML = rows.length
     ? rows.map(asClaimRowHtml).join('')
-    : '<tr><td colspan="11" class="query-history-empty">该批次没有结果行</td></tr>';
+    : '<tr><td colspan="11" class="query-history-empty">该批次没有结果行'
+      + (envMode && (data.environments || []).length
+        ? '（无可申请订单，环境级结果见上方）' : '') + '</td></tr>';
   const trackable = asTrackItemsFromRows(rows).length;
   $('asHistoryTrack').disabled = AS_STATE.running || AS_STATE.starting || !trackable;
   $('asHistoryTrack').textContent = trackable
@@ -6801,10 +6830,6 @@ async function asSubmitItems(items, options) {
     await asRequireRuntimeControls(executor);
   }
   catch (e) { asSetPhase('执行器不可用', e.message || '无法发起售后提交', false); return false; }
-  if (opts.expectedExecutorId && executor.id !== opts.expectedExecutorId) {
-    asSetPhase('执行器已变化', '当前执行器与扫描时不同，请重新按环境扫描并核对后提交。', false);
-    return false;
-  }
   try {
     const res = await asCreateTask('/v1/operation-runs/after-sale-claim', envSerials
       ? {executorId: executor.id, browserMode: runtime.browserMode, concurrency: runtime.concurrency, environmentSerials: envSerials}
@@ -6994,19 +7019,17 @@ function asSyncDirectInputMode() {
     : '每组填环境序号、订单号，以空格分隔；多组用中英文分号或换行分隔。提交前仍会核验可申请状态；需先查看金额和包裹数，可使用上方扫描。';
 }
 // 环境级结果条：无入口跳过的环境不会出现在订单行里，只能在这里看到反馈。
-function asRenderEnvOutcomes(environments) {
-  const box = $('asEnvOutcomes');
-  if (!box) return;
+// 环境结果的 pill 串：按环境直提的「本次提交」条与历史详情共用一套文案/配色，
+// 无入口跳过、未登录/读取失败、已停止都在这里逐条看得见。
+function asEnvOutcomePills(environments) {
   const rows = environments || [];
-  AS_STATE.environments = rows;
-  if (!rows.length) { box.hidden = true; box.innerHTML = ''; return; }
+  if (!rows.length) return '';
   const labels = {ok:'已提交', blocked:'均不可申请', skip:'无售后入口', fail:'失败',
     login:'未登录', inuse:'环境占用', stopped:'已停止', queued:'排队中', running:'进行中',
     uncertain:'待核对', empty:'无订单', verifying:'核验中'};
   const tones = {ok:'ok', blocked:'warn', skip:'warn', fail:'bad', login:'bad',
     inuse:'bad', uncertain:'warn', stopped:'warn'};
-  box.hidden = false;
-  box.innerHTML = rows.map(row => {
+  return rows.map(row => {
     const tone = tones[row.status] || 'run';
     const label = labels[row.status] || row.status || '进行中';
     const counts = ['submittedCount','blockedCount','failedCount']
@@ -7017,6 +7040,14 @@ function asRenderEnvOutcomes(environments) {
       + `${esc(String(row.environmentSerial || ''))} ${esc(label)}`
       + (counts ? ` <small>${esc(counts)}</small>` : '') + '</span>';
   }).join(' ');
+}
+function asRenderEnvOutcomes(environments) {
+  const box = $('asEnvOutcomes');
+  if (!box) return;
+  const rows = environments || [];
+  AS_STATE.environments = rows;
+  box.hidden = !rows.length;
+  box.innerHTML = asEnvOutcomePills(rows);
 }
 function asOrderedRows(items, rows, key) {
   if (!items || !items.length) return rows || [];

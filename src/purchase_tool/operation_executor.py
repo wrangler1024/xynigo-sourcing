@@ -1100,6 +1100,9 @@ class LocalOperationExecutor(object):
         环境级跳过（无入口）不与订单级 skipped 混算——它随 environments
         行单独回传与落库；成功/失败订单数为 0 而全部环境 skip 时整批仍算
         completed（跳过不是故障，与按单提交的 blocked 口径一致）。
+        **但环境级的 fail/login/inuse 是故障**：它们不产生订单行，若只看
+        订单行，「10 个环境全部未登录」会被报成 completed。因此环境级失败
+        参与终态：全失败→failed、与成功并存→partial_failure。
         """
         env_rows = env_rows or []
         order_rows = order_rows or []
@@ -1115,6 +1118,9 @@ class LocalOperationExecutor(object):
                        for row in env_rows)
         env_stopped = sum(row.get('status') == 'stopped'
                           for row in env_rows)
+        env_bad = sum(row.get('status') in ('fail', 'login', 'inuse')
+                      for row in env_rows)
+        hard = failed + env_bad
         if (uncertain
                 or len(env_rows) != total
                 or any(row.get('status') not in AFTER_SALE_TERMINAL_STATES
@@ -1122,11 +1128,11 @@ class LocalOperationExecutor(object):
                 or any(row.get('status') not in AFTER_SALE_TERMINAL_STATES
                        for row in order_rows)):
             run_status = 'uncertain'
-        elif env_stopped and not success and not failed:
+        elif env_stopped and not success and not hard:
             run_status = 'cancelled'
-        elif failed and success:
+        elif hard and success:
             run_status = 'partial_failure'
-        elif failed:
+        elif hard:
             run_status = 'failed'
         else:
             run_status = 'completed'
@@ -1173,8 +1179,10 @@ class LocalOperationExecutor(object):
                 elif field == 'errorSummary':
                     row[field] = (str(value).strip()[:300]
                                   if value is not None else None)
-                elif field == 'durationSeconds' and value is not None:
-                    row[field] = max(0, int(value))
+                elif field == 'durationSeconds':
+                    # 排队/进行中没跑完就是没跑完：None 不能被收成 0 秒
+                    row[field] = (None if value is None
+                                  else max(0, int(value)))
                 elif field in cls._AFTER_SALE_ENV_TEXT_LIMITS:
                     row[field] = str(
                         value or '')[:cls._AFTER_SALE_ENV_TEXT_LIMITS[field]]

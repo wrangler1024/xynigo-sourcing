@@ -956,8 +956,10 @@ class AfterSaleClaimer(object):
                 if self._stop_event.is_set():
                     return
                 if index:
-                    # 同一环境内逐单串行并随机停顿，贴近人工节奏
-                    time.sleep(random.uniform(*self._order_stagger))
+                    # 同一环境内逐单串行并随机停顿，贴近人工节奏（停止可打断）
+                    if self._stop_event.wait(
+                            random.uniform(*self._order_stagger)):
+                        return
                 self._claim_item_guarded(page, serial, item)
         finally:
             if opened_by_me:
@@ -1006,6 +1008,14 @@ class AfterSaleClaimer(object):
             for serial in serials
         ], stagger=self._stagger)
         with self._lock:
+            # 批末安全网与按单提交同款：写入意图未核验的进 uncertain，
+            # 未收尾的行落 stopped，避免页面上永远停在「提交核验中」
+            for order_no, row in self._claim_rows.items():
+                if row.get('status') == 'verifying':
+                    row.update(status='uncertain',
+                               errorSummary='提交核验未完成，请先核对退款记录，不可直接补提')
+                elif row.get('status') in CLAIM_RUNNING_STATES:
+                    row['status'] = 'stopped'
             for serial in serials:
                 row = self._claim_env_rows.get(serial) or {}
                 if row.get('status') in ('queued', 'running'):
@@ -1041,6 +1051,13 @@ class AfterSaleClaimer(object):
                     errorSummary='买家端未登录（环境登录态缺失，请先登录该环境）')
                 return
             cards = self._read_all_order_cards(page)
+            if self._stop_event.is_set():
+                # 读列表被停止打断时拿到的是残缺列表：写操作里绝不能把
+                # 「没读完」当成「没有入口」，也不在列表不完整时新开提交
+                self._finish_env_row(
+                    serial, 'stopped', started,
+                    note='已请求停止，订单列表未确认；本次未提交')
+                return
             candidates = []
             for card in cards:
                 parsed = parse_order_card(card.get('text') or '')
@@ -1057,12 +1074,18 @@ class AfterSaleClaimer(object):
                 self._finish_env_row(serial, 'skip', started,
                                      note='未发现丢件退款入口，环境跳过')
                 return
+            remaining = 0
             for index, (card, parsed) in enumerate(candidates):
                 if self._stop_event.is_set():
+                    remaining = len(candidates) - index
                     break
                 if index:
-                    # 同环境逐单串行并随机停顿，与勾选提交同一节奏
-                    time.sleep(random.uniform(*self._order_stagger))
+                    # 同环境逐单串行并随机停顿，与勾选提交同一节奏；
+                    # 停顿可被停止打断，不再sleep完才看停止标志
+                    if self._stop_event.wait(
+                            random.uniform(*self._order_stagger)):
+                        remaining = len(candidates) - index
+                        break
                 item = self._env_claim_item(serial, env, page, card, parsed)
                 # 按单提交的行走建批次时初始化；直提的行是动态发现的，
                 # 身份字段必须在这里先落，否则上行投影缺 orderNo 会被云端拒收
@@ -1077,18 +1100,23 @@ class AfterSaleClaimer(object):
                 self._count_env_result(serial, after)
             with self._lock:
                 row = self._claim_env_rows.get(serial) or {}
-            if row.get('submittedCount'):
+            if self._stop_event.is_set():
+                # 还有候选没跑完（或停止发生在收尾前）：环境级状态是直提
+                # 唯一的剩余信号——订单行只覆盖已尝试的单，不能报 ok
+                status = 'stopped'
+                note = ('已停止，剩余 %d 单未处理' % remaining) if remaining \
+                    else '已停止'
+            elif row.get('submittedCount'):
                 status = 'ok'
+                note = ''
             elif row.get('failedCount'):
                 status = 'fail'
+                note = ''
             elif row.get('blockedCount'):
                 status = 'blocked'
+                note = '入口订单均无可申请丢件退款包裹（已跳过，未重复提交）'
             else:
                 status = 'stopped'
-            note = ''
-            if status == 'blocked':
-                note = '入口订单均无可申请丢件退款包裹（已跳过，未重复提交）'
-            elif status == 'stopped':
                 note = '已停止，剩余订单未处理'
             self._finish_env_row(serial, status, started, note=note)
         except Exception as exc:
@@ -1577,10 +1605,10 @@ class AfterSaleClaimer(object):
             ready = ('(() => { const s=%s; return s.ready%s; })()'
                      % (_JS_ORDER_LIST_STATE, changed))
             if not page.wait_for(ready, timeout=30):
-                raise RuntimeError('所有订单列表未就绪或翻页未完成，请重试扫描')
+                raise RuntimeError('所有订单列表未就绪或翻页未完成，请重试')
             self._scroll_orders_list(page)
             if not page.wait_for(ready, timeout=15):
-                raise RuntimeError('所有订单列表仍在加载，请重试扫描')
+                raise RuntimeError('所有订单列表仍在加载，请重试')
             # 已观察到：入口已渲染，但送达日期稍后才补上。有限等待展示字段，
             # 日期始终缺失也不据此排除有入口的订单，可申请性仍以接口为准。
             scan_js = _JS_SCAN_ORDERS % json.dumps(ORDER_ENTRY_KEY)
@@ -1598,9 +1626,9 @@ class AfterSaleClaimer(object):
                     raw_cards = retry_cards
                 state = page.js_evaluate(_JS_ORDER_LIST_STATE) or {}
             if not state.get('ready') or not isinstance(raw_cards, list):
-                raise RuntimeError('所有订单列表读取失败，请重试扫描')
+                raise RuntimeError('所有订单列表读取失败，请重试')
             if not raw_cards and not state.get('empty'):
-                raise RuntimeError('未读到订单卡片，也未确认空列表，请重试扫描')
+                raise RuntimeError('未读到订单卡片，也未确认空列表，请重试')
             for card in raw_cards:
                 parsed = parse_order_card(card.get('text') or '') if isinstance(card, dict) else None
                 if not parsed:
@@ -1621,7 +1649,7 @@ class AfterSaleClaimer(object):
                 return list(cards.values())
             previous_signature = state.get('signature')
             if not self._click(page, '.j-order-list .sui-pagination__next'):
-                raise RuntimeError('所有订单列表翻页失败，请重试扫描')
+                raise RuntimeError('所有订单列表翻页失败，请重试')
         raise RuntimeError('所有订单页数超出扫描上限，请人工核对，未确认扫描完整')
 
     def _scan_pre_info(self, page, order_no):
@@ -1636,10 +1664,10 @@ class AfterSaleClaimer(object):
         try:
             page.js_evaluate(_JS_SCAN_PRE_INFO % request_json)
             if not page.wait_for(result_js, timeout=20):
-                raise RuntimeError('可申请性查询超时，请重试扫描')
+                raise RuntimeError('可申请性查询超时，请重试')
             result = page.js_evaluate(result_js)
             if not isinstance(result, dict) or result.get('error'):
-                raise RuntimeError('可申请性查询失败或订单页面已切换，请重试扫描')
+                raise RuntimeError('可申请性查询失败或订单页面已切换，请重试')
             return validate_scan_pre_info(result.get('response'))
         finally:
             try:

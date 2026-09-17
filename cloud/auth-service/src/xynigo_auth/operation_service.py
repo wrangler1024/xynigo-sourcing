@@ -654,17 +654,19 @@ class OperationRunService:
         return snapshot
 
     def _after_sale_claim_environment_counts(self, run_ids: list) -> dict:
-        """批次环境数＝该批次结果行去重 environment_serial（不新增表/列）。
+        """批次环境数：按单批次＝结果行去重 environment_serial；直提批次＝计划环境数。
 
-        统计已经回传结果行的环境，不是请求中计划涉及的环境，也不是成功环境数。
-        运行中随结果回传增加；尚无结果行时为 0。totalCount 仍保留请求订单数，
-        因此可能出现提交数大于 0、环境数为 0 的待执行批次。
+        按环境直提的订单号是执行中发现、且可能一个订单行都没有（全跳过/全未登录），
+        用结果行去重会把环境数报成 0——那正是这批结果的主体，所以直提改读
+        request_summary.environmentSerials（＝建单时的计划环境数）。totalCount 的
+        口径不变：按单批次是订单数，直提批次是环境数。
         """
         wanted = [run_id for run_id in run_ids if run_id is not None]
         if not wanted:
             return {}
         from .models import AfterSaleClaimResult as ResultModel
-        return {
+        from .models import AfterSaleClaimRun as RunModel
+        row_counts = {
             run_id: count
             for run_id, count in self.session.execute(
                 select(
@@ -675,6 +677,20 @@ class OperationRunService:
                 .group_by(ResultModel.run_id)
             )
         }
+        runs = {
+            run.id: run for run in self.session.scalars(
+                select(RunModel).where(RunModel.id.in_(wanted))
+            )
+        }
+        counts = {}
+        for run_id in wanted:
+            run = runs.get(run_id)
+            summary = (run.request_summary or {}) if run is not None else {}
+            if summary.get("mode") == "environments":
+                counts[run_id] = len(summary.get("environmentSerials") or [])
+            else:
+                counts[run_id] = row_counts.get(run_id, 0)
+        return counts
 
     def _after_sale_claim_history_item(
         self, run: AfterSaleClaimRun, actor_names: dict,
