@@ -13727,7 +13727,7 @@ function sheinAuthRenderStores() {
     <tr data-store-id="${esc(s.id)}">
       <td><span class="shein-auth-name">${sheinStoreAuthState.editingId === s.id
         ? `<input id="sheinAuthRenameInput" value="${esc(s.name)}" maxlength="30" style="padding:4px 8px;border:1px solid #cfe3e6;border-radius:6px;width:120px">`
-        : `${esc(s.name)}<button data-act="rename" title="修改店铺名称" type="button">✎</button>`}</span></td>
+        : `${esc(s.name)}${admin ? '<button data-act="rename" title="修改店铺名称" type="button">✎</button>' : ''}`}</span></td>
       <td><span class="shein-auth-type ${s.mode}">${SHEIN_AUTH_APPS[s.mode] ? SHEIN_AUTH_APPS[s.mode].label : s.mode}</span></td>
       <td>${esc(s.merchantId)}</td>
       <td><span class="shein-auth-key">${esc(s.openKeyId)}</span></td>
@@ -13737,7 +13737,7 @@ function sheinAuthRenderStores() {
       <td>${sheinAuthStatusBadge(s.status)}</td>
       <td><span class="shein-auth-row-actions">
         <button class="btn" data-act="verify" type="button">验证</button>
-        <button class="btn" data-act="reauth" type="button">重新授权</button>
+        ${admin ? '<button class="btn" data-act="reauth" type="button">重新授权</button>' : ''}
         ${admin ? '<button class="btn danger" data-act="delete" type="button">删除</button>' : ''}
       </span></td>
     </tr>`).join('');
@@ -14031,6 +14031,7 @@ function initSheinStoreAuthPage() {
     if (!store) return;
     const act = btn.dataset.act;
     if (act === 'rename') {
+      if (!sheinAuthCanManage()) { toast('仅管理员可修改店铺名称'); return; }
       sheinStoreAuthState.editingId = store.id;
       sheinAuthRenderStores();
       const input = $('sheinAuthRenameInput');
@@ -14078,6 +14079,7 @@ function initSheinStoreAuthPage() {
         toast(`「${store.name}」连接验证通过`);
       }, 700);
     } else if (act === 'reauth') {
+      if (!sheinAuthCanManage()) { toast('仅管理员可发起重新授权'); return; }
       if (sheinAuthCloud) {
         // 带 storeId：回调优先更新该行，店铺信息接口失败也不会裂行（评审必须改 #1）。
         cloudFetchJson('/v1/shein-auth/link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: store.mode, storeId: store.id }) })
