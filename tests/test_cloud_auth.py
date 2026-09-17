@@ -1174,34 +1174,15 @@ class AuthRouteGuardTests(unittest.TestCase):
             urlopen(rejected, timeout=3)
         self.assertEqual(caught.exception.code, 401)
 
-    def test_regular_member_device_config_only_requires_login(self):
-        calls = []
-
-        def require(permission=None, role=None):
-            calls.append((permission, role))
-            return {
-                'user': {'id': 'member-test'},
-                'roles': ['member'],
-                'permissions': [],
-            }
-
-        main_module.STATE.auth = SimpleNamespace(require=require)
-        request = Request(
-            self._url('/api/config'),
-            data=b'{}', method='POST',
-            headers={'Content-Type': 'application/json'},
-        )
-        # 裸 STATE 无法走完保存链路；本用例只验证角色闸门已移除：
-        # 已登录成员不再收到 401/403，且鉴权仅剩登录检查本身。
-        try:
-            with urlopen(request, timeout=3) as response:
-                self.assertEqual(response.status, 200)
-        except HTTPError as outcome:
-            self.assertNotIn(outcome.code, (401, 403))
-        self.assertTrue(calls)
-        self.assertTrue(
-            all(permission is None and role is None
-                for permission, role in calls))
+    def test_device_config_paths_stay_out_of_permission_maps(self):
+        # 本机设备设置对所有登录成员开放：/api/config 与 /api/hub-api-key
+        # 刻意不入路径权限表，缺席即只做登录校验（见 main.py 表内注释）。
+        # 若有人把路径加回表中，本用例会失败，避免静默恢复角色门槛。
+        for path in ('/api/config', '/api/hub-api-key'):
+            self.assertNotIn(path, main_module.AUTH_PERMISSION_BY_PATH)
+            self.assertFalse(any(
+                path.startswith(prefix)
+                for prefix, _ in main_module.AUTH_PERMISSION_BY_PREFIX))
 
     def test_business_log_route_requires_login_and_forwards_only_relative_path(self):
         forwarded = []

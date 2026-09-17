@@ -3202,7 +3202,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
   <div class="module-panel hidden" id="settingsPanel">
     <section class="card settings-view" data-settings-view="localsettings">
       <div class="card-title">通用与查询设置 <span class="legend">仅保存在当前电脑</span></div>
-      <div class="credential-note" id="localSettingsPermissionNote">设备运行参数仅允许超级管理员修改；其他成员可在下方管理自己的采购助手个人数据源。</div>
+      <div class="credential-note" id="localSettingsPermissionNote">设备运行参数仅保存在当前电脑，所有登录成员均可修改；下方还可管理自己的采购助手个人数据源。</div>
       <div class="settings-grid">
         <div class="settings-field">
           <label>HubStudio Local API 端口</label>
@@ -16268,8 +16268,8 @@ async function loadLocalSettingsPage() {
     $('cfgProxyState').textContent = cfg.proxySource === 'custom'
       ? '当前使用自定义代理链接；留空保存保持不变，勾选清除恢复内置默认。'
       : '已内置默认提取链接（前期写死），可直接使用；仅需要自定义时填写。';
-    const canWriteDeviceConfig = hasRole('super_admin')
-      && hasPermission('system.integration.manage');
+    // 本机运行参数向所有登录成员开放（20260917 产品决策），不再按角色锁定。
+    const canWriteDeviceConfig = !!authIdentity;
     [
       'cfgPort', 'cfgConcurrency', 'cfgSafeParallel', 'cfgHideEnvName',
       'cfgHideIp', 'cfgEnvVerify', 'cfgEnvWorkers', 'cfgPurchaseTagMX',
@@ -16277,7 +16277,7 @@ async function loadLocalSettingsPage() {
     ].forEach(id => { $(id).disabled = !canWriteDeviceConfig; });
     $('btnCfgSave').disabled = !canWriteDeviceConfig;
     $('btnCfgSave').textContent = canWriteDeviceConfig
-      ? '保存本机业务设置' : '仅超级管理员可修改';
+      ? '保存本机业务设置' : '请先登录';
     await loadLocalDataSources();
     return true;
   } catch (e) {
@@ -16450,8 +16450,8 @@ async function loadLarkConnectionPage() {
 }
 
 $('btnCfgSave').onclick = async () => {
-  if (!(hasRole('super_admin') && hasPermission('system.integration.manage'))) {
-    toast('设备运行参数仅允许超级管理员修改');
+  if (!authIdentity) {
+    toast('请先登录后再保存本机设置');
     return;
   }
   const port = parseInt($('cfgPort').value.trim(), 10);

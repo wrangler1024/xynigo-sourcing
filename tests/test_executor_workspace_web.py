@@ -67,6 +67,18 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         ):
             self.assertIn(marker, html)
 
+    def test_device_settings_editing_is_open_to_members(self):
+        # 兼容页（Windows「本机设置」/ macOS ?view=localsettings）与桌面端一致：
+        # 写入只要求登录，不再按超级管理员角色锁定（20260917 产品决策）。
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        for marker in (
+            "const canWriteDeviceConfig = !!authIdentity;",
+            "所有登录成员均可修改",
+        ):
+            self.assertIn(marker, html)
+        self.assertNotIn(
+            "canWriteDeviceConfig = hasRole('super_admin')", html)
+
     def test_cloud_workspace_routes_business_calls_through_new_executor(self):
         html = LOCAL_HTML.read_text(encoding="utf-8")
         for marker in (

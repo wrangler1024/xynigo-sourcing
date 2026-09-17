@@ -402,14 +402,16 @@
   }
   function renderSettings() {
     var cfg = currentConfig();
+    // canConfigure() 对已登录成员恒真，locked 在本页恒为 false，保留作回收钩子；
+    // 若未来重启锁定，文案不得再写死“采购员”——管理员同样会命中该分支。
     var locked = !canConfigure();
     var cloudIntegrationVisible = roleInfo().superAdmin && hasPermission('system.lark_connection.manage');
     var secureStore = platform === 'mac' ? 'Keychain' : 'CurrentUser DPAPI';
     var actions = '<span class="pill" style="border:1px solid #e2e8f0;background:#fff;color:#475569">' + (locked ? '采购员 · 只读' : '配置 rev · ' + safeId(cfg.configRevision)) + '</span>' + button('保存更改','save-settings','check','primary',locked);
-    var readOnly = locked ? '<section class="notice-strip span-2">' + icon('lock') + '<div><b>普通采购员仅可查看设备级设置</b><p>运行参数和 HubStudio Key 需要超级管理员修改。你仍可在“采购助手数据源”配置自己的个人速填表。</p></div></section>' : '';
+    var sharedNotice = '<section class="notice-strip span-2">' + icon('user') + '<div><b>本机设置由这台电脑上的所有登录成员共享</b><p>运行参数与 HubStudio Key 只保存在本机；保存后立即对本机执行器生效。</p></div></section>';
     var cloudIntegrationCard = cloudIntegrationVisible ?
       '<section class="card section-card span-2">' + sectionTitle('key','飞书企业应用连接','组织级配置由云端工作台统一管理','云端加密') + '<div class="section-body stack"><div class="connection-box"><span class="connection-check">' + icon('shield') + '</span><div><b>本机不保存 App ID 或 App Secret</b><span>企业应用凭证仅由超级管理员在云端配置一次；执行器通过授权代理读取所需数据，Secret 永不下发。</span></div>' + button('打开云端服务配置','open-cloud','arrow','primary') + '</div></div></section>' : '';
-    return header('settings',actions) + '<div class="content two-column">' + readOnly +
+    return header('settings',actions) + '<div class="content two-column">' + sharedNotice +
       '<section class="card section-card">' + sectionTitle('gauge','运行参数','控制本机执行器并发、抽检与安全模式','仅保存在本机') + '<div class="section-body field-grid">' +
       field('cfg-hub-port','HubStudio Local API 端口',cfg.hubPort || 6873,'范围 1–65535','number',locked) + concurrencyField('cfg-concurrency','订单查询并发',cfg.concurrency,'默认 2，可选 2 / 3 / 5',locked) + concurrencyField('cfg-env-workers','建环境并发',cfg.envCreateWorkers,'默认 2；实际并发受安全并行策略封顶',locked) + field('cfg-verify','新建完成抽检数',cfg.verifySampleCount == null ? 1 : cfg.verifySampleCount,'0 表示不执行抽检','number',locked) +
       '<label class="toggle-row"><div><b>安全并行</b><p>允许物流查询与一种环境创建任务并行，同一环境仍禁止双开。</p></div><input id="cfg-safe" class="switch" type="checkbox"' + (cfg.safeParallelTasks !== false ? ' checked' : '') + (locked ? ' disabled' : '') + '></label></div></section>' +

@@ -28,6 +28,12 @@ class DesktopUIContractTests(unittest.TestCase):
         self.assertIn('flex: 0 0 224px', self.css)
         self.assertIn('grid-template-columns:repeat(4', self.css)
 
+    def test_settings_page_states_shared_device_config(self):
+        # 本机配置对所有登录成员开放：不应再出现锁定文案，
+        # 并常驻一条“多人共用同一份本机设置”的说明。
+        self.assertIn('本机设置由这台电脑上的所有登录成员共享', self.javascript)
+        self.assertNotIn('普通采购员仅可查看设备级设置', self.javascript)
+
     def test_ui_uses_real_local_apis_without_exposing_launcher_token(self):
         for path in (
                 '/executor-status.json', '/api/auth/status',
