@@ -157,7 +157,7 @@ class SheinStoreAuthService:
             store_id=target_store_id,
             store_label="（新店铺）" if not target_store_id else "重新授权",
             ok=True,
-            note=f"生成{'自营' if mode == 'self' else '半托管'}授权链接，"
+            note=f"生成{'SHEIN 自营' if mode == 'self' else 'SHEIN 半托管'}授权链接，"
                  f"state 尾号 {state[-6:]}",
         )
         session.flush()

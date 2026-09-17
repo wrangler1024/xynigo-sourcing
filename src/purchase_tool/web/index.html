@@ -3577,8 +3577,8 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
           <input type="search" id="sheinAuthSearch" placeholder="搜索：店铺名称 / 商家ID" autocomplete="off" aria-label="搜索店铺">
           <select id="sheinAuthTypeFilter" aria-label="按店铺类型筛选">
             <option value="">全部类型</option>
-            <option value="self">自营</option>
-            <option value="semi">半托管</option>
+            <option value="self">SHEIN 自营</option>
+            <option value="semi">SHEIN 半托管</option>
           </select>
           <button class="btn" id="btnSheinAuthRefresh" type="button">刷新</button>
           <button class="btn primary" id="btnSheinAuthCreate" type="button">生成授权链接</button>
@@ -13595,8 +13595,8 @@ $('runtimeHelpEntry').onclick = () => toast('请先检查底部运行状态；�
 let sheinStoreAuthState = null;
 let sheinAuthCloud = null; // null=未探测 true=云端接口 false=本地 Mock
 const SHEIN_AUTH_APPS = {
-  self: { label: '自营', appid: '1636F90749001A002A60B0C187361' },
-  semi: { label: '半托管', appid: 'SEMI_APPID_PENDING' }
+  self: { label: 'SHEIN 自营', appid: '1636F90749001A002A60B0C187361' },
+  semi: { label: 'SHEIN 半托管', appid: 'SEMI_APPID_PENDING' }
 };
 const SHEIN_AUTH_STORE_KEY = 'xynigoSheinStoreAuthProtoV2';
 let sheinAuthPageSize = 10;
@@ -13880,8 +13880,8 @@ function initSheinStoreAuthPage() {
     if (!sheinAuthIsAdmin()) { toast('仅管理员可发起店铺授权'); return; }
     sheinAuthPrompt('生成店铺授权链接', [
       { id: 'ssaMode', label: '店铺类型', type: 'select', options: [
-        { value: 'self', label: '自营（Xynigo ERP（自运营）应用）' },
-        { value: 'semi', label: '半托管（应用待创建，原型占位）' }
+        { value: 'self', label: 'SHEIN 自营（Xynigo ERP（自运营）应用）' },
+        { value: 'semi', label: 'SHEIN 半托管（应用待创建，原型占位）' }
       ], hint: '自营与半托管分别对应不同的开放平台应用；链接需由对应店铺的主账号完成授权。' }
     ], values => {
       const mode = values.ssaMode || 'self';
