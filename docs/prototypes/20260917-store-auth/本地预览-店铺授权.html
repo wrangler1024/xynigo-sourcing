@@ -1486,6 +1486,9 @@
   /* 店铺授权（SHEIN 开放平台） */
   .shein-auth-toolbar { display: inline-flex; align-items: center; gap: 8px; }
   .shein-auth-toolbar select { padding: 6px 10px; border: 1px solid #d6e0e8; border-radius: 8px; background: #fff; font-size: 12px; color: var(--navy-900, #16324a); }
+  .shein-auth-toolbar input[type="search"] { width: 210px; padding: 6px 10px; border: 1px solid #d6e0e8; border-radius: 8px; background: #fff; font-size: 12px; color: var(--navy-900, #16324a); outline: none; }
+  .shein-auth-toolbar input[type="search"]:focus { border-color: var(--primary, #2f6fed); }
+  .shein-auth-pagination { margin-top: 12px; }
   .shein-auth-guide { margin-top: 14px; }
   .shein-auth-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
   .shein-auth-step { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border: 1px solid #e3ecf1; border-radius: 10px; background: #f8fbfd; font-size: 12px; }
@@ -3569,6 +3572,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
       <div class="card-title table-title-row">
         <span>店铺授权 <span class="legend">SHEIN 开放平台店铺凭证管理 · 密钥加密保存</span></span>
         <span class="shein-auth-toolbar">
+          <input type="search" id="sheinAuthSearch" placeholder="搜索：店铺名称 / 商家ID" autocomplete="off" aria-label="搜索店铺">
           <select id="sheinAuthTypeFilter" aria-label="按店铺类型筛选">
             <option value="">全部类型</option>
             <option value="self">自营</option>
@@ -3608,6 +3612,15 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
           </tr></thead>
           <tbody id="sheinAuthTbody"><tr><td colspan="9" class="admin-empty">尚未读取授权店铺</td></tr></tbody>
         </table>
+      </div>
+
+      <div class="procurement-pagination shein-auth-pagination">
+        <span class="procurement-pagination-copy" id="sheinAuthPageInfo">第 1 页 · 共 0 家</span>
+        <div class="procurement-pagination-actions">
+          <button class="btn-mini" id="btnSheinAuthPrev" type="button" disabled>上一页</button>
+          <span id="sheinAuthPageIndicator">1 / 1 页</span>
+          <button class="btn-mini" id="btnSheinAuthNext" type="button" disabled>下一页</button>
+        </div>
       </div>
 
       <div class="card-title table-title-row" style="margin-top:18px">
@@ -13579,28 +13592,40 @@ const SHEIN_AUTH_APPS = {
   self: { label: '自营', appid: '1636F90749001A002A60B0C187361' },
   semi: { label: '半托管', appid: 'SEMI_APPID_PENDING' }
 };
-const SHEIN_AUTH_STORE_KEY = 'xynigoSheinStoreAuthProtoV1';
+const SHEIN_AUTH_STORE_KEY = 'xynigoSheinStoreAuthProtoV2';
+const SHEIN_AUTH_PAGE_SIZE = 10;
+let sheinAuthPage = 1;
 
 function sheinStoreAuthSeed() {
   const now = Date.now();
   const day = 24 * 3600 * 1000;
+  const mk = (id, name, mode, merchantId, key, firstD, latestD, verifyH, status) => ({
+    id, name, mode, merchantId, openKeyId: key,
+    firstAt: now - firstD * day, latestAt: now - latestD * day,
+    lastVerifiedAt: verifyH == null ? null : now - verifyH * 3600 * 1000, status
+  });
   return {
     stores: [
-      { id: 'st-1', name: '观潮', mode: 'self', merchantId: '18301880', openKeyId: '33F87761****95C2',
-        firstAt: now - 1 * day, latestAt: now - 1 * day, lastVerifiedAt: now - 3600 * 1000, status: 'ok' },
-      { id: 'st-2', name: '都市绿洲', mode: 'self', merchantId: '18310255', openKeyId: '9E41A8B****3DB6',
-        firstAt: now - 2 * 3600 * 1000, latestAt: now - 2 * 3600 * 1000, lastVerifiedAt: null, status: 'pending' },
-      { id: 'st-3', name: '柳梢青（半托）', mode: 'semi', merchantId: '18310421', openKeyId: 'B3EA8E9****9A9C',
-        firstAt: now - 9 * day, latestAt: now - 3 * day, lastVerifiedAt: now - 2 * day, status: 'ok' },
-      { id: 'st-4', name: '天净沙', mode: 'self', merchantId: '18300877', openKeyId: 'EED6AEE****CE76',
-        firstAt: now - 30 * day, latestAt: now - 30 * day, lastVerifiedAt: now - 21 * day, status: 'expired' }
+      mk('st-1', '观潮', 'self', '18301880', '33F87761****95C2', 1, 1, 1, 'ok'),
+      mk('st-2', '都市绿洲', 'self', '18310255', '9E41A8B****3DB6', 0.1, 0.1, null, 'pending'),
+      mk('st-3', '柳梢青（半托）', 'semi', '18310421', 'B3EA8E9****9A9C', 9, 3, 48, 'ok'),
+      mk('st-4', '天净沙', 'self', '18300877', 'EED6AEE****CE76', 30, 30, 504, 'expired'),
+      mk('st-5', '满庭芳', 'self', '18311102', 'A1C0F52****7B21', 12, 5, 20, 'ok'),
+      mk('st-6', '山花子', 'self', '18311267', 'C4D9E18****0F53', 6, 6, 72, 'ok'),
+      mk('st-7', '鹧鸪天（半托）', 'semi', '18311330', 'D20B6F4****8C77', 15, 8, 100, 'ok'),
+      mk('st-8', '定风波', 'self', '18311495', 'E53A7C1****2D90', 3, 3, 26, 'ok'),
+      mk('st-9', '阮郎归（半托）', 'semi', '18311551', 'F8610D9****4E15', 20, 20, null, 'pending'),
+      mk('st-10', '蝶恋花', 'self', '18311618', '07AB93E****61CD', 45, 40, 600, 'expired'),
+      mk('st-11', '浣溪沙', 'self', '18311772', '18CD42F****B0EA', 2, 2, 5, 'ok'),
+      mk('st-12', '青玉案（半托）', 'semi', '18311836', '29DE56A****C31B', 60, 60, 700, 'expired'),
+      mk('st-13', '望海潮', 'self', '18311990', '3AEF67B****D42C', 7, 4, 30, 'ok')
     ],
     events: [
       { at: now - 3600 * 1000, action: 'verify', store: '观潮', ok: true, note: '店铺信息接口验证通过' },
       { at: now - 2 * 3600 * 1000, action: 'auth', store: '都市绿洲', ok: true, note: '首次授权成功，密钥已加密保存' },
       { at: now - 3 * day, action: 'reauth', store: '柳梢青（半托）', ok: true, note: '重新授权，密钥已轮换' }
     ],
-    seq: 5
+    seq: 14
   };
 }
 
@@ -13642,17 +13667,30 @@ function sheinAuthEventLog(action, store, ok, note) {
   sheinStoreAuthSave();
 }
 
+function sheinAuthFilteredStores() {
+  const mode = $('sheinAuthTypeFilter') ? $('sheinAuthTypeFilter').value : '';
+  const kw = (($('sheinAuthSearch') || {}).value || '').trim().toLowerCase();
+  return sheinStoreAuthState.stores.filter(s =>
+    (!mode || s.mode === mode)
+    && (!kw || String(s.name || '').toLowerCase().includes(kw) || String(s.merchantId || '').includes(kw))
+  );
+}
+
 function sheinAuthRenderStores() {
   const tbody = $('sheinAuthTbody');
   if (!tbody) return;
-  const filter = $('sheinAuthTypeFilter') ? $('sheinAuthTypeFilter').value : '';
   const admin = sheinAuthIsAdmin();
-  const rows = sheinStoreAuthState.stores.filter(s => !filter || s.mode === filter);
-  if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="9" class="admin-empty">当前筛选下暂无授权店铺</td></tr>';
-    return;
-  }
-  tbody.innerHTML = rows.map(s => `
+  const rows = sheinAuthFilteredStores();
+  const pages = Math.max(1, Math.ceil(rows.length / SHEIN_AUTH_PAGE_SIZE));
+  if (sheinAuthPage > pages) sheinAuthPage = pages;
+  if (sheinAuthPage < 1) sheinAuthPage = 1;
+  const pageRows = rows.slice((sheinAuthPage - 1) * SHEIN_AUTH_PAGE_SIZE, sheinAuthPage * SHEIN_AUTH_PAGE_SIZE);
+  if (!pageRows.length) {
+    tbody.innerHTML = sheinStoreAuthState.stores.length
+      ? '<tr><td colspan="9" class="admin-empty">没有符合条件的店铺：调整搜索词或类型筛选</td></tr>'
+      : '<tr><td colspan="9" class="admin-empty">尚未读取授权店铺</td></tr>';
+  } else {
+  tbody.innerHTML = pageRows.map(s => `
     <tr data-store-id="${s.id}">
       <td><span class="shein-auth-name">${sheinStoreAuthState.editingId === s.id
         ? `<input id="sheinAuthRenameInput" value="${s.name}" maxlength="30" style="padding:4px 8px;border:1px solid #cfe3e6;border-radius:6px;width:120px">`
@@ -13670,8 +13708,19 @@ function sheinAuthRenderStores() {
         ${admin ? '<button class="btn danger" data-act="delete" type="button">删除</button>' : ''}
       </span></td>
     </tr>`).join('');
+  }
   const delButtons = tbody.querySelectorAll('button[data-act="delete"]');
   delButtons.forEach(b => { b.disabled = !admin; });
+  const info = $('sheinAuthPageInfo');
+  if (info) info.textContent = rows.length !== sheinStoreAuthState.stores.length
+    ? `第 ${sheinAuthPage} 页 · 筛选出 ${rows.length} 家（全部 ${sheinStoreAuthState.stores.length} 家）`
+    : `第 ${sheinAuthPage} 页 · 共 ${rows.length} 家`;
+  const ind = $('sheinAuthPageIndicator');
+  if (ind) ind.textContent = `${sheinAuthPage} / ${pages} 页`;
+  const prev = $('btnSheinAuthPrev');
+  if (prev) prev.disabled = sheinAuthPage <= 1;
+  const next = $('btnSheinAuthNext');
+  if (next) next.disabled = sheinAuthPage >= pages;
 }
 
 function sheinAuthRenderEvents() {
@@ -13828,6 +13877,7 @@ function initSheinStoreAuthPage() {
           firstAt: now, latestAt: now, lastVerifiedAt: null, status: 'pending'
         });
         sheinAuthEventLog('auth', name, true, '授权成功，密钥已加密保存，待验证连接');
+        sheinAuthPage = 1;
       }
       sheinStoreAuthState.pendingLink = null;
       sheinStoreAuthSave();
@@ -13838,7 +13888,15 @@ function initSheinStoreAuthPage() {
   };
 
   const filterSel = $('sheinAuthTypeFilter');
-  if (filterSel) filterSel.onchange = sheinAuthRenderStores;
+  if (filterSel) filterSel.onchange = () => { sheinAuthPage = 1; sheinAuthRenderStores(); };
+
+  const searchInput = $('sheinAuthSearch');
+  if (searchInput) searchInput.oninput = () => { sheinAuthPage = 1; sheinAuthRenderStores(); };
+
+  const prevBtn = $('btnSheinAuthPrev');
+  if (prevBtn) prevBtn.onclick = () => { if (sheinAuthPage > 1) { sheinAuthPage -= 1; sheinAuthRenderStores(); } };
+  const nextBtn = $('btnSheinAuthNext');
+  if (nextBtn) nextBtn.onclick = () => { sheinAuthPage += 1; sheinAuthRenderStores(); };
 
   const refreshBtn = $('btnSheinAuthRefresh');
   if (refreshBtn) refreshBtn.onclick = () => { sheinAuthRender(); toast('已刷新'); };
