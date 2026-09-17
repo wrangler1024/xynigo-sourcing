@@ -650,6 +650,17 @@ class LocalOperationExecutor(object):
     }
     _AFTER_SALE_NULLABLE_TEXT = {'errorSummary': 300, 'screenshotSha256': 64}
 
+    @staticmethod
+    def _phase_evidence(value):
+        if not isinstance(value, dict) or value.get('source') != 'timeline_nodes_v1':
+            return None
+        if type(value.get('step')) is not int or not 1 <= value['step'] <= 5:
+            return None
+        return {'source':'timeline_nodes_v1', 'step':value['step'],
+                'canSupplement':value.get('canSupplement') is True,
+                **{k:str(value.get(k) or '')[:n] for k,n in
+                   {'title':240,'detail':800,'reason':300,'reasonSource':32}.items()}}
+
     @classmethod
     def _after_sale_rows(cls, raw_rows, *, claim=False):
         """把售后快照行投影成云端契约闭集。
@@ -687,7 +698,8 @@ class LocalOperationExecutor(object):
                          'refundAccount': 40, 'submittedAt': 40, 'source': 32, 'phase': 24,
                          'phaseLabel': 24, 'applicationTimeText': 64, 'timeZone': 64,
                          'detailsNote': 200, 'applicationAt': 40, 'reasonId': 32}.items()},
-                         'packageNos': [str(p)[:64] for p in (r.get('packageNos') or [])[:100]]}
+                         'packageNos': [str(p)[:64] for p in (r.get('packageNos') or [])[:100]],
+                         'phaseEvidence':cls._phase_evidence(r.get('phaseEvidence'))}
                         for r in (value or []) if isinstance(r, dict)]
                 elif field == 'goodsItems':
                     row[field] = [{'name': str(i.get('name') or '')[:200], 'specification': str(i.get('specification') or '')[:200], 'goodsImg': str(i.get('goodsImg') or '')[:300], 'quantity': i.get('quantity') if isinstance(i.get('quantity'), int) and not isinstance(i.get('quantity'), bool) and 1 <= i['quantity'] <= 100000 else None} for i in (value or [])[:100] if isinstance(i, dict)]
@@ -985,7 +997,7 @@ class LocalOperationExecutor(object):
 
     _AFTER_SALE_TRACK_ROW_FIELDS = (
         'refundBillId', 'orderNo', 'environmentSerial', 'storeName', 'status',
-        'phase', 'phaseLabel', 'countdown', 'refundAccount', 'amount',
+        'phase', 'phaseLabel', 'phaseEvidence', 'countdown', 'refundAccount', 'amount',
         'checkedAt', 'note', 'errorSummary', 'durationSeconds',
     )
     _AFTER_SALE_TRACK_TEXT_LIMITS = {
@@ -1012,6 +1024,8 @@ class LocalOperationExecutor(object):
                     status = str(value or '').strip()
                     row[field] = status if status in cls._AFTER_SALE_ROW_ALLOWED_STATUS \
                         else 'running'
+                elif field == 'phaseEvidence':
+                    row[field] = cls._phase_evidence(value)
                 elif field == 'errorSummary':
                     row[field] = (str(value).strip()[:300]
                                   if value is not None else None)

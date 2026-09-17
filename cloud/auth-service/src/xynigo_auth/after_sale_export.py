@@ -28,11 +28,13 @@ HEADERS = (
     "环境序号", "订单号", "商品图", "退款单号", "退款信用卡",
     "退款金额", "阶段", "剩余倒计时", "最近检查", "备注",
 )
-COLUMN_WIDTHS = (12, 22, 34, 24, 20, 14, 14, 16, 20, 40)
+COLUMN_WIDTHS = (12, 22, 34, 24, 20, 14, 30, 16, 20, 52)
 # 与执行器 after_sale_claim.PHASE_LABELS、Web AS_TL_LABEL 保持同一套中文
 PHASE_LABELS = {
-    "submitted": "已受理", "reviewing": "审核中", "processing": "处理中",
-    "refunded": "已退款", "rejected": "已拒绝", "overdue": "超期未出结果",
+    "submitted": "已受理", "reviewing": "审核中", "processing": "SHEIN处理中",
+    "shein_refunded":"SHEIN退款成功", "bank_processed":"金融机构已处理",
+    "review_failed":"审核未通过", "evidence_required":"审核未通过 · 待补充凭证",
+    "refunded":"历史退款状态 · 待回访", "rejected":"历史拒绝状态 · 待回访", "overdue":"超期未出结果",
 }
 
 CLAIM_HEADERS = (
@@ -87,7 +89,11 @@ def _timestamp_text(value):
 def _phase_text(row):
     phase = str(row.get("phase") or "").strip()
     label = str(row.get("phaseLabel") or "").strip()
-    return label or PHASE_LABELS.get(phase, phase)
+    label = PHASE_LABELS.get(phase, label or phase)
+    if row.get('status') not in (None, 'ok'):
+        current = {'queued':'等待回访', 'running':'回访中', 'stopped':'已停止'}.get(row.get('status'), '本次状态未确认')
+        return current + ('；上次成功读取：'+label if label else '')
+    return label
 
 
 def _operation_time_text(value):
@@ -111,9 +117,11 @@ def _row_values(row):
         row.get("refundAccount") or "",
         row.get("amount") or "",
         _phase_text(row),
-        row.get("countdown") or "",
+        (row.get("countdown") or "") if row.get("status") in (None,"ok") else "",
         _timestamp_text(row.get("checkedAt")),
-        row.get("note") or row.get("errorSummary") or "",
+        '\n'.join(filter(None, [row.get("note") or "",
+            '本次未确认：'+row['errorSummary'] if row.get('errorSummary') else '',
+            '历史状态，尚未按当前节点重新核验' if row.get('phase') and not row.get('phaseEvidence') else ''])),
     ]
 
 

@@ -3,6 +3,8 @@ import re
 import time
 from urllib.parse import parse_qs, urlparse
 
+from .after_sale_phase import read_refund_phase
+
 ORIGIN = 'https://www.shein.com.mx'
 
 
@@ -124,20 +126,28 @@ def read_current_receipt(page, order_no, classify_phase, phase_labels):
     if refund_bill_id_from_url(page.url) != identity or identity[1] != facts.get('refundBillId'):
         raise RuntimeError('退款详情的订单或退款单号不一致')
     facts['refundAccount'] = account or facts.get('refundAccount') or ''
-    phase = classify_phase(facts.get('phaseText') or '')
+    try:
+        phase_result = read_refund_phase(page, identity)
+    except Exception:
+        phase_result = {'phase':'', 'phaseLabel':'本次状态未确认', 'phaseEvidence':None,
+                        'note':'本次未确认平台阶段，请重新回访'}
+    phase = phase_result['phase']
+    if refund_bill_id_from_url(page.url) != identity:
+        raise RuntimeError('退款详情在阶段读取期间发生切换')
     package_nos = [str(p)[:64] for p in (facts.get('packageNos') or []) if p][:100]
     return {
         'refundBillId': identity[1], 'phase': phase,
-        'phaseLabel': phase_labels.get(phase, '平台阶段待核对'),
+        'phaseLabel': phase_result['phaseLabel'], 'phaseEvidence':phase_result['phaseEvidence'],
         'packageNo': package_nos[0] if len(package_nos) == 1 else '',
         'packageNos': package_nos,
         **{key: str(facts.get(key) or '')[:limit] for key, limit in
            [('applicationTimeText',64),('timeZone',64),('applicationAt',40),('reasonId',32),
             ('refundAccount',40),('refundPath',48)]},
         'detailsNote': '；'.join(filter(None, [
+            phase_result['note'] if phase in ('review_failed','evidence_required','') else '',
             '' if facts.get('refundPath') else '退款路径未读取',
             '' if facts.get('refundAccount') else '退款账户详情未加载完成，待回访补全',
-        ])),
+        ]))[:200],
     }
 
 

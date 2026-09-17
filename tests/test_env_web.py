@@ -61,6 +61,17 @@ def result_row(site='MX'):
         binding_time='2026-08-20 15:30:00')
 
 
+def wait_for_job_completion(test_case, job, timeout=20):
+    """Wait for the real terminal state, including filesystem work on slow CI."""
+    deadline = time.monotonic() + timeout
+    snapshot = job.snapshot()
+    while snapshot['running'] and time.monotonic() < deadline:
+        time.sleep(0.05)
+        snapshot = job.snapshot()
+    test_case.assertFalse(snapshot['running'], snapshot)
+    return snapshot
+
+
 def tsv_rows(data):
     return list(csv.reader(
         StringIO(data.decode('utf-8-sig')), dialect='excel-tab'))
@@ -694,11 +705,9 @@ class EnvWebJobTests(unittest.TestCase):
                     parsed['planId'], '1:新刚', '20260819',
                     verify_sample_count=0, confirm_write=True,
                     write_lark_ledger=False)
-                deadline = time.time() + 5
-                while job.snapshot()['running'] and time.time() < deadline:
-                    time.sleep(0.05)
+                wait_for_job_completion(self, job)
                 self.assertTrue(
-                    job.snapshot()['ledger']['supplementAvailable'])
+                    job.snapshot()['ledger']['supplementAvailable'], job.snapshot())
                 hub_writes = [call for call in hub.calls if call[0] in {
                     'create', 'cookie', 'account', 'remark'}]
 
@@ -706,9 +715,7 @@ class EnvWebJobTests(unittest.TestCase):
                     job.retry_ledger()
                 result = job.retry_ledger(confirm_lark_write=True)
                 self.assertEqual(result, {'mode': 'supplement', 'count': 1})
-                deadline = time.time() + 5
-                while job.snapshot()['running'] and time.time() < deadline:
-                    time.sleep(0.05)
+                wait_for_job_completion(self, job)
 
         self.assertEqual(service.preflight_calls, [(1, 'MX', TEST_TAG)])
         self.assertEqual(
@@ -1040,7 +1047,7 @@ class BackupEnvJobTests(unittest.TestCase):
             def browser_start(self, _code, headless=False):
                 self.calls.append(('browser_start', headless))
                 self.ip_started.set()
-                if not self.release_ip.wait(2):
+                if not self.release_ip.wait(20):
                     raise RuntimeError('test timed out waiting to release IP check')
                 return {'ip': '203.0.113.10'}
 
@@ -1059,16 +1066,16 @@ class BackupEnvJobTests(unittest.TestCase):
             job.start(
                 parsed['planId'], '1:新刚', '20260819',
                 verify_sample_count=1, confirm_write=True)
-            self.assertTrue(hub.ip_started.wait(2))
-            checking = job.snapshot()
-            self.assertTrue(checking['running'])
-            self.assertEqual(checking['phase'], 'ip_checking')
-            self.assertEqual(checking['ipCheckDone'], 0)
-            self.assertEqual(checking['ipCheckTotal'], 1)
-            hub.release_ip.set()
-            deadline = time.time() + 5
-            while job.snapshot()['running'] and time.time() < deadline:
-                time.sleep(0.05)
+            try:
+                self.assertTrue(hub.ip_started.wait(10), job.snapshot())
+                checking = job.snapshot()
+                self.assertTrue(checking['running'])
+                self.assertEqual(checking['phase'], 'ip_checking')
+                self.assertEqual(checking['ipCheckDone'], 0)
+                self.assertEqual(checking['ipCheckTotal'], 1)
+            finally:
+                hub.release_ip.set()
+                wait_for_job_completion(self, job)
 
         final = job.snapshot()
         self.assertEqual(final['phase'], 'completed')

@@ -14,9 +14,9 @@ from urllib.parse import quote
 
 from . import __version__
 
-RELEASE_VERSION = "0.18.6"
+RELEASE_VERSION = "0.18.7"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-17T03:09:02Z"
+RELEASE_PUBLISHED_AT = "2026-09-17T04:52:08Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,10 +31,10 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.18.6-9b9fd67e1152",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.18.6.exe",
-        "sha256": "8bab4a3bd2c41130d4ec72fca74b2995cdfe4f7868936a54b442669aafaa3d99",
-        "size": 15382563,
+        "runtimeId": "0.18.7-0312635c8bc6",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.18.7.exe",
+        "sha256": "0ea1ce7f990e6beee65dcf40f9f95466109778229e481552bb16fe2ed91b3572",
+        "size": 15389730,
         "installMode": "standard_per_user",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_silent_installer",
@@ -50,10 +50,10 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.18.6-9b9fd67e1152",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.18.6.pkg",
-        "sha256": "efda531033c5777598ea27b9de28e82d20d7d34dfea05316277744329949ca3a",
-        "size": 11743577,
+        "runtimeId": "0.18.7-0312635c8bc6",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.18.7.pkg",
+        "sha256": "59fd17f8d0d2827e637d2d89253d52688c0b6129284732bccd356229a36d19bb",
+        "size": 11750928,
         "installMode": "standard_system_application",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_system_installer",
@@ -320,10 +320,10 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "指定订单提交支持只输入环境序号：实时扫描可申请订单，核对清单并确认后提交，保留完整订单输入方式。",
-            "指定回访支持只输入环境序号：跨历史批次匹配已记录退款单，展示匹配结果和缺失原因，确认后只读回访。",
-            "支持环境去重、输入顺序、多订单及多退款单；退款单归属冲突时提示核对并排除。",
-            "提交保留商品多图及件数，停止、取消、扫描失败、清单变化或执行器切换时阻止误提交。",
-            "云端与 Windows/macOS 安装包统一为 v0.18.6，保持 test 渠道；本次无数据库迁移或新增执行器能力。",
+            "退款跟踪按平台当前节点识别，修复将审核中或审核未通过误报为处理中的问题。",
+            "新增“审核未通过 · 待补充凭证”状态、具体审核原因及筛选，便于采购及时处理。",
+            "退款流程统一为五个节点，区分 SHEIN 退款成功与金融机构处理。",
+            "读取失败保留上次有效状态并标明时效；任务历史与 Excel 导出保持一致，避免混入其他批次的新状态。",
+            "云端与 Windows/macOS 客户端统一为 v0.18.7；回访需升级新版执行器，继续使用 test 渠道。"
         ],
     }

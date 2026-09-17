@@ -91,14 +91,15 @@ def test_real_web_task_lifecycle_and_input_validation():
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_tracking_full_text_can_advance_truncated_submitted_timeline():
+def test_tracking_full_text_cannot_advance_an_unconfirmed_timeline():
     c = claimer(); c._track_rows={'B1':{'refundBillId':'B1'}}
     c._read_refund_account=lambda *a,**k: ''
     page=Mock();page.js_evaluate.return_value={
         'timeline':'Solicitud de reembolso aceptada',
         'fullText':'Solicitud de reembolso aceptada ... está en revisión'}
     c._track_one(page,{'orderNo':'ORDER','refundBillId':'B1'})
-    assert c._track_rows['B1']['phase']=='reviewing'
+    assert c._track_rows['B1']['status']=='fail'
+    assert not c._track_rows['B1'].get('phase')
 
 
 @pytest.mark.parametrize('method', ['_after_sale_summary', '_after_sale_track_summary'])

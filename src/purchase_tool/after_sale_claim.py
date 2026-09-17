@@ -51,6 +51,8 @@ from .after_sale_receipts import (refund_bill_id_from_url, read_refund_receipts,
     read_current_receipt, receipt_reason, read_refund_account, REFUND_ACCOUNT_JS)
 from .after_sale_submit_evidence import install_observer, read_observer, REMOVE_OBSERVER
 from .after_sale_order_detail import read_order_detail_facts
+from .after_sale_phase import (TRACK_STATE_JS, PHASE_LABELS, classify_phase_state,
+                              read_refund_phase, phase_note)
 
 ORIGIN = 'https://www.shein.com.mx'
 # 从「所有订单」开始：运输中、已送达和退款单可能落在不同分类。
@@ -290,53 +292,15 @@ _JS_TOAST_TEXT = ('(() => {' + _JS_NORM + '''
 # 该区块在账户明细接口返回空时会渲染成占位文案 Error，因此取值后要能识别并丢弃。
 _JS_REFUND_ACCOUNT = REFUND_ACCOUNT_JS
 
-# 退款跟踪：退款单页的进度时间轴与金额。只读回访用，绝不点任何按钮。
-# 阶段文案实测（真机）：受理「Solicitud de reembolso aceptada」→ 审核中
-# 「Reseña de SHEIN/Vendedor」+倒计时 →「Procesamiento de reembolsos de SHEIN」；
-# 终态「Reembolsos procesados / Reembolsado」（退款已处理，银行侧 5-15 工作日）。
-_JS_TRACK_STATE = ('(() => {' + _JS_NORM + '''
-  const cl = s => String(s||"").replace(/[\u4e00-\u9fa5]+/g," ")
-    .replace(/\s+/g," ").trim();
-  const body = cl(document.body ? document.body.innerText : "");
-  const i = body.toLowerCase().indexOf("solicitud de reembolso");
-  const timeline = i >= 0 ? body.slice(i, i + 600) : body.slice(0, 600);
-  const amount = (body.match(/\\$MXN ?([\d,]+\.\d{2})/g) || []).slice(0, 3);
-  const countdown = (body.match(/Termina en ([0-9:\\s]{4,12})/) || [])[1] || "";
-  const acc = document.querySelector(".refundAccount-info .tip");
-  const accText = acc ? String(acc.innerText||"").replace(/\s+/g," ").trim() : "";
-  return { timeline: timeline, fullText: body.slice(0, 2400),
-           amounts: amount, countdown: countdown.trim(),
-           account: /^[*0-9\\s-]{4,24}$/.test(accText) ? accText : "" }; })()''')
-
-# 顺序即优先级。注意：退款单页的时间轴**会把所有步骤都列出来**（含尚未到达的
-# 「Procesamiento de reembolsos de SHEIN」），所以不能按「某串是否出现」判当前步骤——
-# 那是踩过的坑。当前步骤的可靠信号是节点上的状态文案（审核节点带「está en revisión」
-# 与 24 小时倒计时）。因此 reviewing 必须排在 processing 之前，且只认当前步骤文案。
-PHASE_RULES = (
-    ('refunded', ('Reembolsos procesados', 'Reembolsado',
-                  'reembolso está siendo procesado')),
-    ('rejected', ('rechazad', 'denegad', 'Reembolso rechazado')),
-    ('reviewing', ('está en revisión', 'esta en revision', 'Termina en')),
-    ('processing', ('Procesamiento de reembolsos',)),
-    ('submitted', ('Solicitud de reembolso aceptada',)),
-)
-PHASE_LABELS = {
-    'submitted': '已受理', 'reviewing': '审核中', 'processing': '处理中',
-    'refunded': '已退款', 'rejected': '已拒绝', 'overdue': '超期未出结果',
-    'fail': '回访失败',
-}
-# 平台业务终态：不代表禁止用户再次显式只读回访。
-TRACK_TERMINAL_PHASES = ('refunded', 'rejected')
-TRACK_OVERDUE_DAYS = 8   # 页面写明结果 7 天内给；超过即标超期
+# 阶段只由完整时间轴的当前节点确认；旧全文字符串不能证明当前阶段。
+_JS_TRACK_STATE = TRACK_STATE_JS
+TRACK_TERMINAL_PHASES = ('bank_processed',)
+TRACK_OVERDUE_DAYS = 8
 
 
-def classify_track_phase(timeline):
-    """从退款单页时间轴文案判定阶段（终态优先，避免被历史文案带偏）。"""
-    text = str(timeline or '')
-    for phase, needles in PHASE_RULES:
-        if any(n in text for n in needles):
-            return phase
-    return ''
+def classify_track_phase(state):
+    result = classify_phase_state(state)
+    return result['phase'] if result else ''
 
 
 _JS_TO_REFUND_LABEL = (
@@ -907,38 +871,24 @@ class AfterSaleClaimer(object):
         if self._login_required(page):
             self._fail_track(bill, 'login', '买家端未登录（环境登录态缺失）')
             return
-        # 时间轴异步渲染：轮询到出文案再判阶段（这个后台渲染时间不稳定，别估 sleep）
-        state = {}
-        deadline = time.time() + 15
-        while time.time() < deadline:
-            state = page.js_evaluate(_JS_TRACK_STATE) or {}
-            if state.get('timeline'):
-                break
-            time.sleep(0.8)
-        timeline = state.get('timeline') or ''
-        phase = classify_track_phase(timeline)
-        if phase in ('', 'submitted') and state.get('fullText'):
-            # 切片可能落在导航栏（页面标题大小写与预期不符时），用全文兜底再判一次
-            phase = classify_track_phase(state['fullText'])
-        if not phase:
-            self._fail_track(bill, 'fail', '未读到可识别的退款阶段，请稍后重试')
+        try:
+            result = read_refund_phase(page, (item['orderNo'], bill))
+        except Exception as exc:
+            self._fail_track(bill, 'fail', scrub_text(str(exc))[:300])
             return
+        phase = result['phase']
         account = self._read_refund_account(page, expected_identity=(item['orderNo'], bill))
-        note = ''
-        if phase == 'rejected':
-            note = '需人工：到买家端看 Historial de negociación 的拒绝理由后决定是否申诉'
-        elif phase not in TRACK_TERMINAL_PHASES:
-            note = '未终态，下次回访继续跟'
+        note = result['note']
         if not account:
             note = '；'.join(filter(None, [note, '退款账户详情未加载完成，待回访补全']))
-        amounts = state.get('amounts') or []
+        amounts = result.get('amounts') or []
         with self._lock:
             row = self._track_rows.get(bill) or {}
             row.update({
                 'status': 'ok', 'phase': phase,
                 'phaseLabel': PHASE_LABELS.get(phase, phase),
-                'timeline': timeline[:400],
-                'countdown': state.get('countdown') or '',
+                'phaseEvidence': result['phaseEvidence'],
+                'countdown': result.get('countdown') or '',
                 'refundAccount': account,
                 'amount': (amounts[0] if amounts else '').replace('$MXN', '').strip(),
                 'checkedAt': datetime.now(timezone.utc).isoformat(),
@@ -1151,7 +1101,7 @@ class AfterSaleClaimer(object):
                     return {'ok': False, 'uncertain': True, 'reason': '退款跳转已出现，目标包裹详情尚未取得'}
                 details = read_current_receipt(page, order_no, classify_track_phase, PHASE_LABELS)
                 if (package_no not in details.get('packageNos', []) or details.get('reasonId') != '83'
-                        or details.get('phase') not in ('submitted', 'reviewing', 'processing', 'refunded')
+                        or details.get('phase') not in ('submitted', 'reviewing', 'processing', 'shein_refunded', 'bank_processed')
                         or not self._receipt_in_attempt(order_no, details)):
                     return {'ok': False, 'uncertain': True, 'reason': '退款跳转凭证未能匹配本轮目标包裹和提交时段'}
                 result = dict(details, ok=True, packageNo=package_no, source='submit_redirect')
@@ -1213,10 +1163,15 @@ class AfterSaleClaimer(object):
                         'applicationAt', 'packageNos', 'reasonId', 'detailsNote'):
                 if result.get(key):
                     entry[key] = result[key]
+            if result.get('phaseEvidence'):
+                entry.update({key: result.get(key) for key in
+                              ('phase', 'phaseLabel', 'phaseEvidence', 'detailsNote')})
             entry['detailsNote'] = '；'.join(filter(None, [
+                phase_note(entry) if entry.get('phaseEvidence') and entry.get('phase')
+                in ('review_failed', 'evidence_required') else '',
                 '' if entry.get('refundPath') else '退款路径未读取',
                 '' if entry.get('refundAccount') else '退款账户详情未加载完成，待回访补全',
-            ]))
+            ]))[:200]
             refunds[bill] = entry
             row['refunds'] = list(refunds.values())
             row.update(entry)
@@ -1253,7 +1208,7 @@ class AfterSaleClaimer(object):
             if (self._receipt_in_attempt(order_no, record)
                     and record.get('reasonId') == '83'
                     and attempt and attempt in record.get('packageNos', [])
-                    and record.get('phase') in ('submitted', 'reviewing', 'processing', 'refunded')):
+                    and record.get('phase') in ('submitted', 'reviewing', 'processing', 'shein_refunded', 'bank_processed')):
                 matches.append(record)
         if len(matches) == 1 and targets and not error:
             try:

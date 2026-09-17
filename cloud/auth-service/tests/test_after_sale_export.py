@@ -70,8 +70,8 @@ def test_export_row_values_follow_header_order() -> None:
     # 这样 Excel 里能直接筛选/求和
     assert [cell.value for cell in sheet[2]] == [
         "4586", "GSH1RV13Y00NQUV", "https://img.shein.com/synthetic-goods.jpg",
-        "2390833880014851", "****7935", "270.22", "已退款", None,
-        "2026-09-16 01:08", MISSING_IMAGE_NOTE,
+        "2390833880014851", "****7935", "270.22", "历史退款状态 · 待回访", None,
+        "2026-09-16 01:08", "历史状态，尚未按当前节点重新核验\n"+MISSING_IMAGE_NOTE,
     ]
     assert sheet.max_row == 2
 
@@ -88,8 +88,8 @@ def test_export_phase_falls_back_to_chinese_label() -> None:
     ])
     assert [sheet.cell(row=index, column=7).value
             for index in range(2, 8)] == [
-        "审核中", "已拒绝", "已受理", "超期未出结果",
-        "weird_new_phase", "平台已退款",
+        "审核中", "历史拒绝状态 · 待回访", "已受理", "超期未出结果",
+        "weird_new_phase", "历史退款状态 · 待回访",
     ]
 
 
@@ -108,7 +108,7 @@ def test_export_checked_at_and_note_fallbacks() -> None:
     ]
     assert [sheet.cell(row=index, column=10).value
             for index in range(5, 7)] == [
-        "拒绝理由：地址不可达\n"+MISSING_IMAGE_NOTE, "回访失败：环境占用\n"+MISSING_IMAGE_NOTE,
+        "拒绝理由：地址不可达\n历史状态，尚未按当前节点重新核验\n"+MISSING_IMAGE_NOTE, "本次未确认：回访失败：环境占用\n历史状态，尚未按当前节点重新核验\n"+MISSING_IMAGE_NOTE,
     ]
 
 

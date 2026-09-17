@@ -2406,7 +2406,7 @@ class AfterSaleRefundTracking(Base):
     """退款跟踪：一个退款单一行，按 refund_bill_id 唯一。
 
     与「提交结果」的分工是——提交结果＝我提交了什么（不可变）；本表＝平台后来怎么
-    处理（每次成功只读回访更新）。已退款/已拒绝为业务终态，用户仍可显式回访；失败读取保留上次有效阶段。
+    处理（每次成功只读回访更新）。审核未通过可能允许补证，用户仍可显式回访；失败读取保留上次有效阶段。
     """
 
     __tablename__ = "after_sale_refund_tracking"
@@ -2420,6 +2420,8 @@ class AfterSaleRefundTracking(Base):
     store_name: Mapped[str | None] = mapped_column(String(128))
     phase: Mapped[str | None] = mapped_column(String(24))
     phase_label: Mapped[str | None] = mapped_column(String(24))
+    phase_evidence: Mapped[dict | None] = mapped_column(JSON)
+    note: Mapped[str | None] = mapped_column(Text)
     countdown: Mapped[str | None] = mapped_column(String(24))
     refund_account: Mapped[str | None] = mapped_column(String(40))
     amount: Mapped[str | None] = mapped_column(String(24))

@@ -121,7 +121,7 @@ def _after_sale_at(value):
     except (TypeError, ValueError):
         return None
     if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
+        return parsed.replace(tzinfo=UTC)
     return parsed
 
 
@@ -587,6 +587,9 @@ class ExecutorChannelService:
         if (task_type == "after.sale.claim.v1"
                 and "after.sale.claim-evidence.v1" not in set(executor.capabilities or [])):
             raise ExecutorServiceError("executor_after_sale_evidence_upgrade_required", status_code=409)
+        if (task_type == "after.sale.track.v1"
+                and "after.sale.phase-evidence.v1" not in set(executor.capabilities or [])):
+            raise ExecutorServiceError("executor_after_sale_phase_upgrade_required", status_code=409)
         if task_type not in set(executor.capabilities or []):
             raise ExecutorServiceError("executor_capability_missing", status_code=409)
         if task_type in ENCRYPTED_TASK_TYPES and self.payload_cipher is None:
@@ -2686,10 +2689,12 @@ class ExecutorChannelService:
                 refunds[refund.refundBillId] = {**old, **{
                     k: v for k, v in refund.model_dump(mode="json").items() if v}}
                 merged = refunds[refund.refundBillId]
+                from .after_sale_presentation import review_note
                 merged['detailsNote'] = '；'.join(filter(None, [
+                    review_note(merged),
                     '' if merged.get('refundPath') else '退款路径未读取',
                     '' if merged.get('refundAccount') else '退款账户详情未加载完成，待回访补全',
-                ]))
+                ]))[:200]
             row.refunds = list(refunds.values())
             row.status = item.status
             row.package_no = item.packageNo or None
@@ -2799,15 +2804,48 @@ class ExecutorChannelService:
                     diagnostic_reason="refund_tracking_identity_mismatch")
         previous = task.progress_summary if isinstance(task.progress_summary, dict) else {}
         per_task = {row["refundBillId"]: row for row in previous.get("rows", [])}
+        frozen_failures = set()
+        fact_defaults = dict(phase="", phaseLabel="", phaseEvidence=None, note="",
+                             countdown="", amount="", refundAccount="", checkedAt="")
         for row in rows:
             item = requested[row.refundBillId]
             row.orderNo = row.orderNo or str(item.get("orderNo") or "")
             row.environmentSerial = row.environmentSerial or str(item.get("environmentSerial") or "")
             row.storeName = row.storeName or str(item.get("storeName") or "")
-            per_task[row.refundBillId] = row.model_dump(mode="json")
+            current = row.model_dump(mode="json")
+            # Freeze the last successful observation into this task's failed row;
+            # a later task must not change an older batch/export retrospectively.
+            record = stored.get(row.refundBillId)
+            if row.status != "ok":
+                prior = per_task.get(row.refundBillId) or {}
+                current.update(fact_defaults)
+                if prior.get("status") in {"fail", "login", "inuse", "blocked", "skip", "empty", "stopped"}:
+                    # Replayed progress/final receipts keep this task's original
+                    # observation, including the absence of any trusted facts.
+                    current.update({key: prior.get(key, default) for key, default in fact_defaults.items()})
+                    frozen_failures.add(row.refundBillId)
+                elif (record and record.environment_serial == row.environmentSerial
+                        and record.order_no == row.orderNo and record.phase and record.checked_at):
+                    current.update(phase=record.phase, phaseLabel=record.phase_label or "",
+                        phaseEvidence=record.phase_evidence, note=record.note or "",
+                        countdown=record.countdown or "", amount=record.amount or "",
+                        refundAccount=record.refund_account or "",
+                        checkedAt=record.checked_at.isoformat())
+            per_task[row.refundBillId] = current
         task.progress_summary = {"rows": [per_task[bill] for bill in requested if bill in per_task]}
         for row in rows:
+            if row.refundBillId in frozen_failures:
+                # A replay is not a new observation and must not overwrite the
+                # shared status/error after another task has refreshed it.
+                continue
             record = stored.get(row.refundBillId)
+            observed_at = _after_sale_at(row.checkedAt) if row.status == "ok" else None
+            if (record and record.environment_serial and observed_at and record.checked_at
+                    and observed_at.astimezone(UTC) < (record.checked_at.astimezone(UTC)
+                        if record.checked_at.tzinfo else record.checked_at.replace(tzinfo=UTC))):
+                # Preserve this task's observation, but do not roll the shared
+                # latest state back when an older successful report arrives late.
+                continue
             if record is None:
                 record = AfterSaleRefundTracking(
                     id=uuid.uuid4(), tenant_id=task.tenant_id,
@@ -2820,12 +2858,15 @@ class ExecutorChannelService:
                 record.refund_account = None
                 record.checked_at = None
                 record.phase = record.phase_label = record.countdown = record.amount = None
+                record.phase_evidence = record.note = None
             record.order_no = row.orderNo or record.order_no
             record.environment_serial = row.environmentSerial or None
             record.store_name = row.storeName or None
             if row.status == "ok":
                 record.phase = row.phase or None
                 record.phase_label = row.phaseLabel or None
+                record.phase_evidence = row.phaseEvidence.model_dump(mode="json") if row.phaseEvidence else None
+                record.note = row.note or None
                 record.countdown = row.countdown or None
                 record.refund_account = row.refundAccount or record.refund_account
                 record.amount = row.amount or None
