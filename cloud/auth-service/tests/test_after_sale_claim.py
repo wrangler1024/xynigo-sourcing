@@ -960,7 +960,7 @@ def test_after_sale_track_export_workbook_and_auth(tmp_path) -> None:
               "GSH0002": "2390783198795777"}
         assert {
             sheet.cell(row=index, column=7).value for index in (2, 3)
-        } == {"审核中", "已退款"}
+        } == {"审核中", "历史退款状态 · 待回访"}
         # 商品图来自提交结果表：本用例没提交过，保持空列
         assert [sheet.cell(row=index, column=3).value
                 for index in (2, 3)] == [None, None]
