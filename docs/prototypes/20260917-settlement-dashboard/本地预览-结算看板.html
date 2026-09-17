@@ -1515,6 +1515,9 @@
   .settle-badge.ok { background: var(--rhino-100); color: var(--rhino-700); }
   .settle-badge.warn { background: var(--parcel-100); color: #90600c; }
   .settle-badge.fail { background: #fdecec; color: #b4232a; }
+  /* 分页内的每页条数下拉：覆盖全局 select 的 220px 宽 / 42px 高，
+     与相邻 btn-mini 同高、贴内容宽度（与店铺授权模块分页控件保持一致） */
+  .settle-pagination select { width: auto; min-height: 0; height: 26px; box-sizing: border-box; padding: 0 6px; border: 1px solid #d6e0e8; border-radius: 8px; background: #fff; font-size: 11px; color: var(--navy-900, #16324a); }
   .settle-alerts { margin-top: 16px; display: grid; gap: 8px; }
   .settle-alerts-title { color: var(--navy-950); font-size: 12px; font-weight: 900; }
   .settle-alert { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; display: flex; align-items: flex-start; gap: 8px; font-size: 11px; line-height: 1.65; color: var(--navy-700); }
@@ -3607,7 +3610,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
           <tbody id="settleStoreTbody"><tr><td colspan="10" class="admin-empty">尚未刷新</td></tr></tbody>
         </table>
       </div>
-      <div class="procurement-pagination">
+      <div class="procurement-pagination settle-pagination">
         <span class="procurement-pagination-copy" id="settlePageInfo">—</span>
         <div class="procurement-pagination-actions">
           <select id="settlePageSize" aria-label="每页显示店铺数">
