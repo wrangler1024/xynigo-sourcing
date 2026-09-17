@@ -1486,6 +1486,35 @@
   .member-role-checks { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .member-role-checks label { display: inline-flex; align-items: center; gap: 5px; }
   .settings-view[data-settings-view="organizationaccess"] { display: flex; flex-direction: column; gap: 16px; }
+
+  /* 店铺授权（SHEIN 开放平台） */
+  .shein-auth-toolbar { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; }
+  .shein-auth-toolbar select { width: auto; min-height: 0; height: 32px; box-sizing: border-box; padding: 0 8px; border: 1px solid #d6e0e8; border-radius: 8px; background: #fff; font-size: 12px; color: var(--navy-900, #16324a); }
+  .shein-auth-toolbar input[type="search"] { width: 210px; height: 32px; box-sizing: border-box; padding: 0 10px; border: 1px solid #d6e0e8; border-radius: 8px; background: #fff; font-size: 12px; color: var(--navy-900, #16324a); outline: none; }
+  .shein-auth-toolbar input[type="search"]:focus { border-color: var(--primary, #2f6fed); }
+  .shein-auth-toolbar .btn { height: 32px; box-sizing: border-box; padding: 0 12px; font-size: 12px; display: inline-flex; align-items: center; justify-content: center; }
+  .shein-auth-pagination { margin-top: 12px; }
+  .shein-auth-pagination select { width: auto; min-height: 0; height: 26px; box-sizing: border-box; padding: 0 6px; border: 1px solid #d6e0e8; border-radius: 8px; background: #fff; font-size: 11px; color: var(--navy-900, #16324a); }
+  .shein-auth-guide { margin-top: 14px; }
+  .shein-auth-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .shein-auth-step { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border: 1px solid #e3ecf1; border-radius: 10px; background: #f8fbfd; font-size: 12px; }
+  .shein-auth-step i { font-style: normal; width: 20px; height: 20px; border-radius: 999px; background: var(--rhino-100, #d9f0f0); color: var(--rhino-600, #126f74); font-weight: 800; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; }
+  .shein-auth-step b { font-size: 13px; }
+  .shein-auth-step span { color: var(--navy-500, #6b7f8f); line-height: 1.5; }
+  .shein-auth-linkbox { margin-top: 12px; border: 1px solid var(--rhino-100, #d9f0f0); background: #f4fbfa; border-radius: 10px; padding: 12px 14px; }
+  .shein-auth-linkbox-head { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
+  .shein-auth-link-row { display: flex; gap: 8px; align-items: center; }
+  .shein-auth-link-row input { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid #cfe3e6; border-radius: 8px; font-size: 12px; background: #fff; color: var(--navy-900, #16324a); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .shein-auth-type { display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+  .shein-auth-type.self { background: var(--rhino-100, #d9f0f0); color: var(--rhino-600, #126f74); }
+  .shein-auth-type.semi { background: var(--amber-bg, #fffbeb); color: var(--amber, #d97706); }
+  .shein-auth-name { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; }
+  .shein-auth-name button { border: none; background: none; color: var(--rhino-600, #126f74); cursor: pointer; font-size: 12px; padding: 0; }
+  .shein-auth-key { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--navy-500, #6b7f8f); }
+  .shein-auth-row-actions { display: inline-flex; gap: 4px; flex-wrap: nowrap; white-space: nowrap; }
+  .shein-auth-row-actions .btn { padding: 3px 8px; font-size: 11px; }
+  @media (max-width: 900px) { .shein-auth-steps { grid-template-columns: 1fr; } }
+
   .organization-tabs { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .organization-tab {
     min-height: 36px; padding: 8px 13px; border: 1px solid var(--line); border-radius: 10px;
@@ -1904,6 +1933,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         <button class="secondary-tab" data-parent="system" data-module="sessionmanagement" hidden>登录会话<span class="secondary-status">云端</span></button>
         <button class="secondary-tab" data-parent="system" data-module="businesslogs" hidden>业务操作日志<span class="secondary-status">云端</span></button>
         <button class="secondary-tab" data-parent="system" data-module="systemlogs" hidden>系统运行日志<span class="secondary-status">云端</span></button>
+        <button class="secondary-tab" data-parent="system" data-module="sheinstoreauth" hidden>店铺授权<span class="secondary-status">新增</span></button>
         <button class="secondary-tab" data-parent="system" data-planned="版本管理" disabled hidden>版本管理<span class="secondary-status planned">规划</span></button>
       </div>
       <button class="module-tab" data-primary="operations" title="运营中心">
@@ -3548,6 +3578,75 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         </table>
       </div>
     </section>
+
+    <section class="card settings-view" data-settings-view="sheinstoreauth" hidden>
+      <div class="card-title table-title-row">
+        <span>店铺授权 <span class="legend">SHEIN 开放平台店铺凭证管理 · 密钥加密保存</span></span>
+        <span class="shein-auth-toolbar">
+          <input type="search" id="sheinAuthSearch" placeholder="搜索：店铺名称 / 商家ID" autocomplete="off" aria-label="搜索店铺">
+          <select id="sheinAuthTypeFilter" aria-label="按店铺类型筛选">
+            <option value="">全部类型</option>
+            <option value="self">SHEIN 自营</option>
+            <option value="semi">SHEIN 半托管</option>
+          </select>
+          <button class="btn" id="btnSheinAuthRefresh" type="button">刷新</button>
+          <button class="btn primary" id="btnSheinAuthCreate" type="button">生成授权链接</button>
+        </span>
+      </div>
+      <div class="credential-note">授权由店铺<strong>主账号</strong>完成：生成链接后在店铺运营浏览器中打开并同意授权，系统自动换取密钥。每家店铺的密钥仅密文保存，页面与日志不展示明文；重新授权后旧密钥立即失效，以最新授权时间为准。</div>
+
+      <div class="shein-auth-guide" id="sheinAuthGuide" hidden>
+        <div class="shein-auth-steps">
+          <div class="shein-auth-step"><i>1</i><b>生成授权链接</b><span>管理员点击右上角「生成授权链接」，链接携带一次性校验参数。</span></div>
+          <div class="shein-auth-step"><i>2</i><b>店铺主账号授权</b><span>在登录 SHEIN 卖家中心的浏览器打开链接，主账号点击同意授权。</span></div>
+          <div class="shein-auth-step"><i>3</i><b>自动绑定</b><span>授权成功后页面自动跳回，系统换取并加密保存店铺密钥，列表即时更新。</span></div>
+        </div>
+      </div>
+
+      <div class="shein-auth-linkbox" id="sheinAuthLinkBox" hidden>
+        <div class="shein-auth-linkbox-head">
+          <b>授权链接已生成</b>
+          <span class="hint">临时令牌自店铺主账号同意授权时起 10 分钟内有效、仅可使用一次；过期请重新生成。</span>
+        </div>
+        <div class="shein-auth-link-row">
+          <input id="sheinAuthLinkInput" readonly aria-label="授权链接">
+          <button class="btn" id="btnSheinAuthCopy" type="button">复制链接</button>
+          <button class="btn" id="btnSheinAuthSimulate" type="button" title="原型演示：真实流程中此步由店铺主账号在授权页完成后自动回调">模拟授权回调</button>
+        </div>
+      </div>
+
+      <div class="table-wrap" style="margin-top:14px">
+        <table class="admin-table shein-auth-table">
+          <thead><tr>
+            <th>店铺名称</th><th>类型</th><th>商家ID</th><th>openKeyId</th>
+            <th>首次授权</th><th>最新授权</th><th>最近验证</th><th>状态</th><th>操作</th>
+          </tr></thead>
+          <tbody id="sheinAuthTbody"><tr><td colspan="9" class="admin-empty">尚未读取授权店铺</td></tr></tbody>
+        </table>
+      </div>
+
+      <div class="procurement-pagination shein-auth-pagination">
+        <span class="procurement-pagination-copy" id="sheinAuthPageInfo">第 1 页 · 共 0 家</span>
+        <div class="procurement-pagination-actions">
+          <select id="sheinAuthPageSize" aria-label="每页显示店铺数">
+            <option value="10">10 条</option><option value="30">30 条</option><option value="50">50 条</option>
+          </select>
+          <button class="btn-mini" id="btnSheinAuthPrev" type="button" disabled>上一页</button>
+          <span id="sheinAuthPageIndicator">1 / 1 页</span>
+          <button class="btn-mini" id="btnSheinAuthNext" type="button" disabled>下一页</button>
+        </div>
+      </div>
+
+      <div class="card-title table-title-row" style="margin-top:18px">
+        <span>授权事件 <span class="legend">最近 20 条授权与验证事件</span></span>
+      </div>
+      <div class="table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>时间</th><th>事件</th><th>店铺</th><th>结果</th><th>说明</th></tr></thead>
+          <tbody id="sheinAuthEventTbody"><tr><td colspan="5" class="admin-empty">暂无事件</td></tr></tbody>
+        </table>
+      </div>
+    </section>
   </div>
 
   <section class="vi-note" aria-label="Xynigo 品牌介绍">
@@ -4099,6 +4198,11 @@ const FEATURE_MODULES = {
     label: '系统运行日志', primary: 'system',
     requiredPermission: 'system.runtime_log.read',
     summary: '查看当前租户的结构化运行与错误事件，通过 requestId 和 traceId 定位云端请求。'
+  },
+  sheinstoreauth: {
+    label: '店铺授权', primary: 'system',
+    requiredPermissionsAny: ['system.shein_store.read', 'system.shein_store.manage'],
+    summary: '管理 SHEIN 开放平台店铺授权：生成授权链接、绑定自营与半托管店铺凭证（密钥加密保存），为订单、额度与财务模块供数。'
   }
 };
 const PERMISSION_MENU_GROUPS = [
@@ -4235,6 +4339,11 @@ const PERMISSION_MENU_GROUPS = [
         codes: ['system.member.manage']
       },
       {
+        id: 'sheinstoreauth', label: '店铺授权', badge: '测试版本',
+        note: '查看与验证连接用「查看」权限；生成链接、改名、删除限管理员（管理权限）。',
+        codes: ['system.shein_store.read', 'system.shein_store.manage']
+      },
+      {
         id: 'localexecutor', label: '本地执行器', badge: 'P1',
         note: '设备查看、生成配对码、撤销设备、读取配置和保存配置分别授权。',
         codes: ['executor.device.read', 'executor.device.pair',
@@ -4298,6 +4407,7 @@ let larkConnectionPageLoaded = false;
 let memberManagementPageLoaded = false;
 let roleManagementPageLoaded = false;
 let sessionManagementPageLoaded = false;
+let sheinStoreAuthPageLoaded = false;
 let activeOrganizationView = 'members';
 let adminMembers = [];
 let adminRoles = [];
@@ -13526,11 +13636,541 @@ $('runtimeManageDevices').onclick = openLocalExecutorManagement;
 $('runtimeDownloadEntry').onclick = openLocalExecutorManagement;
 $('runtimeHelpEntry').onclick = () => toast('请先检查底部运行状态；设备安装、配对和配置摘要可在“系统管理 → 本地执行器”查看。');
 
+/* ===== 店铺授权（SHEIN 开放平台）· 云端模式 + 本地原型兜底 =====
+ * 后端接口 /v1/shein-auth/*（read=查看与验证；manage=授权/改名/删除，限管理员）。
+ * 云端工作台自动走真实接口；本地静态预览（file:// 或后端不可达）回退到
+ * localStorage Mock，保证原型评审页继续可用。
+ * 契约依据：docs/20260917_需求_SHEIN开放平台店铺授权模块.md（真机实测）。
+ */
+let sheinStoreAuthState = null;
+let sheinAuthCloud = null; // null=未探测 true=云端接口 false=本地 Mock
+const SHEIN_AUTH_APPS = {
+  self: { label: 'SHEIN 自营', appid: '1636F90749001A002A60B0C187361' },
+  semi: { label: 'SHEIN 半托管', appid: 'SEMI_APPID_PENDING' }
+};
+const SHEIN_AUTH_STORE_KEY = 'xynigoSheinStoreAuthProtoV2';
+let sheinAuthPageSize = 10;
+let sheinAuthPage = 1;
+
+function sheinAuthLoadPageSize() {
+  try {
+    const v = Number(localStorage.getItem('xynigo.sheinAuth.pageSize'));
+    if ([10, 30, 50].includes(v)) sheinAuthPageSize = v;
+  } catch (e) { /* 忽略本地存储异常 */ }
+}
+
+function sheinAuthSavePageSize(v) {
+  try { localStorage.setItem('xynigo.sheinAuth.pageSize', String(v)); } catch (e) { /* 忽略 */ }
+}
+
+function sheinStoreAuthSeed() {
+  const now = Date.now();
+  const day = 24 * 3600 * 1000;
+  const mk = (id, name, mode, merchantId, key, firstD, latestD, verifyH, status) => ({
+    id, name, mode, merchantId, openKeyId: key,
+    firstAt: now - firstD * day, latestAt: now - latestD * day,
+    lastVerifiedAt: verifyH == null ? null : now - verifyH * 3600 * 1000, status
+  });
+  return {
+    stores: [
+      mk('st-1', '观潮', 'self', '18301880', '33F87761****95C2', 1, 1, 1, 'ok'),
+      mk('st-2', '都市绿洲', 'self', '18310255', '9E41A8B****3DB6', 0.1, 0.1, null, 'pending'),
+      mk('st-3', '柳梢青（半托）', 'semi', '18310421', 'B3EA8E9****9A9C', 9, 3, 48, 'ok'),
+      mk('st-4', '天净沙', 'self', '18300877', 'EED6AEE****CE76', 30, 30, 504, 'expired'),
+      mk('st-5', '满庭芳', 'self', '18311102', 'A1C0F52****7B21', 12, 5, 20, 'ok'),
+      mk('st-6', '山花子', 'self', '18311267', 'C4D9E18****0F53', 6, 6, 72, 'ok'),
+      mk('st-7', '鹧鸪天（半托）', 'semi', '18311330', 'D20B6F4****8C77', 15, 8, 100, 'ok'),
+      mk('st-8', '定风波', 'self', '18311495', 'E53A7C1****2D90', 3, 3, 26, 'ok'),
+      mk('st-9', '阮郎归（半托）', 'semi', '18311551', 'F8610D9****4E15', 20, 20, null, 'pending'),
+      mk('st-10', '蝶恋花', 'self', '18311618', '07AB93E****61CD', 45, 40, 600, 'expired'),
+      mk('st-11', '浣溪沙', 'self', '18311772', '18CD42F****B0EA', 2, 2, 5, 'ok'),
+      mk('st-12', '青玉案（半托）', 'semi', '18311836', '29DE56A****C31B', 60, 60, 700, 'expired'),
+      mk('st-13', '望海潮', 'self', '18311990', '3AEF67B****D42C', 7, 4, 30, 'ok')
+    ],
+    events: [
+      { at: now - 3600 * 1000, action: 'verify', store: '观潮', ok: true, note: '店铺信息接口验证通过' },
+      { at: now - 2 * 3600 * 1000, action: 'auth', store: '都市绿洲', ok: true, note: '首次授权成功，密钥已加密保存' },
+      { at: now - 3 * day, action: 'reauth', store: '柳梢青（半托）', ok: true, note: '重新授权，密钥已轮换' }
+    ],
+    seq: 14
+  };
+}
+
+function sheinStoreAuthLoad() {
+  try {
+    const raw = localStorage.getItem(SHEIN_AUTH_STORE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (e) { /* 忽略本地存储异常 */ }
+  const seed = sheinStoreAuthSeed();
+  try { localStorage.setItem(SHEIN_AUTH_STORE_KEY, JSON.stringify(seed)); } catch (e) { /* 忽略 */ }
+  return seed;
+}
+
+function sheinStoreAuthSave() {
+  try { localStorage.setItem(SHEIN_AUTH_STORE_KEY, JSON.stringify(sheinStoreAuthState)); } catch (e) { /* 忽略 */ }
+}
+
+function sheinAuthIsAdmin() {
+  return hasRole('admin') || hasRole('super_admin');
+}
+
+/* 云端按权限码收口（评审必须改 #6）：manage=生成链接/改名/重新授权/删除；
+   mock 预览（本地无权限体系）沿用管理员角色判定。 */
+function sheinAuthCanManage() {
+  return sheinAuthCloud ? hasPermission('system.shein_store.manage') : sheinAuthIsAdmin();
+}
+
+function sheinAuthFmt(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function sheinAuthStatusBadge(status) {
+  if (status === 'ok') return '<span class="badge ok">正常</span>';
+  if (status === 'pending') return '<span class="badge inuse">待验证</span>';
+  if (status === 'expired') return '<span class="badge fail">凭证失效</span>';
+  return '<span class="badge login">未知</span>';
+}
+
+function sheinAuthEventLog(action, store, ok, note) {
+  sheinStoreAuthState.events.unshift({ at: Date.now(), action, store, ok, note });
+  sheinStoreAuthState.events = sheinStoreAuthState.events.slice(0, 20);
+  sheinStoreAuthSave();
+}
+
+function sheinAuthFilteredStores() {
+  if (sheinAuthCloud) return sheinStoreAuthState.stores; // 云端已按筛选分页返回
+  const mode = $('sheinAuthTypeFilter') ? $('sheinAuthTypeFilter').value : '';
+  const kw = (($('sheinAuthSearch') || {}).value || '').trim().toLowerCase();
+  return sheinStoreAuthState.stores.filter(s =>
+    (!mode || s.mode === mode)
+    && (!kw || String(s.name || '').toLowerCase().includes(kw) || String(s.merchantId || '').includes(kw))
+  );
+}
+
+function sheinAuthRenderStores() {
+  const tbody = $('sheinAuthTbody');
+  if (!tbody) return;
+  const admin = sheinAuthCanManage();
+  const rows = sheinAuthFilteredStores();
+  const total = sheinAuthCloud ? (sheinStoreAuthState.total || 0) : rows.length;
+  const pages = Math.max(1, Math.ceil(total / sheinAuthPageSize));
+  if (sheinAuthPage > pages) sheinAuthPage = pages;
+  if (sheinAuthPage < 1) sheinAuthPage = 1;
+  const pageRows = sheinAuthCloud
+    ? rows
+    : rows.slice((sheinAuthPage - 1) * sheinAuthPageSize, sheinAuthPage * sheinAuthPageSize);
+  if (!pageRows.length) {
+    tbody.innerHTML = total || sheinStoreAuthState.stores.length
+      ? '<tr><td colspan="9" class="admin-empty">没有符合条件的店铺：调整搜索词或类型筛选</td></tr>'
+      : '<tr><td colspan="9" class="admin-empty">尚未读取授权店铺</td></tr>';
+  } else {
+  tbody.innerHTML = pageRows.map(s => `
+    <tr data-store-id="${esc(s.id)}">
+      <td><span class="shein-auth-name">${sheinStoreAuthState.editingId === s.id
+        ? `<input id="sheinAuthRenameInput" value="${esc(s.name)}" maxlength="30" style="padding:4px 8px;border:1px solid #cfe3e6;border-radius:6px;width:120px">`
+        : `${esc(s.name)}${admin ? '<button data-act="rename" title="修改店铺名称" type="button">✎</button>' : ''}`}</span></td>
+      <td><span class="shein-auth-type ${s.mode}">${SHEIN_AUTH_APPS[s.mode] ? SHEIN_AUTH_APPS[s.mode].label : s.mode}</span></td>
+      <td>${esc(s.merchantId)}</td>
+      <td><span class="shein-auth-key">${esc(s.openKeyId)}</span></td>
+      <td>${sheinAuthFmt(s.firstAt)}</td>
+      <td>${sheinAuthFmt(s.latestAt)}</td>
+      <td>${sheinAuthFmt(s.lastVerifiedAt)}</td>
+      <td>${sheinAuthStatusBadge(s.status)}</td>
+      <td><span class="shein-auth-row-actions">
+        <button class="btn" data-act="verify" type="button">验证</button>
+        ${admin ? '<button class="btn" data-act="reauth" type="button">重新授权</button>' : ''}
+        ${admin ? '<button class="btn danger" data-act="delete" type="button">删除</button>' : ''}
+      </span></td>
+    </tr>`).join('');
+  }
+  const delButtons = tbody.querySelectorAll('button[data-act="delete"]');
+  delButtons.forEach(b => { b.disabled = !admin; });
+  const info = $('sheinAuthPageInfo');
+  if (info) {
+    if (sheinAuthCloud) info.textContent = `第 ${sheinAuthPage} 页 · 共 ${total} 家`;
+    else info.textContent = rows.length !== sheinStoreAuthState.stores.length
+      ? `第 ${sheinAuthPage} 页 · 筛选出 ${rows.length} 家（全部 ${sheinStoreAuthState.stores.length} 家）`
+      : `第 ${sheinAuthPage} 页 · 共 ${rows.length} 家`;
+  }
+  const ind = $('sheinAuthPageIndicator');
+  if (ind) ind.textContent = `${sheinAuthPage} / ${pages} 页`;
+  const prev = $('btnSheinAuthPrev');
+  if (prev) prev.disabled = sheinAuthPage <= 1;
+  const next = $('btnSheinAuthNext');
+  if (next) next.disabled = sheinAuthPage >= pages;
+}
+
+function sheinAuthRenderEvents() {
+  const tbody = $('sheinAuthEventTbody');
+  if (!tbody) return;
+  const names = { auth: '首次授权', reauth: '重新授权', verify: '验证连接', rename: '修改名称', delete: '删除授权', link: '生成链接', callback: '授权回调' };
+  if (!sheinStoreAuthState.events.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="admin-empty">暂无事件</td></tr>';
+    return;
+  }
+  tbody.innerHTML = sheinStoreAuthState.events.map(ev => `
+    <tr>
+      <td>${sheinAuthFmt(ev.at)}</td>
+      <td>${esc(ev.actionLabel || names[ev.action] || ev.action)}</td>
+      <td>${esc(ev.store)}</td>
+      <td>${ev.ok ? '<span class="badge ok">成功</span>' : '<span class="badge fail">失败</span>'}</td>
+      <td>${esc(ev.note)}</td>
+    </tr>`).join('');
+}
+
+function sheinAuthRender() {
+  sheinAuthRenderStores();
+  sheinAuthRenderEvents();
+  const admin = sheinAuthCanManage();
+  const createBtn = $('btnSheinAuthCreate');
+  if (createBtn) createBtn.disabled = !admin;
+  const guide = $('sheinAuthGuide');
+  if (guide) guide.hidden = !!((sheinAuthCloud ? sheinStoreAuthState.total : 0) || sheinStoreAuthState.stores.length);
+}
+
+function sheinAuthBuildLink(mode) {
+  const app = SHEIN_AUTH_APPS[mode] || SHEIN_AUTH_APPS.self;
+  const redirectBase = 'https://xynigo.samforo.icu/shein-auth/callback';
+  const redirectB64 = btoa(redirectBase);
+  const state = `XYNIGO-${mode.toUpperCase()}-${Date.now()}`;
+  return {
+    url: `https://openapi-sem.sheincorp.com/#/empower?appid=${app.appid}&redirectUrl=${redirectB64}&state=${state}`,
+    state, mode
+  };
+}
+
+function sheinAuthPrompt(title, fields, onSubmit) {
+  const mask = document.createElement('div');
+  mask.className = 'modal-mask show';
+  mask.setAttribute('aria-hidden', 'false');
+  const fieldHtml = fields.map(f => `
+    <div class="field" style="margin-top:10px">
+      <label for="${f.id}">${f.label}</label>
+      ${f.type === 'select'
+        ? `<select id="${f.id}">${f.options.map(o => `<option value="${o.value}">${o.label}</option>`).join('')}</select>`
+        : `<input id="${f.id}" value="${f.value || ''}" placeholder="${f.placeholder || ''}" maxlength="${f.maxlength || 40}">`}
+      ${f.hint ? `<p class="hint">${f.hint}</p>` : ''}
+    </div>`).join('');
+  mask.innerHTML = `
+    <div class="modal" role="dialog" aria-modal="true">
+      <h3>${title}</h3>
+      ${fieldHtml}
+      <div class="actions" style="margin-top:16px">
+        <button class="btn" data-modal-cancel type="button">取消</button>
+        <button class="btn primary" data-modal-ok type="button">确定</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+  mask.querySelector('[data-modal-cancel]').onclick = () => mask.remove();
+  mask.querySelector('[data-modal-ok]').onclick = () => {
+    const values = {};
+    fields.forEach(f => { values[f.id] = (mask.querySelector('#' + f.id) || {}).value || ''; });
+    mask.remove();
+    onSubmit(values);
+  };
+}
+
+function sheinAuthConfirm(title, text, onOk) {
+  const mask = document.createElement('div');
+  mask.className = 'modal-mask show';
+  mask.setAttribute('aria-hidden', 'false');
+  mask.innerHTML = `
+    <div class="modal" role="dialog" aria-modal="true">
+      <h3>${title}</h3>
+      <p class="hint" style="margin-top:8px">${text}</p>
+      <div class="actions" style="margin-top:16px">
+        <button class="btn" data-modal-cancel type="button">取消</button>
+        <button class="btn danger" data-modal-ok type="button">确认</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+  mask.querySelector('[data-modal-cancel]').onclick = () => mask.remove();
+  mask.querySelector('[data-modal-ok]').onclick = () => { mask.remove(); onOk(); };
+}
+
+function sheinAuthNormalizeStoreRow(item) {
+  return {
+    id: item.id, name: item.name, mode: item.mode, merchantId: item.merchantId,
+    openKeyId: item.openKeyIdMasked || item.openKeyId,
+    firstAt: item.firstAuthorizedAt, latestAt: item.latestAuthorizedAt,
+    lastVerifiedAt: item.lastVerifiedAt, status: item.status
+  };
+}
+
+async function sheinAuthCloudLoadStores() {
+  const mode = $('sheinAuthTypeFilter') ? $('sheinAuthTypeFilter').value : '';
+  const kw = ((($('sheinAuthSearch') || {}).value) || '').trim();
+  const params = new URLSearchParams({ page: String(sheinAuthPage), pageSize: String(sheinAuthPageSize) });
+  if (mode) params.set('mode', mode);
+  if (kw) params.set('keyword', kw);
+  const payload = await cloudFetchJson(`/v1/shein-auth/stores?${params}`);
+  sheinStoreAuthState.stores = (payload.items || []).map(sheinAuthNormalizeStoreRow);
+  sheinStoreAuthState.total = payload.total || 0;
+}
+
+async function sheinAuthCloudLoadEvents() {
+  const payload = await cloudFetchJson('/v1/shein-auth/events');
+  sheinStoreAuthState.events = payload.items || [];
+}
+
+async function sheinAuthCloudRefreshStores() {
+  await sheinAuthCloudLoadStores().catch(e => toast(e.message || '店铺列表加载失败'));
+  sheinAuthRenderStores();
+}
+
+function initSheinStoreAuthPage() {
+  if (sheinAuthCloud) {
+    sheinStoreAuthState = { stores: [], events: [], total: 0, editingId: null };
+    sheinAuthCloudLoadStores().catch(e => toast(e.message || '店铺列表加载失败')).finally(() => sheinAuthRenderStores());
+    sheinAuthCloudLoadEvents().catch(() => {}).finally(() => sheinAuthRenderEvents());
+  } else {
+    sheinStoreAuthState = sheinStoreAuthLoad();
+    sheinStoreAuthState.editingId = null;
+  }
+
+  const createBtn = $('btnSheinAuthCreate');
+  if (createBtn) createBtn.onclick = () => {
+    if (!sheinAuthCanManage()) { toast('仅管理员可发起店铺授权'); return; }
+    sheinAuthPrompt('生成店铺授权链接', [
+      { id: 'ssaMode', label: '店铺类型', type: 'select', options: [
+        { value: 'self', label: 'SHEIN 自营（Xynigo ERP（自运营）应用）' },
+        { value: 'semi', label: 'SHEIN 半托管（应用待创建，原型占位）' }
+      ], hint: '自营与半托管分别对应不同的开放平台应用；链接需由对应店铺的主账号完成授权。' }
+    ], values => {
+      const mode = values.ssaMode || 'self';
+      if (sheinAuthCloud) {
+        cloudFetchJson('/v1/shein-auth/link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode }) })
+          .then(payload => {
+            sheinStoreAuthState.pendingLink = { url: payload.url, state: payload.state, mode };
+            $('sheinAuthLinkInput').value = payload.url;
+            $('sheinAuthLinkBox').hidden = false;
+            $('sheinAuthGuide').hidden = true;
+            sheinAuthCloudLoadEvents().catch(() => {}).finally(() => sheinAuthRenderEvents());
+            toast('授权链接已生成，请在店铺主账号浏览器中打开');
+          })
+          .catch(e => toast(e.message || '授权链接生成失败'));
+        return;
+      }
+      const link = sheinAuthBuildLink(mode);
+      sheinStoreAuthState.pendingLink = link;
+      sheinStoreAuthSave();
+      sheinAuthEventLog('link', '—', true, `生成${(SHEIN_AUTH_APPS[link.mode] || {}).label || ''}授权链接 state=${link.state.slice(-8)}`);
+      $('sheinAuthLinkInput').value = link.url;
+      $('sheinAuthLinkBox').hidden = false;
+      $('sheinAuthGuide').hidden = true;
+      sheinAuthRenderEvents();
+      toast('授权链接已生成，请在店铺主账号浏览器中打开');
+    });
+  };
+
+  const copyBtn = $('btnSheinAuthCopy');
+  if (copyBtn) copyBtn.onclick = async () => {
+    const input = $('sheinAuthLinkInput');
+    if (!input || !input.value) return;
+    try {
+      await navigator.clipboard.writeText(input.value);
+      toast('授权链接已复制');
+    } catch (e) {
+      input.select();
+      document.execCommand('copy');
+      toast('授权链接已复制');
+    }
+  };
+
+  const simBtn = $('btnSheinAuthSimulate');
+  if (simBtn && sheinAuthCloud) simBtn.hidden = true; // 云端走真实回调，不需要模拟
+  if (simBtn) simBtn.onclick = () => {
+    const link = sheinStoreAuthState.pendingLink;
+    if (!link) { toast('请先生成授权链接'); return; }
+    sheinAuthPrompt('模拟授权回调（原型演示）', [
+      { id: 'ssaName', label: '店铺名称', value: '', placeholder: '如：观潮', maxlength: 30 },
+      { id: 'ssaMerchant', label: '商家ID', value: '', placeholder: '如：18301880', maxlength: 20,
+        hint: '真实流程中此信息由平台在授权后返回；原型用于演示回调绑定效果。' }
+    ], values => {
+      const name = (values.ssaName || '').trim();
+      const merchant = (values.ssaMerchant || '').trim();
+      if (!name || !merchant) { toast('请填写店铺名称与商家ID'); return; }
+      const existing = sheinStoreAuthState.stores.find(s => s.merchantId === merchant);
+      const now = Date.now();
+      if (existing) {
+        existing.latestAt = now;
+        existing.status = 'ok';
+        existing.mode = link.mode;
+        sheinAuthEventLog('reauth', existing.name, true, '重新授权成功，密钥已轮换（旧密钥失效）');
+      } else {
+        const hex = () => Math.floor(Math.random() * 0xffff).toString(16).padStart(4, '0').toUpperCase();
+        sheinStoreAuthState.stores.unshift({
+          id: 'st-' + (sheinStoreAuthState.seq += 1), name, mode: link.mode, merchantId: merchant,
+          openKeyId: `${hex()}${hex()}****${hex()}`,
+          firstAt: now, latestAt: now, lastVerifiedAt: null, status: 'pending'
+        });
+        sheinAuthEventLog('auth', name, true, '授权成功，密钥已加密保存，待验证连接');
+        sheinAuthPage = 1;
+      }
+      sheinStoreAuthState.pendingLink = null;
+      sheinStoreAuthSave();
+      $('sheinAuthLinkBox').hidden = true;
+      sheinAuthRender();
+      toast(existing ? '重新授权完成，密钥已轮换' : '店铺授权绑定成功');
+    });
+  };
+
+  const filterSel = $('sheinAuthTypeFilter');
+  if (filterSel) filterSel.onchange = () => { sheinAuthPage = 1; sheinAuthCloud ? sheinAuthCloudRefreshStores() : sheinAuthRenderStores(); };
+
+  let sheinAuthSearchTimer = null;
+  const searchInput = $('sheinAuthSearch');
+  if (searchInput) searchInput.oninput = () => {
+    sheinAuthPage = 1;
+    if (!sheinAuthCloud) { sheinAuthRenderStores(); return; }
+    clearTimeout(sheinAuthSearchTimer); // 云端搜索 300ms 防抖，避免逐键打接口
+    sheinAuthSearchTimer = setTimeout(() => sheinAuthCloudRefreshStores(), 300);
+  };
+
+  const prevBtn = $('btnSheinAuthPrev');
+  if (prevBtn) prevBtn.onclick = () => { if (sheinAuthPage > 1) { sheinAuthPage -= 1; sheinAuthCloud ? sheinAuthCloudRefreshStores() : sheinAuthRenderStores(); } };
+  const nextBtn = $('btnSheinAuthNext');
+  if (nextBtn) nextBtn.onclick = () => {
+    const total = sheinAuthCloud ? (sheinStoreAuthState.total || 0) : sheinAuthFilteredStores().length;
+    const pages = Math.max(1, Math.ceil(total / sheinAuthPageSize));
+    if (sheinAuthPage >= pages) return;
+    sheinAuthPage += 1;
+    sheinAuthCloud ? sheinAuthCloudRefreshStores() : sheinAuthRenderStores();
+  };
+
+  sheinAuthLoadPageSize();
+  const sizeSel = $('sheinAuthPageSize');
+  if (sizeSel) {
+    sizeSel.value = String(sheinAuthPageSize);
+    sizeSel.onchange = () => {
+      sheinAuthPageSize = Number(sizeSel.value) || 10;
+      sheinAuthSavePageSize(sheinAuthPageSize);
+      sheinAuthPage = 1;
+      // 云端每页条数变化必须重新拉数（评审必须改 #4）。
+      sheinAuthCloud ? sheinAuthCloudRefreshStores() : sheinAuthRenderStores();
+    };
+  }
+
+  const refreshBtn = $('btnSheinAuthRefresh');
+  if (refreshBtn) refreshBtn.onclick = () => {
+    if (sheinAuthCloud) {
+      Promise.all([sheinAuthCloudLoadStores(), sheinAuthCloudLoadEvents().catch(() => {})])
+        .then(() => { sheinAuthRender(); toast('已刷新'); })
+        .catch(e => toast(e.message || '刷新失败'));
+      return;
+    }
+    sheinAuthRender(); toast('已刷新');
+  };
+
+  const tbody = $('sheinAuthTbody');
+  if (tbody) tbody.onclick = ev => {
+    const btn = ev.target.closest('button[data-act]');
+    if (!btn) return;
+    const row = ev.target.closest('tr[data-store-id]');
+    if (!row) return;
+    const store = sheinStoreAuthState.stores.find(s => s.id === row.dataset.storeId);
+    if (!store) return;
+    const act = btn.dataset.act;
+    if (act === 'rename') {
+      if (!sheinAuthCanManage()) { toast('仅管理员可修改店铺名称'); return; }
+      sheinStoreAuthState.editingId = store.id;
+      sheinAuthRenderStores();
+      const input = $('sheinAuthRenameInput');
+      if (input) {
+        input.focus();
+        input.select();
+        const commit = () => {
+          const val = input.value.trim();
+          sheinStoreAuthState.editingId = null;
+          if (!val || val === store.name) { sheinAuthRender(); return; }
+          if (sheinAuthCloud) {
+            cloudFetchJson(`/v1/shein-auth/stores/${store.id}/rename`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: val }) })
+              .then(() => { store.name = val; sheinAuthRender(); toast('店铺名称已更新'); })
+              .catch(e => { toast(e.message || '改名失败'); sheinAuthRender(); });
+            return;
+          }
+          sheinAuthEventLog('rename', `${store.name} → ${val}`, true, '修改店铺显示名称');
+          store.name = val;
+          sheinStoreAuthSave();
+          sheinAuthRender();
+        };
+        input.onblur = commit;
+        input.onkeydown = e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { sheinStoreAuthState.editingId = null; sheinAuthRender(); } };
+      }
+    } else if (act === 'verify') {
+      btn.disabled = true;
+      btn.textContent = '验证中…';
+      if (sheinAuthCloud) {
+        cloudFetchJson(`/v1/shein-auth/stores/${store.id}/verify`, { method: 'POST' })
+          .then(payload => {
+            store.status = payload.status; store.lastVerifiedAt = payload.lastVerifiedAt;
+            sheinAuthCloudLoadEvents().catch(() => {});
+            sheinAuthRender();
+            toast(payload.verifiedOk ? `「${store.name}」连接验证通过` : `「${store.name}」验证失败：${payload.status === 'expired' ? '凭证失效' : '接口异常'}`);
+          })
+          .catch(e => { sheinAuthRender(); toast(e.message || '验证请求失败'); });
+        return;
+      }
+      setTimeout(() => {
+        store.status = 'ok';
+        store.lastVerifiedAt = Date.now();
+        sheinAuthEventLog('verify', store.name, true, '店铺信息接口验证通过');
+        sheinStoreAuthSave();
+        sheinAuthRender();
+        toast(`「${store.name}」连接验证通过`);
+      }, 700);
+    } else if (act === 'reauth') {
+      if (!sheinAuthCanManage()) { toast('仅管理员可发起重新授权'); return; }
+      if (sheinAuthCloud) {
+        // 带 storeId：回调优先更新该行，店铺信息接口失败也不会裂行（评审必须改 #1）。
+        cloudFetchJson('/v1/shein-auth/link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: store.mode, storeId: store.id }) })
+          .then(payload => {
+            sheinStoreAuthState.pendingLink = { url: payload.url, state: payload.state, mode: store.mode };
+            $('sheinAuthLinkInput').value = payload.url;
+            $('sheinAuthLinkBox').hidden = false;
+            sheinAuthCloudLoadEvents().catch(() => {}).finally(() => sheinAuthRenderEvents());
+            toast(`已为「${store.name}」生成重新授权链接`);
+          })
+          .catch(e => toast(e.message || '重新授权链接生成失败'));
+        return;
+      }
+      const link = sheinAuthBuildLink(store.mode);
+      sheinStoreAuthState.pendingLink = Object.assign(link, { targetMerchantId: store.merchantId });
+      sheinStoreAuthSave();
+      $('sheinAuthLinkInput').value = link.url;
+      $('sheinAuthLinkBox').hidden = false;
+      toast(`已为「${store.name}」生成重新授权链接`);
+    } else if (act === 'delete') {
+      if (!sheinAuthCanManage()) { toast('仅管理员可删除店铺授权'); return; }
+      sheinAuthConfirm('删除店铺授权', `确定删除「${store.name}」的授权吗？删除后财务与订单模块将无法获取该店铺数据；可随时重新授权恢复。`, () => {
+        if (sheinAuthCloud) {
+          cloudFetchJson(`/v1/shein-auth/stores/${store.id}`, { method: 'DELETE' })
+            .then(() => Promise.all([sheinAuthCloudLoadStores(), sheinAuthCloudLoadEvents().catch(() => {})]))
+            .then(() => { sheinAuthRender(); toast(`已删除「${store.name}」的授权`); })
+            .catch(e => toast(e.message || '删除失败'));
+          return;
+        }
+        sheinStoreAuthState.stores = sheinStoreAuthState.stores.filter(s => s.id !== store.id);
+        sheinAuthEventLog('delete', store.name, true, '管理员删除店铺授权');
+        sheinStoreAuthSave();
+        sheinAuthRender();
+        toast(`已删除「${store.name}」的授权`);
+      });
+    }
+  };
+
+  sheinAuthRender();
+}
+
 function setFeaturePanel(module) {
   const info = FEATURE_MODULES[module];
   if (!info) return;
   const isSettingsModule = [
-    'localsettings', 'larkconnection', 'organizationaccess', 'sessionmanagement'
+    'localsettings', 'larkconnection', 'organizationaccess', 'sessionmanagement',
+    'sheinstoreauth'
   ].includes(module);
   activeModule = module;
   if (module !== 'localexecutor') scheduleLocalExecutorDeviceRefresh();
@@ -13601,8 +14241,66 @@ function setFeaturePanel(module) {
   } else if (module === 'sessionmanagement' && !sessionManagementPageLoaded) {
     sessionManagementPageLoaded = true;
     loadSessionManagement().catch(() => { sessionManagementPageLoaded = false; });
+  } else if (module === 'sheinstoreauth' && !sheinStoreAuthPageLoaded) {
+    sheinStoreAuthPageLoaded = true;
+    if (sheinAuthCloud === null) {
+      // 云端工作台（CLOUD_WEB_MODE）强制走真实接口，绝不落回带假数据的 Mock
+      // （评审必须改 #3：生产一旦 5xx/超时就显示假店并可点「模拟回调」）。
+      // 本地预览（file:// 或 localhost 静态服务）才允许 Mock：
+      // 拿到任意 HTTP 状态码（含 5xx）都视为后端存在；仅 404 或请求未发出回退。
+      if (CLOUD_WEB_MODE) {
+        sheinAuthCloud = true;
+        initSheinStoreAuthPage();
+      } else if (location.protocol === 'file:') {
+        sheinAuthCloud = false;
+        initSheinStoreAuthPage();
+      } else {
+        cloudFetchJson('/v1/shein-auth/stores?pageSize=1')
+          .then(() => { sheinAuthCloud = true; })
+          .catch(e => { sheinAuthCloud = !!(e && typeof e.status === 'number' && e.status !== 404); })
+          .finally(() => initSheinStoreAuthPage());
+      }
+    } else {
+      initSheinStoreAuthPage();
+    }
   }
 }
+
+/* SHEIN 授权回调页：/shein-auth/callback?tempToken=...&state=...
+ * 店铺主账号同意授权后由平台 302 到此；后端回调端点不要求工作台登录态
+ * （state 即一次性凭证），完成后回工作台首页。 */
+(function handleSheinAuthCallback() {
+  if (!location.pathname.startsWith('/shein-auth/callback')) return;
+  const params = new URLSearchParams(location.search);
+  const tempToken = params.get('tempToken') || '';
+  const state = params.get('state') || '';
+  // 立刻从地址栏抹掉令牌：避免进浏览器历史/Referer/站点日志（评审后补项）。
+  try { history.replaceState(null, '', location.pathname); } catch (e) {}
+  const finish = () => { try { sessionStorage.setItem('sheinAuthCallbackDone', '1'); } catch (e) {} setTimeout(() => location.replace('/'), 1200); };
+  if (!tempToken || !state) {
+    console.warn('shein-auth callback missing params');
+    finish();
+    return;
+  }
+  cloudFetchJson('/v1/shein-auth/callback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tempToken, state }) })
+    .then(payload => {
+      const name = (payload.store && payload.store.name) || '';
+      document.title = '店铺授权成功 - Xynigo Sourcing';
+      const banner = document.createElement('div');
+      banner.style.cssText = 'position:fixed;top:40px;left:50%;transform:translateX(-50%);z-index:99999;background:#0b315e;color:#fff;padding:14px 22px;border-radius:12px;font-size:14px;box-shadow:0 8px 24px rgba(11,49,94,.35)';
+      banner.textContent = name ? `「${name}」授权绑定成功，正在返回工作台…` : '店铺授权绑定成功，正在返回工作台…';
+      document.body.appendChild(banner);
+      finish();
+    })
+    .catch(e => {
+      const banner = document.createElement('div');
+      banner.style.cssText = 'position:fixed;top:40px;left:50%;transform:translateX(-50%);z-index:99999;background:#b3261e;color:#fff;padding:14px 22px;border-radius:12px;font-size:14px;box-shadow:0 8px 24px rgba(179,38,30,.35)';
+      banner.textContent = `授权失败：${(e && e.message) || '请重新生成授权链接'}`;
+      document.body.appendChild(banner);
+      setTimeout(() => banner.remove(), 6000);
+      try { sessionStorage.setItem('sheinAuthCallbackFailed', (e && e.message) || 'unknown'); } catch (err) {}
+    });
+})();
 
 function syncPrimaryNavigation(primary) {
   const info = PRIMARY_MODULES[primary];

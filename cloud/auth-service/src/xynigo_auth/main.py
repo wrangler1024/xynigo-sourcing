@@ -110,6 +110,15 @@ from .local_executor_release import (
 )
 from .purchase_receipt import ReceiptBody, ReceiptError, execute as execute_receipt
 from .purchase_receipt_gateway import ReceiptGatewayFactory
+from .shein_openapi_client import SheinOpenApiClient
+from .shein_store_auth_contract import (
+    SheinAuthCallbackBody,
+    SheinAuthLinkBody,
+    SheinStoreListQuery,
+    SheinStoreRenameBody,
+)
+from .shein_store_auth_crypto import SheinStoreSecretCipher
+from .shein_store_auth_service import SheinStoreAuthError, SheinStoreAuthService
 from .procurement_import_sheet import FeishuSheetsGateway, LarkSheetSyncError
 from .integration_contract import FeishuIntegrationWriteBody, FeishuReadProxyBody
 from .after_sale_export import (
@@ -258,6 +267,8 @@ PERMISSION_CATALOG: tuple[tuple[str, str], ...] = (
     ("analytics.access", "数据分析访问"),
     ("system.member.manage", "成员管理"),
     ("system.role.manage", "角色管理"),
+    ("system.shein_store.read", "SHEIN 店铺授权查看"),
+    ("system.shein_store.manage", "SHEIN 店铺授权管理"),
     ("system.lark_connection.manage", "飞书连接管理"),
     ("system.integration.manage", "外部服务管理"),
     ("system.audit.read", "审计日志查看"),
@@ -431,6 +442,7 @@ def create_app(
     database: Database | None = None,
     procurement_import_gateway: FeishuSheetsGateway | None = None,
     feishu_integration_transport: httpx.BaseTransport | None = None,
+    shein_openapi_transport: httpx.BaseTransport | None = None,
 ) -> FastAPI:
     settings = settings or Settings()  # type: ignore[call-arg]
     database = database or Database(settings.database_url.get_secret_value())
@@ -459,6 +471,23 @@ def create_app(
     )
     data_source_registry_service = TenantDataSourceRegistryService(
         DataSourceRegistryCipher(buyer_credential_key)
+    )
+    shein_store_auth_service = (
+        SheinStoreAuthService(
+            cipher=SheinStoreSecretCipher(buyer_credential_key),
+            client=SheinOpenApiClient(
+                gateway=settings.shein_openapi_gateway,
+                app_id=settings.shein_openapi_app_id,
+                app_secret=(
+                    settings.shein_openapi_app_secret.get_secret_value()
+                ),
+                transport=shein_openapi_transport,
+            ),
+            empower_host=settings.shein_auth_empower_host,
+            redirect_base=settings.shein_auth_redirect_base,
+        )
+        if buyer_credential_key
+        else None
     )
     environment_plan_service = (
         CloudEnvironmentPlanService(
@@ -886,6 +915,12 @@ def create_app(
 
         return FileResponse(WEB_ROOT / "index.html", media_type="text/html; charset=utf-8")
 
+    @app.get("/shein-auth/callback", response_class=FileResponse)
+    def shein_auth_callback_page() -> FileResponse:
+        """SHEIN 授权 redirectUrl 落点；前端读 URL 里的 tempToken+state 换钥。"""
+
+        return FileResponse(WEB_ROOT / "index.html", media_type="text/html; charset=utf-8")
+
     @app.get("/favicon.ico", response_class=FileResponse)
     @app.get("/xynigo-logo.png", response_class=FileResponse)
     @app.get("/xynigo-x.png", response_class=FileResponse)
@@ -896,6 +931,223 @@ def create_app(
     def canonical_web_asset(request: Request) -> FileResponse:
         media_type, path = WEB_ROOT_ASSETS[request.url.path]
         return FileResponse(path, media_type=media_type)
+
+    # ===== SHEIN 开放平台店铺授权 =====
+    # 权限分两级：read=查看与验证连接；manage=生成链接/回调绑定/改名/删除
+    # （Jeff 20260917 拍板：授权与删除限定管理员，验证、查看不限角色配置）。
+
+    def _shein_auth_service() -> SheinStoreAuthService:
+        if shein_store_auth_service is None:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "shein_auth_not_configured"},
+            )
+        return shein_store_auth_service
+
+    def _shein_auth_call(handler):
+        try:
+            return handler()
+        except SheinStoreAuthError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"code": exc.code, "message": exc.message},
+            ) from exc
+
+    @app.post("/v1/shein-auth/link")
+    def shein_auth_create_link(
+        body: SheinAuthLinkBody,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="system.shein_store.manage",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="shein_store.link.create",
+        )
+        target_store_id = None
+        if body.storeId:
+            try:
+                target_store_id = uuid.UUID(body.storeId)
+            except (ValueError, TypeError) as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail={"code": "shein_store_id_invalid"},
+                ) from exc
+        payload = _shein_auth_call(
+            lambda: _shein_auth_service().create_link(
+                session,
+                tenant_id=actor.tenant.id,
+                user_id=actor.user.id,
+                mode=body.mode,
+                target_store_id=target_store_id,
+            )
+        )
+        session.commit()
+        return payload
+
+    @app.post("/v1/shein-auth/callback")
+    def shein_auth_complete_callback(
+        body: SheinAuthCallbackBody,
+        request: Request,
+        session: SessionDep,
+    ) -> dict[str, object]:
+        """不要求 xynigo 登录态：state 本身就是一次性能力凭证。
+
+        授权动作发生在店铺主账号的浏览器（可能未登录本工作台）；
+        state 校验租户、时效与一次性消费，能力闭合在链接生命周期内。
+        """
+        return _shein_auth_call(
+            lambda: _shein_auth_service().complete_callback(
+                session, temp_token=body.tempToken, state=body.state
+            )
+        )
+
+    @app.get("/v1/shein-auth/stores")
+    def shein_auth_list_stores(
+        request: Request,
+        session: SessionDep,
+        mode: str = "",
+        keyword: str = "",
+        page: int = 1,
+        pageSize: int = 10,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        query = SheinStoreListQuery(
+            mode=mode, keyword=keyword, page=page, pageSize=pageSize
+        )
+        actor = authorize_request(
+            request,
+            session,
+            permission="system.shein_store.read",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="shein_store.list",
+        )
+        payload = _shein_auth_call(
+            lambda: _shein_auth_service().list_stores(
+                session,
+                tenant_id=actor.tenant.id,
+                mode=query.mode,
+                keyword=query.keyword,
+                page=query.page,
+                page_size=query.pageSize,
+            )
+        )
+        return payload
+
+    @app.get("/v1/shein-auth/events")
+    def shein_auth_list_events(
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="system.shein_store.read",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="shein_store.events.list",
+        )
+        return _shein_auth_service().list_events(
+            session, tenant_id=actor.tenant.id
+        )
+
+    @app.post("/v1/shein-auth/stores/{store_id}/verify")
+    def shein_auth_verify_store(
+        store_id: uuid.UUID,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="system.shein_store.read",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="shein_store.verify",
+        )
+        return _shein_auth_call(
+            lambda: _shein_auth_service().verify_store(
+                session,
+                tenant_id=actor.tenant.id,
+                user_id=actor.user.id,
+                store_id=store_id,
+            )
+        )
+
+    @app.post("/v1/shein-auth/stores/{store_id}/rename")
+    def shein_auth_rename_store(
+        store_id: uuid.UUID,
+        body: SheinStoreRenameBody,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="system.shein_store.manage",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="shein_store.rename",
+        )
+        return _shein_auth_call(
+            lambda: _shein_auth_service().rename_store(
+                session,
+                tenant_id=actor.tenant.id,
+                user_id=actor.user.id,
+                store_id=store_id,
+                name=body.name,
+            )
+        )
+
+    @app.delete("/v1/shein-auth/stores/{store_id}")
+    def shein_auth_delete_store(
+        store_id: uuid.UUID,
+        request: Request,
+        session: SessionDep,
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        actor = authorize_request(
+            request,
+            session,
+            permission="system.shein_store.manage",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="shein_store.delete",
+        )
+        return _shein_auth_call(
+            lambda: _shein_auth_service().delete_store(
+                session,
+                tenant_id=actor.tenant.id,
+                user_id=actor.user.id,
+                store_id=store_id,
+            )
+        )
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:

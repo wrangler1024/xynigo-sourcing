@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     executor_lease_seconds: int = 45
     executor_online_window_seconds: int = 60
     local_executor_asset_dir: str = "/app/release-assets"
+    # SHEIN 开放平台：应用凭证只从部署配置注入，不落库不落日志。
+    # 未配置时店铺授权模块降级（生成链接报 not_configured），不影响其余功能。
+    shein_openapi_gateway: str = "https://openapi.sheincorp.com"
+    shein_auth_empower_host: str = "openapi-sem.sheincorp.com"
+    shein_auth_redirect_base: str = ""
+    shein_openapi_app_id: str = ""
+    shein_openapi_app_secret: SecretStr = SecretStr("")
     cookie_name: str = "xynigo_session"
     cookie_secure: bool = True
     login_success_path: str = "/"
