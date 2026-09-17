@@ -14826,7 +14826,17 @@ function buildSettlementExportRows() {
   return { rows, storeCount: stores.length };
 }
 
+function settleCloudExport() {
+  /* 云端模式：由服务端生成 xlsx（金额是可求和的数值单元格，比前端 CSV 更适合
+     财务直接使用）。走浏览器导航下载，走同源 Cookie 鉴权。 */
+  const currency = SETTLE_STATE.currency === 'ALL' ? '' : SETTLE_STATE.currency;
+  const query = currency ? `?currency=${encodeURIComponent(currency)}` : '';
+  window.location.href = `/v1/finance/settlement/export${query}`;
+  toast('正在导出 xlsx（由服务端生成）…');
+}
+
 function exportSettlementDashboard() {
+  if (settleCloudMode) { settleCloudExport(); return; }
   const { rows, storeCount } = buildSettlementExportRows();
   const csv = rows.map((row) => row.map(settleCsvCell).join(',')).join('\r\n');
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });

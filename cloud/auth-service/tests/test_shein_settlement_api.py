@@ -321,3 +321,43 @@ def test_concurrent_sync_returns_409(tmp_path):
                             headers=admin_headers())
         assert again.status_code == 409
         assert again.json()["detail"]["code"] == "shein_settlement_sync_busy"
+
+
+def test_export_returns_xlsx_attachment(tmp_path):
+    """导出走服务端生成 xlsx：金额是可求和的数值单元格，不是 CSV。"""
+    import io
+
+    from openpyxl import load_workbook
+
+    app, _ = build_app(tmp_path)
+    with TestClient(app) as client:
+        client.post("/v1/finance/settlement/sync", headers=admin_headers())
+        res = client.get("/v1/finance/settlement/export", headers=admin_headers())
+        assert res.status_code == 200
+        assert res.headers["content-type"].startswith(
+            "application/vnd.openxmlformats")
+        assert "attachment" in res.headers["content-disposition"]
+        assert res.headers["x-xynigo-row-count"] == "1"
+        sheet = load_workbook(io.BytesIO(res.content)).active
+        assert sheet.title == "结算看板"
+        assert sheet[1][0].value == "店铺"
+        assert sheet[2][0].value == "合成店铺"
+        assert sheet[2][3].value == 88.8          # 数值单元格，可求和
+        assert sheet[2][3].number_format == "#,##0.00"
+
+
+def test_export_requires_finance_permission(tmp_path):
+    app, _ = build_app(tmp_path)
+    with TestClient(app) as client:
+        assert client.get("/v1/finance/settlement/export",
+                          headers=member_headers()).status_code == 403
+
+
+def test_export_respects_currency_filter(tmp_path):
+    app, _ = build_app(tmp_path)
+    with TestClient(app) as client:
+        client.post("/v1/finance/settlement/sync", headers=admin_headers())
+        res = client.get("/v1/finance/settlement/export?currency=USD",
+                         headers=admin_headers())
+        assert res.status_code == 200
+        assert res.headers["x-xynigo-row-count"] == "0"   # 合成店铺是 MXN

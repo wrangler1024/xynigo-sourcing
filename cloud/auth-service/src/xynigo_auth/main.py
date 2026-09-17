@@ -112,6 +112,7 @@ from .purchase_receipt import ReceiptBody, ReceiptError, execute as execute_rece
 from .purchase_receipt_gateway import ReceiptGatewayFactory
 from .shein_openapi_client import SheinOpenApiClient
 from .shein_settlement_contract import settlement_summary_payload
+from .shein_settlement_export import build_settlement_export
 from .shein_settlement_sync import (
     SheinSettlementSyncBusy,
     SheinSettlementSyncService,
@@ -1208,6 +1209,40 @@ def create_app(
         summary = _settlement_service().build_summary(
             session, tenant_id=actor.tenant.id, currency=currency.strip())
         return settlement_summary_payload(summary)
+
+    @app.get("/v1/finance/settlement/export")
+    def settlement_export(
+        request: Request,
+        session: SessionDep,
+        currency: str = "",
+        session_token: Annotated[
+            str | None, Cookie(alias=settings.cookie_name)
+        ] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> Response:
+        """导出结算看板 xlsx（服务端生成，金额为可求和的数值单元格）。"""
+        actor = authorize_request(
+            request,
+            session,
+            permission="finance.access",
+            session_token=session_token,
+            authorization=authorization,
+            audit_action="finance.settlement.export",
+        )
+        summary = _settlement_service().build_summary(
+            session, tenant_id=actor.tenant.id, currency=currency.strip())
+        content, filename, mime = build_settlement_export(summary)
+        return Response(
+            content=content,
+            media_type=mime,
+            headers={
+                "Cache-Control": "private, no-store",
+                "Content-Disposition": (
+                    "attachment; filename*=UTF-8''" + quote(filename)),
+                "X-Content-Type-Options": "nosniff",
+                "X-Xynigo-Row-Count": str(summary.store_total),
+            },
+        )
 
     @app.post("/v1/finance/settlement/sync")
     def settlement_sync(
