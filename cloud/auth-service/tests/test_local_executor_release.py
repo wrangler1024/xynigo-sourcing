@@ -346,5 +346,5 @@ def test_invalid_green_fallback_is_rejected(field, value):
 
 def test_desktop_release_version_matches_cloud():
     from xynigo_auth import __version__
-    assert release_catalog.RELEASE_VERSION == __version__ == "0.18.5"
-    assert release_catalog.latest_local_executor_release()["version"] == "0.18.5"
+    assert release_catalog.RELEASE_VERSION == __version__ == "0.18.6"
+    assert release_catalog.latest_local_executor_release()["version"] == "0.18.6"
