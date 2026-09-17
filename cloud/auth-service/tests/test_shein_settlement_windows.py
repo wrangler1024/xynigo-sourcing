@@ -48,11 +48,12 @@ def test_millisecond_boundary_does_not_overflow_window():
     start = datetime(2026, 9, 1, 0, 0, 0, 500000, tzinfo=TZ)
     end = datetime(2026, 9, 8, 0, 0, 0, 900000, tzinfo=TZ)
     windows = build_check_order_windows(start, end)
-    assert len(windows) == 1
+    assert windows
     for window_start, window_end in windows:
         assert window_start.microsecond == 0
         assert window_end.microsecond == 0
         assert window_end - window_start <= CHECK_ORDER_MAX_SPAN
+        assert window_end - window_start < timedelta(days=7)
 
 
 def test_check_order_windows_are_contiguous_and_non_overlapping():
@@ -101,8 +102,21 @@ def test_order_backfill_windows_are_contiguous():
 def test_order_backfill_span_never_exceeds_48h():
     windows = build_order_backfill_windows(
         _dt(2026, 9, 17, 0, 0), lookback_days=60)
-    assert len(windows) == 30  # 60 天 / 48h
     assert all(end - start <= ORDER_MAX_SPAN for start, end in windows)
+    # 覆盖连续、无空洞：从回溯起点一路接到 now
+    assert windows[0][0] == _dt(2026, 7, 19, 0, 0)
+    assert windows[-1][1] == _dt(2026, 9, 17, 0, 0)
+    for (_, prev_end), (next_start, _) in zip(windows, windows[1:]):
+        assert prev_end == next_start
+
+
+def test_window_span_is_strictly_less_than_platform_limit():
+    """平台对"恰好 7 天整"会报 gsfs99401（20260917 真机实测），
+    所以分片必须严格小于 7 天，而不是小于等于。"""
+    windows = build_check_order_windows(_dt(2026, 9, 1), _dt(2026, 9, 20))
+    assert all(end - start < timedelta(days=7) for start, end in windows)
+    assert CHECK_ORDER_MAX_SPAN < timedelta(days=7)
+    assert ORDER_MAX_SPAN < timedelta(hours=48)
 
 
 def test_incremental_windows_overlap_to_avoid_boundary_gap():
@@ -159,8 +173,8 @@ def test_plan_marks_full_backfill_on_first_sync():
         order_lookback_days=4,
     )
     assert plan.full_backfill is True
-    assert plan.order_window_count == 2      # 4 天 / 48h
-    assert plan.check_order_window_count == 1  # 7 天整
+    assert plan.order_window_count == 3        # 4 天 / (48h-1s)
+    assert plan.check_order_window_count == 2  # 7 天 / (7d-1s)：恰好 7 天会被拒
 
 
 def test_plan_uses_incremental_after_first_sync():

@@ -41,14 +41,16 @@ CHECK_ORDER_LIST_PATH = "/open-api/finance/get-check-order-list"
 CHECK_ORDER_DETAIL_PATH = "/open-api/finance/get-check-order-detail"
 ORDER_LIST_PATH = "/open-api/order/order-list"
 ORDER_DETAIL_PATH = "/open-api/order/order-detail"
-SITE_LIST_PATH = "/goods/query-site-list"
+SITE_LIST_PATH = "/open-api/goods/query-site-list"
 
 # 网关响应封装按接口族不同：换钥/店铺信息走 `data`，财务与订单域走 `info`
 # （开放平台文档响应示例：{"code":"0","msg":"OK","info":{…},"bbl":{},"traceId":…}）。
 # 两段都接受、info 优先；都缺时把实际键名带进错误信息，首次联调即可自诊断。
 _ENVELOPE_KEYS = ("info", "data")
 
-# 查询窗口上限（实测）：对账单按生成时间 ≤7 天整、毫秒越界报 gsfs99401；订单列表 ≤48h。
+# 查询窗口上限（实测）：对账单按生成时间**必须严格小于 7 天**——文档写「不可超过
+# 7 天」，但实测"恰好 7 天整"仍报 gsfs99401（20260917 真机：09-10 00:00:00 →
+# 09-17 00:00:00 被拒），故取 7 天减 1 秒。订单列表同理取 48h 减 1 秒。
 CHECK_ORDER_MAX_WINDOW_DAYS = 7
 ORDER_LIST_MAX_WINDOW_HOURS = 48
 
@@ -69,6 +71,21 @@ class SheinOpenApiClientError(RuntimeError):
         self.message = message
 
 
+# RandomKey 必须**恰好 5 位**（平台签名规则文档明文「5位随机字符串」）。
+# 平台按固定前 5 位切分签名来重建 KEY，长度不对就会切错前缀 → 报
+# `openapi00001 签名错误:生成的签名不正确`。20260917 实测：8 位随机串
+# 稳定失败、5 位立刻通过（两种长度下 Python 与浏览器 WebCrypto 算出的
+# 签名都逐字节一致，所以问题不在算法而在长度）。
+RANDOM_KEY_LENGTH = 5
+_RANDOM_KEY_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
+
+
+def _random_key() -> str:
+    return "".join(
+        secrets.choice(_RANDOM_KEY_ALPHABET) for _ in range(RANDOM_KEY_LENGTH)
+    )
+
+
 def sign_headers(
     *,
     identity_header: str,
@@ -76,9 +93,16 @@ def sign_headers(
     secret: str,
     path: str,
 ) -> dict[str, str]:
-    """构造网关签名请求头（应用级与店铺级共用算法）。"""
+    """构造网关签名请求头（应用级与店铺级共用算法）。
+
+    算法（以开放平台《SHEIN开放平台API签名指南》为准，20260917 逐条核对）：
+    VALUE = OpenKeyId & Timestamp & Path
+    KEY   = SecretKey + RandomKey（RandomKey 恰好 5 位）
+    Hex   = HMAC-SHA256(VALUE, KEY) 小写十六进制
+    Signature = RandomKey + Base64(Hex)
+    """
     timestamp = str(int(time.time() * 1000))
-    random_key = secrets.token_hex(4)
+    random_key = _random_key()
     value = f"{identity}&{timestamp}&{path}"
     digest = hmac.new(
         (secret + random_key).encode("utf-8"), value.encode("utf-8"),
@@ -328,10 +352,14 @@ class SheinOpenApiClient:
     def query_site_list(
         self, *, open_key_id: str, secret_key: str
     ) -> dict[str, Any]:
-        """店铺站点与站点币种——多币种折算时币种口径的权威来源。"""
-        return self._get(
+        """店铺站点与站点币种——多币种折算时币种口径的权威来源。
+
+        **POST**（实测：按 GET 调会报 openapi00007 请求头参数异常）。
+        响应为 info.data[]，每项含 main_site / sub_site_list[{currency, site_abbr, …}]。
+        """
+        return self._post(
             path=SITE_LIST_PATH, identity=open_key_id, secret=secret_key,
-            identity_header="x-lt-openKeyId", params={},
+            identity_header="x-lt-openKeyId", body={},
         )
 
     def exchange_temp_token(self, temp_token: str) -> tuple[str, str]:

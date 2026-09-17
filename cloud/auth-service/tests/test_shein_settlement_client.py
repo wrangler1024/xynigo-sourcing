@@ -63,8 +63,9 @@ def test_signature_matches_documented_algorithm():
     _client(handler).query_report_orders(
         open_key_id=OPEN_KEY_ID, secret_key=SECRET)
     signature = seen["signature"]
-    random_key, digest_b64 = signature[:8], signature[8:]
-    assert len(random_key) == 8
+    random_key, digest_b64 = signature[:5], signature[5:]
+    # 平台签名规则：RandomKey 恰好 5 位（长度不对会被平台切错前缀 → 00001）
+    assert len(random_key) == 5
     expected = hmac.new(
         (SECRET + random_key).encode(),
         f"{OPEN_KEY_ID}&{seen['timestamp']}&{REPORT_ORDER_LIST_PATH}".encode(),
@@ -200,19 +201,20 @@ def test_order_list_sends_query_type_and_status():
     assert ORDER_LIST_PATH == "/open-api/order/order-list"
 
 
-def test_site_list_is_get_without_payload():
+def test_site_list_is_post_with_empty_body():
+    """实测：按 GET 调会报 openapi00007 请求头参数异常，正确方法是 POST。"""
     captured: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured["method"] = request.method
         captured["content"] = request.content
-        return _ok_info({"siteList": []})
+        return _ok_info({"data": []})
 
     _client(handler).query_site_list(
         open_key_id=OPEN_KEY_ID, secret_key=SECRET)
-    assert captured["method"] == "GET"
-    assert captured["content"] == b""
-    assert SITE_LIST_PATH == "/goods/query-site-list"
+    assert captured["method"] == "POST"
+    assert captured["content"] == b"{}"
+    assert SITE_LIST_PATH == "/open-api/goods/query-site-list"
 
 
 def test_http_500_raises_gateway_http_error():
