@@ -11,7 +11,7 @@
 ## 评审对象（本地直评）
 
 - 分支 `codex/local-config-open-members`
-- 提交 `d9b9049`（代码）、`2708c28`（交接文档）；基线 `origin/main` `ab4c65a`
+- 代码提交 `d9b9049`、交接文档 `2708c28`（其后还有本评审请求的文档提交，可只看内容差异）；基线 `origin/main` `ab4c65a`
 - worktree：`~/Documents/xynigo-worktrees/local-config-open`（**本任务专用，当前无其他写入者**）
 - **本地直评：不要 fetch、不要新建 worktree，直接在该 worktree 评审**；评审期间只读，不切分支、不提交。
 
