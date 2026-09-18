@@ -600,6 +600,17 @@ class ExecutorChannelService:
         if (task_type == "after.sale.track.v1"
                 and "after.sale.phase-evidence.v1" not in set(executor.capabilities or [])):
             raise ExecutorServiceError("executor_after_sale_phase_upgrade_required", status_code=409)
+        if (task_type == "after.sale.scan.v1"
+                and payload.get("purpose") == "refund_discovery"):
+            discovery_caps = set(executor.capabilities or [])
+            if "after.sale.refund-discovery.v1" not in discovery_caps:
+                raise ExecutorServiceError(
+                    "executor_after_sale_discovery_upgrade_required", status_code=409)
+            # 发现阶段发现的真实退款单会接固定身份回访，跟踪侧的五节点
+            # 精准识别能力必须就位，避免旧执行器把阶段读错。
+            if "after.sale.phase-evidence.v1" not in discovery_caps:
+                raise ExecutorServiceError(
+                    "executor_after_sale_phase_upgrade_required", status_code=409)
         if task_type not in set(executor.capabilities or []):
             raise ExecutorServiceError("executor_capability_missing", status_code=409)
         if task_type in ENCRYPTED_TASK_TYPES and self.payload_cipher is None:
@@ -987,6 +998,7 @@ class ExecutorChannelService:
             raise ExecutorServiceError("executor_task_state_conflict", status_code=409)
         self._validate_config_result(task, body)
         self._validate_business_result(task, body)
+        self._validate_after_sale_discovery_result(task, body)
         self._validate_environment_parse_result(task, body)
         self._sync_workspace_preferences(
             executor=executor,
@@ -1365,6 +1377,9 @@ class ExecutorChannelService:
 
     _AFTER_SALE_SCAN_RESULT_KEYS = frozenset({
         "rows", "totalCount", "claimableCount",
+        # 平台查找（refund_discovery）附加的环境计数与退款单计数；
+        # 普通扫描不带这些键。
+        "refundCount", "progressCompleted", "progressTotal",
     })
 
     @classmethod
@@ -1396,12 +1411,134 @@ class ExecutorChannelService:
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ExecutorServiceError(
                     "executor_result_invalid", status_code=422)
+        for key in ("refundCount", "progressCompleted", "progressTotal"):
+            value = summary.get(key)
+            if value is not None and (isinstance(value, bool)
+                                      or not isinstance(value, int) or value < 0):
+                raise ExecutorServiceError(
+                    "executor_result_invalid", status_code=422)
+        completed = summary.get("progressCompleted")
+        plan_total = summary.get("progressTotal")
+        if (isinstance(completed, int) and isinstance(plan_total, int)
+                and completed > plan_total):
+            raise ExecutorServiceError("executor_result_invalid", status_code=422)
         # totalCount 是环境数；同一环境可有多个可申请订单，不能与单数比较。
         if len({row.environmentSerial for row in rows}) > summary["totalCount"]:
             raise ExecutorServiceError("executor_result_invalid", status_code=422)
         if sum(1 for row in rows if row.claimable) != summary["claimableCount"]:
             raise ExecutorServiceError("executor_result_invalid", status_code=422)
         return True
+
+    def _request_payload_or_reject(self, task: ExecutorTask) -> dict[str, Any]:
+        """发现用途的校验必须拿到请求载荷；解密失败直接拒绝，不降级跳过范围校验。"""
+        try:
+            payload = self._request_payload(task)
+        except ExecutorServiceError as exc:
+            raise ExecutorServiceError(
+                "executor_progress_snapshot_invalid", status_code=422,
+                diagnostic_reason="request_payload_unavailable") from exc
+        return payload if isinstance(payload, dict) else {}
+
+    @staticmethod
+    def _validate_after_sale_discovery_rows(
+        rows: list[AfterSaleScanRow],
+        payload: dict[str, Any],
+        *,
+        require_terminal_coverage: bool,
+        code: str = "executor_progress_snapshot_invalid",
+    ) -> None:
+        """refund_discovery 行的闭集语义校验（进度与最终结果共用）。
+
+        - 环境序号必须落在请求白名单内；
+        - 同环境各行的 environmentStatus 必须一致且非空；
+        - 退款单号只允许出现在一个 (环境, 订单) 身份下；
+        - 发现行不得携带可申请语义（claimable / packageCount）；
+        - require_terminal_coverage（最终结果）时每个请求环境都必须出现，
+          且 environmentStatus 全部为终态——部分完成不得冒充全部查完。
+        """
+        serials = {
+            str(item or "").strip()
+            for item in (payload.get("environmentSerials") or [])
+            if str(item or "").strip()
+        }
+        if not serials:
+            raise ExecutorServiceError(
+                code, status_code=422,
+                diagnostic_reason="request_payload_unavailable")
+        env_status: dict[str, str] = {}
+        bill_owner: dict[str, tuple[str, str]] = {}
+        for row in rows:
+            if row.environmentSerial not in serials:
+                raise ExecutorServiceError(
+                    code, status_code=422,
+                    diagnostic_reason="environment_outside_task")
+            if not row.environmentStatus:
+                raise ExecutorServiceError(
+                    code, status_code=422,
+                    diagnostic_reason="environment_status_missing")
+            previous = env_status.setdefault(row.environmentSerial,
+                                             row.environmentStatus)
+            if previous != row.environmentStatus:
+                raise ExecutorServiceError(
+                    code, status_code=422,
+                    diagnostic_reason="environment_status_inconsistent")
+            if row.claimable or row.packageCount:
+                raise ExecutorServiceError(
+                    code, status_code=422,
+                    diagnostic_reason="discovery_claimable_semantics_invalid")
+            for bill in row.refundBillIds:
+                owner = bill_owner.setdefault(
+                    bill, (row.environmentSerial, row.orderNo))
+                if owner != (row.environmentSerial, row.orderNo):
+                    raise ExecutorServiceError(
+                        code, status_code=422,
+                        diagnostic_reason="duplicate_refund_identity")
+        if require_terminal_coverage:
+            if any(status not in {"ok", "failed", "stopped"}
+                   for status in env_status.values()):
+                raise ExecutorServiceError(
+                    code, status_code=422,
+                    diagnostic_reason="environment_not_terminal")
+            missing = serials - set(env_status)
+            if missing:
+                raise ExecutorServiceError(
+                    code, status_code=422,
+                    diagnostic_reason="environment_not_covered")
+
+    def _validate_after_sale_discovery_result(
+        self, task: ExecutorTask, body: ExecutorTaskFinishBody
+    ) -> None:
+        """发现任务最终回执：请求白名单、终态覆盖与汇总一致性。"""
+        if task.task_type != "after.sale.scan.v1" or body.outcome != "succeeded":
+            return
+        payload = self._request_payload_or_reject(task)
+        if payload.get("purpose") != "refund_discovery":
+            return
+        summary = body.resultSummary
+        raw_rows = summary.get("rows")
+        try:
+            rows = [AfterSaleScanRow.model_validate(item) for item in raw_rows]
+        except (ValidationError, TypeError) as exc:
+            raise ExecutorServiceError(
+                "executor_result_invalid", status_code=422) from exc
+        self._validate_after_sale_discovery_rows(
+            rows, payload, require_terminal_coverage=True,
+            code="executor_result_invalid")
+        if summary.get("claimableCount") != 0:
+            raise ExecutorServiceError(
+                "executor_result_invalid", status_code=422)
+        reported_bills = {
+            bill for row in rows for bill in row.refundBillIds}
+        refund_count = summary.get("refundCount")
+        if refund_count is not None and refund_count != len(reported_bills):
+            raise ExecutorServiceError(
+                "executor_result_invalid", status_code=422)
+        plan_total = summary.get("progressTotal")
+        if plan_total is not None and plan_total != len(
+                {str(item or "").strip()
+                 for item in (payload.get("environmentSerials") or [])}):
+            raise ExecutorServiceError(
+                "executor_result_invalid", status_code=422)
 
     @staticmethod
     def _validate_business_result(
@@ -1986,15 +2123,20 @@ class ExecutorChannelService:
         任务行上最近一次进度快照（progress_summary）。totalCount 取执行器
         回执/进度 total、已上报去重环境数与请求环境数三者的最大值，前端按
         「已终结环境数 / totalCount」画进度条。
+
+        purpose=refund_discovery 时另附 progressCompleted/progressTotal
+        （环境数）与 refundCount（去重退款单数）；普通扫描不带这些键。
         """
         if task.task_type != "after.sale.scan.v1":
             raise ExecutorServiceError("executor_task_type_invalid", status_code=404)
+        purpose = self._after_sale_scan_purpose(task)
         progress = task.progress_summary if isinstance(
             task.progress_summary, dict) else {}
         progress_rows = progress.get("rows")
         rows = ([dict(item) for item in progress_rows]
                 if isinstance(progress_rows, list) else [])
         total_count = max(0, int(progress.get("progressTotal") or 0))
+        progress_completed: int | None = None
         result = task.result_summary or {}
         # 任务不确定/失败时 result_summary 里只有明文错误摘要，没有密文；
         # 此时保持进度快照里的部分行，避免解密空密文报错。
@@ -2006,15 +2148,45 @@ class ExecutorChannelService:
                 if isinstance(result_rows, list):
                     rows = [dict(item) for item in result_rows]
                     total_count = max(0, int(summary.get("totalCount") or 0))
+                for key in ("progressCompleted", "progressTotal"):
+                    if isinstance(summary.get(key), int) and not isinstance(
+                            summary.get(key), bool):
+                        if key == "progressCompleted":
+                            progress_completed = summary[key]
+                        else:
+                            total_count = max(total_count, summary[key])
         serials = {str(row.get("environmentSerial") or "") for row in rows}
         serials.discard("")
         total_count = max(total_count, len(serials),
                           len(self._after_sale_scan_requested_serials(task)))
-        return {
+        data: dict[str, Any] = {
             "rows": rows,
             "totalCount": total_count,
             "claimableCount": sum(1 for row in rows if row.get("claimable")),
         }
+        # purpose/progressCompleted/progressTotal/refundCount 只在发现任务输出：
+        # 普通扫描的 GET 响应保持原有形状，不因新用途改变旧契约。
+        if purpose == "refund_discovery":
+            data["purpose"] = purpose
+            if progress_completed is None:
+                progress_completed = progress.get("progressCompleted")
+            data["progressCompleted"] = (
+                int(progress_completed) if isinstance(progress_completed, int)
+                and not isinstance(progress_completed, bool) else 0)
+            data["progressTotal"] = total_count
+            data["refundCount"] = len({
+                str(bill) for row in rows
+                for bill in (row.get("refundBillIds") or [])})
+        return data
+
+    def _after_sale_scan_purpose(self, task: ExecutorTask) -> str:
+        """扫描任务用途；解密不可用时按普通扫描解释（GET 不报错）。"""
+        try:
+            payload = self._request_payload(task)
+        except ExecutorServiceError:
+            return "claimable_orders"
+        purpose = (payload.get("purpose") if isinstance(payload, dict) else None)
+        return "refund_discovery" if purpose == "refund_discovery" else "claimable_orders"
 
     def _after_sale_scan_requested_serials(self, task: ExecutorTask) -> list[str]:
         """扫描任务请求的环境序号；解密不可用时退化为空表（GET 不报错）。"""
@@ -2969,6 +3141,17 @@ class ExecutorChannelService:
                 diagnostic_reason="row_schema_invalid") from exc
         keys = [(row.environmentSerial, row.orderNo) for row in rows]
         allowed_serials = set(self._after_sale_scan_requested_serials(task))
+        # 平台查找（refund_discovery）与普通扫描共用行模型，但语义校验不同：
+        # 发现行必须带环境状态与退款身份闭集；普通扫描行不得携带发现字段。
+        discovery_payload: dict[str, Any] | None = None
+        if self._after_sale_scan_purpose(task) == "refund_discovery":
+            discovery_payload = self._request_payload_or_reject(task)
+            self._validate_after_sale_discovery_rows(
+                rows, discovery_payload, require_terminal_coverage=False)
+        elif any(row.refundBillIds or row.environmentStatus for row in rows):
+            raise ExecutorServiceError(
+                "executor_progress_snapshot_invalid", status_code=422,
+                diagnostic_reason="discovery_fields_outside_purpose")
         invalid_reason = (
             "duplicate_environment_order" if len(keys) != len(set(keys)) else
             "environment_outside_task"

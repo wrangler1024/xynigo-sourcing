@@ -5539,11 +5539,13 @@ function asSyncWriteButtons() {
 }
 
 const AS_LIST_KEY = 'afterSaleEnvList';
+const AS_DISCOVERY_KEY = 'afterSaleDiscoveryTask';
 const AS_STATE = {
   mode: '', type: 'refund', scanTaskId: null, runId: null, runLabel: '',
   orderView: 'pending', claimFilter: 'all', submissions: new Map(), detailKey: '',
   trackTaskId: null, timer: null, running: false,
   envSerials: null, envMode: false, environments: [],
+  discoveryTaskId: null, discoverySerials: [], discoveryIntent: null,
   starting: false, pendingCreates: {}, polling: false, claimItems: [], trackItems: [],
   rows: [], selected: new Set(), claimRows: [], stopRequested: false,
   pollErrors: 0, etaBase: null, startedAt: null, endedAt: null, progressSnapshot: null, status: ''
@@ -5686,6 +5688,7 @@ function asInit() {
   asRenderTypeBar();
   asSelectType(AS_STATE.type);
   asLoadLatestClaim();
+  asRestoreDiscovery();
   if (!$('asSerials').value) asLoadList();
   if (!AS_STATE.timer) AS_STATE.timer = setInterval(asPoll, 2500);
 }
@@ -6336,25 +6339,34 @@ function asSyncTrackInputMode() {
     ? '按输入顺序匹配这些环境在系统中的历史退款单，核对清单后只读回访。每次最多 300 个环境、500 个退款单；系统未记录的退款单可切换“按退款单（完整信息）”。'
     : '每组填环境序号、订单号、退款单号，以空格分隔；多组用中英文分号或换行分隔。只读查询，可回访历史订单，无需本页提交记录。';
 }
-function asConfirmTrackMatches(data) {
+function asConfirmTrackMatches(data, discovery) {
+  // discovery: null=入口不可用（原因见 disabledReason），否则 {executor}
   return new Promise(resolve => {
     const items = data.items || [], environments = data.environments || [];
     const dialog = document.createElement('dialog');
     dialog.className = 'as-product-dialog';
     dialog.setAttribute('aria-label', '核对回访范围');
-    let accepted = false;
+    let action = '';
+    const discoveryReady = !!(discovery && discovery.executor);
+    const discoveryHint = discoveryReady
+      ? '将读取本次输入的全部 ' + environments.length + ' 个环境中的退款记录，再查询进度。'
+      : (discovery && discovery.disabledReason) || '执行器暂不支持平台查找。';
     dialog.innerHTML = '<h3>核对回访范围</h3><p>输入 '+environments.length+' 个环境，匹配 '
       +items.length+' 个退款单。只读查询平台进度，不提交售后。</p>'
+      +'<p class="hint">系统记录可能不含人工申请的退款；平台查找可发现这些退款单。'+esc(discoveryHint)+'</p>'
       +'<div class="as-track-match-list">'+environments.map(env => {
         const bills = items.filter(item => item.environmentSerial === env.environmentSerial);
         return '<p><b>环境 '+esc(env.environmentSerial)+'</b> · '+bills.length+' 个退款单'
           +(env.note ? '<br><span class="hint">'+esc(env.note)+'</span>' : '')
           +bills.map(item => '<br><span class="sub-text">'+esc(item.orderNo)+' · '+esc(item.refundBillId)+'</span>').join('')+'</p>';
       }).join('')+'</div><div class="actions"><button class="btn" data-cancel>返回修改</button>'
-      +'<button class="btn primary" data-confirm'+(items.length ? '' : ' disabled')+'>回访已匹配的 '+items.length+' 单</button></div>';
+      +'<button class="btn primary" data-confirm'+(items.length ? '' : ' disabled')+'>回访已匹配的 '+items.length+' 单</button>'
+      +'<button class="btn" data-discover'+(discoveryReady ? '' : ' disabled')+' title="'+esc(discoveryHint)+'">到平台查找并回访</button></div>';
     dialog.querySelector('[data-cancel]').onclick = () => dialog.close();
-    dialog.querySelector('[data-confirm]').onclick = () => { accepted = true; dialog.close(); };
-    dialog.addEventListener('close', () => { dialog.remove(); resolve(accepted); }, {once:true});
+    dialog.querySelector('[data-confirm]').onclick = () => { action = 'history'; dialog.close(); };
+    const discoveryButton = dialog.querySelector('[data-discover]');
+    discoveryButton.onclick = () => { action = 'discover'; dialog.close(); };
+    dialog.addEventListener('close', () => { dialog.remove(); resolve(action); }, {once:true});
     document.body.appendChild(dialog);
     dialog.showModal();
   });
@@ -6371,25 +6383,39 @@ async function asTrackEnvironments() {
   AS_STATE.starting = true;
   asSyncRuntimeControls();
   let items = [];
+  let discoveryAction = false;
   try {
     AS_STATE.startedAt = null; AS_STATE.endedAt = null; AS_STATE.etaBase = null;
     asProgress({progressTotal:0, progressCompleted:0, unit:'单'});
     asSetPhase('正在匹配退款单', '共 '+serials.length+' 个环境，正在读取系统历史记录。', true);
-    const response = await cloudFetchJson('/v1/after-sale/track/resolve', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({environmentSerials:serials}),
-    });
+    const [response, discovery] = await Promise.all([
+      cloudFetchJson('/v1/after-sale/track/resolve', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({environmentSerials:serials}),
+      }),
+      asDiscoveryExecutor(),
+    ]);
     const data = response?.data;
     if (!Array.isArray(data?.items) || !Array.isArray(data?.environments)) throw new Error('退款单匹配响应不完整，请重试。');
     asSetPhase(data.items.length ? '退款单匹配完成' : '没有匹配到可回访的退款单',
       '共 '+serials.length+' 个环境，匹配 '+data.items.length+' 个退款单；请核对匹配清单。', false);
-    if (await asConfirmTrackMatches(data)) items = data.items;
+    const action = await asConfirmTrackMatches(data, discovery);
+    if (action === 'history') items = data.items;
+    else if (action === 'discover') discoveryAction = true;
     else asSetPhase('回访未开始', '已关闭匹配清单，本次未发起回访任务。', false);
   } catch (error) {
+    // 历史匹配失败时平台查找入口同样不可用：不吞掉错误，也不继续发任务。
     asSetPhase('退款单匹配失败', String(error.message || error), false);
   } finally {
     AS_STATE.starting = false;
     asSyncRuntimeControls();
+  }
+  if (discoveryAction) {
+    const discovery = await asDiscoveryExecutor();
+    if (discovery && discovery.executor) await asDiscoverAndTrack(serials, discovery.executor);
+    else asSetPhase('平台查找不可用',
+      (discovery && discovery.disabledReason) || '本地执行器暂不支持平台查找，本次未发起任务。', false);
+    return;
   }
   if (items.length) await asTrack(items);
 }
@@ -6405,6 +6431,322 @@ function asTrackItemsFromRows(rows) {
     });
   });
   return items;
+}
+// ===== 平台查找退款单（refund_discovery）：只读发现 → 校验身份 → 固定 items 回访 =====
+// 平台查找入口不抛错：执行器不可用/未升级时返回 disabledReason，历史匹配与
+// 三字段回访入口不受这个新门禁影响。
+async function asDiscoveryExecutor() {
+  try {
+    let executor = await cloudFormalExecutor('after.sale.scan.v1');
+    const has = cap => (executor.capabilities || []).includes(cap);
+    if (!has('after.sale.refund-discovery.v1') || !has('after.sale.runtime-controls.v1')) {
+      // 升级后的设备可能仍是本页缓存的旧能力：先刷新同一台再下结论。
+      const payload = await cloudFetchJson('/v1/executors');
+      const devices = Array.isArray(payload.items) ? payload.items : [];
+      const refreshed = devices.find(item => item.id === executor.id);
+      if (!refreshed || refreshed.status === 'revoked' || refreshed.connectivity !== 'online') {
+        return {executor:null, disabledReason:'本地执行器当前离线或不可用，暂不能平台查找。'};
+      }
+      executor = refreshed;
+      localExecutorDevices = devices;
+      renderLocalExecutorDevices();
+    }
+    if (!(executor.capabilities || []).includes('after.sale.refund-discovery.v1')) {
+      return {executor:null, disabledReason:'请升级执行器以支持平台查找退款单。'};
+    }
+    if (!(executor.capabilities || []).includes('after.sale.phase-evidence.v1')) {
+      return {executor:null, disabledReason:'请升级执行器以准确读取五步退款进度后再使用平台查找。'};
+    }
+    if (!(executor.capabilities || []).includes('after.sale.runtime-controls.v1')) {
+      return {executor:null, disabledReason:'请先升级本地执行器，以支持售后无头模式和环境并发设置。'};
+    }
+    return {executor};
+  } catch (e) {
+    return {executor:null, disabledReason:String(e.message || e)};
+  }
+}
+const AS_DISCOVERY_ENV_LABEL = {
+  queued: ['run', '等待'], running: ['run', '查找中'], ok: ['ok', '已完成'],
+  failed: ['bad', '读取失败'], stopped: ['warn', '已停止'],
+};
+function asDiscoveryEnvPill(status) {
+  const entry = AS_DISCOVERY_ENV_LABEL[String(status || '')] || ['warn', '未确认'];
+  return `<span class="pill ${entry[0]}${status === 'running' ? ' as-status-active' : ''}">${entry[1]}</span>`;
+}
+// 空态必须区分：平台确认无退款 / 登录失效 / 页面读取失败 / 环境占用 / 范围未查完。
+function asDiscoveryEnvConclusion(env) {
+  const rows = env.rows || [];
+  if (String(env.environmentStatus || '') === 'failed') {
+    const login = rows.some(r => r.status === 'login') || String(rows[0]?.errorSummary || '').includes('未登录');
+    return login ? '登录失效：请先登录该环境后重试' : '页面读取失败：未确认该环境全部退款记录';
+  }
+  if (String(env.environmentStatus || '') === 'stopped') return '范围未查完：发现被停止，结果不完整';
+  if (!rows.length || (!rows[0].orderNo && rows.length === 1)) return '平台确认无退款订单';
+  if (!rows.some(r => (r.refundBillIds || []).length)) return '平台确认无退款';
+  return '';
+}
+function asRenderDiscoveryRows(rows, options) {
+  const opts = options || {};
+  const order = AS_STATE.discoverySerials || [];
+  const envs = new Map();
+  (rows || []).forEach(row => {
+    const serial = String(row.environmentSerial || '');
+    if (!serial) return;
+    if (!envs.has(serial)) envs.set(serial, {environmentSerial: serial, environmentStatus: row.environmentStatus,
+      storeName: row.storeName || '', rows: []});
+    envs.get(serial).rows.push(row);
+  });
+  const envList = [...envs.values()].sort((a, b) => {
+    const ia = order.indexOf(a.environmentSerial), ib = order.indexOf(b.environmentSerial);
+    return (ia < 0 ? order.length : ia) - (ib < 0 ? order.length : ib);
+  });
+  const tbody = $('asTrackRows');
+  if (!envList.length) {
+    tbody.innerHTML = '<tr><td colspan="10" class="hint" style="text-align:center; padding:22px;">'
+      +'正在查找退款单…按环境只读读取退款记录，不提交售后。</td></tr>';
+    return;
+  }
+  tbody.innerHTML = envList.map(env => {
+    const lines = env.rows.map(row => {
+      const bills = row.refundBillIds || [];
+      if (!row.orderNo) return '';
+      const state = row.status === 'fail'
+        ? '<span class="hint">'+esc(row.errorSummary || '退款记录读取失败')+'</span>'
+        : bills.length ? esc(bills.join(' / ')) : '<span class="hint">无退款</span>';
+      return '<div class="sub-text">'+esc(row.orderNo)+' · '+state+'</div>';
+    }).join('');
+    return `<tr><td colspan="10" style="padding:8px 10px;">
+      ${asDiscoveryEnvPill(env.environmentStatus)} <b>${esc(env.environmentSerial)}</b>
+      <span class="sub-text">${esc(env.storeName)}</span>
+      ${env.rows.some(r => r.status === 'login') || (env.rows.length === 1 && !env.rows[0].orderNo && String(env.rows[0].errorSummary || '').includes('未登录')) ? '<div class="hint">'+esc(env.rows[0].errorSummary || '')+'</div>' : ''}
+      ${env.environmentStatus === 'failed' && !lines ? '<div class="hint">'+esc((env.rows[0]||{}).errorSummary || '页面读取失败')+'</div>' : ''}
+      <div style="margin-top:4px">${lines || '<span class="hint">该环境无订单</span>'}</div>
+    </td></tr>`;
+  }).join('') + (opts.continueButton
+    ? `<tr><td colspan="10" style="padding:10px; text-align:center;">
+        <button class="btn primary" data-as-discovery-continue>仅回访已确认的 ${opts.continueButton} 单</button>
+        ${opts.conflictCount ? '<div class="hint" style="margin-top:6px">'+opts.conflictCount+' 个退款单归属不一致已排除，请核对历史记录</div>' : ''}
+      </td></tr>`
+    : (opts.footNote ? `<tr><td colspan="10" class="hint" style="padding:8px; text-align:center;">${esc(opts.footNote)}</td></tr>` : ''));
+  const button = tbody.querySelector('[data-as-discovery-continue]');
+  if (button) button.onclick = () => asContinueDiscovery();
+}
+function asDiscoveryItemsFromRows(rows) {
+  const seen = new Set(), items = [];
+  (rows || []).forEach(row => {
+    (row.refundBillIds || []).forEach(bill => {
+      if (seen.has(bill) || !row.orderNo || row.status === 'fail') return;
+      seen.add(bill);
+      items.push({environmentSerial:row.environmentSerial || '', orderNo:row.orderNo,
+        refundBillId:bill, storeName:row.storeName || ''});
+    });
+  });
+  return items;
+}
+async function asValidateDiscoveredItems(items) {
+  // 派发前把发现身份与本租户提交/跟踪历史核对：冲突单排除并解释。
+  const response = await cloudFetchJson('/v1/after-sale/track/validate-discovered', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({items}),
+  });
+  const data = response?.data;
+  if (!Array.isArray(data?.items) || !Array.isArray(data?.conflicts)) {
+    throw new Error('退款身份核对响应不完整，请重试。');
+  }
+  return data;
+}
+async function asDiscoverAndTrack(serials, executor) {
+  if (AS_STATE.running || AS_STATE.starting) return;
+  AS_STATE.starting = true;
+  asSyncRuntimeControls();
+  try {
+    const runtime = asRuntimeOptions();
+    AS_STATE.mode = 'discover';   // 发现阶段占用 ③ 卡片；进度按环境计
+    const res = await asCreateTask('/v1/after-sale/scan', {
+      executorId: executor.id, browserMode: runtime.browserMode,
+      concurrency: runtime.concurrency, environmentSerials: serials,
+      purpose:'refund_discovery',
+    });
+    const data = (res || {}).data || {};
+    if (!data.taskId) throw new Error('平台查找任务未返回编号，请重试。');
+    AS_STATE.discoveryTaskId = data.taskId;
+    AS_STATE.discoverySerials = serials.slice();
+    AS_STATE.discoveryIntent = {taskId:data.taskId, executorId:executor.id, serials:serials.slice()};
+    asDiscoveryPersist();
+    AS_STATE.running = true;
+    AS_STATE.stopRequested = false;
+    AS_STATE.pollErrors = 0;
+    AS_STATE.etaBase = null;
+    AS_STATE.startedAt = Date.now(); AS_STATE.endedAt = null; AS_STATE.progressSnapshot = null;
+    AS_STATE.trackRows = [];
+    $('asTrack').disabled = true; $('asStop').disabled = false;
+    asRenderDiscoveryRows([]);
+    asProgress({progressTotal:serials.length, progressCompleted:0, unit:'个环境'});
+    asSetPhase('正在查找退款单', `共 ${serials.length} 个环境 · 只读读取退款记录，不提交售后`, true);
+    $('asTrackCard').scrollIntoView?.({block:'start',behavior:'instant'});
+    asPoll();
+  } catch (e) {
+    AS_STATE.mode = '';
+    AS_STATE.discoveryIntent = null;
+    asSetPhase('平台查找发起失败', String(e.message || e), false);
+  } finally {
+    AS_STATE.starting = false;
+    asSyncRuntimeControls();
+  }
+}
+// 发现终态：完整成功自动接续回访（同一页面意图）；部分失败/停止只留手动继续。
+async function asFinishDiscovery(taskId, rows, status) {
+  const intent = AS_STATE.discoveryIntent;
+  const envStates = new Map();
+  (rows || []).forEach(row => envStates.set(String(row.environmentSerial || ''),
+    String(row.environmentStatus || '')));
+  const failedEnvs = [...envStates.entries()].filter(([, s]) => s === 'failed').map(([s]) => s);
+  const stoppedEnvs = [...envStates.entries()].filter(([, s]) => s === 'stopped').map(([s]) => s);
+  const allOk = status === 'succeeded' && envStates.size > 0
+    && [...envStates.values()].every(s => s === 'ok');
+  const items = asDiscoveryItemsFromRows(rows);
+  let validated = {items: [], conflicts: []};
+  if (items.length) {
+    try {
+      validated = await asValidateDiscoveredItems(items);
+    } catch (e) {
+      asSetPhase('退款身份核对失败', String(e.message || e) + '；可稍后在此页重试或改用完整信息回访。', false);
+      asRenderDiscoveryRows(rows, items.length
+        ? {continueButton: items.length} : {footNote:'退款身份核对未完成'});
+      return;
+    }
+  }
+  const conflicts = validated.conflicts || [];
+  const accepted = validated.items || [];
+  // 回访任务契约上限 500 个去重退款单：超限不自动接续，提示分批。
+  if (accepted.length > 500) {
+    AS_STATE.discoveryIntent = null;
+    asSetPhase('发现的退款单超过上限',
+      `本次发现 ${accepted.length} 个退款单，单次回访最多 500 个；请改用「按退款单（完整信息）」分批回访。`, false);
+    asRenderDiscoveryRows(rows, {footNote:'发现结果超过单批回访上限（500），请分批回访'});
+    return;
+  }
+  const autoContinue = !!(intent && intent.taskId === taskId
+    && allOk && !AS_STATE.stopRequested && accepted.length);
+  if (autoContinue) {
+    let executorOk = false;
+    try {
+      const track = await asDiscoveryExecutor();
+      executorOk = !!(track.executor && track.executor.id === intent.executorId);
+      if (track.executor && track.executor.id !== intent.executorId) {
+        asSetPhase('执行器已变化', '当前执行器与平台查找时不同，不自动接续；请核对后手动继续。', false);
+      }
+    } catch (e) { executorOk = false; }
+    if (executorOk) {
+      AS_STATE.discoveryIntent = null;
+      asSetPhase('平台查找完成', `发现 ${items.length} 个退款单${conflicts.length ? '，其中 '+conflicts.length+' 个归属不一致已排除' : ''}；自动接续回访 ${accepted.length} 单。`, false);
+      await asTrack(accepted);
+      return;
+    }
+  }
+  AS_STATE.discoveryIntent = null;
+  if (!items.length && allOk) {
+    asSetPhase('平台确认无退款', '本次输入的全部环境已完整读取，平台没有退款记录。', false);
+    asRenderDiscoveryRows(rows, {});
+    return;
+  }
+  if (!items.length) {
+    asSetPhase(status === 'cancelled' ? '平台查找已停止' : '平台查找未完成',
+      `发现 ${failedEnvs.length} 个环境读取失败、${stoppedEnvs.length} 个环境未查完；未发现可回访的退款单。`, false);
+    asRenderDiscoveryRows(rows, {});
+    return;
+  }
+  asSetPhase('平台查找完成（部分待确认）',
+    `发现 ${items.length} 个退款单，可回访 ${accepted.length} 单${conflicts.length ? '，'+conflicts.length+' 个归属不一致已排除' : ''}`
+    + (failedEnvs.length || stoppedEnvs.length ? `；${failedEnvs.length} 个环境读取失败、${stoppedEnvs.length} 个环境未查完，未包含在其结果中。` : '。'),
+    false);
+  asRenderDiscoveryRows(rows, accepted.length
+    ? {continueButton: accepted.length, conflictCount: conflicts.length}
+    : {conflictCount: conflicts.length});
+}
+async function asContinueDiscovery() {
+  if (AS_STATE.running || AS_STATE.starting) return;
+  const taskId = AS_STATE.discoveryTaskId;
+  if (!taskId) return;
+  AS_STATE.starting = true; asSyncRuntimeControls();
+  try {
+    const res = await cloudFetchJson('/v1/after-sale/scan/' + encodeURIComponent(taskId));
+    const rows = (res?.data?.summary?.rows) || [];
+    const items = asDiscoveryItemsFromRows(rows);
+    if (!items.length) { asSetPhase('没有可回访的退款单', '本次平台查找未发现退款单。', false); return; }
+    const track = await asDiscoveryExecutor();
+    if (!track.executor) { asSetPhase('执行器不可用', track.disabledReason || '无法发起回访', false); return; }
+    const validated = await asValidateDiscoveredItems(items);
+    const accepted = validated.items || [];
+    if (!accepted.length) {
+      asSetPhase('没有可回访的退款单', (validated.conflicts || []).length
+        ? '发现的退款单均与历史归属不一致，已全部排除；请核对历史记录。' : '未发现可回访的退款单。', false);
+      return;
+    }
+    if (accepted.length > 500) {
+      asSetPhase('发现的退款单超过上限',
+        `本次可回访 ${accepted.length} 个退款单，单次最多 500 个；请改用「按退款单（完整信息）」分批回访。`, false);
+      return;
+    }
+    await asTrack(accepted);
+  } catch (e) {
+    asSetPhase('继续回访失败', String(e.message || e), false);
+  } finally {
+    AS_STATE.starting = false; asSyncRuntimeControls();
+  }
+}
+function asDiscoveryPersist() {
+  try { localStorage.setItem(AS_DISCOVERY_KEY, JSON.stringify({
+    taskId: AS_STATE.discoveryTaskId, serials: AS_STATE.discoverySerials || []})); } catch (e) {}
+}
+function asDiscoveryClearPersisted() {
+  try { localStorage.removeItem(AS_DISCOVERY_KEY); } catch (e) {}
+}
+// 刷新页面恢复任务与结果，但不恢复自动接续意图（避免打开历史任务就自动发新任务）。
+async function asRestoreDiscovery() {
+  if (AS_STATE.running || AS_STATE.starting || AS_STATE.mode || AS_STATE.runId) return;
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(AS_DISCOVERY_KEY) || 'null'); } catch (e) {}
+  if (!saved || !saved.taskId || !Array.isArray(saved.serials) || !saved.serials.length) return;
+  try {
+    const res = await cloudFetchJson('/v1/after-sale/scan/' + encodeURIComponent(saved.taskId));
+    const data = (res || {}).data || {};
+    const summary = data.summary || {};
+    if (summary.purpose !== 'refund_discovery') { asDiscoveryClearPersisted(); return; }
+    AS_STATE.discoveryTaskId = saved.taskId;
+    AS_STATE.discoverySerials = saved.serials;
+    const rows = summary.rows || [];
+    const status = String(data.status || '');
+    // fetch 返回期间提交批次可能已恢复：只读渲染结果安全，接续轮询要让位。
+    const busy = AS_STATE.running || AS_STATE.starting || AS_STATE.mode || AS_STATE.runId;
+    if (['created','queued','leased','running','cancel_requested'].includes(status)) {
+      if (busy) return;
+      AS_STATE.mode = 'discover'; AS_STATE.running = true;
+      AS_STATE.stopRequested = status === 'cancel_requested';
+      AS_STATE.pollErrors = 0;
+      AS_STATE.startedAt = Date.parse(data.startedAt || data.createdAt || '') || Date.now();
+      AS_STATE.endedAt = null; AS_STATE.etaBase = null;
+      asSyncRuntimeControls(); $('asStop').disabled = false;
+      asRenderDiscoveryRows(rows);
+      asProgress({progressTotal:Number(summary.progressTotal || saved.serials.length),
+        progressCompleted:Number(summary.progressCompleted || 0), unit:'个环境'});
+      asSetPhase('已恢复运行中的平台查找', `共 ${saved.serials.length} 个环境，继续更新进度`, true);
+      asPoll();
+      return;
+    }
+    if (['succeeded','failed','cancelled','uncertain'].includes(status)) {
+      AS_STATE.discoveryIntent = null;
+      asRenderDiscoveryRows(rows, asDiscoveryItemsFromRows(rows).length
+        ? {continueButton: asDiscoveryItemsFromRows(rows).length} : {});
+      asSetPhase('已恢复平台查找结果',
+        '刷新后不自动接续回访；确认无误后点「仅回访已确认的单」。', false);
+      return;
+    }
+    asDiscoveryClearPersisted();
+    AS_STATE.discoveryTaskId = null; AS_STATE.discoverySerials = [];
+  } catch (e) {
+    asDiscoveryClearPersisted();
+  }
 }
 async function asTrack(explicitItems) {
   if (AS_STATE.running || AS_STATE.starting) return;
@@ -7224,6 +7566,30 @@ async function asPoll() {
           `本次已处理 ${completed} / ${total} 单 · 读取失败 ${readFailures} 单 · 未终态 ${open} 单`
           + (bad ? ` · 已拒绝 ${bad} 单审核异常需人工处理` : ''), false);
       }
+    } else if (AS_STATE.mode === 'discover' && AS_STATE.discoveryTaskId) {
+      const taskId = AS_STATE.discoveryTaskId;
+      const res = await cloudFetchJson('/v1/after-sale/scan/'
+        + encodeURIComponent(AS_STATE.discoveryTaskId));
+      const data = (res || {}).data || {};
+      if (AS_STATE.mode !== 'discover' || AS_STATE.discoveryTaskId !== taskId) return;
+      const summary = data.summary || {};
+      const rows = summary.rows || [];
+      asRenderDiscoveryRows(rows);
+      // 发现阶段进度按「环境」计，回访阶段按「退款单」计，两个分母不混用。
+      const envTotal = Number(summary.progressTotal || summary.totalCount
+        || (AS_STATE.discoverySerials || []).length || 0);
+      const envDone = Number(summary.progressCompleted || 0);
+      asProgress({ ...data, progressTotal: envTotal, progressCompleted: envDone,
+        rows, unit: '个环境' });
+      AS_STATE.pollErrors = 0;
+      AS_STATE.status = String(data.status || '');
+      if (['succeeded', 'failed', 'cancelled', 'uncertain'].includes(AS_STATE.status)) {
+        AS_STATE.running = false;
+        AS_STATE.mode = '';
+        $('asTrack').disabled = false; $('asStop').disabled = true;
+        if (AS_STATE.stopRequested) AS_STATE.discoveryIntent = null;
+        await asFinishDiscovery(taskId, rows, AS_STATE.status);
+      }
     } else if (AS_STATE.mode === 'claim' && AS_STATE.runId) {
       const runId = AS_STATE.runId;
       const res = await cloudFetchJson('/v1/operation-runs/after-sale-claim/'
@@ -7299,6 +7665,11 @@ $('asStop').onclick = async () => {
     } else if (AS_STATE.mode === 'scan' && AS_STATE.scanTaskId) {
       await cloudFetchJson('/v1/after-sale/scan/'
         + encodeURIComponent(AS_STATE.scanTaskId) + '/cancel', { method: 'POST' });
+    } else if (AS_STATE.mode === 'discover' && AS_STATE.discoveryTaskId) {
+      // 停止取消当前阶段并解除接续意图；发现所得部分列表保留展示但不自动继续。
+      AS_STATE.discoveryIntent = null;
+      await cloudFetchJson('/v1/after-sale/scan/'
+        + encodeURIComponent(AS_STATE.discoveryTaskId) + '/cancel', { method: 'POST' });
     }
   } catch (e) {
     asSetPhase('停止失败', String(e.message || e) + '。可稍后重试。', false);
@@ -7311,6 +7682,9 @@ $('asClearResult').onclick = () => {
   AS_STATE.claimFilter = 'all';
   AS_STATE.runLabel = '';
   AS_STATE.envMode = false; AS_STATE.envSerials = null;
+  AS_STATE.discoveryTaskId = null; AS_STATE.discoverySerials = [];
+  AS_STATE.discoveryIntent = null;
+  asDiscoveryClearPersisted();
   $('asClaimRows').innerHTML = '<tr><td colspan="11" class="hint" style="text-align:center; padding:22px;">已清空。</td></tr>';
   $('asPhaseBanner').hidden = true;
   $('asBar').style.width = '0%'; $('asProgressText').textContent = '未开始';

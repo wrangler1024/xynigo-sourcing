@@ -44,6 +44,7 @@ EXECUTOR_CAPABILITIES = Literal[
     "after.sale.claim-evidence.v1",
     "after.sale.claim-environment.v1",
     "after.sale.phase-evidence.v1",
+    "after.sale.refund-discovery.v1",
     "environment.create-bound.v1",
     "environment.create-backup.v1",
     "environment.retry-row.v1",

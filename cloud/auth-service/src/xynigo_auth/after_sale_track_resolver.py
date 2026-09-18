@@ -136,3 +136,62 @@ def resolve_after_sale_track_items(session, tenant_id, serials):
     return {"items": items, "environments": environments,
             "environmentCount": len(serials), "billCount": len(items),
             "matchedEnvironmentCount": sum(env["billCount"] > 0 for env in environments)}
+
+
+def validate_discovered_refund_identities(session, tenant_id, items):
+    """平台发现的退款身份与本租户提交/跟踪两类历史核对。
+
+    与 ``resolve_after_sale_track_items`` 共用冲突判定：同一退款单已绑定到
+    不同环境/订单（或历史记录缺少环境但订单不一致）时排除并解释原因，
+    不覆盖既有绑定。返回按原顺序保留的可用 items 与冲突清单。
+    """
+    identities = {
+        str(item["refundBillId"]): (
+            str(item["environmentSerial"]), str(item["orderNo"]),
+            str(item.get("storeName") or "")[:128])
+        for item in items
+    }
+    blocked: dict[str, str] = {}
+    claim_columns = _claim_identities(session, tenant_id)
+    query = select(
+        claim_columns.c.refund_bill_id, claim_columns.c.environment_serial,
+        claim_columns.c.order_no,
+    ).where(claim_columns.c.refund_bill_id.in_(identities)).distinct()
+    with session.execute(query.execution_options(yield_per=100)) as records:
+        for bill, serial, order in records:
+            discovered = identities.get(bill)
+            if discovered and (serial, order) != discovered[:2]:
+                blocked.setdefault(
+                    bill, "退款单已绑定到其他环境或订单（提交历史），为避免改绑已排除")
+    track = AfterSaleRefundTracking
+    bindings = session.execute(select(
+        track.refund_bill_id, track.environment_serial, track.order_no,
+    ).where(track.tenant_id == tenant_id,
+            track.refund_bill_id.in_(identities))).all()
+    for bill, serial, order in bindings:
+        discovered = identities.get(bill)
+        if not discovered:
+            continue
+        order = str(order or "")
+        if (serial and (serial, order) != discovered[:2]) or (
+                not serial and order and order != discovered[1]):
+            blocked.setdefault(
+                bill, "退款单已绑定到其他环境或订单（跟踪历史），为避免改绑已排除")
+    accepted = []
+    conflicts = []
+    for item in items:
+        bill = str(item["refundBillId"])
+        serial = str(item["environmentSerial"])
+        order = str(item["orderNo"])
+        if bill in blocked:
+            conflicts.append({
+                "environmentSerial": serial, "orderNo": order,
+                "refundBillId": bill,
+                "reason": blocked[bill],
+            })
+            continue
+        accepted.append({"environmentSerial": serial, "orderNo": order,
+                         "refundBillId": bill,
+                         "storeName": str(item.get("storeName") or "")[:128]})
+    return {"items": accepted, "conflicts": conflicts,
+            "billCount": len(accepted), "conflictCount": len(conflicts)}

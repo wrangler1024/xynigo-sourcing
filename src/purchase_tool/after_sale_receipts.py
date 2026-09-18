@@ -83,6 +83,88 @@ _DETAIL_FACTS = r'''(() => {
 })()'''.replace('__REFUND_ACCOUNT_READER__', REFUND_ACCOUNT_JS)
 
 
+# 平台查找（refund_discovery）专用：只发现退款单号，不读阶段/账户。
+# 先尝试从 Detalles 锚点自身的 href 取身份（无副作用）；href 缺失或与当前
+# 订单不一致时才点击入口并从地址栏取值。两种途径共用 refund_bill_id_from_url
+# 的严格身份校验（订单号必须等于当前订单）。
+_DISCOVERY_HREFS = ('[...document.querySelectorAll("a.she-btn-black")]'
+                    '.filter(a=>a.innerText.trim()==="Detalles")'
+                    '.map(a=>a.getAttribute("href")||"")')
+# 空态只认「专门的空态容器」里的文案（class 含 empty 的可见节点），不扫全文——
+# 退款列表的空态 DOM 尚未经真机核验，宁可误报「无法确认」，不猜成「无退款」。
+_JS_REFUND_LIST_STATE = r'''(() => {
+  const visible = e => !!e && !!(e.offsetWidth || e.offsetHeight);
+  const emptyText = [...document.querySelectorAll('[class*=empty]')]
+    .filter(visible)
+    .map(e => String(e.innerText || '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean).slice(0, 4).join(' | ').slice(0, 400);
+  return {emptyText: emptyText};
+})()'''
+# 收紧到明确的「查无记录」语义；其余文案一律视为未确认。（西语阴阳性别
+# 两种拼写都收：vacío/vacía。）
+REFUND_LIST_EMPTY_RE = re.compile(
+    r'no se encontr[óo]|se encuentra vac[ií][ao]|est[áa] vac[ií][ao]|'
+    r'no hay (?:ning[úu]n )?reembolso|vac[ií][ao]', re.I)
+
+
+def _stop_guard(stop_check):
+    if stop_check is not None and stop_check():
+        raise RuntimeError('发现已停止，未确认该订单全部退款记录')
+
+
+def discover_refund_bills(page, order_no, stop_check=None):
+    """只读发现一个订单的全部退款单号（轻量：不读阶段/账户，不产生写操作）。
+
+    与 ``read_refund_receipts`` 共享导航路径和身份校验，但只收集
+    ``refund_bill_id``。找不到 Detalles 时只有确认了平台显式空态才返回空
+    列表；否则抛错，由调用方按「读取失败」处理，不得当作「无退款」。
+    """
+    if not re.fullmatch(r'[A-Z0-9]{1,32}', order_no):
+        raise ValueError('订单号格式无效')
+    _stop_guard(stop_check)
+    url = ORIGIN + '/user/order_return/return_refund_list/' + order_no
+    page.goto(url, dom_timeout=40, settle_seconds=2)
+    if not page.wait_for(_DETAIL_LINKS + '.length > 0', timeout=15):
+        state = page.js_evaluate(_JS_REFUND_LIST_STATE) or {}
+        if REFUND_LIST_EMPTY_RE.search(str(state.get('emptyText') or '')):
+            return []
+        raise RuntimeError(
+            '退款记录列表未提供详情入口，也未确认空态；不能据此判定无退款')
+    count = page.js_evaluate(_DETAIL_LINKS + '.length')
+    if not isinstance(count, int) or not 1 <= count <= 100:
+        raise RuntimeError('退款记录数量未确认或超出读取上限')
+    bills = []
+    for index in range(count):
+        _stop_guard(stop_check)
+        if index:
+            page.goto(url, dom_timeout=40, settle_seconds=2)
+            if not page.wait_for(_DETAIL_LINKS + '.length === %d' % count,
+                                 timeout=25):
+                raise RuntimeError('退款列表在核对期间发生变化')
+        identity = None
+        href = (page.js_evaluate(_DISCOVERY_HREFS + '[%d]' % index) or '')
+        if str(href or '').strip():
+            identity = refund_bill_id_from_url(href)
+        if identity is None:
+            point = page.js_evaluate('''(() => { const a=%s[%d];if(!a)return null;
+              a.scrollIntoView({block:'center'});const r=a.getBoundingClientRect();
+              return {x:r.x+r.width/2,y:r.y+r.height/2};})()''' % (_DETAIL_LINKS, index))
+            if not point:
+                raise RuntimeError('退款详情入口未取得')
+            page.native_click_point(point['x'], point['y'])
+            if not page.wait_for(
+                    "location.pathname.includes('/orders/refundLabel/')",
+                    timeout=40):
+                raise RuntimeError('退款详情未加载完成')
+            identity = refund_bill_id_from_url(page.url)
+        if not identity or identity[0] != order_no:
+            raise RuntimeError('退款详情入口与当前订单不一致')
+        bills.append(identity[1])
+    if len(set(bills)) != len(bills):
+        raise RuntimeError('退款记录列表重复，未确认全部记录')
+    return bills
+
+
 def read_refund_receipts(page, order_no, classify_phase, phase_labels, on_record=None):
     """Follow only the platform's existing refund-detail links. Never submit."""
     if not re.fullmatch(r'[A-Z0-9]{1,32}', order_no):
