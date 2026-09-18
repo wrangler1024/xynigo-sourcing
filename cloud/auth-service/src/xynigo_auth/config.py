@@ -58,6 +58,17 @@ class Settings(BaseSettings):
     settlement_sync_interval_seconds: int = 6 * 60 * 60
     # 超过此时长仍处于 running 的同步记录视为异常中断，可被新一轮接管
     settlement_sync_stale_seconds: int = 2 * 60 * 60
+
+    @field_validator("settlement_sync_interval_seconds",
+                     "settlement_sync_stale_seconds")
+    @classmethod
+    def validate_settlement_sync_seconds(cls, value: int) -> int:
+        # 下限校验放在配置层：worker 构造时也有 max(60,…) 兜底，但配置对象本身
+        # 能拒绝明显错误的取值（例如按秒误填）。
+        if value < 60:
+            raise ValueError(
+                "settlement sync 间隔/阈值不得小于 60 秒")
+        return value
     procurement_import_max_active_plans_per_tenant: int = 5
     environment_plan_ttl_seconds: int = 30 * 60
     environment_plan_max_active_plans_per_tenant: int = 5

@@ -66,10 +66,17 @@ class FakeClient:
 
     def query_orders(self, *, open_key_id, secret_key, query_type, start_time,
                      end_time, page=1, page_size=30, order_status=None):
+        """按 orderUpdateTime 过滤，模拟平台的 48h 窗（queryType=2）。
+
+        过滤不能省：增量窗口只有 2 小时重叠，真实平台在没人下单/改单时就是返回空，
+        而"返回空"正是最容易把在途写空的路径。假网关若不按窗过滤，这条永远测不到。
+        """
         self._guard(open_key_id)
         self.order_calls.append({"page": page, "start": start_time})
-        return {"count": len(self.orders), "orderList": self.orders} \
-            if page == 1 else {"count": len(self.orders), "orderList": []}
+        matched = [item for item in self.orders
+                   if start_time <= str(item.get("orderUpdateTime") or "") < end_time]
+        return {"count": len(matched), "orderList": matched} if page == 1 \
+            else {"count": len(matched), "orderList": []}
 
     def query_order_details(self, *, open_key_id, secret_key, order_nos):
         self._guard(open_key_id)
@@ -148,7 +155,9 @@ def add_store(env, name: str, *, open_key_id: str | None = None,
 def build_service(env, client) -> SheinSettlementSyncService:
     return SheinSettlementSyncService(
         client=client, cipher=env["cipher"], order_lookback_days=4,
-        check_order_days_back=14,
+        # 待结算要回溯到"连续 4 个空窗"才算见底，故测试用的回溯上限要够长，
+        # 否则会以"未见底"判为不完整而整店失败（生产默认 180 天）
+        check_order_lookback_days=60,
     )
 
 
@@ -419,3 +428,159 @@ def test_second_sync_keeps_in_transit_amount(env):
         store = summary.stores[0]
         assert store.status == "ok", store.error_summary
         assert store.in_transit_amount == Decimal("88.80")
+
+
+# ---- 评审必须改项的回归位 ----
+
+def test_incremental_empty_window_keeps_in_transit(env):
+    """增量窗口**返回空**时在途必须保持（评审必须改 #1）。
+
+    真实平台在没人下单/改单时，2 小时重叠窗就是返回空——这是常态而不是异常。
+    早期实现遇到空结果直接 `return 0, None`，于是每 6 小时的定时同步都会把
+    看板上的在途整段清空，而台账里 order_status=4 的行一直还在。
+    """
+    client = FakeClient()
+    client.orders = [{"orderNo": "O1", "orderStatus": 4,
+                      "orderCreateTime": "2026-09-10 10:00:00",
+                      "orderUpdateTime": "2026-09-16 10:00:00"}]
+    client.details = {"O1": {"estimatedGrossIncome": 88.8, "currencyCode": "MXN"}}
+    add_store(env, "甲店")
+    service = build_service(env, client)
+
+    with env["db"].session_factory() as session:
+        service.run(session, tenant_id=env["tenant_id"], now=NOW)
+        session.commit()
+        assert service.build_summary(
+            session, tenant_id=env["tenant_id"]
+        ).stores[0].in_transit_amount == Decimal("88.80")
+
+        # 第二次：增量窗 [NOW-2h, NOW] 不含 09-16 的更新 → 平台返回空
+        outcome = service.run(session, tenant_id=env["tenant_id"],
+                              now=NOW + timedelta(hours=6))
+        session.commit()
+        assert outcome.stores[0].status == "ok"
+        summary = service.build_summary(session, tenant_id=env["tenant_id"])
+        assert summary.stores[0].in_transit_amount == Decimal("88.80"), \
+            "增量窗口为空时在途被写成空——看板会整段消失"
+
+
+def test_failed_after_success_does_not_show_stale_batches(env):
+    """先成功再失败：明细/导出不得显示上一轮的过期待结算（评审必须改 #4）。
+
+    单店失败走 SAVEPOINT，上一轮写入的批次会留在库里。若照挂不误，卡片剔除了
+    该店、表格与 xlsx 却仍有金额——两边对不上，还像是"这家店还在正常出数"。
+    """
+    store_id = add_store(env, "甲店", open_key_id="A" * 32)
+    client = FakeClient()
+    client.check_orders = [
+        {"addTime": "2026-09-15 10:00:00", "estimatePayTime": "2026-09-21 10:00:00",
+         "currencyCode": "MXN", "estimateIncomeMoneyTotal": 500.00,
+         "incomeExpenditureType": 1}]
+    client.report_orders = [{"income": 100, "currencyCode": "MXN"}]
+    service = build_service(env, client)
+
+    with env["db"].session_factory() as session:
+        service.run(session, tenant_id=env["tenant_id"], now=NOW)
+        session.commit()
+        store = service.build_summary(
+            session, tenant_id=env["tenant_id"]).stores[0]
+        assert sum(b.amount for b in store.payout_batches) == Decimal("500.00")
+
+    # 第二次让接口整体失败
+    client.fail_open_key_ids = {"A" * 32}
+    with env["db"].session_factory() as session:
+        service.run(session, tenant_id=env["tenant_id"],
+                    now=NOW + timedelta(hours=6))
+        session.commit()
+        store = service.build_summary(
+            session, tenant_id=env["tenant_id"]).stores[0]
+        assert store.status == "fail"
+        assert store.payout_batches == (), "失败店仍挂着上一轮的过期批次"
+        assert store.in_transit_amount is None
+        assert store.settled_cumulative_amount is None
+        # 卡片同样不含
+        assert store.currency not in {
+            g.currency for c in service.build_summary(
+                session, tenant_id=env["tenant_id"]).cards.values()
+            for g in c.groups}
+
+
+def test_check_order_duplicate_rows_are_deduped(env):
+    """同一条对账单被相邻窗口各返回一次时，不能重复计入（评审必须改 #3）。
+
+    分片是左闭右开的，但平台对 startAddTime/endAddTime 的开闭语义未在真机确认；
+    按对账单号去重后，两种语义都不会让金额翻倍。
+    """
+    client = FakeClient()
+    duplicate = {"checkOrderNo": "B1",
+                 "addTime": "2026-09-15 10:00:00",
+                 "estimatePayTime": "2026-09-21 10:00:00",
+                 "currencyCode": "MXN", "estimateIncomeMoneyTotal": 500.00,
+                 "incomeExpenditureType": 1}
+    client.check_orders = [duplicate, dict(duplicate)]   # 同一单号两次
+    add_store(env, "甲店")
+    with env["db"].session_factory() as session:
+        outcome = build_service(env, client).run(
+            session, tenant_id=env["tenant_id"], now=NOW)
+        session.commit()
+        assert outcome.stores[0].status == "ok"
+        assert outcome.stores[0].batches[0].amount == Decimal("500.00")
+
+
+def test_older_pending_bill_beyond_naive_window_is_still_picked_up(env):
+    """生成时间较早但仍是 checkStatus=1 的账单必须被算进来（评审必须改 #2）。
+
+    旧实现只拉最近 21 天，更早的真实待结算永远不会进桶；而且全删重建会把
+    上一轮已经算对的金额抹掉。
+    """
+    client = FakeClient()
+    client.check_orders = [
+        # 生成于 40 天前（远超旧的 21 天窗），至今仍未结算
+        {"checkOrderNo": "B-old", "addTime": "2026-08-08 10:00:00",
+         "estimatePayTime": "2026-09-21 10:00:00", "currencyCode": "MXN",
+         "estimateIncomeMoneyTotal": 777.00, "incomeExpenditureType": 1}]
+    add_store(env, "甲店")
+    with env["db"].session_factory() as session:
+        outcome = build_service(env, client).run(
+            session, tenant_id=env["tenant_id"], now=NOW)
+        session.commit()
+        assert outcome.stores[0].status == "ok"
+        assert sum(b.amount for b in outcome.stores[0].batches) == Decimal("777.00")
+
+
+def test_check_order_missing_field_fails_store_instead_of_silently_dropping(env):
+    """关键字段缺失时整店失败，不静默丢一条真实的待结算金额。"""
+    client = FakeClient()
+    client.check_orders = [
+        {"checkOrderNo": "B-bad", "addTime": "2026-09-15 10:00:00",
+         "estimatePayTime": "", "currencyCode": "MXN",
+         "estimateIncomeMoneyTotal": 300.00, "incomeExpenditureType": 1}]
+    add_store(env, "甲店")
+    with env["db"].session_factory() as session:
+        outcome = build_service(env, client).run(
+            session, tenant_id=env["tenant_id"], now=NOW)
+        session.commit()
+        assert outcome.stores[0].status == "fail"
+        assert "关键字段" in outcome.stores[0].error_summary
+
+
+def test_incomplete_backwalk_fails_instead_of_truncating(env):
+    """回溯到上限仍未见底 → 显式失败，不静默少算。
+
+    构造：把回溯上限设得极短（7 天），而最后一窗仍有待结算 → 判为不完整。
+    """
+    client = FakeClient()
+    client.check_orders = [
+        {"checkOrderNo": "B1", "addTime": "2026-09-15 10:00:00",
+         "estimatePayTime": "2026-09-21 10:00:00", "currencyCode": "MXN",
+         "estimateIncomeMoneyTotal": 100.00, "incomeExpenditureType": 1}]
+    add_store(env, "甲店")
+    service = SheinSettlementSyncService(
+        client=client, cipher=env["cipher"], order_lookback_days=4,
+        check_order_lookback_days=7,   # 只有一个窗口，无法形成连续空窗
+    )
+    with env["db"].session_factory() as session:
+        outcome = service.run(session, tenant_id=env["tenant_id"], now=NOW)
+        session.commit()
+        assert outcome.stores[0].status == "fail"
+        assert "未见底" in outcome.stores[0].error_summary

@@ -50,6 +50,7 @@ from .shein_settlement_service import (
 )
 from .shein_settlement_windows import (
     DEFAULT_ORDER_BACKFILL_DAYS,
+    floor_to_second as _floor_second,
     PLATFORM_TZ,
     build_order_backfill_windows,
     build_order_incremental_windows,
@@ -68,8 +69,12 @@ REPORT_STATUS_PAID = 2
 # 收支类型：1=收入 2=支出（对账单按轧差取净额）
 EXPENDITURE_INCOME = 1
 
-# 常规刷新只需覆盖最近的待结算批次；更早的批次早已进报账单。
-DEFAULT_CHECK_ORDER_DAYS_BACK = 21
+# 待结算是「全部 checkStatus=1」，不是「最近一批」——所以取数每次都往回翻满
+# 整个区间。「连续空窗就停」是错的：空窗不构成见底依据（见 _fetch_pending_batches）。
+# 正确性由「最早那个窗口是否还有账单」来收口：还有 → 判不完整并显式失败。
+DEFAULT_CHECK_ORDER_LOOKBACK_DAYS = 180   # 回溯上限（达到上限仍未见底 = 数据不完整）
+MAX_CHECK_ORDER_PAGES_PER_WINDOW = 100    # 单窗口翻页上限
+MAX_ORDER_LIST_PAGES_PER_WINDOW = 200     # 订单列表单窗口翻页上限
 # 历史累计已结算要全量翻页；设上限是为了避免异常数据下无限翻，
 # 真触发说明该店历史报账单量超预期，宁可显式失败也不要静默少算。
 MAX_REPORT_ORDER_PAGES = 200
@@ -182,12 +187,12 @@ class SheinSettlementSyncService:
         client: SheinOpenApiClient,
         cipher: SheinStoreSecretCipher,
         order_lookback_days: int = DEFAULT_ORDER_BACKFILL_DAYS,
-        check_order_days_back: int = DEFAULT_CHECK_ORDER_DAYS_BACK,
+        check_order_lookback_days: int = DEFAULT_CHECK_ORDER_LOOKBACK_DAYS,
     ) -> None:
         self.client = client
         self.cipher = cipher
         self.order_lookback_days = order_lookback_days
-        self.check_order_days_back = check_order_days_back
+        self.check_order_lookback_days = check_order_lookback_days
 
     # ------------------------------------------------------------------
     # 取数
@@ -235,19 +240,36 @@ class SheinSettlementSyncService:
                         continue
                     # 同一单可能跨窗口多次出现，后写覆盖先写（窗口已按时间升序）
                     seen[order_no] = item
-                if len(items) < 30 or page >= MAX_REPORT_ORDER_PAGES:
+                if len(items) < 30:
                     break
                 page += 1
+                if page > MAX_ORDER_LIST_PAGES_PER_WINDOW:
+                    raise SheinSettlementSyncError(
+                        "shein_settlement_order_pages_exceeded",
+                        f"{store.store_name}：订单列表单窗口翻页超过 "
+                        f"{MAX_ORDER_LIST_PAGES_PER_WINDOW} 页，可能被截断；"
+                        "为避免少算在途已中止本店同步",
+                    )
 
-        if not seen:
-            return 0, None
-
+        # 本轮窗口没有订单**不代表台账里没有在途**：增量窗口只有 2 小时重叠，
+        # 平台没返回更新单是常态。在途一律回读台账求和——早期版本在这里
+        # `return 0, None`，导致每 6 小时的增量同步把看板的在途整段清空。
         shipped = [
             order_no for order_no, item in seen.items()
             if int(item.get("orderStatus") or 0) == ORDER_STATUS_SHIPPED
         ]
         amounts = self._fetch_order_amounts(
             store=store, secret=secret, order_nos=shipped)
+        # 在途单拿不到预计收入时必须整店失败：SQL SUM 会跳过 NULL，静默把该店
+        # 在途算少（极端情况显示 0），而少算不会报警。
+        missing = [no for no in shipped
+                   if amounts.get(no, {}).get("amount") is None]
+        if missing:
+            raise SheinSettlementSyncError(
+                "shein_settlement_order_amount_missing",
+                f"{store.store_name}：{len(missing)} 笔在途订单未返回预计收入"
+                f"（如 {missing[0]}），无法计入在途；为避免少算已中止本店同步",
+            )
 
         synced_at = now
         written = 0
@@ -335,55 +357,129 @@ class SheinSettlementSyncService:
         ).scalar()
         return to_cent(Decimal(total)) if total is not None else None
 
+    def _fetch_pending_batches(
+        self, *, store: SheinAuthorizedStore, secret: str, now: datetime,
+    ) -> tuple[dict[tuple[date, str], Decimal], bool]:
+        """把**全部** checkStatus=1 的待结算按 (打款日, 币种) 聚合。
+
+        返回 (buckets, complete)。`complete=False` 表示最早那个窗口里仍有待结算
+        账单——即可能还有更早的没翻到，调用方必须显式失败：静默少算待结算比
+        同步失败严重得多。
+
+        **为什么每次都回溯完整区间、不用"连续空窗就停"**：空窗不构成见底依据。
+        一张 40 天前生成、至今未结算的账单，前面隔着若干空窗（那段时间没生成新
+        账单），连续空窗的启发式会在够到它之前就停下 → 永久少算。回溯上限设为
+        足够长（默认 180 天）并用"最早窗口是否为空"这个精确判据收口。
+
+        去重按对账单号：分片窗口是左闭右开的，但**平台的开闭语义未在真机确认**，
+        若平台两端闭合，落在边界秒的账单会同时出现在相邻两个窗口里；按单号去重
+        可让两种语义都不翻倍（重复拉到只是覆盖，不会重复计）。
+        """
+        buckets: dict[tuple[date, str], Decimal] = {}
+        seen_orders: set[str] = set()
+        # 窗口从下界（now - lookback）向上切，**最早那个窗口的起点恰好等于下界**。
+        # 这是判据成立的前提：先前按"从 now 往回切"的写法，最早窗口永远不贴着
+        # 下界，于是"最早窗口是否还有账单"永远为假——判据成了死代码。
+        limit = _floor_second(now) - timedelta(
+            days=self.check_order_lookback_days)
+        windows = slice_time_windows(limit, _floor_second(now),
+                                     CHECK_ORDER_MAX_SPAN)
+        oldest_had_rows = False
+        for index, (window_start, window_end) in enumerate(windows):
+            rows = self._fetch_check_order_window(
+                store=store, secret=secret,
+                start=window_start, end=window_end)
+            if rows and index == 0:
+                oldest_had_rows = True
+            for item in rows:
+                self._accumulate_pending_row(
+                    item, buckets=buckets, seen_orders=seen_orders,
+                    store=store)
+        return buckets, not oldest_had_rows
+
+    def _fetch_check_order_window(
+        self, *, store: SheinAuthorizedStore, secret: str,
+        start: datetime, end: datetime,
+    ) -> list[dict[str, Any]]:
+        collected: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            payload = self.client.query_check_orders(
+                open_key_id=store.open_key_id, secret_key=secret,
+                start_add_time=format_platform_time(start),
+                end_add_time=format_platform_time(end),
+                page=page, page_size=30,
+                check_status=CHECK_STATUS_PENDING,
+            )
+            items = _rows(payload, "list")
+            collected.extend(items)
+            if len(items) < 30 or page >= MAX_CHECK_ORDER_PAGES_PER_WINDOW:
+                break
+            page += 1
+        return collected
+
+    def _accumulate_pending_row(
+        self, item: dict[str, Any], *,
+        buckets: dict[tuple[date, str], Decimal], seen_orders: set[str],
+        store: SheinAuthorizedStore,
+    ) -> None:
+        """把一条对账单并入待结算桶；关键字段缺失即整店失败。
+
+        缺字段时**不能 continue**：那是一条真实的待结算金额，悄悄丢掉会让看板少算，
+        而少算不会报警——财务只会看到一个偏小的数。
+        """
+        order_no = str(item.get("checkOrderNo") or "").strip()
+        if order_no:
+            if order_no in seen_orders:
+                return
+            seen_orders.add(order_no)
+        pay_date = _pay_date(item.get("estimatePayTime"))
+        currency = str(item.get("currencyCode") or "").strip()
+        amount = _as_decimal(item.get("estimateIncomeMoneyTotal"))
+        if pay_date is None or not currency or amount is None:
+            raise SheinSettlementSyncError(
+                "shein_settlement_check_order_incomplete",
+                f"{store.store_name}：对账单缺少关键字段"
+                f"（单号 {order_no or '未知'}、打款日 {item.get('estimatePayTime')!r}、"
+                f"币种 {currency!r}、金额 {item.get('estimateIncomeMoneyTotal')!r}），"
+                "无法计入待结算；为避免少算已中止本店同步",
+            )
+        # 支出行取负：对账单按收支轧差，支出与收入成对出现
+        kind = int(item.get("incomeExpenditureType") or EXPENDITURE_INCOME)
+        signed = abs(amount) if kind == EXPENDITURE_INCOME else -abs(amount)
+        key = (pay_date, currency)
+        buckets[key] = buckets.get(key, Decimal("0")) + signed
+
     def _collect_payout_batches(
         self, session: Session, *, store: SheinAuthorizedStore, secret: str,
         now: datetime,
     ) -> tuple[PayoutBatch, ...]:
-        """对账单 checkStatus=1 按预计打款日分批（收支轧差净额）。"""
-        start = now - timedelta(days=self.check_order_days_back)
-        buckets: dict[tuple[date, str], Decimal] = {}
-        for window_start, window_end in slice_time_windows(
-                start, now, CHECK_ORDER_MAX_SPAN):
-            page = 1
-            while True:
-                payload = self.client.query_check_orders(
-                    open_key_id=store.open_key_id, secret_key=secret,
-                    start_add_time=format_platform_time(window_start),
-                    end_add_time=format_platform_time(window_end),
-                    page=page, page_size=30,
-                    check_status=CHECK_STATUS_PENDING,
-                )
-                items = _rows(payload, "list")
-                for item in items:
-                    pay_date = _pay_date(item.get("estimatePayTime"))
-                    currency = str(item.get("currencyCode") or "").strip()
-                    amount = _as_decimal(item.get("estimateIncomeMoneyTotal"))
-                    if pay_date is None or not currency or amount is None:
-                        continue
-                    # 支出行取负：对账单按收支轧差，支出与收入成对出现
-                    kind = int(item.get("incomeExpenditureType")
-                               or EXPENDITURE_INCOME)
-                    signed = abs(amount) if kind == EXPENDITURE_INCOME \
-                        else -abs(amount)
-                    key = (pay_date, currency)
-                    buckets[key] = buckets.get(key, Decimal("0")) + signed
-                if len(items) < 30:
-                    break
-                page += 1
+        """取全部待结算并按预计打款日分批，然后**整体替换**该店批次。
 
-        # 快照式覆盖：本次区间是最新事实，旧的批次行删掉重建，避免残留过期批次
+        只有确认回溯见底（complete）才做替换：窗口不完整时删旧写新会把上一轮
+        已经正确的待结算抹掉，而且看起来像"这批钱结算完了"。
+        """
+        buckets, complete = self._fetch_pending_batches(
+            store=store, secret=secret, now=now)
+        if not complete:
+            raise SheinSettlementSyncError(
+                "shein_settlement_check_orders_incomplete",
+                f"{store.store_name}：待结算回溯超过 "
+                f"{self.check_order_lookback_days} 天仍未见底，"
+                "可能存在更早的未结算账单；为避免少算已中止本店同步",
+            )
+
         session.execute(delete(SheinPayoutBatch).where(
             SheinPayoutBatch.tenant_id == store.tenant_id,
             SheinPayoutBatch.store_id == store.id,
         ))
-        now_ts = now
         batches: list[PayoutBatch] = []
         for (pay_date, currency), amount in sorted(buckets.items()):
             net = to_cent(amount)
             session.add(SheinPayoutBatch(
                 tenant_id=store.tenant_id, store_id=store.id,
                 pay_date=pay_date, currency=currency, amount=net,
-                synced_at=now_ts,
+                synced_at=now,
             ))
             batches.append(PayoutBatch(
                 pay_date=pay_date, currency=currency, amount=net))
@@ -599,6 +695,10 @@ class SheinSettlementSyncService:
     ) -> SyncRunOutcome:
         """跑一轮同步。逐店串行、按店隔离失败（并发留到有限流实测数据后再开）。"""
         moment = now or datetime.now(PLATFORM_TZ)
+        # 先把异常中断的 running 记录收掉，否则进程被杀后手动刷新会一直 409
+        self.recover_stale_runs(
+            session, tenant_id=tenant_id,
+            stale_after_seconds=stale_after_seconds, now=moment)
         # 同店互斥：手动刷新与定时任务共用这一个闸门
         if self.active_run(
             session, tenant_id=tenant_id,
@@ -713,27 +813,34 @@ class SheinSettlementSyncService:
                     SheinPayoutBatch.store_id == store.id,
                 ).order_by(SheinPayoutBatch.pay_date)
             ).scalars().all()
-            store_currency = (snapshot.currency if snapshot else "") or (
-                batches[0].currency if batches else "")
+            store_ok = bool(snapshot and snapshot.status == "ok")
+            # 失败店的历史批次必须整批丢掉：单店失败走 SAVEPOINT，上一轮成功写入的
+            # 批次会留在库里。若照挂不误，卡片虽剔除该店、明细与导出却仍显示过期的
+            # 待结算——两边数字对不上，而且看起来像"这家店还在正常出数"。
+            effective_batches = batches if store_ok else []
+            store_currency = (
+                (snapshot.currency if snapshot else "")
+                or (effective_batches[0].currency if effective_batches else "")
+            )
             if currency and currency != store_currency:
                 continue
             inputs.append(StoreSettlementInput(
                 store_id=str(store.id), store_name=store.store_name,
                 mode=store.mode, currency=store_currency,
-                status="ok" if snapshot and snapshot.status == "ok" else "fail",
+                status="ok" if store_ok else "fail",
                 error_summary=(
                     snapshot.error_summary if snapshot else "尚未同步"
                 ) or "尚未同步",
                 in_transit_amount=(
-                    Decimal(snapshot.in_transit_amount) if snapshot
+                    Decimal(snapshot.in_transit_amount) if store_ok
                     and snapshot.in_transit_amount is not None else None),
                 settled_cumulative_amount=(
-                    Decimal(snapshot.settled_cumulative_amount) if snapshot
+                    Decimal(snapshot.settled_cumulative_amount) if store_ok
                     and snapshot.settled_cumulative_amount is not None else None),
                 payout_batches=tuple(
                     PayoutBatch(pay_date=row.pay_date, currency=row.currency,
                                 amount=Decimal(row.amount))
-                    for row in batches),
+                    for row in effective_batches),
                 payment_method=snapshot.payment_method if snapshot else None,
                 synced_at=snapshot.synced_at if snapshot else None,
             ))

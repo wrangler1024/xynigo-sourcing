@@ -504,6 +504,7 @@ def create_app(
         if buyer_credential_key
         else None
     )
+    settlement_sync_worker = None
     if shein_settlement_sync_service is not None and settings.settlement_sync_enabled:
         settlement_sync_worker = SheinSettlementSyncWorker(
             session_factory=database.session_factory,
@@ -524,7 +525,6 @@ def create_app(
         else None
     )
     operation_sync_worker = None
-    settlement_sync_worker = None
     if settings.feishu_operation_sync_enabled:
         operation_sync_worker = FeishuOperationSyncWorker(
             session_factory=database.session_factory,

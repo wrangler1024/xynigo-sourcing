@@ -72,15 +72,17 @@ def build_settlement_export(summary: SettlementSummary):
 
     row_index = 2
     for store in summary.stores:
-        nearest = store.nearest_pay_date
+        # 失败行一律留空：即使聚合层已经剥掉批次，这里再按 status 兜一次，
+        # 避免"先成功再失败"的店把上一轮的过期待结算带进财务手里的文件。
+        settled_ok = store.status == "ok"
+        nearest = store.nearest_pay_date if settled_ok else None
         nearest_amount = None
         if nearest is not None:
             nearest_amount = sum(
                 (batch.amount for batch in store.payout_batches
                  if batch.pay_date == nearest), start=0)
-        unsettled = sum(
-            (batch.amount for batch in store.payout_batches), start=0) \
-            if store.payout_batches else None
+        unsettled = (sum((batch.amount for batch in store.payout_batches), start=0)
+                     if settled_ok and store.payout_batches else None)
         values = (
             store.store_name,
             MODE_LABELS.get(store.mode, store.mode),

@@ -157,6 +157,12 @@ def _sum_by_currency(
     故意不做"缺汇率就跳过该币种"的处理：那会让人民币合计看起来正常、
     实则少算了一整个币种，属于最难发现的错。宁可整体显示"—"。
     """
+    # 人民币不需要折算：汇率表里通常不会有 CNY 自身，若不兜底，一个人民币店
+    # 就会让整张卡的人民币合计变成「—」（缺汇率），把其他币种一起拖下水。
+    rates = dict(fx_rates)
+    rates.setdefault("CNY", Decimal("1"))
+    rates.setdefault("RMB", Decimal("1"))
+
     totals: dict[str, Decimal] = {}
     for currency, amount in entries:
         totals[currency] = totals.get(currency, Decimal("0")) + amount
@@ -164,7 +170,7 @@ def _sum_by_currency(
     groups: list[MetricGroup] = []
     for currency in sorted(totals):
         total = to_cent(totals[currency])
-        rate = fx_rates.get(currency)
+        rate = rates.get(currency)
         groups.append(MetricGroup(
             currency=currency,
             total=total,
@@ -249,7 +255,11 @@ def build_settlement_summary(
             hint=CARD_HINTS[key],
             groups=groups,
             cny_total=_cny_total(groups),
-            nearest_pay_date=nearest.pay_date if nearest else None,
+            # 打款日只挂在「下次结算」上：四张卡都带会让每张卡头都渲染
+            # 「预计 MM-DD」，与本题无关（在途/已结算都没有"打款日"概念）。
+            nearest_pay_date=(
+                nearest.pay_date if nearest and key == NEAREST_PAYOUT else None
+            ),
         )
 
     alerts = list(diff_alerts or [])

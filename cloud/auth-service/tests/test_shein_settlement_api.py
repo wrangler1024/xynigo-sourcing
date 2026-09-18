@@ -91,7 +91,7 @@ def shein_transport(*, fail: bool = False):
     return httpx.MockTransport(handler)
 
 
-def build_app(tmp_path, *, transport=None):
+def build_app(tmp_path, *, transport=None, settlement_sync_enabled=False):
     database_url = f"sqlite+pysqlite:///{tmp_path / 'settle.sqlite3'}"
     database = Database(database_url)
 
@@ -119,6 +119,7 @@ def build_app(tmp_path, *, transport=None):
         shein_openapi_app_id="APPID0001",
         shein_openapi_app_secret="app-secret-not-real",
         shein_auth_redirect_base="http://testserver",
+        settlement_sync_enabled=settlement_sync_enabled,
     )
     app = create_app(
         settings=settings, oauth_client=object(), directory_client=object(),
@@ -361,3 +362,22 @@ def test_export_respects_currency_filter(tmp_path):
                          headers=admin_headers())
         assert res.status_code == 200
         assert res.headers["x-xynigo-row-count"] == "0"   # 合成店铺是 MXN
+
+
+def test_worker_is_installed_when_enabled(tmp_path):
+    """评审必须改 #5 的回归位：开关打开时必须真的装上 worker。
+
+    原实现把 worker 构造在 `settlement_sync_worker = None` **之前**，构造完立刻被
+    置空——`SETTLEMENT_SYNC_ENABLED=true` 也不会启动线程，"到期才跑/重启不多打
+    平台"只在单测里成立。
+    """
+    app, _ = build_app(tmp_path, settlement_sync_enabled=True)
+    assert app.state.settlement_sync_worker is not None
+    with TestClient(app):          # 触发 lifespan，确认能正常起停
+        pass
+
+
+def test_worker_absent_when_disabled(tmp_path):
+    """默认关闭：部署即对外打网关是要避免的。"""
+    app, _ = build_app(tmp_path)
+    assert app.state.settlement_sync_worker is None

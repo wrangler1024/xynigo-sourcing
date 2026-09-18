@@ -14619,7 +14619,7 @@ function settleRenderCurrencyTabs() {
     const active = SETTLE_STATE.currency === chip.code ? ' active' : '';
     const title = SETTLE_CURRENCY_LABELS[chip.code] || '';
     return `<button type="button" class="settle-currency-chip${active}" ` +
-      `data-settle-currency="${chip.code}" title="${title}">${chip.label}</button>`;
+      `data-settle-currency="${esc(chip.code)}" title="${esc(title)}">${esc(chip.label)}</button>`;
   }).join('');
   host.querySelectorAll('[data-settle-currency]').forEach((btn) => {
     btn.onclick = async () => {
@@ -14726,9 +14726,9 @@ function settleRenderTable() {
         ? payDates[0] + (more > 0 ? ` <span class="settle-more">+${more} 批</span>` : '')
         : '—';
       return `<tr>
-        <td><strong>${store.storeName}</strong></td>
+        <td><strong>${esc(store.storeName)}</strong></td>
         <td>${store.mode === 'semi' ? 'SHEIN 半托管' : 'SHEIN 自营'}</td>
-        <td>${store.currency || '—'}</td>
+        <td>${esc(store.currency) || '—'}</td>
         <td class="num">${settleMoney(store.inTransitAmount)}</td>
         <td class="num">${settleMoney(store.unsettledAmount)}</td>
         <td class="num">${settleMoney(store.nearestPayoutAmount)}</td>
@@ -14758,12 +14758,12 @@ function settleRenderAlerts() {
   if (warns.length) {
     blocks.push('<div class="settle-alerts-title">对账差异（订单级聚合 vs 对账单净额）</div>');
     warns.forEach((a) => blocks.push(
-      `<div class="settle-alert warn"><span>⚠</span><span><strong>${a.storeName}</strong>：${a.message}</span></div>`));
+      `<div class="settle-alert warn"><span>⚠</span><span><strong>${esc(a.storeName)}</strong>：${esc(a.message)}</span></div>`));
   }
   if (fails.length) {
     blocks.push('<div class="settle-alerts-title">同步失败（未计入汇总）</div>');
     fails.forEach((a) => blocks.push(
-      `<div class="settle-alert fail"><span>✕</span><span><strong>${a.storeName}</strong>：${a.message}</span></div>`));
+      `<div class="settle-alert fail"><span>✕</span><span><strong>${esc(a.storeName)}</strong>：${esc(a.message)}</span></div>`));
   }
   if (!blocks.length) {
     blocks.push('<div class="settle-alerts-title">对账差异</div>');
