@@ -687,8 +687,11 @@ def test_failed_round_does_not_advance_order_watermark(env):
 
     时序（时间必须这样取，否则测不到）：
       T1 = NOW        成功；台账 O1=已发货，成功快照 synced_at=T1
-      T2 = NOW+5h     失败；O1 已在 NOW+2h 签收（落在本轮窗口内→台账更新→
-                      被 SAVEPOINT 回滚），失败快照仍写 synced_at=T2
+      T2 = NOW+5h     失败；O1 已在 NOW+2h 签收。本轮**在第一次 query_orders
+                      就抛异常**（`fail_open_key_ids`），所以台账根本没被写过——
+                      设这个用例模拟的是"失败轮没能把该窗的变更落库"这件事本身，
+                      不是"写了又被回滚"（评审指出描述过头，已改正）。失败快照
+                      仍会写 synced_at=T2。
       T3 = NOW+11h    恢复
 
     水位若取到失败快照的 T2，增量窗只剩 [T2−2h, T3] = [NOW+3h, …]，
