@@ -30,8 +30,11 @@ class DesktopUIContractTests(unittest.TestCase):
 
     def test_settings_page_states_shared_device_config(self):
         # 本机配置对所有登录成员开放：不应再出现锁定文案，
-        # 并常驻一条“多人共用同一份本机设置”的说明。
+        # 且共享提示必须常驻渲染（不得被重新包进 locked 条件）。
         self.assertIn('本机设置由这台电脑上的所有登录成员共享', self.javascript)
+        self.assertIn("var sharedNotice = '<section", self.javascript)
+        self.assertIn('+ sharedNotice +', self.javascript)
+        self.assertNotIn('var sharedNotice = locked', self.javascript)
         self.assertNotIn('普通采购员仅可查看设备级设置', self.javascript)
 
     def test_ui_uses_real_local_apis_without_exposing_launcher_token(self):
