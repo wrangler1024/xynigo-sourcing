@@ -3,6 +3,7 @@ import json
 import http.client
 import os
 from pathlib import Path
+import types
 from types import SimpleNamespace
 import tempfile
 import threading
@@ -605,6 +606,47 @@ class ConfigRouteTests(unittest.TestCase):
         self.assertEqual(conflict['configRevision'],
                          response['configRevision'])
         self.assertEqual(reloaded['hubPort'], 6999)
+
+    def _switch_auth_to_member(self):
+        calls = []
+
+        def require(permission=None, role=None):
+            calls.append((permission, role))
+            return {
+                'user': {'id': 'member-1'},
+                'roles': ['member'],
+                'permissions': [],
+            }
+
+        main_module.STATE.auth = SimpleNamespace(require=require)
+        return calls
+
+    def test_member_can_save_device_runtime_config(self):
+        calls = self._switch_auth_to_member()
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+                main_module, 'CONFIG_PATH', str(Path(tmp) / 'config.json')):
+            save_config(default_config())
+            response = self._post_json('/api/config', {'hubPort': 6999})
+        self.assertTrue(response['saved'])
+        self.assertEqual(response['changedFields'], ['hubPort'])
+        self.assertTrue(calls)
+        self.assertTrue(
+            all(permission is None and role is None
+                for permission, role in calls))
+
+    def test_member_can_save_hub_api_key(self):
+        calls = self._switch_auth_to_member()
+        main_module.STATE.hub_capabilities = lambda force=False: {}
+        main_module.STATE.save_hub_api_key = types.MethodType(
+            main_module.AppState.save_hub_api_key, main_module.STATE)
+        response = self._post_json('/api/hub-api-key', {
+            'apiKey': 'member-hub-key-5678', 'clear': False})
+        self.assertTrue(response['saved'])
+        self.assertTrue(response['configured'])
+        self.assertTrue(calls)
+        self.assertTrue(
+            all(permission is None and role is None
+                for permission, role in calls))
 
     def test_lark_unified_ledger_template_is_downloadable(self):
         url = 'http://127.0.0.1:%d/api/lark/template' % (

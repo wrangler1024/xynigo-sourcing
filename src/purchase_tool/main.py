@@ -303,7 +303,8 @@ AUTH_PERMISSION_BY_PATH = {
     '/api/lark/target-url': 'system.lark_connection.manage',
     '/api/lark/target-metadata': 'system.lark_connection.manage',
     '/api/lark/preflight': 'system.lark_connection.manage',
-    '/api/hub-api-key': 'system.integration.manage',
+    # /api/config 与 /api/hub-api-key 刻意不入表：缺席即只做登录校验，
+    # 本机设备设置对所有登录成员开放（20260917 产品决策）。
     '/api/hub-core-repair/status': 'system.integration.manage',
     '/api/hub-core-repair/start': 'system.integration.manage',
     '/api/extension/pair/approve': 'operations.access',
@@ -5131,8 +5132,8 @@ class Handler(BaseHTTPRequestHandler):
                     **public_envbatch_preferences(cfg),
                 })
             elif path == '/api/config':
-                request_identity = STATE.auth.require(
-                    'system.integration.manage', role='super_admin')
+                # 本机配置向所有登录成员开放，仅保留登录校验。
+                STATE.auth.require()
                 lock = getattr(STATE, 'config_lock', None)
                 with lock if lock is not None else nullcontext():
                     service = state_local_config_service()
