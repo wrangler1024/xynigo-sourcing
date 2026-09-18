@@ -73,12 +73,18 @@ def _payload_hash(
     payload = body.model_dump(mode="json")
     if isinstance(body, AfterSaleClaimRunCreateBody):
         # Preserve hashes of requests created before optional product facts.
-        for item in payload.get("items", []):
+        for item in payload.get("items") or []:
             for key in ("goodsImages", "goodsItems"):
                 if not item.get(key):
                     item.pop(key, None)
             if item.get("itemCount") is None:
                 item.pop("itemCount", None)
+        # 新增的 environmentSerials 只在「按环境直提」时参与哈希：按单请求
+        # 保持与历史完全相同的规范形式，老幂等键重放不会被判成不同请求。
+        if payload.get("environmentSerials") is None:
+            payload.pop("environmentSerials", None)
+        if payload.get("items") is None:
+            payload.pop("items", None)
     # 重提来源只用于展示（「重提自哪一批」），不参与幂等：它不影响实际提交内容，
     # 若进了哈希，同一批重提时补填/改填来源会被判成「同幂等键下不同请求」而 409。
     payload.pop("retryFromRunId", None)
@@ -440,57 +446,84 @@ class OperationRunService:
             return existing, True
         # Guard every entry point, including direct input without retryFromRunId.
         # A lost receipt must never become permission to replay a platform write.
+        # 按环境直提时订单号事先未知，逐单防护只覆盖按单提交；直提的幂等
+        # 依靠执行器提交前 pre_info 体检（已提交过的包裹平台侧不可再退）。
         from .models import AfterSaleClaimResult
-        # Environment serial/code/name are aliases of the same buyer browser.
-        # The platform order identity is stable across those aliases.
-        requested = {i.orderNo for i in body.items}
-        prior = self.session.scalars(select(AfterSaleClaimResult).where(
-            AfterSaleClaimResult.tenant_id == tenant_id,
-            func.upper(func.trim(AfterSaleClaimResult.order_no)).in_([i.orderNo for i in body.items]),
-        )).all()
-        for row in prior:
-            if row.order_no.strip().upper() not in requested:
-                continue
-            message = (row.error_summary or '') + (row.note or '')
-            legacy_unknown = row.status == 'fail' and (
-                bool(row.refunds or row.refund_bill_id) or any(marker in message for marker in (
-                    '提交后未跳转', '已跳转退款页', '已受理，但后续核验失败')))
-            if row.status in ('uncertain', 'verifying') or legacy_unknown:
-                raise PurchaseServiceError(
-                    'after_sale_receipt_reconciliation_required',
-                    '订单存在待核对的提交结果，请先核对已有退款记录，不能直接补提', 409)
-        # A dead executor may never have uploaded its in-flight row. The run's
-        # uncertain terminal state must also protect such an unreported write.
-        uncertain_runs = self.session.scalars(select(AfterSaleClaimRun).where(
-            AfterSaleClaimRun.tenant_id == tenant_id,
-            AfterSaleClaimRun.status == 'uncertain',
-        )).all()
-        prior_by_run = {(row.run_id, row.order_no.strip().upper()): row for row in prior}
-        for previous in uncertain_runs:
-            for item in (previous.request_summary or {}).get('items') or []:
-                key = str(item.get('orderNo') or '').strip().upper()
-                if key not in requested:
+        requested: set[str] = set()
+        prior: list[AfterSaleClaimResult] = []
+        if body.items:
+            # Environment serial/code/name are aliases of the same buyer browser.
+            # The platform order identity is stable across those aliases.
+            requested = {i.orderNo for i in body.items}
+            prior = self.session.scalars(select(AfterSaleClaimResult).where(
+                AfterSaleClaimResult.tenant_id == tenant_id,
+                func.upper(func.trim(AfterSaleClaimResult.order_no)).in_([i.orderNo for i in body.items]),
+            )).all()
+            for row in prior:
+                if row.order_no.strip().upper() not in requested:
                     continue
-                row = prior_by_run.get((previous.id, key))
-                if row is None or row.status in ('queued', 'running'):
-                    raise PurchaseServiceError('after_sale_receipt_reconciliation_required',
-                        '之前的提交任务结果不明且缺少完整回执，请先核对平台退款记录', 409)
+                message = (row.error_summary or '') + (row.note or '')
+                legacy_unknown = row.status == 'fail' and (
+                    bool(row.refunds or row.refund_bill_id) or any(marker in message for marker in (
+                        '提交后未跳转', '已跳转退款页', '已受理，但后续核验失败')))
+                if row.status in ('uncertain', 'verifying') or legacy_unknown:
+                    raise PurchaseServiceError(
+                        'after_sale_receipt_reconciliation_required',
+                        '订单存在待核对的提交结果，请先核对已有退款记录，不能直接补提', 409)
+            # A dead executor may never have uploaded its in-flight row. The run's
+            # uncertain terminal state must also protect such an unreported write.
+            uncertain_runs = self.session.scalars(select(AfterSaleClaimRun).where(
+                AfterSaleClaimRun.tenant_id == tenant_id,
+                AfterSaleClaimRun.status == 'uncertain',
+            )).all()
+            prior_by_run = {(row.run_id, row.order_no.strip().upper()): row for row in prior}
+            for previous in uncertain_runs:
+                for item in (previous.request_summary or {}).get('items') or []:
+                    key = str(item.get('orderNo') or '').strip().upper()
+                    if key not in requested:
+                        continue
+                    row = prior_by_run.get((previous.id, key))
+                    if row is None or row.status in ('queued', 'running'):
+                        raise PurchaseServiceError('after_sale_receipt_reconciliation_required',
+                            '之前的提交任务结果不明且缺少完整回执，请先核对平台退款记录', 409)
         now = utcnow()
-        items = [
-            {
-                "environmentSerial": item.environmentSerial,
-                "orderNo": item.orderNo,
-                "storeName": item.storeName,
-                "packageNo": item.packageNo,
-                # 展示字段也留在批次请求摘要里：批次详情、导出、排查都用得上
-                "deliveredAt": item.deliveredAt,
-                "goodsImg": item.goodsImg,
-                "goodsImages": item.goodsImages,
-                "goodsItems": [product.model_dump(mode="json") for product in item.goodsItems],
-                "itemCount": item.itemCount,
+        if body.environmentSerials:
+            # 按环境单遍直提：total 以「环境」计，订单由执行器现场发现
+            serials = [serial.strip() for serial in body.environmentSerials]
+            request_summary = {
+                "mode": "environments",
+                "environmentSerials": serials,
+                "browserMode": body.browserMode,
+                "concurrency": body.concurrency,
+                "retryFromRunId": body.retryFromRunId,
             }
-            for item in body.items
-        ]
+            total = len(serials)
+        else:
+            items = [
+                {
+                    "environmentSerial": item.environmentSerial,
+                    "orderNo": item.orderNo,
+                    "storeName": item.storeName,
+                    "packageNo": item.packageNo,
+                    # 展示字段也留在批次请求摘要里：批次详情、导出、排查都用得上
+                    "deliveredAt": item.deliveredAt,
+                    "goodsImg": item.goodsImg,
+                    "goodsImages": item.goodsImages,
+                    "goodsItems": [product.model_dump(mode="json") for product in item.goodsItems],
+                    "itemCount": item.itemCount,
+                }
+                for item in (body.items or [])
+            ]
+            request_summary = {
+                "mode": "orders",
+                "items": items,
+                "browserMode": body.browserMode,
+                "concurrency": body.concurrency,
+                # 重提来源批次（提交历史「重提自哪一批」）：写进既有 request_summary
+                # JSON 列，不加列、不加迁移；创建审计的 change_summary 同步记一份。
+                "retryFromRunId": body.retryFromRunId,
+            }
+            total = len(items)
         run = AfterSaleClaimRun(
             id=uuid.uuid4(),
             tenant_id=tenant_id,
@@ -502,20 +535,13 @@ class OperationRunService:
             status="created",
             phase="created",
             progress_completed=0,
-            progress_total=len(items),
-            total_count=len(items),
+            progress_total=total,
+            total_count=total,
             success_count=0,
             failed_count=0,
             skipped_count=0,
             stopped_count=0,
-            request_summary={
-                "items": items,
-                "browserMode": body.browserMode,
-                "concurrency": body.concurrency,
-                # 重提来源批次（提交历史「重提自哪一批」）：写进既有 request_summary
-                # JSON 列，不加列、不加迁移；创建审计的 change_summary 同步记一份。
-                "retryFromRunId": body.retryFromRunId,
-            },
+            request_summary=request_summary,
             source="cloud_web",
             created_at=now,
             updated_at=now,
@@ -628,17 +654,19 @@ class OperationRunService:
         return snapshot
 
     def _after_sale_claim_environment_counts(self, run_ids: list) -> dict:
-        """批次环境数＝该批次结果行去重 environment_serial（不新增表/列）。
+        """批次环境数：按单批次＝结果行去重 environment_serial；直提批次＝计划环境数。
 
-        统计已经回传结果行的环境，不是请求中计划涉及的环境，也不是成功环境数。
-        运行中随结果回传增加；尚无结果行时为 0。totalCount 仍保留请求订单数，
-        因此可能出现提交数大于 0、环境数为 0 的待执行批次。
+        按环境直提的订单号是执行中发现、且可能一个订单行都没有（全跳过/全未登录），
+        用结果行去重会把环境数报成 0——那正是这批结果的主体，所以直提改读
+        request_summary.environmentSerials（＝建单时的计划环境数）。totalCount 的
+        口径不变：按单批次是订单数，直提批次是环境数。
         """
         wanted = [run_id for run_id in run_ids if run_id is not None]
         if not wanted:
             return {}
         from .models import AfterSaleClaimResult as ResultModel
-        return {
+        from .models import AfterSaleClaimRun as RunModel
+        row_counts = {
             run_id: count
             for run_id, count in self.session.execute(
                 select(
@@ -649,6 +677,20 @@ class OperationRunService:
                 .group_by(ResultModel.run_id)
             )
         }
+        runs = {
+            run.id: run for run in self.session.scalars(
+                select(RunModel).where(RunModel.id.in_(wanted))
+            )
+        }
+        counts = {}
+        for run_id in wanted:
+            run = runs.get(run_id)
+            summary = (run.request_summary or {}) if run is not None else {}
+            if summary.get("mode") == "environments":
+                counts[run_id] = len(summary.get("environmentSerials") or [])
+            else:
+                counts[run_id] = row_counts.get(run_id, 0)
+        return counts
 
     def _after_sale_claim_history_item(
         self, run: AfterSaleClaimRun, actor_names: dict,
@@ -675,6 +717,8 @@ class OperationRunService:
             "failedCount": run.failed_count,
             "stopRequested": run.stop_requested,
             "retryFromRunId": str(summary.get("retryFromRunId") or ""),
+            # orders=按单提交（旧批次缺 mode 也按 orders 解释）；environments=按环境直提
+            "submitMode": str(summary.get("mode") or "orders"),
         }
 
     def _after_sale_claim_actor_names(
@@ -3607,13 +3651,21 @@ def after_sale_claim_snapshot(session, run: AfterSaleClaimRun) -> dict:
                                     TrackingModel.refund_bill_id.in_(bills))
     ).all()} if bills else {}
     result_rows = []
+    env_mode = (run.request_summary or {}).get("mode") == "environments"
     order_index = {
         str(item.get("orderNo") or ""): index
         for index, item in enumerate((run.request_summary or {}).get("items") or [])
         if isinstance(item, dict)
     }
-    for row in sorted(rows, key=lambda item: (
-            order_index.get(item.order_no, len(order_index)), item.order_no or "")):
+    if env_mode:
+        # 直提批次没有请求清单序，按（环境, 订单号）稳定分组展示
+        ordered = sorted(rows, key=lambda item: (
+            item.environment_serial or "", item.order_no or ""))
+    else:
+        ordered = sorted(rows, key=lambda item: (
+            order_index.get(item.order_no, len(order_index)),
+            item.order_no or ""))
+    for row in ordered:
         refunds = []
         for raw in (row.refunds or ([{'refundBillId': row.refund_bill_id,
                 'refundPath': row.refund_path, 'refundAccount': row.refund_account}]
@@ -3676,6 +3728,11 @@ def after_sale_claim_snapshot(session, run: AfterSaleClaimRun) -> dict:
                         if run.completed_at else ""),
         "startedAt": (run.started_at.isoformat()
                       if run.started_at else ""),
+        # 按环境直提批次附环境级结果（无入口跳过的环境只有这里有记录）
+        "submitMode": ("environments" if env_mode else "orders"),
+        "environments": (
+            [dict(item) for item in (run.environment_results or [])]
+            if env_mode else []),
         "rows": result_rows,
     }
 

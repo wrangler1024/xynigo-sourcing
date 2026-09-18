@@ -268,6 +268,7 @@ class RouteMethodTests(unittest.TestCase):
         span = self._method_span('do_POST')
         self.assertIn("path == '/api/after-sale/scan'", span)
         self.assertIn("path == '/api/after-sale/submit'", span)
+        self.assertIn("path == '/api/after-sale/claim-environments'", span)
         self.assertIn("path == '/api/after-sale/stop'", span)
         self.assertNotIn("path == '/api/after-sale/progress'", span)
         self.assertNotIn("path == '/api/after-sale/screenshot'", span)
@@ -275,6 +276,7 @@ class RouteMethodTests(unittest.TestCase):
     def test_permission_map_covers_after_sale_routes(self):
         from purchase_tool.main import AUTH_PERMISSION_BY_PATH
         for path in ('/api/after-sale/scan', '/api/after-sale/submit',
+                     '/api/after-sale/claim-environments',
                      '/api/after-sale/progress', '/api/after-sale/stop',
                      '/api/after-sale/screenshot'):
             self.assertEqual(AUTH_PERMISSION_BY_PATH.get(path),
@@ -406,6 +408,373 @@ class TrackBridgeTests(unittest.TestCase):
         self.assertIn('after.sale.track.v1', BUSINESS_TASK_TYPES)
 
 
+class _FakePage(object):
+    def __init__(self, serial):
+        self.serial = serial
+        self.gotos = []
+
+    def goto(self, url, dom_timeout=None, settle_seconds=None):
+        self.gotos.append(url)
+
+
+class ClaimEnvironmentBatchTests(unittest.TestCase):
+    """按环境单遍直提：环境只开一遍，订单动态发现、无入口环境跳过。"""
+
+    def _claimer(self, serials):
+        hub = _FakeHub(serials)
+        # 关掉单间随机停顿（默认 5~15 秒，用来贴近人工节奏）
+        return AfterSaleClaimer(hub, order_stagger=(0.0, 0.0)), hub
+
+    @staticmethod
+    def _wait(claimer):
+        deadline = time.time() + 5
+        while time.time() < deadline and claimer.snapshot()['running']:
+            time.sleep(0.05)
+
+    def test_start_claim_environments_dedupes_and_cleans(self):
+        claimer, _hub = self._claimer([])
+        claimer._run_claim_environments = lambda serials, headless: None
+        result = claimer.start_claim_environments(
+            ['9002', '9001', '9002', '', None])
+        self.assertEqual(result['mode'], 'claim_env')
+        self.assertEqual(result['total'], 2)
+
+    def test_snapshot_exposes_claim_env_rows(self):
+        claimer, _hub = self._claimer([])
+        self.assertEqual(claimer.snapshot()['claimEnvRows'], [])
+
+    def test_env_rows_cover_outcomes(self):
+        serials = ['11', '12', '13']
+
+        def stub(serial, env, headless):
+            if serial == '11':
+                claimer._publish_claim('GSH1A', {'status': 'ok'})
+                claimer._count_env_result('11', 'ok')
+                claimer._finish_env_row('11', 'ok', time.time())
+            elif serial == '12':
+                claimer._finish_env_row('12', 'skip', time.time(),
+                                        note='未发现丢件退款入口，环境跳过')
+            else:
+                claimer._finish_env_row('13', 'login', time.time(),
+                                        errorSummary='买家端未登录')
+
+        claimer, _hub = self._claimer(serials)
+        claimer._claim_env_one = stub
+        claimer.start_claim_environments(serials)
+        self._wait(claimer)
+        snap = claimer.snapshot()
+        self.assertFalse(snap['running'])
+        self.assertEqual(snap['mode'], 'claim_env')
+        rows = {r['environmentSerial']: r for r in snap['claimEnvRows']}
+        self.assertEqual(rows['11']['status'], 'ok')
+        self.assertEqual(rows['11']['submittedCount'], 1)
+        self.assertEqual(rows['12']['status'], 'skip')
+        self.assertIn('入口', rows['12']['note'])
+        self.assertEqual(rows['13']['status'], 'login')
+        self.assertEqual([r['orderNo'] for r in snap['claimRows']], ['GSH1A'])
+
+    def test_real_env_pass_skips_env_without_entry(self):
+        """只有带入口的订单会进申请页；无入口环境整体跳过、不留订单行。"""
+        cards = [{'text': CARD_DELIVERED, 'hasEntry': True,
+                  'goodsImg': '', 'deliveredAt': '04 Sep 2026 14:36:41'},
+                 {'text': CARD_REFUNDING, 'hasEntry': False}]
+        claimer, _hub = self._claimer(['21', '22'])
+        claimer._open_env = lambda env, serial, headless: (
+            _FakePage(serial), False)
+        claimer._login_required = lambda page: False
+        claimer._read_all_order_cards = lambda page: (
+            cards if page.serial == '21' else [])
+        claimer._env_claim_item = lambda serial, env, page, card, parsed: {
+            'environmentSerial': serial, 'orderNo': parsed['orderNo'],
+            'storeName': '', 'packageNo': ''}
+        submitted = []
+
+        def fake_claim_one(page, serial, item):
+            submitted.append(dict(item))
+            claimer._publish_claim(item['orderNo'], {'status': 'ok'})
+
+        claimer._claim_one = fake_claim_one
+        claimer.start_claim_environments(['21', '22'])
+        self._wait(claimer)
+        snap = claimer.snapshot()
+        rows = {r['environmentSerial']: r for r in snap['claimEnvRows']}
+        self.assertEqual(rows['21']['status'], 'ok')
+        self.assertEqual(rows['21']['entryCount'], 1)
+        self.assertEqual(rows['21']['submittedCount'], 1)
+        self.assertEqual(rows['22']['status'], 'skip')
+        self.assertEqual(rows['22']['entryCount'], 0)
+        self.assertEqual([r['orderNo'] for r in snap['claimRows']],
+                         ['GSH1RV329000RBM'])
+        self.assertEqual([item['environmentSerial'] for item in submitted],
+                         ['21'])
+
+    def test_env_with_only_blocked_orders_is_skipped_not_failed(self):
+        claimer, _hub = self._claimer(['31'])
+        claimer._open_env = lambda env, serial, headless: (
+            _FakePage(serial), False)
+        claimer._login_required = lambda page: False
+        claimer._read_all_order_cards = lambda page: [
+            {'text': CARD_DELIVERED, 'hasEntry': True, 'goodsImg': '',
+             'deliveredAt': ''}]
+        claimer._env_claim_item = lambda serial, env, page, card, parsed: {
+            'environmentSerial': serial, 'orderNo': parsed['orderNo'],
+            'storeName': '', 'packageNo': ''}
+
+        def fake_claim_one(page, serial, item):
+            claimer._publish_claim(item['orderNo'], {
+                'status': 'blocked', 'errorSummary': '已无可申请包裹'})
+
+        claimer._claim_one = fake_claim_one
+        claimer.start_claim_environments(['31'])
+        self._wait(claimer)
+        row = claimer.snapshot()['claimEnvRows'][0]
+        self.assertEqual(row['status'], 'blocked')
+        self.assertEqual(row['blockedCount'], 1)
+        self.assertEqual(row['failedCount'], 0)
+
+    def test_stop_marks_unfinished_envs_stopped(self):
+        claimer, _hub = self._claimer(['41', '42'])
+        claimer._claim_env_one = lambda serial, env, headless: None
+        claimer._stop_event.set()
+        claimer.start_claim_environments(['41', '42'])
+        self._wait(claimer)
+        statuses = [r['status'] for r in claimer.snapshot()['claimEnvRows']]
+        self.assertEqual(statuses, ['stopped', 'stopped'])
+
+    def test_stop_during_list_read_is_stopped_not_skip(self):
+        """列表被停止打断读到的是残缺列表：写操作里绝不算「没有入口」。"""
+        claimer, _hub = self._claimer(['51'])
+        claimer._open_env = lambda env, serial, headless: (
+            _FakePage(serial), False)
+        claimer._login_required = lambda page: False
+
+        def half_read(page):
+            claimer._stop_event.set()   # 翻页中途被停止
+            return []                   # 残缺列表（可能就是空的）
+
+        claimer._read_all_order_cards = half_read
+        claimer.start_claim_environments(['51'])
+        self._wait(claimer)
+        row = claimer.snapshot()['claimEnvRows'][0]
+        self.assertEqual(row['status'], 'stopped')
+        self.assertIn('未确认', row['note'])
+        self.assertEqual(claimer.snapshot()['claimRows'], [])
+
+    def test_stop_mid_candidates_marks_env_stopped_not_ok(self):
+        """环境内还有候选没跑完时，哪怕已提交成功也不能报 ok。"""
+        cards = [{'text': CARD_DELIVERED, 'hasEntry': True, 'goodsImg': '',
+                  'deliveredAt': ''},
+                 {'text': CARD_DELIVERED.replace('GSH1RV329000RBM',
+                                                 'GSH1RV329000RBN'),
+                  'hasEntry': True, 'goodsImg': '', 'deliveredAt': ''}]
+        claimer, _hub = self._claimer(['61'])
+        claimer._open_env = lambda env, serial, headless: (
+            _FakePage(serial), False)
+        claimer._login_required = lambda page: False
+        claimer._read_all_order_cards = lambda page: cards
+        claimer._env_claim_item = lambda serial, env, page, card, parsed: {
+            'environmentSerial': serial, 'orderNo': parsed['orderNo'],
+            'storeName': '', 'packageNo': ''}
+        calls = []
+
+        def fake_claim_one(page, serial, item):
+            calls.append(item['orderNo'])
+            claimer._publish_claim(item['orderNo'], {'status': 'ok'})
+            claimer._stop_event.set()   # 第一单提交后收到停止
+
+        claimer._claim_one = fake_claim_one
+        claimer.start_claim_environments(['61'])
+        self._wait(claimer)
+        rows = {r['environmentSerial']: r for r in
+                claimer.snapshot()['claimEnvRows']}
+        self.assertEqual(len(calls), 1, '停止后不得再开新提交')
+        self.assertEqual(rows['61']['status'], 'stopped')
+        self.assertEqual(rows['61']['submittedCount'], 1, '已提交的计数保留')
+        self.assertIn('剩余 1 单未处理', rows['61']['note'])
+
+    def test_batch_end_safety_net_closes_stuck_rows(self):
+        """批末安全网：verifying→uncertain、queued/running→stopped。"""
+        claimer, _hub = self._claimer(['71'])
+
+        def stub(serial, env, headless):
+            claimer._publish_claim('GSH1A', {'status': 'running'})
+            claimer._publish_claim('GSH1B', {'status': 'verifying'})
+
+        claimer._claim_env_one = stub
+        claimer.start_claim_environments(['71'])
+        self._wait(claimer)
+        rows = {r['orderNo']: r for r in claimer.snapshot()['claimRows']}
+        self.assertEqual(rows['GSH1A']['status'], 'stopped')
+        self.assertEqual(rows['GSH1B']['status'], 'uncertain')
+        self.assertIn('不可直接补提', rows['GSH1B']['errorSummary'])
+
+
+class BridgeClaimEnvironmentTests(unittest.TestCase):
+    """云端任务 → 按环境直提：环境级快照与「跳过不算失败」的汇总口径。"""
+
+    def _run(self, script, payload=None, cancel=None):
+        rpc = _FakeRpc(script)
+        reports = []
+        executor = LocalOperationExecutor(rpc, poll_interval=0.001,
+                                          sleep_fn=lambda _s: None)
+        outcome, code, summary = executor._execute_after_sale_claim_environments(
+            payload or {'runKey': 'as-env-1',
+                        'environmentSerials': ['4904', '4905', '4904'],
+                        'browserMode': 'visible'},
+            lambda **event: reports.append(event), cancel or threading.Event())
+        return rpc, reports, outcome, code, summary
+
+    def test_posts_serial_and_projects_environment_rows(self):
+        rpc, reports, outcome, code, summary = self._run([
+            {'running': True, 'claimRows': [], 'claimEnvRows': [
+                {'environmentSerial': '4904', 'storeName': '采购环境4904',
+                 'status': 'running', 'entryCount': 2, 'submittedCount': 0,
+                 'blockedCount': 0, 'failedCount': 0}]},
+            {'running': False,
+             'claimRows': [
+                 {'orderNo': 'GSH1A', 'environmentSerial': '4904',
+                  'status': 'ok', 'refundBillId': '2390765181147136'},
+                 {'orderNo': 'GSH1B', 'environmentSerial': '4904',
+                  'status': 'blocked', 'errorSummary': '已无可申请包裹'}],
+             'claimEnvRows': [
+                 {'environmentSerial': '4904', 'storeName': '采购环境4904',
+                  'status': 'ok', 'entryCount': 2, 'submittedCount': 1,
+                  'blockedCount': 1, 'failedCount': 0},
+                 {'environmentSerial': '4905', 'storeName': '采购环境4905',
+                  'status': 'skip', 'entryCount': 0, 'submittedCount': 0,
+                  'blockedCount': 0, 'failedCount': 0,
+                  'note': '未发现丢件退款入口，环境跳过'}]},
+        ])
+        posted = next(body for method, path, body in rpc.bodies
+                      if method == 'POST'
+                      and path == '/api/after-sale/claim-environments')
+        self.assertEqual(posted['serials'], ['4904', '4905'])
+        self.assertEqual(outcome, 'succeeded')
+        self.assertEqual(code, 'after_sale_completed')
+        # 进度按环境计、成败计数按订单计
+        self.assertEqual(summary['progressTotal'], 2)
+        self.assertEqual(summary['progressCompleted'], 2)
+        self.assertEqual(summary['successCount'], 1)
+        self.assertEqual(summary['skippedCount'], 1)
+        self.assertEqual(summary['failedCount'], 0)
+        self.assertEqual(summary['runStatus'], 'completed')
+        envs = {row['environmentSerial']: row
+                for row in summary['environments']}
+        self.assertEqual(envs['4905']['status'], 'skip')
+        self.assertIn('入口', envs['4905']['note'])
+        self.assertTrue(any('environments' in (event.get('snapshot') or {})
+                            for event in reports))
+
+    def test_env_payload_rejects_missing_or_oversized_serials(self):
+        executor = LocalOperationExecutor(
+            _FakeRpc([{'running': False, 'claimRows': []}]))
+        with self.assertRaises(Exception) as ctx:
+            executor._execute_after_sale_claim_environments(
+                {'environmentSerials': []}, lambda **e: None, None)
+        self.assertIn('缺少环境序号', str(ctx.exception))
+        with self.assertRaises(Exception) as ctx:
+            executor._execute_after_sale_claim_environments(
+                {'environmentSerials': [str(i) for i in range(301)]},
+                lambda **e: None, None)
+        self.assertIn('上限', str(ctx.exception))
+
+    def test_dispatch_routes_env_payload_to_environment_handler(self):
+        """同一 claim 任务类型按报文体分流：带 environmentSerials 走直提。"""
+        rpc = _FakeRpc([
+            {'running': True, 'claimRows': [], 'claimEnvRows': [
+                {'environmentSerial': '4904', 'status': 'running',
+                 'entryCount': 0, 'submittedCount': 0, 'blockedCount': 0,
+                 'failedCount': 0}]},
+            {'running': False, 'claimRows': [], 'claimEnvRows': [
+                {'environmentSerial': '4904', 'status': 'skip',
+                 'entryCount': 0, 'submittedCount': 0, 'blockedCount': 0,
+                 'failedCount': 0, 'note': '未发现丢件退款入口，环境跳过'}]},
+        ])
+        executor = LocalOperationExecutor(rpc, poll_interval=0.001,
+                                          sleep_fn=lambda _s: None)
+        outcome, code, _summary = executor.execute(
+            'after.sale.claim.v1',
+            {'environmentSerials': ['4904'], 'browserMode': 'visible'},
+            lambda **event: None, threading.Event())
+        self.assertEqual(outcome, 'succeeded')
+        self.assertEqual(code, 'after_sale_completed')
+        self.assertEqual(rpc.calls[0],
+                         ('POST', '/api/after-sale/claim-environments'))
+
+    def test_env_summary_marks_partial_failure_and_uncertain(self):
+        summary = LocalOperationExecutor._after_sale_environment_summary(
+            2, [{'environmentSerial': '4904', 'status': 'ok'},
+                {'environmentSerial': '4905', 'status': 'fail'}],
+            [{'orderNo': 'A', 'status': 'ok'},
+             {'orderNo': 'B', 'status': 'fail'}])
+        self.assertEqual(summary['runStatus'], 'partial_failure')
+        self.assertEqual(summary['failedCount'], 1)
+        self.assertEqual(summary['successCount'], 1)
+        # 环境尚未终态 → 整批待核对，不提前报完成
+        summary = LocalOperationExecutor._after_sale_environment_summary(
+            2, [{'environmentSerial': '4904', 'status': 'running'}], [])
+        self.assertEqual(summary['runStatus'], 'uncertain')
+        # 全部环境无入口（无订单行）也是 completed：跳过不是故障
+        summary = LocalOperationExecutor._after_sale_environment_summary(
+            1, [{'environmentSerial': '4904', 'status': 'skip'}], [])
+        self.assertEqual(summary['runStatus'], 'completed')
+        self.assertEqual(summary['successCount'], 0)
+
+    def test_env_level_failures_participate_in_terminal_status(self):
+        """环境级 fail/login 不产生订单行，必须自己把批次打失败/部分失败。"""
+        # 10 个环境全部未登录、零订单行 → failed，不是 completed
+        summary = LocalOperationExecutor._after_sale_environment_summary(
+            3, [{'environmentSerial': s, 'status': 'login'}
+                for s in ('1', '2', '3')], [])
+        self.assertEqual(summary['runStatus'], 'failed')
+        # 9 个无入口 + 1 个读取失败 → failed（跳过不能把故障稀释成完成）
+        summary = LocalOperationExecutor._after_sale_environment_summary(
+            10, [*[{'environmentSerial': str(i), 'status': 'skip'}
+                   for i in range(9)],
+                 {'environmentSerial': '9', 'status': 'fail'}], [])
+        self.assertEqual(summary['runStatus'], 'failed')
+        # 环境读取失败与成功订单并存 → partial_failure
+        summary = LocalOperationExecutor._after_sale_environment_summary(
+            2, [{'environmentSerial': '4904', 'status': 'ok'},
+                {'environmentSerial': '4905', 'status': 'login'}],
+            [{'orderNo': 'A', 'status': 'ok'}])
+        self.assertEqual(summary['runStatus'], 'partial_failure')
+        # 全 blocked（有订单行、零成功零失败）仍是 completed
+        summary = LocalOperationExecutor._after_sale_environment_summary(
+            1, [{'environmentSerial': '4904', 'status': 'blocked'}],
+            [{'orderNo': 'A', 'status': 'blocked'}])
+        self.assertEqual(summary['runStatus'], 'completed')
+        # 环境被停止且无任何成功/故障 → cancelled
+        summary = LocalOperationExecutor._after_sale_environment_summary(
+            1, [{'environmentSerial': '4904', 'status': 'stopped'}], [])
+        self.assertEqual(summary['runStatus'], 'cancelled')
+
+    def test_env_row_projection_clamps_and_drops_unknown_fields(self):
+        rows = LocalOperationExecutor._after_sale_env_rows([{
+            'environmentSerial': '4904', 'environmentId': 'C1',
+            'storeName': '采购环境4904', 'accountName': 'buyer@example.test',
+            'status': 'ok', 'entryCount': 2, 'submittedCount': 1,
+            'blockedCount': 1, 'failedCount': 0, 'note': 'x' * 500,
+            'errorSummary': None, 'durationSeconds': 12,
+            'orders': [{'orderNo': 'GSH1A'}],   # 本地字段必须被丢掉
+            'internal': 'secret',
+        }])
+        self.assertNotIn('orders', rows[0])
+        self.assertNotIn('internal', rows[0])
+        self.assertEqual(len(rows[0]['note']), 200)
+        self.assertIsNone(rows[0]['errorSummary'])
+        self.assertEqual(rows[0]['durationSeconds'], 12)
+        # 排队/进行中没跑完就是没跑完：None 不能被收成 0 秒
+        pending = LocalOperationExecutor._after_sale_env_rows(
+            [{'environmentSerial': '4905', 'status': 'queued',
+              'durationSeconds': None}])
+        self.assertIsNone(pending[0]['durationSeconds'])
+        # 未知状态回落到 running，不能把非法状态带上行
+        fallback = LocalOperationExecutor._after_sale_env_rows(
+            [{'environmentSerial': '1', 'status': 'made-up'}])
+        self.assertEqual(fallback[0]['status'], 'running')
+
+
 if __name__ == '__main__':
     unittest.main()
 
@@ -426,6 +795,8 @@ class _FakeRpc(object):
         if path.startswith('/api/after-sale/scan'):
             return {'httpStatus': 200, 'responseType': 'json', 'body': {}}
         if path.startswith('/api/after-sale/submit'):
+            return {'httpStatus': 200, 'responseType': 'json', 'body': {}}
+        if path.startswith('/api/after-sale/claim-environments'):
             return {'httpStatus': 200, 'responseType': 'json', 'body': {}}
         if path.startswith('/api/after-sale/stop'):
             return {'httpStatus': 200, 'responseType': 'json', 'body': {}}

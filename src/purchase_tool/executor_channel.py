@@ -59,6 +59,7 @@ SUPPORTED_CAPABILITIES = (
     'after.sale.reliable-results.v1',
     'after.sale.receipt-recovery.v1',
     'after.sale.claim-evidence.v1',
+    'after.sale.claim-environment.v1',
     'after.sale.phase-evidence.v1',
     'environment.create-bound.v1',
     'environment.create-backup.v1',
@@ -77,6 +78,7 @@ MODERN_ONLY_CAPABILITIES = frozenset({
     'after.sale.reliable-results.v1',
     'after.sale.receipt-recovery.v1',
     'after.sale.claim-evidence.v1',
+    'after.sale.claim-environment.v1',
     'after.sale.phase-evidence.v1',
 })
 COMPATIBLE_CAPABILITIES = tuple(

@@ -806,7 +806,12 @@ class AfterSaleClaimWiringTests(unittest.TestCase):
     def test_scan_and_submit_hit_the_formal_cloud_routes(self):
         html = self._read()
         self.assertIn("cloudFormalExecutor('after.sale.scan.v1')", html)
-        self.assertIn("cloudFormalExecutor('after.sale.claim.v1')", html)
+        self.assertIn("cloudFormalExecutor('after.sale.track.v1')", html)
+        # 提交入口按范围动态选能力位：按单提交与按环境直提各要求自己的能力
+        submit = html[html.index('async function asSubmitItems('):]
+        submit = submit[:submit.index('\n}\n')]
+        self.assertIn("'after.sale.claim.v1'", submit)
+        self.assertIn("'after.sale.claim-environment.v1'", submit)
         self.assertIn("'/v1/after-sale/scan'", html)
         self.assertIn("'/v1/operation-runs/after-sale-claim'", html)
 
@@ -1406,6 +1411,104 @@ class WebCloudContractAlignmentTests(unittest.TestCase):
             missing = sorted(reads - keys)
             self.assertFalse(missing,
                              f'{signature} 读了云端没给的字段（会恒为空）：{missing}')
+
+    def test_web_environment_payload_matches_cloud_claim_body(self):
+        """按环境直提的报文键必须是云端建单契约的子集，环境清单必发。
+
+        直提与按单提交共用 asSubmitItems（只留一条建 Run 路径），只有范围
+        字段与能力位分叉；键名漂移不会让任何一侧单测失败，只会表现为线上
+        422（契约 extra=forbid）。
+        """
+        html = LOCAL_HTML.read_text(encoding='utf-8')
+        body = html[html.index('async function asSubmitItems('):]
+        body = body[:body.index('\n}\n')]
+        self.assertIn('environmentSerials: envSerials', body)
+        env_branch = body[body.index('? {executorId'):
+                          body.index(': {executorId')]
+        order_branch = body[body.index(': {executorId'):body.index('});')]
+        keys = set(re.findall(r'(\w+):', env_branch + order_branch))
+        fields = set(re.findall(r'^    (\w+):', self._contract_block(
+            'AfterSaleClaimRunCreateBody'), re.M))
+        self.assertTrue(keys, '未解析到建 Run 报文键')
+        self.assertFalse(keys - fields,
+                         f'建 Run 发了契约没定义的键：{sorted(keys - fields)}')
+        self.assertIn('environmentSerials', set(re.findall(r'(\w+):', env_branch)))
+        # 执行器选择必须按范围点名能力位：老执行器不具备直提能力、不能接直提任务
+        self.assertIn("'after.sale.claim-environment.v1'", body)
+        self.assertIn("'after.sale.claim.v1'", body)
+        # 具名入口只做确认与解析，建 Run 仍回到 asSubmitItems
+        wrapper = html[html.index('async function asSubmitByEnvironment('):]
+        wrapper = wrapper[:wrapper.index('\n}\n')]
+        self.assertIn('asSubmitItems([], {environmentSerials: serials', wrapper)
+
+    def test_bridge_environment_rows_match_cloud_contract(self):
+        """桥接的环境行投影字段，云端 AfterSaleClaimEnvironmentRow 必须都有。"""
+        source = (ROOT / 'src' / 'purchase_tool'
+                  / 'operation_executor.py').read_text(encoding='utf-8')
+        block = source[source.index('_AFTER_SALE_ENV_ROW_FIELDS = ('):]
+        block = block[:block.index(')')]
+        fields = set(re.findall(r"'(\w+)'", block))
+        declared = set(re.findall(r'^    (\w+):', self._contract_block(
+            'AfterSaleClaimEnvironmentRow'), re.M))
+        self.assertTrue(fields and declared, '未解析到环境行字段')
+        missing = sorted(fields - declared)
+        self.assertFalse(missing, f'桥接投影了契约没有的环境行字段：{missing}')
+        self.assertIn('environmentSerial', fields)
+        self.assertIn('submittedCount', fields)
+
+    def test_web_reads_environment_results_declared_by_cloud_snapshot(self):
+        """Web 读 data.environments / submitMode，云端快照都必须返回。"""
+        html = LOCAL_HTML.read_text(encoding='utf-8')
+        service = (self.CLOUD_CONTRACT.parent / 'operation_service.py').read_text(
+            encoding='utf-8')
+        self.assertIn('asRenderEnvOutcomes(data.environments', html)
+        self.assertIn('data?.submitMode', html)
+        self.assertIn('"submitMode":', service)
+        self.assertIn('"environments": (', service)
+
+    def test_environment_results_survive_restore_and_history_detail(self):
+        """环境级结果必须在「恢复批次」与「历史详情」两条路上都看得见。
+
+        直提批次可能一行订单都没有（全 skip / 全未登录），只按 rows 判断恢复
+        会让这批结果整个消失；历史详情只写 meta 计数也看不到各环境原因。
+        """
+        html = LOCAL_HTML.read_text(encoding='utf-8')
+        restore = html[html.index('async function asLoadLatestClaim('):]
+        restore = restore[:restore.index('\n}\n')]
+        self.assertIn('data?.environments', restore)
+        self.assertIn('!restoreEnvs.length', restore,
+                      '恢复条件必须把环境级结果算进去')
+        detail = html[html.index('function asRenderClaimHistoryDetail('):]
+        detail = detail[:detail.index('\n}\n')]
+        self.assertIn('asEnvOutcomePills(', detail)
+        self.assertIn("$('asHistoryEnvOutcomes')", detail)
+        self.assertIn('读取失败', detail)
+        self.assertIn('已停止', detail)
+        # 弹层里必须有承载节点，否则渲染无处可去
+        self.assertIn('id="asHistoryEnvOutcomes"', html)
+        # 共用一套 pill 渲染，避免两处文案漂移
+        self.assertIn('function asEnvOutcomePills(', html)
+
+    def test_environment_mode_flag_and_partial_failure_title(self):
+        """复评未闭合项的两条护栏：横幅标题与进度单位不能只看「有没有值」。
+
+        - 环境失败 + 订单成功时 run 是 partial_failure，横幅标题必须一致
+          （不能因为 failedCount=0 就写「完成」）。
+        - 进度单位/环境失败句必须看模式标志：运行中恢复时 environments 可能
+          还没回传，用 envSerials.length 判断会退回「单」。
+        """
+        html = LOCAL_HTML.read_text(encoding='utf-8')
+        poll = html[html.index('} else if (AS_STATE.mode === \'claim\''):]
+        poll = poll[:poll.index('\n    }\n')]
+        self.assertIn('partial_failure:head + \'完成（部分失败）\'', poll)
+        self.assertIn("unit: AS_STATE.envMode ? '个环境' : '单'", poll)
+        self.assertIn('AS_STATE.envMode ? (data.environments || []) : []', poll)
+        submit = html[html.index('async function asSubmitItems('):]
+        submit = submit[:submit.index('\n}\n')]
+        self.assertIn('AS_STATE.envMode = !!envSerials;', submit)
+        restore = html[html.index('async function asLoadLatestClaim('):]
+        restore = restore[:restore.index('\n}\n')]
+        self.assertIn('AS_STATE.envMode = envMode;', restore)
 
     def test_history_routes_match_web_urls(self):
         """历史列表/详情/导出的 URL 必须与云端路由对上（路径漂移只会是 404）。"""
