@@ -113,8 +113,10 @@ class FakeClient:
                             page_size=30, report_status=None, **kwargs):
         self._guard(open_key_id)
         self.report_calls.append({"page": page, "status": report_status})
-        return {"count": len(self.report_orders), "list": self.report_orders} \
-            if page == 1 else {"count": len(self.report_orders), "list": []}
+        # 真分页（与订单/对账单一致）：第 1 页回全部会让 200 页上限这条路径走不到
+        start_index = (page - 1) * page_size
+        return {"count": len(self.report_orders),
+                "list": self.report_orders[start_index:start_index + page_size]}
 
     def query_site_list(self, *, open_key_id, secret_key):
         self._guard(open_key_id)
@@ -676,3 +678,92 @@ def test_dirty_in_transit_row_fails_instead_of_under_counting(env):
         session.commit()
         assert outcome.stores[0].status == "fail"
         assert "缺少预计收入" in outcome.stores[0].error_summary
+
+
+# ---- 三轮评审必须改的回归位 ----
+
+def test_failed_round_does_not_advance_order_watermark(env):
+    """失败快照不得作为订单水位（三轮必须改）。
+
+    时序（时间必须这样取，否则测不到）：
+      T1 = NOW        成功；台账 O1=已发货，成功快照 synced_at=T1
+      T2 = NOW+5h     失败；O1 已在 NOW+2h 签收（落在本轮窗口内→台账更新→
+                      被 SAVEPOINT 回滚），失败快照仍写 synced_at=T2
+      T3 = NOW+11h    恢复
+
+    水位若取到失败快照的 T2，增量窗只剩 [T2−2h, T3] = [NOW+3h, …]，
+    **NOW+2h 的签收再也不会被读到** → 在途长期虚高。
+
+    注意：失败轮距上次成功必须**大于 2 小时重叠**，否则更新落在重叠窗内，
+    缺陷被掩盖、用例会假绿（第一版就是这么写的，实测修不修都是绿的）。
+    """
+    client = FakeClient()
+    client.orders = [{"orderNo": "O1", "orderStatus": 4,
+                      "orderCreateTime": "2026-09-10 10:00:00",
+                      "orderUpdateTime": "2026-09-16 10:00:00"}]
+    client.details = {"O1": {"estimatedGrossIncome": 88.8, "currencyCode": "MXN"}}
+    add_store(env, "甲店", open_key_id="A" * 32)
+    service = build_service(env, client)
+
+    with env["db"].session_factory() as session:
+        service.run(session, tenant_id=env["tenant_id"], now=NOW)
+        session.commit()
+        assert service.build_summary(
+            session, tenant_id=env["tenant_id"]
+        ).stores[0].in_transit_amount == Decimal("88.80")
+
+    # T2：O1 在失败当轮窗口内（NOW+2h）被签收
+    client.orders = [{"orderNo": "O1", "orderStatus": 5,
+                      "orderCreateTime": "2026-09-10 10:00:00",
+                      "orderUpdateTime": "2026-09-17 14:00:00"}]
+    client.fail_open_key_ids = {"A" * 32}
+    with env["db"].session_factory() as session:
+        outcome = service.run(session, tenant_id=env["tenant_id"],
+                              now=NOW + timedelta(hours=5))
+        session.commit()
+        assert outcome.stores[0].status == "fail"
+
+    # T3：恢复。水位只认成功快照 → 窗口仍覆盖 NOW+2h → 读到签收
+    client.fail_open_key_ids = set()
+    with env["db"].session_factory() as session:
+        outcome = service.run(session, tenant_id=env["tenant_id"],
+                              now=NOW + timedelta(hours=11))
+        session.commit()
+        assert outcome.stores[0].status == "ok"
+        assert outcome.stores[0].in_transit_amount == Decimal("0.00"), \
+            "失败轮被跳窗：O1 的签收没读到，在途虚高"
+
+
+def test_check_order_invalid_expenditure_type_fails_store(env):
+    """收支类型缺失/非法必须整店失败，不能默认成收入（三轮建议点）。
+
+    原 `int(x or 1)` 会把 None 与 0 都当收入 → 一笔真实支出被算成正数，轧差即错。
+    """
+    client = FakeClient()
+    client.check_orders = [
+        {"checkOrderNo": "B1", "addTime": "2026-09-15 10:00:00",
+         "estimatePayTime": "2026-09-21 10:00:00", "currencyCode": "MXN",
+         "estimateIncomeMoneyTotal": 100.00, "incomeExpenditureType": 0}]
+    add_store(env, "甲店")
+    with env["db"].session_factory() as session:
+        outcome = build_service(env, client).run(
+            session, tenant_id=env["tenant_id"], now=NOW)
+        session.commit()
+        assert outcome.stores[0].status == "fail"
+        assert "收支类型非法" in outcome.stores[0].error_summary
+
+
+def test_report_order_page_cap_fails_instead_of_truncating(env):
+    """报账单翻页超限也须整店失败（三轮指出的盲区：原先假网关第 1 页回全部）。"""
+    client = FakeClient()
+    client.report_orders = [
+        {"reportOrderNo": f"R{i}", "income": 1.00, "currencyCode": "MXN"}
+        for i in range(30 * 201)          # 超过 200 页 × 30
+    ]
+    add_store(env, "甲店")
+    with env["db"].session_factory() as session:
+        outcome = build_service(env, client).run(
+            session, tenant_id=env["tenant_id"], now=NOW)
+        session.commit()
+        assert outcome.stores[0].status == "fail"
+        assert "未取完" in outcome.stores[0].error_summary

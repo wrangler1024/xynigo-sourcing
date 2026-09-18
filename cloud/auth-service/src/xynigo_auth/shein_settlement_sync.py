@@ -68,6 +68,7 @@ CHECK_STATUS_PENDING = 1
 REPORT_STATUS_PAID = 2
 # 收支类型：1=收入 2=支出（对账单按轧差取净额）
 EXPENDITURE_INCOME = 1
+EXPENDITURE_EXPENSE = 2
 
 # 待结算是「全部 checkStatus=1」，不是「最近一批」——所以取数每次都往回翻满
 # 整个区间。「连续空窗就停」是错的：空窗不构成见底依据（见 _fetch_pending_batches）。
@@ -212,24 +213,27 @@ class SheinSettlementSyncService:
                 SheinSettlementOrder.store_id == store.id,
             )
         ).scalar()
-        ledger_rows = session.execute(
-            select(func.count()).select_from(SheinSettlementOrder).where(
-                SheinSettlementOrder.tenant_id == store.tenant_id,
-                SheinSettlementOrder.store_id == store.id,
-            )
-        ).scalar()
         # 水位优选用快照时间：安静期增量窗没有订单可写，max(last_synced_at) 不会
         # 前进，窗口会一轮轮变长直到重新打满 48h 分片（多打平台）。快照每轮都写。
+        #
+        # **但只认 status == "ok" 的快照**：失败快照写在 SAVEPOINT 之外、synced_at
+        # 是本轮 now，而本轮拉到的台账更新已被 SAVEPOINT 回滚。拿它当水位会把
+        # [上次成功, 本轮 − 重叠] 这段窗口整个跳过去——期间发生的签收/新发货再也
+        # 不会出现在任何窗口里，在途长期偏离真值。
         snapshot_watermark = session.execute(
             select(func.max(SheinSettlementSnapshot.synced_at)).where(
                 SheinSettlementSnapshot.tenant_id == store.tenant_id,
                 SheinSettlementSnapshot.store_id == store.id,
+                SheinSettlementSnapshot.status == "ok",
             )
         ).scalar()
-        if ledger_rows and snapshot_watermark is not None:
-            if last_synced is None or _as_platform_tz(
-                    snapshot_watermark) > _as_platform_tz(last_synced):
-                last_synced = snapshot_watermark
+        # 空店（台账 0 行）同样接受成功快照水位：否则一个从未出过单的店每轮都
+        # 走一次 60 天全量回溯，白打几十次订单窗。
+        if snapshot_watermark is not None and (
+            last_synced is None
+            or _as_platform_tz(snapshot_watermark) > _as_platform_tz(last_synced)
+        ):
+            last_synced = snapshot_watermark
 
         if last_synced is None:
             # 首次：向前回溯建账。48h 窗口拉不全"所有已发货未签收"——
@@ -488,8 +492,20 @@ class SheinSettlementSyncService:
                 f"币种 {currency!r}、金额 {item.get('estimateIncomeMoneyTotal')!r}），"
                 "无法计入待结算；为避免少算或重复计已中止本店同步",
             )
-        # 支出行取负：对账单按收支轧差，支出与收入成对出现
-        kind = int(item.get("incomeExpenditureType") or EXPENDITURE_INCOME)
+        # 支出行取负：对账单按收支轧差，支出与收入成对出现。
+        # 收支类型缺失或非法**不能默认成收入**：`int(x or 1)` 会把 0/None 都当收入，
+        # 一笔真实的支出被算成正数，轧差即错。缺类型与缺单号同等对待。
+        raw_kind = item.get("incomeExpenditureType")
+        try:
+            kind = int(raw_kind)
+        except (TypeError, ValueError):
+            kind = 0
+        if kind not in (EXPENDITURE_INCOME, EXPENDITURE_EXPENSE):
+            raise SheinSettlementSyncError(
+                "shein_settlement_check_order_incomplete",
+                f"{store.store_name}：对账单收支类型非法（单号 {order_no}、"
+                f"取值为 {raw_kind!r}）；无法判断收入或支出，为避免轧差错算已中止本店同步",
+            )
         # 去重键带收支类型：真机上同一单号是否会同时出现收入行与支出行尚未确认，
         # 只按单号去重会把成对出现的其中一行吃掉，轧差就错了。
         dedup_key = (order_no, kind)

@@ -92,8 +92,9 @@ def build_settlement_export(summary: SettlementSummary):
             _money(store.in_transit_amount) if settled_ok else None,
             _money(unsettled) if settled_ok else None,
             _money(nearest_amount) if settled_ok else None,
-            " / ".join(sorted({b.pay_date.isoformat()
-                               for b in store.payout_batches})) or None,
+            (" / ".join(sorted({b.pay_date.isoformat()
+                                for b in store.payout_batches})) or None)
+            if settled_ok else None,
             _money(store.settled_cumulative_amount) if settled_ok else None,
             store.synced_at.strftime("%Y-%m-%d %H:%M") if store.synced_at else None,
             STATUS_LABELS.get(store.status, store.status),
