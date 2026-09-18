@@ -87,12 +87,14 @@ def build_settlement_export(summary: SettlementSummary):
             store.store_name,
             MODE_LABELS.get(store.mode, store.mode),
             store.currency,
-            _money(store.in_transit_amount),
-            _money(unsettled),
-            _money(nearest_amount),
+            # 失败行的**所有**金额列一律留空（不只待结算/下次结算）：在途与已结算
+            # 目前虽由聚合层清空，导出侧再按状态兜一次，避免以后有人改聚合时漏掉这里。
+            _money(store.in_transit_amount) if settled_ok else None,
+            _money(unsettled) if settled_ok else None,
+            _money(nearest_amount) if settled_ok else None,
             " / ".join(sorted({b.pay_date.isoformat()
                                for b in store.payout_batches})) or None,
-            _money(store.settled_cumulative_amount),
+            _money(store.settled_cumulative_amount) if settled_ok else None,
             store.synced_at.strftime("%Y-%m-%d %H:%M") if store.synced_at else None,
             STATUS_LABELS.get(store.status, store.status),
             store.error_summary or None,

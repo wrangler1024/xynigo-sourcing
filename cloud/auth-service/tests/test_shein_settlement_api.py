@@ -67,7 +67,7 @@ def shein_transport(*, fail: bool = False):
             start = str(payload.get("startAddTime") or "")
             end = str(payload.get("endAddTime") or "")
             add_time = "2026-09-15 10:00:00"
-            items = ([{"addTime": add_time,
+            items = ([{"checkOrderNo": "B-s1", "addTime": add_time,
                        "estimatePayTime": "2026-09-21 10:00:00",
                        "currencyCode": "MXN",
                        "estimateIncomeMoneyTotal": 500.25,

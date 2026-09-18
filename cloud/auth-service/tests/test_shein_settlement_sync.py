@@ -75,8 +75,9 @@ class FakeClient:
         self.order_calls.append({"page": page, "start": start_time})
         matched = [item for item in self.orders
                    if start_time <= str(item.get("orderUpdateTime") or "") < end_time]
-        return {"count": len(matched), "orderList": matched} if page == 1 \
-            else {"count": len(matched), "orderList": []}
+        start_index = (page - 1) * page_size
+        return {"count": len(matched),
+                "orderList": matched[start_index:start_index + page_size]}
 
     def query_order_details(self, *, open_key_id, secret_key, order_nos):
         self._guard(open_key_id)
@@ -102,8 +103,11 @@ class FakeClient:
             item for item in self.check_orders
             if start_add_time <= str(item.get("addTime") or "") < end_add_time
         ]
-        return {"count": len(matched), "list": matched} if page == 1 \
-            else {"count": len(matched), "list": []}
+        # 真分页：一次只回一页。若像早先那样第 1 页就回全部，翻页上限这条路径
+        # 永远走不到（截断保护也就测不出来）。
+        start_index = (page - 1) * page_size
+        return {"count": len(matched),
+                "list": matched[start_index:start_index + page_size]}
 
     def query_report_orders(self, *, open_key_id, secret_key, page=1,
                             page_size=30, report_status=None, **kwargs):
@@ -175,10 +179,10 @@ def test_sync_writes_ledger_batches_and_snapshot(env):
     ]
     client.details = {"O1": {"estimatedGrossIncome": 100.5, "currencyCode": "MXN"}}
     client.check_orders = [
-        {"addTime": "2026-09-15 10:00:00", "estimatePayTime": "2026-09-21 10:00:00",
+        {"checkOrderNo": "B-s1", "addTime": "2026-09-15 10:00:00", "estimatePayTime": "2026-09-21 10:00:00",
          "currencyCode": "MXN", "estimateIncomeMoneyTotal": 600.00,
          "incomeExpenditureType": 1},
-        {"addTime": "2026-09-16 10:00:00", "estimatePayTime": "2026-09-28 10:00:00",
+        {"checkOrderNo": "B-s2", "addTime": "2026-09-16 10:00:00", "estimatePayTime": "2026-09-28 10:00:00",
          "currencyCode": "MXN", "estimateIncomeMoneyTotal": 400.00,
          "incomeExpenditureType": 1},
     ]
@@ -241,10 +245,10 @@ def test_payout_batches_net_income_against_expense(env):
     """对账单按收支轧差；支出行取负（同店同日同币种合并）。"""
     client = FakeClient()
     client.check_orders = [
-        {"addTime": "2026-09-15 10:00:00", "estimatePayTime": "2026-09-21 10:00:00",
+        {"checkOrderNo": "B-s1", "addTime": "2026-09-15 10:00:00", "estimatePayTime": "2026-09-21 10:00:00",
          "currencyCode": "MXN", "estimateIncomeMoneyTotal": 1059.32,
          "incomeExpenditureType": 1},
-        {"addTime": "2026-09-15 11:00:00", "estimatePayTime": "2026-09-21 10:00:00",
+        {"checkOrderNo": "B-exp", "addTime": "2026-09-15 11:00:00", "estimatePayTime": "2026-09-21 10:00:00",
          "currencyCode": "MXN", "estimateIncomeMoneyTotal": 114.16,
          "incomeExpenditureType": 2},
     ]
@@ -264,7 +268,7 @@ def test_sync_is_idempotent(env):
                       "orderUpdateTime": "2026-09-16 10:00:00"}]
     client.details = {"O1": {"estimatedGrossIncome": 50, "currencyCode": "MXN"}}
     client.check_orders = [
-        {"addTime": "2026-09-15 10:00:00", "estimatePayTime": "2026-09-21 10:00:00",
+        {"checkOrderNo": "B-s1", "addTime": "2026-09-15 10:00:00", "estimatePayTime": "2026-09-21 10:00:00",
          "currencyCode": "MXN", "estimateIncomeMoneyTotal": 100,
          "incomeExpenditureType": 1}]
     add_store(env, "甲店")
@@ -473,7 +477,7 @@ def test_failed_after_success_does_not_show_stale_batches(env):
     store_id = add_store(env, "甲店", open_key_id="A" * 32)
     client = FakeClient()
     client.check_orders = [
-        {"addTime": "2026-09-15 10:00:00", "estimatePayTime": "2026-09-21 10:00:00",
+        {"checkOrderNo": "B-s1", "addTime": "2026-09-15 10:00:00", "estimatePayTime": "2026-09-21 10:00:00",
          "currencyCode": "MXN", "estimateIncomeMoneyTotal": 500.00,
          "incomeExpenditureType": 1}]
     client.report_orders = [{"income": 100, "currencyCode": "MXN"}]
@@ -584,3 +588,91 @@ def test_incomplete_backwalk_fails_instead_of_truncating(env):
         session.commit()
         assert outcome.stores[0].status == "fail"
         assert "未见底" in outcome.stores[0].error_summary
+
+
+# ---- 复评新增必须改项的回归位 ----
+
+def test_check_order_without_order_no_fails_store(env):
+    """缺对账单号必须整店失败（复评必须改 #1）。
+
+    单号是去重键：没有它就无法判断边界秒被相邻两片各返回一次的情况，金额会翻倍。
+    原实现 `if order_no:` 把缺号行直接放过——既不去重、又照常入桶。
+    """
+    client = FakeClient()
+    client.check_orders = [
+        {"addTime": "2026-09-15 10:00:00",
+         "estimatePayTime": "2026-09-21 10:00:00", "currencyCode": "MXN",
+         "estimateIncomeMoneyTotal": 100.00, "incomeExpenditureType": 1}]
+    add_store(env, "甲店")
+    with env["db"].session_factory() as session:
+        outcome = build_service(env, client).run(
+            session, tenant_id=env["tenant_id"], now=NOW)
+        session.commit()
+        assert outcome.stores[0].status == "fail"
+        assert "缺少关键字段" in outcome.stores[0].error_summary
+
+
+def test_same_order_income_and_expense_rows_are_both_kept(env):
+    """同一单号的收入行与支出行都要保留（复评提醒点）。
+
+    去重键是 (对账单号, 收支类型)：真机是否会出现同号两行尚未确认，
+    但若只按单号去重，成对的支出行会被吃掉 → 轧差算错。
+    """
+    client = FakeClient()
+    client.check_orders = [
+        {"checkOrderNo": "B-pair", "addTime": "2026-09-15 10:00:00",
+         "estimatePayTime": "2026-09-21 10:00:00", "currencyCode": "MXN",
+         "estimateIncomeMoneyTotal": 100.00, "incomeExpenditureType": 1},
+        {"checkOrderNo": "B-pair", "addTime": "2026-09-15 10:00:00",
+         "estimatePayTime": "2026-09-21 10:00:00", "currencyCode": "MXN",
+         "estimateIncomeMoneyTotal": 30.00, "incomeExpenditureType": 2}]
+    add_store(env, "甲店")
+    with env["db"].session_factory() as session:
+        outcome = build_service(env, client).run(
+            session, tenant_id=env["tenant_id"], now=NOW)
+        session.commit()
+        assert outcome.stores[0].status == "ok"
+        assert outcome.stores[0].batches[0].amount == Decimal("70.00")
+
+
+def test_check_order_page_cap_fails_instead_of_truncating(env):
+    """对账单翻页超限必须整店失败（复评必须改 #2）。
+
+    原先是静默 break：截断结果仍会被当成"见底"，随后全删重建 → 「看着完整、
+    实际少算」。与订单列表/报账单的口径对齐。
+    """
+    client = FakeClient()
+    client.check_orders = [
+        {"checkOrderNo": f"B{i}", "addTime": "2026-09-15 10:00:00",
+         "estimatePayTime": "2026-09-21 10:00:00", "currencyCode": "MXN",
+         "estimateIncomeMoneyTotal": 1.00, "incomeExpenditureType": 1}
+        for i in range(4000)          # 超过 100 页 × 30
+    ]
+    add_store(env, "甲店")
+    with env["db"].session_factory() as session:
+        outcome = build_service(env, client).run(
+            session, tenant_id=env["tenant_id"], now=NOW)
+        session.commit()
+        assert outcome.stores[0].status == "fail"
+        assert "翻页超过" in outcome.stores[0].error_summary
+
+
+def test_dirty_in_transit_row_fails_instead_of_under_counting(env):
+    """台账里已存在「在途但金额为空」的脏行时必须失败（复评建议点）。
+
+    增量空窗不会重拉这些详情的金额，而 SQL SUM 会跳过 NULL → 静默算少。
+    """
+    store_id = add_store(env, "甲店")
+    with env["db"].session_factory() as session:
+        session.add(SheinSettlementOrder(
+            tenant_id=env["tenant_id"], store_id=store_id, order_no="DIRTY",
+            order_status=4, currency="MXN",
+            estimated_gross_income=None, last_synced_at=NOW))
+        session.commit()
+    client = FakeClient()
+    with env["db"].session_factory() as session:
+        outcome = build_service(env, client).run(
+            session, tenant_id=env["tenant_id"], now=NOW)
+        session.commit()
+        assert outcome.stores[0].status == "fail"
+        assert "缺少预计收入" in outcome.stores[0].error_summary

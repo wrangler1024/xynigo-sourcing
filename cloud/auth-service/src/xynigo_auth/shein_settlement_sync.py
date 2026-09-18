@@ -212,6 +212,24 @@ class SheinSettlementSyncService:
                 SheinSettlementOrder.store_id == store.id,
             )
         ).scalar()
+        ledger_rows = session.execute(
+            select(func.count()).select_from(SheinSettlementOrder).where(
+                SheinSettlementOrder.tenant_id == store.tenant_id,
+                SheinSettlementOrder.store_id == store.id,
+            )
+        ).scalar()
+        # 水位优选用快照时间：安静期增量窗没有订单可写，max(last_synced_at) 不会
+        # 前进，窗口会一轮轮变长直到重新打满 48h 分片（多打平台）。快照每轮都写。
+        snapshot_watermark = session.execute(
+            select(func.max(SheinSettlementSnapshot.synced_at)).where(
+                SheinSettlementSnapshot.tenant_id == store.tenant_id,
+                SheinSettlementSnapshot.store_id == store.id,
+            )
+        ).scalar()
+        if ledger_rows and snapshot_watermark is not None:
+            if last_synced is None or _as_platform_tz(
+                    snapshot_watermark) > _as_platform_tz(last_synced):
+                last_synced = snapshot_watermark
 
         if last_synced is None:
             # 首次：向前回溯建账。48h 窗口拉不全"所有已发货未签收"——
@@ -347,6 +365,22 @@ class SheinSettlementSyncService:
     def _sum_in_transit(
         self, session: Session, *, store: SheinAuthorizedStore,
     ) -> Decimal | None:
+        # 先扫脏行：历史版本可能留下 order_status=4 但金额为 NULL 的行（SUM 会跳过
+        # NULL → 该店在途静默算少）。只在求和前扫一次，增量空窗也能兜住。
+        dirty = session.execute(
+            select(func.count()).select_from(SheinSettlementOrder).where(
+                SheinSettlementOrder.tenant_id == store.tenant_id,
+                SheinSettlementOrder.store_id == store.id,
+                SheinSettlementOrder.order_status == ORDER_STATUS_SHIPPED,
+                SheinSettlementOrder.estimated_gross_income.is_(None),
+            )
+        ).scalar()
+        if dirty:
+            raise SheinSettlementSyncError(
+                "shein_settlement_in_transit_amount_missing",
+                f"{store.store_name}：台账中有 {dirty} 笔在途订单缺少预计收入，"
+                "无法计入在途；为避免少算已中止本店同步",
+            )
         total = session.execute(
             select(func.coalesce(func.sum(
                 SheinSettlementOrder.estimated_gross_income), 0)).where(
@@ -376,7 +410,7 @@ class SheinSettlementSyncService:
         可让两种语义都不翻倍（重复拉到只是覆盖，不会重复计）。
         """
         buckets: dict[tuple[date, str], Decimal] = {}
-        seen_orders: set[str] = set()
+        seen_orders: set[tuple[str, int]] = set()
         # 窗口从下界（now - lookback）向上切，**最早那个窗口的起点恰好等于下界**。
         # 这是判据成立的前提：先前按"从 now 往回切"的写法，最早窗口永远不贴着
         # 下界，于是"最早窗口是否还有账单"永远为假——判据成了死代码。
@@ -384,18 +418,19 @@ class SheinSettlementSyncService:
             days=self.check_order_lookback_days)
         windows = slice_time_windows(limit, _floor_second(now),
                                      CHECK_ORDER_MAX_SPAN)
-        oldest_had_rows = False
         for index, (window_start, window_end) in enumerate(windows):
             rows = self._fetch_check_order_window(
                 store=store, secret=secret,
                 start=window_start, end=window_end)
             if rows and index == 0:
-                oldest_had_rows = True
+                # 贴着下界的那一片还有未结账单 → 一定判不完整、整店会失败。
+                # 立刻返回，不再往后打二十几个窗口白耗平台配额。
+                return {}, False
             for item in rows:
                 self._accumulate_pending_row(
                     item, buckets=buckets, seen_orders=seen_orders,
                     store=store)
-        return buckets, not oldest_had_rows
+        return buckets, True
 
     def _fetch_check_order_window(
         self, *, store: SheinAuthorizedStore, secret: str,
@@ -413,14 +448,25 @@ class SheinSettlementSyncService:
             )
             items = _rows(payload, "list")
             collected.extend(items)
-            if len(items) < 30 or page >= MAX_CHECK_ORDER_PAGES_PER_WINDOW:
+            if len(items) < 30:
                 break
             page += 1
+            if page > MAX_CHECK_ORDER_PAGES_PER_WINDOW:
+                # 与订单列表/报账单一致：**超限即失败**。原先是静默 break，
+                # 截断结果仍会被当成"见底"，随后全删重建 → 正是第 2 项要防的
+                # 「看着完整、实际少算」。
+                raise SheinSettlementSyncError(
+                    "shein_settlement_check_order_pages_exceeded",
+                    f"{store.store_name}：对账单单窗口翻页超过 "
+                    f"{MAX_CHECK_ORDER_PAGES_PER_WINDOW} 页，可能被截断；"
+                    "为避免少算待结算已中止本店同步",
+                )
         return collected
 
     def _accumulate_pending_row(
         self, item: dict[str, Any], *,
-        buckets: dict[tuple[date, str], Decimal], seen_orders: set[str],
+        buckets: dict[tuple[date, str], Decimal],
+        seen_orders: set[tuple[str, int]],
         store: SheinAuthorizedStore,
     ) -> None:
         """把一条对账单并入待结算桶；关键字段缺失即整店失败。
@@ -429,23 +475,27 @@ class SheinSettlementSyncService:
         而少算不会报警——财务只会看到一个偏小的数。
         """
         order_no = str(item.get("checkOrderNo") or "").strip()
-        if order_no:
-            if order_no in seen_orders:
-                return
-            seen_orders.add(order_no)
         pay_date = _pay_date(item.get("estimatePayTime"))
         currency = str(item.get("currencyCode") or "").strip()
         amount = _as_decimal(item.get("estimateIncomeMoneyTotal"))
-        if pay_date is None or not currency or amount is None:
+        # 单号是去重键，缺了就不能去重——分片边界秒被相邻两片各返回一次时金额会翻倍。
+        # 所以它和其他关键字段同等对待：缺一即整店失败，不能 `if order_no:` 绕过去。
+        if not order_no or pay_date is None or not currency or amount is None:
             raise SheinSettlementSyncError(
                 "shein_settlement_check_order_incomplete",
                 f"{store.store_name}：对账单缺少关键字段"
-                f"（单号 {order_no or '未知'}、打款日 {item.get('estimatePayTime')!r}、"
+                f"（单号 {order_no or '缺失'}、打款日 {item.get('estimatePayTime')!r}、"
                 f"币种 {currency!r}、金额 {item.get('estimateIncomeMoneyTotal')!r}），"
-                "无法计入待结算；为避免少算已中止本店同步",
+                "无法计入待结算；为避免少算或重复计已中止本店同步",
             )
         # 支出行取负：对账单按收支轧差，支出与收入成对出现
         kind = int(item.get("incomeExpenditureType") or EXPENDITURE_INCOME)
+        # 去重键带收支类型：真机上同一单号是否会同时出现收入行与支出行尚未确认，
+        # 只按单号去重会把成对出现的其中一行吃掉，轧差就错了。
+        dedup_key = (order_no, kind)
+        if dedup_key in seen_orders:
+            return
+        seen_orders.add(dedup_key)
         signed = abs(amount) if kind == EXPENDITURE_INCOME else -abs(amount)
         key = (pay_date, currency)
         buckets[key] = buckets.get(key, Decimal("0")) + signed

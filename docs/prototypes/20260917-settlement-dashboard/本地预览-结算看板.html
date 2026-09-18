@@ -14723,7 +14723,7 @@ function settleRenderTable() {
       const payDates = store.payDates || [];
       const more = payDates.length - 1;
       const payDateCell = payDates.length
-        ? payDates[0] + (more > 0 ? ` <span class="settle-more">+${more} 批</span>` : '')
+        ? esc(payDates[0]) + (more > 0 ? ` <span class="settle-more">+${more} 批</span>` : '')
         : '—';
       return `<tr>
         <td><strong>${esc(store.storeName)}</strong></td>
