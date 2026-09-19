@@ -60,7 +60,26 @@ def _as_utc(value: datetime) -> datetime:
 STORE_INFO_FIELDS = (
     "merchantId", "merchant_id", "storeName", "store_name",
     "storeCode", "store_code", "site", "region", "currency",
+    "supplierId", "storeStatus",
 )
+
+
+def _normalized_store_info(store_info: dict[str, Any]) -> dict[str, Any]:
+    """真机（20260919）：店铺身份嵌在 info.storeInfo 子对象里
+    （supplierId/storeName/storeStatus）。扁平化后按白名单入库，
+    并兼容早期假定的扁平 merchantId/storeName 结构。"""
+    flat = dict(store_info or {})
+    nested = flat.pop("storeInfo", None)
+    if isinstance(nested, dict):
+        for key, value in (
+            ("merchantId", nested.get("supplierId")),
+            ("storeName", nested.get("storeName")),
+            ("storeStatus", nested.get("storeStatus")),
+            ("storeCode", nested.get("storeCode")),
+        ):
+            if value is not None and not flat.get(key):
+                flat[key] = value
+    return flat
 
 
 def _filtered_store_info(store_info: dict[str, Any]) -> dict[str, Any]:
@@ -81,6 +100,8 @@ def _mask_temp_token(token: str) -> str:
 
 
 def _store_payload(store: SheinAuthorizedStore) -> dict[str, Any]:
+    # 库列为 naive UTC：序列化必须补 +00:00，否则浏览器按本地时区解析，
+    # 非东八区用户看到的时间整体漂移（20260919 真机反馈）。
     return {
         "id": str(store.id),
         "name": store.store_name,
@@ -88,10 +109,11 @@ def _store_payload(store: SheinAuthorizedStore) -> dict[str, Any]:
         "merchantId": store.merchant_id,
         "openKeyIdMasked": mask_open_key_id(store.open_key_id),
         "appId": store.app_id,
-        "firstAuthorizedAt": store.first_authorized_at.isoformat(),
-        "latestAuthorizedAt": store.latest_authorized_at.isoformat(),
+        "firstAuthorizedAt": _as_utc(store.first_authorized_at).isoformat(),
+        "latestAuthorizedAt": _as_utc(store.latest_authorized_at).isoformat(),
         "lastVerifiedAt": (
-            store.last_verified_at.isoformat() if store.last_verified_at else None
+            _as_utc(store.last_verified_at).isoformat()
+            if store.last_verified_at else None
         ),
         "status": store.status,
     }
@@ -350,9 +372,9 @@ class SheinStoreAuthService:
 
         store_info: dict[str, Any] = {}
         try:
-            store_info = self.client.query_store_info(
+            store_info = _normalized_store_info(self.client.query_store_info(
                 open_key_id=open_key_id, secret_key=secret_key
-            )
+            ))
         except SheinOpenApiClientError:
             store_info = {}  # 换钥成功但店铺信息接口暂时失败：不阻断绑定
 
@@ -516,9 +538,9 @@ class SheinStoreAuthService:
                 "shein_store_secret_unreadable", "店铺密钥暂时无法解密", 503
             ) from exc
         try:
-            store_info = self.client.query_store_info(
+            store_info = _normalized_store_info(self.client.query_store_info(
                 open_key_id=record.open_key_id, secret_key=secret_key
-            )
+            ))
             record.status = "ok"
             record.store_info = _filtered_store_info(store_info)
             note = "店铺信息接口验证通过"
@@ -647,7 +669,7 @@ class SheinStoreAuthService:
             "items": [
                 {
                     "id": str(row.id),
-                    "at": row.created_at.isoformat(),
+                    "at": _as_utc(row.created_at).isoformat(),
                     "action": row.action,
                     "actionLabel": names.get(row.action, row.action),
                     "store": row.store_label,

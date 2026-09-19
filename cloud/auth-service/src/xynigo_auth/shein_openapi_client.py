@@ -170,10 +170,13 @@ class SheinOpenApiClient:
     def configured(self) -> bool:
         return bool(self.gateway and self.app_id and self.app_secret)
 
-    def _unwrap(self, payload: dict[str, Any], *, path: str) -> dict[str, Any]:
+    def _unwrap(
+        self, payload: dict[str, Any], *, path: str
+    ) -> dict[str, Any] | list[Any]:
+        """取业务数据段；真机（20260919）order-detail 的 info 直接是数组。"""
         for key in _ENVELOPE_KEYS:
             section = payload.get(key)
-            if isinstance(section, dict):
+            if isinstance(section, (dict, list)):
                 return section
         raise SheinOpenApiClientError(
             "shein_gateway_data_invalid",
@@ -343,8 +346,12 @@ class SheinOpenApiClient:
 
     def query_order_details(
         self, *, open_key_id: str, secret_key: str, order_nos: list[str]
-    ) -> dict[str, Any]:
-        """订单详情（含 estimatedGrossIncome 预计收入）。单次 ≤30 单号。"""
+    ) -> dict[str, Any] | list[Any]:
+        """订单详情（含 estimatedGrossIncome 预计收入）。单次 ≤30 单号。
+
+        真机（20260919）：响应 info 直接是明细数组（无 orderList 包裹），
+        未知单号整批报业务错 9998935。
+        """
         batch = [str(no) for no in order_nos][:ORDER_DETAIL_MAX_BATCH]
         return self._post(
             path=ORDER_DETAIL_PATH, identity=open_key_id,

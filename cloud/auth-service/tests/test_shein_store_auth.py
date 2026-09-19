@@ -107,10 +107,22 @@ def shein_transport(
                 return httpx.Response(
                     200, json={"code": "500", "msg": "sign error", "data": None}
                 )
+            # 真机（20260919）：店铺身份嵌在 info.storeInfo 子对象
+            # （supplierId/storeName/storeStatus），外层还有额度段。
             return httpx.Response(200, json={
                 "code": "0",
                 "msg": "ok",
-                "data": {"merchantId": "18301880", "storeName": "观潮"},
+                "info": {
+                    "storeInfo": {
+                        "supplierId": 18301880,
+                        "storeName": "观潮",
+                        "storeStatus": 1,
+                    },
+                    "storeProductQuota": {
+                        "totalLimit": 0, "availableLimit": 0,
+                        "usedQuota": 0, "supplierBusinessMode": "",
+                    },
+                },
             })
         return httpx.Response(404, json={"code": "404", "msg": "not found"})
 
@@ -280,6 +292,30 @@ def test_decrypt_secret_key_matches_official_doc_vector() -> None:
     assert padded[:-padded[-1]].decode("utf-8") == "Hello World"
 
 
+def test_store_payload_timestamps_are_tz_aware(tmp_path) -> None:
+    """库列为 naive UTC；序列化须带 +00:00，否则浏览器按本地时区错读。"""
+    app, _database, _ids = build_shein_app(tmp_path)
+    with TestClient(app) as client:
+        link = client.post(
+            "/v1/shein-auth/link", json={"mode": "self"}, headers=admin_headers()
+        ).json()
+        callback = client.post(
+            "/v1/shein-auth/callback",
+            json={"tempToken": "temp-token-123456", "state": link["state"]},
+        )
+        assert callback.status_code == 200
+        listed = client.get(
+            "/v1/shein-auth/stores?page=1&pageSize=10", headers=admin_headers()
+        ).json()
+        item = listed["items"][0]
+        assert item["firstAuthorizedAt"].endswith("+00:00")
+        assert item["latestAuthorizedAt"].endswith("+00:00")
+        events = client.get(
+            "/v1/shein-auth/events", headers=admin_headers()
+        ).json()
+        assert events["items"][-1]["at"].endswith("+00:00")
+
+
 def test_client_exchange_and_store_info_use_mock_gateway() -> None:
     client = SheinOpenApiClient(
         gateway="https://openapi.example.test",
@@ -294,7 +330,9 @@ def test_client_exchange_and_store_info_use_mock_gateway() -> None:
     info = client.query_store_info(
         open_key_id=OPEN_KEY_ID, secret_key=secret
     )
-    assert info["merchantId"] == "18301880"
+    # 客户端返回原始业务段；真机（20260919）身份在 info.storeInfo 子对象。
+    assert info["storeInfo"]["supplierId"] == 18301880
+    assert info["storeInfo"]["storeName"] == "观潮"
 
 
 def test_client_maps_expired_temp_token_code() -> None:

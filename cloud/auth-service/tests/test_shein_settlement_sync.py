@@ -86,9 +86,10 @@ class FakeClient:
     def query_order_details(self, *, open_key_id, secret_key, order_nos):
         self._guard(open_key_id)
         self.detail_calls.append(list(order_nos))
-        return {"orderList": [
+        # 真机（20260919）：order-detail 的 info 直接是明细数组，无包裹键。
+        return [
             {"orderNo": no, **self.details.get(no, {})} for no in order_nos
-            if no in self.details]}
+            if no in self.details]
 
     def query_check_orders(self, *, open_key_id, secret_key, start_add_time,
                            end_add_time, page=1, page_size=30,
@@ -183,7 +184,7 @@ def test_sync_writes_ledger_batches_and_snapshot(env):
          "orderCreateTime": "2026-09-11 10:00:00",
          "orderUpdateTime": "2026-09-16 11:00:00"},
     ]
-    client.details = {"O1": {"estimatedGrossIncome": 100.5, "currencyCode": "MXN"}}
+    client.details = {"O1": {"estimatedGrossIncome": 100.5, "orderCurrency": "MXN"}}
     client.check_orders = [
         {"checkOrderNo": "B-s1", "addTime": "2026-09-15 10:00:00", "estimatePayTime": "2026-09-21 10:00:00",
          "currencyCode": "MXN", "estimateIncomeMoneyTotal": 600.00,
@@ -235,7 +236,7 @@ def test_order_details_only_fetched_for_in_transit_orders(env):
          "orderUpdateTime": "2026-09-16 10:00:00"}
         for i in range(6)
     ]
-    client.details = {f"O{i}": {"estimatedGrossIncome": 10, "currencyCode": "MXN"}
+    client.details = {f"O{i}": {"estimatedGrossIncome": 10, "orderCurrency": "MXN"}
                       for i in range(6)}
     add_store(env, "甲店")
 
@@ -272,7 +273,7 @@ def test_sync_is_idempotent(env):
     client.orders = [{"orderNo": "O1", "orderStatus": 4,
                       "orderCreateTime": "2026-09-10 10:00:00",
                       "orderUpdateTime": "2026-09-16 10:00:00"}]
-    client.details = {"O1": {"estimatedGrossIncome": 50, "currencyCode": "MXN"}}
+    client.details = {"O1": {"estimatedGrossIncome": 50, "orderCurrency": "MXN"}}
     client.check_orders = [
         {"checkOrderNo": "B-s1", "addTime": "2026-09-15 10:00:00", "estimatePayTime": "2026-09-21 10:00:00",
          "currencyCode": "MXN", "estimateIncomeMoneyTotal": 100,
@@ -293,6 +294,34 @@ def test_sync_is_idempotent(env):
             select(SheinPayoutBatch)).scalars().all()) == 1
 
 
+def test_order_detail_supports_legacy_wrapped_payload(env):
+    """兼容旧假设的包裹形态（{"orderList":[…]}）与旧币种字段 currencyCode。"""
+    client = FakeClient()
+    client.orders = [{"orderNo": "O1", "orderStatus": 4,
+                      "orderCreateTime": "2026-09-10 10:00:00",
+                      "orderUpdateTime": "2026-09-16 10:00:00"}]
+    client.details = {"O1": {"estimatedGrossIncome": 50, "currencyCode": "MXN"}}
+
+    def wrapped_details(*, open_key_id, secret_key, order_nos):
+        client.detail_calls.append(list(order_nos))
+        return {"orderList": [
+            {"orderNo": no, **client.details.get(no, {})} for no in order_nos
+            if no in client.details]}
+
+    client.query_order_details = wrapped_details
+    client.check_orders = []
+    add_store(env, "甲店")
+
+    with env["db"].session_factory() as session:
+        build_service(env, client).run(
+            session, tenant_id=env["tenant_id"], now=NOW)
+        session.commit()
+        row = session.execute(
+            select(SheinSettlementOrder)).scalars().one()
+        assert row.estimated_gross_income == Decimal("50")
+        assert row.currency == "MXN"
+
+
 def test_one_store_failure_does_not_affect_others(env):
     """一家店挂了不能拖垮整轮——这是看板可信度的前提。"""
     ok_store = add_store(env, "正常店", open_key_id="A" * 32)
@@ -301,7 +330,7 @@ def test_one_store_failure_does_not_affect_others(env):
     client.orders = [{"orderNo": "O1", "orderStatus": 4,
                       "orderCreateTime": "2026-09-10 10:00:00",
                       "orderUpdateTime": "2026-09-16 10:00:00"}]
-    client.details = {"O1": {"estimatedGrossIncome": 77, "currencyCode": "MXN"}}
+    client.details = {"O1": {"estimatedGrossIncome": 77, "orderCurrency": "MXN"}}
 
     with env["db"].session_factory() as session:
         outcome = build_service(env, client).run(
@@ -424,7 +453,7 @@ def test_second_sync_keeps_in_transit_amount(env):
     client.orders = [{"orderNo": "O1", "orderStatus": 4,
                       "orderCreateTime": "2026-09-10 10:00:00",
                       "orderUpdateTime": "2026-09-16 10:00:00"}]
-    client.details = {"O1": {"estimatedGrossIncome": 88.8, "currencyCode": "MXN"}}
+    client.details = {"O1": {"estimatedGrossIncome": 88.8, "orderCurrency": "MXN"}}
     add_store(env, "甲店")
     service = build_service(env, client)
 
@@ -453,7 +482,7 @@ def test_incremental_empty_window_keeps_in_transit(env):
     client.orders = [{"orderNo": "O1", "orderStatus": 4,
                       "orderCreateTime": "2026-09-10 10:00:00",
                       "orderUpdateTime": "2026-09-16 10:00:00"}]
-    client.details = {"O1": {"estimatedGrossIncome": 88.8, "currencyCode": "MXN"}}
+    client.details = {"O1": {"estimatedGrossIncome": 88.8, "orderCurrency": "MXN"}}
     add_store(env, "甲店")
     service = build_service(env, client)
 
@@ -708,7 +737,7 @@ def test_failed_round_does_not_advance_order_watermark(env):
     client.orders = [{"orderNo": "O1", "orderStatus": 4,
                       "orderCreateTime": "2026-09-10 10:00:00",
                       "orderUpdateTime": "2026-09-16 10:00:00"}]
-    client.details = {"O1": {"estimatedGrossIncome": 88.8, "currencyCode": "MXN"}}
+    client.details = {"O1": {"estimatedGrossIncome": 88.8, "orderCurrency": "MXN"}}
     add_store(env, "甲店", open_key_id="A" * 32)
     service = build_service(env, client)
 
