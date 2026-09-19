@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import httpx
 import pytest
@@ -31,6 +31,7 @@ from xynigo_auth.models import (
     UserRole,
 )
 from xynigo_auth.security import hash_token
+from xynigo_auth.shein_settlement_sync import FxRateQuote
 from xynigo_auth.shein_store_auth_crypto import SheinStoreSecretCipher
 
 ADMIN_TOKEN = "admin-token-000000000000"
@@ -121,10 +122,16 @@ def build_app(tmp_path, *, transport=None, settlement_sync_enabled=False):
         shein_auth_redirect_base="http://testserver",
         settlement_sync_enabled=settlement_sync_enabled,
     )
+    def _stub_fx_fetcher() -> FxRateQuote:
+        # 确定性 stub：空汇率 = 汇率源不可用，cny 折算为 None。
+        # 汇率接线的详细行为在 test_shein_settlement_sync 里覆盖。
+        return FxRateQuote(rates={}, rate_date=date.today())
+
     app = create_app(
         settings=settings, oauth_client=object(), directory_client=object(),
         database=database,
         shein_openapi_transport=transport or shein_transport(),
+        settlement_fx_fetcher=_stub_fx_fetcher,
     )
     now = utcnow()
     with database.session_factory() as session:

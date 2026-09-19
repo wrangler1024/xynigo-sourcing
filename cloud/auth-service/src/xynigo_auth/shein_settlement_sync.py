@@ -18,13 +18,12 @@
 """
 from __future__ import annotations
 
-import re
 import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
@@ -153,6 +152,11 @@ def _as_decimal(value: Any) -> Decimal | None:
         return None
 
 
+def _positive_decimal(value: Any) -> Decimal | None:
+    parsed = _as_decimal(value)
+    return parsed if parsed is not None and parsed > 0 else None
+
+
 def _parse_platform_time(value: Any) -> datetime | None:
     """平台时间 `yyyy-MM-dd HH:mm:ss`（UTC+8）→ 带时区 datetime。"""
     text = str(value or "").strip()
@@ -190,11 +194,14 @@ class SheinSettlementSyncService:
         cipher: SheinStoreSecretCipher,
         order_lookback_days: int = DEFAULT_ORDER_BACKFILL_DAYS,
         check_order_lookback_days: int = DEFAULT_CHECK_ORDER_LOOKBACK_DAYS,
+        fx_fetcher: Callable[[], FxRateQuote] | None = None,
     ) -> None:
         self.client = client
         self.cipher = cipher
         self.order_lookback_days = order_lookback_days
         self.check_order_lookback_days = check_order_lookback_days
+        # None = 不自动取汇率（测试默认）；生产装配显式传 fetch_frankfurter_rates
+        self.fx_fetcher = fx_fetcher
 
     # ------------------------------------------------------------------
     # 取数
@@ -772,6 +779,29 @@ class SheinSettlementSyncService:
             stale_after_seconds=stale_after_seconds, now=moment,
         ) is not None:
             raise SheinSettlementSyncBusy()
+        # 汇率先行（整轮一次）：取数失败不阻塞店铺同步——库内旧汇率继续顶上
+        # （current_fx_rates 取 ≤ 今天的最新一条），失败原因记入 run.detail["fx"]。
+        # 快照写入时会把当时生效的汇率固化进 fx_rate_snapshot，历史值不会漂。
+        fx_note: dict[str, str] = {"status": "skipped"}
+        if self.fx_fetcher is not None:
+            try:
+                quote = self.fx_fetcher()
+            except Exception as exc:  # noqa: BLE001 - 汇率失败不算同步失败
+                fx_note = {
+                    "status": "failed",
+                    "error": f"{type(exc).__name__}: {exc}"[:200],
+                }
+            else:
+                for iso, rate in quote.rates.items():
+                    upsert_fx_rate(
+                        session, tenant_id=tenant_id, currency=iso, rate=rate,
+                        effective_date=quote.rate_date, source=FX_RATE_SOURCE)
+                fx_note = {
+                    "status": "ok",
+                    "rateDate": quote.rate_date.isoformat(),
+                    "currencies": str(len(quote.rates)),
+                }
+                session.commit()
         query = select(SheinAuthorizedStore).where(
             SheinAuthorizedStore.tenant_id == tenant_id,
             SheinAuthorizedStore.status != "expired",
@@ -811,12 +841,15 @@ class SheinSettlementSyncService:
             else ("failed" if ok == 0 else "partial")
         )
         run.detail = {
-            item.store_name: {
-                "status": item.status,
-                "error": item.error_summary,
-                "orders": item.orders_written,
-            }
-            for item in outcomes
+            "fx": fx_note,
+            **{
+                item.store_name: {
+                    "status": item.status,
+                    "error": item.error_summary,
+                    "orders": item.orders_written,
+                }
+                for item in outcomes
+            },
         }
         session.flush()
         return SyncRunOutcome(
@@ -919,7 +952,7 @@ def upsert_fx_rate(
     session: Session, *, tenant_id: uuid.UUID, currency: str, rate: Decimal,
     effective_date: date, source: str = "manual",
 ) -> SheinFxRate:
-    """写入/更新某日汇率。中行牌价的自动取数待接入（口径见需求文档 §6）。"""
+    """写入/更新某日汇率。frankfurter 自动取数在 run() 开头整轮执行一次。"""
     row = session.execute(
         select(SheinFxRate).where(
             SheinFxRate.tenant_id == tenant_id,
@@ -1055,66 +1088,95 @@ class SheinSettlementSyncWorker:
         return executed
 
 
-# ---- 中行牌价自动取数（Jeff 20260919 拍板：用中行折算价）----
-# 中行外汇牌价页（boc.cn/sourcedb/whpj/）每日公布主要货币的买卖价与折算价。
-# 折算价 = 中行根据市场折算的参考中间价，不含买卖差价，是行业惯例的折算口径。
-# **注意**：该页覆盖币种有限（约 20 种），不在表里的币种自动取数拿不到——
-# 看板对缺汇率的币种显示「—」（不按 1:1 计入），这是刻意的失败保护。
+# ---- 汇率自动取数（Jeff 20260919 拍板：frankfurter 做唯一来源）----
+# frankfurter.app（开源项目 github.com/lineofflight/frankfurter）免费、无需 Key，
+# 数据源为欧洲央行每日参考汇率。以 USD 为基准报价，兑人民币按交叉价计算：
+#   1 MXN ≈ rates.CNY / rates.MXN
+# 与中行折算价交叉验证差约 0.7%，作为参考看板足够。取不到的币种看板显示
+# 「—」（不按 1:1 计入），这是刻意的失败保护。
 
-BOC_RATE_PAGE_URL = "https://www.boc.cn/sourcedb/whpj/"
-BOC_RATE_UNIT = 100  # 中行牌价以「每 100 外币」为单位
-BOC_CURRENCY_NAMES = {
-    "美元": "USD", "墨西哥比索": "MXN", "欧元": "EUR", "港币": "HKD",
-    "日元": "JPY", "英镑": "GBP", "澳大利亚元": "AUD", "加拿大元": "CAD",
-    "新加坡元": "SGD", "瑞士法郎": "CHF", "新西兰元": "NZD", "泰国铢": "THB",
-    "韩元": "KRW", "巴西里亚尔": "BRL", "菲律宾比索": "PHP",
-    "印度尼西亚卢比": "IDR", "南非兰特": "ZAR", "马来西亚林吉特": "MYR",
-}
+FRANKFURTER_LATEST_URL = "https://api.frankfurter.dev/v1/latest"
+FX_RATE_SOURCE = "frankfurter"
 
 
-def parse_boc_rate_page(html_text: str) -> dict[str, Decimal]:
-    """从中行牌价页 HTML 提取各币种的折算价（人民币/1 外币）。
+@dataclass(frozen=True)
+class FxRateQuote:
+    """一次汇率取数的结果。
 
-    纯函数，便于测试。解析失败或结果为空时抛
-    SheinSettlementSyncError——调用方不得静默跳过，否则人民币合计会显示
-    「—」而不是错算，这是刻意的失败保护。
+    rates[ISO] = 人民币/1 外币（CNY 恒为 1）；rate_date 是行情所属日期
+    （ECB 参考汇率日，周末停在周五），用作 shein_fx_rates.effective_date。
     """
-    rows = re.findall(r"<tr[^>]*>(.*?)</tr>", html_text, re.S)
-    rates: dict[str, Decimal] = {}
-    for row in rows:
-        cells = [
-            re.sub(r"<[^>]+>", "", c).strip()
-            for c in re.findall(r"<td[^>]*>(.*?)</td>", row, re.S)
-        ]
-        if len(cells) < 6:
-            continue
-        iso = BOC_CURRENCY_NAMES.get(cells[0])
-        if iso is None:
-            continue
-        # 列序：货币名称/现汇买入/现钞买入/现汇卖出/现钞卖出/中行折算价/发布日期/发布时间
-        conversion_raw = cells[5].replace(",", "")
-        try:
-            per_hundred = Decimal(conversion_raw)
-        except ArithmeticError:
-            continue
-        if per_hundred > 0:
-            rates[iso] = per_hundred / BOC_RATE_UNIT
-    return rates
+
+    rates: dict[str, Decimal]
+    rate_date: date
 
 
-async def fetch_boc_rates_page(
+def parse_frankfurter_quote(payload: dict[str, Any]) -> FxRateQuote:
+    """从 frankfurter latest 响应提取兑人民币汇率。
+
+    纯函数，便于测试。frankfurter 以 USD 为基准（rates.CNY=6.6976 表示
+    1 USD = 6.6976 CNY），其余币种按交叉价换算。响应缺 CNY 或金额非法时
+    返回空 rates——聚合层对缺汇率的币种显示「—」，绝不按 1:1 静默计入。
+    """
+    rate_date = date.today()
+    date_raw = str(payload.get("date") or "").strip()
+    try:
+        rate_date = datetime.strptime(date_raw, "%Y-%m-%d").date()
+    except ValueError:
+        pass
+    rates_raw = payload.get("rates")
+    if not isinstance(rates_raw, dict):
+        return FxRateQuote(rates={}, rate_date=rate_date)
+    cny_per_usd = _positive_decimal(rates_raw.get("CNY"))
+    if cny_per_usd is None:
+        return FxRateQuote(rates={}, rate_date=rate_date)
+    rates = {"CNY": Decimal("1"), "USD": cny_per_usd}
+    for iso, per_usd_raw in rates_raw.items():
+        if iso in ("CNY", "USD"):
+            continue
+        per_usd = _positive_decimal(per_usd_raw)
+        if per_usd is None:
+            continue
+        rates[iso] = (cny_per_usd / per_usd).quantize(Decimal("0.00001"))
+    return FxRateQuote(rates=rates, rate_date=rate_date)
+
+
+def fetch_frankfurter_rates(
     *, timeout_seconds: float = 20.0,
-) -> str:
-    """从中行网站拉取牌价页 HTML（独立函数，便于测试 mock）。"""
+) -> FxRateQuote:
+    """从 frankfurter 拉取最新汇率（同步 httpx，与 SHEIN 客户端同风格）。
+
+    独立函数便于测试注入。网络失败或非 200 抛 SheinSettlementSyncError——
+    由调用方决定降级策略（沿用库内旧汇率），这里不做静默兜底。
+    """
     import httpx as _httpx
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; XynigoSettlement/1.0)"}
-    async with _httpx.AsyncClient(
-        timeout=timeout_seconds, follow_redirects=True,
-    ) as client:
-        resp = await client.get(BOC_RATE_PAGE_URL, headers=headers)
+    try:
+        with _httpx.Client(timeout=timeout_seconds) as client:
+            resp = client.get(
+                FRANKFURTER_LATEST_URL,
+                params={"base": "USD"},
+                headers={"User-Agent": "xynigo-settlement/1.0"},
+            )
+    except _httpx.HTTPError as exc:
+        raise SheinSettlementSyncError(
+            "shein_fx_frankfurter_fetch_failed",
+            f"frankfurter 请求失败：{type(exc).__name__}",
+        ) from exc
     if resp.status_code != 200:
         raise SheinSettlementSyncError(
-            "shein_fx_boc_fetch_failed",
-            f"中行牌价页返回 HTTP {resp.status_code}",
+            "shein_fx_frankfurter_fetch_failed",
+            f"frankfurter 返回 HTTP {resp.status_code}",
         )
-    return resp.text
+    try:
+        payload = resp.json()
+    except ValueError as exc:
+        raise SheinSettlementSyncError(
+            "shein_fx_frankfurter_fetch_failed",
+            "frankfurter 响应不是合法 JSON",
+        ) from exc
+    if not isinstance(payload, dict):
+        raise SheinSettlementSyncError(
+            "shein_fx_frankfurter_fetch_failed",
+            "frankfurter 响应结构异常",
+        )
+    return parse_frankfurter_quote(payload)

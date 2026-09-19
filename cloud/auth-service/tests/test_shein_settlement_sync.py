@@ -21,6 +21,7 @@ from xynigo_auth.database import Database
 from xynigo_auth.models import (
     Base,
     SheinAuthorizedStore,
+    SheinFxRate,
     SheinPayoutBatch,
     SheinSettlementOrder,
     SheinSettlementSnapshot,
@@ -29,10 +30,12 @@ from xynigo_auth.models import (
     User,
 )
 from xynigo_auth.shein_openapi_client import SheinOpenApiClientError
+from xynigo_auth.shein_settlement_service import UNSETTLED
 from xynigo_auth.shein_settlement_sync import (
+    FxRateQuote,
     SheinSettlementSyncService,
     _as_platform_tz,
-    parse_boc_rate_page,
+    parse_frankfurter_quote,
     upsert_fx_rate,
 )
 from xynigo_auth.shein_settlement_windows import PLATFORM_TZ
@@ -773,53 +776,138 @@ def test_report_order_page_cap_fails_instead_of_truncating(env):
         assert "未取完" in outcome.stores[0].error_summary
 
 
-# ---- 中行牌价解析 ----
+# ---- frankfurter 汇率解析与 run() 接线 ----
 
-BOC_HTML_ROW_MXN = (
-    "<tr><td>墨西哥比索</td><td>38.49</td><td>38.49</td><td>39.27</td>"
-    "<td>39.27</td><td>39.28</td><td>2026/09/19 10:30:00</td></tr>"
-)
-BOC_HTML_ROW_USD = (
-    "<tr><td>美元</td><td>668.83</td><td>668.83</td><td>671.64</td>"
-    "<td>671.64</td><td>675.21</td><td>2026/09/19 10:30:00</td></tr>"
-)
-BOC_HTML_ROW_BRL = (
-    "<tr><td>巴西里亚尔</td><td>130.25</td><td>130.25</td><td>132.00</td>"
-    "<td>132.00</td><td>131.50</td><td>2026/09/19 10:30:00</td></tr>"
-)
+FRANKFURTER_PAYLOAD = {
+    "amount": 1.0,
+    "base": "USD",
+    "date": "2026-09-18",
+    "rates": {"CNY": 6.6976, "MXN": 17.1776, "BRL": 5.1359, "EUR": 0.8726},
+}
 
 
-def test_parse_boc_extracts_conversion_rate():
-    """中行折算价 = 第 6 列，折算到每 1 外币（牌价以 100 外币为单位）。"""
-    from xynigo_auth.shein_settlement_sync import parse_boc_rate_page
-    rates = parse_boc_rate_page(BOC_HTML_ROW_MXN)
-    assert rates == {"MXN": Decimal("0.3928")}
+def test_parse_frankfurter_cross_rates():
+    """1 MXN = CNY_per_USD / MXN_per_USD；CNY 恒 1、USD 直接取 CNY 行。"""
+    quote = parse_frankfurter_quote(FRANKFURTER_PAYLOAD)
+    assert quote.rate_date.isoformat() == "2026-09-18"
+    assert quote.rates["CNY"] == Decimal("1")
+    assert quote.rates["USD"] == Decimal("6.6976")
+    # 6.6976 / 17.1776 = 0.38991…，quantize 到 1e-5
+    assert quote.rates["MXN"] == (Decimal("6.6976") / Decimal("17.1776")
+                                  ).quantize(Decimal("0.00001"))
 
 
-def test_parse_boc_extracts_multiple_currencies():
-    html = BOC_HTML_ROW_MXN + BOC_HTML_ROW_USD + BOC_HTML_ROW_BRL
-    rates = parse_boc_rate_page(html)
-    assert set(rates) == {"MXN", "USD", "BRL"}
-    assert rates["BRL"] == Decimal("1.3150")
+def test_parse_frankfurter_missing_cny_returns_empty():
+    """缺 CNY 基准价时宁缺毋错：返回空 rates，看板显示「—」而不是错算。"""
+    payload = {"date": "2026-09-18", "rates": {"MXN": 17.1776}}
+    assert parse_frankfurter_quote(payload).rates == {}
 
 
-def test_parse_boc_ignores_unknown_currencies():
-    from xynigo_auth.shein_settlement_sync import parse_boc_rate_page
-    html = ('<tr><td>火星币</td><td>100.00</td><td>100.00</td><td>100.00</td>'
-            '<td>100.00</td><td>100.00</td><td>x</td></tr>' + BOC_HTML_ROW_MXN)
-    rates = parse_boc_rate_page(html)
-    assert set(rates) == {"MXN"}
+def test_parse_frankfurter_missing_rates_key_returns_empty():
+    assert parse_frankfurter_quote({"date": "2026-09-18"}).rates == {}
+    assert parse_frankfurter_quote({"rates": "not-a-dict"}).rates == {}
 
 
-def test_parse_boc_skips_zero_and_invalid_rates():
-    from xynigo_auth.shein_settlement_sync import parse_boc_rate_page
-    html = ('<tr><td>美元</td><td>0</td><td>0</td><td>0</td>'
-            '<td>0</td><td>0</td><td>x</td></tr>' + BOC_HTML_ROW_MXN)
-    rates = parse_boc_rate_page(html)
-    assert "USD" not in rates
-    assert rates["MXN"] == Decimal("0.3928")
+def test_parse_frankfurter_skips_zero_and_invalid_entries():
+    payload = {
+        "date": "2026-09-18",
+        "rates": {"CNY": 6.6976, "MXN": 0, "BRL": "n/a", "EUR": None},
+    }
+    rates = parse_frankfurter_quote(payload).rates
+    assert set(rates) == {"CNY", "USD"}
 
 
-def test_parse_boc_empty_page_returns_empty():
-    from xynigo_auth.shein_settlement_sync import parse_boc_rate_page
-    assert parse_boc_rate_page("") == {}
+def test_parse_frankfurter_bad_date_falls_back_to_today():
+    import datetime as _dt
+    quote = parse_frankfurter_quote({"rates": {"CNY": 6.6976}})
+    assert quote.rate_date == _dt.date.today()
+
+
+def _fx_quote() -> FxRateQuote:
+    return parse_frankfurter_quote(FRANKFURTER_PAYLOAD)
+
+
+def _service_with_fx(env, client, fetcher) -> SheinSettlementSyncService:
+    return SheinSettlementSyncService(
+        client=client, cipher=env["cipher"], order_lookback_days=4,
+        check_order_lookback_days=60, fx_fetcher=fetcher)
+
+
+def test_run_fetches_fx_rates_once_and_upserts(env):
+    """run() 开头整轮取一次汇率并落库（source=frankfurter）。"""
+    client = FakeClient()
+    client.orders = []
+    client.check_orders = []
+    client.report_orders = []
+    calls: list[int] = []
+
+    def fetcher() -> FxRateQuote:
+        calls.append(1)
+        return _fx_quote()
+
+    add_store(env, "甲店")
+    with env["db"].session_factory() as session:
+        _service_with_fx(env, client, fetcher).run(
+            session, tenant_id=env["tenant_id"], now=NOW)
+        session.commit()
+        rows = session.execute(select(SheinFxRate).order_by(
+            SheinFxRate.currency)).scalars().all()
+    assert len(calls) == 1
+    assert {row.currency for row in rows} == {"CNY", "USD", "MXN", "BRL", "EUR"}
+    assert all(row.source == "frankfurter" for row in rows)
+    mxn = next(row for row in rows if row.currency == "MXN")
+    assert mxn.effective_date.isoformat() == "2026-09-18"
+
+
+def test_run_fx_fetch_failure_does_not_block_sync(env):
+    """frankfurter 挂了：店铺同步照常成功，失败原因记入 run.detail["fx"]。"""
+    client = FakeClient()
+    client.orders = []
+    client.check_orders = []
+    client.report_orders = []
+
+    def fetcher() -> FxRateQuote:
+        raise RuntimeError("network down")
+
+    add_store(env, "甲店")
+    with env["db"].session_factory() as session:
+        outcome = _service_with_fx(env, client, fetcher).run(
+            session, tenant_id=env["tenant_id"], now=NOW)
+        session.commit()
+        assert outcome.status == "succeeded"
+        run = session.execute(select(
+            SheinSettlementSyncRun).order_by(
+            SheinSettlementSyncRun.id.desc())).scalars().first()
+    assert run.detail["fx"]["status"] == "failed"
+    assert "RuntimeError" in run.detail["fx"]["error"]
+
+
+def test_run_fx_fetch_failure_stale_rates_still_serve_summary(env):
+    """取数失败后沿用库内旧汇率：人民币合计仍按上一有效汇率折算。"""
+    client = FakeClient()
+    client.orders = []
+    client.check_orders = [{
+        "checkOrderNo": "CK1", "addTime": "2026-09-16 10:00:00",
+        "estimatePayTime": "2026-09-21 10:00:00",
+        "currencyCode": "MXN", "estimateIncomeMoneyTotal": 100.00,
+        "incomeExpenditureType": 1,
+    }]
+    client.report_orders = []
+
+    def broken_fetcher() -> FxRateQuote:
+        raise RuntimeError("network down")
+
+    add_store(env, "甲店")
+    with env["db"].session_factory() as session:
+        # 上一轮成功取到汇率
+        upsert_fx_rate(session, tenant_id=env["tenant_id"], currency="MXN",
+                       rate=Decimal("0.39"), effective_date=NOW.date(),
+                       source="frankfurter")
+        session.commit()
+        service = _service_with_fx(env, client, broken_fetcher)
+        service.run(session, tenant_id=env["tenant_id"], now=NOW)
+        session.commit()
+        summary = service.build_summary(session, tenant_id=env["tenant_id"])
+    unsettled_card = summary.cards[UNSETTLED]
+    assert unsettled_card.cny_total == Decimal("39.00")
+    assert unsettled_card.group("MXN").cny == Decimal("39.00")

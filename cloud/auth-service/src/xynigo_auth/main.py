@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Callable, Literal
 from urllib.parse import quote
 
 import httpx
@@ -114,9 +114,11 @@ from .shein_openapi_client import SheinOpenApiClient
 from .shein_settlement_contract import settlement_summary_payload
 from .shein_settlement_export import build_settlement_export
 from .shein_settlement_sync import (
+    FxRateQuote,
     SheinSettlementSyncBusy,
     SheinSettlementSyncService,
     SheinSettlementSyncWorker,
+    fetch_frankfurter_rates,
 )
 from .shein_store_auth_contract import (
     SheinAuthCallbackBody,
@@ -451,6 +453,8 @@ def create_app(
     procurement_import_gateway: FeishuSheetsGateway | None = None,
     feishu_integration_transport: httpx.BaseTransport | None = None,
     shein_openapi_transport: httpx.BaseTransport | None = None,
+    settlement_fx_fetcher: Callable[[], FxRateQuote] | None = (
+        fetch_frankfurter_rates),
 ) -> FastAPI:
     settings = settings or Settings()  # type: ignore[call-arg]
     database = database or Database(settings.database_url.get_secret_value())
@@ -501,6 +505,7 @@ def create_app(
         SheinSettlementSyncService(
             client=shein_openapi_client,
             cipher=SheinStoreSecretCipher(buyer_credential_key),
+            fx_fetcher=settlement_fx_fetcher,
         )
         if buyer_credential_key
         else None
