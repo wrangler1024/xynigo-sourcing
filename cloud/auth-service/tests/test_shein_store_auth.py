@@ -49,7 +49,8 @@ SECRET_PLAIN = "136CADB9F0B14D878650B4B520648D58"
 REDIRECT_BASE = "https://xynigo.example.test/shein-auth/callback"
 
 
-def aes_encrypt_hex(plain: str, app_secret: str) -> str:
+def aes_encrypt_b64(plain: str, app_secret: str) -> str:
+    """官方《店铺授权应用手册》同款加密：AES-128-CBC + base64 密文。"""
     key = app_secret.encode("utf-8")[:16]
     data = plain.encode("utf-8")
     pad = 16 - len(data) % 16
@@ -57,7 +58,7 @@ def aes_encrypt_hex(plain: str, app_secret: str) -> str:
     encryptor = Cipher(
         algorithms.AES(key), modes.CBC(b"space-station-de")
     ).encryptor()
-    return (encryptor.update(data) + encryptor.finalize()).hex()
+    return base64.b64encode(encryptor.update(data) + encryptor.finalize()).decode()
 
 
 def shein_transport(
@@ -91,7 +92,7 @@ def shein_transport(
                 "msg": "ok",
                 "data": {
                     "openKeyId": open_key_map.get(token, OPEN_KEY_ID),
-                    "secretKey": aes_encrypt_hex(SECRET_PLAIN, APP_SECRET),
+                    "secretKey": aes_encrypt_b64(SECRET_PLAIN, APP_SECRET),
                 },
             })
         if request.url.path == (
@@ -245,7 +246,7 @@ def test_sign_headers_reproducible_structure() -> None:
 
 
 def test_decrypt_secret_key_roundtrip_and_bad_inputs() -> None:
-    ciphertext = aes_encrypt_hex(SECRET_PLAIN, APP_SECRET)
+    ciphertext = aes_encrypt_b64(SECRET_PLAIN, APP_SECRET)
     assert decrypt_secret_key(ciphertext, APP_SECRET) == SECRET_PLAIN
     for broken in ("zz", "00" * 3):
         try:
@@ -255,11 +256,28 @@ def test_decrypt_secret_key_roundtrip_and_bad_inputs() -> None:
         else:
             raise AssertionError("坏密文应报错")
     try:
+        # 短密钥按官方语义补零成合法 key，但解不出正确填充。
         decrypt_secret_key(ciphertext, "short")
     except SheinOpenApiClientError as exc:
-        assert exc.code == "shein_app_secret_invalid"
+        assert exc.code == "shein_secret_padding_invalid"
     else:
-        raise AssertionError("短应用密钥应报错")
+        raise AssertionError("错误密钥应报错")
+
+
+def test_decrypt_secret_key_matches_official_doc_vector() -> None:
+    """官方《店铺授权应用手册》Python 示例自带向量原样解出，钉死参数组合。
+
+    密文是 base64（此前误按 hex 解码导致真机换钥失败）；key=appSecret 前
+    16 字节、IV=固定种子前 16 字节、AES-128-CBC、PKCS7。
+    """
+    key = "14ABE7A4222647CB945DADC76740BA73".encode("utf-8")[:16]
+    decryptor = Cipher(
+        algorithms.AES(key), modes.CBC(b"space-station-de")
+    ).decryptor()
+    padded = decryptor.update(
+        base64.b64decode("lr4JDSqQkRyZ2YAosX3ZRQ==")
+    ) + decryptor.finalize()
+    assert padded[:-padded[-1]].decode("utf-8") == "Hello World"
 
 
 def test_client_exchange_and_store_info_use_mock_gateway() -> None:
