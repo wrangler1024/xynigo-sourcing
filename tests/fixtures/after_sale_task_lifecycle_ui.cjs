@@ -97,6 +97,8 @@ for (const name of ['asBeginTaskEpoch', 'asRunIdOf', 'asWriteEntryReady', 'asCre
   'asTrack', 'asDiscoverAndTrack']) load(name);
 const stopStart = html.indexOf("$('asStop').onclick =");
 vm.runInContext(html.slice(stopStart, html.indexOf('\n};', stopStart) + 3), ctx);
+const clearStart = html.indexOf("$('asClearResult').onclick =");
+vm.runInContext(html.slice(clearStart, html.indexOf('\n};', clearStart) + 3), ctx);
 const run = code => vm.runInContext(code, ctx);
 const state = () => ctx.AS_STATE;
 
@@ -560,6 +562,142 @@ const envs5 = ['900001', '900002', '900003', '900004', '900005'];
     assert.ok(finishCalls.some(c => c.taskId === 'DISC-1' && c.status === 'succeeded'),
       '发现终态必须进入收尾处理（自动接续入口）');
     console.log('scenario 15 (asDiscoverAndTrack 真实创建与终态) OK');
+  }
+
+  // ── 场景 16：新发现任务已完成、页面重回空闲后，旧恢复响应不得倒退接管 ──
+  {
+    // 16a active：旧恢复响应此刻返回 running，不得重新接管旧编号
+    resetState();
+    storageData.set('afterSaleDiscoveryTask', JSON.stringify({taskId: 'STALE-DISC', serials: ['900001']}));
+    const restoreGate = defer();
+    let newGet = null;
+    router = (path, options) => {
+      if (path.endsWith('/after-sale/scan/STALE-DISC')) return restoreGate.promise;
+      if (path.endsWith('/after-sale/scan/NEW-FIN')) { newGet = newGet || defer(); return newGet.promise; }
+      if (options && options.method && path === '/v1/after-sale/scan') {
+        return Promise.resolve({data: {taskId: 'NEW-FIN'}});
+      }
+      return {data: {}};
+    };
+    const restoreDone = run('asRestoreDiscovery()');
+    await settle();
+    const discovery = run(`asDiscoverAndTrack(["900001"],
+      {id: "EXEC-4", capabilities: ${JSON.stringify(EXEC_CAPS)}})`);
+    await discovery; await settle();
+    assert.ok(state().running === true && state().discoveryTaskId === 'NEW-FIN');
+    // 新任务跑完到终态，页面回到空闲（busy 检查全部失效，只剩代次能拦）
+    newGet.resolve({data: {status: 'succeeded',
+      summary: {purpose: 'refund_discovery', rows: [{environmentSerial: '900001', environmentStatus: 'ok'}],
+        progressTotal: 1, progressCompleted: 1}}});
+    await settle();
+    assert.ok(state().running === false && state().mode === '' && state().taskEpoch >= 1,
+      '新任务已完成，页面重回空闲');
+    const staleRestoreCalls = getCalls.filter(p => p.endsWith('/STALE-DISC')).length;
+    restoreGate.resolve({data: {status: 'running',
+      summary: {purpose: 'refund_discovery', rows: [], progressTotal: 1, progressCompleted: 0}}});
+    await restoreDone; await settle();
+    assert.equal(state().discoveryTaskId, 'NEW-FIN', '旧恢复响应不得把任务编号倒退');
+    assert.ok(state().mode === '' && state().running === false, '旧恢复响应不得重新接管轮询');
+    assert.equal(getCalls.filter(p => p.endsWith('/STALE-DISC')).length, staleRestoreCalls,
+      '不得开始查询旧任务');
+    assert.ok(!phases.some(p => p.title.includes('已恢复运行中的平台查找')), '不得倒退提示');
+
+    // 16b terminal：旧恢复响应返回 succeeded，不得用旧结果覆盖新任务结果
+    resetState();
+    storageData.set('afterSaleDiscoveryTask', JSON.stringify({taskId: 'STALE-2', serials: ['900001']}));
+    const restoreGate2 = defer();
+    router = async path => {
+      if (path.endsWith('/after-sale/scan/STALE-2')) return restoreGate2.promise;
+      if (path.endsWith('/after-sale/scan/NEW-FIN2')) return {data: {status: 'succeeded',
+        summary: {purpose: 'refund_discovery', rows: [{environmentSerial: '900001', environmentStatus: 'ok'}],
+          progressTotal: 1, progressCompleted: 1}}};
+      if (path === '/v1/after-sale/scan') return {data: {}};
+      return {data: {}};
+    };
+    // 创建请求也走 router：POST /v1/after-sale/scan 返回 {data:{taskId}} —— 手动补
+    let created2 = false;
+    const realRouter = router;
+    router = async (path, options) => {
+      if (options && options.method && path === '/v1/after-sale/scan' && !created2) {
+        created2 = true; return {data: {taskId: 'NEW-FIN2'}};
+      }
+      return realRouter(path, options);
+    };
+    const restoreDone2 = run('asRestoreDiscovery()');
+    await settle();
+    const discovery2 = run(`asDiscoverAndTrack(["900002"],
+      {id: "EXEC-4", capabilities: ${JSON.stringify(EXEC_CAPS)}})`);
+    await discovery2; await settle();
+    run('asPoll()'); await settle();
+    assert.ok(state().running === false, '新任务已完成');
+    const rowsBefore = (state().discoveryRows || []).length;
+    const phaseCount = phases.length;
+    restoreGate2.resolve({data: {status: 'succeeded',
+      summary: {purpose: 'refund_discovery', rows: [{environmentSerial: '900001', environmentStatus: 'failed'}],
+        progressTotal: 1, progressCompleted: 1}}});
+    await restoreDone2; await settle();
+    assert.equal((state().discoveryRows || []).length, rowsBefore, '旧恢复结果不得覆盖新任务结果');
+    assert.equal(phases.length, phaseCount, '旧恢复提示不得覆盖新任务终态提示');
+
+    // 16c reject：旧恢复请求失败，不得删掉新任务的持久化
+    resetState();
+    storageData.set('afterSaleDiscoveryTask', JSON.stringify({taskId: 'STALE-3', serials: ['900001']}));
+    const restoreGate3 = defer();
+    router = (path, options) => {
+      if (path.endsWith('/after-sale/scan/STALE-3')) return restoreGate3.promise;
+      if (options && options.method && path === '/v1/after-sale/scan') {
+        return Promise.resolve({data: {taskId: 'NEW-FIN3'}});
+      }
+      return {data: {status: 'succeeded', summary: {purpose: 'refund_discovery',
+        rows: [], progressTotal: 1, progressCompleted: 1}}};
+    };
+    const restoreDone3 = run('asRestoreDiscovery()');
+    await settle();
+    const discovery3 = run(`asDiscoverAndTrack(["900003"],
+      {id: "EXEC-4", capabilities: ${JSON.stringify(EXEC_CAPS)}})`);
+    await discovery3; await settle();
+    run('asPoll()'); await settle();
+    assert.ok(state().running === false, '新任务已完成、页面空闲');
+    restoreGate3.reject(new Error('session expired'));
+    await restoreDone3; await settle();
+    assert.ok((storageData.get('afterSaleDiscoveryTask') || '').includes('NEW-FIN3'),
+      '旧恢复失败不得删除新任务的持久化');
+    console.log('scenario 16 (新任务完成后旧恢复响应 active/terminal/reject 均不倒退) OK');
+  }
+
+  // ── 场景 17：新提交批次完成并清空结果后，旧 latest 响应不得接管旧批次 ──
+  {
+    resetState();
+    const latestGate = defer(), createGate = defer(), newGet = defer();
+    router = (path, options) => {
+      if (path === '/v1/operation-runs/after-sale-claim/latest') return latestGate.promise;
+      if (options && options.method && path === claimCreatePath) return createGate.promise;
+      if (path === claimGet('NEW-C')) return newGet.promise;
+      return {data: {}};
+    };
+    const restoring = run('asLoadLatestClaim()');
+    await settle();
+    const submitted = run(`asSubmitItems([{environmentSerial: "900001", orderNo: "SO-9"}], {label: "提交售后"})`);
+    await settle();
+    createGate.resolve({data: {runId: 'NEW-C'}});
+    assert.equal(await submitted, true);
+    await settle();
+    newGet.resolve({data: {status: 'completed', successCount: 1, progressCompleted: 1, progressTotal: 1,
+      rows: [{orderNo: 'SO-9', status: 'ok'}], environments: []}});
+    await settle();
+    assert.ok(state().running === false && state().runId === 'NEW-C' && state().claimRows.length === 1);
+    // 清空结果：页面完全空闲（busy 检查全部失效，只剩代次能拦）
+    node('asClearResult').onclick();
+    assert.ok(state().runId === null && (state().claimRows || []).length === 0, '结果已清空');
+    const phaseCount = phases.length;
+    latestGate.resolve({data: {runId: 'OLD-C', status: 'running', submitMode: 'environments',
+      rows: [{orderNo: 'OLD-9'}], environments: [], progressTotal: 2, progressCompleted: 0}});
+    await restoring; await settle();
+    assert.equal(state().runId, null, '旧 latest 响应不得接管旧批次');
+    assert.ok(state().mode === '' && state().running === false);
+    assert.ok(!getCalls.some(p => p === claimGet('OLD-C')), '不得开始查询旧批次');
+    assert.equal(phases.length, phaseCount, '不得出现旧批次恢复提示');
+    console.log('scenario 17 (清空后旧 latest 响应不接管) OK');
   }
 
   console.log('PASS: task lifecycle race regression (submit/poll/epoch/terminal/stop/scan/restore/discover/track) — synthetic data only');

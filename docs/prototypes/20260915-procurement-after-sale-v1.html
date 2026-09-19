@@ -6073,8 +6073,12 @@ function asSerials() {
 // 恢复最近提交批次供「本次提交」与退款跟踪共用，不覆盖扫描记录。
 async function asLoadLatestClaim() {
   if (AS_STATE.starting || AS_STATE.running || AS_STATE.runId || (AS_STATE.claimRows || []).length) return;
+  // 发出请求前快照任务代次：响应回来时已变，说明期间建立过其他任务
+  // （哪怕它已结束、页面重回空闲），这个恢复结果都已过期，整体丢弃。
+  const epoch = AS_STATE.taskEpoch || 0;
   try {
     const res = await cloudFetchJson('/v1/operation-runs/after-sale-claim/latest');
+    if (epoch !== (AS_STATE.taskEpoch || 0)) return;
     const data = (res || {}).data;
     const rows = (data && data.rows) || [];
     const active = ['created','queued','leased','running'].includes(data?.status);
@@ -7156,8 +7160,12 @@ async function asRestoreDiscovery() {
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(AS_DISCOVERY_KEY) || 'null'); } catch (e) {}
   if (!saved || !saved.taskId || !Array.isArray(saved.serials) || !saved.serials.length) return;
+  // 发出请求前快照任务代次：响应回来时已变，说明期间建立过其他任务
+  // （哪怕它已结束、页面重回空闲），这个恢复结果都已过期，整体丢弃。
+  const epoch = AS_STATE.taskEpoch || 0;
   try {
     const res = await cloudFetchJson('/v1/after-sale/scan/' + encodeURIComponent(saved.taskId));
+    if (epoch !== (AS_STATE.taskEpoch || 0)) return;
     // 响应回来先校验归属：期间已发起/恢复其他任务则整体让位——
     // 不写任务编号、不渲染、不清持久化（持久化可能已属于新任务）。
     if (AS_STATE.running || AS_STATE.starting || AS_STATE.mode || AS_STATE.runId) return;
@@ -7169,7 +7177,7 @@ async function asRestoreDiscovery() {
     const rows = summary.rows || [];
     const status = String(data.status || '');
     if (['created','queued','leased','running','cancel_requested'].includes(status)) {
-      // 即将接手轮询：取新代次，使任何在飞的旧响应失效。
+      // 接受恢复结果：按一致的生命周期规则推进代次，使在飞旧响应失效。
       asBeginTaskEpoch();
       AS_STATE.mode = 'discover'; AS_STATE.running = true;
       AS_STATE.stopRequested = status === 'cancel_requested';
@@ -7195,7 +7203,8 @@ async function asRestoreDiscovery() {
     asDiscoveryClearPersisted();
     AS_STATE.discoveryTaskId = null; AS_STATE.discoverySerials = [];
   } catch (e) {
-    // 归属已换时不清持久化：那可能已是新任务的恢复数据。
+    // 代次已变：不清持久化——那可能已是新任务的恢复数据。
+    if (epoch !== (AS_STATE.taskEpoch || 0)) return;
     if (!AS_STATE.running && !AS_STATE.starting && !AS_STATE.mode && !AS_STATE.runId) {
       asDiscoveryClearPersisted();
     }
@@ -7674,13 +7683,13 @@ async function asScan(options = {}) {
     // 创建成功：任务模式与编号、运行状态一次建立；失败路径不残留 mode。
     AS_STATE.mode = 'scan';   // 状态条落点：扫描的进度显示在 ② 卡片
     AS_STATE.scanTaskId = data.taskId || null;
-    asSetOrderView('pending', true);
     AS_STATE.running = true;
     AS_STATE.stopRequested = false;
     AS_STATE.pollErrors = 0;
     AS_STATE.etaBase = null;
     AS_STATE.startedAt = Date.now(); AS_STATE.endedAt = null; AS_STATE.progressSnapshot = null;
     started = true;   // 任务已创建受理：之后的界面渲染异常不属于创建失败
+    asSetOrderView('pending', true);
     AS_STATE.selected = new Set();
     AS_STATE.rows = [];
     asSyncScanExportButton();
