@@ -31,7 +31,7 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.18.8-PENDING",
+        "runtimeId": "0.18.8-fb91cae92f7e",
         "assetName": "Xynigo_Sourcing_Windows_Setup_v0.18.8.exe",
         "sha256": "0ea1ce7f990e6beee65dcf40f9f95466109778229e481552bb16fe2ed91b3572",
         "size": 15389730,
@@ -50,7 +50,7 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.18.8-PENDING",
+        "runtimeId": "0.18.8-fb91cae92f7e",
         "assetName": "Xynigo_Sourcing_macOS_Standard_v0.18.8.pkg",
         "sha256": "59fd17f8d0d2827e637d2d89253d52688c0b6129284732bccd356229a36d19bb",
         "size": 11750928,
@@ -320,10 +320,10 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "采购售后支持按环境单遍直提：点一次确认直接进环境提交，不再先扫描再勾选。",
-            "采购售后支持按环境发现平台退款单：只读枚举订单并产出退款单号，供回访使用。",
-            "本机设置对全体登录成员开放，共享设备场景不再依赖管理员。",
-            "云端新增财务中心·对账结算看板与店铺授权模块。",
-            "云端与 Windows/macOS 客户端统一为 v0.18.8，继续使用 test 渠道。"
+            "采购售后支持按环境单遍直提：点一次确认直接进环境提交，不再先扫描再勾选；无售后入口的环境自动跳过并回报原因。",
+            "采购售后支持按环境发现平台退款单：只读枚举订单并产出退款单号，供回访任务使用。",
+            "本机设置对全体登录成员开放，共享设备场景不再依赖管理员解锁。",
+            "云端新增财务中心·对账结算看板（在途/待结算/下次结算/已结算，多币种分列）与店铺授权模块。",
+            "云端与 Windows/macOS 客户端统一为 v0.18.8，继续使用 test 渠道；需升级执行器后采购售后新入口才可见。"
         ],
     }
