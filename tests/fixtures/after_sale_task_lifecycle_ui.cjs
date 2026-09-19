@@ -630,13 +630,19 @@ const envs5 = ['900001', '900002', '900003', '900004', '900005'];
     await discovery2; await settle();
     run('asPoll()'); await settle();
     assert.ok(state().running === false, '新任务已完成');
-    const rowsBefore = (state().discoveryRows || []).length;
+    const rowsKey = rows => JSON.stringify((rows || [])
+      .map(r => ({environmentSerial: r.environmentSerial, environmentStatus: r.environmentStatus})));
+    const rowsBefore = rowsKey(state().discoveryRows);
+    const taskIdBefore = state().discoveryTaskId;
+    const serialsBefore = JSON.stringify(state().discoverySerials || []);
     const phaseCount = phases.length;
     restoreGate2.resolve({data: {status: 'succeeded',
       summary: {purpose: 'refund_discovery', rows: [{environmentSerial: '900001', environmentStatus: 'failed'}],
         progressTotal: 1, progressCompleted: 1}}});
     await restoreDone2; await settle();
-    assert.equal((state().discoveryRows || []).length, rowsBefore, '旧恢复结果不得覆盖新任务结果');
+    assert.equal(rowsKey(state().discoveryRows), rowsBefore, '旧恢复结果不得覆盖新任务结果内容');
+    assert.equal(state().discoveryTaskId, taskIdBefore, '旧恢复响应不得改变任务编号');
+    assert.equal(JSON.stringify(state().discoverySerials || []), serialsBefore, '旧恢复响应不得改变任务环境序号');
     assert.equal(phases.length, phaseCount, '旧恢复提示不得覆盖新任务终态提示');
 
     // 16c reject：旧恢复请求失败，不得删掉新任务的持久化
