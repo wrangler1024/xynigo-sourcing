@@ -24,7 +24,7 @@ const ctx=vm.createContext(context),run=code=>vm.runInContext(code,ctx);
 function load(name){const match=new RegExp('(?:async )?function '+name+'\\([^]*?\\n}').exec(html);assert.ok(match,name);vm.runInContext(match[0],ctx);}
 for(const name of ['asBeginTaskEpoch','asParseTrackEnvironments','asSerials','asParseDirectOrders','asDirectSubmit','asScan','asCreateTask',
  'asWriteEntryReady','asSubmitItems','asSubmitByEnvironment','asRenderEnvOutcomes','asEnvOutcomePills','asRunIdOf','asOrderedRows',
- 'asSyncDirectInputMode'])load(name);
+ 'asClaimEnvironmentRows','asEnvironmentSummary','asSyncDirectInputMode'])load(name);
 const stopStart=html.indexOf("$('asStop').onclick =");
 vm.runInContext(html.slice(stopStart,html.indexOf('\n};',stopStart)+3),ctx);
 function reset(){Object.assign(state,{type:'refund',running:false,starting:false,polling:false,mode:'',rows:[],claimRows:[],
@@ -45,16 +45,17 @@ const claims=()=>calls.filter(c=>c.path==='/v1/operation-runs/after-sale-claim')
  assert.ok(!calls.some(c=>c.path==='/v1/after-sale/scan'),'direct submit must not scan first');
  assert.equal(state.runLabel,'按环境提交');assert.equal(state.starting,false);
  assert.equal(JSON.stringify(state.envSerials),JSON.stringify(['900002','900001']));
- assert.equal(node('asEnvOutcomes').hidden,true);
+ assert.equal(node('asEnvOutcomes').hidden,false);
+ assert.match(node('asEnvOutcomes').textContent,/环境 2 个/);
 
  // 环境结果条：环境级反馈按状态着色，空列表隐藏
  run('asRenderEnvOutcomes([{environmentSerial:"900001",status:"ok",submittedCount:2},'
    +'{environmentSerial:"900002",status:"skip",note:"未发现丢件退款入口"}])');
  assert.equal(node('asEnvOutcomes').hidden,false);
- assert.match(node('asEnvOutcomes').innerHTML,/900001/);
- assert.match(node('asEnvOutcomes').innerHTML,/无售后入口/);
- assert.match(node('asEnvOutcomes').innerHTML,/提交2/);
- run('asRenderEnvOutcomes([])');
+ assert.match(node('asEnvOutcomes').textContent,/已处理 1 个/);
+ assert.match(node('asEnvOutcomes').textContent,/已跳过 1 个/);
+ assert.equal(state.environments[0].environmentSerial,'900002','preserve input environment order');
+ state.envSerials=null;run('asRenderEnvOutcomes([])');
  assert.equal(node('asEnvOutcomes').hidden,true);
 
  // 拒绝确认 / 非法输入 / 超上限 / 规划类型：都不许发写请求

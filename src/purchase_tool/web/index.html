@@ -741,6 +741,7 @@
   #afterSalePanel .as-order-view { min-width:0; }
   #afterSalePanel .as-pending-note { font-size:11px; color:var(--navy-500); margin-top:5px; white-space:normal; max-width:240px; line-height:1.5; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
   #afterSalePanel .as-detail-button { border:0; background:none; padding:2px 0; color:#12848a; cursor:pointer; font-size:11px; display:block; }
+  .as-environment-row > td { background:var(--rhino-50, #f0fafa); border-top:1px solid var(--line); }
   #afterSalePanel .as-claim-filters { display:flex; gap:7px; flex-wrap:wrap; padding:0 19px 14px; }
   #afterSalePanel .as-claim-filters .btn { padding:5px 10px; font-size:11px; }
   #afterSalePanel .as-claim-filters .btn[aria-pressed="true"] { background:var(--rhino-100); border-color:#9bd3d6; color:#087d85; }
@@ -2548,14 +2549,14 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
 
       <div class="business-summary" id="asBizSummary" style="padding-top:4px;">
         <div class="business-stat"><small>提交订单</small><b>—</b></div>
-        <div class="business-stat stat-ok"><small>已受理</small><b>—</b></div>
-        <div class="business-stat"><small>已跳过</small><b>—</b></div>
-        <div class="business-stat stat-bad"><small>失败</small><b>—</b></div>
-        <div class="business-stat"><small>已停止</small><b>—</b></div>
-        <div class="business-stat"><small>待核对</small><b>—</b></div>
+        <div class="business-stat stat-ok"><small>已受理订单</small><b>—</b></div>
+        <div class="business-stat"><small>已跳过订单</small><b>—</b></div>
+        <div class="business-stat stat-bad"><small>失败订单</small><b>—</b></div>
+        <div class="business-stat"><small>已停止订单</small><b>—</b></div>
+        <div class="business-stat"><small>待核对订单</small><b>—</b></div>
       </div>
-      <!-- 按环境直提的环境级结果：无入口跳过的环境不会出现在订单行，只在这里反馈 -->
-      <div id="asEnvOutcomes" class="as-env-outcomes" hidden style="padding:4px 19px 0; display:flex; flex-wrap:wrap; gap:6px;"></div>
+      <!-- 环境统计与订单统计分开；逐环境状态和原因在同一结果表展示 -->
+      <div id="asEnvOutcomes" class="as-env-outcomes hint" hidden style="padding:4px 19px 8px;"></div>
       <div class="as-claim-filters" id="asClaimFilters" role="group" aria-label="提交结果状态筛选"></div>
 
       <div style="padding: 0 19px;">
@@ -3876,7 +3877,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
             <button class="btn" id="asHistoryExport" type="button">导出 Excel</button>
           </div>
         </div>
-        <!-- 按环境直提的环境级结果：无入口/未登录/失败的环境没有订单行，只有这里能看到 -->
+        <!-- 环境摘要单独计数，环境原因与订单明细共用下方结果表 -->
         <div id="asHistoryEnvOutcomes" class="as-env-outcomes" hidden style="padding:0 19px 8px; display:flex; flex-wrap:wrap; gap:6px;"></div>
         <div class="query-history-detail-table"><table style="min-width:1250px"><thead><tr>
           <th>环境序号</th><th>订单号</th><th style="width:46px">商品图</th><th>售后类型</th><th>送达时间</th><th>退款单号</th><th>退款路径</th><th>退款信用卡</th><th>状态</th><th>操作时间</th><th>备注</th>
@@ -5671,6 +5672,7 @@ async function asLoadLatestClaim() {
       ? (data.environments || []).map(row => String(row.environmentSerial || ''))
       : null;
     AS_STATE.environments = envMode ? (data.environments || []) : [];
+    AS_STATE.status = String(data.status || "");
     asRenderEnvOutcomes(AS_STATE.environments);
     if (active) {
       AS_STATE.mode = 'claim'; AS_STATE.running = true;
@@ -6114,7 +6116,8 @@ function asSupplementClaimAccounts(trackRows) {
   if ((AS_STATE.claimRows || []).length) asRenderClaimRows(AS_STATE.claimRows.map(supplement));
   if (AS_HISTORY.detail?.rows?.length) {
     AS_HISTORY.detail.rows = AS_HISTORY.detail.rows.map(supplement);
-    $('asHistoryDetailBody').innerHTML = AS_HISTORY.detail.rows.map(asClaimRowHtml).join('');
+    $('asHistoryDetailBody').innerHTML = asClaimTableHtml(AS_HISTORY.detail.rows,
+      asClaimEnvironmentRows(AS_HISTORY.detail.environments || [], AS_HISTORY.detail.batch?.status));
   }
 }
 function asClaimRowHtml(row) {
@@ -6146,21 +6149,59 @@ function asClaimReasonHtml(row) {
   const diagnostics=[row.submissionError && '提交响应：'+row.submissionError,row.recoveryError && '补查：'+row.recoveryError].filter(Boolean).map(esc).join('<br>');
   return esc(note || '—') + (diagnostics ? '<details><summary>执行诊断</summary>'+diagnostics+'</details>' : '') + (evidence ? '<details><summary>退款凭证</summary>'+evidence+'</details>' : '');
 }
+// 环境行仅用于展示：不混入 claimRows，避免被导出/补提/回访当成订单。
+function asClaimEnvironmentRows(environments, status) {
+  const terminal = ['completed','partial_failure','failed','cancelled','uncertain'].includes(status);
+  return (environments || []).map(row => terminal && ['queued','running','verifying'].includes(row.status)
+    ? {...row, status: 'uncertain',
+      note: [row.note, '批次已结束，未收到该环境的最终结果；请先核对，勿重复提交'].filter(Boolean).join('；')}
+    : row);
+}
+function asEnvironmentSummary(rows) {
+  const count = statuses => rows.filter(row => statuses.includes(row.status)).length;
+  return `环境 ${rows.length} 个 · 等待 ${count(['queued'])} 个 · 处理中 ${count(['running','verifying'])} 个`
+    + ` · 已处理 ${count(['ok'])} 个 · 失败 ${count(['fail','login','inuse'])} 个`
+    + ` · 已跳过 ${count(['skip','blocked','empty'])} 个 · 已停止 ${count(['stopped'])} 个`
+    + ` · 待核对 ${count(['uncertain'])} 个（不计入订单数）`;
+}
+function asClaimEnvironmentRowHtml(row) {
+  const note = [row.note, row.errorSummary].filter(Boolean).join('；');
+  const fallback = {queued:'等待执行器处理此环境', running:'正在读取订单并逐单处理',
+    ok:'该环境已处理，订单结果见下方', skip:'没有可申请售后的订单', blocked:'订单均不可申请售后',
+    empty:'未发现订单', fail:'环境处理失败，未返回具体原因', login:'环境未登录',
+    inuse:'环境被占用', stopped:'该环境已停止', uncertain:'环境结果待核对，请勿重复提交'};
+  return `<tr data-as-environment="${esc(row.environmentSerial || '')}" class="as-environment-row">
+    <td class="sub-text">${esc(row.environmentSerial || '')}</td><td class="as-order">—</td>
+    <td colspan="6" class="hint">环境进度${row.storeName ? ' · '+esc(row.storeName) : ''}</td>
+    <td>${asEnvOutcomePills([row])}</td><td class="sub-text">—</td>
+    <td class="hint">${esc(note || fallback[row.status] || '环境状态待核对')}</td></tr>`;
+}
+function asClaimTableHtml(rows, environments, filter = 'all', running = false, hasRun = true) {
+  const visible = rows.filter(row => asClaimMatchesFilter(row, filter));
+  const envs = environments || [];
+  const known = new Set(envs.map(row => String(row.environmentSerial || '')));
+  const parts = envs.map(env => {
+    const orders = visible.filter(row => String(row.environmentSerial || '') === String(env.environmentSerial || ''));
+    return asClaimMatchesFilter(env, filter) || orders.length
+      ? asClaimEnvironmentRowHtml(env) + orders.map(asClaimRowHtml).join('') : '';
+  });
+  parts.push(...visible.filter(row => !known.has(String(row.environmentSerial || ''))).map(asClaimRowHtml));
+  const content = parts.join('');
+  if (content) return content;
+  const note = rows.length || envs.length ? '该分类暂无结果。'
+    : running ? '提交批次运行中，等待订单明细回传。'
+    : hasRun ? '本批次已结束，未返回订单明细；请查看批次状态并核对结果。'
+    : '提交后此处逐步展示每单结果。';
+  return `<tr><td colspan="11" class="hint" style="text-align:center; padding:22px;">${note}</td></tr>`;
+}
 function asRenderClaimRows(rows) {
   AS_STATE.claimRows = rows || [];
   asReconcileScanRows(AS_STATE.claimRows);
   $('asResultCount').textContent = AS_STATE.claimRows.length;
   asRenderClaimFilters();
   asSyncClaimExportButton();
-  const tbody = $('asClaimRows');
-  const visible = AS_STATE.claimRows.filter(row => asClaimMatchesFilter(row, AS_STATE.claimFilter || 'all'));
-  if (!AS_STATE.claimRows.length) {
-    tbody.innerHTML = `<tr><td colspan="11" class="hint" style="text-align:center; padding:22px;">${AS_STATE.running && AS_STATE.mode === 'claim' ? '<span class="as-status-active">提交批次运行中</span>，等待订单明细回传。' : '提交后此处逐步展示每单结果。'}</td></tr>`;
-  } else if (!visible.length) {
-    tbody.innerHTML = '<tr><td colspan="11" class="hint" style="text-align:center; padding:22px;">该分类暂无结果。</td></tr>';
-  } else {
-    tbody.innerHTML = visible.map(asClaimRowHtml).join('');
-  }
+  $('asClaimRows').innerHTML = asClaimTableHtml(AS_STATE.claimRows, AS_STATE.environments || [],
+    AS_STATE.claimFilter || 'all', AS_STATE.running && AS_STATE.mode === 'claim', !!AS_STATE.runId);
   asSyncRetryButton(AS_STATE.claimRows);
   const rows2 = AS_STATE.claimRows;
   const stats = $('asBizSummary').children;
@@ -6169,12 +6210,13 @@ function asRenderClaimRows(rows) {
   const bad = rows2.filter(r => ['fail', 'login', 'inuse'].includes(r.status) && !asClaimNeedsReconciliation(r)).length;
   const uncertain = rows2.filter(asClaimNeedsReconciliation).length;
   const stopped = rows2.filter(r => r.status === 'stopped').length;
-  stats[0].querySelector('b').textContent = rows2.length || '—';
-  stats[1].querySelector('b').textContent = rows2.length ? ok : '—';
-  stats[2].querySelector('b').textContent = rows2.length ? skipped : '—';
-  stats[3].querySelector('b').textContent = rows2.length ? bad : '—';
-  stats[4].querySelector('b').textContent = rows2.length ? stopped : '—';
-  if (stats[5]) stats[5].querySelector('b').textContent = rows2.length ? uncertain : '—';
+  const hasResults = !!AS_STATE.runId || rows2.length || (AS_STATE.environments || []).length;
+  stats[0].querySelector('b').textContent = hasResults ? rows2.length : '—';
+  stats[1].querySelector('b').textContent = hasResults ? ok : '—';
+  stats[2].querySelector('b').textContent = hasResults ? skipped : '—';
+  stats[3].querySelector('b').textContent = hasResults ? bad : '—';
+  stats[4].querySelector('b').textContent = hasResults ? stopped : '—';
+  if (stats[5]) stats[5].querySelector('b').textContent = hasResults ? uncertain : '—';
   const issues = rows2.filter(r => ['fail', 'login', 'inuse', 'blocked', 'uncertain'].includes(r.status));
   $('asErrBox').hidden = !issues.length;
   $('asErrList').innerHTML = issues.map(r =>
@@ -6224,8 +6266,10 @@ function asRenderClaimFilters() {
     ['uncertain','待核对'],['failed','失败'],['skipped','已跳过'],['stopped','已停止']];
   $('asClaimFilters').innerHTML = groups.map(([key,label]) => {
     const count = (AS_STATE.claimRows || []).filter(row => asClaimMatchesFilter(row,key)).length;
-    return `<button class="btn sm" type="button" data-as-claim-filter="${key}" aria-pressed="${(AS_STATE.claimFilter || 'all') === key}">${label} ${count}</button>`;
-  }).join('') + `<span class="hint">显示 ${(AS_STATE.claimRows || []).filter(row => asClaimMatchesFilter(row,AS_STATE.claimFilter || 'all')).length} / ${(AS_STATE.claimRows || []).length} 单；导出与补提不受此筛选影响。</span>`;
+    const envs = AS_STATE.environments || [];
+    const envCount = envs.filter(row => asClaimMatchesFilter(row,key)).length;
+    return `<button class="btn sm" type="button" data-as-claim-filter="${key}" aria-pressed="${(AS_STATE.claimFilter || 'all') === key}">${label} ${count}${envs.length ? ' 单 · '+envCount+' 环境' : ''}</button>`;
+  }).join('') + `<span class="hint">显示 ${(AS_STATE.claimRows || []).filter(row => asClaimMatchesFilter(row,AS_STATE.claimFilter || 'all')).length} / ${(AS_STATE.claimRows || []).length} 单${(AS_STATE.environments || []).length ? '；环境进度单独列示' : ''}；导出与补提不受此筛选影响。</span>`;
 }
 $('asClaimFilters').onclick = event => {
   const button = event.target.closest('[data-as-claim-filter]');
@@ -7033,9 +7077,9 @@ function asRenderClaimHistoryDetail(data) {
   const bits = [
     `批次 ${esc(asShortRef(batch.runId))}`,
     envMode ? `按环境直提 ${Number(batch.totalCount || 0)} 个环境` : `提交 ${Number(batch.totalCount || 0)} 单`,
-    `已受理 ${Number(batch.successCount || 0)}`,
-    `已跳过 ${Number(batch.skippedCount || 0)}`,
-    `失败 ${Number(batch.failedCount || 0)}`,
+    `已受理 ${Number(batch.successCount || 0)} 单`,
+    `已跳过 ${Number(batch.skippedCount || 0)} 单`,
+    `失败 ${Number(batch.failedCount || 0)} 单`,
     `待核对 ${rows.filter(asClaimNeedsReconciliation).length}`,
     esc(batch.actorName || '—'),
     esc(String(batch.createdAt || '').replace('T', ' ').slice(0, 16)),
@@ -7056,21 +7100,14 @@ function asRenderClaimHistoryDetail(data) {
     bits.push(`重提自 ${esc(asShortRef(batch.retryFromRunId))}`);
   }
   $('asHistoryDetailMeta').innerHTML = bits.join(' · ');
-  // 环境级结果逐条展示：无入口/未登录/读取失败/已停止的环境没有订单行，
-  // 只靠订单行详情会把它们整个丢掉
+  const envRows = asClaimEnvironmentRows(envMode ? (data.environments || []) : [], batch.status);
   const envBox = $('asHistoryEnvOutcomes');
   if (envBox) {
-    const envRows = envMode ? (data.environments || []) : [];
     envBox.hidden = !envRows.length;
-    envBox.innerHTML = envRows.length
-      ? '<span class="hint" style="align-self:center">环境结果</span> '
-        + asEnvOutcomePills(envRows) : '';
+    envBox.textContent = envRows.length ? asEnvironmentSummary(envRows) : '';
   }
-  $('asHistoryDetailBody').innerHTML = rows.length
-    ? rows.map(asClaimRowHtml).join('')
-    : '<tr><td colspan="11" class="query-history-empty">该批次没有结果行'
-      + (envMode && (data.environments || []).length
-        ? '（无可申请订单，环境级结果见上方）' : '') + '</td></tr>';
+  $('asHistoryDetailBody').innerHTML = asClaimTableHtml(rows, envRows, 'all',
+    ['created','queued','leased','running'].includes(batch.status));
   const trackable = asTrackItemsFromRows(rows).length;
   $('asHistoryTrack').disabled = AS_STATE.running || AS_STATE.starting || !trackable;
   $('asHistoryTrack').textContent = trackable
@@ -7340,6 +7377,7 @@ async function asSubmitItems(items, options) {
     AS_STATE.envSerials = envSerials;
     AS_STATE.envMode = !!envSerials;
     AS_STATE.environments = [];
+    AS_STATE.status = "queued";
     AS_STATE.running = true;
     AS_STATE.stopRequested = false;
     AS_STATE.pollErrors = 0;
@@ -7533,7 +7571,7 @@ function asEnvOutcomePills(environments) {
   const rows = environments || [];
   if (!rows.length) return '';
   const labels = {ok:'已提交', blocked:'均不可申请', skip:'无售后入口', fail:'失败',
-    login:'未登录', inuse:'环境占用', stopped:'已停止', queued:'排队中', running:'进行中',
+    login:'未登录', inuse:'环境占用', stopped:'已停止', queued:'排队中', running:'读取/提交中',
     uncertain:'待核对', empty:'无订单', verifying:'核验中'};
   const tones = {ok:'ok', blocked:'warn', skip:'warn', fail:'bad', login:'bad',
     inuse:'bad', uncertain:'warn', stopped:'warn'};
@@ -7552,11 +7590,16 @@ function asEnvOutcomePills(environments) {
 function asRenderEnvOutcomes(environments) {
   const box = $('asEnvOutcomes');
   if (!box) return;
-  const rows = environments || [];
+  const reported = new Map((environments || []).map(row => [String(row.environmentSerial), row]));
+  // 新建时按输入顺序显示等待行；尚未回传的环境不凭空判成失败。
+  const serials = [...new Set([...(AS_STATE.envSerials || []), ...reported.keys()])];
+  const rows = asClaimEnvironmentRows(serials.map(serial => reported.get(serial)
+    || {environmentSerial:serial,status:'queued'}), AS_STATE.status);
   AS_STATE.environments = rows;
   box.hidden = !rows.length;
-  box.innerHTML = asEnvOutcomePills(rows);
+  box.textContent = rows.length ? asEnvironmentSummary(rows) : '';
 }
+
 function asOrderedRows(items, rows, key) {
   if (!items || !items.length) return rows || [];
   const results = new Map((rows || []).map(row => [row[key], row]));
@@ -7667,15 +7710,16 @@ async function asPoll() {
       const data = (res || {}).data || {};
       if (epoch !== (AS_STATE.taskEpoch || 0)) return;
       if (AS_STATE.mode !== 'claim' || AS_STATE.runId !== runId) return;
-      asRenderClaimRows(asOrderedRows(AS_STATE.claimItems, data.rows || [], 'orderNo'));
-      asRenderEnvOutcomes(data.environments || []);
-      asProgress({...data, unit: AS_STATE.envMode ? '个环境' : '单'});
-      AS_STATE.pollErrors = 0;
       AS_STATE.status = String(data.status || '');
       const done = ['completed', 'partial_failure', 'failed', 'cancelled',
         'uncertain'].includes(AS_STATE.status);
+      // 先建立快照终态再渲染，空列表也不能残留「运行中」。
+      if (done) AS_STATE.running = false;
+      asRenderEnvOutcomes(data.environments || []);
+      asRenderClaimRows(asOrderedRows(AS_STATE.claimItems, data.rows || [], 'orderNo'));
+      asProgress({...data, unit: AS_STATE.envMode ? '个环境' : '单'});
+      AS_STATE.pollErrors = 0;
       if (done) {
-        AS_STATE.running = false;
         $('asScan').disabled = false; $('asSubmit').disabled = false; $('asStop').disabled = true;
         const bad = Number(data.failedCount || 0);
         const okCount = Number(data.successCount || 0);

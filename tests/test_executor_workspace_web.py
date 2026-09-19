@@ -923,9 +923,13 @@ class AfterSaleClaimWiringTests(unittest.TestCase):
         # 行模板抽成了 asClaimRowHtml：③ 与「历史详情」共用一套，列序只在一处定义
         tpl = html[html.index('function asClaimRowHtml('):]
         tpl = tpl[:tpl.index('\n}')]
-        self.assertTrue('visible.map(asClaimRowHtml)' in html)
-        self.assertIn('rows.map(asClaimRowHtml)', html,
+        self.assertIn('orders.map(asClaimRowHtml)', html)
+        self.assertIn('asClaimTableHtml(rows, envRows', html,
                       '历史详情必须复用 ③ 的行模板，不得另写一份（列序会漂）')
+        env_tpl = html[html.index('function asClaimEnvironmentRowHtml('):]
+        env_tpl = env_tpl[:env_tpl.index('\n}')]
+        self.assertEqual(env_tpl.count('<td') + 5, 11, '环境行 colspan=6 与表头对齐')
+        self.assertIn('colspan="6"', env_tpl)
         cells = tpl.count('<td') + tpl.count('${asScanGoodsHtml')
         self.assertEqual(cells, 11, '③ 行模板单元格数与表头不一致（会整列错位）')
         # 只数个数拦不住列序错（曾把状态列留在第 6 位）：这里按表头顺序逐个钉行模板
@@ -1531,13 +1535,13 @@ class WebCloudContractAlignmentTests(unittest.TestCase):
                       '恢复条件必须把环境级结果算进去')
         detail = html[html.index('function asRenderClaimHistoryDetail('):]
         detail = detail[:detail.index('\n}\n')]
-        self.assertIn('asEnvOutcomePills(', detail)
+        self.assertIn('asClaimTableHtml(', detail)
         self.assertIn("$('asHistoryEnvOutcomes')", detail)
         self.assertIn('读取失败', detail)
         self.assertIn('已停止', detail)
         # 弹层里必须有承载节点，否则渲染无处可去
         self.assertIn('id="asHistoryEnvOutcomes"', html)
-        # 共用一套 pill 渲染，避免两处文案漂移
+        # 共用表格行渲染，环境失败原因与订单结果均在列表展示
         self.assertIn('function asEnvOutcomePills(', html)
 
     def test_environment_mode_flag_and_partial_failure_title(self):

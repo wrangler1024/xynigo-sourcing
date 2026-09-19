@@ -23,6 +23,7 @@ for(const name of ['asSetOrderView','asOrderIdentity','asSubmissionForRow','asSu
  'asClaimPill','asClaimPillText','asClaimReasonHtml','asItemCount','asFilteredRows','asSelectedItems',
  'asRecoverableClaimRows','asReconcileScanRows','asSyncSelection','asRenderScanRows','asRenderClaimRows',
  'asRenderClaimFilters','asClaimMatchesFilter','asOrderDetailHtml','asGoodsImages','asScanGoodsHtml',
+ 'asClaimEnvironmentRows','asEnvironmentSummary','asClaimEnvironmentRowHtml','asClaimTableHtml','asEnvOutcomePills',
  'asTrackItemsFromRows','asClaimRowHtml','asRefundPathText','asRefundAccountHtml','asSupplementClaimAccounts']){
  const match=new RegExp('function '+name+'\\([^]*?\\n}').exec(html);assert(match,name);run(match[0]);
 }
