@@ -119,17 +119,20 @@ def sign_headers(
 
 
 def decrypt_secret_key(ciphertext: str, app_secret: str) -> str:
-    """解密平台返回的 AES-128-CBC secretKey 密文。"""
+    """解密平台返回的 AES-128-CBC secretKey 密文。
+
+    官方《店铺授权应用手册》Python 示例逐条核对（20260919）：
+    密文为 **base64**（不是 hex）、AES-128-CBC、key=appSecret 前 16 字节
+    （不足补零、超出截断）、IV=固定种子 "space-station-default-iv" 前 16
+    字节、PKCS7 去填充、明文为 32 位十六进制串。
+    """
     key = str(app_secret).encode("utf-8")[:16]
-    if len(key) != 16:
-        raise SheinOpenApiClientError(
-            "shein_app_secret_invalid", "应用密钥长度不足 16 字节"
-        )
+    key = key + bytes(16 - len(key))
     try:
         decryptor = Cipher(
             algorithms.AES(key), modes.CBC(b"space-station-de")
         ).decryptor()
-        padded = decryptor.update(bytes.fromhex(ciphertext)) + decryptor.finalize()
+        padded = decryptor.update(base64.b64decode(ciphertext)) + decryptor.finalize()
     except (ValueError, TypeError) as exc:
         raise SheinOpenApiClientError(
             "shein_secret_ciphertext_invalid", "店铺密钥密文无法解密"
@@ -167,10 +170,13 @@ class SheinOpenApiClient:
     def configured(self) -> bool:
         return bool(self.gateway and self.app_id and self.app_secret)
 
-    def _unwrap(self, payload: dict[str, Any], *, path: str) -> dict[str, Any]:
+    def _unwrap(
+        self, payload: dict[str, Any], *, path: str
+    ) -> dict[str, Any] | list[Any]:
+        """取业务数据段；真机（20260919）order-detail 的 info 直接是数组。"""
         for key in _ENVELOPE_KEYS:
             section = payload.get(key)
-            if isinstance(section, dict):
+            if isinstance(section, (dict, list)):
                 return section
         raise SheinOpenApiClientError(
             "shein_gateway_data_invalid",
@@ -340,8 +346,12 @@ class SheinOpenApiClient:
 
     def query_order_details(
         self, *, open_key_id: str, secret_key: str, order_nos: list[str]
-    ) -> dict[str, Any]:
-        """订单详情（含 estimatedGrossIncome 预计收入）。单次 ≤30 单号。"""
+    ) -> dict[str, Any] | list[Any]:
+        """订单详情（含 estimatedGrossIncome 预计收入）。单次 ≤30 单号。
+
+        真机（20260919）：响应 info 直接是明细数组（无 orderList 包裹），
+        未知单号整批报业务错 9998935。
+        """
         batch = [str(no) for no in order_nos][:ORDER_DETAIL_MAX_BATCH]
         return self._post(
             path=ORDER_DETAIL_PATH, identity=open_key_id,

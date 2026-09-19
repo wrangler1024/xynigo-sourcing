@@ -360,8 +360,14 @@ class SheinSettlementSyncService:
             open_key_id=store.open_key_id, secret_key=secret,
             order_nos=order_nos,
         )
+        # 真机（20260919）：order-detail 的 info 直接是明细数组，无包裹键；
+        # 币种字段为 orderCurrency（currencyCode/currency 作旧格式兼容）。
+        if isinstance(payload, list):
+            rows = [item for item in payload if isinstance(item, dict)]
+        else:
+            rows = _rows(payload, "orderList", "list")
         result: dict[str, dict[str, Any]] = {}
-        for item in _rows(payload, "orderList", "list"):
+        for item in rows:
             order_no = str(item.get("orderNo") or "").strip()
             if not order_no:
                 continue
@@ -369,7 +375,8 @@ class SheinSettlementSyncService:
                 "amount": _as_decimal(
                     item.get("estimatedGrossIncome")
                     or item.get("estimateGrossIncome")),
-                "currency": str(item.get("currencyCode")
+                "currency": str(item.get("orderCurrency")
+                                or item.get("currencyCode")
                                 or item.get("currency") or ""),
             }
         return result

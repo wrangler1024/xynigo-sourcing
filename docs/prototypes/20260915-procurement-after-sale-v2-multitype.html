@@ -4942,7 +4942,6 @@ let larkConnectionPageLoaded = false;
 let memberManagementPageLoaded = false;
 let roleManagementPageLoaded = false;
 let sessionManagementPageLoaded = false;
-let sheinStoreAuthPageLoaded = false;
 let activeOrganizationView = 'members';
 let adminMembers = [];
 let adminRoles = [];
@@ -15268,7 +15267,7 @@ function setFeaturePanel(module) {
     } else {
       settleLoad();
     }
-    sheinStoreAuthPageLoaded = true;
+  } else if (module === 'sheinstoreauth') {
     if (sheinAuthCloud === null) {
       // 云端工作台（CLOUD_WEB_MODE）强制走真实接口，绝不落回带假数据的 Mock
       // （评审必须改 #3：生产一旦 5xx/超时就显示假店并可点「模拟回调」）。
@@ -15825,7 +15824,9 @@ async function enterSettlementDashboard() {
   // 立刻从地址栏抹掉令牌：避免进浏览器历史/Referer/站点日志（评审后补项）。
   try { history.replaceState(null, '', location.pathname); } catch (e) {}
   const finish = () => { try { sessionStorage.setItem('sheinAuthCallbackDone', '1'); } catch (e) {} setTimeout(() => location.replace('/'), 1200); };
-  if (!tempToken || !state) {
+  // state 允许缺席：平台回跳可能剥掉 redirectUrl 自带 query，空 state
+  // 照常提交，由服务端按最新未消费链接回退认领。
+  if (!tempToken) {
     console.warn('shein-auth callback missing params');
     finish();
     return;

@@ -843,7 +843,10 @@ def create_app(
         response.headers["X-Request-ID"] = request.state.request_id
         response.headers["X-Trace-ID"] = request.state.trace_id
         response.headers["Cache-Control"] = "no-store"
-        if request.url.path == "/":
+        # 回调页与工作台是同一份文档（SHEIN 授权回跳落点），共用同一 CSP；
+        # 落到兜底分支的 default-src 'none' 会连内联样式带脚本一起拦掉，
+        # 页面裸渲染、换钥脚本不执行（20260919 真机踩坑）。
+        if request.url.path in ("/", "/shein-auth/callback"):
             response.headers["Content-Security-Policy"] = (
                 "default-src 'none'; "
                 f"script-src {WEB_INLINE_SCRIPT_CSP}; style-src 'unsafe-inline'; "
