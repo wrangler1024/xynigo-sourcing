@@ -32,6 +32,7 @@ from xynigo_auth.shein_openapi_client import SheinOpenApiClientError
 from xynigo_auth.shein_settlement_sync import (
     SheinSettlementSyncService,
     _as_platform_tz,
+    parse_boc_rate_page,
     upsert_fx_rate,
 )
 from xynigo_auth.shein_settlement_windows import PLATFORM_TZ
@@ -770,3 +771,55 @@ def test_report_order_page_cap_fails_instead_of_truncating(env):
         session.commit()
         assert outcome.stores[0].status == "fail"
         assert "未取完" in outcome.stores[0].error_summary
+
+
+# ---- 中行牌价解析 ----
+
+BOC_HTML_ROW_MXN = (
+    "<tr><td>墨西哥比索</td><td>38.49</td><td>38.49</td><td>39.27</td>"
+    "<td>39.27</td><td>39.28</td><td>2026/09/19 10:30:00</td></tr>"
+)
+BOC_HTML_ROW_USD = (
+    "<tr><td>美元</td><td>668.83</td><td>668.83</td><td>671.64</td>"
+    "<td>671.64</td><td>675.21</td><td>2026/09/19 10:30:00</td></tr>"
+)
+BOC_HTML_ROW_BRL = (
+    "<tr><td>巴西里亚尔</td><td>130.25</td><td>130.25</td><td>132.00</td>"
+    "<td>132.00</td><td>131.50</td><td>2026/09/19 10:30:00</td></tr>"
+)
+
+
+def test_parse_boc_extracts_conversion_rate():
+    """中行折算价 = 第 6 列，折算到每 1 外币（牌价以 100 外币为单位）。"""
+    from xynigo_auth.shein_settlement_sync import parse_boc_rate_page
+    rates = parse_boc_rate_page(BOC_HTML_ROW_MXN)
+    assert rates == {"MXN": Decimal("0.3928")}
+
+
+def test_parse_boc_extracts_multiple_currencies():
+    html = BOC_HTML_ROW_MXN + BOC_HTML_ROW_USD + BOC_HTML_ROW_BRL
+    rates = parse_boc_rate_page(html)
+    assert set(rates) == {"MXN", "USD", "BRL"}
+    assert rates["BRL"] == Decimal("1.3150")
+
+
+def test_parse_boc_ignores_unknown_currencies():
+    from xynigo_auth.shein_settlement_sync import parse_boc_rate_page
+    html = ('<tr><td>火星币</td><td>100.00</td><td>100.00</td><td>100.00</td>'
+            '<td>100.00</td><td>100.00</td><td>x</td></tr>' + BOC_HTML_ROW_MXN)
+    rates = parse_boc_rate_page(html)
+    assert set(rates) == {"MXN"}
+
+
+def test_parse_boc_skips_zero_and_invalid_rates():
+    from xynigo_auth.shein_settlement_sync import parse_boc_rate_page
+    html = ('<tr><td>美元</td><td>0</td><td>0</td><td>0</td>'
+            '<td>0</td><td>0</td><td>x</td></tr>' + BOC_HTML_ROW_MXN)
+    rates = parse_boc_rate_page(html)
+    assert "USD" not in rates
+    assert rates["MXN"] == Decimal("0.3928")
+
+
+def test_parse_boc_empty_page_returns_empty():
+    from xynigo_auth.shein_settlement_sync import parse_boc_rate_page
+    assert parse_boc_rate_page("") == {}
