@@ -23,6 +23,24 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         ):
             self.assertIn(marker, html)
 
+    def test_shein_storeauth_module_has_its_own_dispatch_branch(self):
+        # 店铺授权的初始化曾被错误并入 settledashboard 分支：直接进入店铺授权
+        # 页时按钮事件从不绑定，「生成授权链接」点击无任何反应。此用例钉住
+        # setFeaturePanel 里必须存在独立的 sheinstoreauth 分支，且结算看板
+        # 分支内不得再出现店铺授权初始化。
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        panel = html[
+            html.index("function setFeaturePanel(module)"):
+            html.index("function syncPrimaryNavigation(primary)")
+        ]
+        self.assertIn("} else if (module === 'sheinstoreauth') {", panel)
+        settle_branch = panel[
+            panel.index("module === 'settledashboard'"):
+            panel.index("module === 'sheinstoreauth'")
+        ]
+        self.assertNotIn("initSheinStoreAuthPage", settle_branch)
+        self.assertNotIn("sheinStoreAuthPageLoaded", html)
+
     def test_member_scoped_data_source_controls_are_local_and_safe(self):
         local_html = LOCAL_HTML.read_text(encoding="utf-8")
         cloud_html = CLOUD_HTML.read_text(encoding="utf-8")

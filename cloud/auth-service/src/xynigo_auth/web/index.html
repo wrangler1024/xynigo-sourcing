@@ -4513,7 +4513,6 @@ let larkConnectionPageLoaded = false;
 let memberManagementPageLoaded = false;
 let roleManagementPageLoaded = false;
 let sessionManagementPageLoaded = false;
-let sheinStoreAuthPageLoaded = false;
 let activeOrganizationView = 'members';
 let adminMembers = [];
 let adminRoles = [];
@@ -14754,7 +14753,7 @@ function setFeaturePanel(module) {
     } else {
       settleLoad();
     }
-    sheinStoreAuthPageLoaded = true;
+  } else if (module === 'sheinstoreauth') {
     if (sheinAuthCloud === null) {
       // 云端工作台（CLOUD_WEB_MODE）强制走真实接口，绝不落回带假数据的 Mock
       // （评审必须改 #3：生产一旦 5xx/超时就显示假店并可点「模拟回调」）。
