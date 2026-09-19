@@ -1094,16 +1094,19 @@ class AfterSaleRunStripWiringTests(unittest.TestCase):
 
     def test_each_flow_sets_its_stage_before_first_message(self):
         html = self._html()
-        # 提交的阶段落在共用入口 asSubmitItems 里（asSubmit/补提/指定单/历史重提都走它）
+        # 提交的阶段落在共用入口 asSubmitItems 里（asSubmit/补提/指定单/历史重提都走它）。
+        # 任务模式与运行状态在创建成功后一次建立：mode 先行会在异步创建窗口里
+        # 让旧任务编号被轮询冒充新任务（提交列表与进度失联的根因），失败路径也会残留。
         for func, mode in (('async function asScan(', 'scan'),
                            ('async function asSubmitItems(', 'claim'),
                            ('async function asTrack(', 'track')):
             body = html[html.index(func):]
             body = body[:body.index('\n}\n')]
-            # 阶段要早于该函数里的第一条提示：否则首条报错（如「执行器不可用」）
-            # 会落到上一阶段的卡片，用户看着像那个阶段在跑
-            self.assertLess(body.index(f"AS_STATE.mode = '{mode}'"),
-                            body.index('asSetPhase('))
+            mode_at = body.index(f"AS_STATE.mode = '{mode}'")
+            self.assertLess(mode_at, body.index('AS_STATE.running = true'),
+                            f'{func} 任务模式必须先于运行状态建立')
+            self.assertGreater(mode_at, body.index('await asCreateTask'),
+                               f'{func} 任务模式必须在创建请求返回后才写入')
 
 
 class AfterSaleThreeRequirementsWiringTests(unittest.TestCase):

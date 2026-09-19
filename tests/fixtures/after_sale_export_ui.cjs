@@ -28,7 +28,7 @@ const context = vm.createContext({
   asSetPhase:()=>{},asProgress:()=>{},asSyncRuntimeControls:()=>{},asPoll:()=>{state.pollCalls=(state.pollCalls||0)+1;},
  asRenderEnvOutcomes:rows=>{envCalls.push(rows||[]);}
 });
-for (const name of ['asRunIdOf','asSyncClaimExportButton','asDownloadClaimBatch',
+for (const name of ['asBeginTaskEpoch','asRunIdOf','asSyncClaimExportButton','asDownloadClaimBatch',
   'asExportClaimResults','asExportClaimHistory','asLoadLatestClaim','asOrderedRows']) {
   const match = new RegExp('(?:async )?function '+name+'\\([^]*?\\n}').exec(html);
   assert.ok(match, name);

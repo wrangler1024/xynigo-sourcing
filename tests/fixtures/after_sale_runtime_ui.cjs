@@ -14,7 +14,7 @@ ctx=vm.createContext({TextEncoder,AS_STATE:state,AS_TYPES:[],AS_HISTORY:{detail:
  crypto:require('node:crypto').webcrypto, asSyncWriteButtons:()=>{}, asSetPhase:(title,text)=>{assert.notEqual(title,'发起失败',text);vm.runInContext('asSyncRuntimeControls()',ctx);},asSaveList:()=>{},asProgress:()=>{},asRenderEnvOutcomes:()=>{},
  asSyncScanExportButton:()=>{}, asRenderClaimRows:()=>{},asRenderTrackRows:()=>{},asPoll:()=>{}, Set,Date,Math,Number,
 });
-for(const name of ['asRuntimeOptions','asSyncRuntimeControls','asRequireRuntimeControls',
+for(const name of ['asBeginTaskEpoch','asRuntimeOptions','asSyncRuntimeControls','asRequireRuntimeControls',
  'asCreateTask','asOrderedRows','asSerials','asRunIdOf','asWriteEntryReady','asScan','asTrack','asSubmitItems']){
  const m=new RegExp('(?:async )?function '+name+'\\([^]*?\\n}').exec(html);assert.ok(m,name);vm.runInContext(m[0],ctx);
 }

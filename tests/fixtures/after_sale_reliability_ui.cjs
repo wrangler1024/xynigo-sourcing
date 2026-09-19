@@ -11,7 +11,7 @@ const ctx=vm.createContext({TextEncoder,AS_STATE:state,AS_TYPES:[], $:node,crypt
  asRenderClaimRows:()=>{},asRenderTrackRows:()=>{},asRenderScanRows:()=>{},asSetOrderView:()=>{},asProgress:()=>{},asPoll:()=>{},asSyncRetryButton:()=>{},
  asRenderEnvOutcomes:()=>{},
  asRunIdOf:d=>d.runId,toast:()=>{},console});
-for(const name of ['asSyncScanExportButton','asCreateTask','asWriteEntryReady','asScan','asTrack','asSubmitItems','asOrderedRows','asTrackItemsFromRows','asParseManualBills','asTrackManual']){
+for(const name of ['asBeginTaskEpoch','asSyncScanExportButton','asCreateTask','asWriteEntryReady','asScan','asTrack','asSubmitItems','asOrderedRows','asTrackItemsFromRows','asParseManualBills','asTrackManual']){
  const m=new RegExp('(?:async )?function '+name+'\\([^]*?\\n}').exec(html);assert.ok(m,name);vm.runInContext(m[0],ctx);
 }
 for(const id of ['asStop','asClearResult']){const a=html.indexOf("$('"+id+"').onclick =");vm.runInContext(html.slice(a,html.indexOf('\n};',a)+3),ctx);}

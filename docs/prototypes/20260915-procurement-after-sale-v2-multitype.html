@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>采购售后 · 多类型三级菜单 · 设计样稿 · Xynigo Sourcing v0.18.7</title>
+<title>采购售后 · 多类型三级菜单 · 设计样稿 · Xynigo Sourcing v0.18.8</title>
 <link rel="icon" type="image/png" sizes="260x260" href="/xynigo-x.png?v=6">
 <link rel="icon" type="image/x-icon" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256" href="/favicon.ico?v=6">
 <link rel="shortcut icon" href="/favicon.ico?v=6">
@@ -1485,6 +1485,62 @@
   .permission-menu-badge { padding: 3px 6px; border-radius: 999px; background: var(--parcel-100); color: #90600c; font-size: 8px; font-weight: 900; white-space: nowrap; }
   .member-role-checks { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .member-role-checks label { display: inline-flex; align-items: center; gap: 5px; }
+  /* 财务中心 · 对账结算（结算看板）· 各币种分列，不做折算 */
+  .settle-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .settle-toolbar .btn { min-height: 32px; padding: 6px 12px; font-size: 11px; }
+  .settle-currency { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .settle-currency-chip {
+    min-height: 32px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 10px;
+    background: #fff; color: var(--navy-700); font-size: 11px; font-weight: 800; cursor: pointer;
+  }
+  .settle-currency-chip:hover { border-color: #9fd5d8; background: var(--rhino-100); color: var(--rhino-700); }
+  .settle-currency-chip.active { border-color: var(--rhino-500); background: var(--rhino-100); color: var(--rhino-700); }
+  .settle-status { margin-top: 12px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 11px; color: var(--navy-500); }
+  .settle-status b { color: var(--navy-950); font-size: 11px; }
+  .settle-cards { margin-top: 14px; display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(228px, 1fr)); }
+  .settle-card { padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+  .settle-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .settle-card-head b { color: var(--navy-950); font-size: 12px; }
+  .settle-card-head small { color: var(--navy-500); font-size: 10px; white-space: nowrap; }
+  .settle-hint-due { color: var(--rhino-700); font-weight: 900; }
+  .settle-card-rows { margin-top: 10px; display: grid; gap: 7px; }
+  .settle-card-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .settle-card-row .cur { color: var(--navy-500); font-size: 10px; font-weight: 800; }
+  .settle-card-row .amt { color: var(--navy-950); font-size: 17px; font-weight: 900; font-variant-numeric: tabular-nums; }
+  .settle-card-row .due { color: var(--rhino-700); font-size: 10px; font-weight: 800; }
+  .settle-card-cny { margin-top: 9px; color: var(--navy-950); font-size: 21px; font-weight: 900; font-variant-numeric: tabular-nums; }
+  .settle-card-cny small { margin-left: 6px; color: var(--navy-500); font-size: 10px; font-weight: 800; }
+    /* 固定两行高度：各卡币种数不一致时（如某币种无待结算）卡片仍等高、币种行仍对齐 */
+  .settle-card-native { margin-top: 9px; min-height: 38px; display: grid; gap: 4px; padding-top: 9px; border-top: 1px dashed var(--line); align-content: start; }
+  .settle-native-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .settle-native-row .cur { color: var(--navy-500); font-size: 10px; font-weight: 800; }
+  .settle-native-row .amt { color: var(--navy-700); font-size: 12px; font-weight: 850; font-variant-numeric: tabular-nums; }
+  .settle-native-row .due { color: var(--rhino-700); font-size: 10px; font-weight: 800; }
+  .settle-more { color: var(--navy-500); font-size: 9px; font-weight: 800; }
+  /* 打款日 + 「+N 批」提示不换行，避免「批」字被折到第二行 */
+  .settle-table td.pay-date { white-space: nowrap; }
+  .settle-fx { margin-top: 10px; padding: 9px 11px; border-radius: 10px; background: #fbfcfd; border: 1px solid var(--line); color: var(--navy-500); font-size: 10px; line-height: 1.7; }
+  .settle-fx b { color: var(--navy-700); font-size: 10px; }
+  .settle-card-none { margin-top: 10px; color: var(--navy-500); font-size: 11px; }
+  .settle-table td.num, .settle-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .settle-table td:first-child { min-width: 168px; white-space: nowrap; }
+  .settle-table td:last-child { min-width: 92px; }
+  .settle-badge { padding: 2px 7px; border-radius: 999px; font-size: 9px; font-weight: 900; white-space: nowrap; }
+  .settle-badge.ok { background: var(--rhino-100); color: var(--rhino-700); }
+  .settle-badge.warn { background: var(--parcel-100); color: #90600c; }
+  .settle-badge.fail { background: #fdecec; color: #b4232a; }
+  /* 分页控件收紧：全局 .procurement-pagination-actions 的 8px 间距 +
+     页码指示器 min-width 88px 会把「上一页」「下一页」推开一大段 */
+  .settle-pagination .procurement-pagination-actions { gap: 6px; }
+  .settle-pagination .procurement-pagination-actions span { min-width: 56px; }
+  /* 分页内的每页条数下拉：覆盖全局 select 的 220px 宽 / 42px 高，
+     与相邻 btn-mini 同高、贴内容宽度（与店铺授权模块分页控件保持一致） */
+  .settle-pagination select { width: auto; min-height: 0; height: 26px; box-sizing: border-box; padding: 0 6px; border: 1px solid #d6e0e8; border-radius: 8px; background: #fff; font-size: 11px; color: var(--navy-900, #16324a); }
+  .settle-alerts { margin-top: 16px; display: grid; gap: 8px; }
+  .settle-alerts-title { color: var(--navy-950); font-size: 12px; font-weight: 900; }
+  .settle-alert { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; display: flex; align-items: flex-start; gap: 8px; font-size: 11px; line-height: 1.65; color: var(--navy-700); }
+  .settle-alert.warn { border-color: #f0d9a8; background: #fffaf0; }
+  .settle-alert.fail { border-color: #f3c9c9; background: #fff6f6; }
   .settings-view[data-settings-view="organizationaccess"] { display: flex; flex-direction: column; gap: 16px; }
 
   /* 店铺授权（SHEIN 开放平台） */
@@ -1912,7 +1968,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         <button class="secondary-tab" data-parent="operations" data-planned="异常工单" disabled hidden>异常工单<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="operations" data-planned="协同记录" disabled hidden>协同记录<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="finance" data-planned="应付管理" disabled hidden>应付管理<span class="secondary-status planned">规划</span></button>
-        <button class="secondary-tab" data-parent="finance" data-planned="对账结算" disabled hidden>对账结算<span class="secondary-status planned">规划</span></button>
+        <button class="secondary-tab" data-parent="finance" data-module="settledashboard" hidden>对账结算<span class="secondary-status">新增</span></button>
         <button class="secondary-tab" data-parent="finance" data-planned="费用管理" disabled hidden>费用管理<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="finance" data-planned="财务报表" disabled hidden>财务报表<span class="secondary-status planned">规划</span></button>
         <button class="secondary-tab" data-parent="resources" data-module="buyerlib" hidden>买家号库<span class="secondary-status">新增</span></button>
@@ -2026,7 +2082,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
           <div class="hero-kicker">XYNIGO SOURCING WORKSPACE</div>
           <h1>让小犀帮你把每一单稳稳带回来，<span class="hero-call">Xyni, GO!</span></h1>
           <p id="moduleSummary">集中查看采购待办、履约风险与本地执行状态。</p>
-          <div class="hero-meta"><span class="hero-chip">累计修复测试 v0.18.7</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
+          <div class="hero-meta"><span class="hero-chip">累计修复测试 v0.18.8</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
         </div>
         <div class="hero-lockup" role="img" aria-label="小犀与 Xynigo 完整品牌一体图形">
           <img src="xynigo-logo.png" alt="">
@@ -3234,7 +3290,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
   <div class="module-panel hidden" id="settingsPanel">
     <section class="card settings-view" data-settings-view="localsettings">
       <div class="card-title">通用与查询设置 <span class="legend">仅保存在当前电脑</span></div>
-      <div class="credential-note" id="localSettingsPermissionNote">设备运行参数仅允许超级管理员修改；其他成员可在下方管理自己的采购助手个人数据源。</div>
+      <div class="credential-note" id="localSettingsPermissionNote">设备运行参数仅保存在当前电脑，所有登录成员均可修改；下方还可管理自己的采购助手个人数据源。</div>
       <div class="settings-grid">
         <div class="settings-field">
           <label>HubStudio Local API 端口</label>
@@ -3581,6 +3637,43 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
       </div>
     </section>
 
+    <section class="card settings-view" data-settings-view="settledashboard" hidden>
+      <div class="card-title table-title-row">
+        <span>对账结算 · 结算看板 <span class="legend">SHEIN 开放平台接口只读汇总 · 全店资金在途与结算进度</span></span>
+        <span class="settle-toolbar">
+          <span class="settle-currency" id="settleCurrencyTabs" role="group" aria-label="币种筛选"></span>
+          <button class="btn" id="btnSettleExport" type="button">导出 Excel</button>
+          <button class="btn" id="btnSettleRefresh" type="button">刷新数据</button>
+        </span>
+      </div>
+      <div class="credential-note">数据取自 SHEIN 开放平台财务与订单接口（只读），<strong>每 6 小时自动同步一次</strong>，也可随时手动刷新。汇总卡片按维护汇率折算人民币，同时保留各币种原币金额；店铺明细表为原币口径，可与平台后台逐单回溯核对。「不可提现 / 可提现 / 提现中」属卖家后台资金账户口径，开放平台财务接口不提供，本看板不含该口径。</div>
+      <div class="settle-status" id="settleStatusBar"></div>
+      <div class="settle-cards" id="settleSummaryCards"></div>
+      <div class="settle-fx" id="settleFxNote"></div>
+      <div class="table-wrap settle-table">
+        <table class="admin-table">
+          <thead><tr>
+            <th>店铺</th><th>类型</th><th>币种</th>
+            <th class="num">在途资金</th><th class="num">待结算资金</th>
+            <th class="num">下次结算</th><th>预计打款日</th>
+            <th class="num">已结算（历史累计）</th><th>数据时间</th><th>状态</th>
+          </tr></thead>
+          <tbody id="settleStoreTbody"><tr><td colspan="10" class="admin-empty">尚未刷新</td></tr></tbody>
+        </table>
+      </div>
+      <div class="procurement-pagination settle-pagination">
+        <span class="procurement-pagination-copy" id="settlePageInfo">—</span>
+        <div class="procurement-pagination-actions">
+          <select id="settlePageSize" aria-label="每页显示店铺数">
+            <option value="10">10 条</option><option value="30">30 条</option><option value="50">50 条</option>
+          </select>
+          <button class="btn-mini" id="btnSettlePrev" type="button" disabled>上一页</button>
+          <span id="settlePageIndicator">—</span>
+          <button class="btn-mini" id="btnSettleNext" type="button" disabled>下一页</button>
+        </div>
+      </div>
+      <div class="settle-alerts" id="settleAlerts"></div>
+    </section>
     <section class="card settings-view" data-settings-view="sheinstoreauth" hidden>
       <div class="card-title table-title-row">
         <span>店铺授权 <span class="legend">SHEIN 开放平台店铺凭证管理 · 密钥加密保存</span></span>
@@ -4501,7 +4594,7 @@ const PRIMARY_MODULES = {
     planning: '运营中心已纳入产品规划，具体数据口径和业务流程将在需求确认后接入。'
   },
   finance: {
-    label: '财务中心', hint: '应付 · 对账 · 费用 · 报表', defaultModule: null,
+    label: '财务中心', hint: '应付 · 对账 · 费用 · 报表', defaultModule: 'settledashboard',
     requiredPermission: 'finance.access',
     summary: '统一规划应付、对账、费用与财务报表能力。',
     planning: '财务中心已预留产品入口，后续将结合财务权限与审批流程分阶段建设。'
@@ -4564,6 +4657,10 @@ const FEATURE_MODULES = {
   storefinance: {
     label: '店铺结算查询', primary: 'assistant', requiredPermission: 'assistant.access',
     summary: '批量自动登录采集 SHEIN 店铺后台结算与资金数据，导出《店铺结算汇总表》交财务。全程只读。'
+  },
+  settledashboard: {
+    label: '对账结算', primary: 'finance', requiredPermission: 'finance.access',
+    summary: '汇总所有已授权 SHEIN 店铺的在途资金、待结算资金、下次结算与预计打款日、已结算资金；按维护汇率折算人民币合计，同时保留各币种原币金额。'
   },
   aftersale: {
     label: '采购售后', primary: 'procurement', requiredPermission: 'assistant.access',
@@ -4695,7 +4792,12 @@ const PERMISSION_MENU_GROUPS = [
     id: 'finance', label: '财务中心', secondary: [
       {
         id: 'moduleentry', label: '模块入口', badge: '规划入口',
-        note: '控制财务中心入口可见；应付、对账与报表功能尚未开发。',
+        note: '控制财务中心入口可见；应付、费用与报表功能尚未开发。',
+        codes: ['finance.access']
+      },
+      {
+        id: 'settledashboard', label: '对账结算', badge: '新增',
+        note: '当前与财务中心入口共用「财务中心访问」权限；后续按查看与刷新拆分细粒度权限。',
         codes: ['finance.access']
       }
     ]
@@ -5059,7 +5161,7 @@ async function cloudFetchJson(path, opts={}) {
   const headers = new Headers(opts.headers || {});
   headers.set('Accept', 'application/json');
   headers.set('X-Xynigo-Source', 'cloud_web_workspace');
-  headers.set('X-Xynigo-Client-Version', '0.18.7-cloud-web');
+  headers.set('X-Xynigo-Client-Version', '0.18.8-cloud-web');
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     headers.set('X-Xynigo-Web-CSRF', 'same-origin');
   }
@@ -5866,15 +5968,24 @@ function asSyncWriteButtons() {
 }
 
 const AS_LIST_KEY = 'afterSaleEnvList';
+const AS_DISCOVERY_KEY = 'afterSaleDiscoveryTask';
 const AS_STATE = {
   mode: '', type: 'refund', scanTaskId: null, runId: null, runLabel: '',
   orderView: 'pending', claimFilter: 'all', submissions: new Map(), detailKey: '',
   trackTaskId: null, timer: null, running: false,
   envSerials: null, envMode: false, environments: [],
+  discoveryTaskId: null, discoverySerials: [], discoveryIntent: null,
   starting: false, pendingCreates: {}, polling: false, claimItems: [], trackItems: [],
   rows: [], selected: new Set(), claimRows: [], stopRequested: false,
-  pollErrors: 0, etaBase: null, startedAt: null, endedAt: null, progressSnapshot: null, status: ''
+  pollErrors: 0, etaBase: null, startedAt: null, endedAt: null, progressSnapshot: null, status: '',
+  taskEpoch: 0
 };
+// 任务代次：每次发起/恢复任务前递增。轮询在发出请求前快照代次，
+// 响应回来（含失败）时代次已变则整体丢弃，杜绝旧任务响应覆盖新任务。
+function asBeginTaskEpoch() {
+  AS_STATE.taskEpoch = (AS_STATE.taskEpoch || 0) + 1;
+  return AS_STATE.taskEpoch;
+}
 function asRuntimeOptions() {
   return {
     browserMode: $('asHeadless').getAttribute('aria-checked') === 'true' ? 'headless' : 'visible',
@@ -5910,11 +6021,14 @@ document.querySelectorAll('[data-as-concurrency]').forEach(button => {
     });
   };
 });
-async function asRequireRuntimeControls(executor) {
+// taskMode 显式声明本次发起的目标任务类型：mode 已推迟到创建成功后才写入，
+// 能力检查不能依赖共享 AS_STATE.mode，否则 claim 的两个能力位会被漏验。
+async function asRequireRuntimeControls(executor, taskMode) {
+  const mode = taskMode || AS_STATE.mode;
   const required = ['after.sale.runtime-controls.v1'];
-  if (AS_STATE.mode !== 'scan') required.push('after.sale.reliable-results.v1');
-  if (AS_STATE.mode === 'track') required.push('after.sale.phase-evidence.v1');
-  if (AS_STATE.mode === 'claim') required.push('after.sale.receipt-recovery.v1', 'after.sale.claim-evidence.v1');
+  if (mode !== 'scan') required.push('after.sale.reliable-results.v1');
+  if (mode === 'track') required.push('after.sale.phase-evidence.v1');
+  if (mode === 'claim') required.push('after.sale.receipt-recovery.v1', 'after.sale.claim-evidence.v1');
   // An upgraded device can still have old capabilities in this page's cache.
   // Refresh the same device before reporting an upgrade requirement.
   if (required.some(cap => !(executor.capabilities || []).includes(cap))) {
@@ -5928,16 +6042,16 @@ async function asRequireRuntimeControls(executor) {
     localExecutorDevices = devices;
     renderLocalExecutorDevices();
   }
-  if (AS_STATE.mode !== 'scan' && !(executor.capabilities || []).includes('after.sale.reliable-results.v1')) {
+  if (mode !== 'scan' && !(executor.capabilities || []).includes('after.sale.reliable-results.v1')) {
     throw new Error('请升级执行器以支持完整退款记录和可靠回传');
   }
-  if (AS_STATE.mode === 'claim' && !(executor.capabilities || []).includes('after.sale.receipt-recovery.v1')) {
+  if (mode === 'claim' && !(executor.capabilities || []).includes('after.sale.receipt-recovery.v1')) {
     throw new Error('请升级执行器以支持退款凭证补查和重复提交保护');
   }
-  if (AS_STATE.mode === 'claim' && !(executor.capabilities || []).includes('after.sale.claim-evidence.v1')) {
+  if (mode === 'claim' && !(executor.capabilities || []).includes('after.sale.claim-evidence.v1')) {
     throw new Error('请升级执行器以支持提交回执核验、完整商品信息和操作完成时间');
   }
-  if (AS_STATE.mode === 'track' && !(executor.capabilities || []).includes('after.sale.phase-evidence.v1')) {
+  if (mode === 'track' && !(executor.capabilities || []).includes('after.sale.phase-evidence.v1')) {
     throw new Error('请升级执行器以准确读取五步退款进度及审核补证状态');
   }
   if (!(executor.capabilities || []).includes('after.sale.runtime-controls.v1')) {
@@ -5970,6 +6084,8 @@ async function asLoadLatestClaim() {
     if (!asRunIdOf(data) || (!active && !rows.length && !restoreEnvs.length)) return;
     // 请求返回前可能已发起新批次，不能让旧批次覆盖当前展示与导出对象。
     if (AS_STATE.starting || AS_STATE.running || AS_STATE.runId || (AS_STATE.claimRows || []).length) return;
+    // 即将建立任务上下文：先取新代次，使任何在飞的旧轮询响应失效。
+    asBeginTaskEpoch();
     const envMode = data?.submitMode === 'environments';
     AS_STATE.runId = asRunIdOf(data);
     AS_STATE.claimRows = rows;
@@ -6013,6 +6129,7 @@ function asInit() {
   asRenderTypeBar();
   asSelectType(AS_STATE.type);
   asLoadLatestClaim();
+  asRestoreDiscovery();
   if (!$('asSerials').value) asLoadList();
   if (!AS_STATE.timer) AS_STATE.timer = setInterval(asPoll, 2500);
 }
@@ -6663,25 +6780,34 @@ function asSyncTrackInputMode() {
     ? '按输入顺序匹配这些环境在系统中的历史退款单，核对清单后只读回访。每次最多 300 个环境、500 个退款单；系统未记录的退款单可切换“按退款单（完整信息）”。'
     : '每组填环境序号、订单号、退款单号，以空格分隔；多组用中英文分号或换行分隔。只读查询，可回访历史订单，无需本页提交记录。';
 }
-function asConfirmTrackMatches(data) {
+function asConfirmTrackMatches(data, discovery) {
+  // discovery: null=入口不可用（原因见 disabledReason），否则 {executor}
   return new Promise(resolve => {
     const items = data.items || [], environments = data.environments || [];
     const dialog = document.createElement('dialog');
     dialog.className = 'as-product-dialog';
     dialog.setAttribute('aria-label', '核对回访范围');
-    let accepted = false;
+    let action = '';
+    const discoveryReady = !!(discovery && discovery.executor);
+    const discoveryHint = discoveryReady
+      ? '将读取本次输入的全部 ' + environments.length + ' 个环境中的退款记录，再查询进度。'
+      : (discovery && discovery.disabledReason) || '执行器暂不支持平台查找。';
     dialog.innerHTML = '<h3>核对回访范围</h3><p>输入 '+environments.length+' 个环境，匹配 '
       +items.length+' 个退款单。只读查询平台进度，不提交售后。</p>'
+      +'<p class="hint">系统记录可能不含人工申请的退款；平台查找可发现这些退款单。'+esc(discoveryHint)+'</p>'
       +'<div class="as-track-match-list">'+environments.map(env => {
         const bills = items.filter(item => item.environmentSerial === env.environmentSerial);
         return '<p><b>环境 '+esc(env.environmentSerial)+'</b> · '+bills.length+' 个退款单'
           +(env.note ? '<br><span class="hint">'+esc(env.note)+'</span>' : '')
           +bills.map(item => '<br><span class="sub-text">'+esc(item.orderNo)+' · '+esc(item.refundBillId)+'</span>').join('')+'</p>';
       }).join('')+'</div><div class="actions"><button class="btn" data-cancel>返回修改</button>'
-      +'<button class="btn primary" data-confirm'+(items.length ? '' : ' disabled')+'>回访已匹配的 '+items.length+' 单</button></div>';
+      +'<button class="btn primary" data-confirm'+(items.length ? '' : ' disabled')+'>回访已匹配的 '+items.length+' 单</button>'
+      +'<button class="btn" data-discover'+(discoveryReady ? '' : ' disabled')+' title="'+esc(discoveryHint)+'">到平台查找并回访</button></div>';
     dialog.querySelector('[data-cancel]').onclick = () => dialog.close();
-    dialog.querySelector('[data-confirm]').onclick = () => { accepted = true; dialog.close(); };
-    dialog.addEventListener('close', () => { dialog.remove(); resolve(accepted); }, {once:true});
+    dialog.querySelector('[data-confirm]').onclick = () => { action = 'history'; dialog.close(); };
+    const discoveryButton = dialog.querySelector('[data-discover]');
+    discoveryButton.onclick = () => { action = 'discover'; dialog.close(); };
+    dialog.addEventListener('close', () => { dialog.remove(); resolve(action); }, {once:true});
     document.body.appendChild(dialog);
     dialog.showModal();
   });
@@ -6698,25 +6824,39 @@ async function asTrackEnvironments() {
   AS_STATE.starting = true;
   asSyncRuntimeControls();
   let items = [];
+  let discoveryAction = false;
   try {
     AS_STATE.startedAt = null; AS_STATE.endedAt = null; AS_STATE.etaBase = null;
     asProgress({progressTotal:0, progressCompleted:0, unit:'单'});
     asSetPhase('正在匹配退款单', '共 '+serials.length+' 个环境，正在读取系统历史记录。', true);
-    const response = await cloudFetchJson('/v1/after-sale/track/resolve', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({environmentSerials:serials}),
-    });
+    const [response, discovery] = await Promise.all([
+      cloudFetchJson('/v1/after-sale/track/resolve', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({environmentSerials:serials}),
+      }),
+      asDiscoveryExecutor(),
+    ]);
     const data = response?.data;
     if (!Array.isArray(data?.items) || !Array.isArray(data?.environments)) throw new Error('退款单匹配响应不完整，请重试。');
     asSetPhase(data.items.length ? '退款单匹配完成' : '没有匹配到可回访的退款单',
       '共 '+serials.length+' 个环境，匹配 '+data.items.length+' 个退款单；请核对匹配清单。', false);
-    if (await asConfirmTrackMatches(data)) items = data.items;
+    const action = await asConfirmTrackMatches(data, discovery);
+    if (action === 'history') items = data.items;
+    else if (action === 'discover') discoveryAction = true;
     else asSetPhase('回访未开始', '已关闭匹配清单，本次未发起回访任务。', false);
   } catch (error) {
+    // 历史匹配失败时平台查找入口同样不可用：不吞掉错误，也不继续发任务。
     asSetPhase('退款单匹配失败', String(error.message || error), false);
   } finally {
     AS_STATE.starting = false;
     asSyncRuntimeControls();
+  }
+  if (discoveryAction) {
+    const discovery = await asDiscoveryExecutor();
+    if (discovery && discovery.executor) await asDiscoverAndTrack(serials, discovery.executor);
+    else asSetPhase('平台查找不可用',
+      (discovery && discovery.disabledReason) || '本地执行器暂不支持平台查找，本次未发起任务。', false);
+    return;
   }
   if (items.length) await asTrack(items);
 }
@@ -6733,13 +6873,335 @@ function asTrackItemsFromRows(rows) {
   });
   return items;
 }
+// ===== 平台查找退款单（refund_discovery）：只读发现 → 校验身份 → 固定 items 回访 =====
+// 平台查找入口不抛错：执行器不可用/未升级时返回 disabledReason，历史匹配与
+// 三字段回访入口不受这个新门禁影响。
+async function asDiscoveryExecutor() {
+  try {
+    let executor = await cloudFormalExecutor('after.sale.scan.v1');
+    const has = cap => (executor.capabilities || []).includes(cap);
+    if (!has('after.sale.refund-discovery.v1') || !has('after.sale.runtime-controls.v1')) {
+      // 升级后的设备可能仍是本页缓存的旧能力：先刷新同一台再下结论。
+      const payload = await cloudFetchJson('/v1/executors');
+      const devices = Array.isArray(payload.items) ? payload.items : [];
+      const refreshed = devices.find(item => item.id === executor.id);
+      if (!refreshed || refreshed.status === 'revoked' || refreshed.connectivity !== 'online') {
+        return {executor:null, disabledReason:'本地执行器当前离线或不可用，暂不能平台查找。'};
+      }
+      executor = refreshed;
+      localExecutorDevices = devices;
+      renderLocalExecutorDevices();
+    }
+    if (!(executor.capabilities || []).includes('after.sale.refund-discovery.v1')) {
+      return {executor:null, disabledReason:'请升级执行器以支持平台查找退款单。'};
+    }
+    if (!(executor.capabilities || []).includes('after.sale.phase-evidence.v1')) {
+      return {executor:null, disabledReason:'请升级执行器以准确读取五步退款进度后再使用平台查找。'};
+    }
+    if (!(executor.capabilities || []).includes('after.sale.runtime-controls.v1')) {
+      return {executor:null, disabledReason:'请先升级本地执行器，以支持售后无头模式和环境并发设置。'};
+    }
+    return {executor};
+  } catch (e) {
+    return {executor:null, disabledReason:String(e.message || e)};
+  }
+}
+const AS_DISCOVERY_ENV_LABEL = {
+  queued: ['run', '等待'], running: ['run', '查找中'], ok: ['ok', '已完成'],
+  failed: ['bad', '读取失败'], stopped: ['warn', '已停止'],
+};
+function asDiscoveryEnvPill(status) {
+  const entry = AS_DISCOVERY_ENV_LABEL[String(status || '')] || ['warn', '未确认'];
+  return `<span class="pill ${entry[0]}${status === 'running' ? ' as-status-active' : ''}">${entry[1]}</span>`;
+}
+// 空态必须区分：平台确认无退款 / 登录失效 / 页面读取失败 / 环境占用 / 范围未查完。
+function asDiscoveryEnvConclusion(env) {
+  const rows = env.rows || [];
+  if (String(env.environmentStatus || '') === 'failed') {
+    const login = rows.some(r => r.status === 'login') || String(rows[0]?.errorSummary || '').includes('未登录');
+    return login ? '登录失效：请先登录该环境后重试' : '页面读取失败：未确认该环境全部退款记录';
+  }
+  if (String(env.environmentStatus || '') === 'stopped') return '范围未查完：发现被停止，结果不完整';
+  if (!rows.length || (!rows[0].orderNo && rows.length === 1)) return '平台确认无退款订单';
+  if (!rows.some(r => (r.refundBillIds || []).length)) return '平台确认无退款';
+  return '';
+}
+function asRenderDiscoveryRows(rows, options) {
+  const opts = options || {};
+  const order = AS_STATE.discoverySerials || [];
+  const envs = new Map();
+  (rows || []).forEach(row => {
+    const serial = String(row.environmentSerial || '');
+    if (!serial) return;
+    if (!envs.has(serial)) envs.set(serial, {environmentSerial: serial, environmentStatus: row.environmentStatus,
+      storeName: row.storeName || '', rows: []});
+    envs.get(serial).rows.push(row);
+  });
+  const envList = [...envs.values()].sort((a, b) => {
+    const ia = order.indexOf(a.environmentSerial), ib = order.indexOf(b.environmentSerial);
+    return (ia < 0 ? order.length : ia) - (ib < 0 ? order.length : ib);
+  });
+  const tbody = $('asTrackRows');
+  if (!envList.length) {
+    tbody.innerHTML = '<tr><td colspan="10" class="hint" style="text-align:center; padding:22px;">'
+      +'正在查找退款单…按环境只读读取退款记录，不提交售后。</td></tr>';
+    return;
+  }
+  tbody.innerHTML = envList.map(env => {
+    const lines = env.rows.map(row => {
+      const bills = row.refundBillIds || [];
+      if (!row.orderNo) return '';
+      const state = row.status === 'fail'
+        ? '<span class="hint">'+esc(row.errorSummary || '退款记录读取失败')+'</span>'
+        : bills.length ? esc(bills.join(' / ')) : '<span class="hint">无退款</span>';
+      return '<div class="sub-text">'+esc(row.orderNo)+' · '+state+'</div>';
+    }).join('');
+    return `<tr><td colspan="10" style="padding:8px 10px;">
+      ${asDiscoveryEnvPill(env.environmentStatus)} <b>${esc(env.environmentSerial)}</b>
+      <span class="sub-text">${esc(env.storeName)}</span>
+      ${env.rows.some(r => r.status === 'login') || (env.rows.length === 1 && !env.rows[0].orderNo && String(env.rows[0].errorSummary || '').includes('未登录')) ? '<div class="hint">'+esc(env.rows[0].errorSummary || '')+'</div>' : ''}
+      ${env.environmentStatus === 'failed' && !lines ? '<div class="hint">'+esc((env.rows[0]||{}).errorSummary || '页面读取失败')+'</div>' : ''}
+      <div style="margin-top:4px">${lines || '<span class="hint">该环境无订单</span>'}</div>
+    </td></tr>`;
+  }).join('') + (opts.continueButton
+    ? `<tr><td colspan="10" style="padding:10px; text-align:center;">
+        <button class="btn primary" data-as-discovery-continue>仅回访已确认的 ${opts.continueButton} 单</button>
+        ${opts.conflictCount ? '<div class="hint" style="margin-top:6px">'+opts.conflictCount+' 个退款单归属不一致已排除，请核对历史记录</div>' : ''}
+      </td></tr>`
+    : (opts.footNote ? `<tr><td colspan="10" class="hint" style="padding:8px; text-align:center;">${esc(opts.footNote)}</td></tr>` : ''));
+  const button = tbody.querySelector('[data-as-discovery-continue]');
+  if (button) button.onclick = () => asContinueDiscovery();
+}
+function asDiscoveryItemsFromRows(rows) {
+  const seen = new Set(), items = [];
+  (rows || []).forEach(row => {
+    (row.refundBillIds || []).forEach(bill => {
+      if (seen.has(bill) || !row.orderNo || row.status === 'fail') return;
+      seen.add(bill);
+      items.push({environmentSerial:row.environmentSerial || '', orderNo:row.orderNo,
+        refundBillId:bill, storeName:row.storeName || ''});
+    });
+  });
+  return items;
+}
+async function asValidateDiscoveredItems(items) {
+  // 派发前把发现身份与本租户提交/跟踪历史核对：冲突单排除并解释。
+  const response = await cloudFetchJson('/v1/after-sale/track/validate-discovered', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({items}),
+  });
+  const data = response?.data;
+  if (!Array.isArray(data?.items) || !Array.isArray(data?.conflicts)) {
+    throw new Error('退款身份核对响应不完整，请重试。');
+  }
+  return data;
+}
+async function asDiscoverAndTrack(serials, executor) {
+  if (AS_STATE.running || AS_STATE.starting) return;
+  AS_STATE.starting = true;
+  asSyncRuntimeControls();
+  const epoch = asBeginTaskEpoch();
+  let started = false;
+  try {
+    const runtime = asRuntimeOptions();
+    const res = await asCreateTask('/v1/after-sale/scan', {
+      executorId: executor.id, browserMode: runtime.browserMode,
+      concurrency: runtime.concurrency, environmentSerials: serials,
+      purpose:'refund_discovery',
+    });
+    const data = (res || {}).data || {};
+    if (!data.taskId) throw new Error('平台查找任务未返回编号，请重试。');
+    // 创建成功：任务模式与编号、运行状态一次建立；失败路径不残留 mode。
+    AS_STATE.mode = 'discover';   // 发现阶段占用 ③ 卡片；进度按环境计
+    AS_STATE.discoveryTaskId = data.taskId;
+    AS_STATE.discoverySerials = serials.slice();
+    AS_STATE.discoveryIntent = {taskId:data.taskId, executorId:executor.id, serials:serials.slice()};
+    asDiscoveryPersist();
+    AS_STATE.running = true;
+    AS_STATE.stopRequested = false;
+    AS_STATE.pollErrors = 0;
+    AS_STATE.etaBase = null;
+    AS_STATE.startedAt = Date.now(); AS_STATE.endedAt = null; AS_STATE.progressSnapshot = null;
+    AS_STATE.trackRows = [];
+    $('asTrack').disabled = true; $('asStop').disabled = false;
+    asRenderDiscoveryRows([]);
+    asProgress({progressTotal:serials.length, progressCompleted:0, unit:'个环境'});
+    asSetPhase('正在查找退款单', `共 ${serials.length} 个环境 · 只读读取退款记录，不提交售后`, true);
+    $('asTrackCard').scrollIntoView?.({block:'start',behavior:'instant'});
+    started = true;
+  } catch (e) {
+    if (!started) AS_STATE.discoveryIntent = null;
+    asSetPhase('平台查找发起失败', String(e.message || e), false);
+  } finally {
+    AS_STATE.starting = false;
+    asSyncRuntimeControls();
+    if (started && epoch === AS_STATE.taskEpoch) asPoll();
+  }
+}
+// 发现终态：完整成功自动接续回访（同一页面意图）；部分失败/停止只留手动继续。
+async function asFinishDiscovery(taskId, rows, status) {
+  const intent = AS_STATE.discoveryIntent;
+  const envStates = new Map();
+  (rows || []).forEach(row => envStates.set(String(row.environmentSerial || ''),
+    String(row.environmentStatus || '')));
+  const failedEnvs = [...envStates.entries()].filter(([, s]) => s === 'failed').map(([s]) => s);
+  const stoppedEnvs = [...envStates.entries()].filter(([, s]) => s === 'stopped').map(([s]) => s);
+  const allOk = status === 'succeeded' && envStates.size > 0
+    && [...envStates.values()].every(s => s === 'ok');
+  const items = asDiscoveryItemsFromRows(rows);
+  let validated = {items: [], conflicts: []};
+  if (items.length) {
+    try {
+      validated = await asValidateDiscoveredItems(items);
+    } catch (e) {
+      asSetPhase('退款身份核对失败', String(e.message || e) + '；可稍后在此页重试或改用完整信息回访。', false);
+      asRenderDiscoveryRows(rows, items.length
+        ? {continueButton: items.length} : {footNote:'退款身份核对未完成'});
+      return;
+    }
+  }
+  const conflicts = validated.conflicts || [];
+  const accepted = validated.items || [];
+  // 回访任务契约上限 500 个去重退款单：超限不自动接续，提示分批。
+  if (accepted.length > 500) {
+    AS_STATE.discoveryIntent = null;
+    asSetPhase('发现的退款单超过上限',
+      `本次发现 ${accepted.length} 个退款单，单次回访最多 500 个；请改用「按退款单（完整信息）」分批回访。`, false);
+    asRenderDiscoveryRows(rows, {footNote:'发现结果超过单批回访上限（500），请分批回访'});
+    return;
+  }
+  const autoContinue = !!(intent && intent.taskId === taskId
+    && allOk && !AS_STATE.stopRequested && accepted.length);
+  if (autoContinue) {
+    let executorOk = false;
+    try {
+      const track = await asDiscoveryExecutor();
+      executorOk = !!(track.executor && track.executor.id === intent.executorId);
+      if (track.executor && track.executor.id !== intent.executorId) {
+        asSetPhase('执行器已变化', '当前执行器与平台查找时不同，不自动接续；请核对后手动继续。', false);
+      }
+    } catch (e) { executorOk = false; }
+    if (executorOk) {
+      AS_STATE.discoveryIntent = null;
+      asSetPhase('平台查找完成', `发现 ${items.length} 个退款单${conflicts.length ? '，其中 '+conflicts.length+' 个归属不一致已排除' : ''}；自动接续回访 ${accepted.length} 单。`, false);
+      await asTrack(accepted);
+      return;
+    }
+  }
+  AS_STATE.discoveryIntent = null;
+  if (!items.length && allOk) {
+    asSetPhase('平台确认无退款', '本次输入的全部环境已完整读取，平台没有退款记录。', false);
+    asRenderDiscoveryRows(rows, {});
+    return;
+  }
+  if (!items.length) {
+    asSetPhase(status === 'cancelled' ? '平台查找已停止' : '平台查找未完成',
+      `发现 ${failedEnvs.length} 个环境读取失败、${stoppedEnvs.length} 个环境未查完；未发现可回访的退款单。`, false);
+    asRenderDiscoveryRows(rows, {});
+    return;
+  }
+  asSetPhase('平台查找完成（部分待确认）',
+    `发现 ${items.length} 个退款单，可回访 ${accepted.length} 单${conflicts.length ? '，'+conflicts.length+' 个归属不一致已排除' : ''}`
+    + (failedEnvs.length || stoppedEnvs.length ? `；${failedEnvs.length} 个环境读取失败、${stoppedEnvs.length} 个环境未查完，未包含在其结果中。` : '。'),
+    false);
+  asRenderDiscoveryRows(rows, accepted.length
+    ? {continueButton: accepted.length, conflictCount: conflicts.length}
+    : {conflictCount: conflicts.length});
+}
+async function asContinueDiscovery() {
+  if (AS_STATE.running || AS_STATE.starting) return;
+  const taskId = AS_STATE.discoveryTaskId;
+  if (!taskId) return;
+  AS_STATE.starting = true; asSyncRuntimeControls();
+  try {
+    const res = await cloudFetchJson('/v1/after-sale/scan/' + encodeURIComponent(taskId));
+    const rows = (res?.data?.summary?.rows) || [];
+    const items = asDiscoveryItemsFromRows(rows);
+    if (!items.length) { asSetPhase('没有可回访的退款单', '本次平台查找未发现退款单。', false); return; }
+    const track = await asDiscoveryExecutor();
+    if (!track.executor) { asSetPhase('执行器不可用', track.disabledReason || '无法发起回访', false); return; }
+    const validated = await asValidateDiscoveredItems(items);
+    const accepted = validated.items || [];
+    if (!accepted.length) {
+      asSetPhase('没有可回访的退款单', (validated.conflicts || []).length
+        ? '发现的退款单均与历史归属不一致，已全部排除；请核对历史记录。' : '未发现可回访的退款单。', false);
+      return;
+    }
+    if (accepted.length > 500) {
+      asSetPhase('发现的退款单超过上限',
+        `本次可回访 ${accepted.length} 个退款单，单次最多 500 个；请改用「按退款单（完整信息）」分批回访。`, false);
+      return;
+    }
+    await asTrack(accepted);
+  } catch (e) {
+    asSetPhase('继续回访失败', String(e.message || e), false);
+  } finally {
+    AS_STATE.starting = false; asSyncRuntimeControls();
+  }
+}
+function asDiscoveryPersist() {
+  try { localStorage.setItem(AS_DISCOVERY_KEY, JSON.stringify({
+    taskId: AS_STATE.discoveryTaskId, serials: AS_STATE.discoverySerials || []})); } catch (e) {}
+}
+function asDiscoveryClearPersisted() {
+  try { localStorage.removeItem(AS_DISCOVERY_KEY); } catch (e) {}
+}
+// 刷新页面恢复任务与结果，但不恢复自动接续意图（避免打开历史任务就自动发新任务）。
+async function asRestoreDiscovery() {
+  if (AS_STATE.running || AS_STATE.starting || AS_STATE.mode || AS_STATE.runId) return;
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(AS_DISCOVERY_KEY) || 'null'); } catch (e) {}
+  if (!saved || !saved.taskId || !Array.isArray(saved.serials) || !saved.serials.length) return;
+  try {
+    const res = await cloudFetchJson('/v1/after-sale/scan/' + encodeURIComponent(saved.taskId));
+    const data = (res || {}).data || {};
+    const summary = data.summary || {};
+    if (summary.purpose !== 'refund_discovery') { asDiscoveryClearPersisted(); return; }
+    AS_STATE.discoveryTaskId = saved.taskId;
+    AS_STATE.discoverySerials = saved.serials;
+    const rows = summary.rows || [];
+    const status = String(data.status || '');
+    // fetch 返回期间提交批次可能已恢复：只读渲染结果安全，接续轮询要让位。
+    const busy = AS_STATE.running || AS_STATE.starting || AS_STATE.mode || AS_STATE.runId;
+    if (['created','queued','leased','running','cancel_requested'].includes(status)) {
+      if (busy) return;
+      // 即将接手轮询：取新代次，使任何在飞的旧响应失效。
+      asBeginTaskEpoch();
+      AS_STATE.mode = 'discover'; AS_STATE.running = true;
+      AS_STATE.stopRequested = status === 'cancel_requested';
+      AS_STATE.pollErrors = 0;
+      AS_STATE.startedAt = Date.parse(data.startedAt || data.createdAt || '') || Date.now();
+      AS_STATE.endedAt = null; AS_STATE.etaBase = null;
+      asSyncRuntimeControls(); $('asStop').disabled = false;
+      asRenderDiscoveryRows(rows);
+      asProgress({progressTotal:Number(summary.progressTotal || saved.serials.length),
+        progressCompleted:Number(summary.progressCompleted || 0), unit:'个环境'});
+      asSetPhase('已恢复运行中的平台查找', `共 ${saved.serials.length} 个环境，继续更新进度`, true);
+      asPoll();
+      return;
+    }
+    if (['succeeded','failed','cancelled','uncertain'].includes(status)) {
+      AS_STATE.discoveryIntent = null;
+      asRenderDiscoveryRows(rows, asDiscoveryItemsFromRows(rows).length
+        ? {continueButton: asDiscoveryItemsFromRows(rows).length} : {});
+      asSetPhase('已恢复平台查找结果',
+        '刷新后不自动接续回访；确认无误后点「仅回访已确认的单」。', false);
+      return;
+    }
+    asDiscoveryClearPersisted();
+    AS_STATE.discoveryTaskId = null; AS_STATE.discoverySerials = [];
+  } catch (e) {
+    asDiscoveryClearPersisted();
+  }
+}
 async function asTrack(explicitItems) {
   if (AS_STATE.running || AS_STATE.starting) return;
   AS_STATE.starting = true;
   asSyncRuntimeControls();
+  const epoch = asBeginTaskEpoch();
+  let started = false;
   try {
   const runtime = asRuntimeOptions();
-  AS_STATE.mode = 'track';
   // 优先显式回访对象，否则取本次提交中已取得退款单号的行。
   const items = (Array.isArray(explicitItems) && explicitItems.length)
     ? explicitItems
@@ -6750,11 +7212,13 @@ async function asTrack(explicitItems) {
     return;
   }
   let executor;
-  try { executor = await cloudFormalExecutor('after.sale.track.v1'); await asRequireRuntimeControls(executor); }
+  try { executor = await cloudFormalExecutor('after.sale.track.v1'); await asRequireRuntimeControls(executor, 'track'); }
   catch (e) { asSetPhase('执行器不可用', e.message || '无法发起回访', false); return; }
   try {
     const res = await asCreateTask('/v1/after-sale/track', {executorId: executor.id, browserMode: runtime.browserMode, concurrency: runtime.concurrency, items});
     const data = (res || {}).data || {};
+    // 创建成功：任务模式与编号、运行状态一次建立；失败路径不残留 mode。
+    AS_STATE.mode = 'track';
     AS_STATE.trackTaskId = data.taskId || null;
     AS_STATE.running = true;
     AS_STATE.stopRequested = false;
@@ -6769,13 +7233,14 @@ async function asTrack(explicitItems) {
     asProgress({progressTotal: items.length, progressCompleted: 0, unit: '单'});
     asSetPhase('回访运行中', `共 ${items.length} 个退款单 · 只读，不动订单与退款数据`, true);
     $('asTrackCard').scrollIntoView?.({block:'start',behavior:'instant'});
-    asPoll();
+    started = true;
   } catch (e) {
     asSetPhase('发起失败', String(e.message || e), false);
   }
   } finally {
     AS_STATE.starting = false;
     asSyncRuntimeControls();
+    if (started && epoch === AS_STATE.taskEpoch) asPoll();
   }
 }
 // 按本轮回访任务导出，不重新触发回访。
@@ -7174,9 +7639,10 @@ async function asScan(options = {}) {
   if (AS_STATE.running || AS_STATE.starting) return;
   AS_STATE.starting = true;
   asSyncRuntimeControls();
+  const epoch = asBeginTaskEpoch();
+  let started = false;
   try {
   const runtime = asRuntimeOptions();
-  AS_STATE.mode = 'scan';   // 状态条落点：扫描的进度显示在 ② 卡片
   const serials = options.environmentSerials || asSerials();
   if (!serials.length) {
     asSetPhase('等待发起', '请先填入买家号环境序号。', false);
@@ -7188,12 +7654,14 @@ async function asScan(options = {}) {
   }
   asSaveList();
   let executor;
-  try { executor = await cloudFormalExecutor('after.sale.scan.v1'); await asRequireRuntimeControls(executor); }
+  try { executor = await cloudFormalExecutor('after.sale.scan.v1'); await asRequireRuntimeControls(executor, 'scan'); }
   catch (e) { asSetPhase('执行器不可用', e.message || '无法发起扫描', false); return; }
   try {
     const res = await asCreateTask('/v1/after-sale/scan', {executorId: executor.id, browserMode: runtime.browserMode, concurrency: runtime.concurrency, environmentSerials: serials});
     const data = (res || {}).data || {};
     if (!data.taskId) throw new Error('扫描任务未返回编号，请重试。');
+    // 创建成功：任务模式与编号、运行状态一次建立；失败路径不残留 mode。
+    AS_STATE.mode = 'scan';   // 状态条落点：扫描的进度显示在 ② 卡片
     AS_STATE.scanTaskId = data.taskId || null;
     asSetOrderView('pending', true);
     AS_STATE.running = true;
@@ -7208,13 +7676,14 @@ async function asScan(options = {}) {
     $('asScanRows').innerHTML = '<tr><td colspan="12" class="hint" style="text-align:center; padding:18px;"><span class="as-status-active">扫描中</span>，正在逐个打开环境读取订单…</td></tr>';
     asProgress({progressTotal:serials.length, progressCompleted:0, unit:'个环境'});
     asSetPhase('扫描运行中', `共 ${serials.length} 个环境 · 只读，不会改动订单`, true);
-    asPoll();
+    started = true;
   } catch (e) {
     asSetPhase('发起失败', String(e.message || e), false);
   }
   } finally {
     AS_STATE.starting = false;
     asSyncRuntimeControls();
+    if (started && epoch === AS_STATE.taskEpoch) asPoll();
   }
 }
 // 勾选提交 / 补提失败单 / 直接提交 / 历史重提共用同一建 Run 入口。
@@ -7246,9 +7715,13 @@ async function asSubmitItems(items, options) {
   if (!asWriteEntryReady()) return false;   // 最后一道闸：任何调用方都绕不过去
   AS_STATE.starting = true;
   asSyncRuntimeControls();
+  // 同步段先取任务代次：从这一刻起，任何在飞的旧轮询响应都归属失效。
+  // mode 不再先行写入——异步准备期间页面保持无任务态，
+  // 轮询不会拿旧 runId 冒充新任务去查询（那正是「列表 0、进度 0/5、一直提交中」的根因）。
+  const epoch = asBeginTaskEpoch();
+  let started = false;
   try {
   const runtime = asRuntimeOptions();
-  AS_STATE.mode = 'claim';  // 任务模式与订单视图独立，切页签不影响轮询。
   if (!items.length && !envSerials) {
     asSetPhase('等待发起', opts.emptyHint || '请先勾选要提交的订单。', false);
     return false;
@@ -7257,7 +7730,7 @@ async function asSubmitItems(items, options) {
   try {
     executor = await cloudFormalExecutor(
       envSerials ? 'after.sale.claim-environment.v1' : 'after.sale.claim.v1');
-    await asRequireRuntimeControls(executor);
+    await asRequireRuntimeControls(executor, 'claim');
   }
   catch (e) { asSetPhase('执行器不可用', e.message || '无法发起售后提交', false); return false; }
   try {
@@ -7265,6 +7738,8 @@ async function asSubmitItems(items, options) {
       ? {executorId: executor.id, browserMode: runtime.browserMode, concurrency: runtime.concurrency, environmentSerials: envSerials}
       : {executorId: executor.id, browserMode: runtime.browserMode, concurrency: runtime.concurrency, items, retryFromRunId: opts.retryFromRunId || ''});
     const data = (res || {}).data || {};
+    // 创建成功：任务模式、编号、范围与运行状态一次建立；失败路径不残留 mode。
+    AS_STATE.mode = 'claim';  // 任务模式与订单视图独立，切页签不影响轮询。
     AS_STATE.runId = asRunIdOf(data);
     AS_STATE.claimFilter = 'all';
     AS_STATE.runLabel = label;
@@ -7287,7 +7762,7 @@ async function asSubmitItems(items, options) {
     asSetPhase(label + '中', envSerials
       ? `共 ${envSerials.length} 个环境 · 单遍直提，无可申请售后订单的环境会跳过`
       : `共 ${items.length} 单 · 退款路径「原路退回」· ${runtime.concurrency} 个环境并发，同环境逐单提交`, true);
-    asPoll();
+    started = true;
     return true;
   } catch (e) {
     asSetPhase('发起失败', String(e.message || e), false);
@@ -7296,6 +7771,9 @@ async function asSubmitItems(items, options) {
   } finally {
     AS_STATE.starting = false;
     asSyncRuntimeControls();
+    // starting 解除后再启动首轮轮询（asPoll 对 starting 让位）；
+    // 代次未过时才触发，2.5s 定时器始终兜底。
+    if (started && epoch === AS_STATE.taskEpoch) asPoll();
   }
 }
 // 按环境单遍直提的具名入口：确认与解析在前，建 Run 仍走 asSubmitItems。
@@ -7486,14 +7964,20 @@ function asOrderedRows(items, rows, key) {
   return items.map(item => ({...item, status:'queued', ...(results.get(item[key]) || {})}));
 }
 async function asPoll() {
-  if (AS_STATE.polling) return;
+  // 新任务创建期间（starting）不查询任何批次：此时页面没有可信的任务上下文，
+  // 旧编号的终态响应会把刚建立/正在建立的新任务状态清掉。
+  if (AS_STATE.polling || AS_STATE.starting) return;
   AS_STATE.polling = true;
+  // 请求发出前的任务代次：响应回来（含失败）时已变，说明归属的任务已被
+  // 发起/恢复/切换取代，整个响应连同清理动作一起丢弃。
+  const epoch = AS_STATE.taskEpoch || 0;
   try {
     if (AS_STATE.mode === 'scan' && AS_STATE.scanTaskId) {
       const taskId = AS_STATE.scanTaskId;
       const res = await cloudFetchJson('/v1/after-sale/scan/'
         + encodeURIComponent(AS_STATE.scanTaskId));
       const data = (res || {}).data || {};
+      if (epoch !== (AS_STATE.taskEpoch || 0)) return;
       if (AS_STATE.mode !== 'scan' || AS_STATE.scanTaskId !== taskId) return;
       const summary = data.summary || {};
       const rows = summary.rows || [];
@@ -7525,6 +8009,7 @@ async function asPoll() {
       const res = await cloudFetchJson('/v1/after-sale/track/'
         + encodeURIComponent(AS_STATE.trackTaskId));
       const data = (res || {}).data || {};
+      if (epoch !== (AS_STATE.taskEpoch || 0)) return;
       if (AS_STATE.mode !== 'track' || AS_STATE.trackTaskId !== taskId) return;
       const summary = data.summary || {};
       const rows = asOrderedRows(AS_STATE.trackItems, summary.rows || [], 'refundBillId');
@@ -7551,11 +8036,37 @@ async function asPoll() {
           `本次已处理 ${completed} / ${total} 单 · 读取失败 ${readFailures} 单 · 未终态 ${open} 单`
           + (bad ? ` · 已拒绝 ${bad} 单审核异常需人工处理` : ''), false);
       }
+    } else if (AS_STATE.mode === 'discover' && AS_STATE.discoveryTaskId) {
+      const taskId = AS_STATE.discoveryTaskId;
+      const res = await cloudFetchJson('/v1/after-sale/scan/'
+        + encodeURIComponent(AS_STATE.discoveryTaskId));
+      const data = (res || {}).data || {};
+      if (epoch !== (AS_STATE.taskEpoch || 0)) return;
+      if (AS_STATE.mode !== 'discover' || AS_STATE.discoveryTaskId !== taskId) return;
+      const summary = data.summary || {};
+      const rows = summary.rows || [];
+      asRenderDiscoveryRows(rows);
+      // 发现阶段进度按「环境」计，回访阶段按「退款单」计，两个分母不混用。
+      const envTotal = Number(summary.progressTotal || summary.totalCount
+        || (AS_STATE.discoverySerials || []).length || 0);
+      const envDone = Number(summary.progressCompleted || 0);
+      asProgress({ ...data, progressTotal: envTotal, progressCompleted: envDone,
+        rows, unit: '个环境' });
+      AS_STATE.pollErrors = 0;
+      AS_STATE.status = String(data.status || '');
+      if (['succeeded', 'failed', 'cancelled', 'uncertain'].includes(AS_STATE.status)) {
+        AS_STATE.running = false;
+        AS_STATE.mode = '';
+        $('asTrack').disabled = false; $('asStop').disabled = true;
+        if (AS_STATE.stopRequested) AS_STATE.discoveryIntent = null;
+        await asFinishDiscovery(taskId, rows, AS_STATE.status);
+      }
     } else if (AS_STATE.mode === 'claim' && AS_STATE.runId) {
       const runId = AS_STATE.runId;
       const res = await cloudFetchJson('/v1/operation-runs/after-sale-claim/'
         + encodeURIComponent(AS_STATE.runId));
       const data = (res || {}).data || {};
+      if (epoch !== (AS_STATE.taskEpoch || 0)) return;
       if (AS_STATE.mode !== 'claim' || AS_STATE.runId !== runId) return;
       asRenderClaimRows(asOrderedRows(AS_STATE.claimItems, data.rows || [], 'orderNo'));
       asRenderEnvOutcomes(data.environments || []);
@@ -7600,8 +8111,16 @@ async function asPoll() {
         asSetPhase((AS_STATE.runLabel || '提交售后') + '中',
           `已完成 ${doneN} / ${total} ${unit}`, true);
       }
+    } else if (AS_STATE.running) {
+      // running=true 却没有任何可轮询的任务上下文：正常时序不会出现（任务模式与
+      // 编号一起建立），只在历史坏页面或未来回归时到达。只读提示恢复方式，
+      // 不把未知任务自动判失败，也不代替用户重提。
+      asSetPhase('任务状态待恢复',
+        '当前页面的任务上下文不完整；刷新页面后可在「本次提交」恢复查看最新批次，不会重复提交。', false);
     }
   } catch (e) {
+    // 归属已被取代的请求连失败也不计入新任务的错误统计。
+    if (epoch !== (AS_STATE.taskEpoch || 0)) return;
     AS_STATE.pollErrors += 1;
     if (AS_STATE.pollErrors >= 5 && AS_STATE.running) {
       asSetPhase('状态刷新失败',
@@ -7626,6 +8145,16 @@ $('asStop').onclick = async () => {
     } else if (AS_STATE.mode === 'scan' && AS_STATE.scanTaskId) {
       await cloudFetchJson('/v1/after-sale/scan/'
         + encodeURIComponent(AS_STATE.scanTaskId) + '/cancel', { method: 'POST' });
+    } else if (AS_STATE.mode === 'discover' && AS_STATE.discoveryTaskId) {
+      // 停止取消当前阶段并解除接续意图；发现所得部分列表保留展示但不自动继续。
+      AS_STATE.discoveryIntent = null;
+      await cloudFetchJson('/v1/after-sale/scan/'
+        + encodeURIComponent(AS_STATE.discoveryTaskId) + '/cancel', { method: 'POST' });
+    } else {
+      // running=true 却定位不到任务编号：宁可不动真实任务，也不盲发取消。
+      AS_STATE.stopRequested = false;
+      asSetPhase('无法定位要停止的任务',
+        '当前页面的任务上下文不完整；刷新页面恢复后再操作，后台任务不会因此中断。', false);
     }
   } catch (e) {
     asSetPhase('停止失败', String(e.message || e) + '。可稍后重试。', false);
@@ -7638,6 +8167,9 @@ $('asClearResult').onclick = () => {
   AS_STATE.claimFilter = 'all';
   AS_STATE.runLabel = '';
   AS_STATE.envMode = false; AS_STATE.envSerials = null;
+  AS_STATE.discoveryTaskId = null; AS_STATE.discoverySerials = [];
+  AS_STATE.discoveryIntent = null;
+  asDiscoveryClearPersisted();
   $('asClaimRows').innerHTML = '<tr><td colspan="11" class="hint" style="text-align:center; padding:22px;">已清空。</td></tr>';
   $('asPhaseBanner').hidden = true;
   $('asBar').style.width = '0%'; $('asProgressText').textContent = '未开始';
@@ -14628,7 +15160,7 @@ function setFeaturePanel(module) {
   if (!info) return;
   const isSettingsModule = [
     'localsettings', 'larkconnection', 'organizationaccess', 'sessionmanagement',
-    'sheinstoreauth'
+    'settledashboard', 'sheinstoreauth'
   ].includes(module);
   activeModule = module;
   if (module !== 'localexecutor') scheduleLocalExecutorDeviceRefresh();
@@ -14699,7 +15231,14 @@ function setFeaturePanel(module) {
   } else if (module === 'sessionmanagement' && !sessionManagementPageLoaded) {
     sessionManagementPageLoaded = true;
     loadSessionManagement().catch(() => { sessionManagementPageLoaded = false; });
-  } else if (module === 'sheinstoreauth' && !sheinStoreAuthPageLoaded) {
+  } else if (module === 'settledashboard') {
+    // 首次进入探测后端并读数据；再次进入直接重读（数据可能已被定时任务刷新）
+    if (!settleDashboardLoaded) {
+      settleDashboardLoaded = true;
+      enterSettlementDashboard();
+    } else {
+      settleLoad();
+    }
     sheinStoreAuthPageLoaded = true;
     if (sheinAuthCloud === null) {
       // 云端工作台（CLOUD_WEB_MODE）强制走真实接口，绝不落回带假数据的 Mock
@@ -14724,6 +15263,528 @@ function setFeaturePanel(module) {
   }
 }
 
+/* ===== 财务中心 · 对账结算（结算看板）· 云端接口 + 本地预览兜底 =====
+ * 云端工作台走真实接口：
+ *   GET  /v1/finance/settlement/summary?currency=<币种|空>  只读看板数据
+ *   POST /v1/finance/settlement/sync                        手动同步（写操作）
+ * 权限沿用 finance.access。
+ *
+ * **前端不做任何聚合**：四指标、按打款日分批、人民币折算、缺汇率置空、
+ * 失败店铺剔除，全部由服务端口径层算好（口径与回归位见
+ * docs/20260917_需求_财务中心结算看板.md 与 test_shein_settlement_service.py）。
+ * 这里只做格式化与分页——分页是纯展示关注点，不是口径。
+ * 币种筛选也走服务端：跨币种打款日不同时，"下次结算取最近一批"依赖全局
+ * 排期，前端按币种自行挑数会算错。
+ *
+ * 本地静态预览（file:// 或后端不可达）回退到 SETTLE_MOCK_PAYLOAD 固定样例，
+ * 仅用于界面评审，不代表生产口径。
+ */
+let settleDashboardLoaded = false;
+let settleCloudMode = null; // null=未探测 true=云端接口 false=本地样例
+const SETTLE_CURRENCY_LABELS = { MXN: '墨西哥比索', USD: '美元' };
+const SETTLE_PAGE_SIZES = [10, 30, 50];
+const SETTLE_PAGE_SIZE_KEY = 'xynigo.settleDashboard.pageSize';
+const SETTLE_SYNC_INTERVAL_HOURS = 6;
+const SETTLE_STATE = {
+  currency: 'ALL', page: 1, pageSize: 10,
+  payload: null, syncing: false, error: '',
+};
+
+function settleLoadPageSize() {
+  try {
+    const v = Number(localStorage.getItem(SETTLE_PAGE_SIZE_KEY));
+    if (SETTLE_PAGE_SIZES.includes(v)) SETTLE_STATE.pageSize = v;
+  } catch (e) { /* 忽略本地存储异常 */ }
+}
+
+function settleSavePageSize(v) {
+  try { localStorage.setItem(SETTLE_PAGE_SIZE_KEY, String(v)); } catch (e) { /* 忽略 */ }
+}
+
+/* 本地预览样例：与接口同构的固定载荷（不做任何计算）。
+ * 仅 file:// 或后端不可达时使用；云端模式绝不落回这份假数据。 */
+function settleMockPayload() {
+  const now = new Date();
+  const iso = new Date(now.getTime() - 5 * 60000).toISOString();
+  const g = (cur, total, cny) => ({ currency: cur, total, cny });
+  const store = (name, mode, cur, o) => Object.assign({
+    storeId: name, storeName: name, mode, currency: cur,
+    status: 'ok', error: '', paymentMethod: 1,
+    inTransitAmount: null, unsettledAmount: null,
+    nearestPayoutAmount: null, nearestPayDate: null,
+    payDates: [], settledCumulativeAmount: null, syncedAt: iso,
+  }, o);
+  return {
+    syncedAt: iso,
+    currencies: ['MXN', 'USD'],
+    storeTotal: 6, storeOk: 5, storeFailed: 1,
+    cards: {
+      in_transit: { key: 'in_transit', title: '在途资金', hint: '已发货未签收（订单级）',
+        groups: [g('MXN', '199432.82', '78077.95'), g('USD', '14750.30', '104845.13')],
+        cnyTotal: '182923.08', nearestPayDate: null },
+      unsettled: { key: 'unsettled', title: '待结算资金', hint: '对账单待结算按收支轧差（全部）',
+        groups: [g('MXN', '29547.73', '11568.45'), g('USD', '2154.76', '15315.03')],
+        cnyTotal: '26883.48', nearestPayDate: null },
+      nearest_payout: { key: 'nearest_payout', title: '下次结算金额', hint: '仅最近一批',
+        groups: [g('MXN', '14866.97', '5820.42'), g('USD', '1476.66', '10495.80')],
+        cnyTotal: '16316.22', nearestPayDate: '2026-09-21' },
+      settled_cumulative: { key: 'settled_cumulative', title: '已结算资金', hint: '报账单已付款历史累计',
+        groups: [g('MXN', '2046053.30', '801029.87'), g('USD', '180858.52', '1285542.36')],
+        cnyTotal: '2086572.23', nearestPayDate: null },
+    },
+    schedule: [
+      { payDate: '2026-09-21', cny: '16316.22',
+        groups: [g('MXN', '14866.97', '5820.42'), g('USD', '1476.66', '10495.80')] },
+      { payDate: '2026-09-28', cny: '10567.26',
+        groups: [g('MXN', '14680.76', '5747.52'), g('USD', '678.10', '4819.74')] },
+    ],
+    stores: [
+      store('样例店铺 01 · 拉美站', 'SHEIN 自营', 'MXN',
+        { inTransitAmount: '4820.50', unsettledAmount: '945.16',
+          nearestPayoutAmount: '614.35', nearestPayDate: '2026-09-21',
+          payDates: ['2026-09-21', '2026-09-28'], settledCumulativeAmount: '48620.35' }),
+      store('样例店铺 02 · 拉美站', 'SHEIN 自营', 'MXN',
+        { inTransitAmount: '12760.00', unsettledAmount: '2310.44',
+          nearestPayoutAmount: '2310.44', nearestPayDate: '2026-09-21',
+          payDates: ['2026-09-21'], settledCumulativeAmount: '132480.60',
+          status: 'warn' }),
+      store('样例店铺 03 · 北美站', 'SHEIN 自营', 'USD',
+        { inTransitAmount: '0.00', unsettledAmount: null,
+          settledCumulativeAmount: '31845.90' }),
+      store('样例店铺 04 · 拉美站', 'SHEIN 半托管', 'MXN',
+        { inTransitAmount: '3390.75', unsettledAmount: '612.08',
+          nearestPayoutAmount: '612.08', nearestPayDate: '2026-09-28',
+          payDates: ['2026-09-28'], settledCumulativeAmount: '27430.75' }),
+      store('样例店铺 05 · 北美站', 'SHEIN 自营', 'USD',
+        { status: 'fail', error: '接口错误：签名错误:生成的签名不正确',
+          syncedAt: new Date(now.getTime() - 34 * 60000).toISOString() }),
+      store('样例店铺 06 · 拉美站', 'SHEIN 自营', 'MXN',
+        { inTransitAmount: '2210.30', unsettledAmount: '1580.66',
+          nearestPayoutAmount: '1027.43', nearestPayDate: '2026-09-21',
+          payDates: ['2026-09-21', '2026-09-28'],
+          settledCumulativeAmount: '65210.40', status: 'warn' }),
+    ],
+    alerts: [
+      { kind: 'diff', storeName: '样例店铺 02 · 拉美站',
+        message: '订单级聚合比对账单净额高 114.16，属结算调整行未在订单侧回更' },
+      { kind: 'sync_fail', storeName: '样例店铺 05 · 北美站',
+        message: '接口错误：签名错误:生成的签名不正确' },
+    ],
+  };
+}
+
+function settleFilterMockPayload(payload, currency) {
+  /* 本地样例的币种筛选：纯挑选，不重算——避免在客户端复制口径逻辑。
+     代价是"下次结算最近一批"仍按全局排期（跨币种时可能不精确），
+     这正是筛选要放服务端的原因，云端模式没有这个问题。 */
+  if (!currency || currency === 'ALL') return payload;
+  const pick = (groups) => groups.filter((item) => item.currency === currency);
+  const cards = {};
+  Object.keys(payload.cards).forEach((key) => {
+    const card = payload.cards[key];
+    const groups = pick(card.groups);
+    cards[key] = Object.assign({}, card, {
+      groups,
+      cnyTotal: groups.length ? groups[0].cny : null,
+    });
+  });
+  return Object.assign({}, payload, {
+    cards,
+    schedule: payload.schedule.map((row) =>
+      Object.assign({}, row, { groups: pick(row.groups) }))
+      .filter((row) => row.groups.length),
+    stores: payload.stores.filter((s) => s.currency === currency),
+    alerts: payload.alerts.filter((a) =>
+      payload.stores.some((s) => s.storeName === a.storeName && s.currency === currency)),
+    currencies: [currency],
+  });
+}
+
+async function settleFetchSummary() {
+  const currency = SETTLE_STATE.currency === 'ALL' ? '' : SETTLE_STATE.currency;
+  if (settleCloudMode) {
+    const query = currency ? `?currency=${encodeURIComponent(currency)}` : '';
+    return cloudFetchJson(`/v1/finance/settlement/summary${query}`);
+  }
+  return settleFilterMockPayload(settleMockPayload(), SETTLE_STATE.currency);
+}
+
+async function settleLoad() {
+  SETTLE_STATE.error = '';
+  try {
+    SETTLE_STATE.payload = await settleFetchSummary();
+  } catch (e) {
+    SETTLE_STATE.error = (e && e.message) || '读取结算数据失败';
+  }
+  settleRenderAll();
+}
+
+async function settleTriggerSync() {
+  if (SETTLE_STATE.syncing) return;
+  SETTLE_STATE.syncing = true;
+  settleRenderStatus();
+  $('btnSettleRefresh').disabled = true;
+  try {
+    if (settleCloudMode) {
+      const run = await cloudFetchJson('/v1/finance/settlement/sync', { method: 'POST' });
+      const failed = Number(run.storeFailed || 0);
+      toast(failed
+        ? `同步完成：${run.storeOk} 家成功、${failed} 家失败（详见异常区）`
+        : `同步完成：${run.storeOk} 家店铺全部成功`);
+      await settleLoad();
+    } else {
+      await settleLoad();
+      toast('本地预览：已重新载入样例数据（未调用后端）');
+    }
+  } catch (e) {
+    toast((e && e.message) || '同步失败');
+  } finally {
+    SETTLE_STATE.syncing = false;
+    $('btnSettleRefresh').disabled = false;
+    settleRenderStatus();
+  }
+}
+
+/* ---------- 展示层：只格式化服务端算好的值，不做聚合 ---------- */
+
+function settleMoney(value) {
+  // 接口已把金额序列化为两位小数字符串；null 表示无数据（显示「—」），
+  // 不是 0——「没同步」和「确实是 0」必须分得开。
+  if (value === null || value === undefined || value === '') return '—';
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '—';
+  return num.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function settleTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function settleCurrencies() {
+  const payload = SETTLE_STATE.payload;
+  return payload ? payload.currencies || [] : [];
+}
+
+function settleRenderCurrencyTabs() {
+  const host = $('settleCurrencyTabs');
+  if (!host) return;
+  const chips = [{ code: 'ALL', label: '全部币种' }].concat(
+    settleCurrencies().map((code) => ({ code, label: code })));
+  host.innerHTML = chips.map((chip) => {
+    const active = SETTLE_STATE.currency === chip.code ? ' active' : '';
+    const title = SETTLE_CURRENCY_LABELS[chip.code] || '';
+    return `<button type="button" class="settle-currency-chip${active}" ` +
+      `data-settle-currency="${esc(chip.code)}" title="${esc(title)}">${esc(chip.label)}</button>`;
+  }).join('');
+  host.querySelectorAll('[data-settle-currency]').forEach((btn) => {
+    btn.onclick = async () => {
+      if (SETTLE_STATE.currency === btn.dataset.settleCurrency) return;
+      SETTLE_STATE.currency = btn.dataset.settleCurrency;
+      SETTLE_STATE.page = 1;
+      // 币种筛选走服务端：合计口径依赖全局排期，前端挑数会算错最近批次
+      await settleLoad();
+    };
+  });
+}
+
+function settleRenderStatus() {
+  const host = $('settleStatusBar');
+  if (!host) return;
+  const payload = SETTLE_STATE.payload;
+  if (!payload) {
+    host.innerHTML = `<span>${SETTLE_STATE.error || '正在读取…'}</span>`;
+    return;
+  }
+  const ok = Number(payload.storeOk || 0);
+  const total = Number(payload.storeTotal || 0);
+  const failed = Number(payload.storeFailed || 0);
+  const currencies = settleCurrencies();
+  const nextSync = payload.syncedAt
+    ? settleTime(new Date(new Date(payload.syncedAt).getTime()
+        + SETTLE_SYNC_INTERVAL_HOURS * 3600 * 1000).toISOString())
+    : '—';
+  const parts = [
+    `<span>数据时间 <b>${settleTime(payload.syncedAt)}</b></span>`,
+    `<span>每 <b>${SETTLE_SYNC_INTERVAL_HOURS}</b> 小时自动同步 · 下次 <b>${nextSync}</b></span>`,
+    `<span>店铺覆盖 <b>${ok} / ${total}</b> 家成功</span>`,
+    `<span>币种 <b>${currencies.length ? currencies.join(' · ') : '—'}</b></span>`,
+  ];
+  if (failed) parts.push(`<span>同步失败 <b>${failed}</b> 家（见下方异常区）</span>`);
+  if (SETTLE_STATE.syncing) parts.push('<span><b>正在同步…</b></span>');
+  if (SETTLE_STATE.error) parts.push(`<span>${SETTLE_STATE.error}</span>`);
+  parts.push('<span>口径：对账单为主、订单级交叉校验</span>');
+  host.innerHTML = parts.join('');
+}
+
+function settleRenderCards() {
+  const host = $('settleSummaryCards');
+  if (!host) return;
+  const payload = SETTLE_STATE.payload;
+  if (!payload) { host.innerHTML = ''; return; }
+  const order = ['in_transit', 'unsettled', 'nearest_payout', 'settled_cumulative'];
+  host.innerHTML = order.map((key) => {
+    const card = payload.cards[key];
+    if (!card) return '';
+    const hasData = card.groups.length > 0;
+    const cnyLine = hasData
+      ? `<div class="settle-card-cny">¥ ${settleMoney(card.cnyTotal)}<small>人民币合计</small></div>`
+      : '';
+    const rows = hasData
+      ? card.groups.map((group) =>
+        `<div class="settle-native-row"><span class="cur">${group.currency}</span>` +
+        `<span class="amt">${settleMoney(group.total)}</span></div>`).join('')
+      : '<div class="settle-card-none">当前范围内无可计入店铺</div>';
+    // 打款日放卡片头部（hint 位）：多一行会把这张卡的币种行压低一截，四张卡不再齐平
+    const dueHtml = card.nearestPayDate
+      ? ` · <span class="settle-hint-due">预计 ${card.nearestPayDate.slice(5)}</span>` : '';
+    return `<div class="settle-card"><div class="settle-card-head"><b>${card.title}</b>` +
+      `<small>${card.hint}${dueHtml}</small></div>${cnyLine}` +
+      `<div class="settle-card-native">${rows}</div></div>`;
+  }).join('');
+  const fxNote = $('settleFxNote');
+  if (fxNote) {
+    const missing = [];
+    Object.values(payload.cards).forEach((card) => {
+      card.groups.forEach((group) => {
+        if (group.cny === null && missing.indexOf(group.currency) < 0) {
+          missing.push(group.currency);
+        }
+      });
+    });
+    fxNote.innerHTML = '汇率口径：<b>中国银行当日汇率</b>。卡片人民币金额按当日汇率折算，' +
+      '币种原币金额同列保留可回溯核对；汇率随每日快照固化，历史值不随汇率变动重算。' +
+      (missing.length
+        ? `<b>当前缺少 ${missing.join(' / ')} 汇率，对应人民币合计显示「—」（不按 1:1 计入）。</b>`
+        : '');
+  }
+}
+
+function settleRenderTable() {
+  const body = $('settleStoreTbody');
+  if (!body) return;
+  const payload = SETTLE_STATE.payload;
+  const stores = payload ? payload.stores || [] : [];
+  const pageSize = SETTLE_STATE.pageSize;
+  const pages = Math.max(1, Math.ceil(stores.length / pageSize));
+  if (SETTLE_STATE.page > pages) SETTLE_STATE.page = pages;
+  const start = (SETTLE_STATE.page - 1) * pageSize;
+  const rows = stores.slice(start, start + pageSize);
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="10" class="admin-empty">当前范围内没有已授权店铺</td></tr>';
+  } else {
+    const badge = { ok: ['ok', '正常'], warn: ['warn', '有差异'], fail: ['fail', '同步失败'] };
+    body.innerHTML = rows.map((store) => {
+      const [cls, label] = badge[store.status] || badge.ok;
+      const payDates = store.payDates || [];
+      const more = payDates.length - 1;
+      const payDateCell = payDates.length
+        ? esc(payDates[0]) + (more > 0 ? ` <span class="settle-more">+${more} 批</span>` : '')
+        : '—';
+      return `<tr>
+        <td><strong>${esc(store.storeName)}</strong></td>
+        <td>${store.mode === 'semi' ? 'SHEIN 半托管' : 'SHEIN 自营'}</td>
+        <td>${esc(store.currency) || '—'}</td>
+        <td class="num">${settleMoney(store.inTransitAmount)}</td>
+        <td class="num">${settleMoney(store.unsettledAmount)}</td>
+        <td class="num">${settleMoney(store.nearestPayoutAmount)}</td>
+        <td class="pay-date">${payDateCell}</td>
+        <td class="num">${settleMoney(store.settledCumulativeAmount)}</td>
+        <td>${settleTime(store.syncedAt)}</td>
+        <td><span class="settle-badge ${cls}">${label}</span></td>
+      </tr>`;
+    }).join('');
+  }
+  $('settlePageInfo').textContent = stores.length
+    ? `第 ${SETTLE_STATE.page} 页 · 共 ${stores.length} 家`
+    : '暂无数据';
+  $('settlePageIndicator').textContent = `${SETTLE_STATE.page} / ${pages} 页`;
+  $('btnSettlePrev').disabled = SETTLE_STATE.page <= 1;
+  $('btnSettleNext').disabled = SETTLE_STATE.page >= pages;
+}
+
+function settleRenderAlerts() {
+  const host = $('settleAlerts');
+  if (!host) return;
+  const payload = SETTLE_STATE.payload;
+  const alerts = payload ? payload.alerts || [] : [];
+  const warns = alerts.filter((a) => a.kind === 'diff');
+  const fails = alerts.filter((a) => a.kind === 'sync_fail');
+  const blocks = [];
+  if (warns.length) {
+    blocks.push('<div class="settle-alerts-title">对账差异（订单级聚合 vs 对账单净额）</div>');
+    warns.forEach((a) => blocks.push(
+      `<div class="settle-alert warn"><span>⚠</span><span><strong>${esc(a.storeName)}</strong>：${esc(a.message)}</span></div>`));
+  }
+  if (fails.length) {
+    blocks.push('<div class="settle-alerts-title">同步失败（未计入汇总）</div>');
+    fails.forEach((a) => blocks.push(
+      `<div class="settle-alert fail"><span>✕</span><span><strong>${esc(a.storeName)}</strong>：${esc(a.message)}</span></div>`));
+  }
+  if (!blocks.length) {
+    blocks.push('<div class="settle-alerts-title">对账差异</div>');
+    blocks.push('<div class="settle-alert"><span>✓</span><span>当前范围内无差异、无同步失败。</span></div>');
+  }
+  host.innerHTML = blocks.join('');
+}
+
+function settleRenderAll() {
+  settleRenderCurrencyTabs();
+  settleRenderStatus();
+  settleRenderCards();
+  settleRenderTable();
+  settleRenderAlerts();
+}
+
+/* ---------- 导出 ----------
+ * 只把服务端算好的载荷写成表格，**不复算任何合计**。
+ * 原型用前端 CSV（UTF-8 BOM，Excel 可直接打开）；
+ * 正式实现沿用巡检 store_finance_export.py 由云端出 xlsx，列序以本函数为准。 */
+function settleCsvCell(value) {
+  const text = value === null || value === undefined ? '' : String(value);
+  return /[",\n\r]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+}
+
+function settleStamp() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+}
+
+const SETTLE_EXPORT_HEADERS = ['店铺', '类型', '币种', '在途资金', '待结算资金',
+  '下次结算', '预计打款日', '已结算（历史累计）', '数据时间', '状态', '说明'];
+
+function buildSettlementExportRows() {
+  const payload = SETTLE_STATE.payload || {};
+  const stores = payload.stores || [];
+  const rows = [SETTLE_EXPORT_HEADERS.slice()];
+  const statusLabel = { ok: '正常', warn: '有差异', fail: '同步失败' };
+  stores.forEach((store) => {
+    rows.push([
+      store.storeName, store.mode === 'semi' ? 'SHEIN 半托管' : 'SHEIN 自营',
+      store.currency || '',
+      store.inTransitAmount, store.unsettledAmount, store.nearestPayoutAmount,
+      (store.payDates || []).join(' / '), store.settledCumulativeAmount,
+      store.syncedAt ? store.syncedAt.slice(0, 16).replace('T', ' ') : '',
+      statusLabel[store.status] || '正常', store.error || '',
+    ]);
+  });
+  rows.push([]);
+  rows.push(['汇总（值取自服务端口径层，非本文件计算）']);
+  rows.push(['', '', '币种', '在途资金', '待结算资金', '下次结算', '',
+    '已结算（历史累计）', '', '', '']);
+  const cardGroups = (key) => (payload.cards && payload.cards[key]
+    ? payload.cards[key].groups : []);
+  const currencySet = [];
+  ['in_transit', 'unsettled', 'settled_cumulative'].forEach((key) => {
+    cardGroups(key).forEach((group) => {
+      if (currencySet.indexOf(group.currency) < 0) currencySet.push(group.currency);
+    });
+  });
+  currencySet.sort().forEach((currency) => {
+    const pick = (key) => {
+      const hit = cardGroups(key).find((group) => group.currency === currency);
+      return hit ? hit.total : '';
+    };
+    rows.push(['', '', currency, pick('in_transit'), pick('unsettled'),
+      pick('nearest_payout'), '', pick('settled_cumulative'), '', '', '']);
+  });
+  const cnyOf = (key) => {
+    const card = payload.cards && payload.cards[key];
+    return card ? card.cnyTotal : '';
+  };
+  rows.push(['', '', '折人民币', cnyOf('in_transit'), cnyOf('unsettled'),
+    cnyOf('nearest_payout'), '', cnyOf('settled_cumulative'), '', '', '']);
+  rows.push([]);
+  rows.push(['结算排期（按预计打款日，服务端口径）']);
+  rows.push(['', '', '打款日', '该批币种:原币金额', '', '', '', '', '', '', '']);
+  (payload.schedule || []).forEach((row) => {
+    const native = row.groups
+      .map((group) => `${group.currency}:${settleMoney(group.total)}`).join(' ');
+    rows.push(['', '', row.payDate, native, '', '', '', '', '', '', '']);
+  });
+  rows.push([]);
+  rows.push([`数据时间：${payload.syncedAt ? payload.syncedAt.slice(0, 16).replace('T', ' ') : ''}`,
+    `店铺：成功 ${payload.storeOk || 0} / 共 ${payload.storeTotal || 0} 家`,
+    `币种范围：${SETTLE_STATE.currency === 'ALL' ? '全部' : SETTLE_STATE.currency}`,
+    `数据来源：${settleCloudMode ? '云端接口' : '本地预览样例'}`]);
+  return { rows, storeCount: stores.length };
+}
+
+function settleCloudExport() {
+  /* 云端模式：由服务端生成 xlsx（金额是可求和的数值单元格，比前端 CSV 更适合
+     财务直接使用）。走浏览器导航下载，走同源 Cookie 鉴权。 */
+  const currency = SETTLE_STATE.currency === 'ALL' ? '' : SETTLE_STATE.currency;
+  const query = currency ? `?currency=${encodeURIComponent(currency)}` : '';
+  window.location.href = `/v1/finance/settlement/export${query}`;
+  toast('正在导出 xlsx（由服务端生成）…');
+}
+
+function exportSettlementDashboard() {
+  if (settleCloudMode) { settleCloudExport(); return; }
+  const { rows, storeCount } = buildSettlementExportRows();
+  const csv = rows.map((row) => row.map(settleCsvCell).join(',')).join('\r\n');
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `结算看板_${settleStamp()}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast(`已导出 ${storeCount} 家店铺（原型导出 CSV，正式版为云端 xlsx）`);
+}
+
+/* ---------- 初始化 ---------- */
+
+function initSettlementDashboard() {
+  settleLoadPageSize();
+  const sizeSel = $('settlePageSize');
+  if (sizeSel) {
+    sizeSel.value = String(SETTLE_STATE.pageSize);
+    sizeSel.onchange = () => {
+      const picked = Number(sizeSel.value);
+      SETTLE_STATE.pageSize = SETTLE_PAGE_SIZES.includes(picked) ? picked : 10;
+      settleSavePageSize(SETTLE_STATE.pageSize);
+      SETTLE_STATE.page = 1; // 每页条数变化后回第 1 页，避免停在不存在的页码
+      settleRenderTable();
+    };
+  }
+  $('btnSettleExport').onclick = () => exportSettlementDashboard();
+  $('btnSettleRefresh').onclick = () => { settleTriggerSync(); };
+  $('btnSettlePrev').onclick = () => {
+    if (SETTLE_STATE.page > 1) { SETTLE_STATE.page -= 1; settleRenderTable(); }
+  };
+  $('btnSettleNext').onclick = () => {
+    const payload = SETTLE_STATE.payload;
+    const total = payload ? (payload.stores || []).length : 0;
+    const pages = Math.max(1, Math.ceil(total / SETTLE_STATE.pageSize));
+    if (SETTLE_STATE.page < pages) { SETTLE_STATE.page += 1; settleRenderTable(); }
+  };
+  return settleLoad();
+}
+
+async function enterSettlementDashboard() {
+  if (settleCloudMode === null) {
+    // 云端工作台强制走真实接口，绝不落回样例数据；仅本地预览允许回退。
+    if (CLOUD_WEB_MODE) {
+      settleCloudMode = true;
+    } else if (location.protocol === 'file:') {
+      settleCloudMode = false;
+    } else {
+      await cloudFetchJson('/v1/finance/settlement/summary?currency=')
+        .then(() => { settleCloudMode = true; })
+        .catch((e) => {
+          settleCloudMode = !!(e && typeof e.status === 'number' && e.status !== 404);
+        });
+    }
+  }
+  return initSettlementDashboard();
+}
 /* SHEIN 授权回调页：/shein-auth/callback?tempToken=...&state=...
  * 店铺主账号同意授权后由平台 302 到此；后端回调端点不要求工作台登录态
  * （state 即一次性凭证），完成后回工作台首页。 */
@@ -17424,8 +18485,8 @@ async function loadLocalSettingsPage() {
     $('cfgProxyState').textContent = cfg.proxySource === 'custom'
       ? '当前使用自定义代理链接；留空保存保持不变，勾选清除恢复内置默认。'
       : '已内置默认提取链接（前期写死），可直接使用；仅需要自定义时填写。';
-    const canWriteDeviceConfig = hasRole('super_admin')
-      && hasPermission('system.integration.manage');
+    // 本机运行参数向所有登录成员开放（20260917 产品决策），不再按角色锁定。
+    const canWriteDeviceConfig = !!authIdentity;
     [
       'cfgPort', 'cfgConcurrency', 'cfgSafeParallel', 'cfgHideEnvName',
       'cfgHideIp', 'cfgEnvVerify', 'cfgEnvWorkers', 'cfgPurchaseTagMX',
@@ -17433,7 +18494,7 @@ async function loadLocalSettingsPage() {
     ].forEach(id => { $(id).disabled = !canWriteDeviceConfig; });
     $('btnCfgSave').disabled = !canWriteDeviceConfig;
     $('btnCfgSave').textContent = canWriteDeviceConfig
-      ? '保存本机业务设置' : '仅超级管理员可修改';
+      ? '保存本机业务设置' : '请先登录';
     await loadLocalDataSources();
     return true;
   } catch (e) {
@@ -17606,8 +18667,8 @@ async function loadLarkConnectionPage() {
 }
 
 $('btnCfgSave').onclick = async () => {
-  if (!(hasRole('super_admin') && hasPermission('system.integration.manage'))) {
-    toast('设备运行参数仅允许超级管理员修改');
+  if (!authIdentity) {
+    toast('请先登录后再保存本机设置');
     return;
   }
   const port = parseInt($('cfgPort').value.trim(), 10);
