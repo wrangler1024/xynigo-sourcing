@@ -33,17 +33,28 @@ async function settle(n = 6) { for (let i = 0; i < n; i++) await tick(); }
 const nodes = new Map();
 const node = id => {
   if (!nodes.has(id)) nodes.set(id, {dataset: {}, disabled: false, hidden: false,
-    value: id === 'asSerials' ? '900001 900002' : '', innerHTML: '', textContent: '', style: {}});
+    value: id === 'asSerials' ? '900001 900002' : '', innerHTML: '', textContent: '', style: {},
+    tabIndex: 0, attrs: {}, setAttribute(k, v) { this.attrs[k] = v; },
+    scrollIntoView: () => {}});
   return nodes.get(id);
 };
 
-const getCalls = [], postCalls = [], phases = [], progressCalls = [];
+const storageData = new Map();
+const localStorageStub = {
+  getItem: k => (storageData.has(k) ? storageData.get(k) : null),
+  setItem: (k, v) => storageData.set(k, String(v)),
+  removeItem: k => storageData.delete(k),
+};
+
+const getCalls = [], postCalls = [], phases = [], progressCalls = [], finishCalls = [];
 let router = async () => ({data: {}});
 let executorResponder = async () => ({id: 'EXEC', capabilities: EXEC_CAPS});
 
 const ctx = vm.createContext({
   TextEncoder, console, encodeURIComponent,
   AS_STATE: freshState(), AS_TYPES: [], $: node,
+  AS_DISCOVERY_KEY: 'afterSaleDiscoveryTask',
+  localStorage: localStorageStub,
   crypto: require('node:crypto').webcrypto,
   localExecutorDevices: [], renderLocalExecutorDevices: () => {},
   cloudFormalExecutor: async capability => executorResponder(capability),
@@ -60,13 +71,17 @@ const ctx = vm.createContext({
   asRuntimeOptions: () => ({browserMode: 'headless', concurrency: 2}),
   asSyncRuntimeControls: () => {},
   asSaveList: () => {}, asSyncScanExportButton: () => {},
-  asSetOrderView: () => {}, asSyncRetryButton: () => {},
+  asSyncRetryButton: () => {},
   asRenderClaimRows: rows => { ctx.AS_STATE.claimRows = rows; },
   asRenderEnvOutcomes: rows => { ctx.AS_STATE.environments = rows || []; },
   asRenderScanRows: rows => { ctx.AS_STATE.rows = rows || []; },
-  asRenderTrackRows: () => {}, asSupplementClaimAccounts: () => {},
-  asReviewFailed: () => false, asRenderDiscoveryRows: () => {},
-  asFinishDiscovery: async () => {},
+  asRenderTrackRows: rows => { ctx.AS_STATE.trackRows = rows || []; },
+  asSupplementClaimAccounts: () => {},
+  asReviewFailed: () => false,
+  asRenderDiscoveryRows: rows => { ctx.AS_STATE.discoveryRows = rows || []; },
+  asDiscoveryItemsFromRows: () => [],
+  asTrackItemsFromRows: () => [],
+  asFinishDiscovery: async (taskId, rows, status) => { finishCalls.push({taskId, status}); },
   toast: message => { node('toast').textContent = message; }, confirm: () => true
 });
 
@@ -77,7 +92,9 @@ function load(name) {
 }
 for (const name of ['asBeginTaskEpoch', 'asRunIdOf', 'asWriteEntryReady', 'asCreateTask',
   'asRequireRuntimeControls', 'asPoll', 'asSubmitItems', 'asSubmitByEnvironment',
-  'asScan', 'asSerials', 'asOrderedRows']) load(name);
+  'asScan', 'asSerials', 'asOrderedRows', 'asSetOrderView',
+  'asLoadLatestClaim', 'asRestoreDiscovery', 'asDiscoveryPersist', 'asDiscoveryClearPersisted',
+  'asTrack', 'asDiscoverAndTrack']) load(name);
 const stopStart = html.indexOf("$('asStop').onclick =");
 vm.runInContext(html.slice(stopStart, html.indexOf('\n};', stopStart) + 3), ctx);
 const run = code => vm.runInContext(code, ctx);
@@ -86,6 +103,7 @@ const state = () => ctx.AS_STATE;
 function resetState(extra) {
   ctx.AS_STATE = Object.assign(freshState(), extra || {});
   getCalls.length = 0; postCalls.length = 0; phases.length = 0; progressCalls.length = 0;
+  finishCalls.length = 0; storageData.clear();
   ['asStop', 'asScan', 'asSubmit'].forEach(id => { node(id).disabled = false; });
   router = async () => ({data: {}});
   executorResponder = async () => ({id: 'EXEC', capabilities: EXEC_CAPS});
@@ -323,9 +341,17 @@ const envs5 = ['900001', '900002', '900003', '900004', '900005'];
     };
     await node('asStop').onclick();
     assert.equal(cancelPath, claimGet('STOP-1') + '/cancel', '取消必须发给当前任务编号');
-    run('asSetOrderView && 0');                             // 占位：视图切换由桩承担，无任务语义
-    assert.equal(state().mode, 'claim', '切页签不属于任务切换');
-    console.log('scenario 8 (停止指向当前任务) OK');
+    // 真实页签切换：视图状态与 DOM 生效，但任务模式、停止目标不受影响
+    run("asSetOrderView('pending', true)");
+    assert.equal(state().orderView, 'pending');
+    assert.equal(node('asPendingTab').attrs['aria-selected'], 'true');
+    assert.equal(node('asResultView').hidden, true);
+    assert.equal(state().mode, 'claim', '切页签不是任务切换');
+    run("asSetOrderView('result', true)");
+    assert.equal(state().orderView, 'result');
+    assert.equal(state().mode, 'claim', '切回结果页同样不影响任务');
+    assert.equal(state().runId, 'STOP-1');
+    console.log('scenario 8 (停止指向当前任务 + 真实页签切换) OK');
   }
 
   // ── 场景 9：姊妹路径 asScan 同窗口——模式后置、旧编号不被查询 ──
@@ -346,5 +372,195 @@ const envs5 = ['900001', '900002', '900003', '900004', '900005'];
     console.log('scenario 9 (asScan 姊妹路径) OK');
   }
 
-  console.log('PASS: task lifecycle race regression (submit/poll/epoch/terminal/stop/scan) — synthetic data only');
+  // ── 场景 10：asLoadLatestClaim 真实恢复终态批次，随后真实再提交 ──
+  {
+    resetState();
+    let createGate = null;
+    router = async (path, options) => {
+      if (path === '/v1/operation-runs/after-sale-claim/latest') {
+        return {data: {runId: 'LATEST-1', submitMode: 'environments', status: 'completed',
+          rows: [{orderNo: 'L1', status: 'ok'}],
+          environments: [{environmentSerial: '900001', status: 'ok'}], progressTotal: 1, progressCompleted: 1}};
+      }
+      if (options && options.method && path === claimCreatePath) {
+        createGate = createGate || defer();
+        return createGate.promise;
+      }
+      return {data: {}};
+    };
+    await run('asLoadLatestClaim()');
+    assert.ok(state().runId === 'LATEST-1' && state().claimRows.length === 1,
+      '真实恢复必须回填最近批次与订单行');
+    assert.ok(state().running === false && state().mode === '', '终态批次恢复不接管轮询');
+    assert.equal(state().runLabel, '按环境提交');
+    const submitted = run(`asSubmitItems([], {environmentSerials: ["900030"], label: "按环境提交"})`);
+    await settle();
+    createGate.resolve({data: {runId: 'AFTER-LATEST'}});
+    assert.equal(await submitted, true);
+    await settle();
+    assert.ok(state().mode === 'claim' && state().runId === 'AFTER-LATEST'
+      && state().running === true && getCalls.includes(claimGet('AFTER-LATEST')),
+      '恢复终态历史后真实再提交必须建立并轮询新任务');
+    console.log('scenario 10 (asLoadLatestClaim 真实恢复 + 再提交) OK');
+  }
+
+  // ── 场景 11：asLoadLatestClaim 恢复运行中批次并跟进到终态 ──
+  {
+    resetState();
+    const liveGet = defer();
+    router = async path => path === '/v1/operation-runs/after-sale-claim/latest'
+      ? {data: {runId: 'LIVE-1', status: 'running', submitMode: 'environments',
+        rows: [{orderNo: 'V1', status: 'running'}], environments: [], progressTotal: 3, progressCompleted: 1}}
+      : (path === claimGet('LIVE-1') ? liveGet.promise : {data: {}});
+    await run('asLoadLatestClaim()');
+    assert.ok(state().mode === 'claim' && state().running === true && state().runId === 'LIVE-1',
+      '恢复运行中批次必须接管轮询');
+    assert.ok(state().taskEpoch >= 1, '恢复接手必须取任务代次');
+    assert.ok(getCalls.includes(claimGet('LIVE-1')), '恢复后首轮轮询必须发出');
+    liveGet.resolve({data: {status: 'completed', successCount: 3, progressCompleted: 3, progressTotal: 3,
+      rows: [{orderNo: 'V1', status: 'ok'}], environments: []}});
+    await settle();
+    assert.ok(state().running === false && state().mode === '', '恢复的任务也必须正常终态');
+    console.log('scenario 11 (asLoadLatestClaim 恢复运行中批次) OK');
+  }
+
+  // ── 场景 12：asRestoreDiscovery 旧响应晚到不得覆盖新发现任务（成功与 reject）──
+  {
+    resetState();
+    storageData.set('afterSaleDiscoveryTask', JSON.stringify({taskId: 'OLD-DISC', serials: ['900001']}));
+    const restoreGate = defer(), createGate = defer();
+    router = (path, options) => {
+      if (path.endsWith('/after-sale/scan/OLD-DISC')) return restoreGate.promise;
+      if (options && options.method && path === '/v1/after-sale/scan') return createGate.promise;
+      return {data: {}};
+    };
+    const restoreDone = run('asRestoreDiscovery()');
+    await settle();
+    assert.ok(getCalls.some(p => p.endsWith('/after-sale/scan/OLD-DISC')), '旧恢复请求已发出');
+    const discovery = run(`asDiscoverAndTrack(["900001", "900002"],
+      {id: "EXEC-2", capabilities: ${JSON.stringify(EXEC_CAPS)}})`);
+    await settle();
+    createGate.resolve({data: {taskId: 'NEW-DISC'}});
+    await discovery; await settle();
+    assert.ok(state().mode === 'discover' && state().discoveryTaskId === 'NEW-DISC'
+      && state().running === true, '新发现任务已建立');
+    // 旧恢复响应此刻返回运行中状态，试图写回旧编号——必须被归属校验拦下
+    restoreGate.resolve({data: {status: 'running',
+      summary: {purpose: 'refund_discovery', rows: [], progressTotal: 1, progressCompleted: 0}}});
+    await restoreDone; await settle();
+    assert.equal(state().discoveryTaskId, 'NEW-DISC', '旧恢复响应不得覆盖新任务编号');
+    assert.equal(state().mode, 'discover');
+    assert.equal(state().running, true);
+    // 停止仍指向新任务编号
+    let cancelPath = null;
+    router = async (path, options) => {
+      if (options && options.method === 'POST' && path.endsWith('/cancel')) cancelPath = path;
+      return {data: {}};
+    };
+    await node('asStop').onclick();
+    assert.ok(cancelPath && cancelPath.endsWith('/after-sale/scan/NEW-DISC/cancel'),
+      '停止必须仍指向新任务编号');
+    // reject 版本：旧恢复请求失败时不得清掉新任务的持久化
+    resetState();
+    storageData.set('afterSaleDiscoveryTask', JSON.stringify({taskId: 'OLD-DISC-2', serials: ['900001']}));
+    const restoreGate2 = defer(), createGate2 = defer();
+    router = (path, options) => {
+      if (path.endsWith('/after-sale/scan/OLD-DISC-2')) return restoreGate2.promise;
+      if (options && options.method && path === '/v1/after-sale/scan') return createGate2.promise;
+      return {data: {}};
+    };
+    const restoreDone2 = run('asRestoreDiscovery()');
+    await settle();
+    const discovery2 = run(`asDiscoverAndTrack(["900009"],
+      {id: "EXEC-2", capabilities: ${JSON.stringify(EXEC_CAPS)}})`);
+    await settle();
+    createGate2.resolve({data: {taskId: 'NEW-DISC-2'}});
+    await discovery2; await settle();
+    restoreGate2.reject(new Error('session expired'));
+    await restoreDone2; await settle();
+    const persisted = storageData.get('afterSaleDiscoveryTask') || '';
+    assert.ok(persisted.includes('NEW-DISC-2'), '旧恢复失败不得清除新任务的持久化');
+    console.log('scenario 12 (asRestoreDiscovery 旧响应晚到成功/reject 均不覆盖) OK');
+  }
+
+  // ── 场景 13：asRestoreDiscovery 无交错正常恢复（active 与终态）──
+  {
+    resetState();
+    storageData.set('afterSaleDiscoveryTask', JSON.stringify({taskId: 'SOLO-DISC', serials: ['900001']}));
+    const soloGet = defer();
+    router = path => path.endsWith('/after-sale/scan/SOLO-DISC') ? soloGet.promise : {data: {}};
+    const restoring = run('asRestoreDiscovery()');
+    await settle();
+    soloGet.resolve({data: {status: 'running',
+      summary: {purpose: 'refund_discovery', rows: [], progressTotal: 1, progressCompleted: 0}}});
+    await restoring; await settle();
+    assert.ok(state().mode === 'discover' && state().discoveryTaskId === 'SOLO-DISC'
+      && state().running === true, '无交错时恢复必须正常接手');
+    assert.ok(getCalls.some(p => p.endsWith('/after-sale/scan/SOLO-DISC')), '恢复后必须开始轮询');
+    // 终态批次恢复：展示结果但不接管
+    resetState();
+    storageData.set('afterSaleDiscoveryTask', JSON.stringify({taskId: 'DONE-DISC', serials: ['900001']}));
+    router = async path => path.endsWith('/after-sale/scan/DONE-DISC')
+      ? {data: {status: 'succeeded', summary: {purpose: 'refund_discovery', rows: [], progressTotal: 1, progressCompleted: 1}}}
+      : {data: {}};
+    await run('asRestoreDiscovery()');
+    assert.ok(state().running === false && state().mode === '', '终态恢复不接管');
+    assert.ok(state().discoveryIntent === null, '刷新恢复不得带出自动接续意图');
+    console.log('scenario 13 (asRestoreDiscovery 正常恢复 active/终态) OK');
+  }
+
+  // ── 场景 14：asTrack 真实回访创建、窗口期模式后置与终态 ──
+  {
+    resetState();
+    const trackCreate = defer();
+    router = (path, options) => (options && options.method
+      && path === '/v1/after-sale/track') ? trackCreate.promise : {data: {}};
+    const tracked = run(`asTrack([{environmentSerial: "900001", orderNo: "SO-1", refundBillId: "RB-1"}])`);
+    await settle();
+    assert.equal(state().mode, '', '回访创建期间同样不得先行写入任务模式');
+    run('asPoll()'); await settle();
+    assert.ok(!getCalls.some(p => p.includes('/after-sale/track/')), 'starting 期间不得发旧回访查询');
+    trackCreate.resolve({data: {taskId: 'TR-1'}});
+    await tracked; await settle();
+    assert.ok(state().mode === 'track' && state().trackTaskId === 'TR-1' && state().running === true);
+    assert.ok(getCalls.includes('/v1/after-sale/track/TR-1'), '回访创建后首轮轮询必须发出');
+    const trackGet = defer();
+    router = path => path === '/v1/after-sale/track/TR-1' ? trackGet.promise : {data: {}};
+    run('asPoll()'); await settle();
+    trackGet.resolve({data: {status: 'succeeded', summary: {progressTotal: 1, progressCompleted: 1,
+      rows: [{refundBillId: 'RB-1', status: 'ok', phase: 'reviewing'}]}}});
+    await settle();
+    assert.ok(state().running === false && state().mode === '', '回访终态必须解除忙碌');
+    assert.ok((state().trackRows || []).some(r => r.refundBillId === 'RB-1'), '回访行必须渲染');
+    console.log('scenario 14 (asTrack 真实创建与终态) OK');
+  }
+
+  // ── 场景 15：asDiscoverAndTrack 真实创建、持久化与 discover 终态 ──
+  {
+    resetState();
+    const discCreate = defer();
+    router = (path, options) => (options && options.method
+      && path === '/v1/after-sale/scan') ? discCreate.promise : {data: {}};
+    const discovery = run(`asDiscoverAndTrack(["900041"],
+      {id: "EXEC-3", capabilities: ${JSON.stringify(EXEC_CAPS)}})`);
+    await settle();
+    assert.equal(state().mode, '', '发现创建期间同样不得先行写入任务模式');
+    discCreate.resolve({data: {taskId: 'DISC-1'}});
+    await discovery; await settle();
+    assert.ok(state().mode === 'discover' && state().discoveryTaskId === 'DISC-1' && state().running === true);
+    assert.ok((storageData.get('afterSaleDiscoveryTask') || '').includes('DISC-1'),
+      '发现任务创建后必须写入持久化（刷新可恢复）');
+    const discGet = defer();
+    router = path => path.endsWith('/after-sale/scan/DISC-1') ? discGet.promise : {data: {}};
+    run('asPoll()'); await settle();
+    discGet.resolve({data: {status: 'succeeded',
+      summary: {purpose: 'refund_discovery', rows: [], progressTotal: 1, progressCompleted: 1}}});
+    await settle();
+    assert.ok(state().running === false && state().mode === '', '发现终态必须解除忙碌');
+    assert.ok(finishCalls.some(c => c.taskId === 'DISC-1' && c.status === 'succeeded'),
+      '发现终态必须进入收尾处理（自动接续入口）');
+    console.log('scenario 15 (asDiscoverAndTrack 真实创建与终态) OK');
+  }
+
+  console.log('PASS: task lifecycle race regression (submit/poll/epoch/terminal/stop/scan/restore/discover/track) — synthetic data only');
 })().catch(e => { console.error(e); process.exitCode = 1; });

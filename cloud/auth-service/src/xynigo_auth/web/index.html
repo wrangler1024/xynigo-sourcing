@@ -6594,14 +6594,18 @@ async function asDiscoverAndTrack(serials, executor) {
     AS_STATE.etaBase = null;
     AS_STATE.startedAt = Date.now(); AS_STATE.endedAt = null; AS_STATE.progressSnapshot = null;
     AS_STATE.trackRows = [];
+    started = true;   // 任务已创建受理：之后的界面渲染异常不属于创建失败
     $('asTrack').disabled = true; $('asStop').disabled = false;
     asRenderDiscoveryRows([]);
     asProgress({progressTotal:serials.length, progressCompleted:0, unit:'个环境'});
     asSetPhase('正在查找退款单', `共 ${serials.length} 个环境 · 只读读取退款记录，不提交售后`, true);
     $('asTrackCard').scrollIntoView?.({block:'start',behavior:'instant'});
-    started = true;
   } catch (e) {
-    if (!started) AS_STATE.discoveryIntent = null;
+    if (started) {
+      asSetPhase('平台查找已发起', '界面刷新出现异常，不影响后台查找；正在继续查询进度。', true);
+      return;
+    }
+    AS_STATE.discoveryIntent = null;
     asSetPhase('平台查找发起失败', String(e.message || e), false);
   } finally {
     AS_STATE.starting = false;
@@ -6725,6 +6729,9 @@ async function asRestoreDiscovery() {
   if (!saved || !saved.taskId || !Array.isArray(saved.serials) || !saved.serials.length) return;
   try {
     const res = await cloudFetchJson('/v1/after-sale/scan/' + encodeURIComponent(saved.taskId));
+    // 响应回来先校验归属：期间已发起/恢复其他任务则整体让位——
+    // 不写任务编号、不渲染、不清持久化（持久化可能已属于新任务）。
+    if (AS_STATE.running || AS_STATE.starting || AS_STATE.mode || AS_STATE.runId) return;
     const data = (res || {}).data || {};
     const summary = data.summary || {};
     if (summary.purpose !== 'refund_discovery') { asDiscoveryClearPersisted(); return; }
@@ -6732,10 +6739,7 @@ async function asRestoreDiscovery() {
     AS_STATE.discoverySerials = saved.serials;
     const rows = summary.rows || [];
     const status = String(data.status || '');
-    // fetch 返回期间提交批次可能已恢复：只读渲染结果安全，接续轮询要让位。
-    const busy = AS_STATE.running || AS_STATE.starting || AS_STATE.mode || AS_STATE.runId;
     if (['created','queued','leased','running','cancel_requested'].includes(status)) {
-      if (busy) return;
       // 即将接手轮询：取新代次，使任何在飞的旧响应失效。
       asBeginTaskEpoch();
       AS_STATE.mode = 'discover'; AS_STATE.running = true;
@@ -6762,7 +6766,10 @@ async function asRestoreDiscovery() {
     asDiscoveryClearPersisted();
     AS_STATE.discoveryTaskId = null; AS_STATE.discoverySerials = [];
   } catch (e) {
-    asDiscoveryClearPersisted();
+    // 归属已换时不清持久化：那可能已是新任务的恢复数据。
+    if (!AS_STATE.running && !AS_STATE.starting && !AS_STATE.mode && !AS_STATE.runId) {
+      asDiscoveryClearPersisted();
+    }
   }
 }
 async function asTrack(explicitItems) {
@@ -6799,13 +6806,17 @@ async function asTrack(explicitItems) {
     AS_STATE.trackItems = items.map(item => ({...item}));
     AS_STATE.trackRows = [];
     AS_STATE.trackTotal = items.length;
+    started = true;   // 任务已创建受理：之后的界面渲染异常不属于创建失败
     $('asTrack').disabled = true; $('asStop').disabled = false;
     asRenderTrackRows(asOrderedRows(AS_STATE.trackItems, [], 'refundBillId'));
     asProgress({progressTotal: items.length, progressCompleted: 0, unit: '单'});
     asSetPhase('回访运行中', `共 ${items.length} 个退款单 · 只读，不动订单与退款数据`, true);
     $('asTrackCard').scrollIntoView?.({block:'start',behavior:'instant'});
-    started = true;
   } catch (e) {
+    if (started) {
+      asSetPhase('回访已发起', '界面刷新出现异常，不影响后台回访；正在继续查询进度。', true);
+      return;
+    }
     asSetPhase('发起失败', String(e.message || e), false);
   }
   } finally {
@@ -7240,6 +7251,7 @@ async function asScan(options = {}) {
     AS_STATE.pollErrors = 0;
     AS_STATE.etaBase = null;
     AS_STATE.startedAt = Date.now(); AS_STATE.endedAt = null; AS_STATE.progressSnapshot = null;
+    started = true;   // 任务已创建受理：之后的界面渲染异常不属于创建失败
     AS_STATE.selected = new Set();
     AS_STATE.rows = [];
     asSyncScanExportButton();
@@ -7247,8 +7259,11 @@ async function asScan(options = {}) {
     $('asScanRows').innerHTML = '<tr><td colspan="12" class="hint" style="text-align:center; padding:18px;"><span class="as-status-active">扫描中</span>，正在逐个打开环境读取订单…</td></tr>';
     asProgress({progressTotal:serials.length, progressCompleted:0, unit:'个环境'});
     asSetPhase('扫描运行中', `共 ${serials.length} 个环境 · 只读，不会改动订单`, true);
-    started = true;
   } catch (e) {
+    if (started) {
+      asSetPhase('扫描已发起', '界面刷新出现异常，不影响后台扫描；正在继续查询进度。', true);
+      return;
+    }
     asSetPhase('发起失败', String(e.message || e), false);
   }
   } finally {
@@ -7322,6 +7337,7 @@ async function asSubmitItems(items, options) {
     AS_STATE.pollErrors = 0;
     AS_STATE.etaBase = null;
     AS_STATE.startedAt = Date.now(); AS_STATE.endedAt = null; AS_STATE.progressSnapshot = null;
+    started = true;   // 任务已创建受理：之后的界面渲染异常不属于创建失败
     asProgress({progressTotal: envSerials ? envSerials.length : items.length,
       progressCompleted:0, rows:[], unit: envSerials ? '个环境' : '单'});
     AS_STATE.claimItems = envSerials ? [] : items.map(item => ({...item}));
@@ -7333,9 +7349,13 @@ async function asSubmitItems(items, options) {
     asSetPhase(label + '中', envSerials
       ? `共 ${envSerials.length} 个环境 · 单遍直提，无可申请售后订单的环境会跳过`
       : `共 ${items.length} 单 · 退款路径「原路退回」· ${runtime.concurrency} 个环境并发，同环境逐单提交`, true);
-    started = true;
     return true;
   } catch (e) {
+    if (started) {
+      // 任务已创建并在后台执行：界面渲染异常不是创建失败，不得提示重提。
+      asSetPhase(label + '已发起', '界面刷新出现异常，不影响后台任务；正在继续查询进度，请勿重复提交。', true);
+      return true;
+    }
     asSetPhase('发起失败', String(e.message || e), false);
     return false;
   }
