@@ -186,7 +186,11 @@ class SheinStoreAuthService:
                  f"授权链接（{LINK_TTL_MINUTES} 分钟内有效）",
         )
         session.flush()
-        redirect_b64 = base64.b64encode(self.redirect_base.encode()).decode()
+        # state 同时嵌进 redirectUrl：平台回跳若原样保留 query 就能带回
+        # state；若平台剥掉 query，则由 _claim_link 的空 state 回退兜底。
+        separator = "&" if "?" in self.redirect_base else "?"
+        redirect_target = f"{self.redirect_base}{separator}state={state}"
+        redirect_b64 = base64.b64encode(redirect_target.encode()).decode()
         url = (
             f"https://{self.empower_host}/#/empower"
             f"?appid={self.client.app_id}&redirectUrl={redirect_b64}&state={state}"
@@ -206,16 +210,41 @@ class SheinStoreAuthService:
         先短事务 UPDATE ... WHERE consumed_at IS NULL，rowcount 判定胜者；
         并发回调只有一个能拿到（串行 409 由既有分支覆盖，失败也计入一次性）。
         换钥的联网调用放在事务外，避免长时间持行锁。
+
+        state 为空时走回退：认领该应用最新一条未消费且未过期的链接。
+        平台回跳若剥掉 redirectUrl 自带 query，state 就回不来——此时只能
+        按「时间最新者优先」匹配。tempToken 本身只有真实完成我方应用授权
+        才能取得，窗口又被 15 分钟 TTL 收紧，回退风险有界；state 正常回传
+        时不进入此路径。
         """
-        link = session.scalar(
-            select(SheinAuthLink).where(SheinAuthLink.state == str(state))
-        )
-        if link is None:
-            session.rollback()
-            raise SheinStoreAuthError(
-                "shein_auth_state_unknown", "授权链接无效或已过期", 404
-            )
         now = datetime.now(UTC)
+        if str(state or "").strip():
+            link = session.scalar(
+                select(SheinAuthLink).where(SheinAuthLink.state == str(state))
+            )
+            if link is None:
+                session.rollback()
+                raise SheinStoreAuthError(
+                    "shein_auth_state_unknown", "授权链接无效或已过期", 404
+                )
+        else:
+            link = session.scalar(
+                select(SheinAuthLink)
+                .where(
+                    SheinAuthLink.app_id == self.client.app_id,
+                    SheinAuthLink.consumed_at.is_(None),
+                    SheinAuthLink.expires_at > now,
+                )
+                .order_by(SheinAuthLink.created_at.desc())
+                .limit(1)
+            )
+            if link is None:
+                session.rollback()
+                raise SheinStoreAuthError(
+                    "shein_auth_state_unknown",
+                    "没有待使用的授权链接，请先在工作台重新生成",
+                    404,
+                )
         claimed = session.execute(
             update(SheinAuthLink)
             .where(

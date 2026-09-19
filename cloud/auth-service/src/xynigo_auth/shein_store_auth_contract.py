@@ -15,10 +15,14 @@ class SheinAuthLinkBody(BaseModel):
 
 
 class SheinAuthCallbackBody(BaseModel):
-    """state 即一次性能力凭证：回调端点不要求 xynigo 登录态。"""
+    """state 即一次性能力凭证：回调端点不要求 xynigo 登录态。
+
+    state 允许为空：平台回跳可能剥掉 redirectUrl 自带 query，此时由
+    服务端按最新未消费链接回退认领（见 _claim_link）。
+    """
 
     tempToken: str = Field(min_length=8, max_length=256)
-    state: str = Field(min_length=16, max_length=128)
+    state: str = Field(default="", max_length=128)
 
 
 class SheinStoreRenameBody(BaseModel):

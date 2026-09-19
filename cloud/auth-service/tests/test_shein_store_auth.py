@@ -311,9 +311,10 @@ def test_full_authorization_flow_binds_store_with_encrypted_secret(
             "https://openapi-sem.sheincorp.com/#/empower"
             f"?appid={APP_ID}&redirectUrl="
         )
+        # state 嵌进 redirectUrl：平台回跳保留 query 时可原样带回。
         assert base64.b64decode(
             payload["url"].split("redirectUrl=")[1].split("&")[0]
-        ).decode() == REDIRECT_BASE
+        ).decode() == f"{REDIRECT_BASE}?state={payload['state']}"
 
         # 回调端点不要求登录态（店铺主账号浏览器可能未登录工作台）。
         callback = client.post(
@@ -407,6 +408,59 @@ def test_state_single_use_unknown_and_expiry(tmp_path) -> None:
         )
         assert expired.status_code == 410
         assert expired.json()["detail"]["code"] == "shein_auth_state_expired"
+
+
+def test_callback_without_state_claims_newest_unexpired_link(tmp_path) -> None:
+    """平台回跳剥掉 query 时 state 缺席：按最新未消费且未过期链接回退。"""
+    app, database, _ids = build_shein_app(tmp_path)
+    with TestClient(app) as client:
+        fresh = client.post(
+            "/v1/shein-auth/link", json={"mode": "self"}, headers=admin_headers()
+        ).json()
+        newest_expired = client.post(
+            "/v1/shein-auth/link", json={"mode": "self"}, headers=admin_headers()
+        ).json()
+        with database.session_factory() as session:
+            record = session.scalar(
+                select(SheinAuthLink).where(
+                    SheinAuthLink.state == newest_expired["state"]
+                )
+            )
+            record.expires_at = utcnow() - timedelta(minutes=1)
+            session.commit()
+
+        # 时间最新的一条已过期：回退必须跳过它选中次新的；
+        # 若实现不过滤过期就会认领最新一条并以 410 失败。
+        ok = client.post(
+            "/v1/shein-auth/callback",
+            json={"tempToken": "temp-token-123456", "state": ""},
+        )
+        assert ok.status_code == 200, ok.text
+        assert ok.json()["store"]["merchantId"] == "18301880"
+
+        # 未消费链接已被清空：空 state 回退应明确 404，不得静默成功。
+        drained = client.post(
+            "/v1/shein-auth/callback",
+            json={"tempToken": "temp-token-123456", "state": ""},
+        )
+        assert drained.status_code == 404
+        assert drained.json()["detail"]["code"] == "shein_auth_state_unknown"
+
+
+def test_callback_page_shares_workspace_csp(tmp_path) -> None:
+    """回调页与工作台同一份文档；兜底 CSP 会连内联样式带脚本一起拦掉。"""
+    app, _database, _ids = build_shein_app(tmp_path)
+    with TestClient(app) as client:
+        workspace = client.get("/")
+        callback = client.get("/shein-auth/callback?appid=x&tempToken=y")
+        assert callback.status_code == 200
+        assert (
+            callback.headers["content-security-policy"]
+            == workspace.headers["content-security-policy"]
+        )
+        assert "style-src 'unsafe-inline'" in (
+            callback.headers["content-security-policy"]
+        )
 
 
 def test_temp_token_platform_expiry_maps_to_event_failure(tmp_path) -> None:

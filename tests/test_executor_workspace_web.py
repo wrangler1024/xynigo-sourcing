@@ -41,6 +41,17 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
         self.assertNotIn("initSheinStoreAuthPage", settle_branch)
         self.assertNotIn("sheinStoreAuthPageLoaded", html)
 
+    def test_shein_auth_callback_allows_missing_state(self):
+        # 平台回跳可能剥掉 redirectUrl 自带 query：回调脚本只强制 tempToken，
+        # 空 state 照常提交（服务端按最新未消费链接回退认领）。
+        html = LOCAL_HTML.read_text(encoding="utf-8")
+        handler = html[
+            html.index("(function handleSheinAuthCallback"):
+            html.index("function syncPrimaryNavigation(primary)")
+        ]
+        self.assertIn("if (!tempToken) {", handler)
+        self.assertNotIn("|| !state", handler)
+
     def test_member_scoped_data_source_controls_are_local_and_safe(self):
         local_html = LOCAL_HTML.read_text(encoding="utf-8")
         cloud_html = CLOUD_HTML.read_text(encoding="utf-8")
