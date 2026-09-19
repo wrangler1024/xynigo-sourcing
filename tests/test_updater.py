@@ -404,6 +404,76 @@ class UpdaterTests(unittest.TestCase):
         )
         self.assertEqual(exit_codes, [[42], [42]])
 
+    def test_standard_install_refreshes_catalog_before_download(self):
+        stale = release('0.6.0', manifest={'assetName': 'old.pkg', 'size': 1})
+        fresh = release('0.6.0', manifest={'assetName': 'new.pkg', 'size': 2})
+        catalogs = [stale, fresh]
+        seen = []
+
+        class RefreshingClient(FakeClient):
+            def get_latest_release(self):
+                return catalogs.pop(0) if catalogs else fresh
+
+            def prepare_update(
+                    self, chosen, output=print, progress=None, stage=None):
+                seen.append(chosen)
+                return super().prepare_update(
+                    chosen, output=output, progress=progress, stage=stage)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = UpdateCoordinator(
+                Path(tmp) / 'mgr', '0.5.0',
+                client=RefreshingClient(),
+                output=lambda _line: None,
+                exit_fn=lambda _code: None,
+                environ={'XYNIGO_INSTALL_MODE': 'standard'},
+                skip_marker_path=Path(tmp) / 'no-marker',
+                standard_install_delay=0,
+            )
+            checked = manager.check_now()
+            installed = manager.prompt_now()
+        self.assertEqual(checked['state'], 'available')
+        self.assertTrue(installed)
+        self.assertEqual(seen, [fresh])
+        self.assertEqual(manager.snapshot()['state'], 'restarting')
+
+    def test_standard_install_keeps_snapshot_when_catalog_refresh_fails(self):
+        stale = release('0.6.0', manifest={'assetName': 'old.pkg', 'size': 1})
+        seen = []
+
+        class FailingRefreshClient(FakeClient):
+            def __init__(self):
+                super(FailingRefreshClient, self).__init__(latest=stale)
+                self.calls = 0
+
+            def get_latest_release(self):
+                self.calls += 1
+                if self.calls >= 2:
+                    raise UpdateError('目录暂时不可用')
+                return stale
+
+            def prepare_update(
+                    self, chosen, output=print, progress=None, stage=None):
+                seen.append(chosen)
+                return super().prepare_update(
+                    chosen, output=output, progress=progress, stage=stage)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = UpdateCoordinator(
+                Path(tmp) / 'mgr', '0.5.0',
+                client=FailingRefreshClient(),
+                output=lambda _line: None,
+                exit_fn=lambda _code: None,
+                environ={'XYNIGO_INSTALL_MODE': 'standard'},
+                skip_marker_path=Path(tmp) / 'no-marker',
+                standard_install_delay=0,
+            )
+            manager.check_now()
+            installed = manager.prompt_now()
+        self.assertTrue(installed)
+        self.assertEqual(seen, [stale])
+        self.assertEqual(manager.snapshot()['state'], 'restarting')
+
     def test_standard_client_downloads_authenticated_installer_and_checks_hash(self):
         data = b'x' * 1_100_000
         auth = FakeStandardAuth(data)

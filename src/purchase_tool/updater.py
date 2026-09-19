@@ -948,6 +948,16 @@ class UpdateCoordinator(object):
         try:
             if release is None:
                 raise UpdateError('当前没有可安装的新版本')
+            if self.standard_mode:
+                # 检查时的目录快照可能已过期；服务器换装资产后按旧快照的
+                # size/hash 下载必然报「云端安装包大小不一致」，安装前须重取。
+                try:
+                    fresh = self.client.get_latest_release()
+                    if (normalize_version(fresh.version)
+                            >= normalize_version(release.version)):
+                        release = fresh
+                except Exception:
+                    pass  # 目录刷新失败时沿用检查时快照继续尝试
             # Cloud workspace RPC must finish recording the accepted response
             # before the executor exits to hand control to the installer.
             if self.standard_mode and self.standard_install_delay:
