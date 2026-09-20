@@ -6181,9 +6181,18 @@ function asClaimTableHtml(rows, environments, filter = 'all', running = false, h
   const envs = environments || [];
   const known = new Set(envs.map(row => String(row.environmentSerial || '')));
   const parts = envs.map(env => {
-    const orders = visible.filter(row => String(row.environmentSerial || '') === String(env.environmentSerial || ''));
+    const related = rows.filter(row => String(row.environmentSerial || '') === String(env.environmentSerial || ''));
+    const orders = related.filter(row => asClaimMatchesFilter(row, filter));
+    // 正常结束且订单明细齐备时收起环境占位；异常、处理中与无明细仍需独立说明。
+    // 用全部关联订单判断是否收尾，避免筛选隐藏在途订单后误判环境已完成。
+    const settled = related.length > 0 && related.every(row => row.orderNo
+      && ['ok','skip','blocked','empty','fail','login','inuse','stopped','uncertain'].includes(row.status));
+    const reportedCount = Math.max(Number(env.entryCount) || 0,
+      ['submittedCount','blockedCount','failedCount'].reduce((sum, key) => sum + (Number(env[key]) || 0), 0));
+    const showEnvironment = !orders.length || !settled || related.length < reportedCount
+      || !['ok','skip','blocked'].includes(env.status) || !!env.errorSummary;
     return asClaimMatchesFilter(env, filter) || orders.length
-      ? asClaimEnvironmentRowHtml(env) + orders.map(asClaimRowHtml).join('') : '';
+      ? (showEnvironment ? asClaimEnvironmentRowHtml(env) : '') + orders.map(asClaimRowHtml).join('') : '';
   });
   parts.push(...visible.filter(row => !known.has(String(row.environmentSerial || ''))).map(asClaimRowHtml));
   const content = parts.join('');

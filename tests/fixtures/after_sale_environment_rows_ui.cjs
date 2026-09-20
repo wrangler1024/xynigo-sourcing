@@ -82,7 +82,28 @@ const poll=async data=>{response=data;await run('asPoll()');assert.equal(state.p
   assert.equal(state.claimRows.length,1);assert.equal(node('asBizSummary').children[0].querySelector('b').textContent,1);
   assert.equal(node('asClaimExport').disabled,false);
   assert.equal(run('asTrackItemsFromRows(AS_STATE.claimRows).length'),1);
+  assert.doesNotMatch(table(),/data-as-environment="900005"/,'completed environment no longer duplicates its order');
   state.claimFilter='failed';run('asRenderClaimRows(AS_STATE.claimRows)');assert.match(table(),/900004/);assert.doesNotMatch(table(),/SYNTH-ORDER/);
+
+  // Finished order details replace normal environment placeholders in both current and history tables.
+  ctx.displayRows=[{environmentSerial:'900010',orderNo:'SYNTH-SKIP',status:'skip',note:'已有退款，跳过'}];
+  ctx.displayEnvs=[{environmentSerial:'900010',status:'skip',blockedCount:1}];
+  const display=filter=>run(`asClaimTableHtml(displayRows, displayEnvs, ${JSON.stringify(filter)})`);
+  assert.doesNotMatch(display('all'),/data-as-environment/);
+  assert.equal((display('all').match(/data-as-claim=/g)||[]).length,1);
+  assert.match(display('skipped'),/已有退款，跳过/);
+  ctx.displayRows.push({environmentSerial:'900010',orderNo:'SYNTH-OTHER',status:'ok'});
+  ctx.displayEnvs[0]={environmentSerial:'900010',status:'ok',submittedCount:1,blockedCount:1};
+  assert.equal((display('all').match(/data-as-claim=/g)||[]).length,2);
+  assert.doesNotMatch(display('all'),/data-as-environment/,'multi-order environment keeps one row per order');
+  ctx.displayEnvs[0].status='running';assert.match(display('all'),/data-as-environment/);
+  ctx.displayEnvs[0].status='fail';ctx.displayEnvs[0].errorSummary='还有订单读取失败';
+  assert.match(display('all'),/还有订单读取失败/,'environment failures must survive existing details');
+  ctx.displayEnvs[0]={environmentSerial:'900010',status:'skip',blockedCount:3};
+  assert.match(display('all'),/data-as-environment/,'incomplete details keep the environment summary');
+  ctx.displayEnvs[0].blockedCount=2;ctx.displayRows[1].status='running';
+  assert.match(display('skipped'),/data-as-environment/,'filter must not conceal unfinished work');
+  ctx.displayRows=[];assert.match(display('all'),/data-as-environment/,'legacy empty detail still explains outcome');
 
   // Skip, login, inuse and cancelled contexts all retain inline reasons without fake orders.
   for(const status of ['skip','blocked','login','inuse','stopped']){
