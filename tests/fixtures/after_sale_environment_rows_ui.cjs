@@ -121,6 +121,14 @@ const poll=async data=>{response=data;await run('asPoll()');assert.equal(state.p
     assert.equal((rendered.match(/<tr\b/g)||[]).length,1);
     assert.match(rendered,/data-as-claim="SYNTH-LIFECYCLE"/);assert.doesNotMatch(rendered,/data-as-environment=/);
     assert.equal(JSON.stringify([ctx.displayRows,ctx.displayEnvs]),before,'rendering must not mutate order or environment data');
+    if(status==='queued') {
+      assert.match(rendered,/已发现，待核对/);
+      assert.match(rendered,/订单已读取，详情及售后资格待核对/);
+      assert.doesNotMatch(rendered,/>等待<|>提交中</);
+      assert.match(display('queued'),/SYNTH-LIFECYCLE/,'display label preserves queued filter membership');
+      assert.doesNotMatch(display('running'),/data-as-claim=/,'discovery does not claim the order is running');
+      assert.match(run('asClaimRowHtml(displayRows[0])'),/>等待</,'specified orders keep queue semantics');
+    } else assert.doesNotMatch(rendered,/已发现，待核对/);
     if(status==='skip')assert.doesNotMatch(rendered,/as-status-active/);
   }
   ctx.displayEnvs[0]={environmentSerial:'900010',status:'fail',errorSummary:'<script>synthetic</script>'};

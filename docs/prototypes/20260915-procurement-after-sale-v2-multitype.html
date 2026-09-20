@@ -6550,6 +6550,13 @@ function asSupplementClaimAccounts(trackRows) {
   }
 }
 function asClaimRowHtml(row, context = {}) {
+  // A discovered order may remain queued while its details are being read.
+  // Do not infer an actual submission (or which order is active) from images.
+  const discovered = context.environmentMode && row.status === 'queued' && !!row.orderNo;
+  const statusHtml = discovered
+    ? '<span class="pill run">已发现，待核对</span><div class="hint">订单已读取，详情及售后资格待核对</div>'
+    : context.environmentMode && row.status === 'running'
+      ? '<span class="pill run as-status-active">读取/提交中</span>' : asClaimPill(row);
   const bad = !['ok'].includes(String(row.status || ''));
   const cls = bad && row.status !== 'queued' && !['running','verifying'].includes(row.status)
     ? ' class="tr-bad"' : (row.status === 'running' ? ' class="tr-run"' : '');
@@ -6565,7 +6572,7 @@ function asClaimRowHtml(row, context = {}) {
           return esc(path || (r.refundBillId ? '未取得' : '—'));
         }).join('<br>')}</td>
         <td class="sub-text">${(row.refunds?.length ? row.refunds : [row]).map(asRefundAccountHtml).join('<br>')}</td>
-        <td>${context.environmentMode && row.status === 'running' ? '<span class="pill run as-status-active">读取/提交中</span>' : asClaimPill(row)}${row.status !== 'ok' && row.refunds?.length ? `<div class="hint">平台：${esc([...new Set(row.refunds.map(r=>r.phaseLabel).filter(Boolean))].join(' / ') || '阶段待核对')} · ${row.refunds.length} 笔退款记录</div>` : ''}</td>
+        <td>${statusHtml}${row.status !== 'ok' && row.refunds?.length ? `<div class="hint">平台：${esc([...new Set(row.refunds.map(r=>r.phaseLabel).filter(Boolean))].join(' / ') || '阶段待核对')} · ${row.refunds.length} 笔退款记录</div>` : ''}</td>
         <td class="sub-text">${esc(row.operationCompletedAt ? new Date(row.operationCompletedAt).toLocaleString('zh-CN', {hour12:false,timeZoneName:'shortOffset'}) : '—')}</td>
         <td class="hint">${asClaimReasonHtml(row)}${context.environmentHint || ''}</td>
       </tr>`;

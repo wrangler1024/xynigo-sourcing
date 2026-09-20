@@ -942,7 +942,7 @@ class AfterSaleClaimWiringTests(unittest.TestCase):
         cells = tpl[tpl.index('<td'):]
         markers = ['row.environmentSerial', 'row.orderNo', '${asScanGoodsHtml',
                    'AFTER_SALE_TYPE', 'row.deliveredAt', 'r.refundBillId',
-                   'r.refundPath', 'asRefundAccountHtml', 'asClaimPill',
+                   'r.refundPath', 'asRefundAccountHtml', '${statusHtml}',
                    'row.operationCompletedAt', 'asClaimReasonHtml']
         order = [cells.index(k) for k in markers]
         self.assertEqual(order, sorted(order), '③ 行模板列序与表头不一致（会整列错位）')
