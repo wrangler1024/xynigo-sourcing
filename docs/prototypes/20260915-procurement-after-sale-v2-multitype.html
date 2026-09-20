@@ -6719,7 +6719,7 @@ function asRenderClaimFilters() {
     const envs = AS_STATE.environments || [];
     const envCount = envs.filter(row => asClaimMatchesFilter(row,key)).length;
     return `<button class="btn sm" type="button" data-as-claim-filter="${key}" aria-pressed="${(AS_STATE.claimFilter || 'all') === key}">${label} ${count}${envs.length ? ' 单 · '+envCount+' 环境' : ''}</button>`;
-  }).join('') + `<span class="hint">显示 ${(AS_STATE.claimRows || []).filter(row => asClaimMatchesFilter(row,AS_STATE.claimFilter || 'all')).length} / ${(AS_STATE.claimRows || []).length} 单${(AS_STATE.environments || []).length ? '；环境进度单独列示' : ''}；导出与补提不受此筛选影响。</span>`;
+  }).join('') + `<span class="hint">显示 ${(AS_STATE.claimRows || []).filter(row => asClaimMatchesFilter(row,AS_STATE.claimFilter || 'all')).length} / ${(AS_STATE.claimRows || []).length} 单${(AS_STATE.environments || []).length ? '；环境提示随订单显示，无明细时单列' : ''}；导出与补提不受此筛选影响。</span>`;
 }
 $('asClaimFilters').onclick = event => {
   const button = event.target.closest('[data-as-claim-filter]');
