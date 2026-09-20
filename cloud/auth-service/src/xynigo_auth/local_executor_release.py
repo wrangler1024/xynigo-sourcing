@@ -14,9 +14,9 @@ from urllib.parse import quote
 
 from . import __version__
 
-RELEASE_VERSION = "0.18.8"
+RELEASE_VERSION = "0.18.9"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-19T04:00:00Z"
+RELEASE_PUBLISHED_AT = "2026-09-20T03:00:00Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,8 +31,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.18.8-fb91cae92f7e",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.18.8.exe",
+        "runtimeId": "0.18.9-fb91cae92f7e",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.18.9.exe",
         "sha256": "69319b3b67b34bda416c69b65d86ab70e02f17e102f16d60517bc9adcefc6f70",
         "size": 15410073,
         "installMode": "standard_per_user",
@@ -50,8 +50,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.18.8-fb91cae92f7e",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.18.8.pkg",
+        "runtimeId": "0.18.9-fb91cae92f7e",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.18.9.pkg",
         "sha256": "31e387ddd6f67939b7f64a59bddfc293be3080fdef2dde171fdd44ee10b3a0d2",
         "size": 11786167,
         "installMode": "standard_system_application",
@@ -320,10 +320,10 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "采购售后支持按环境单遍直提：点一次确认直接进环境提交，不再先扫描再勾选；无售后入口的环境自动跳过并回报原因。",
-            "采购售后支持按环境发现平台退款单：只读枚举订单并产出退款单号，供回访任务使用。",
-            "本机设置对全体登录成员开放，共享设备场景不再依赖管理员解锁。",
-            "云端新增财务中心·对账结算看板（在途/待结算/下次结算/已结算，多币种分列）与店铺授权模块。",
-            "云端与 Windows/macOS 客户端统一为 v0.18.8，继续使用 test 渠道；需升级执行器后采购售后新入口才可见。"
+            "按环境提交保留无售后入口订单的商品及已读退款资料，并显示具体跳过原因；已有退款不计本次新增受理。",
+            "修复部分结果手动继续回访未创建任务，保留停止、身份校验及任务归属保护。",
+            "发现与回访统一结果列，明确步骤 1/2、2/2；读取中的状态显示动态省略号，不再提前显示无订单。",
+            "改进 HubStudio 团队环境匹配提示，支持分行退款倒计时；环境状态不再重复序号。",
+            "云端与 Windows/macOS 执行器统一为 v0.18.9，沿用 test 渠道；订单资料采集修复需升级执行器。"
         ],
     }
