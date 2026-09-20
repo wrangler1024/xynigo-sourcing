@@ -640,6 +640,7 @@ class LocalOperationExecutor(object):
         'orderNo', 'environmentSerial', 'storeName', 'status', 'packageNo',
         'refundBillId', 'refundPath', 'refundAccount', 'deliveredAt',
         'goodsImg', 'durationSeconds', 'submittedAt', 'operationCompletedAt',
+        'goodsImages', 'goodsItems', 'itemCount',
         'submissionError', 'recoveryError',
         'note', 'errorSummary', 'screenshotSha256', 'refunds',
     )
@@ -675,7 +676,7 @@ class LocalOperationExecutor(object):
                    {'title':240,'detail':800,'reason':300,'reasonSource':32}.items()}}
 
     @classmethod
-    def _after_sale_rows(cls, raw_rows, *, claim=False):
+    def _after_sale_rows(cls, raw_rows, *, claim=False, discovered=False):
         """把售后快照行投影成云端契约闭集。
 
         两个视图共用一套投影：扫描行含订单与包裹计数，提交行含退款单号与
@@ -692,6 +693,8 @@ class LocalOperationExecutor(object):
             row = {}
             for field in fields:
                 if claim and field not in cls._AFTER_SALE_CLAIM_ROW_FIELDS:
+                    continue
+                if claim and not discovered and field in ('goodsImages', 'goodsItems', 'itemCount'):
                     continue
                 if field not in raw:
                     continue
@@ -1141,7 +1144,7 @@ class LocalOperationExecutor(object):
                 'current': min(total, completed),
                 'total': total,
                 'snapshot': {
-                    'rows': self._after_sale_rows(rows, claim=True),
+                    'rows': self._after_sale_rows(rows, claim=True, discovered=True),
                     'environments': self._after_sale_env_rows(env_rows),
                 },
             }
@@ -1169,7 +1172,7 @@ class LocalOperationExecutor(object):
             self.sleep(self.poll_interval)
         summary = self._after_sale_environment_summary(
             total, env_rows, rows)
-        summary['rows'] = self._after_sale_rows(rows, claim=True)
+        summary['rows'] = self._after_sale_rows(rows, claim=True, discovered=True)
         summary['environments'] = self._after_sale_env_rows(env_rows)
         return self._terminal_result('after_sale', summary)
 

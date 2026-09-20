@@ -975,7 +975,7 @@ class AfterSaleClaimWiringTests(unittest.TestCase):
         self.assertIn('function asParseManualBills', html)
         self.assertIn('function asTrackManual', html)
         # asTrack 必须接受显式 items（手工入口靠它），并保留从 ③ 推导的默认路径
-        self.assertIn('async function asTrack(explicitItems)', html)
+        self.assertTrue('async function asTrack(explicitItems, options = {})' in html)
         self.assertIn("Array.isArray(explicitItems) && explicitItems.length", html)
 
     def test_stop_routes_exist_for_both_phases(self):

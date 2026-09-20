@@ -474,7 +474,7 @@ class ClaimEnvironmentBatchTests(unittest.TestCase):
         self.assertEqual([r['orderNo'] for r in snap['claimRows']], ['GSH1A'])
 
     def test_real_env_pass_skips_env_without_entry(self):
-        """只有带入口的订单会进申请页；无入口环境整体跳过、不留订单行。"""
+        """只有带入口的订单会进申请页；无入口订单保留事实与跳过结果。"""
         cards = [{'text': CARD_DELIVERED, 'hasEntry': True,
                   'goodsImg': '', 'deliveredAt': '04 Sep 2026 14:36:41'},
                  {'text': CARD_REFUNDING, 'hasEntry': False}]
@@ -504,7 +504,9 @@ class ClaimEnvironmentBatchTests(unittest.TestCase):
         self.assertEqual(rows['22']['status'], 'skip')
         self.assertEqual(rows['22']['entryCount'], 0)
         self.assertEqual([r['orderNo'] for r in snap['claimRows']],
-                         ['GSH1RV329000RBM'])
+                         ['GSH1RV329000RBM', 'GSH1RV46900MLN8'])
+        self.assertEqual(snap['claimRows'][1]['status'], 'skip')
+        self.assertIn('退款', snap['claimRows'][1]['note'])
         self.assertEqual([item['environmentSerial'] for item in submitted],
                          ['21'])
 

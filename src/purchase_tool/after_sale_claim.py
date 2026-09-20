@@ -655,6 +655,10 @@ class AfterSaleClaimer(object):
         for name_key, matched in name_matches.items():
             if len(matched) == 1:
                 index.setdefault(wanted[name_key], matched[0])
+            else:
+                index.setdefault(wanted[name_key], {
+                    '_resolutionError': '当前 HubStudio 团队有多个同名环境，请使用环境序号或环境 ID 精确定位',
+                })
         return index
 
     # ---- 扫描（只读） ----
@@ -1207,7 +1211,7 @@ class AfterSaleClaimer(object):
     def _claim_env_one(self, serial, env, headless):
         """一个环境的单遍直提：读订单列表 → 有入口的订单现场核验并提交。
 
-        没有售后入口的环境不留订单行，只在环境级记 skip 与原因；有入口
+        没有售后入口的订单保留只读资料和跳过原因；有入口
         但资格核验全被拒的环境记 blocked。可退性最终以提交前 pre_info
         体检为准，这里的入口判断只是「要不要进申请页」。
         """
@@ -1235,11 +1239,26 @@ class AfterSaleClaimer(object):
                     note='已请求停止，订单列表未确认；本次未提交')
                 return
             candidates = []
+            skipped_reasons = []
             for card in cards:
                 parsed = parse_order_card(card.get('text') or '')
                 if not parsed:
                     raise RuntimeError('订单卡片格式无法识别，请人工核对所有订单页')
+                self._publish_claim(parsed['orderNo'], {
+                    'environmentSerial': serial,
+                    'storeName': str(env.get('containerName') or serial)[:128],
+                    'status': 'queued',
+                    'goodsImg': str(card.get('goodsImg') or '')[:300],
+                    'deliveredAt': str(card.get('deliveredAt') or parsed.get('deliveredAt') or '')[:32],
+                    **{key: value for key, value in order_item_summary(card).items()
+                       if key in ('goodsImages', 'goodsItems', 'itemCount')},
+                })
                 if not card.get('hasEntry'):
+                    if self._stop_event.is_set():
+                        break
+                    skipped_reasons.append(
+                        self._record_unavailable_order(serial, env, page, card, parsed))
+                    self._count_env_result(serial, 'skip')
                     continue
                 candidates.append((card, parsed))
             with self._lock:
@@ -1247,8 +1266,11 @@ class AfterSaleClaimer(object):
                 row['entryCount'] = len(candidates)
                 self._claim_env_rows[serial] = row
             if not candidates:
-                self._finish_env_row(serial, 'skip', started,
-                                     note='未发现丢件退款入口，环境跳过')
+                note = ('；'.join(dict.fromkeys(skipped_reasons))[:200]
+                        if skipped_reasons else '所有订单列表为空')
+                self._finish_env_row(
+                    serial, 'stopped' if self._stop_event.is_set() else 'skip', started,
+                    note='已停止，剩余订单未处理' if self._stop_event.is_set() else note)
                 return
             remaining = 0
             for index, (card, parsed) in enumerate(candidates):
@@ -1266,6 +1288,7 @@ class AfterSaleClaimer(object):
                 # 按单提交的行走建批次时初始化；直提的行是动态发现的，
                 # 身份字段必须在这里先落，否则上行投影缺 orderNo 会被云端拒收
                 self._publish_claim(parsed['orderNo'], {
+                    **item,
                     'orderNo': parsed['orderNo'],
                     'environmentSerial': serial,
                     'storeName': str(env.get('containerName') or serial)[:128],
@@ -1300,6 +1323,17 @@ class AfterSaleClaimer(object):
                 serial, 'fail', started, errorSummary=
                 scrub_text('%s: %s' % (type(exc).__name__, str(exc)))[:200])
         finally:
+            # 动态清单已展示的待处理行必须随环境收尾，不能在终态仍显示排队。
+            # 已尝试写入的 verifying/uncertain 状态继续保留其核对语义。
+            with self._lock:
+                environment = self._claim_env_rows.get(serial) or {}
+                for result in self._claim_rows.values():
+                    if (str(result.get('environmentSerial')) == str(serial)
+                            and result.get('status') in ('queued', 'running')):
+                        result['status'] = 'stopped' if self._stop_event.is_set() else 'fail'
+                        result['note'] = '已停止，未继续处理' if self._stop_event.is_set() else ''
+                        result['errorSummary'] = (None if self._stop_event.is_set() else
+                                                  environment.get('errorSummary') or '环境读取未完成，请核对后重试')
             if opened_by_me:
                 self._stop_env(env, serial)
 
@@ -1307,7 +1341,8 @@ class AfterSaleClaimer(object):
         """从卡片与详情页拼提交条目；详情读不到不挡提交，字段留待核对。"""
         parsed = dict(parsed)
         parsed['goodsImg'] = str(card.get('goodsImg') or '')[:300]
-        summary = {}
+        parsed['deliveredAt'] = card.get('deliveredAt') or parsed.get('deliveredAt') or ''
+        summary = order_item_summary(card)
         try:
             detail = read_order_detail_facts(page, parsed['orderNo'])
             summary = order_item_summary(dict(card, **detail))
@@ -1317,7 +1352,7 @@ class AfterSaleClaimer(object):
                 parsed['goodsImg'] = str(detail['goodsImages'][0])[:300]
         except Exception:
             # 展示字段缺失不改变可退性，未知值保持未知，绝不推断
-            summary = {}
+            pass
         return {
             'environmentSerial': serial,
             'orderNo': parsed['orderNo'],
@@ -1328,6 +1363,28 @@ class AfterSaleClaimer(object):
             **{key: value for key, value in summary.items()
                if key in ('goodsImages', 'goodsItems', 'itemCount')},
         }
+
+    def _record_unavailable_order(self, serial, env, page, card, parsed):
+        """无入口仍保留订单事实；退款凭证只读补查，不进入提交路径。"""
+        started = time.time()
+        order_no = parsed['orderNo']
+        code, reason = scan_unavailable_reason(card, parsed)
+        item = self._env_claim_item(serial, env, page, card, parsed)
+        self._publish_claim(order_no, {**item, 'status': 'running',
+                                      'note': '正在核对订单及已有退款记录'})
+        if code.startswith('refund_') and not self._stop_event.is_set():
+            records, error = self._recover_receipts(page, order_no, 'existing')
+            if records:
+                reason = '已有退款申请：' + receipt_reason(records) + '；本次跳过提交'
+            if error:
+                self._publish_claim(order_no, {'recoveryError': error})
+                reason += '；退款详情未完整取得，请回访核对'
+        self._publish_claim(order_no, {
+            'status': 'skip', 'note': reason[:200], 'errorSummary': None,
+            'operationCompletedAt': datetime.now(timezone.utc).isoformat(),
+            'durationSeconds': int(time.time() - started),
+        })
+        return reason
 
     def _count_env_result(self, serial, status):
         with self._lock:
@@ -1723,8 +1780,10 @@ class AfterSaleClaimer(object):
         """打开（或复用）环境浏览器并连上 CDP，返回 (page, 是否本模块开启)。"""
         if not env:
             raise RuntimeError(
-                '未匹配到唯一环境：请用环境序号或环境 ID 定位（重名环境'
-                '必须用序号）')
+                '当前 HubStudio 团队中未找到匹配环境：请核对已切换到目标团队、'
+                '环境序号或环境 ID 是否正确')
+        if env.get('_resolutionError'):
+            raise RuntimeError(env['_resolutionError'])
         container_code = str(env.get('containerCode') or '') or serial
         opened_before = container_code in self.hub.open_container_codes()
         data = self.hub.browser_start(container_code, headless=headless) or {}

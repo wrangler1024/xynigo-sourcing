@@ -2939,16 +2939,20 @@ class ExecutorChannelService:
             # 不该因为同事没升级桌面端就把 ③ 的送达时间、④ 的商品图留空。
             row.delivered_at = (item.deliveredAt
                                 or str(request_item.get("deliveredAt") or "")
-                                or None)
+                                or row.delivered_at or None)
             row.goods_img = (item.goodsImg
                              or str(request_item.get("goodsImg") or "")
-                             or None)
-            # Product facts are immutable request metadata, not repeated in every
-            # progress frame. Old clients cannot erase the original scan facts.
-            row.goods_images = request_item.get("goodsImages") or row.goods_images or []
-            row.goods_items = request_item.get("goodsItems") or row.goods_items or []
+                             or row.goods_img or None)
+            # 按单提交保留原清单；环境直提的订单在执行中发现，资料来自回执。
+            # 旧执行器缺字段或后续空快照不能擦除已取得的事实。
+            row.goods_images = request_item.get("goodsImages") or item.goodsImages or row.goods_images or []
+            row.goods_items = (request_item.get("goodsItems")
+                               or [entry.model_dump() for entry in item.goodsItems]
+                               or row.goods_items or [])
             if request_item.get("itemCount") is not None:
                 row.item_count = request_item["itemCount"]
+            elif item.itemCount is not None:
+                row.item_count = item.itemCount
             completed_at = _after_sale_at(item.operationCompletedAt)
             if completed_at is not None and row.operation_completed_at is None:
                 row.operation_completed_at = completed_at

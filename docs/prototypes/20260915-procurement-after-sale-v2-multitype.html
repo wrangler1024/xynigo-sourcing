@@ -2548,7 +2548,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
       </div>
 
       <div class="business-summary" id="asBizSummary" style="padding-top:4px;">
-        <div class="business-stat"><small>提交订单</small><b>—</b></div>
+        <div class="business-stat"><small>处理订单</small><b>—</b></div>
         <div class="business-stat stat-ok"><small>已受理订单</small><b>—</b></div>
         <div class="business-stat"><small>已跳过订单</small><b>—</b></div>
         <div class="business-stat stat-bad"><small>失败订单</small><b>—</b></div>
@@ -2602,7 +2602,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
           <textarea id="asTrackBills" rows="1" placeholder="输入环境序号，以空格、逗号、分号或换行分隔" aria-describedby="asTrackManualHelp" autocomplete="off" spellcheck="false"></textarea>
           <button class="btn" id="asTrackManual" type="button">回访指定单</button>
         </div>
-        <p class="as-manual-help" id="asTrackManualHelp">按输入顺序匹配这些环境在系统中的历史退款单，核对清单后只读回访。每次最多 300 个环境、500 个退款单；系统未记录的退款单可切换“按退款单（完整信息）”。</p>
+        <p class="as-manual-help" id="asTrackManualHelp">先匹配系统历史退款单，再选择回访已匹配记录，或到平台查找全部输入环境后回访。未匹配不代表平台无退款。每次最多 300 个环境、500 个退款单，全程只读。</p>
       </div>
       <div class="as-track-filters">
         <label for="asTrackFilter">退款状态</label>
@@ -6750,6 +6750,7 @@ function asTrackStageCell(row) {
     +(phase?'<div class="hint">上次成功读取：'+label+'</div>':'');
 }
 function asRenderTrackRows(rows) {
+  if ($('asTrackFilter')) $('asTrackFilter').disabled = false;
   AS_STATE.trackRows=rows || [];
   const filter=$('asTrackFilter')?.value || 'all';
   const selected=AS_STATE.trackRows.filter(row=>filter==='all'
@@ -6757,7 +6758,7 @@ function asRenderTrackRows(rows) {
     || (filter==='review_failed' && asReviewFailed(row.phase))
     || (filter==='unconfirmed' && !['ok','queued','running','stopped'].includes(row.status)));
   const hint=$('asTrackFilterHint');
-  if(hint)hint.textContent='显示 '+selected.length+' / '+AS_STATE.trackRows.length+' 单；异常筛选包含保留的上次状态，导出包含本批全部结果。';
+  if(hint)hint.textContent=(AS_STATE.trackWorkflow ? '步骤 2/2：查询退款进度 · ' : '')+'显示 '+selected.length+' / '+AS_STATE.trackRows.length+' 单；异常筛选包含保留的上次状态，导出包含本批全部结果。';
   const tbody=$('asTrackRows');
   if(!selected.length) {
     tbody.innerHTML='<tr><td colspan="10" class="hint" style="text-align:center; padding:22px;">'
@@ -6769,13 +6770,13 @@ function asRenderTrackRows(rows) {
     return `<tr${bad?' class="tr-bad"':''}>
       <td class="sub-text">${esc(row.environmentSerial || '')}</td>
       <td class="as-order">${esc(row.orderNo || '')}</td>
-      ${asThumbCell(row.goodsImg)}
+      ${asThumbCell(row.goodsImg || (AS_STATE.trackItems || []).find(item => item.refundBillId === row.refundBillId && item.orderNo === row.orderNo && item.environmentSerial === row.environmentSerial)?.goodsImg)}
       <td class="as-order" style="font-size:12px">${esc(row.refundBillId || '')}</td>
       <td class="sub-text">${esc(row.refundAccount || '—')}</td>
       <td>${esc(row.amount || '—')}</td>
       <td>${asTrackStageCell(row)}</td>
       <td>${row.status==='ok'?esc(row.countdown || '—'):'—'}</td>
-      <td class="sub-text">${row.checkedAt?'最近有效读取：<br>'+esc(row.checkedAt.replace('T',' ').slice(0,19)):'—'}</td>
+      <td class="sub-text">${row.checkedAt?'最近有效读取：<br>'+esc(new Date(row.checkedAt).toLocaleString('zh-CN',{hour12:false})):'—'}</td>
       <td class="hint${bad?' as-review-note':''}">${row.errorSummary && row.status!=='ok'?'<div>本次未确认：'+esc(row.errorSummary)+'</div>':''}${esc(row.note || '')}${asTrackEvidence(row)}</td></tr>`;
   }).join('');
 }
@@ -6824,7 +6825,7 @@ function asSyncTrackInputMode() {
   $('asTrackBills').placeholder = byEnvironment
     ? '输入环境序号，以空格、逗号、分号或换行分隔' : '环境序号 订单号 退款单号；…';
   $('asTrackManualHelp').textContent = byEnvironment
-    ? '按输入顺序匹配这些环境在系统中的历史退款单，核对清单后只读回访。每次最多 300 个环境、500 个退款单；系统未记录的退款单可切换“按退款单（完整信息）”。'
+    ? '先匹配系统历史退款单，再选择回访已匹配记录，或到平台查找全部输入环境后回访。未匹配不代表平台无退款。每次最多 300 个环境、500 个退款单，全程只读。'
     : '每组填环境序号、订单号、退款单号，以空格分隔；多组用中英文分号或换行分隔。只读查询，可回访历史订单，无需本页提交记录。';
 }
 function asConfirmTrackMatches(data, discovery) {
@@ -6841,7 +6842,7 @@ function asConfirmTrackMatches(data, discovery) {
       : (discovery && discovery.disabledReason) || '执行器暂不支持平台查找。';
     dialog.innerHTML = '<h3>核对回访范围</h3><p>输入 '+environments.length+' 个环境，匹配 '
       +items.length+' 个退款单。只读查询平台进度，不提交售后。</p>'
-      +'<p class="hint">系统记录可能不含人工申请的退款；平台查找可发现这些退款单。'+esc(discoveryHint)+'</p>'
+      +'<p class="hint">回访已匹配的退款单只处理下列已知记录，不自动补查缺失环境。系统记录可能不含人工申请的退款；选择平台查找会读取全部输入环境，再回访查到的退款单。'+esc(discoveryHint)+'</p>'
       +'<div class="as-track-match-list">'+environments.map(env => {
         const bills = items.filter(item => item.environmentSerial === env.environmentSerial);
         return '<p><b>环境 '+esc(env.environmentSerial)+'</b> · '+bills.length+' 个退款单'
@@ -6964,17 +6965,23 @@ function asDiscoveryEnvPill(status) {
 // 空态必须区分：平台确认无退款 / 登录失效 / 页面读取失败 / 环境占用 / 范围未查完。
 function asDiscoveryEnvConclusion(env) {
   const rows = env.rows || [];
-  if (String(env.environmentStatus || '') === 'failed') {
+  const status = String(env.environmentStatus || '');
+  if (status === 'queued') return '等待读取订单与退款记录';
+  if (status === 'running') return '正在读取订单与退款记录，尚未完成';
+  if (status === 'failed') {
     const login = rows.some(r => r.status === 'login') || String(rows[0]?.errorSummary || '').includes('未登录');
     return login ? '登录失效：请先登录该环境后重试' : '页面读取失败：未确认该环境全部退款记录';
   }
-  if (String(env.environmentStatus || '') === 'stopped') return '范围未查完：发现被停止，结果不完整';
-  if (!rows.length || (!rows[0].orderNo && rows.length === 1)) return '平台确认无退款订单';
-  if (!rows.some(r => (r.refundBillIds || []).length)) return '平台确认无退款';
+  if (status === 'stopped') return '范围未查完：发现被停止，结果不完整';
+  if (status !== 'ok') return '环境查询结果待核实';
+  if (!rows.some(row => row.orderNo)) return '平台确认无订单';
+  if (!rows.some(r => (r.refundBillIds || []).length)) return '平台确认无退款记录';
   return '';
 }
 function asRenderDiscoveryRows(rows, options) {
+  if ($('asTrackFilter')) $('asTrackFilter').disabled = true;
   const opts = options || {};
+  AS_STATE.discoveryRows = rows || [];
   const order = AS_STATE.discoverySerials || [];
   const envs = new Map();
   (rows || []).forEach(row => {
@@ -6988,29 +6995,34 @@ function asRenderDiscoveryRows(rows, options) {
     const ia = order.indexOf(a.environmentSerial), ib = order.indexOf(b.environmentSerial);
     return (ia < 0 ? order.length : ia) - (ib < 0 ? order.length : ib);
   });
+  const hint = $('asTrackFilterHint');
+  if (hint) hint.textContent = `步骤 1/2：查找退款单 · ${order.length || envList.length} 个环境；退款阶段、金额及账户将在步骤 2 查询。`;
   const tbody = $('asTrackRows');
   if (!envList.length) {
     tbody.innerHTML = '<tr><td colspan="10" class="hint" style="text-align:center; padding:22px;">'
       +'正在查找退款单…按环境只读读取退款记录，不提交售后。</td></tr>';
     return;
   }
-  tbody.innerHTML = envList.map(env => {
-    const lines = env.rows.map(row => {
-      const bills = row.refundBillIds || [];
-      if (!row.orderNo) return '';
-      const state = row.status === 'fail'
-        ? '<span class="hint">'+esc(row.errorSummary || '退款记录读取失败')+'</span>'
-        : bills.length ? esc(bills.join(' / ')) : '<span class="hint">无退款</span>';
-      return '<div class="sub-text">'+esc(row.orderNo)+' · '+state+'</div>';
-    }).join('');
-    return `<tr><td colspan="10" style="padding:8px 10px;">
-      ${asDiscoveryEnvPill(env.environmentStatus)} <b>${esc(env.environmentSerial)}</b>
-      <span class="sub-text">${esc(env.storeName)}</span>
-      ${env.rows.some(r => r.status === 'login') || (env.rows.length === 1 && !env.rows[0].orderNo && String(env.rows[0].errorSummary || '').includes('未登录')) ? '<div class="hint">'+esc(env.rows[0].errorSummary || '')+'</div>' : ''}
-      ${env.environmentStatus === 'failed' && !lines ? '<div class="hint">'+esc((env.rows[0]||{}).errorSummary || '页面读取失败')+'</div>' : ''}
-      <div style="margin-top:4px">${lines || '<span class="hint">该环境无订单</span>'}</div>
-    </td></tr>`;
-  }).join('') + (opts.continueButton
+  tbody.innerHTML = envList.map(env => env.rows.map(row => {
+    const bills = row.refundBillIds || [];
+    const hasOrder = !!row.orderNo;
+    const complete = row.status === 'ok';
+    const note = row.errorSummary || (hasOrder && complete
+      ? bills.length ? '已找到退款单，等待步骤 2 查询退款进度' : '该订单已查询，平台无退款记录'
+      : asDiscoveryEnvConclusion(env));
+    const status = hasOrder && complete
+      ? bills.length ? '退款单已找到' : '无退款记录' : '';
+    return (bills.length ? bills : ['']).map(bill => `<tr>
+      <td class="sub-text">${esc(row.environmentSerial || '')}</td>
+      <td class="as-order">${esc(row.orderNo || '—')}</td>
+      ${asThumbCell(row.goodsImg)}
+      <td class="as-order">${esc(bill || '—')}</td>
+      <td class="hint">—</td><td class="hint">—</td>
+      <td>${status ? '<span class="pill ok">'+esc(status)+'</span>' : asDiscoveryEnvPill(env.environmentStatus)}</td>
+      <td class="hint">—</td><td class="hint">${row.checkedAt ? '查找：'+esc(new Date(row.checkedAt).toLocaleString('zh-CN',{hour12:false})) : '—'}</td>
+      <td class="hint">${esc(note)}${env.storeName ? '<div>'+esc(env.storeName)+'</div>' : ''}</td>
+    </tr>`).join('');
+  }).join('')).join('') + (opts.continueButton
     ? `<tr><td colspan="10" style="padding:10px; text-align:center;">
         <button class="btn primary" data-as-discovery-continue>仅回访已确认的 ${opts.continueButton} 单</button>
         ${opts.conflictCount ? '<div class="hint" style="margin-top:6px">'+opts.conflictCount+' 个退款单归属不一致已排除，请核对历史记录</div>' : ''}
@@ -7074,7 +7086,7 @@ async function asDiscoverAndTrack(serials, executor) {
     $('asTrack').disabled = true; $('asStop').disabled = false;
     asRenderDiscoveryRows([]);
     asProgress({progressTotal:serials.length, progressCompleted:0, unit:'个环境'});
-    asSetPhase('正在查找退款单', `共 ${serials.length} 个环境 · 只读读取退款记录，不提交售后`, true);
+    asSetPhase('步骤 1/2：正在查找退款单', `共 ${serials.length} 个环境 · 查找完成后进入步骤 2 查询退款进度 · 全程只读`, true);
     $('asTrackCard').scrollIntoView?.({block:'start',behavior:'instant'});
   } catch (e) {
     if (started) {
@@ -7091,20 +7103,28 @@ async function asDiscoverAndTrack(serials, executor) {
 }
 // 发现终态：完整成功自动接续回访（同一页面意图）；部分失败/停止只留手动继续。
 async function asFinishDiscovery(taskId, rows, status) {
+  const epoch = AS_STATE.taskEpoch || 0;
+  const owns = () => epoch === (AS_STATE.taskEpoch || 0) && AS_STATE.discoveryTaskId === taskId
+    && !AS_STATE.running && !AS_STATE.starting;
+  if (!owns()) return;
   const intent = AS_STATE.discoveryIntent;
   const envStates = new Map();
   (rows || []).forEach(row => envStates.set(String(row.environmentSerial || ''),
     String(row.environmentStatus || '')));
   const failedEnvs = [...envStates.entries()].filter(([, s]) => s === 'failed').map(([s]) => s);
   const stoppedEnvs = [...envStates.entries()].filter(([, s]) => s === 'stopped').map(([s]) => s);
-  const allOk = status === 'succeeded' && envStates.size > 0
+  const expectedSerials = (AS_STATE.discoverySerials || []).map(String);
+  const missingEnvs = expectedSerials.filter(serial => !envStates.has(serial));
+  const allOk = status === 'succeeded' && expectedSerials.length > 0 && !missingEnvs.length
     && [...envStates.values()].every(s => s === 'ok');
   const items = asDiscoveryItemsFromRows(rows);
   let validated = {items: [], conflicts: []};
   if (items.length) {
     try {
       validated = await asValidateDiscoveredItems(items);
+      if (!owns()) return;
     } catch (e) {
+      if (!owns()) return;
       asSetPhase('退款身份核对失败', String(e.message || e) + '；可稍后在此页重试或改用完整信息回访。', false);
       asRenderDiscoveryRows(rows, items.length
         ? {continueButton: items.length} : {footNote:'退款身份核对未完成'});
@@ -7127,15 +7147,17 @@ async function asFinishDiscovery(taskId, rows, status) {
     let executorOk = false;
     try {
       const track = await asDiscoveryExecutor();
+      if (!owns()) return;
       executorOk = !!(track.executor && track.executor.id === intent.executorId);
       if (track.executor && track.executor.id !== intent.executorId) {
         asSetPhase('执行器已变化', '当前执行器与平台查找时不同，不自动接续；请核对后手动继续。', false);
       }
     } catch (e) { executorOk = false; }
+    if (!owns()) return;
     if (executorOk) {
       AS_STATE.discoveryIntent = null;
       asSetPhase('平台查找完成', `发现 ${items.length} 个退款单${conflicts.length ? '，其中 '+conflicts.length+' 个归属不一致已排除' : ''}；自动接续回访 ${accepted.length} 单。`, false);
-      await asTrack(accepted);
+      await asTrack(accepted, {discoveryRows:rows});
       return;
     }
   }
@@ -7147,13 +7169,13 @@ async function asFinishDiscovery(taskId, rows, status) {
   }
   if (!items.length) {
     asSetPhase(status === 'cancelled' ? '平台查找已停止' : '平台查找未完成',
-      `发现 ${failedEnvs.length} 个环境读取失败、${stoppedEnvs.length} 个环境未查完；未发现可回访的退款单。`, false);
+      `发现 ${failedEnvs.length} 个环境读取失败、${stoppedEnvs.length + missingEnvs.length} 个环境未查完；未发现可回访的退款单。`, false);
     asRenderDiscoveryRows(rows, {});
     return;
   }
   asSetPhase('平台查找完成（部分待确认）',
     `发现 ${items.length} 个退款单，可回访 ${accepted.length} 单${conflicts.length ? '，'+conflicts.length+' 个归属不一致已排除' : ''}`
-    + (failedEnvs.length || stoppedEnvs.length ? `；${failedEnvs.length} 个环境读取失败、${stoppedEnvs.length} 个环境未查完，未包含在其结果中。` : '。'),
+    + (failedEnvs.length || stoppedEnvs.length || missingEnvs.length ? `；${failedEnvs.length} 个环境读取失败、${stoppedEnvs.length + missingEnvs.length} 个环境未查完，未包含在其结果中。` : '。'),
     false);
   asRenderDiscoveryRows(rows, accepted.length
     ? {continueButton: accepted.length, conflictCount: conflicts.length}
@@ -7163,15 +7185,21 @@ async function asContinueDiscovery() {
   if (AS_STATE.running || AS_STATE.starting) return;
   const taskId = AS_STATE.discoveryTaskId;
   if (!taskId) return;
+  const epoch = AS_STATE.taskEpoch || 0;
+  const owns = () => epoch === (AS_STATE.taskEpoch || 0) && AS_STATE.discoveryTaskId === taskId;
+  let nextItems = [], discoveryRows = [];
   AS_STATE.starting = true; asSyncRuntimeControls();
   try {
     const res = await cloudFetchJson('/v1/after-sale/scan/' + encodeURIComponent(taskId));
-    const rows = (res?.data?.summary?.rows) || [];
-    const items = asDiscoveryItemsFromRows(rows);
+    if (!owns()) return;
+    discoveryRows = (res?.data?.summary?.rows) || [];
+    const items = asDiscoveryItemsFromRows(discoveryRows);
     if (!items.length) { asSetPhase('没有可回访的退款单', '本次平台查找未发现退款单。', false); return; }
     const track = await asDiscoveryExecutor();
+    if (!owns()) return;
     if (!track.executor) { asSetPhase('执行器不可用', track.disabledReason || '无法发起回访', false); return; }
     const validated = await asValidateDiscoveredItems(items);
+    if (!owns()) return;
     const accepted = validated.items || [];
     if (!accepted.length) {
       asSetPhase('没有可回访的退款单', (validated.conflicts || []).length
@@ -7183,12 +7211,13 @@ async function asContinueDiscovery() {
         `本次可回访 ${accepted.length} 个退款单，单次最多 500 个；请改用「按退款单（完整信息）」分批回访。`, false);
       return;
     }
-    await asTrack(accepted);
+    nextItems = accepted;
   } catch (e) {
-    asSetPhase('继续回访失败', String(e.message || e), false);
+    if (owns()) asSetPhase('继续回访失败', String(e.message || e), false);
   } finally {
-    AS_STATE.starting = false; asSyncRuntimeControls();
+    if (owns()) { AS_STATE.starting = false; asSyncRuntimeControls(); }
   }
+  if (nextItems.length && owns()) await asTrack(nextItems, {discoveryRows});
 }
 function asDiscoveryPersist() {
   try { localStorage.setItem(AS_DISCOVERY_KEY, JSON.stringify({
@@ -7253,7 +7282,7 @@ async function asRestoreDiscovery() {
     }
   }
 }
-async function asTrack(explicitItems) {
+async function asTrack(explicitItems, options = {}) {
   if (AS_STATE.running || AS_STATE.starting) return;
   AS_STATE.starting = true;
   asSyncRuntimeControls();
@@ -7284,14 +7313,21 @@ async function asTrack(explicitItems) {
     AS_STATE.pollErrors = 0;
     AS_STATE.etaBase = null;
     AS_STATE.startedAt = Date.now(); AS_STATE.endedAt = null; AS_STATE.progressSnapshot = null;
-    AS_STATE.trackItems = items.map(item => ({...item}));
+    AS_STATE.trackWorkflow = Array.isArray(options.discoveryRows);
+    AS_STATE.trackItems = items.map(item => {
+      const found = (options.discoveryRows || []).find(row => row.orderNo === item.orderNo
+        && String(row.environmentSerial) === String(item.environmentSerial)
+        && (row.refundBillIds || []).includes(item.refundBillId));
+      return {...item, ...(found?.goodsImg ? {goodsImg:found.goodsImg} : {})};
+    });
     AS_STATE.trackRows = [];
     AS_STATE.trackTotal = items.length;
     started = true;   // 任务已创建受理：之后的界面渲染异常不属于创建失败
     $('asTrack').disabled = true; $('asStop').disabled = false;
     asRenderTrackRows(asOrderedRows(AS_STATE.trackItems, [], 'refundBillId'));
     asProgress({progressTotal: items.length, progressCompleted: 0, unit: '单'});
-    asSetPhase('回访运行中', `共 ${items.length} 个退款单 · 只读，不动订单与退款数据`, true);
+    asSetPhase(AS_STATE.trackWorkflow ? '步骤 2/2：回访运行中' : '回访运行中',
+      `${AS_STATE.trackWorkflow ? '步骤 1 查找已结束；' : ''}共 ${items.length} 个退款单 · 本阶段按退款单计数 · 只读查询退款进度`, true);
     $('asTrackCard').scrollIntoView?.({block:'start',behavior:'instant'});
   } catch (e) {
     if (started) {
@@ -7993,7 +8029,7 @@ function asSyncDirectInputMode() {
     ? '单遍直提：逐个进入这些环境，发现可申请的丢件退款订单就直接提交；没有售后入口的环境跳过并记录原因。每次最多 300 个环境；不受待处理列表的日期或件数筛选影响。'
     : '每组填环境序号、订单号，以空格分隔；多组用中英文分号或换行分隔。提交前仍会核验可申请状态；需先查看金额和包裹数，可使用上方扫描。';
 }
-// 环境级结果条：无入口跳过的环境不会出现在订单行里，只能在这里看到反馈。
+// 环境进度与订单结果分开计数：旧执行器无订单行时仍保留环境反馈。
 // 环境结果的 pill 串：按环境直提的「本次提交」条与历史详情共用一套文案/配色，
 // 无入口跳过、未登录/读取失败、已停止都在这里逐条看得见。
 function asEnvOutcomePills(environments) {
@@ -8011,8 +8047,8 @@ function asEnvOutcomePills(environments) {
       .map((key, index) => row[key] ? ['提交','跳过','失败'][index] + row[key] : '')
       .filter(Boolean).join(' · ');
     const tip = [row.note, row.errorSummary].filter(Boolean).join('；');
-    return `<span class="pill ${tone}" ${tip ? `title="${esc(tip)}"` : ''}>`
-      + `${esc(String(row.environmentSerial || ''))} ${esc(label)}`
+    return `<span class="pill ${tone}${['running','verifying'].includes(row.status) ? ' as-status-active' : ''}" ${tip ? `title="${esc(tip)}"` : ''}>`
+      + esc(label)
       + (counts ? ` <small>${esc(counts)}</small>` : '') + '</span>';
   }).join(' ');
 }
@@ -8103,7 +8139,7 @@ async function asPoll() {
         const readFailures = rows.filter(r => ['fail','login','inuse'].includes(r.status)).length;
         const title = ({cancelled:'回访已停止', failed:'回访失败', uncertain:'回访待核对'})[AS_STATE.status]
           || (completed < total ? '回访结束（结果未齐）' : readFailures ? '回访完成（部分失败）' : '回访完成');
-        asSetPhase(title,
+        asSetPhase(AS_STATE.trackWorkflow ? '步骤 2/2：'+title : title,
           `本次已处理 ${completed} / ${total} 单 · 读取失败 ${readFailures} 单 · 未终态 ${open} 单`
           + (bad ? ` · 已拒绝 ${bad} 单审核异常需人工处理` : ''), false);
       }

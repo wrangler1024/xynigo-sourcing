@@ -91,9 +91,9 @@ def classify_phase_state(state):
                 'title':str(current.get('title') or '')[:240], 'detail':detail[:800],
                 'canSupplement':can_supplement, 'reason':reason,
                 'reasonSource':'current_node' if reason else ''}
-    countdown = re.search(r'Termina en\s+([0-9: ]{4,12})', detail, re.I)
+    countdown = re.search(r'Termina en\s+(\d{1,3}\s*:\s*\d{2}\s*:\s*\d{2})(?!\d)', detail, re.I)
     return {'phase':phase, 'phaseLabel':PHASE_LABELS[phase], 'phaseEvidence':evidence,
-            'countdown':countdown.group(1).strip() if countdown else ''}
+            'countdown':re.sub(r'\s+', '', countdown.group(1)) if countdown else ''}
 
 
 def latest_rejection_reason(text, bill):

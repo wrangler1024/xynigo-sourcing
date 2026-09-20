@@ -15,6 +15,7 @@ from pydantic import (
     ConfigDict,
     Field,
     StrictBool,
+    StrictInt,
     field_validator,
     model_validator,
 )
@@ -1301,6 +1302,9 @@ class AfterSaleClaimProgressRow(BaseModel):
     refundAccount: str = Field(default="", max_length=40)
     deliveredAt: str = Field(default="", max_length=32)
     goodsImg: str = Field(default="", max_length=300)
+    goodsImages: list[Annotated[str, Field(max_length=300)]] = Field(default_factory=list, max_length=100)
+    goodsItems: list[AfterSaleOrderItem] = Field(default_factory=list, max_length=100)
+    itemCount: StrictInt | None = Field(default=None, ge=1, le=100_000)
     durationSeconds: int | None = Field(default=None, ge=0, le=86_400_000)
     submittedAt: str | None = Field(default=None, max_length=40)
     operationCompletedAt: str | None = Field(default=None, max_length=40)
