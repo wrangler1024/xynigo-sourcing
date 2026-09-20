@@ -14,7 +14,7 @@ from urllib.parse import quote
 
 from . import __version__
 
-RELEASE_VERSION = "0.18.9"
+RELEASE_VERSION = "0.18.10"
 RELEASE_CHANNEL = "test"
 RELEASE_PUBLISHED_AT = "2026-09-20T02:06:14Z"
 
@@ -31,8 +31,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.18.9-f55acdefd9b5",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.18.9.exe",
+        "runtimeId": "0.18.10-f55acdefd9b5",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.18.10.exe",
         "sha256": "051f60b1665fccd58f30a70f85696163dd6ebc191dbea112916c646f280ca0c0",
         "size": 15413016,
         "installMode": "standard_per_user",
@@ -50,8 +50,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.18.9-f55acdefd9b5",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.18.9.pkg",
+        "runtimeId": "0.18.10-f55acdefd9b5",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.18.10.pkg",
         "sha256": "0b452a3d46aadd3f78944444d503282a450706f8f0b2a12cf75d84ed60f68a20",
         "size": 11791522,
         "installMode": "standard_system_application",
@@ -324,6 +324,6 @@ def latest_local_executor_release() -> dict[str, object]:
             "修复部分结果手动继续回访未创建任务，保留停止、身份校验及任务归属保护。",
             "发现与回访统一结果列，明确步骤 1/2、2/2；读取中的状态显示动态省略号，不再提前显示无订单。",
             "改进 HubStudio 团队环境匹配提示，支持分行退款倒计时；环境状态不再重复序号。",
-            "云端与 Windows/macOS 执行器统一为 v0.18.9，沿用 test 渠道；订单资料采集修复需升级执行器。"
+            "云端与 Windows/macOS 执行器统一为 v0.18.10，沿用 test 渠道；订单资料采集修复需升级执行器。"
         ],
     }
