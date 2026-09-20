@@ -131,6 +131,26 @@ const poll=async data=>{response=data;await run('asPoll()');assert.equal(state.p
     } else assert.doesNotMatch(rendered,/已发现，待核对/);
     if(status==='skip')assert.doesNotMatch(rendered,/as-status-active/);
   }
+  // Activity belongs to the live environment, never inferred from order images.
+  ctx.displayRows=[{environmentSerial:'900010',orderNo:'SYNTH-PENDING',status:'queued',goodsImg:'synthetic'}];
+  ctx.displayEnvs=[{environmentSerial:'900010',status:'running'}];
+  const liveDisplay=()=>run('asClaimTableHtml(displayRows, displayEnvs, "all", true)');
+  const beforeActivity=JSON.stringify([ctx.displayRows,ctx.displayEnvs]);
+  assert.match(liveDisplay(),/as-status-active">环境处理中/);
+  assert.match(liveDisplay(),/无需手动确认/);
+  assert.equal((liveDisplay().match(/<tr\b/g)||[]).length,1);
+  assert.doesNotMatch(liveDisplay(),/>提交中</);
+  assert.equal(JSON.stringify([ctx.displayRows,ctx.displayEnvs]),beforeActivity);
+  assert.doesNotMatch(display('all'),/as-status-active">环境处理中/,'history is never presented as live');
+  for(const envStatus of ['queued','skip','fail','stopped','uncertain']) {
+    ctx.displayEnvs[0].status=envStatus;
+    assert.doesNotMatch(liveDisplay(),/as-status-active">环境处理中/,'inactive environment has no activity animation');
+  }
+  ctx.displayEnvs[0].status='running';
+  for(const orderStatus of ['skip','ok','uncertain','stopped']) {
+    ctx.displayRows[0].status=orderStatus;
+    assert.doesNotMatch(liveDisplay(),/as-status-active">环境处理中/,'finished orders keep their own result');
+  }
   ctx.displayEnvs[0]={environmentSerial:'900010',status:'fail',errorSummary:'<script>synthetic</script>'};
   assert.match(display('all'),/&lt;script&gt;synthetic/);assert.doesNotMatch(display('all'),/<script>/);
   ctx.displayRows=[];assert.match(display('all'),/data-as-environment/,'legacy empty detail still explains outcome');

@@ -6554,7 +6554,9 @@ function asClaimRowHtml(row, context = {}) {
   // Do not infer an actual submission (or which order is active) from images.
   const discovered = context.environmentMode && row.status === 'queued' && !!row.orderNo;
   const statusHtml = discovered
-    ? '<span class="pill run">已发现，待核对</span><div class="hint">订单已读取，详情及售后资格待核对</div>'
+    ? context.environmentActive
+      ? '<span class="pill run as-status-active">环境处理中</span><div class="hint">订单已读取，正在自动处理，无需手动确认</div>'
+      : '<span class="pill run">已发现，待核对</span><div class="hint">订单已读取，详情及售后资格待核对</div>'
     : context.environmentMode && row.status === 'running'
       ? '<span class="pill run as-status-active">读取/提交中</span>' : asClaimPill(row);
   const bad = !['ok'].includes(String(row.status || ''));
@@ -6639,7 +6641,9 @@ function asClaimTableHtml(rows, environments, filter = 'all', running = false, h
     const environmentHint = needsContext && !activeOrderExplainsProgress
       ? `<div data-as-environment-context="${esc(env.environmentSerial || '')}" style="margin-top:6px;white-space:normal;">环境进度：${asEnvOutcomePills([env])}<div>${esc(details)}</div></div>` : '';
     return orders.map((row, index) => asClaimRowHtml(row, {
-      environmentMode:true, environmentHint:index === 0 ? environmentHint : '',
+      environmentMode:true,
+      environmentActive:running && ['running','verifying'].includes(env.status),
+      environmentHint:index === 0 ? environmentHint : '',
     })).join('');
   });
   parts.push(...visible.filter(row => !known.has(String(row.environmentSerial || ''))).map(row => asClaimRowHtml(row)));
