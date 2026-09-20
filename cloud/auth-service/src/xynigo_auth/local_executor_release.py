@@ -16,7 +16,7 @@ from . import __version__
 
 RELEASE_VERSION = "0.18.10"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-20T02:06:14Z"
+RELEASE_PUBLISHED_AT = "2026-09-20T10:04:19Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,10 +31,10 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.18.10-f55acdefd9b5",
+        "runtimeId": "0.18.10-eaf584aedde7",
         "assetName": "Xynigo_Sourcing_Windows_Setup_v0.18.10.exe",
-        "sha256": "051f60b1665fccd58f30a70f85696163dd6ebc191dbea112916c646f280ca0c0",
-        "size": 15413016,
+        "sha256": "64719621ba3acf114cbb68672b5e99f8e91b5cd4325a2412728c0a03b7c15e79",
+        "size": 15417192,
         "installMode": "standard_per_user",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_silent_installer",
@@ -50,10 +50,10 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.18.10-f55acdefd9b5",
+        "runtimeId": "0.18.10-eaf584aedde7",
         "assetName": "Xynigo_Sourcing_macOS_Standard_v0.18.10.pkg",
-        "sha256": "0b452a3d46aadd3f78944444d503282a450706f8f0b2a12cf75d84ed60f68a20",
-        "size": 11791522,
+        "sha256": "1dbbdcc5322db27fcc3a31f469282a9d9ec80f8c3957bbef18ad153d7728354e",
+        "size": 11792723,
         "installMode": "standard_system_application",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_system_installer",
@@ -320,10 +320,8 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "按环境提交保留无售后入口订单的商品及已读退款资料，并显示具体跳过原因；已有退款不计本次新增受理。",
-            "修复部分结果手动继续回访未创建任务，保留停止、身份校验及任务归属保护。",
-            "发现与回访统一结果列，明确步骤 1/2、2/2；读取中的状态显示动态省略号，不再提前显示无订单。",
-            "改进 HubStudio 团队环境匹配提示，支持分行退款倒计时；环境状态不再重复序号。",
-            "云端与 Windows/macOS 执行器统一为 v0.18.10，沿用 test 渠道；订单资料采集修复需升级执行器。"
-        ],
+    "售后环境匹配齐指定序号后停止分页，增加查询预算、停止响应与匹配阶段提示。",
+    "新增重试失败环境，仅允许无订单明细且计数明确为零的失败环境，保留待核对保护。",
+    "执行器与工作台更新至 v0.18.10，沿用 test 渠道；环境查询优化需安装新版执行器。"
+],
     }
