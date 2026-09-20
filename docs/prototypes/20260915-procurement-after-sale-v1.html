@@ -2529,6 +2529,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         <div class="table-actions">
           <button class="btn sm" id="asClaimHistory">提交历史</button>
           <button class="btn sm" id="asRetryFailed" disabled>补提失败单</button>
+          <button class="btn sm" id="asRetryEnvironments" disabled>重试失败环境</button>
           <button class="btn sm" id="asClaimExport" title="导出当前批次已回传的提交结果" disabled>导出提交结果 Excel</button>
           <button class="btn sm" id="asClearResult">清空结果</button>
         </div>
@@ -6614,7 +6615,7 @@ function asClaimEnvironmentRowHtml(row) {
   return `<tr data-as-environment="${esc(row.environmentSerial || '')}" class="as-environment-row">
     <td class="sub-text">${esc(row.environmentSerial || '')}</td><td class="as-order">—</td>
     <td colspan="6" class="hint">环境进度${row.storeName ? ' · '+esc(row.storeName) : ''}</td>
-    <td>${asEnvOutcomePills([row])}</td><td class="sub-text">—</td>
+    <td>${row.status === 'running' && String(row.note || '').startsWith('正在匹配 Hub 环境') ? '<span class="pill run as-status-active">匹配环境中</span>' : asEnvOutcomePills([row])}</td><td class="sub-text">—</td>
     <td class="hint">${esc(asClaimEnvironmentNote(row))}</td></tr>`;
 }
 function asClaimTableHtml(rows, environments, filter = 'all', running = false, hasRun = true) {
@@ -7863,7 +7864,7 @@ async function asSubmitItems(items, options) {
   catch (e) { asSetPhase('执行器不可用', e.message || '无法发起售后提交', false); return false; }
   try {
     const res = await asCreateTask('/v1/operation-runs/after-sale-claim', envSerials
-      ? {executorId: executor.id, browserMode: runtime.browserMode, concurrency: runtime.concurrency, environmentSerials: envSerials}
+      ? {executorId: executor.id, browserMode: runtime.browserMode, concurrency: runtime.concurrency, environmentSerials: envSerials, retryFromRunId: opts.retryFromRunId || ''}
       : {executorId: executor.id, browserMode: runtime.browserMode, concurrency: runtime.concurrency, items, retryFromRunId: opts.retryFromRunId || ''});
     const data = (res || {}).data || {};
     // 创建成功：任务模式、编号、范围与运行状态一次建立；失败路径不残留 mode。
@@ -7966,12 +7967,37 @@ function asClaimItemsFromRows(rows) {
       itemCount: asItemCount(row),
     }));
 }
+function asRetryableEnvironmentSerials() {
+  if (!AS_STATE.runId || !['completed','partial_failure','failed','cancelled'].includes(AS_STATE.status)) return [];
+  const rows = AS_STATE.claimRows || [];
+  return [...new Set((AS_STATE.environments || []).filter(env => {
+    const serial = String(env.environmentSerial || '').trim();
+    return serial && ['fail','login','inuse'].includes(env.status)
+      && ['entryCount','submittedCount','blockedCount','failedCount'].every(key => typeof env[key] === 'number' && env[key] === 0)
+      && !rows.some(row => String(row.environmentSerial || '').trim() === serial);
+  }).map(env => String(env.environmentSerial).trim()))];
+}
+async function asRetryFailedEnvironments() {
+  if (!asWriteEntryReady()) return false;
+  const serials = asRetryableEnvironmentSerials();
+  if (!serials.length) return false;
+  const sourceRunId = AS_STATE.runId;
+  if (!confirm(`将重试 ${serials.length} 个未返回订单明细的失败环境：\n${serials.join('、')}\n\n会重新读取订单并对可申请订单发起售后；已处理环境不包含在内。确认继续？`)) return false;
+  return asSubmitItems([], {environmentSerials:serials, retryFromRunId:sourceRunId, label:'重试失败环境'});
+}
 function asSyncRetryButton(rows) {
   const button = $('asRetryFailed');
   if (!button) return;
   const count = asRecoverableClaimRows(rows || AS_STATE.claimRows).length;
   button.disabled = !count || AS_STATE.running || AS_STATE.starting || AS_STATE.type !== 'refund';
   button.textContent = count ? `补提失败单（${count}）` : '补提失败单';
+  const envButton = $('asRetryEnvironments');
+  if (envButton) {
+    const envCount = asRetryableEnvironmentSerials().length;
+    envButton.disabled = !envCount || AS_STATE.running || AS_STATE.starting || AS_STATE.type !== 'refund';
+    envButton.textContent = envCount ? `重试失败环境（${envCount}）` : '重试失败环境';
+    envButton.title = envCount ? '仅重试没有订单明细和提交记录的失败环境' : '没有可安全重试的空明细失败环境；已有订单请按订单处理，待核对结果不可直接重试';
+  }
 }
 async function asRetryFailedClaims(rows, sourceRunId) {
   const list = asRecoverableClaimRows(rows || AS_STATE.claimRows);
@@ -8318,6 +8344,10 @@ $('asClearResult').onclick = () => {
 };
 $('asStripToggle').onclick = () => asStripToggle(
   !$('asRunStrip').classList.contains('as-strip-collapsed'));
+$('asRetryEnvironments').onclick = () => {
+  if ($('asRetryEnvironments').disabled) return;
+  return asRetryFailedEnvironments();
+};
 $('asRetryFailed').onclick = () => {
   if ($('asRetryFailed').disabled) return;
   return asRetryFailedClaims();

@@ -10,13 +10,13 @@ const node = id => {
 node('asBizSummary').children = Array.from({length:6},()=>{const b={};return {querySelector:()=>b};});
 const state = {type:'refund',mode:'',running:false,starting:false,polling:false,taskEpoch:0,
   claimRows:[],claimItems:[],selected:new Set(),pendingCreates:{},environments:[],claimFilter:'all'};
-let response = {}, posts = 0;
+let response = {}, posts = 0, postedBodies = [], confirmation = true;
 const ctx = vm.createContext({AS_STATE:state,AS_HISTORY:{},AS_TYPES:[],AFTER_SALE_TYPE:'丢件退款',
-  $:node,Date,TextEncoder,crypto:require('node:crypto').webcrypto,
+  $:node,Date,TextEncoder,confirm:()=>confirmation,crypto:require('node:crypto').webcrypto,
   esc:v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),
   cloudFormalExecutor:async()=>({id:'SYNTH-EXEC'}),asRequireRuntimeControls:async()=>{},
   asRuntimeOptions:()=>({browserMode:'headless',concurrency:2}),
-  cloudFetchJson:async(_path,opts)=>{if(opts?.method){posts++;return {data:{runId:'SYNTH-RUN'}};}return {data:response};},
+  cloudFetchJson:async(_path,opts)=>{if(opts?.method){posts++;postedBodies.push(JSON.parse(opts.body));return {data:{runId:'SYNTH-RUN'}};}return {data:response};},
   asSyncRuntimeControls(){},asSetOrderView(){},asReconcileScanRows(){},asSyncRetryButton(){},asSyncWriteButtons(){},
   asProgress:d=>{node('progress').data=d;},asSetPhase:title=>{node('phase').textContent=title;},
   asScanGoodsHtml:()=>'<td>—</td>',asShortRef:s=>s||'—',
@@ -29,6 +29,7 @@ for(const name of ['asBeginTaskEpoch','asRunIdOf','asCreateTask','asWriteEntryRe
   'asClaimReasonHtml','asRefundPathText','asRefundAccountHtml','asClaimRowHtml','asRenderClaimRows',
   'asRenderClaimFilters','asClaimEnvironmentRows','asEnvironmentSummary','asClaimEnvironmentNote','asClaimEnvironmentRowHtml',
   'asClaimTableHtml','asEnvOutcomePills','asRenderEnvOutcomes','asSyncClaimExportButton',
+  'asRetryableEnvironmentSerials','asRetryFailedEnvironments','asSyncRetryButton',
   'asRecoverableClaimRows','asTrackItemsFromRows','asRenderClaimHistoryDetail','asOpenClaimHistoryDetail','asLoadLatestClaim']) {
   const m = new RegExp('(?:async )?function '+name+'\\([^]*?\\n}').exec(html);assert.ok(m,name);run(m[0]);
 }
@@ -172,5 +173,36 @@ const poll=async data=>{response=data;await run('asPoll()');assert.equal(state.p
   state.status='queued';state.mode='claim';state.running=true;state.claimItems=[{environmentSerial:'900097',orderNo:'SYNTH-EXACT'}];
   run('asRenderClaimRows(asOrderedRows(AS_STATE.claimItems, [], "orderNo"))');assert.match(table(),/SYNTH-EXACT/);assert.match(table(),/等待/);
   assert.doesNotMatch(table(),/data-as-environment/);
+  // Failed environments without order evidence can retry, using the real create path.
+  state.running=false;state.starting=false;state.mode='';state.status='partial_failure';state.runId='SYNTH-SOURCE';
+  const emptyFailure={environmentSerial:'900090',status:'fail',entryCount:0,submittedCount:0,blockedCount:0,failedCount:0};
+  state.environments=[emptyFailure,{...emptyFailure,environmentSerial:'900091',status:'skip'},
+    {...emptyFailure,environmentSerial:'900092'}];
+  state.claimRows=[{environmentSerial:'900092',orderNo:'SYNTH-EXISTING',status:'uncertain'}];
+  run('asSyncRetryButton(AS_STATE.claimRows)');
+  assert.equal(node('asRetryFailed').disabled,true);
+  assert.equal(node('asRetryEnvironments').disabled,false);
+  assert.equal(run('asRetryableEnvironmentSerials().join(",")'),'900090');
+  for(const status of ['running','uncertain','queued']) {
+    state.status=status;assert.equal(run('asRetryableEnvironmentSerials().length'),0);
+  }
+  state.status='partial_failure';
+  for(const key of ['entryCount','submittedCount','blockedCount','failedCount']) {
+    emptyFailure[key]=1;assert.equal(run('asRetryableEnvironmentSerials().length'),0);emptyFailure[key]=0;
+  }
+  emptyFailure.entryCount=null;assert.equal(run('asRetryableEnvironmentSerials().length'),0);
+  delete emptyFailure.entryCount;assert.equal(run('asRetryableEnvironmentSerials().length'),0);
+  emptyFailure.entryCount=0;
+  state.running=true;run('asSyncRetryButton(AS_STATE.claimRows)');assert.equal(node('asRetryEnvironments').disabled,true);
+  state.running=false;const beforeRetryPosts=posts;confirmation=false;
+  await run('asRetryFailedEnvironments()');assert.equal(posts,beforeRetryPosts);
+  confirmation=true;response={status:'queued',rows:[],environments:[]};
+  await run('asRetryFailedEnvironments()');await settle();
+  assert.equal(posts,beforeRetryPosts+1);
+  assert.deepEqual(postedBodies.at(-1).environmentSerials,['900090']);
+  assert.equal(postedBodies.at(-1).retryFromRunId,'SYNTH-SOURCE');
+  assert.ok(postedBodies.at(-1).idempotencyKey);
+  const lookupHtml=run('asClaimEnvironmentRowHtml({environmentSerial:"900090",status:"running",note:"正在匹配 Hub 环境，尚未读取订单或提交"})');
+  assert.match(lookupHtml,/匹配环境中/);
   console.log('PASS: real environment/order table lifecycle, terminal failures, reasons, filters, history, restore, and order-only actions');
 })().catch(error=>{console.error(error);process.exitCode=1;});

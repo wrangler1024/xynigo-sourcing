@@ -643,7 +643,12 @@ class AfterSaleClaimer(object):
         wanted = {str(k).strip().casefold(): k for k in keys}
         index = {}
         name_matches = {}
-        for env in self.hub.env_list():
+        iterator = getattr(self.hub, 'iter_environments', None)
+        environments = (iterator(stop_event=self._stop_event) if callable(iterator)
+                        else self.hub.env_list())
+        for env in environments:
+            if self._stop_event.is_set():
+                break
             for identifier in (env.get('serialNumber'),
                                env.get('containerCode')):
                 key = str(identifier or '').strip().casefold()
@@ -652,6 +657,10 @@ class AfterSaleClaimer(object):
             name = str(env.get('containerName') or '').strip()
             if name and name.casefold() in wanted:
                 name_matches.setdefault(name.casefold(), []).append(env)
+            # Exact serial/ID matches are authoritative; names need all pages
+            # so duplicate names cannot accidentally target an arbitrary account.
+            if len(index) == len(wanted):
+                break
         for name_key, matched in name_matches.items():
             if len(matched) == 1:
                 index.setdefault(wanted[name_key], matched[0])
@@ -1167,21 +1176,38 @@ class AfterSaleClaimer(object):
     # ---- 按环境单遍直提（写操作） ----
 
     def _run_claim_environments(self, serials, headless):
-        env_index = self._env_index(serials)
+        # Publish the lookup stage before any Hub request can block.
+        with self._lock:
+            for serial in serials:
+                self._claim_env_rows[serial] = {
+                    'environmentSerial': serial, 'environmentId': '',
+                    'storeName': serial, 'accountName': '', 'status': 'running',
+                    'entryCount': 0, 'submittedCount': 0,
+                    'blockedCount': 0, 'failedCount': 0,
+                    'note': '正在匹配 Hub 环境，尚未读取订单或提交',
+                    'errorSummary': None, 'durationSeconds': None,
+                }
+        try:
+            env_index = self._env_index(serials)
+        except Exception as exc:
+            reason = scrub_text('%s: %s' % (type(exc).__name__, str(exc)))[:200]
+            for serial in serials:
+                self._finish_env_row(serial, 'stopped' if self._stop_event.is_set() else 'fail',
+                                     note='环境匹配未完成，尚未提交', errorSummary=reason)
+            return
+        if self._stop_event.is_set():
+            for serial in serials:
+                self._finish_env_row(serial, 'stopped', note='已停止环境匹配，尚未提交')
+            return
         with self._lock:
             for serial in serials:
                 env = env_index.get(serial) or {}
-                self._claim_env_rows[serial] = {
-                    'environmentSerial': serial,
+                self._claim_env_rows[serial].update({
                     'environmentId': str(env.get('containerCode') or ''),
                     'storeName': env.get('containerName') or serial,
                     'accountName': self._account_name(env),
-                    'status': 'queued',
-                    'entryCount': 0, 'submittedCount': 0,
-                    'blockedCount': 0, 'failedCount': 0,
-                    'note': '', 'errorSummary': None,
-                    'durationSeconds': None,
-                }
+                    'status': 'queued', 'note': '',
+                })
         self._run_environment_jobs([
             (serial, env_index.get(serial) or {}, self._claim_env_one_guarded,
              (serial, env_index.get(serial) or {}, headless))

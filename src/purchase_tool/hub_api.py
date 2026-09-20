@@ -773,6 +773,33 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
             current += 1
         return result
 
+    def iter_environments(self, stop_event=None, budget_seconds=45):
+        """Bounded read-only pagination; callers can stop once identifiers match."""
+        deadline = time.monotonic() + budget_seconds
+        current = 1
+        while True:
+            if stop_event is not None and stop_event.is_set():
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise HubApiError('匹配 Hub 环境超时，请检查 HubStudio 后重试',
+                                  'hubstudio_environment_lookup_timeout')
+            data = self._post('/env/list', {'current': current, 'size': 200},
+                              retries=1, transport_retries=1,
+                              recover_transport=False,
+                              timeout=min(10.0, remaining)) or {}
+            page = data.get('list', [])
+            if not isinstance(page, list):
+                raise HubApiError('Hub 环境列表格式无效',
+                                  'hubstudio_local_api_incompatible')
+            for env in page:
+                if stop_event is not None and stop_event.is_set():
+                    return
+                yield env
+            if current * 200 >= int(data.get('total') or 0) or not page:
+                return
+            current += 1
+
     def env_lookup(self, container_code=None, container_name=None,
                    tag_name=None):
         """按环境 ID 或完整环境名定向查询，避免为单条回读全量翻页。"""
