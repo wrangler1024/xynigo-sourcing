@@ -6549,7 +6549,7 @@ function asSupplementClaimAccounts(trackRows) {
       asClaimEnvironmentRows(AS_HISTORY.detail.environments || [], AS_HISTORY.detail.batch?.status));
   }
 }
-function asClaimRowHtml(row) {
+function asClaimRowHtml(row, context = {}) {
   const bad = !['ok'].includes(String(row.status || ''));
   const cls = bad && row.status !== 'queued' && !['running','verifying'].includes(row.status)
     ? ' class="tr-bad"' : (row.status === 'running' ? ' class="tr-run"' : '');
@@ -6565,9 +6565,9 @@ function asClaimRowHtml(row) {
           return esc(path || (r.refundBillId ? '未取得' : '—'));
         }).join('<br>')}</td>
         <td class="sub-text">${(row.refunds?.length ? row.refunds : [row]).map(asRefundAccountHtml).join('<br>')}</td>
-        <td>${asClaimPill(row)}${row.status !== 'ok' && row.refunds?.length ? `<div class="hint">平台：${esc([...new Set(row.refunds.map(r=>r.phaseLabel).filter(Boolean))].join(' / ') || '阶段待核对')} · ${row.refunds.length} 笔退款记录</div>` : ''}</td>
+        <td>${context.environmentMode && row.status === 'running' ? '<span class="pill run as-status-active">读取/提交中</span>' : asClaimPill(row)}${row.status !== 'ok' && row.refunds?.length ? `<div class="hint">平台：${esc([...new Set(row.refunds.map(r=>r.phaseLabel).filter(Boolean))].join(' / ') || '阶段待核对')} · ${row.refunds.length} 笔退款记录</div>` : ''}</td>
         <td class="sub-text">${esc(row.operationCompletedAt ? new Date(row.operationCompletedAt).toLocaleString('zh-CN', {hour12:false,timeZoneName:'shortOffset'}) : '—')}</td>
-        <td class="hint">${asClaimReasonHtml(row)}</td>
+        <td class="hint">${asClaimReasonHtml(row)}${context.environmentHint || ''}</td>
       </tr>`;
 }
 function asClaimReasonHtml(row) {
@@ -6593,17 +6593,20 @@ function asEnvironmentSummary(rows) {
     + ` · 已跳过 ${count(['skip','blocked','empty'])} 个 · 已停止 ${count(['stopped'])} 个`
     + ` · 待核对 ${count(['uncertain'])} 个（不计入订单数）`;
 }
-function asClaimEnvironmentRowHtml(row) {
+function asClaimEnvironmentNote(row) {
   const note = [row.note, row.errorSummary].filter(Boolean).join('；');
   const fallback = {queued:'等待执行器处理此环境', running:'正在读取订单并逐单处理',
-    ok:'该环境已处理，订单结果见下方', skip:'没有可申请售后的订单', blocked:'订单均不可申请售后',
+    ok:'该环境已处理', skip:'没有可申请售后的订单', blocked:'订单均不可申请售后',
     empty:'未发现订单', fail:'环境处理失败，未返回具体原因', login:'环境未登录',
     inuse:'环境被占用', stopped:'该环境已停止', uncertain:'环境结果待核对，请勿重复提交'};
+  return note || fallback[row.status] || '环境状态待核对';
+}
+function asClaimEnvironmentRowHtml(row) {
   return `<tr data-as-environment="${esc(row.environmentSerial || '')}" class="as-environment-row">
     <td class="sub-text">${esc(row.environmentSerial || '')}</td><td class="as-order">—</td>
     <td colspan="6" class="hint">环境进度${row.storeName ? ' · '+esc(row.storeName) : ''}</td>
     <td>${asEnvOutcomePills([row])}</td><td class="sub-text">—</td>
-    <td class="hint">${esc(note || fallback[row.status] || '环境状态待核对')}</td></tr>`;
+    <td class="hint">${esc(asClaimEnvironmentNote(row))}</td></tr>`;
 }
 function asClaimTableHtml(rows, environments, filter = 'all', running = false, hasRun = true) {
   const visible = rows.filter(row => asClaimMatchesFilter(row, filter));
@@ -6612,18 +6615,27 @@ function asClaimTableHtml(rows, environments, filter = 'all', running = false, h
   const parts = envs.map(env => {
     const related = rows.filter(row => String(row.environmentSerial || '') === String(env.environmentSerial || ''));
     const orders = related.filter(row => asClaimMatchesFilter(row, filter));
-    // 正常结束且订单明细齐备时收起环境占位；异常、处理中与无明细仍需独立说明。
-    // 用全部关联订单判断是否收尾，避免筛选隐藏在途订单后误判环境已完成。
+    // 订单一旦可见，就在原订单行持续更新。环境范围的提示附在首条可见订单备注中，
+    // 不创建第二条订单形状的进度行；筛选后的空范围仍可单独展示环境解释。
     const settled = related.length > 0 && related.every(row => row.orderNo
       && ['ok','skip','blocked','empty','fail','login','inuse','stopped','uncertain'].includes(row.status));
     const reportedCount = Math.max(Number(env.entryCount) || 0,
       ['submittedCount','blockedCount','failedCount'].reduce((sum, key) => sum + (Number(env[key]) || 0), 0));
-    const showEnvironment = !orders.length || !settled || related.length < reportedCount
+    const needsContext = !settled || related.length < reportedCount
       || !['ok','skip','blocked'].includes(env.status) || !!env.errorSummary;
-    return asClaimMatchesFilter(env, filter) || orders.length
-      ? (showEnvironment ? asClaimEnvironmentRowHtml(env) : '') + orders.map(asClaimRowHtml).join('') : '';
+    if (!orders.length) return asClaimMatchesFilter(env, filter) ? asClaimEnvironmentRowHtml(env) : '';
+    const activeOrderExplainsProgress = ['running','verifying'].includes(env.status) && !env.errorSummary && !env.note
+      && related.length >= reportedCount && orders.some(row => ['running','verifying'].includes(row.status));
+    const details = [asClaimEnvironmentNote(env),
+      related.length < reportedCount ? `环境已报告 ${reportedCount} 单，已返回 ${related.length} 条订单明细` : '',
+      !settled && ['ok','skip','blocked'].includes(env.status) ? '订单仍有未结束状态，请核对各行进度' : ''].filter(Boolean).join('；');
+    const environmentHint = needsContext && !activeOrderExplainsProgress
+      ? `<div data-as-environment-context="${esc(env.environmentSerial || '')}" style="margin-top:6px;white-space:normal;">环境进度：${asEnvOutcomePills([env])}<div>${esc(details)}</div></div>` : '';
+    return orders.map((row, index) => asClaimRowHtml(row, {
+      environmentMode:true, environmentHint:index === 0 ? environmentHint : '',
+    })).join('');
   });
-  parts.push(...visible.filter(row => !known.has(String(row.environmentSerial || ''))).map(asClaimRowHtml));
+  parts.push(...visible.filter(row => !known.has(String(row.environmentSerial || ''))).map(row => asClaimRowHtml(row)));
   const content = parts.join('');
   if (content) return content;
   const note = rows.length || envs.length ? '该分类暂无结果。'

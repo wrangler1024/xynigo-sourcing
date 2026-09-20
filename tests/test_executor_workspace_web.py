@@ -923,7 +923,7 @@ class AfterSaleClaimWiringTests(unittest.TestCase):
         # 行模板抽成了 asClaimRowHtml：③ 与「历史详情」共用一套，列序只在一处定义
         tpl = html[html.index('function asClaimRowHtml('):]
         tpl = tpl[:tpl.index('\n}')]
-        self.assertIn('orders.map(asClaimRowHtml)', html)
+        self.assertTrue('orders.map((row, index) => asClaimRowHtml(row,' in html)
         self.assertIn('asClaimTableHtml(rows, envRows', html,
                       '历史详情必须复用 ③ 的行模板，不得另写一份（列序会漂）')
         env_tpl = html[html.index('function asClaimEnvironmentRowHtml('):]

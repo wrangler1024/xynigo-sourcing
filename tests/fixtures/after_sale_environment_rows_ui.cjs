@@ -27,7 +27,7 @@ for(const name of ['AS_CLAIM_PILL','AS_RECOVERABLE_CLAIM_STATUS'])
 for(const name of ['asBeginTaskEpoch','asRunIdOf','asCreateTask','asWriteEntryReady','asSubmitItems','asPoll',
   'asOrderedRows','asClaimNeedsReconciliation','asClaimMatchesFilter','asClaimPill','asClaimPillText',
   'asClaimReasonHtml','asRefundPathText','asRefundAccountHtml','asClaimRowHtml','asRenderClaimRows',
-  'asRenderClaimFilters','asClaimEnvironmentRows','asEnvironmentSummary','asClaimEnvironmentRowHtml',
+  'asRenderClaimFilters','asClaimEnvironmentRows','asEnvironmentSummary','asClaimEnvironmentNote','asClaimEnvironmentRowHtml',
   'asClaimTableHtml','asEnvOutcomePills','asRenderEnvOutcomes','asSyncClaimExportButton',
   'asRecoverableClaimRows','asTrackItemsFromRows','asRenderClaimHistoryDetail','asOpenClaimHistoryDetail','asLoadLatestClaim']) {
   const m = new RegExp('(?:async )?function '+name+'\\([^]*?\\n}').exec(html);assert.ok(m,name);run(m[0]);
@@ -70,12 +70,14 @@ const poll=async data=>{response=data;await run('asPoll()');assert.equal(state.p
   response={runId:'RESTORED',submitMode:'environments',status:'failed',rows:[],environments:failures};
   await run('asLoadLatestClaim()');assert.match(table(),/合成环境连接失败/);assert.doesNotMatch(table(),/运行中/);
 
-  // Mixed batch: environment group followed by its orders, and a failing env without orders.
+  // Once an order is known, active progress uses that order row; empty failed environments remain visible.
   state.mode='claim';state.running=true;state.envMode=true;state.envSerials=envs;state.claimItems=[];
   const order={environmentSerial:envs[0],orderNo:'SYNTH-ORDER',status:'running'};
   await poll({status:'running',rows:[order],environments:[{environmentSerial:envs[0],status:'running'},failures[1]]});
   assert.equal(state.claimRows.length,1);assert.match(table(),/SYNTH-ORDER/);assert.match(table(),/提交中/);
-  assert.ok(table().indexOf('data-as-environment="900005"')<table().indexOf('data-as-claim="SYNTH-ORDER"'));
+  assert.doesNotMatch(table(),/data-as-environment="900005"/);
+  assert.match(table(),/as-status-active">读取\/提交中/);
+  assert.match(table(),/data-as-environment="900004"/);
   await poll({status:'partial_failure',rows:[{...order,status:'ok',refundBillId:'SYNTH-BILL'}],
     environments:[{environmentSerial:envs[0],status:'ok'},failures[1]],progressCompleted:5,progressTotal:5,successCount:1});
   assert.match(table(),/未收到该环境的最终结果/);assert.doesNotMatch(table(),/等待执行器|读取\/提交中/);
@@ -96,13 +98,33 @@ const poll=async data=>{response=data;await run('asPoll()');assert.equal(state.p
   ctx.displayEnvs[0]={environmentSerial:'900010',status:'ok',submittedCount:1,blockedCount:1};
   assert.equal((display('all').match(/data-as-claim=/g)||[]).length,2);
   assert.doesNotMatch(display('all'),/data-as-environment/,'multi-order environment keeps one row per order');
-  ctx.displayEnvs[0].status='running';assert.match(display('all'),/data-as-environment/);
+  ctx.displayEnvs[0].status='running';assert.match(display('all'),/data-as-environment-context/);
+  assert.doesNotMatch(display('all'),/data-as-environment=/);
   ctx.displayEnvs[0].status='fail';ctx.displayEnvs[0].errorSummary='还有订单读取失败';
   assert.match(display('all'),/还有订单读取失败/,'environment failures must survive existing details');
+  assert.doesNotMatch(display('all'),/data-as-environment=/,'environment diagnostics stay inside an order row');
+  assert.equal((display('all').match(/data-as-environment-context=/g)||[]).length,1);
+  assert.match(display('failed'),/data-as-environment=/,'environment-only filter still explains failure');
   ctx.displayEnvs[0]={environmentSerial:'900010',status:'skip',blockedCount:3};
-  assert.match(display('all'),/data-as-environment/,'incomplete details keep the environment summary');
+  assert.match(display('all'),/已报告 3 单，已返回 2 条订单明细/);
+  assert.doesNotMatch(display('all'),/data-as-environment=/);
   ctx.displayEnvs[0].blockedCount=2;ctx.displayRows[1].status='running';
-  assert.match(display('skipped'),/data-as-environment/,'filter must not conceal unfinished work');
+  assert.match(display('skipped'),/订单仍有未结束状态/,'filter must not conceal unfinished work');
+  // Same row identity persists while reading, verifying and finishing. No duplicate environment row.
+  ctx.displayRows=[{environmentSerial:'900010',orderNo:'SYNTH-LIFECYCLE',status:'running'}];
+  ctx.displayEnvs=[{environmentSerial:'900010',status:'running'}];
+  for(const status of ['queued','running','verifying','uncertain','skip']) {
+    ctx.displayRows[0].status=status;
+    if(status==='uncertain')ctx.displayEnvs[0].status='uncertain';
+    if(status==='skip')ctx.displayEnvs[0].status='skip';
+    const before=JSON.stringify([ctx.displayRows,ctx.displayEnvs]);const rendered=display('all');
+    assert.equal((rendered.match(/<tr\b/g)||[]).length,1);
+    assert.match(rendered,/data-as-claim="SYNTH-LIFECYCLE"/);assert.doesNotMatch(rendered,/data-as-environment=/);
+    assert.equal(JSON.stringify([ctx.displayRows,ctx.displayEnvs]),before,'rendering must not mutate order or environment data');
+    if(status==='skip')assert.doesNotMatch(rendered,/as-status-active/);
+  }
+  ctx.displayEnvs[0]={environmentSerial:'900010',status:'fail',errorSummary:'<script>synthetic</script>'};
+  assert.match(display('all'),/&lt;script&gt;synthetic/);assert.doesNotMatch(display('all'),/<script>/);
   ctx.displayRows=[];assert.match(display('all'),/data-as-environment/,'legacy empty detail still explains outcome');
 
   // Skip, login, inuse and cancelled contexts all retain inline reasons without fake orders.
