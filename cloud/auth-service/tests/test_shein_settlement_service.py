@@ -21,6 +21,8 @@ from xynigo_auth.shein_settlement_service import (
     build_payout_schedule,
     build_settlement_summary,
     nearest_payout_amount,
+    next_pay_date,
+    overdue_batches,
     to_cent,
 )
 
@@ -30,6 +32,9 @@ FX = {"MXN": MXN, "USD": USD}
 
 D21 = date(2026, 9, 21)
 D28 = date(2026, 9, 28)
+# 测试基准日:「下次结算」按真实时钟动态判定,测试必须显式传 today 固定,
+# 否则用例只在特定日期成立(20260921 红梅逾期事件后引入的口径)。
+TODAY = D21
 
 
 def _store(
@@ -102,11 +107,11 @@ def test_missing_rate_yields_none_not_parity():
 # ---- 打款日分批（本次的核心口径）----
 
 def test_unsettled_is_all_but_nearest_is_only_first_batch():
-    """待结算取全部、下次结算只取最近一批——两者都取全量就会是同一个数。"""
+    """待结算取全部、下次结算只取最早未来一批——两者都取全量就会是同一个数。"""
     stores = [
         _store("a", "MXN", batches=((D21, "600.00"), (D28, "400.00"))),
     ]
-    summary = build_settlement_summary(stores, FX)
+    summary = build_settlement_summary(stores, FX, today=TODAY)
 
     unsettled = summary.cards[UNSETTLED]
     nearest = summary.cards[NEAREST_PAYOUT]
@@ -122,7 +127,7 @@ def test_nearest_batch_never_carries_an_earliest_date_for_full_amount():
         _store("a", "MXN", batches=((D21, "600.00"),)),
         _store("b", "MXN", batches=((D28, "400.00"),)),
     ]
-    summary = build_settlement_summary(stores, FX)
+    summary = build_settlement_summary(stores, FX, today=TODAY)
     schedule = [(row.pay_date, row.groups[0].total) for row in summary.schedule]
 
     assert schedule == [(D21, Decimal("600.00")), (D28, Decimal("400.00"))]
@@ -169,12 +174,12 @@ def test_leapfrog_payout_across_dates_per_currency():
 
 def test_store_nearest_payout_amount_uses_only_nearest_date():
     store = _store("a", "MXN", batches=((D21, "600.00"), (D28, "400.00")))
-    assert nearest_payout_amount(store) == Decimal("600.00")
+    assert nearest_payout_amount(store, today=TODAY) == Decimal("600.00")
 
 
 def test_store_nearest_payout_amount_is_none_without_batches():
     """没有批次时返回 None，而不是回退成全部未结算（那会让该店虚高）。"""
-    assert nearest_payout_amount(_store("a", "MXN")) is None
+    assert nearest_payout_amount(_store("a", "MXN"), today=TODAY) is None
 
 
 def test_store_nearest_sums_multiple_currencies_on_same_date():
@@ -187,7 +192,7 @@ def test_store_nearest_sums_multiple_currencies_on_same_date():
             PayoutBatch(D28, "MXN", Decimal("9.00")),
         ),
     )
-    assert nearest_payout_amount(store) == Decimal("105.00")
+    assert nearest_payout_amount(store, today=TODAY) == Decimal("105.00")
 
 
 # ---- 失败店铺与告警 ----
@@ -232,7 +237,7 @@ def test_four_cards_present_with_titles_and_hints():
     assert set(summary.cards) == {
         IN_TRANSIT, UNSETTLED, NEAREST_PAYOUT, SETTLED_CUMULATIVE}
     assert summary.cards[IN_TRANSIT].title == "在途资金"
-    assert summary.cards[NEAREST_PAYOUT].hint == "仅最近一批"
+    assert summary.cards[NEAREST_PAYOUT].hint == "最早未来一批（逾期批次见告警）"
 
 
 def test_currencies_only_include_successful_stores():
@@ -251,3 +256,62 @@ def test_empty_input_yields_none_cny_not_zero():
         assert card.cny_total is None
         assert card.groups == ()
     assert summary.nearest_payout is None
+
+
+# ---- 逾期批次口径（20260921 真机事件：红梅 -199.10 MXN 批次逾期 27 天）----
+
+D08 = date(2026, 8, 24)  # 红梅事件的逾期日
+
+
+def test_overdue_batch_excluded_from_nearest_but_alerted():
+    """逾期批次不进「下次结算」（不把看板钉在过去的日期），但进告警、
+    且仍留在待结算总额里——三个位置一个都不能少。"""
+    stores = [
+        _store("红梅", "MXN", batches=((D08, "-199.10"),)),
+        _store("云晴", "MXN", batches=((D21, "600.00"), (D28, "400.00"))),
+    ]
+    summary = build_settlement_summary(stores, FX, today=TODAY)
+
+    nearest = summary.cards[NEAREST_PAYOUT]
+    assert nearest.nearest_pay_date == D21, "逾期批不得冒充下次结算"
+    assert nearest.group("MXN").total == Decimal("600.00")
+    # 待结算总额仍含逾期批次（全部批次净额）
+    assert summary.cards[UNSETTLED].group("MXN").total == Decimal("800.90")
+    # 排期完整保留逾期行（前端明细可复算）
+    assert [row.pay_date for row in summary.schedule] == [D08, D21, D28]
+    # 告警：逾期批次逐条列出，含店名/天数/原币金额
+    overdue = [a for a in summary.alerts if a.kind == "overdue"]
+    assert len(overdue) == 1
+    assert overdue[0].store_name == "红梅"
+    assert "28 天" in overdue[0].message
+    assert "-199.10 MXN" in overdue[0].message
+
+
+def test_all_batches_overdue_yields_no_nearest():
+    """只有逾期批次时「下次结算」为空（没有未来的打款），逾期告警照常。"""
+    stores = [_store("红梅", "MXN", batches=((D08, "-199.10"),))]
+    summary = build_settlement_summary(stores, FX, today=TODAY)
+
+    nearest = summary.cards[NEAREST_PAYOUT]
+    assert nearest.nearest_pay_date is None
+    assert nearest.groups == ()
+    assert summary.cards[UNSETTLED].group("MXN").total == Decimal("-199.10")
+    assert [a.kind for a in summary.alerts if a.kind == "overdue"] == ["overdue"]
+
+
+def test_store_level_nearest_payout_amount_ignores_overdue():
+    """店铺列同口径：该店只有逾期批次时「下次结算」列为 None。"""
+    store = _store("红梅", "MXN", batches=((D08, "-199.10"),))
+    assert nearest_payout_amount(store, today=TODAY) is None
+    assert next_pay_date(store.payout_batches, today=TODAY) is None
+    assert [b.pay_date for b in overdue_batches(store.payout_batches, today=TODAY)] == [D08]
+
+
+def test_failed_store_overdue_batches_not_alerted_twice():
+    """失败店的批次不进任何汇总（含逾期告警）——与既有「整批丢掉」口径一致。"""
+    stores = [
+        _store("失败店", "MXN", status="fail", error="x",
+               batches=((D08, "-199.10"),)),
+    ]
+    summary = build_settlement_summary(stores, FX, today=TODAY)
+    assert [a.kind for a in summary.alerts] == ["sync_fail"]

@@ -46,6 +46,7 @@ from .shein_settlement_service import (
     SettlementSummary,
     StoreSettlementInput,
     build_settlement_summary,
+    next_pay_date,
     to_cent,
 )
 from .shein_settlement_windows import (
@@ -676,17 +677,18 @@ class SheinSettlementSyncService:
         self, session: Session, *, store: SheinAuthorizedStore,
         outcome: StoreSyncOutcome, now: datetime, run_id: uuid.UUID | None = None,
     ) -> None:
-        nearest = None
+        # 快照与看板同口径：未来最近一批（逾期批次不写 nearest，见告警）。
+        snapshot_day = now.astimezone(PLATFORM_TZ).date()
+        nearest = next_pay_date(outcome.batches, today=snapshot_day)
         nearest_amount = None
-        if outcome.batches:
-            nearest = min(batch.pay_date for batch in outcome.batches)
+        if nearest is not None:
             nearest_amount = to_cent(sum(
                 batch.amount for batch in outcome.batches
                 if batch.pay_date == nearest))
         session.add(SheinSettlementSnapshot(
             tenant_id=store.tenant_id, store_id=store.id,
             sync_run_id=run_id,
-            snapshot_date=now.astimezone(PLATFORM_TZ).date(),
+            snapshot_date=snapshot_day,
             synced_at=now,
             currency=outcome.currency,
             in_transit_amount=outcome.in_transit_amount,

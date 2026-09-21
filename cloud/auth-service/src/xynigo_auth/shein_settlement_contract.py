@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import Any
 
 from .shein_settlement_service import (
@@ -17,7 +18,13 @@ from .shein_settlement_service import (
     PayoutScheduleRow,
     SettlementSummary,
     StoreSettlementInput,
+    next_pay_date,
 )
+from .shein_settlement_windows import PLATFORM_TZ
+
+
+def _today(value: date | None) -> date:
+    return value if value is not None else datetime.now(PLATFORM_TZ).date()
 
 
 def _money(value) -> str | None:
@@ -53,8 +60,9 @@ def _schedule_row(row: PayoutScheduleRow) -> dict[str, Any]:
     }
 
 
-def _store(store: StoreSettlementInput) -> dict[str, Any]:
-    nearest = store.nearest_pay_date
+def _store(store: StoreSettlementInput, today: date) -> dict[str, Any]:
+    # 店铺列与卡片同口径：未来最近一批；只有逾期批次时该列为空。
+    nearest = next_pay_date(store.payout_batches, today=today)
     nearest_amount = None
     if nearest is not None:
         total = sum(
@@ -89,11 +97,14 @@ def _latest_synced_at(summary: SettlementSummary) -> str | None:
     return max(stamps).isoformat() if stamps else None
 
 
-def settlement_summary_payload(summary: SettlementSummary) -> dict[str, Any]:
+def settlement_summary_payload(
+    summary: SettlementSummary, *, today: date | None = None
+) -> dict[str, Any]:
+    current = _today(today)
     return {
         "cards": {key: _card(card) for key, card in summary.cards.items()},
         "schedule": [_schedule_row(row) for row in summary.schedule],
-        "stores": [_store(store) for store in summary.stores],
+        "stores": [_store(store, current) for store in summary.stores],
         "alerts": [
             {"kind": alert.kind, "storeName": alert.store_name,
              "message": alert.message}

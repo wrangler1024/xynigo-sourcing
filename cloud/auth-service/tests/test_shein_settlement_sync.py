@@ -940,3 +940,36 @@ def test_run_fx_fetch_failure_stale_rates_still_serve_summary(env):
     unsettled_card = summary.cards[UNSETTLED]
     assert unsettled_card.cny_total == Decimal("39.00")
     assert unsettled_card.group("MXN").cny == Decimal("39.00")
+
+
+def test_snapshot_nearest_uses_future_batch_not_overdue(env):
+    """快照 nearest 与看板同口径：逾期批次（红梅事件）不写 nearest，
+    但仍留在批次表与待结算总额里。"""
+    client = FakeClient()
+    client.check_orders = [
+        # 逾期批：预计打款日早于 NOW(2026-09-17) —— 不得成为 nearest
+        {"checkOrderNo": "B-overdue", "addTime": "2026-08-20 10:00:00",
+         "estimatePayTime": "2026-08-24 10:00:00",
+         "incomeExpenditureType": 2,
+         "currencyCode": "MXN", "estimateIncomeMoneyTotal": -199.10},
+        # 未来批： nearest 应取它
+        {"checkOrderNo": "B-future", "addTime": "2026-09-15 10:00:00",
+         "estimatePayTime": "2026-09-21 10:00:00",
+         "incomeExpenditureType": 1,
+         "currencyCode": "MXN", "estimateIncomeMoneyTotal": 600.00},
+    ]
+    add_store(env, "红梅")
+
+    with env["db"].session_factory() as session:
+        outcome = build_service(env, client).run(
+            session, tenant_id=env["tenant_id"], now=NOW)
+        session.commit()
+        snap = session.execute(select(SheinSettlementSnapshot)).scalars().one()
+        batches = session.execute(
+            select(SheinPayoutBatch).order_by(SheinPayoutBatch.pay_date)
+        ).scalars().all()
+        assert [b.pay_date.isoformat() for b in batches] == [
+            "2026-08-24", "2026-09-21"]
+        assert snap.nearest_pay_date.isoformat() == "2026-09-21"
+        assert Decimal(snap.nearest_pay_amount) == Decimal("600.00")
+        assert Decimal(snap.unsettled_amount) == Decimal("400.90")
