@@ -14,7 +14,7 @@ JS 浮点，两边诉求不同，所以不共用一套序列化。
 from __future__ import annotations
 
 import io
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
@@ -62,8 +62,16 @@ def _write_header(sheet, row: int, headers, *, width_from=None) -> None:
             sheet.column_dimensions[get_column_letter(col)].width = width_from[col - 1]
 
 
-def build_settlement_export(summary: SettlementSummary):
-    """返回 (content, filename, mime)。"""
+def build_settlement_export(
+    summary: SettlementSummary, *, today: date | None = None
+):
+    """返回 (content, filename, mime)。today 缺省取平台时区当前日期
+    （「下次结算」列与看板同口径：只认未来批次）。"""
+    from .shein_settlement_service import next_pay_date
+    from .shein_settlement_windows import PLATFORM_TZ
+
+    if today is None:
+        today = datetime.now(PLATFORM_TZ).date()
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "结算看板"
@@ -75,7 +83,9 @@ def build_settlement_export(summary: SettlementSummary):
         # 失败行一律留空：即使聚合层已经剥掉批次，这里再按 status 兜一次，
         # 避免"先成功再失败"的店把上一轮的过期待结算带进财务手里的文件。
         settled_ok = store.status == "ok"
-        nearest = store.nearest_pay_date if settled_ok else None
+        nearest = (
+            next_pay_date(store.payout_batches, today=today)
+            if settled_ok else None)
         nearest_amount = None
         if nearest is not None:
             nearest_amount = sum(

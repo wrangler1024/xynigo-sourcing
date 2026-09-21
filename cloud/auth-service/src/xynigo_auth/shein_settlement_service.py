@@ -6,8 +6,12 @@
 
 1. 在途资金   = Σ estimatedGrossIncome（orderStatus=4 已发货未签收，订单级）
 2. 待结算资金 = Σ 对账单 checkStatus=1 按收支轧差净额（**全部**）
-3. 下次结算   = 同上净额中**仅最近一个打款日那一批**
+3. 下次结算   = 同上净额中**最早的一个未来打款日那一批（pay_date ≥ 当天）**
    — 两者都取全量就会是同一个数，必须按打款日切开。
+   — 预计打款日已过但仍未结算的批次是「逾期批次」：不计入下次结算
+     （20260921 真机：红梅 -199.10 MXN 批次逾期 27 天，旧口径取「最早
+     一批」导致看板显示过去的日期），改列告警请人工核对；金额仍留在
+     待结算总额里。
 4. 已结算资金 = Σ 报账单 reportStatus=2（**历史全量累计**，非本期/本年度）
 5. 人民币合计 = Σ(原币 × 当日维护汇率)；**任一币种缺汇率即返回 None**，
    绝不按 1:1 静默计入（比索当人民币算会让总数错得离谱还不报错）。
@@ -40,7 +44,7 @@ CARD_TITLES = {
 CARD_HINTS = {
     IN_TRANSIT: "已发货未签收（订单级）",
     UNSETTLED: "对账单待结算按收支轧差（全部）",
-    NEAREST_PAYOUT: "仅最近一批",
+    NEAREST_PAYOUT: "最早未来一批（逾期批次见告警）",
     SETTLED_CUMULATIVE: "报账单已付款历史累计",
 }
 
@@ -84,10 +88,25 @@ class StoreSettlementInput:
     def ok(self) -> bool:
         return self.status == "ok"
 
-    @property
-    def nearest_pay_date(self) -> date | None:
-        dates = sorted(batch.pay_date for batch in self.payout_batches)
-        return dates[0] if dates else None
+
+def next_pay_date(
+    batches: tuple[PayoutBatch, ...] | list[PayoutBatch], *, today: date
+) -> date | None:
+    """未来最近的打款日（pay_date ≥ today）。
+
+    「下次结算」必须指向还没发生的打款；预计日已过的批次属于逾期
+    （见 overdue_batches），混进来会把看板钉死在一个过去的日子。
+    """
+    dates = sorted(b.pay_date for b in batches if b.pay_date >= today)
+    return dates[0] if dates else None
+
+
+def overdue_batches(
+    batches: tuple[PayoutBatch, ...] | list[PayoutBatch], *, today: date
+) -> tuple[PayoutBatch, ...]:
+    """预计打款日已过但仍未结算的批次（按日期升序）。"""
+    return tuple(sorted(
+        (b for b in batches if b.pay_date < today), key=lambda b: b.pay_date))
 
 
 @dataclass(frozen=True)
@@ -221,8 +240,17 @@ def build_settlement_summary(
     fx_rates: dict[str, Decimal],
     *,
     diff_alerts: list[SettlementAlert] | None = None,
+    today: date | None = None,
 ) -> SettlementSummary:
-    """汇总成看板所需的四张卡片 + 排期 + 告警。"""
+    """汇总成看板所需的四张卡片 + 排期 + 告警。
+
+    today 缺省取平台时区当前日期；「下次结算」只认 pay_date ≥ today 的
+    最早一批，逾期批次进告警（不进下次结算、不离开待结算总额）。
+    """
+    from .shein_settlement_windows import PLATFORM_TZ
+
+    if today is None:
+        today = datetime.now(PLATFORM_TZ).date()
     ok_stores = [store for store in stores if store.ok]
 
     in_transit_entries: list[tuple[str, Decimal]] = []
@@ -238,7 +266,10 @@ def build_settlement_summary(
             unsettled_entries.append((batch.currency, batch.amount))
 
     schedule = build_payout_schedule(stores, fx_rates)
-    nearest = schedule[0] if schedule else None
+    # 「下次结算」= 最早的一个未来批次；全部逾期/无批次时为 None（此时
+    # 卡片显示「—」，逾期批次在告警区可见，钱仍在待结算总额里）。
+    nearest = next(
+        (row for row in schedule if row.pay_date >= today), None)
 
     groups_by_key = {
         IN_TRANSIT: _sum_by_currency(in_transit_entries, fx_rates),
@@ -263,6 +294,19 @@ def build_settlement_summary(
         )
 
     alerts = list(diff_alerts or [])
+    # 逾期批次：预计打款日已过但仍待结算——不是「下次」，但必须被人看见。
+    for store in ok_stores:
+        for batch in overdue_batches(store.payout_batches, today=today):
+            days = (today - batch.pay_date).days
+            alerts.append(SettlementAlert(
+                kind="overdue",
+                store_name=store.store_name,
+                message=(
+                    f"预计 {batch.pay_date.isoformat()} 打款的批次已逾期 "
+                    f"{days} 天未结算：{to_cent(batch.amount)} "
+                    f"{batch.currency}（仍计入待结算，请人工核对）"
+                ),
+            ))
     for store in stores:
         if not store.ok:
             alerts.append(SettlementAlert(
@@ -288,13 +332,15 @@ def build_settlement_summary(
     )
 
 
-def nearest_payout_amount(store: StoreSettlementInput) -> Decimal | None:
-    """店铺级「下次结算」：最近一个打款日那一批的该店金额。
+def nearest_payout_amount(
+    store: StoreSettlementInput, *, today: date
+) -> Decimal | None:
+    """店铺级「下次结算」：未来最近一个打款日那一批的该店金额。
 
-    对账单接口自身的实现（agent 侧同步）可复用此口径；缺少批次时回退 None，
+    与看板卡同口径（逾期批次不计入）；缺少**未来**批次时回退 None，
     不要回退成全部未结算——那会让该店在"下次结算"列虚高。
     """
-    nearest = store.nearest_pay_date
+    nearest = next_pay_date(store.payout_batches, today=today)
     if nearest is None:
         return None
     total = Decimal("0")

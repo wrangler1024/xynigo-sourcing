@@ -15068,7 +15068,7 @@ function settleMockPayload() {
       unsettled: { key: 'unsettled', title: '待结算资金', hint: '对账单待结算按收支轧差（全部）',
         groups: [g('MXN', '29547.73', '11568.45'), g('USD', '2154.76', '15315.03')],
         cnyTotal: '26883.48', nearestPayDate: null },
-      nearest_payout: { key: 'nearest_payout', title: '下次结算金额', hint: '仅最近一批',
+      nearest_payout: { key: 'nearest_payout', title: '下次结算金额', hint: '最早未来一批（逾期批次见告警）',
         groups: [g('MXN', '14866.97', '5820.42'), g('USD', '1476.66', '10495.80')],
         cnyTotal: '16316.22', nearestPayDate: '2026-09-21' },
       settled_cumulative: { key: 'settled_cumulative', title: '已结算资金', hint: '报账单已付款历史累计',
@@ -15355,11 +15355,17 @@ function settleRenderAlerts() {
   const payload = SETTLE_STATE.payload;
   const alerts = payload ? payload.alerts || [] : [];
   const warns = alerts.filter((a) => a.kind === 'diff');
+  const overdues = alerts.filter((a) => a.kind === 'overdue');
   const fails = alerts.filter((a) => a.kind === 'sync_fail');
   const blocks = [];
   if (warns.length) {
     blocks.push('<div class="settle-alerts-title">对账差异（订单级聚合 vs 对账单净额）</div>');
     warns.forEach((a) => blocks.push(
+      `<div class="settle-alert warn"><span>⚠</span><span><strong>${esc(a.storeName)}</strong>：${esc(a.message)}</span></div>`));
+  }
+  if (overdues.length) {
+    blocks.push('<div class="settle-alerts-title">逾期未打款（预计日已过仍待结算，不计入下次结算）</div>');
+    overdues.forEach((a) => blocks.push(
       `<div class="settle-alert warn"><span>⚠</span><span><strong>${esc(a.storeName)}</strong>：${esc(a.message)}</span></div>`));
   }
   if (fails.length) {
@@ -15369,7 +15375,7 @@ function settleRenderAlerts() {
   }
   if (!blocks.length) {
     blocks.push('<div class="settle-alerts-title">对账差异</div>');
-    blocks.push('<div class="settle-alert"><span>✓</span><span>当前范围内无差异、无同步失败。</span></div>');
+    blocks.push('<div class="settle-alert"><span>✓</span><span>当前范围内无差异、无逾期、无同步失败。</span></div>');
   }
   host.innerHTML = blocks.join('');
 }
