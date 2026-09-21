@@ -165,12 +165,17 @@ class SheinStoreAuthService:
             return target
         return self.client
 
-    def _client_for_app_id(self, app_id: str) -> SheinOpenApiClient:
-        """回调/验证按发起时的应用反查 client。
+    def _client_for_app_id(
+        self, app_id: str, *, required: bool = False
+    ) -> SheinOpenApiClient:
+        """按发起时的应用反查 client。
 
-        配置换过 appid 的历史链接会匹配不到，回退自运营 client：
-        店铺级接口（query-store-info）不使用应用凭证，行为可兜底；
-        换钥若因 AppSecret 不符失败会走既有换钥失败事件路径。
+        required=True（换钥路径）：匹配不到直接报配置错误——回退自营
+        几乎必然用错 AppSecret，结果同样是失败，但会被伪装成普通网关
+        502，排障绕弯；显式失败把「配置换过 appid」暴露成可诊断事件。
+        required=False（verify 路径）：query-store-info 走店铺级签名，
+        不使用应用凭证，回退自运营 client（共享网关）行为正确，也让
+        「semi 未配置但库里已有半托管店」仍能验证。
         """
         for candidate in (self.semi_client, self.client):
             if (
@@ -179,6 +184,13 @@ class SheinStoreAuthService:
                 and candidate.app_id == str(app_id or "")
             ):
                 return candidate
+        if required:
+            raise SheinStoreAuthError(
+                "shein_auth_app_unknown",
+                "授权链接所属应用的凭证未配置（部署可能已更换应用），"
+                "请重新生成授权链接",
+                503,
+            )
         return self.client
 
     # ---- 事件 ----
@@ -388,8 +400,23 @@ class SheinStoreAuthService:
         link_target_id = link.target_store_id
         link_mode = link.mode
         link_app_id = link.app_id
-        # 换钥必须用发起链接的应用：密文按该应用 AppSecret 加密，选错即解密失败。
-        link_client = self._client_for_app_id(link_app_id)
+        # 换钥必须用发起链接的应用：密文按该应用 AppSecret 加密，选错即解密失败；
+        # 应用匹配不到时显式报配置错误（不伪装成网关失败，评审建议改 #1）。
+        try:
+            link_client = self._client_for_app_id(link_app_id, required=True)
+        except SheinStoreAuthError as exc:
+            self._event(
+                session,
+                tenant_id=link_tenant_id,
+                actor_user_id=link_actor_id,
+                action="callback",
+                store_id=link_target_id,
+                store_label="（应用配置缺失）",
+                ok=False,
+                note=f"链接应用 {str(link_app_id or '')[:8]}… 无对应凭证配置",
+            )
+            session.commit()
+            raise exc
 
         failure: SheinOpenApiClientError | None = None
         open_key_id = secret_key = ""

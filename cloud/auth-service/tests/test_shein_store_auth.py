@@ -100,6 +100,15 @@ def shein_transport(
             seen["get_by_token_appids"].append(
                 request.headers.get("x-lt-appid", "")
             )
+            # 网关侧校验应用归属（评审建议改 #3）：换钥密文按本应用的
+            # AppSecret 加密，打错应用在真实平台必然签名失败，mock 里
+            # 同样硬失败——「打到了哪个 transport」之外的第二道隔离。
+            if request.headers.get("x-lt-appid", "") != app_id:
+                return httpx.Response(200, json={
+                    "code": "openapi00001",
+                    "msg": "sign error: appid mismatch",
+                    "data": None,
+                })
             token = json.loads(request.content)["tempToken"]
             if token in expired_tokens:
                 return httpx.Response(
@@ -158,10 +167,15 @@ def build_shein_app(
     *,
     semi_transport=None,
     with_semi=False,
+    database=None,
 ):
+    """构造合成应用。database 传入时复用已有库（跳过建表与种子数据），
+    用于「同一份库、换一套配置再起服务」的兼容性场景。"""
     database_url = f"sqlite+pysqlite:///{tmp_path / 'shein.sqlite3'}"
-    database = Database(database_url)
-    Base.metadata.create_all(database.engine)
+    fresh_database = database is None
+    if fresh_database:
+        database = Database(database_url)
+        Base.metadata.create_all(database.engine)
     settings = Settings(
         environment="test",
         database_url=database_url,
@@ -205,6 +219,8 @@ def build_shein_app(
             else None
         ),
     )
+    if not fresh_database:
+        return app, database, {}
     now = utcnow()
     with database.session_factory() as session:
         tenant = Tenant(feishu_tenant_key="tenant_allowed", name="合成组织")
@@ -1011,3 +1027,171 @@ def test_empty_state_fallback_claims_latest_link_across_apps(tmp_path) -> None:
 
         assert semi_transport.seen["get_by_token_appids"] == [SEMI_APP_ID]
         assert self_transport.seen["get_by_token_appids"] == []
+
+
+def test_empty_state_fallback_without_semi_stays_self_only(tmp_path) -> None:
+    """未配置 semi 时空 state 回退只认领自营链接——与改动前语义等价
+    （_configured_app_ids 不含未配置的 semi，IN 退化为单值）。"""
+    app, _database, _ids = build_shein_app(tmp_path)  # with_semi=False
+    with TestClient(app) as client:
+        link = client.post(
+            "/v1/shein-auth/link", json={"mode": "self"}, headers=admin_headers()
+        )
+        assert link.status_code == 200
+
+        callback = client.post(
+            "/v1/shein-auth/callback",
+            json={"tempToken": "temp-token-self-1", "state": ""},
+        )
+        assert callback.status_code == 200, callback.text
+        assert callback.json()["store"]["mode"] == "self"
+
+
+def test_empty_state_cross_app_claim_failure_is_closed(tmp_path) -> None:
+    """空 state 误认领另一应用链接时失败闭合：换钥失败、不落店、
+    被误认领的链接已消费（一次性仍生效）、另一应用链接不受牵连。"""
+    self_transport = shein_transport()
+    semi_transport = shein_transport(
+        app_id=SEMI_APP_ID,
+        app_secret=SEMI_APP_SECRET,
+        open_key_id=SEMI_OPEN_KEY_ID,
+        secret_plain=SEMI_SECRET_PLAIN,
+        store_name="半托管合成店",
+        supplier_id=28889999,
+        expired_tokens=("token-not-for-this-app",),
+    )
+    app, database, _ids = build_shein_app(
+        tmp_path,
+        transport=self_transport,
+        semi_transport=semi_transport,
+        with_semi=True,
+    )
+    with TestClient(app) as client:
+        first = client.post(
+            "/v1/shein-auth/link", json={"mode": "self"}, headers=admin_headers()
+        )
+        assert first.status_code == 200
+        second = client.post(
+            "/v1/shein-auth/link", json={"mode": "semi"}, headers=admin_headers()
+        )
+        assert second.status_code == 200
+        with database.session_factory() as session:
+            latest = session.scalar(
+                select(SheinAuthLink).where(
+                    SheinAuthLink.state == second.json()["state"]
+                )
+            )
+            latest.created_at = latest.created_at + timedelta(seconds=1)
+            session.commit()
+
+        # 空 state 认领时间最新的半托管链接；tempToken 属于另一应用/已失效
+        # → 平台拒绝换钥 → 410，且没有任何店铺行落库。
+        failed = client.post(
+            "/v1/shein-auth/callback",
+            json={"tempToken": "token-not-for-this-app", "state": ""},
+        )
+        assert failed.status_code == 410
+        assert failed.json()["detail"]["code"] == "shein_temp_token_expired"
+
+        with database.session_factory() as session:
+            stores = session.scalars(select(SheinAuthorizedStore)).all()
+            assert stores == [], "误认领换钥失败不得落店"
+            semi_link = session.scalar(
+                select(SheinAuthLink).where(
+                    SheinAuthLink.state == second.json()["state"]
+                )
+            )
+            self_link = session.scalar(
+                select(SheinAuthLink).where(
+                    SheinAuthLink.state == first.json()["state"]
+                )
+            )
+            assert semi_link.consumed_at is not None, "被误认领链接必须已消费"
+            assert self_link.consumed_at is None, "另一应用链接不受牵连"
+
+
+def test_semi_store_verify_still_works_without_semi_config(tmp_path) -> None:
+    """库里已有半托管店、服务改为未配置 semi 时：verify 走店铺级签名
+    回退自营 client（共享网关）仍成功——半托管店不被配置移除卡死。"""
+    self_transport = shein_transport()
+    semi_transport = shein_transport(
+        app_id=SEMI_APP_ID,
+        app_secret=SEMI_APP_SECRET,
+        open_key_id=SEMI_OPEN_KEY_ID,
+        secret_plain=SEMI_SECRET_PLAIN,
+        store_name="半托管合成店",
+        supplier_id=28889999,
+    )
+    app_with_semi, database, _ids = build_shein_app(
+        tmp_path,
+        transport=self_transport,
+        semi_transport=semi_transport,
+        with_semi=True,
+    )
+    with TestClient(app_with_semi) as client:
+        link = client.post(
+            "/v1/shein-auth/link", json={"mode": "semi"}, headers=admin_headers()
+        ).json()
+        store = client.post(
+            "/v1/shein-auth/callback",
+            json={"tempToken": "semi-token-v", "state": link["state"]},
+        ).json()["store"]
+        assert store["mode"] == "semi"
+        store_id = store["id"]
+
+    before = len(self_transport.seen["store_info_open_key_ids"])
+    # 同一份库、重启为未配置 semi 的服务；自营 transport 继续复用。
+    app_without_semi, _db, _ids2 = build_shein_app(
+        tmp_path, transport=self_transport, database=database
+    )
+    with TestClient(app_without_semi) as client:
+        verified = client.post(
+            f"/v1/shein-auth/stores/{store_id}/verify", headers=admin_headers()
+        )
+        assert verified.status_code == 200, verified.text
+        assert verified.json()["verifiedOk"] is True
+        assert verified.json()["mode"] == "semi"
+    # verify 的店铺信息请求确实经自营 client 打出（回退路径的证据）。
+    assert self_transport.seen["store_info_open_key_ids"][before:] == [
+        SEMI_OPEN_KEY_ID
+    ]
+
+
+def test_callback_with_unconfigured_link_app_reports_config_error(
+    tmp_path,
+) -> None:
+    """带 state 的历史 semi 链接在 semi 未配置时：显式报应用配置缺失
+    （shein_auth_app_unknown），不再伪装成网关换钥 502（评审建议改 #1）。"""
+    self_transport = shein_transport()
+    semi_transport = shein_transport(
+        app_id=SEMI_APP_ID,
+        app_secret=SEMI_APP_SECRET,
+        open_key_id=SEMI_OPEN_KEY_ID,
+        secret_plain=SEMI_SECRET_PLAIN,
+        store_name="半托管合成店",
+        supplier_id=28889999,
+    )
+    app_with_semi, database, _ids = build_shein_app(
+        tmp_path,
+        transport=self_transport,
+        semi_transport=semi_transport,
+        with_semi=True,
+    )
+    with TestClient(app_with_semi) as client:
+        link = client.post(
+            "/v1/shein-auth/link", json={"mode": "semi"}, headers=admin_headers()
+        ).json()
+
+    app_without_semi, _db, _ids2 = build_shein_app(
+        tmp_path, transport=self_transport, database=database
+    )
+    with TestClient(app_without_semi) as client:
+        callback = client.post(
+            "/v1/shein-auth/callback",
+            json={"tempToken": "semi-token-g", "state": link["state"]},
+        )
+        assert callback.status_code == 503
+        assert callback.json()["detail"]["code"] == "shein_auth_app_unknown"
+        # 换钥没有打到任何网关（配置缺失在联网前就拒绝）。
+        assert self_transport.seen["get_by_token_appids"] == []
+        assert semi_transport.seen["get_by_token_appids"] == []

@@ -14670,7 +14670,7 @@ function initSheinStoreAuthPage() {
     sheinAuthPrompt('生成店铺授权链接', [
       { id: 'ssaMode', label: '店铺类型', type: 'select', options: [
         { value: 'self', label: 'SHEIN 自营（Xynigo ERP（自运营）应用）' },
-        { value: 'semi', label: 'SHEIN 半托管（应用待创建，原型占位）' }
+        { value: 'semi', label: 'SHEIN 半托管（Xynigo ERP（半托管）应用）' }
       ], hint: '自营与半托管分别对应不同的开放平台应用；链接需由对应店铺的主账号完成授权。' }
     ], values => {
       const mode = values.ssaMode || 'self';
