@@ -16,7 +16,7 @@ from . import __version__
 
 RELEASE_VERSION = "0.18.11"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-20T10:04:19Z"
+RELEASE_PUBLISHED_AT = "2026-09-21T01:55:38Z"
 
 
 if RELEASE_VERSION != __version__:
@@ -31,10 +31,10 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.18.11-eaf584aedde7",
+        "runtimeId": "0.18.11-9b6836f2f73e",
         "assetName": "Xynigo_Sourcing_Windows_Setup_v0.18.11.exe",
-        "sha256": "64719621ba3acf114cbb68672b5e99f8e91b5cd4325a2412728c0a03b7c15e79",
-        "size": 15417192,
+        "sha256": "9094690e2f8cddfdd679e0774fdbb0ae43e2e771c27c67c18dc6ae574f0587e3",
+        "size": 15417548,
         "installMode": "standard_per_user",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_silent_installer",
@@ -50,10 +50,10 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.18.11-eaf584aedde7",
+        "runtimeId": "0.18.11-9b6836f2f73e",
         "assetName": "Xynigo_Sourcing_macOS_Standard_v0.18.11.pkg",
-        "sha256": "1dbbdcc5322db27fcc3a31f469282a9d9ec80f8c3957bbef18ad153d7728354e",
-        "size": 11792723,
+        "sha256": "5c26cb1d887aca38e33e972f2945ddaa174152cb81bc0227fb2946352cc1c4c1",
+        "size": 11793695,
         "installMode": "standard_system_application",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_system_installer",
@@ -320,8 +320,8 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-    "售后环境匹配齐指定序号后停止分页，增加查询预算、停止响应与匹配阶段提示。",
-    "新增重试失败环境，仅允许无订单明细且计数明确为零的失败环境，保留待核对保护。",
-    "执行器与工作台更新至 v0.18.11，沿用 test 渠道；环境查询优化需安装新版执行器。"
-],
+            "修复 Windows 上售后环境扫描约 45 秒后空结果却显示成功：环境匹配超时明确保留每个环境的失败原因。",
+            "慢速 Hub 环境查询允许有限延长和只读重试，显示已找到的环境数；部分扫描失败与真正无订单分开提示。",
+            "Windows/macOS 执行器与测试工作台统一为 v0.18.11；请安装新版执行器后进行同批只读扫描核验。"
+        ],
     }
