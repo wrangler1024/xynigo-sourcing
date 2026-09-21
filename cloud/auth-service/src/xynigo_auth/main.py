@@ -453,6 +453,7 @@ def create_app(
     procurement_import_gateway: FeishuSheetsGateway | None = None,
     feishu_integration_transport: httpx.BaseTransport | None = None,
     shein_openapi_transport: httpx.BaseTransport | None = None,
+    shein_semi_openapi_transport: httpx.BaseTransport | None = None,
     settlement_fx_fetcher: Callable[[], FxRateQuote] | None = (
         fetch_frankfurter_rates),
 ) -> FastAPI:
@@ -490,17 +491,27 @@ def create_app(
         app_secret=settings.shein_openapi_app_secret.get_secret_value(),
         transport=shein_openapi_transport,
     )
+    # 半托管第二应用：未配置时 client.configured=False，service 层对半托管
+    # 链接生成报 not_configured；已配置自营链路完全不受影响。
+    shein_semi_openapi_client = SheinOpenApiClient(
+        gateway=settings.shein_openapi_gateway,
+        app_id=settings.shein_openapi_semi_app_id,
+        app_secret=settings.shein_openapi_semi_app_secret.get_secret_value(),
+        transport=shein_semi_openapi_transport,
+    )
     shein_store_auth_service = (
         SheinStoreAuthService(
             cipher=SheinStoreSecretCipher(buyer_credential_key),
             client=shein_openapi_client,
+            semi_client=shein_semi_openapi_client,
             empower_host=settings.shein_auth_empower_host,
             redirect_base=settings.shein_auth_redirect_base,
         )
         if buyer_credential_key
         else None
     )
-    # 结算看板：与店铺授权共用同一 client 与密钥解密器（凭证只有一份）
+    # 结算看板：与店铺授权共用自运营 client——业务接口全部店铺级签名
+    # （openKeyId/secretKey 显式传入），应用凭证仅换钥使用，半托管店照常同步。
     shein_settlement_sync_service = (
         SheinSettlementSyncService(
             client=shein_openapi_client,

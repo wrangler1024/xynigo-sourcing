@@ -47,6 +47,11 @@ APP_SECRET = "0123456789abcdef0123456789abcdef"
 OPEN_KEY_ID = "33F87761EBD0428AA8573A22F63295C2"
 SECRET_PLAIN = "136CADB9F0B14D878650B4B520648D58"
 REDIRECT_BASE = "https://xynigo.example.test/shein-auth/callback"
+# 半托管第二应用（合成值）：平台一应用一合作模式，凭证成对。
+SEMI_APP_ID = "163EFAKE00000000000000000000FAKE"
+SEMI_APP_SECRET = "fedcba9876543210fedcba9876543210"
+SEMI_OPEN_KEY_ID = "44A98872FC05D59CB964B33C77851D03"
+SEMI_SECRET_PLAIN = "97B1C60421E94AF3820E7A67746E17DF"
 
 
 def aes_encrypt_b64(plain: str, app_secret: str) -> str:
@@ -66,15 +71,25 @@ def shein_transport(
     expired_tokens: tuple[str, ...] = (),
     store_info_fail_times: int = 0,
     token_open_keys: dict[str, str] | None = None,
+    app_id: str = APP_ID,
+    app_secret: str = APP_SECRET,
+    open_key_id: str = OPEN_KEY_ID,
+    secret_plain: str = SECRET_PLAIN,
+    store_name: str = "观潮",
+    supplier_id: int = 18301880,
 ):
     """Fake SHEIN 网关：get-by-token + query-store-info，验证签名头存在。
 
     store_info_fail_times：前 N 次店铺信息查询返回业务错误（模拟接口闪断，
     用于验证「信息接口失败不裂行」的回归场景）。
     token_open_keys：tempToken → openKeyId 映射（模拟平台换钥轮换）。
+    app_id/app_secret/open_key_id/secret_plain/store_name/supplier_id：
+    按应用参数化——半托管应用走自己的凭证与店铺身份，密文必须用
+    对应应用的 AppSecret 加密才能被服务端解开（一应用一模式的核心约束）。
     """
     failures_left = {"count": store_info_fail_times}
     open_key_map = token_open_keys or {}
+    seen = {"get_by_token_appids": [], "store_info_open_key_ids": []}
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers.get("x-lt-appid") or request.headers.get(
@@ -82,6 +97,9 @@ def shein_transport(
         ), "签名身份头缺失"
         assert request.headers.get("x-lt-signature"), "签名头缺失"
         if request.url.path == "/open-api/auth/get-by-token":
+            seen["get_by_token_appids"].append(
+                request.headers.get("x-lt-appid", "")
+            )
             token = json.loads(request.content)["tempToken"]
             if token in expired_tokens:
                 return httpx.Response(
@@ -91,13 +109,16 @@ def shein_transport(
                 "code": "0",
                 "msg": "ok",
                 "data": {
-                    "openKeyId": open_key_map.get(token, OPEN_KEY_ID),
-                    "secretKey": aes_encrypt_b64(SECRET_PLAIN, APP_SECRET),
+                    "openKeyId": open_key_map.get(token, open_key_id),
+                    "secretKey": aes_encrypt_b64(secret_plain, app_secret),
                 },
             })
         if request.url.path == (
             "/open-api/openapi-business-backend/query-store-info"
         ):
+            seen["store_info_open_key_ids"].append(
+                request.headers.get("x-lt-openKeyId", "")
+            )
             if failures_left["count"] > 0:
                 failures_left["count"] -= 1
                 return httpx.Response(
@@ -114,8 +135,8 @@ def shein_transport(
                 "msg": "ok",
                 "info": {
                     "storeInfo": {
-                        "supplierId": 18301880,
-                        "storeName": "观潮",
+                        "supplierId": supplier_id,
+                        "storeName": store_name,
                         "storeStatus": 1,
                     },
                     "storeProductQuota": {
@@ -126,10 +147,18 @@ def shein_transport(
             })
         return httpx.Response(404, json={"code": "404", "msg": "not found"})
 
-    return httpx.MockTransport(handler)
+    transport = httpx.MockTransport(handler)
+    transport.seen = seen  # type: ignore[attr-defined]
+    return transport
 
 
-def build_shein_app(tmp_path, transport=None):
+def build_shein_app(
+    tmp_path,
+    transport=None,
+    *,
+    semi_transport=None,
+    with_semi=False,
+):
     database_url = f"sqlite+pysqlite:///{tmp_path / 'shein.sqlite3'}"
     database = Database(database_url)
     Base.metadata.create_all(database.engine)
@@ -148,6 +177,14 @@ def build_shein_app(tmp_path, transport=None):
         shein_openapi_app_id=APP_ID,
         shein_openapi_app_secret=APP_SECRET,
         shein_auth_redirect_base=REDIRECT_BASE,
+        **(
+            {
+                "shein_openapi_semi_app_id": SEMI_APP_ID,
+                "shein_openapi_semi_app_secret": SEMI_APP_SECRET,
+            }
+            if with_semi
+            else {}
+        ),
     )
     app = create_app(
         settings=settings,
@@ -155,6 +192,18 @@ def build_shein_app(tmp_path, transport=None):
         directory_client=object(),
         database=database,
         shein_openapi_transport=transport or shein_transport(),
+        shein_semi_openapi_transport=semi_transport or (
+            shein_transport(
+                app_id=SEMI_APP_ID,
+                app_secret=SEMI_APP_SECRET,
+                open_key_id=SEMI_OPEN_KEY_ID,
+                secret_plain=SEMI_SECRET_PLAIN,
+                store_name="半托管合成店",
+                supplier_id=28889999,
+            )
+            if with_semi
+            else None
+        ),
     )
     now = utcnow()
     with database.session_factory() as session:
@@ -809,3 +858,156 @@ def test_zero_order_placeholder_merchant_and_verify_backfills(tmp_path) -> None:
         ).json()
         assert verified["merchantId"] == "18301880"
         assert verified["name"] == "观潮"
+
+
+# ---- 半托管第二应用（一应用一合作模式）----
+
+def test_semi_not_configured_rejects_link_but_self_mode_unaffected(
+    tmp_path,
+) -> None:
+    """未配置半托管凭证：半托管链接生成明确拒绝，自营链路照常。"""
+    app, _database, _ids = build_shein_app(tmp_path)  # with_semi=False
+    with TestClient(app) as client:
+        rejected = client.post(
+            "/v1/shein-auth/link",
+            json={"mode": "semi"},
+            headers=admin_headers(),
+        )
+        assert rejected.status_code == 503
+        assert rejected.json()["detail"]["code"] == "shein_auth_not_configured"
+
+        ok = client.post(
+            "/v1/shein-auth/link", json={"mode": "self"}, headers=admin_headers()
+        )
+        assert ok.status_code == 200
+        assert f"appid={APP_ID}&" in ok.json()["url"]
+
+
+def test_semi_link_and_callback_use_semi_app_credentials(tmp_path) -> None:
+    """半托管链路全流程：链接带半托管 appid，回调换钥/店铺信息都打半托管
+    应用（x-lt-appid 断言），落库店铺 mode=semi 且密文可解（应用配对正确）。"""
+    app, database, _ids = build_shein_app(tmp_path, with_semi=True)
+    with TestClient(app) as client:
+        link = client.post(
+            "/v1/shein-auth/link", json={"mode": "semi"}, headers=admin_headers()
+        )
+        assert link.status_code == 200, link.text
+        payload = link.json()
+        assert f"appid={SEMI_APP_ID}&" in payload["url"]
+
+        callback = client.post(
+            "/v1/shein-auth/callback",
+            json={"tempToken": "semi-token-1", "state": payload["state"]},
+        )
+        assert callback.status_code == 200, callback.text
+        store = callback.json()["store"]
+        assert store["mode"] == "semi"
+        assert store["appId"] == SEMI_APP_ID
+        assert store["name"] == "半托管合成店"
+        assert store["merchantId"] == "28889999"
+
+        with database.session_factory() as session:
+            record = session.scalar(select(SheinAuthorizedStore))
+            assert record.mode == "semi"
+            assert record.app_id == SEMI_APP_ID
+            assert record.open_key_id == SEMI_OPEN_KEY_ID
+            # 落库密文用部署密钥解开后应是半托管密钥明文（应用配对正确）。
+            cipher = SheinStoreSecretCipher(
+                "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="
+            )
+            assert cipher.decrypt_secret(record.secret_ciphertext) == (
+                SEMI_SECRET_PLAIN
+            )
+
+
+def test_semi_callback_hits_semi_transport_only(tmp_path) -> None:
+    """半托管回调的网络调用只打半托管应用网关；自营 transport 零换钥请求。
+
+    换钥签名与密文解密都依赖发起应用的 AppSecret，打到错误应用必然失败，
+    所以 transport 侧的 appid 归属是 per-mode 正确性的直接证据。
+    """
+    self_transport = shein_transport()
+    semi_transport = shein_transport(
+        app_id=SEMI_APP_ID,
+        app_secret=SEMI_APP_SECRET,
+        open_key_id=SEMI_OPEN_KEY_ID,
+        secret_plain=SEMI_SECRET_PLAIN,
+        store_name="半托管合成店",
+        supplier_id=28889999,
+    )
+    app, _database, _ids = build_shein_app(
+        tmp_path,
+        transport=self_transport,
+        semi_transport=semi_transport,
+        with_semi=True,
+    )
+    with TestClient(app) as client:
+        link = client.post(
+            "/v1/shein-auth/link", json={"mode": "semi"}, headers=admin_headers()
+        ).json()
+        callback = client.post(
+            "/v1/shein-auth/callback",
+            json={"tempToken": "semi-token-2", "state": link["state"]},
+        )
+        assert callback.status_code == 200, callback.text
+
+        assert semi_transport.seen["get_by_token_appids"] == [SEMI_APP_ID]
+        assert semi_transport.seen["store_info_open_key_ids"] == [
+            SEMI_OPEN_KEY_ID
+        ]
+        # 自营应用的 mock 网关不应收到任何请求。
+        assert self_transport.seen["get_by_token_appids"] == []
+        assert self_transport.seen["store_info_open_key_ids"] == []
+
+
+def test_empty_state_fallback_claims_latest_link_across_apps(tmp_path) -> None:
+    """空 state 回退：两应用各有未消费链接时认领时间最新一条（半托管），
+    且换钥走该链接所属应用——IN 过滤不漏半托管链接是本回归的核心。"""
+    self_transport = shein_transport()
+    semi_transport = shein_transport(
+        app_id=SEMI_APP_ID,
+        app_secret=SEMI_APP_SECRET,
+        open_key_id=SEMI_OPEN_KEY_ID,
+        secret_plain=SEMI_SECRET_PLAIN,
+        store_name="半托管合成店",
+        supplier_id=28889999,
+    )
+    app, database, _ids = build_shein_app(
+        tmp_path,
+        transport=self_transport,
+        semi_transport=semi_transport,
+        with_semi=True,
+    )
+    with TestClient(app) as client:
+        first = client.post(
+            "/v1/shein-auth/link", json={"mode": "self"}, headers=admin_headers()
+        )
+        assert first.status_code == 200
+        second = client.post(
+            "/v1/shein-auth/link", json={"mode": "semi"}, headers=admin_headers()
+        )
+        assert second.status_code == 200
+
+        # SQLite 的 CURRENT_TIMESTAMP 只有秒级精度，两次请求常落在同一秒；
+        # 显式把半托管链接时间推后，直接测「按时间最新认领」的查询语义
+        # （生产 PostgreSQL 为微秒精度，不存在此歧义）。
+        with database.session_factory() as session:
+            latest = session.scalar(
+                select(SheinAuthLink).where(
+                    SheinAuthLink.state == second.json()["state"]
+                )
+            )
+            latest.created_at = latest.created_at + timedelta(seconds=1)
+            session.commit()
+
+        callback = client.post(
+            "/v1/shein-auth/callback",
+            json={"tempToken": "semi-token-3", "state": ""},
+        )
+        assert callback.status_code == 200, callback.text
+        store = callback.json()["store"]
+        assert store["mode"] == "semi", "应认领时间最新的半托管链接"
+        assert store["appId"] == SEMI_APP_ID
+
+        assert semi_transport.seen["get_by_token_appids"] == [SEMI_APP_ID]
+        assert self_transport.seen["get_by_token_appids"] == []
