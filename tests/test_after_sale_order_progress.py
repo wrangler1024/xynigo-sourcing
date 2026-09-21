@@ -15,7 +15,7 @@ class ExecutionOrderTests(unittest.TestCase):
         for mode in ['claim', 'track']:
             with self.subTest(mode=mode):
                 claimer = AfterSaleClaimer(None)
-                claimer._env_index = lambda _: {}
+                claimer._env_index = lambda _, **kwargs: {}
                 groups = []
                 def visit(serial, env, group, headless):
                     groups.append((serial, [r['orderNo'] for r in group]))
@@ -42,7 +42,7 @@ class ExecutionOrderTests(unittest.TestCase):
         for mode in ['claim', 'track']:
             with self.subTest(mode=mode):
                 claimer = AfterSaleClaimer(None)
-                claimer._env_index = lambda _: {}
+                claimer._env_index = lambda _, **kwargs: {}
                 first_started = threading.Event()
                 second_done = threading.Event()
                 completed = []

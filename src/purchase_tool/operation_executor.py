@@ -866,6 +866,18 @@ class LocalOperationExecutor(object):
                 break
             self.sleep(self.poll_interval)
         rows = self._after_sale_rows(self._flatten_scan_rows(env_rows))
+        failed = [row for row in env_rows if row.get('status') in ('fail', 'login', 'inuse')]
+        incomplete = (len(env_rows) != total or any(
+            row.get('status') not in AFTER_SALE_TERMINAL_STATES for row in env_rows))
+        stopped = any(row.get('status') == 'stopped' for row in env_rows)
+        if failed or incomplete or stopped:
+            reason = next((str(row.get('errorSummary') or '') for row in failed
+                           if row.get('errorSummary')), '')
+            return ('failed', 'after_sale_scan_failed', {
+                'runStatus': 'failed', 'phase': 'after_sale.scan.failed',
+                'errorCode': 'after_sale_scan_incomplete' if incomplete else 'after_sale_scan_failed',
+                'errorSummary': reason[:200] or '部分环境扫描失败或未完成；请查看环境结果',
+            })
         return ('succeeded', 'after_sale_scan_completed', {
             'rows': rows,
             'totalCount': total,

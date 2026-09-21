@@ -773,21 +773,32 @@ class HubStudioLocalApiAdapter(HubStudioAdapter):
             current += 1
         return result
 
-    def iter_environments(self, stop_event=None, budget_seconds=45):
-        """Bounded read-only pagination; callers can stop once identifiers match."""
+    def iter_environments(self, stop_event=None, budget_seconds=300):
+        """Read-only paginated lookup with a finite budget and one timeout retry."""
         deadline = time.monotonic() + budget_seconds
         current = 1
         while True:
             if stop_event is not None and stop_event.is_set():
                 return
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise HubApiError('匹配 Hub 环境超时，请检查 HubStudio 后重试',
-                                  'hubstudio_environment_lookup_timeout')
-            data = self._post('/env/list', {'current': current, 'size': 200},
-                              retries=1, transport_retries=1,
-                              recover_transport=False,
-                              timeout=min(10.0, remaining)) or {}
+            for attempt in range(2):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise HubApiError('匹配 Hub 环境超时，请检查 HubStudio 后重试',
+                                      'hubstudio_environment_lookup_timeout')
+                try:
+                    data = self._post('/env/list', {'current': current, 'size': 200},
+                                      retries=1, transport_retries=1,
+                                      recover_transport=False,
+                                      timeout=min(45.0, remaining)) or {}
+                    break
+                except HubApiError as exc:
+                    if exc.reason_code != 'hubstudio_local_api_timeout':
+                        raise
+                    if attempt or deadline - time.monotonic() <= 0:
+                        raise HubApiError('Hub 环境列表第 %d 页读取超时' % current,
+                                          'hubstudio_local_api_timeout') from exc
+                    if stop_event is not None and stop_event.wait(0.5):
+                        return
             page = data.get('list', [])
             if not isinstance(page, list):
                 raise HubApiError('Hub 环境列表格式无效',

@@ -638,7 +638,7 @@ class AfterSaleClaimer(object):
             for future in futures:
                 future.result()
 
-    def _env_index(self, keys):
+    def _env_index(self, keys, on_progress=None):
         """把序号/环境ID/环境名解析成环境对象（重名环境要求改用序号）。"""
         wanted = {str(k).strip().casefold(): k for k in keys}
         index = {}
@@ -653,7 +653,10 @@ class AfterSaleClaimer(object):
                                env.get('containerCode')):
                 key = str(identifier or '').strip().casefold()
                 if key and key in wanted:
+                    previous = len(index)
                     index[wanted[key]] = env
+                    if len(index) != previous and on_progress:
+                        on_progress(len(index), len(wanted))
             name = str(env.get('containerName') or '').strip()
             if name and name.casefold() in wanted:
                 name_matches.setdefault(name.casefold(), []).append(env)
@@ -673,25 +676,48 @@ class AfterSaleClaimer(object):
     # ---- 扫描（只读） ----
 
     def _run_scan(self, serials, headless):
-        env_index = self._env_index(serials)
+        # Publish every requested environment before Hub pagination can block.
+        started = time.time()
+        with self._lock:
+            for serial in serials:
+                self._scan_rows[serial] = {
+                    'environmentSerial': serial, 'environmentId': '',
+                    'storeName': serial, 'accountName': '',
+                    'status': 'running', 'orderNo': '', 'deliveredAt': '',
+                    'amount': '', 'packages': [], 'claimable': False,
+                    'orders': [], 'errorSummary': '正在匹配 Hub 环境（已找到 0/%d），尚未扫描订单' % len(serials),
+                    'screenshotSha256': None, 'screenshotStatus': '',
+                }
+        matched_count = 0
+        def report_match(found, total):
+            nonlocal matched_count
+            matched_count = found
+            with self._lock:
+                for row in self._scan_rows.values():
+                    if row.get('status') == 'running':
+                        row['errorSummary'] = '正在匹配 Hub 环境（已找到 %d/%d），尚未扫描订单' % (found, total)
+        try:
+            env_index = self._env_index(serials, on_progress=report_match)
+        except Exception as exc:
+            reason = scrub_text('%s: %s' % (type(exc).__name__, str(exc)))[:200]
+            for serial in serials:
+                self._fail_scan(serial, 'stopped' if self._stop_event.is_set() else 'fail',
+                                '环境匹配未完成（已找到 %d/%d），未扫描订单：%s' % (matched_count, len(serials), reason),
+                                started=started)
+            return
+        if self._stop_event.is_set():
+            for serial in serials:
+                self._fail_scan(serial, 'stopped', '已停止环境匹配，未扫描订单', started=started)
+            return
         with self._lock:
             for serial in serials:
                 env = env_index.get(serial, {})
-                self._scan_rows[serial] = {
-                    'environmentSerial': serial,
+                self._scan_rows[serial].update({
                     'environmentId': str(env.get('containerCode') or ''),
                     'storeName': env.get('containerName') or serial,
                     'accountName': self._account_name(env),
-                    'status': 'queued',
-                    'orderNo': '',
-                    'deliveredAt': '',
-                    'amount': '',
-                    'packages': [],
-                    'claimable': False,
-                    'errorSummary': None,
-                    'screenshotSha256': None,
-                    'screenshotStatus': '',
-                }
+                    'status': 'queued', 'errorSummary': None,
+                })
         self._run_environment_jobs([
             (serial, env_index.get(serial, {}), self._scan_one_guarded,
              (serial, env_index.get(serial, {}), headless))

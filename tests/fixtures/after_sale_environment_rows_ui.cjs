@@ -19,6 +19,7 @@ const ctx = vm.createContext({AS_STATE:state,AS_HISTORY:{},AS_TYPES:[],AFTER_SAL
   cloudFetchJson:async(_path,opts)=>{if(opts?.method){posts++;postedBodies.push(JSON.parse(opts.body));return {data:{runId:'SYNTH-RUN'}};}return {data:response};},
   asSyncRuntimeControls(){},asSetOrderView(){},asReconcileScanRows(){},asSyncRetryButton(){},asSyncWriteButtons(){},
   asProgress:d=>{node('progress').data=d;},asSetPhase:title=>{node('phase').textContent=title;},
+  asRenderScanRows:rows=>{node('scanRows').data=rows;},
   asScanGoodsHtml:()=>'<td>—</td>',asShortRef:s=>s||'—',
 });
 const run = code=>vm.runInContext(code,ctx);
@@ -204,5 +205,16 @@ const poll=async data=>{response=data;await run('asPoll()');assert.equal(state.p
   assert.ok(postedBodies.at(-1).idempotencyKey);
   const lookupHtml=run('asClaimEnvironmentRowHtml({environmentSerial:"900090",status:"running",note:"正在匹配 Hub 环境，尚未读取订单或提交"})');
   assert.match(lookupHtml,/匹配环境中/);
+  // Real poll distinguishes a failed scan from a genuine no-order scan.
+  state.mode='scan';state.scanTaskId='SYNTH-SCAN';state.running=true;state.starting=false;
+  await poll({status:'failed',summary:{rows:[{environmentSerial:'SYNTH-A',status:'fail',errorSummary:'synthetic Hub timeout'}],totalCount:1}});
+  assert.equal(node('phase').textContent,'扫描失败');
+  assert.equal(node('scanRows').data[0].status,'fail');
+  state.mode='scan';state.scanTaskId='SYNTH-SCAN-2';state.running=true;
+  await poll({status:'succeeded',summary:{rows:[{environmentSerial:'SYNTH-B',status:'empty'}],totalCount:1}});
+  assert.equal(node('phase').textContent,'扫描完成');
+  state.mode='scan';state.scanTaskId='SYNTH-SCAN-3';state.running=true;
+  await poll({status:'failed',summary:{rows:[{environmentSerial:'SYNTH-A',status:'ok',claimable:true},{environmentSerial:'SYNTH-B',status:'fail'}],totalCount:2}});
+  assert.equal(node('phase').textContent,'扫描完成（部分失败）');
   console.log('PASS: real environment/order table lifecycle, terminal failures, reasons, filters, history, restore, and order-only actions');
 })().catch(error=>{console.error(error);process.exitCode=1;});

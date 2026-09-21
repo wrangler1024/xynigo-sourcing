@@ -18,7 +18,7 @@ def test_lookup_stops_pagination_after_all_exact_identifiers_match():
     assert result['900001']['containerCode'] == 'SYNTH-A'
     assert len(result) == 2 and hub._post.call_count == 1
     assert hub._post.call_args.kwargs['retries'] == 1
-    assert hub._post.call_args.kwargs['timeout'] <= 10
+    assert hub._post.call_args.kwargs['timeout'] <= 45
 
 
 def test_names_require_complete_search_and_duplicate_name_is_rejected():
@@ -34,7 +34,7 @@ def test_names_require_complete_search_and_duplicate_name_is_rejected():
 def test_page_budget_and_stop_prevent_more_requests():
     hub = HubStudioLocalApiAdapter()
     hub._post = Mock(return_value={'list': [{'serialNumber': '1'}], 'total': 999})
-    with patch('purchase_tool.hub_api.time.monotonic', side_effect=[0, 0, 46]):
+    with patch('purchase_tool.hub_api.time.monotonic', side_effect=[0, 0, 301]):
         with pytest.raises(HubApiError, match='超时'):
             list(hub.iter_environments())
     assert hub._post.call_count == 1
@@ -62,3 +62,22 @@ def test_lookup_stage_is_published_before_request_and_failure_never_opens(stoppe
     assert all(row['status'] == ('stopped' if stopped else 'fail') for row in snap['claimEnvRows'])
     assert all('尚未提交' in row['note'] for row in snap['claimEnvRows'])
     claimer._run_environment_jobs.assert_not_called()
+
+
+def test_read_only_page_timeout_is_retried_once_and_can_continue():
+    hub = HubStudioLocalApiAdapter()
+    hub._post = Mock(side_effect=[
+        HubApiError('HubStudio Local API 请求超时', 'hubstudio_local_api_timeout'),
+        {'list': [{'serialNumber': '900001'}], 'total': 1},
+    ])
+    assert [env['serialNumber'] for env in hub.iter_environments()] == ['900001']
+    assert hub._post.call_count == 2
+    assert hub._post.call_args.kwargs['timeout'] <= 45
+
+
+def test_non_timeout_hub_error_is_not_retried():
+    hub = HubStudioLocalApiAdapter()
+    hub._post = Mock(side_effect=HubApiError('synthetic auth', 'hubstudio_unauthorized'))
+    with pytest.raises(HubApiError, match='synthetic auth'):
+        list(hub.iter_environments())
+    assert hub._post.call_count == 1

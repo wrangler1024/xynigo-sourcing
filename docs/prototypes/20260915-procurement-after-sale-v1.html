@@ -8161,7 +8161,9 @@ async function asPoll() {
         AS_STATE.running = false;
         $('asScan').disabled = false; $('asStop').disabled = true;
         const claimable = rows.filter(r => r.claimable).length;
-        const scanTitle = ({succeeded:'扫描完成', failed:'扫描失败', cancelled:'扫描已停止', uncertain:'扫描待核对'})[AS_STATE.status];
+        const partialScan = AS_STATE.status === 'failed' && rows.some(r => ['ok','skip','blocked','empty'].includes(r.status));
+        const scanTitle = partialScan ? '扫描完成（部分失败）'
+          : ({succeeded:'扫描完成', failed:'扫描失败', cancelled:'扫描已停止', uncertain:'扫描待核对'})[AS_STATE.status];
         asSetPhase(scanTitle,
           AS_STATE.status !== 'succeeded' ? '任务未完整完成，请查看各行结果后重试或核对。'
             : claimable ? `可申请 ${claimable} 单，勾选后点「提交售后」。`

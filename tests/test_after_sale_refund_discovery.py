@@ -383,7 +383,7 @@ class TestDiscoveryTaskTransport:
                 'environmentSerials': ['101'], 'purpose': 'unexpected',
                 'browserMode': 'headless', 'concurrency': 2}, lambda **_: None)
 
-    def test_default_purpose_still_posts_scan_endpoint(self):
+    def test_default_purpose_still_posts_scan_endpoint_and_rejects_empty_result(self):
         calls, executor = self.rpc([
             {'running': False, 'rows': []},
         ])
@@ -391,7 +391,8 @@ class TestDiscoveryTaskTransport:
         outcome, code, result = runner.execute('after.sale.scan.v1', {
             'environmentSerials': ['101'], 'browserMode': 'headless',
             'concurrency': 2}, lambda **_: None)
-        assert code == 'after_sale_scan_completed'
+        assert outcome == 'failed' and code == 'after_sale_scan_failed'
+        assert result['runStatus'] == 'failed'
         assert any(c['method'] == 'POST' and c['path'] == '/api/after-sale/scan'
                    for c in calls)
         assert not any(c['path'] == '/api/after-sale/refund-discovery'
