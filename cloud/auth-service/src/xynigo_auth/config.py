@@ -82,8 +82,13 @@ class Settings(BaseSettings):
     shein_openapi_gateway: str = "https://openapi.sheincorp.com"
     shein_auth_empower_host: str = "openapi-sem.sheincorp.com"
     shein_auth_redirect_base: str = ""
+    # 平台「一应用一合作模式」：自运营与半托管各一个应用，凭证成对配置。
+    # 网关/授权域名/回调地址两模式共用，只有应用凭证分开。
     shein_openapi_app_id: str = ""
     shein_openapi_app_secret: SecretStr = SecretStr("")
+    # 半托管应用（未配置时半托管链接生成报 not_configured，自营不受影响）。
+    shein_openapi_semi_app_id: str = ""
+    shein_openapi_semi_app_secret: SecretStr = SecretStr("")
     cookie_name: str = "xynigo_session"
     cookie_secure: bool = True
     login_success_path: str = "/"

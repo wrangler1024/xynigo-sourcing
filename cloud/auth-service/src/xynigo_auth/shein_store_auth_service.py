@@ -127,11 +127,71 @@ class SheinStoreAuthService:
         client: SheinOpenApiClient,
         empower_host: str,
         redirect_base: str,
+        semi_client: SheinOpenApiClient | None = None,
     ) -> None:
         self.cipher = cipher
         self.client = client
+        # 平台「一应用一合作模式」：client=自运营应用，semi_client=半托管应用。
+        # semi_client 未配置（None 或凭证为空）时半托管链接生成报 not_configured，
+        # 自营链路不受影响。
+        self.semi_client = semi_client
         self.empower_host = str(empower_host or "").strip("/")
         self.redirect_base = str(redirect_base or "").strip()
+
+    # ---- 应用选择 ----
+
+    def _configured_app_ids(self) -> list[str]:
+        return [
+            c.app_id
+            for c in (self.client, self.semi_client)
+            if c is not None and c.configured and c.app_id
+        ]
+
+    def _client_for_mode(self, mode: str) -> SheinOpenApiClient:
+        """按合作模式取应用 client。
+
+        换钥时平台密文用**发起授权那个应用**的 AppSecret 解密
+        （key=AppSecret 前 16 字节），选错应用必然解密失败——
+        所以模式选错比不配置更糟，半托管未配置必须在生成链接时就拒绝。
+        """
+        if mode == "semi":
+            target = self.semi_client
+            if target is None or not target.configured:
+                raise SheinStoreAuthError(
+                    "shein_auth_not_configured",
+                    "SHEIN 半托管应用凭证未配置，请联系管理员检查部署配置",
+                    503,
+                )
+            return target
+        return self.client
+
+    def _client_for_app_id(
+        self, app_id: str, *, required: bool = False
+    ) -> SheinOpenApiClient:
+        """按发起时的应用反查 client。
+
+        required=True（换钥路径）：匹配不到直接报配置错误——回退自营
+        几乎必然用错 AppSecret，结果同样是失败，但会被伪装成普通网关
+        502，排障绕弯；显式失败把「配置换过 appid」暴露成可诊断事件。
+        required=False（verify 路径）：query-store-info 走店铺级签名，
+        不使用应用凭证，回退自运营 client（共享网关）行为正确，也让
+        「semi 未配置但库里已有半托管店」仍能验证。
+        """
+        for candidate in (self.semi_client, self.client):
+            if (
+                candidate is not None
+                and candidate.configured
+                and candidate.app_id == str(app_id or "")
+            ):
+                return candidate
+        if required:
+            raise SheinStoreAuthError(
+                "shein_auth_app_unknown",
+                "授权链接所属应用的凭证未配置（部署可能已更换应用），"
+                "请重新生成授权链接",
+                503,
+            )
+        return self.client
 
     # ---- 事件 ----
 
@@ -172,7 +232,8 @@ class SheinStoreAuthService:
     ) -> dict[str, Any]:
         if mode not in ("self", "semi"):
             raise SheinStoreAuthError("shein_auth_mode_invalid", "店铺类型无效", 422)
-        if not self.client.configured or not self.redirect_base:
+        app_client = self._client_for_mode(mode)
+        if not app_client.configured or not self.redirect_base:
             raise SheinStoreAuthError(
                 "shein_auth_not_configured",
                 "SHEIN 开放平台应用凭证未配置，请联系管理员检查部署配置",
@@ -191,7 +252,7 @@ class SheinStoreAuthService:
             created_by_user_id=user_id,
             state=state,
             mode=mode,
-            app_id=self.client.app_id,
+            app_id=app_client.app_id,
             target_store_id=target_store_id,
             expires_at=now + timedelta(minutes=LINK_TTL_MINUTES),
         )
@@ -215,7 +276,7 @@ class SheinStoreAuthService:
         redirect_b64 = base64.b64encode(redirect_target.encode()).decode()
         url = (
             f"https://{self.empower_host}/#/empower"
-            f"?appid={self.client.app_id}&redirectUrl={redirect_b64}&state={state}"
+            f"?appid={app_client.app_id}&redirectUrl={redirect_b64}&state={state}"
         )
         return {
             "url": url,
@@ -233,7 +294,8 @@ class SheinStoreAuthService:
         并发回调只有一个能拿到（串行 409 由既有分支覆盖，失败也计入一次性）。
         换钥的联网调用放在事务外，避免长时间持行锁。
 
-        state 为空时走回退：认领该应用最新一条未消费且未过期的链接。
+        state 为空时走回退：认领任一已配置应用最新一条未消费且未过期的链接
+        （两应用各有链接时取时间最新）。
         平台回跳若剥掉 redirectUrl 自带 query，state 就回不来——此时只能
         按「时间最新者优先」匹配。tempToken 本身只有真实完成我方应用授权
         才能取得，窗口又被 15 分钟 TTL 收紧，回退风险有界；state 正常回传
@@ -250,10 +312,11 @@ class SheinStoreAuthService:
                     "shein_auth_state_unknown", "授权链接无效或已过期", 404
                 )
         else:
+            app_ids = self._configured_app_ids()
             link = session.scalar(
                 select(SheinAuthLink)
                 .where(
-                    SheinAuthLink.app_id == self.client.app_id,
+                    SheinAuthLink.app_id.in_(app_ids),
                     SheinAuthLink.consumed_at.is_(None),
                     SheinAuthLink.expires_at > now,
                 )
@@ -337,11 +400,28 @@ class SheinStoreAuthService:
         link_target_id = link.target_store_id
         link_mode = link.mode
         link_app_id = link.app_id
+        # 换钥必须用发起链接的应用：密文按该应用 AppSecret 加密，选错即解密失败；
+        # 应用匹配不到时显式报配置错误（不伪装成网关失败，评审建议改 #1）。
+        try:
+            link_client = self._client_for_app_id(link_app_id, required=True)
+        except SheinStoreAuthError as exc:
+            self._event(
+                session,
+                tenant_id=link_tenant_id,
+                actor_user_id=link_actor_id,
+                action="callback",
+                store_id=link_target_id,
+                store_label="（应用配置缺失）",
+                ok=False,
+                note=f"链接应用 {str(link_app_id or '')[:8]}… 无对应凭证配置",
+            )
+            session.commit()
+            raise exc
 
         failure: SheinOpenApiClientError | None = None
         open_key_id = secret_key = ""
         try:
-            open_key_id, secret_key = self.client.exchange_temp_token(temp_token)
+            open_key_id, secret_key = link_client.exchange_temp_token(temp_token)
         except SheinOpenApiClientError as exc:
             failure = exc
         if failure is not None:
@@ -372,7 +452,7 @@ class SheinStoreAuthService:
 
         store_info: dict[str, Any] = {}
         try:
-            store_info = _normalized_store_info(self.client.query_store_info(
+            store_info = _normalized_store_info(link_client.query_store_info(
                 open_key_id=open_key_id, secret_key=secret_key
             ))
         except SheinOpenApiClientError:
@@ -538,7 +618,10 @@ class SheinStoreAuthService:
                 "shein_store_secret_unreadable", "店铺密钥暂时无法解密", 503
             ) from exc
         try:
-            store_info = _normalized_store_info(self.client.query_store_info(
+            # 店铺级签名不依赖应用凭证；按 store 的 app_id 选 client 保持
+            # 应用语义一致（回退路径见 _client_for_app_id）。
+            store_client = self._client_for_app_id(record.app_id)
+            store_info = _normalized_store_info(store_client.query_store_info(
                 open_key_id=record.open_key_id, secret_key=secret_key
             ))
             record.status = "ok"
