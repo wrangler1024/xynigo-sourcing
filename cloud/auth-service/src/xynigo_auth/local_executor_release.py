@@ -14,7 +14,7 @@ from urllib.parse import quote
 
 from . import __version__
 
-RELEASE_VERSION = "0.18.10"
+RELEASE_VERSION = "0.18.11"
 RELEASE_CHANNEL = "test"
 RELEASE_PUBLISHED_AT = "2026-09-20T10:04:19Z"
 
@@ -31,8 +31,8 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.18.10-eaf584aedde7",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.18.10.exe",
+        "runtimeId": "0.18.11-eaf584aedde7",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.18.11.exe",
         "sha256": "64719621ba3acf114cbb68672b5e99f8e91b5cd4325a2412728c0a03b7c15e79",
         "size": 15417192,
         "installMode": "standard_per_user",
@@ -50,8 +50,8 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.18.10-eaf584aedde7",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.18.10.pkg",
+        "runtimeId": "0.18.11-eaf584aedde7",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.18.11.pkg",
         "sha256": "1dbbdcc5322db27fcc3a31f469282a9d9ec80f8c3957bbef18ad153d7728354e",
         "size": 11792723,
         "installMode": "standard_system_application",
@@ -322,6 +322,6 @@ def latest_local_executor_release() -> dict[str, object]:
         "notesZh": [
     "售后环境匹配齐指定序号后停止分页，增加查询预算、停止响应与匹配阶段提示。",
     "新增重试失败环境，仅允许无订单明细且计数明确为零的失败环境，保留待核对保护。",
-    "执行器与工作台更新至 v0.18.10，沿用 test 渠道；环境查询优化需安装新版执行器。"
+    "执行器与工作台更新至 v0.18.11，沿用 test 渠道；环境查询优化需安装新版执行器。"
 ],
     }
