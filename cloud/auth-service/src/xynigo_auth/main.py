@@ -222,6 +222,15 @@ from .tenant_integration_crypto import (
 )
 
 logger = logging.getLogger(__name__)
+# uvicorn 只配置自身 logger，应用 logger 默认无 handler：worker 的 info
+# 日志（启动/心跳/租户结果）会被 lastResort 阈值吞掉——20260922 排查
+# 自动同步事故时发现 worker 日志一条都看不到，正是这里缺失。
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s %(message)s"))
+    logger.addHandler(_handler)
+    logger.setLevel(logging.INFO)
 
 
 WEB_ROOT = Path(__file__).with_name("web")
