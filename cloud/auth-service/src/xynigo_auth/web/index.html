@@ -15252,7 +15252,9 @@ function settleRenderStatus() {
     : '—';
   const parts = [
     `<span>数据时间 <b>${settleTime(payload.syncedAt)}</b></span>`,
-    `<span>每 <b>${SETTLE_SYNC_INTERVAL_HOURS}</b> 小时自动同步 · 下次 <b>${nextSync}</b></span>`,
+    payload.scheduledSyncEnabled === false
+      ? `<span>自动同步未启用，仅手动刷新</span>`
+      : `<span>每 <b>${SETTLE_SYNC_INTERVAL_HOURS}</b> 小时自动同步 · 下次 <b>${nextSync}</b></span>`,
     `<span>店铺覆盖 <b>${ok} / ${total}</b> 家成功</span>`,
     `<span>币种 <b>${currencies.length ? currencies.join(' · ') : '—'}</b></span>`,
   ];

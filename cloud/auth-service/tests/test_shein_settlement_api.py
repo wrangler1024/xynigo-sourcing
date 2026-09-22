@@ -40,6 +40,13 @@ FERNET_KEY = "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="
 SECRET_PLAIN = "C" * 32
 
 
+# 「下次结算」按真实时钟动态判定（pay_date>=今天）：打款日必须用运行时
+# 计算的未来日期,写死日历日会在次日起整组变红（20260922 复现过）。
+from datetime import date as _date, timedelta as _timedelta
+FUTURE_PAY_DATE = (_date.today() + _timedelta(days=7)).isoformat()
+FUTURE_PAY_TIME = FUTURE_PAY_DATE + " 10:00:00"
+
+
 def shein_transport(*, fail: bool = False):
     """最小假网关：够同步跑一轮（订单/详情/对账单/报账单/站点币种）。"""
 
@@ -69,7 +76,7 @@ def shein_transport(*, fail: bool = False):
             end = str(payload.get("endAddTime") or "")
             add_time = "2026-09-15 10:00:00"
             items = ([{"checkOrderNo": "B-s1", "addTime": add_time,
-                       "estimatePayTime": "2026-09-21 10:00:00",
+                       "estimatePayTime": FUTURE_PAY_TIME,
                        "currencyCode": "MXN",
                        "estimateIncomeMoneyTotal": 500.25,
                        "incomeExpenditureType": 1}]
@@ -251,15 +258,15 @@ def test_sync_then_summary_roundtrip(tmp_path):
         assert store["paymentMethod"] == 2
         assert store["inTransitAmount"] == "88.80"
         assert store["nearestPayoutAmount"] == "500.25"
-        assert store["payDates"] == ["2026-09-21"]
+        assert store["payDates"] == [FUTURE_PAY_DATE]
         assert store["settledCumulativeAmount"] == "1200.50"
 
         card = body["cards"]["settled_cumulative"]
         assert card["groups"] == [
             {"currency": "MXN", "total": "1200.50", "cny": None}]
         assert card["cnyTotal"] is None       # 未配置汇率 → 显示「—」
-        assert body["cards"]["nearest_payout"]["nearestPayDate"] == "2026-09-21"
-        assert body["schedule"][0]["payDate"] == "2026-09-21"
+        assert body["cards"]["nearest_payout"]["nearestPayDate"] == FUTURE_PAY_DATE
+        assert body["schedule"][0]["payDate"] == FUTURE_PAY_DATE
 
 
 def test_amounts_serialize_as_two_decimal_strings(tmp_path):

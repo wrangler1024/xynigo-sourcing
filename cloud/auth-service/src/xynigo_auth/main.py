@@ -1228,7 +1228,12 @@ def create_app(
         )
         summary = _settlement_service().build_summary(
             session, tenant_id=actor.tenant.id, currency=currency.strip())
-        return settlement_summary_payload(summary)
+        payload = settlement_summary_payload(summary)
+        # 自动同步开关状态：前端据此区分「每 6 小时自动同步」与
+        # 「自动同步未启用」——20260921 事故中开关关闭但前端照常
+        # 宣称会自动同步，误导排障方向。
+        payload["scheduledSyncEnabled"] = settings.settlement_sync_enabled
+        return payload
 
     @app.get("/v1/finance/settlement/export")
     def settlement_export(

@@ -1025,6 +1025,12 @@ class SheinSettlementSyncWorker:
     def _loop(self) -> None:
         if self._stop.wait(self.initial_delay_seconds):
             return
+        # 启动即留痕：开关漏配时这条日志不存在，一眼能分辨 worker 是否在跑
+        # （20260921 事故：开关默认关且部署清单漏项，"每 6 小时自动同步"
+        # 纯属前端文案，worker 从未启动，靠查库才定位到）。
+        self._log(
+            f"settlement sync worker started: interval={self.interval_seconds}s "
+            f"stale={self.stale_after_seconds}s")
         while not self._stop.is_set():
             try:
                 self.run_once()
@@ -1069,6 +1075,10 @@ class SheinSettlementSyncWorker:
                 session.rollback()
                 self._log(f"settlement sync worker lookup failed: {type(exc).__name__}")
                 return 0
+        if not due:
+            # 每轮一条心跳：证明 worker 活着且确实检查过（没到期的静默跳过
+            # 在旧版完全没有输出，分不清「没到期」和「根本没在跑」）。
+            self._log("settlement sync tick: no tenant due")
         for tenant_id in due:
             with self.session_factory() as session:
                 try:
