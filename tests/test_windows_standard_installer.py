@@ -98,9 +98,8 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
                       self.installer)
         self.assertIn('!define APP_NAME "Xynigo Sourcing Production"',
                       self.installer)
-        self.assertNotIn('Page custom MigrationPageCreate MigrationPageLeave',
-                         self.installer)
-        self.assertNotIn('  Call MigrateGreenPackageData\n', self.installer)
+        self.assertNotIn('MigrateGreenPackageData', self.installer)
+        self.assertNotIn('/MIGRATEDIR=', self.installer)
 
     def test_protocol_is_registered_only_as_a_validated_launcher(self):
         self.assertIn('Software\\Classes\\xynigo', self.installer)
@@ -117,10 +116,7 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
             self.assertIn(name, self.installer)
             self.assertNotIn('Delete "$INSTDIR\\%s"' % name, self.installer)
             self.assertNotIn('RMDir /r "$INSTDIR\\%s"' % name, self.installer)
-        self.assertIn('"/MIGRATEDIR="', self.installer)
-        self.assertIn('MigrateGreenPackageData', self.installer)
-        self.assertIn('robocopy.exe', self.installer)
-        self.assertIn('/XO /XN /XC', self.installer)
+        self.assertNotIn('robocopy.exe', self.installer)
 
     def test_launchers_pin_data_root_and_pairing_stays_explicit(self):
         self.assertIn('XYNIGO_DATA_DIR=%CD%', self.launcher)
@@ -135,8 +131,6 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
         for source in (
             'MUI_WELCOMEFINISHPAGE_BITMAP',
             'MUI_HEADERIMAGE_BITMAP',
-            'MigrationPageCreate',
-            '迁移旧版数据',
             'Xynigo.exe',
             '启动 Xynigo 桌面客户端',
         ):
