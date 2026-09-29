@@ -357,9 +357,13 @@ jobs:
           python - <<'PY'
           import json
           import os
+          import subprocess
           from pathlib import Path
           import tempfile
           import zipfile
+          from purchase_tool.cloud_auth import DEFAULT_AUTH_BASE_URL
+
+          assert DEFAULT_AUTH_BASE_URL == 'https://app.xynigo.com'
 
           manifest_path = next(Path('dist').glob('*_update.json'))
           manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
@@ -380,10 +384,7 @@ jobs:
               assert info['platform'] == os.environ['EXPECTED_PLATFORM']
               binary = root / 'runtime' / 'xynigo-sourcing'
               binary.chmod(0o755)
-          import subprocess
-          from purchase_tool.cloud_auth import DEFAULT_AUTH_BASE_URL
-          assert DEFAULT_AUTH_BASE_URL == 'https://app.xynigo.com'
-          output = subprocess.check_output(
+              output = subprocess.check_output(
                   [str(binary), '--package-self-test'], text=True)
               assert os.environ['EXPECTED_PLATFORM'] in output
               tls_env = dict(os.environ)
