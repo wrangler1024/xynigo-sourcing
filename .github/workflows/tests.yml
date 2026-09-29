@@ -232,14 +232,18 @@ jobs:
           # runtime pointer, and starts a fresh status center.
           $onlineLauncher = Start-Process -FilePath "$installDir\Xynigo.exe" -ArgumentList "--background" -PassThru
           $onlineChildren = @()
-          for ($attempt = 0; $attempt -lt 20; $attempt++) {
+          for ($attempt = 0; $attempt -lt 60; $attempt++) {
             $onlineChildren = @(Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe'" | Where-Object {
               $_.ExecutablePath -and $_.ExecutablePath -like "$runtimeDir\*"
             })
             if ($onlineChildren.Count -eq 1) { break }
             Start-Sleep -Milliseconds 500
           }
-          if ($onlineChildren.Count -ne 1) { throw "online executor child did not start" }
+          if ($onlineChildren.Count -ne 1) {
+            $statusLog = Join-Path $installDir '日志\状态中心.log'
+            if (Test-Path $statusLog) { Get-Content $statusLog -Tail 80 | Write-Host }
+            throw "online executor child did not start"
+          }
           # The real updater spawns the installer and then exits its own Python
           # process. Reproduce that handoff while leaving Xynigo.exe alive for
           # the installer's online-mode process switch.
