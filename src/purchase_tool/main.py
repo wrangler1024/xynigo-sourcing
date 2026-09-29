@@ -55,7 +55,8 @@ from . import __version__
 from .buyer_library import BuyerLibraryJob, DatabaseBuyerLibraryService
 from .buyer_ledger_sync import validate_unified_schema
 from .buyer_register import BuyerRegistrationTask, RegistrationOrchestrator
-from .cloud_auth import DEFAULT_AUTH_BASE_URL, LocalAuthError, LocalAuthService
+from .cloud_auth import (
+    CloudAuthClient, DEFAULT_AUTH_BASE_URL, LocalAuthError, LocalAuthService)
 from .cloud_feishu_transport import CloudFeishuTransport
 from .data_source_registry import (
     DataSourceMappingRequired, DataSourceRegistry, DataSourceRegistryError,
@@ -188,7 +189,7 @@ def public_purchase_assistant_source_context(identity, source_status,
     resolution = str(payload.get('resolution') or '')
     payload.update({
         'management': 'desktop',
-        'settingsUrl': 'xynigo://settings',
+        'settingsUrl': 'xynigo-prod://settings',
         'member': {
             'name': str(((identity or {}).get('user') or {}).get(
                 'name') or '')[:255],
@@ -1242,7 +1243,8 @@ class AppState(object):
             current_runtime_id=os.environ.get('XYNIGO_RUNTIME_ID'),
         )
         self.executor_channel = ExecutorChannelWorker(
-            client=CloudExecutorClient(),
+            client=CloudExecutorClient(client=CloudAuthClient(
+                self.auth.client.base_url, timeout=35.0)),
             credential_store=self.executor_credential_store,
             state_store=ExecutorChannelStateStore(
                 base_url=self.auth.client.base_url),
@@ -1661,6 +1663,7 @@ class AppState(object):
             'schemaVersion': 1,
             'product': 'Xynigo Sourcing 本地执行器',
             'version': __version__,
+            'cloudOrigin': getattr(client, 'base_url', DEFAULT_AUTH_BASE_URL),
             'executor': {
                 'running': True,
                 'paired': paired,
@@ -3426,7 +3429,7 @@ class Handler(BaseHTTPRequestHandler):
                 },
                 'version': __version__,
                 'configured': configured,
-                'settingsUrl': 'xynigo://settings',
+                'settingsUrl': 'xynigo-prod://settings',
             })
         if path == PURCHASE_ASSISTANT_API_PREFIX + '/session':
             if not self._purchase_assistant_pair_allowed():
@@ -3618,7 +3621,7 @@ class Handler(BaseHTTPRequestHandler):
                     'ok': False,
                     'code': 'local_config_desktop_only',
                     'error': '收件信息数据源只能在 Xynigo 桌面客户端配置',
-                    'settingsUrl': 'xynigo://settings',
+                    'settingsUrl': 'xynigo-prod://settings',
                 }, 410)
             capability = STATE.hub_capabilities(force=True)
             if not capability.get('available'):

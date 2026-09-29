@@ -1,7 +1,10 @@
 """Production clients and generated Web assets must not target the test host."""
 
 from pathlib import Path
+import os
 from subprocess import CompletedProcess
+import subprocess
+import sys
 
 from purchase_tool.cloud_auth import (
     DEFAULT_AUTH_BASE_URL, KEYCHAIN_SERVICE,
@@ -11,6 +14,8 @@ from purchase_tool.cloud_auth import (
 from purchase_tool.executor_channel import (
     ExecutorChannelStateStore, default_windows_executor_credential_path,
 )
+from purchase_tool.env_batch import default_resume_dir
+from purchase_tool.operation_result_sync import default_operation_outbox_path
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -51,6 +56,9 @@ def test_local_auth_and_executor_state_keep_legacy_test_slot(tmp_path, monkeypat
     prod_state.save({"executorId": "production-device"})
     assert test_state.load()["executorId"] == "test-device"
     assert prod_state.load()["executorId"] == "production-device"
+    assert "production" in str(default_operation_outbox_path()).lower()
+    resume_path = str(default_resume_dir()).lower()
+    assert "production" in resume_path or "生产" in resume_path
 
 
 def test_production_keychain_clear_does_not_delete_test_session():
@@ -82,3 +90,26 @@ def test_production_keychain_clear_does_not_delete_test_session():
     prod_store.save("p" * 64)
     prod_store.clear()
     assert test_store.load() == "t" * 64
+
+
+def test_executor_network_origin_follows_injected_auth_origin(tmp_path):
+    env = dict(os.environ)
+    env.update({
+        "PYTHONPATH": str(ROOT / "src"),
+        "XYNIGO_DATA_DIR": str(tmp_path),
+        "XYNIGO_AUTH_BASE_URL": PRODUCTION_ORIGIN,
+    })
+    source = """
+from purchase_tool.cloud_auth import CloudAuthClient, LocalAuthService, MemoryAuthSessionStore
+from purchase_tool.main import AppState
+auth = LocalAuthService(client=CloudAuthClient('https://xynigo.samforo.icu'),
+                        store=MemoryAuthSessionStore())
+state = AppState(auth_service=auth, executor_credential_store=MemoryAuthSessionStore())
+assert state.executor_channel.client.client.base_url == auth.client.base_url
+assert state.executor_channel.state_store.path.name == 'executor-channel.json'
+assert state.local_executor_status()['cloudOrigin'] == auth.client.base_url
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", source], cwd=ROOT, env=env,
+        capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr

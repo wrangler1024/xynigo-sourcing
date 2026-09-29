@@ -588,7 +588,7 @@ class PurchaseAssistantHttpTests(unittest.TestCase):
         self.assertTrue(health['features']['memberScopedDataSources'])
         self.assertFalse(health['features']['environmentScopedDataSources'])
         self.assertTrue(health['features']['hubStudioAutomation'])
-        self.assertEqual(health['settingsUrl'], 'xynigo://settings')
+        self.assertEqual(health['settingsUrl'], 'xynigo-prod://settings')
         self.assertNotIn('recipient', health)
         self._pair()
 
@@ -766,14 +766,14 @@ class PurchaseAssistantHttpTests(unittest.TestCase):
         self.assertEqual(payload['source']['mode'], 'team')
         self.assertEqual(payload['source']['management'], 'desktop')
         self.assertEqual(payload['source']['resolution'], 'team_default')
-        self.assertEqual(payload['source']['settingsUrl'], 'xynigo://settings')
+        self.assertEqual(payload['source']['settingsUrl'], 'xynigo-prod://settings')
         self.assertNotIn('spreadsheetToken', json.dumps(payload))
         status, _response_headers, payload = self._post(
             '/api/purchase-assistant/v1/data-source/save',
             {'mode': 'team'}, headers)
         self.assertEqual(status, 410)
         self.assertEqual(payload['code'], 'local_config_desktop_only')
-        self.assertEqual(payload['settingsUrl'], 'xynigo://settings')
+        self.assertEqual(payload['settingsUrl'], 'xynigo-prod://settings')
 
     def test_mock_environment_open_close_and_batch_use_restricted_bridge(self):
         token = self._pair()

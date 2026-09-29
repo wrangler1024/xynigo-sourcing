@@ -21,29 +21,30 @@ ROOT = Path(__file__).resolve().parents[1]
 class ExecutorProtocolTests(unittest.TestCase):
     def test_only_low_risk_actions_are_accepted(self):
         self.assertEqual(
-            parse_executor_protocol_uri('xynigo://start'),
+            parse_executor_protocol_uri('xynigo-prod://start'),
             {'action': 'start'},
         )
         self.assertEqual(
-            parse_executor_protocol_uri('xynigo://wake/'),
+            parse_executor_protocol_uri('xynigo-prod://wake/'),
             {'action': 'wake'},
         )
         self.assertEqual(
-            parse_executor_protocol_uri('xynigo://pair?code=ABCD-EFGH'),
+            parse_executor_protocol_uri('xynigo-prod://pair?code=ABCD-EFGH'),
             {'action': 'pair', 'pairingCode': 'ABCD-EFGH'},
         )
 
     def test_business_actions_credentials_and_ambiguous_parameters_are_rejected(self):
         invalid = (
             'https://example.test/start',
-            'xynigo://purchase?order=1',
-            'xynigo://start?token=' + ('x' * 40),
-            'xynigo://start?ticket=' + ('x' * 40),
-            'xynigo://pair?code=ABCD-EFGH&code=JKLM-NPQR',
-            'xynigo://pair?code=ABCI-1234',
-            'xynigo://user:password@start',
-            'xynigo://start:bad-port',
-            'xynigo://start#fragment',
+            'xynigo://start',
+            'xynigo-prod://purchase?order=1',
+            'xynigo-prod://start?token=' + ('x' * 40),
+            'xynigo-prod://start?ticket=' + ('x' * 40),
+            'xynigo-prod://pair?code=ABCD-EFGH&code=JKLM-NPQR',
+            'xynigo-prod://pair?code=ABCI-1234',
+            'xynigo-prod://user:password@start',
+            'xynigo-prod://start:bad-port',
+            'xynigo-prod://start#fragment',
         )
         for uri in invalid:
             with self.subTest(uri=uri):
@@ -57,6 +58,7 @@ class ExecutorProtocolTests(unittest.TestCase):
         guard.close()
         self.assertEqual(closed, [42])
         self.assertTrue(WINDOWS_MUTEX_NAME.startswith('Local\\'))
+        self.assertIn('Production', WINDOWS_MUTEX_NAME)
 
 
 class WindowsStandardInstallerContractTests(unittest.TestCase):
@@ -102,7 +104,7 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
         self.assertNotIn('/MIGRATEDIR=', self.installer)
 
     def test_protocol_is_registered_only_as_a_validated_launcher(self):
-        self.assertIn('Software\\Classes\\xynigo', self.installer)
+        self.assertIn('Software\\Classes\\xynigo-prod', self.installer)
         self.assertIn('"URL Protocol" ""', self.installer)
         self.assertIn('Xynigo.exe$\\" --protocol', self.installer)
 
@@ -278,8 +280,8 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
         self.assertIn('/ONLINEUPDATE=', self.installer)
         self.assertIn('Function .onInstSuccess', self.installer)
         self.assertIn('Exec \'"$INSTDIR\\Xynigo.exe" --show\'', self.installer)
-        self.assertIn(
-            'taskkill.exe" /IM Xynigo.exe /F', self.installer)
+        self.assertIn('stop-managed-executors.ps1', self.installer)
+        self.assertNotIn('/IM Xynigo.exe', self.installer)
         self.assertIn('XYNIGO_RUNTIME_ID="+runtimeID', self.gui_launcher)
 
     def test_builder_marks_unsigned_artifact_as_not_release_eligible(self):
@@ -302,7 +304,7 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
             "'installMode': 'green_package'",
             "'Xynigo.exe', 'xynigo-logo.png', 'xynigo-x.ico'",
             '双击“Xynigo.exe”打开桌面客户端',
-            '绿色版不注册 xynigo:// 系统协议',
+            '绿色版不注册 xynigo-prod:// 系统协议',
             "'desktopUI': 'webview2'",
             "'webViewRuntime': 'evergreen'",
             'XYNIGO_BUILD_LABEL',
@@ -350,7 +352,7 @@ class WindowsStandardInstallerArtifactTests(unittest.TestCase):
         self.assertFalse(payload['requiresElevation'])
         self.assertFalse(payload['autoStart'])
         self.assertFalse(payload['releaseEligible'])
-        self.assertEqual(payload['protocol'], 'xynigo')
+        self.assertEqual(payload['protocol'], 'xynigo-prod')
         self.assertTrue(payload['statusCenter'])
         self.assertTrue(payload['trayMenu'])
         if 'onlineUpdate' in payload:

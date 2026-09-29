@@ -235,7 +235,7 @@ class ExecutorWorkspaceWebTests(unittest.TestCase):
             "config.summary.v2",
             "applyLocalExecutorConfigSummary",
             "configSummaryStale",
-            "xynigo://settings",
+            "xynigo-prod://settings",
             "摘要不可用：所选设备版本过旧",
         ):
             self.assertIn(marker, html)

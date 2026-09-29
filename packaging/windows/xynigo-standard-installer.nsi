@@ -61,7 +61,7 @@ SetCompressor /SOLID lzma
 !define APP_ID "XynigoSourcing.Production.Executor"
 !define APP_REG_KEY "Software\Xynigo\SourcingProduction"
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_ID}"
-!define PROTOCOL_KEY "Software\Classes\xynigo"
+!define PROTOCOL_KEY "Software\Classes\xynigo-prod"
 
 Name "${APP_NAME}"
 OutFile "${OUTPUT_FILE}"
@@ -153,19 +153,17 @@ Section "$(CoreSectionName)" SEC_CORE
   SectionIn RO
   SetShellVarContext current
 
-  ; A user-initiated upgrade may run while the tray owns the executor.
-  ; Stop only this user's Xynigo launcher/process tree before replacement.
-  ${If} $OnlineUpdate == "1"
-    ; The verified installer is launched by the Python child. Killing the
-    ; whole launcher tree would also kill this installer, so online mode only
-    ; stops the status-center process after the child has requested exit.
-    nsExec::ExecToStack '"$SYSDIR\taskkill.exe" /IM Xynigo.exe /F'
-    Sleep 800
-  ${Else}
-    nsExec::ExecToStack '"$SYSDIR\taskkill.exe" /IM Xynigo.exe /T /F'
-  ${EndIf}
-  Pop $0
-  Pop $1
+  ; An existing production install is stopped by its own path-scoped helper.
+  ; A fresh install never touches a test launcher with the same executable name.
+  IfFileExists "$INSTDIR\stop-managed-executors.ps1" 0 production_stopped
+    nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\stop-managed-executors.ps1" -InstallDir "$INSTDIR"'
+    Pop $0
+    Pop $1
+    ${If} $0 != 0
+      DetailPrint "$1"
+      Abort
+    ${EndIf}
+  production_stopped:
 
   ; Each immutable package revision has its own directory. This matters when a
   ; hotfix keeps the public APP_VERSION: reinstalling must still replace the

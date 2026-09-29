@@ -38,6 +38,7 @@ private func makeDesktopEditMenu() -> NSMenu {
 private struct DesktopStatus: Decodable {
     let schemaVersion: Int
     let version: String
+    let cloudOrigin: String
     let executor: DesktopExecutorSummary
     let cloudChannel: DesktopCloudSummary
     let hubStudio: DesktopHubSummary
@@ -1028,7 +1029,8 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
                let data,
                let status = try? JSONDecoder().decode(DesktopStatus.self, from: data),
                status.schemaVersion == 1,
-               !status.version.isEmpty {
+               !status.version.isEmpty,
+               status.cloudOrigin == desktopCloudURL.absoluteString {
                 completion(status, baseURL)
                 return
             }
@@ -1375,7 +1377,7 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         }
         showDesktopClient()
         if raw.range(
-            of: #"^xynigo://settings/?$"#,
+            of: #"^xynigo-prod://settings/?$"#,
             options: [.regularExpression, .caseInsensitive]
         ) != nil {
             pendingOpenSettings = true
@@ -1399,7 +1401,7 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
               !raw.contains("\0") else {
             return false
         }
-        let pattern = #"^xynigo://(?:start/?|wake/?|settings/?|pair\?code=[A-HJ-NP-Z2-9]{4}-?[A-HJ-NP-Z2-9]{4})$"#
+        let pattern = #"^xynigo-prod://(?:start/?|wake/?|settings/?|pair\?code=[A-HJ-NP-Z2-9]{4}-?[A-HJ-NP-Z2-9]{4})$"#
         return raw.range(
             of: pattern,
             options: [.regularExpression, .caseInsensitive]

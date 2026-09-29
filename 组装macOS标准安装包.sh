@@ -85,10 +85,9 @@ echo "[3/7] Build native launcher, app metadata and icon ..."
 cp packaging/macos/启动本地执行器.command "$RESOURCES/启动本地执行器.command"
 cp packaging/macos/协议启动.command "$RESOURCES/协议启动.command"
 cp packaging/macos/配对本地执行器.command "$RESOURCES/配对本地执行器.command"
-cp packaging/macos/迁移绿色包数据.command "$RESOURCES/迁移绿色包数据.command"
 chmod 755 "$CONTENTS/MacOS/xynigo-launcher" \
   "$RESOURCES/启动本地执行器.command" "$RESOURCES/协议启动.command" \
-  "$RESOURCES/配对本地执行器.command" "$RESOURCES/迁移绿色包数据.command" \
+  "$RESOURCES/配对本地执行器.command" \
   "$RESOURCES/runtime/xynigo-sourcing"
 
 INFO_PLIST="$CONTENTS/Info.plist"
@@ -111,7 +110,7 @@ payload = {
     'CFBundleURLTypes': [{
         'CFBundleTypeRole': 'Viewer',
         'CFBundleURLName': 'Xynigo local executor launcher',
-        'CFBundleURLSchemes': ['xynigo'],
+        'CFBundleURLSchemes': ['xynigo-prod'],
     }],
     'LSApplicationCategoryType': 'public.app-category.business',
     'LSMinimumSystemVersion': '13.0',
@@ -165,10 +164,10 @@ metadata = {
     'executorLaunchMode': 'managed_child',
     'dataDirectory': '~/Library/Application Support/XynigoSourcingProduction',
     'autoStart': False,
-    'protocol': 'xynigo',
+    'protocol': 'xynigo-prod',
     'managedPaths': [
         'runtime', '启动本地执行器.command', '协议启动.command',
-        '配对本地执行器.command', '迁移绿色包数据.command', 'xynigo.icns',
+        '配对本地执行器.command', 'xynigo.icns',
     ],
     'preservedPaths': [
         'config.json', '查询日志', '日志', 'logs', '运行数据',
@@ -291,7 +290,7 @@ metadata = {
     'dataDirectory': '~/Library/Application Support/XynigoSourcingProduction',
     'requiresElevation': True,
     'autoStart': False,
-    'protocol': 'xynigo',
+    'protocol': 'xynigo-prod',
     'assetName': installer.name,
     'size': installer.stat().st_size,
     'sha256': digest,

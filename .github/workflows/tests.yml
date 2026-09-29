@@ -101,7 +101,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $installer = Get-Item "dist\Xynigo_Sourcing_Windows_Setup_v*.exe"
-          $installDir = Join-Path $env:LOCALAPPDATA "Programs\Xynigo Sourcing"
+          $installDir = Join-Path $env:LOCALAPPDATA "Programs\Xynigo Sourcing Production"
           $greenDir = Join-Path $env:RUNNER_TEMP "Xynigo green source"
           # Reproduce the v0.12.7 hotfix incident: an existing same-version
           # runtime must not be reused when the package payload has changed.
@@ -220,10 +220,13 @@ jobs:
           }
           if ($managedPids[0] -eq $orphanPid) { throw "launcher adopted the orphan executor" }
           & taskkill.exe /PID $launcher.Id /T /F | Out-Null
-          $protocol = (Get-Item "HKCU:\Software\Classes\xynigo\shell\open\command").GetValue('')
+          $protocol = (Get-Item "HKCU:\Software\Classes\xynigo-prod\shell\open\command").GetValue('')
           if ($protocol -notmatch 'Xynigo\.exe.*--protocol') { throw "xynigo protocol missing" }
-          if (-not (Test-Path "$installDir\config.json")) { throw "green config was not migrated" }
-          if (-not (Test-Path "$installDir\运行数据\keep.txt")) { throw "green runtime data was not migrated" }
+          if (Test-Path "$installDir\config.json") { throw "test config was imported into production" }
+          if (Test-Path "$installDir\运行数据\keep.txt") { throw "test runtime data was imported into production" }
+          Set-Content -Path "$installDir\config.json" -Value '{"production":true}' -Encoding UTF8
+          New-Item -ItemType Directory -Force -Path "$installDir\运行数据" | Out-Null
+          Set-Content -Path "$installDir\运行数据\keep.txt" -Value 'production-only' -Encoding UTF8
           # Exercise the standard-package online handoff: the installer stops
           # the launcher without killing itself, switches the immutable
           # runtime pointer, and starts a fresh status center.
@@ -263,7 +266,7 @@ jobs:
           if (-not $onlineRestarted) { throw "online installer did not restart the status center" }
           if (-not (Test-Path "$installDir\config.json")) { throw "upgrade removed config" }
           if (-not (Test-Path "$installDir\运行数据\keep.txt")) { throw "upgrade removed runtime data" }
-          & taskkill.exe /IM Xynigo.exe /T /F | Out-Null
+          & "$installDir\stop-managed-executors.ps1" -InstallDir $installDir
           Start-Sleep -Milliseconds 800
           # Reproduce a detached runtime that taskkill of the launcher cannot
           # reach, and prove uninstall does not kill an unrelated Python.
@@ -279,7 +282,7 @@ jobs:
           # observable cleanup, while keeping the removal assertions strict.
           $cleanupDeadline = (Get-Date).AddSeconds(30)
           while (((Test-Path "$installDir\versions") -or
-                  (Test-Path "HKCU:\Software\Classes\xynigo")) -and
+                  (Test-Path "HKCU:\Software\Classes\xynigo-prod")) -and
                  (Get-Date) -lt $cleanupDeadline) {
             Start-Sleep -Milliseconds 250
           }
@@ -293,7 +296,7 @@ jobs:
           if (Test-Path "$installDir\versions") { throw "uninstall kept managed versions" }
           if (-not (Test-Path "$installDir\config.json")) { throw "uninstall removed config" }
           if (-not (Test-Path "$installDir\运行数据\keep.txt")) { throw "uninstall removed runtime data" }
-          if (Test-Path "HKCU:\Software\Classes\xynigo") { throw "protocol registration remained" }
+          if (Test-Path "HKCU:\Software\Classes\xynigo-prod") { throw "protocol registration remained" }
           $uninstallOrphan.Refresh()
           $unrelatedPython.Refresh()
           if (-not $uninstallOrphan.HasExited) { throw "uninstall left the detached runtime alive" }
@@ -373,19 +376,19 @@ jobs:
           test -n "$package"
           payload_list="$RUNNER_TEMP/xynigo-standard-payload.txt"
           pkgutil --payload-files "$package" > "$payload_list"
-          grep -Fq 'Applications/Xynigo Sourcing.app/Contents/MacOS/xynigo-launcher' "$payload_list"
-          grep -Fq 'Applications/Xynigo Sourcing.app/Contents/Resources/runtime/xynigo-sourcing' "$payload_list"
+          grep -Fq 'Applications/Xynigo Sourcing Production.app/Contents/MacOS/xynigo-launcher' "$payload_list"
+          grep -Fq 'Applications/Xynigo Sourcing Production.app/Contents/Resources/runtime/xynigo-sourcing' "$payload_list"
           if grep -Eiq 'LaunchAgents|LaunchDaemons|LoginItems' "$payload_list"; then
             echo 'unexpected autostart payload' >&2
             exit 1
           fi
           expanded="$RUNNER_TEMP/xynigo-standard-expanded"
           pkgutil --expand-full "$package" "$expanded"
-          app="$(find "$expanded" -type d -name 'Xynigo Sourcing.app' -print -quit)"
+          app="$(find "$expanded" -type d -name 'Xynigo Sourcing Production.app' -print -quit)"
           test -n "$app"
           codesign --verify --deep --strict "$app"
-          test "$(plutil -extract CFBundleIdentifier raw "$app/Contents/Info.plist")" = 'icu.samforo.xynigo.sourcing'
-          plutil -p "$app/Contents/Info.plist" | grep -Fq 'xynigo'
+          test "$(plutil -extract CFBundleIdentifier raw "$app/Contents/Info.plist")" = 'com.xynigo.sourcing.production'
+          plutil -p "$app/Contents/Info.plist" | grep -Fq 'xynigo-prod'
           python - <<'PY'
           import json
           from pathlib import Path
@@ -394,7 +397,7 @@ jobs:
               'Xynigo_Sourcing_macOS_Standard_v*.json'))
           metadata = json.loads(metadata_path.read_text(encoding='utf-8'))
           assert metadata['installMode'] == 'standard_system_application'
-          assert metadata['dataDirectory'].endswith('XynigoSourcing')
+          assert metadata['dataDirectory'].endswith('XynigoSourcingProduction')
           assert metadata['autoStart'] is False
           assert metadata['developerIdApplicationSigned'] is False
           assert metadata['developerIdInstallerSigned'] is False

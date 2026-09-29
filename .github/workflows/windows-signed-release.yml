@@ -83,7 +83,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $installer = Get-Item "dist\Xynigo_Sourcing_Windows_Setup_v*.exe"
-          $installDir = Join-Path $env:LOCALAPPDATA "Programs\Xynigo Sourcing"
+          $installDir = Join-Path $env:LOCALAPPDATA "Programs\Xynigo Sourcing Production"
           $greenDir = Join-Path $env:RUNNER_TEMP "Xynigo green source"
           New-Item -ItemType Directory -Force -Path "$greenDir\运行数据" | Out-Null
           Set-Content -Path "$greenDir\VERSION.json" -Value '{"version":"legacy"}' -Encoding UTF8
@@ -95,9 +95,12 @@ jobs:
           if (-not (Test-Path "$installDir\xynigo-logo.png")) { throw "brand asset missing" }
           $launcherSignature = Get-AuthenticodeSignature "$installDir\Xynigo.exe"
           if ($launcherSignature.Status -ne "Valid") { throw "installed launcher signature invalid" }
-          $protocol = (Get-Item "HKCU:\Software\Classes\xynigo\shell\open\command").GetValue('')
+          $protocol = (Get-Item "HKCU:\Software\Classes\xynigo-prod\shell\open\command").GetValue('')
           if ($protocol -notmatch 'Xynigo\.exe.*--protocol') { throw "protocol does not use signed launcher" }
-          if (-not (Test-Path "$installDir\config.json")) { throw "config migration failed" }
+          if (Test-Path "$installDir\config.json") { throw "test config was imported into production" }
+          Set-Content -Path "$installDir\config.json" -Value '{"production":true}' -Encoding UTF8
+          New-Item -ItemType Directory -Force -Path "$installDir\运行数据" | Out-Null
+          Set-Content -Path "$installDir\运行数据\keep.txt" -Value 'production-only' -Encoding UTF8
           $uninstaller = Get-Item "$installDir\卸载 Xynigo Sourcing.exe"
           $uninstall = Start-Process $uninstaller.FullName -ArgumentList "/S" -Wait -PassThru
           if ($uninstall.ExitCode -ne 0) { throw "uninstall failed" }

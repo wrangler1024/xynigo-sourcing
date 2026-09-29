@@ -27,7 +27,7 @@ def default_standard_data_dir(environ=None):
     if configured:
         return Path(configured).expanduser()
     if sys.platform == 'darwin':
-        return Path.home() / 'Library' / 'Application Support' / 'XynigoSourcing'
+        return Path.home() / 'Library' / 'Application Support' / 'XynigoSourcingProduction'
     return Path.cwd()
 
 

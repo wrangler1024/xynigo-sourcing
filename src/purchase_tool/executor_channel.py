@@ -468,7 +468,7 @@ class ExecutorChannelWorker(object):
                                 nextRetryAt=None,
                             )
                         # An already-running executor must notice a later
-                        # xynigo://pair process. Missing unpaired credentials
+                        # xynigo-prod://pair process. Missing unpaired credentials
                         # are cheap to recheck; a paired-but-unavailable
                         # Keychain item backs off to avoid repeated prompts.
                         self._wait(30.0 if paired else 1.0)
