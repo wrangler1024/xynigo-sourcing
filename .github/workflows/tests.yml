@@ -266,6 +266,22 @@ jobs:
           if (-not $onlineRestarted) { throw "online installer did not restart the status center" }
           if (-not (Test-Path "$installDir\config.json")) { throw "upgrade removed config" }
           if (-not (Test-Path "$installDir\运行数据\keep.txt")) { throw "upgrade removed runtime data" }
+          # The installer returns after the tray restarts. Wait for its child
+          # to serve a production-owned status before testing the stop helper.
+          $productionReady = $false
+          for ($attempt = 0; $attempt -lt 40 -and -not $productionReady; $attempt++) {
+            for ($port = 8765; $port -le 8774; $port++) {
+              try {
+                $status = Invoke-RestMethod -Uri "http://127.0.0.1:$port/executor-status.json" -TimeoutSec 1
+                if ($status.schemaVersion -eq 1 -and $status.cloudOrigin -eq 'https://app.xynigo.com') {
+                  $productionReady = $true
+                  break
+                }
+              } catch {}
+            }
+            if (-not $productionReady) { Start-Sleep -Milliseconds 500 }
+          }
+          if (-not $productionReady) { throw "production executor was not ready after online reinstall" }
           & "$installDir\stop-managed-executors.ps1" -InstallDir $installDir
           Start-Sleep -Milliseconds 800
           # Reproduce a detached runtime that taskkill of the launcher cannot

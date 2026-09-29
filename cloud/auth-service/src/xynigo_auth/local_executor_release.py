@@ -16,7 +16,8 @@ from . import __version__
 
 RELEASE_VERSION = "0.18.12"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-29T02:42:27Z"
+# Fill this only when signed assets are actually distributed.
+RELEASE_PUBLISHED_AT = ""
 
 
 if RELEASE_VERSION != __version__:
