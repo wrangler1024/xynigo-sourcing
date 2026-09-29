@@ -1,7 +1,7 @@
 #!/bin/bash
 set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
-DATA_DIR="$HOME/Library/Application Support/XynigoSourcing"
+DATA_DIR="$HOME/Library/Application Support/XynigoSourcingProduction"
 mkdir -p "$DATA_DIR"
 chmod 700 "$DATA_DIR" 2>/dev/null || true
 export XYNIGO_DATA_DIR="$DATA_DIR"

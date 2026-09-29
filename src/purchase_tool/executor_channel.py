@@ -29,6 +29,7 @@ from .cloud_auth import (
     MemoryAuthSessionStore,
     WindowsDpapiAuthSessionStore,
     _validated_token,
+    origin_storage_suffix,
 )
 from .operation_executor import (
     BUSINESS_TASK_TYPES, OperationExecutionError,
@@ -125,33 +126,36 @@ def _future_iso(seconds):
             + timedelta(seconds=max(0.0, float(seconds)))).isoformat()
 
 
-def default_executor_state_path():
+def default_executor_state_path(base_url=None):
     data_dir = os.environ.get('XYNIGO_DATA_DIR') or os.getcwd()
-    return Path(data_dir) / '运行数据' / 'executor-channel.json'
+    return (Path(data_dir) / '运行数据' /
+            ('executor-channel' + origin_storage_suffix(base_url) + '.json'))
 
 
-def default_windows_executor_credential_path():
+def default_windows_executor_credential_path(base_url=None):
     base = os.environ.get('LOCALAPPDATA')
     if not base:
         raise LocalAuthError('credential_store_failed')
-    return Path(base) / 'Xynigo' / 'credentials' / 'executor-device.bin'
+    return (Path(base) / 'Xynigo' / 'credentials' /
+            ('executor-device' + origin_storage_suffix(base_url) + '.bin'))
 
 
-def system_executor_credential_store():
+def system_executor_credential_store(base_url=None):
     if sys.platform == 'darwin':
         return MacKeychainAuthSessionStore(
             account=EXECUTOR_KEYCHAIN_ACCOUNT,
-            service=EXECUTOR_KEYCHAIN_SERVICE,
+            service=EXECUTOR_KEYCHAIN_SERVICE
+                    + origin_storage_suffix(base_url),
         )
     if os.name == 'nt':
         return WindowsDpapiAuthSessionStore(
-            path=default_windows_executor_credential_path())
+            path=default_windows_executor_credential_path(base_url))
     return MemoryAuthSessionStore()
 
 
 class ExecutorChannelStateStore(object):
-    def __init__(self, path=None):
-        self.path = Path(path) if path else default_executor_state_path()
+    def __init__(self, path=None, base_url=None):
+        self.path = Path(path) if path else default_executor_state_path(base_url)
         self.lock = threading.RLock()
 
     def load(self):
@@ -859,8 +863,10 @@ def pair_executor(pairing_code, display_name=None, client=None,
     system, architecture = local_platform()
     display_name = str(display_name or socket.gethostname() or '采购电脑').strip()
     client = client or CloudExecutorClient()
-    credential_store = credential_store or system_executor_credential_store()
-    state_store = state_store or ExecutorChannelStateStore()
+    credential_store = credential_store or system_executor_credential_store(
+        client.client.base_url)
+    state_store = state_store or ExecutorChannelStateStore(
+        base_url=client.client.base_url)
     result = client.pair(pairing_code, display_name, system, architecture)
     credential = result['deviceCredential']
     try:

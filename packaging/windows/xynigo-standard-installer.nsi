@@ -57,10 +57,10 @@ SetCompressor /SOLID lzma
 !include "FileFunc.nsh"
 !include "nsDialogs.nsh"
 
-!define APP_NAME "Xynigo Sourcing"
+!define APP_NAME "Xynigo Sourcing Production"
 !define APP_PUBLISHER "Xynigo"
-!define APP_ID "XynigoSourcing.Executor"
-!define APP_REG_KEY "Software\Xynigo\Sourcing"
+!define APP_ID "XynigoSourcing.Production.Executor"
+!define APP_REG_KEY "Software\Xynigo\SourcingProduction"
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_ID}"
 !define PROTOCOL_KEY "Software\Classes\xynigo"
 
@@ -104,7 +104,6 @@ VIAddVersionKey /LANG=0 "LegalCopyright" "Copyright Xynigo contributors"
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "${LICENSE_FILE}"
 !insertmacro MUI_PAGE_DIRECTORY
-Page custom MigrationPageCreate MigrationPageLeave
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
@@ -323,11 +322,7 @@ Section "$(CoreSectionName)" SEC_CORE
   FileClose $0
   WriteUninstaller "$INSTDIR\卸载 Xynigo Sourcing.exe"
 
-  Call MigrateGreenPackageData
-  ${If} ${Errors}
-    MessageBox MB_ICONSTOP "$(MigrationFailed)"
-    Abort
-  ${EndIf}
+  ; Production starts with empty local data. Do not import test runtime state.
 
   CreateDirectory "$SMPROGRAMS\${APP_NAME}"
   CreateShortcut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" \

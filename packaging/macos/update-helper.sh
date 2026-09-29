@@ -41,7 +41,7 @@ if [ -z "$install_dir" ] || [ "$install_dir" = "/" ]; then
   exit 2
 fi
 if [ -z "$state_dir" ]; then
-  state_dir="$HOME/Library/Application Support/XynigoSourcing"
+  state_dir="$HOME/Library/Application Support/XynigoSourcingProduction"
 fi
 
 managed_paths=(

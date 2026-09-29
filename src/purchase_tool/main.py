@@ -1154,7 +1154,8 @@ class AppState(object):
                 'data_source_registry_migration_failed'
         self.auth = auth_service or LocalAuthService()
         self.executor_credential_store = (
-            executor_credential_store or system_executor_credential_store())
+            executor_credential_store or system_executor_credential_store(
+                self.auth.client.base_url))
         self.operation_sync_error = ''
         self.operation_sync = OperationResultSyncQueue(
             self._send_operation_result)
@@ -1184,7 +1185,8 @@ class AppState(object):
         self.hub_core_repair = HubCoreRepairCoordinator(
             lambda: self.hub, self.tasks, HUB_CORE_AUDIT_PATH,
             device_info_getter=lambda: {
-                **ExecutorChannelStateStore().load(),
+                **ExecutorChannelStateStore(
+                    base_url=self.auth.client.base_url).load(),
                 'clientVersion': __version__,
             })
         self._hub_status = HubStatusCache(lambda: self.hub)
@@ -1242,7 +1244,8 @@ class AppState(object):
         self.executor_channel = ExecutorChannelWorker(
             client=CloudExecutorClient(),
             credential_store=self.executor_credential_store,
-            state_store=ExecutorChannelStateStore(),
+            state_store=ExecutorChannelStateStore(
+                base_url=self.auth.client.base_url),
             config_getter=lambda: dict(self.cfg),
             public_config_getter=public_executor_config,
             config_writer=self.apply_cloud_config,
@@ -1580,7 +1583,10 @@ class AppState(object):
         never returns device credentials, cloud sessions, config values, task
         identifiers, HubStudio response bodies or user data.
         """
-        channel = ExecutorChannelStateStore().load()
+        auth = getattr(self, 'auth', None)
+        client = getattr(auth, 'client', None)
+        channel = ExecutorChannelStateStore(
+            base_url=getattr(client, 'base_url', None)).load()
         tasks = self.tasks.snapshot()
         if hasattr(self, '_hub_status'):
             hub_capability = self._hub_status.cached_snapshot()

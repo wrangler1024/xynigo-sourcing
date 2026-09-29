@@ -125,8 +125,8 @@ class MacOSStandardInstallerContractTests(unittest.TestCase):
         ).read_text(encoding='utf-8')
 
     def test_app_and_pkg_have_stable_identity_and_no_autostart(self):
-        self.assertIn('/Applications/Xynigo Sourcing.app', self.builder)
-        self.assertIn('icu.samforo.xynigo.sourcing', self.builder)
+        self.assertIn('/Applications/Xynigo Sourcing Production.app', self.builder)
+        self.assertIn('com.xynigo.sourcing.production', self.builder)
         self.assertIn("'CFBundleURLSchemes': ['xynigo']", self.builder)
         self.assertIn("'LSMinimumSystemVersion': '13.0'", self.builder)
         self.assertIn("'NSAllowsLocalNetworking': True", self.builder)
@@ -256,16 +256,17 @@ class MacOSStandardInstallerContractTests(unittest.TestCase):
         for script in (self.start_script, self.protocol_script,
                        self.migration_script):
             self.assertIn(
-                '$HOME/Library/Application Support/XynigoSourcing', script)
+                '$HOME/Library/Application Support/XynigoSourcingProduction',
+                script)
             self.assertIn('XYNIGO_INSTALL_MODE=standard', script)
         self.assertIn('protocol "$XYNIGO_PROTOCOL_URI"', self.protocol_script)
         self.assertNotIn('echo "$XYNIGO_PROTOCOL_URI"', self.protocol_script)
 
-    def test_first_launch_offers_safe_green_data_migration(self):
-        self.assertIn('首次启动 Xynigo 标准版', self.launcher)
-        self.assertIn('迁移绿色包数据.command', self.launcher)
-        self.assertIn('choose folder', self.migration_script)
-        self.assertIn(' migrate "$SOURCE_DIR"', self.migration_script)
+    def test_first_launch_keeps_test_data_out_of_production(self):
+        self.assertIn('首次启动 Xynigo 生产版', self.launcher)
+        self.assertIn('XynigoSourcingProduction', self.launcher)
+        self.assertNotIn('openTerminalScript("迁移绿色包数据.command")',
+                         self.launcher)
 
     def test_builder_marks_artifact_as_not_release_eligible(self):
         self.assertIn("'appSignature': 'adhoc'", self.builder)

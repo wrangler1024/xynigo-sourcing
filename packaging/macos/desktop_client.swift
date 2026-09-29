@@ -4,7 +4,7 @@ import Foundation
 import WebKit
 
 private let desktopCloudURL = URL(string: "https://app.xynigo.com")!
-private let desktopDataFolder = "XynigoSourcing"
+private let desktopDataFolder = "XynigoSourcingProduction"
 private let desktopSettingsQuery = "view=localsettings"
 private let desktopPairPattern = try! NSRegularExpression(
     pattern: "^[A-HJ-NP-Z2-9]{4}-?[A-HJ-NP-Z2-9]{4}$",
@@ -745,16 +745,11 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
             if !FileManager.default.fileExists(atPath: marker.path),
                !FileManager.default.fileExists(atPath: config.path) {
                 let alert = NSAlert()
-                alert.messageText = "首次启动 Xynigo 标准版"
-                alert.informativeText = "以前使用过绿色包时，可先迁移配置、日志和运行数据；新用户可直接启动。"
+                alert.messageText = "首次启动 Xynigo 生产版"
+                alert.informativeText = "生产版使用独立本机目录。请重新登录并配对本地执行器。"
                 alert.addButton(withTitle: "直接启动")
-                alert.addButton(withTitle: "迁移绿色包数据…")
                 alert.addButton(withTitle: "暂不启动")
                 let response = alert.runModal()
-                if response == .alertSecondButtonReturn {
-                    try openTerminalScript("迁移绿色包数据.command")
-                    return false
-                }
                 if response != .alertFirstButtonReturn { return false }
             }
             try Data().write(to: marker, options: .atomic)

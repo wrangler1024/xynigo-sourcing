@@ -94,6 +94,13 @@ class WindowsStandardInstallerContractTests(unittest.TestCase):
         self.assertNotIn('WriteRegStr HKLM', self.installer)
         self.assertNotIn('CurrentVersion\\Run', self.installer)
         self.assertNotIn('RequestExecutionLevel admin', self.installer)
+        self.assertIn('!define APP_ID "XynigoSourcing.Production.Executor"',
+                      self.installer)
+        self.assertIn('!define APP_NAME "Xynigo Sourcing Production"',
+                      self.installer)
+        self.assertNotIn('Page custom MigrationPageCreate MigrationPageLeave',
+                         self.installer)
+        self.assertNotIn('  Call MigrateGreenPackageData\n', self.installer)
 
     def test_protocol_is_registered_only_as_a_validated_launcher(self):
         self.assertIn('Software\\Classes\\xynigo', self.installer)
