@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Release contract tests for Xynigo Sourcing v0.18.9 candidate."""
+"""Release contract tests for Xynigo Sourcing candidates."""
 
 from pathlib import Path
 import hashlib
@@ -15,23 +15,20 @@ from purchase_tool import __version__
 class ReleaseV0170Tests(unittest.TestCase):
     def test_version_and_packaging_are_aligned(self):
         root = Path(__file__).resolve().parents[1]
-        self.assertEqual(__version__, '0.18.9')
         pyproject = (root / 'pyproject.toml').read_text(encoding='utf-8')
-        self.assertIn('version = "0.18.9"', pyproject)
+        self.assertIn(f'version = "{__version__}"', pyproject)
         cloud_project = (root / 'cloud' / 'auth-service' /
                          'pyproject.toml').read_text(encoding='utf-8')
-        self.assertIn('version = "0.18.9"', cloud_project)
+        self.assertIn(f'version = "{__version__}"', cloud_project)
         cloud_init = (root / 'cloud' / 'auth-service' / 'src' /
                       'xynigo_auth' / '__init__.py').read_text(
                           encoding='utf-8')
-        self.assertIn('__version__ = "0.18.9"', cloud_init)
+        self.assertIn(f'__version__ = "{__version__}"', cloud_init)
         cloud_main = (root / 'cloud' / 'auth-service' / 'src' /
                       'xynigo_auth' / 'main.py').read_text(encoding='utf-8')
-        self.assertIn('version="0.18.9"', cloud_main)
-        self.assertTrue((root / 'release' / 'v0.18.9.zh-CN.json').is_file())
-        self.assertTrue((root / 'release' / 'v0.18.9.zh-CN.md').is_file())
-        self.assertTrue((root / 'release' / 'v0.18.9.zh-CN.json').is_file())
-        self.assertTrue((root / 'release' / 'v0.18.9.zh-CN.md').is_file())
+        self.assertIn('version=__version__', cloud_main)
+        self.assertTrue((root / 'release' / f'v{__version__}.zh-CN.json').is_file())
+        self.assertTrue((root / 'release' / f'v{__version__}.zh-CN.md').is_file())
         script = (root / '组装Windows绿色包.sh').read_text(encoding='utf-8')
         self.assertIn('v${VERSION}${BUILD_SUFFIX}.zip', script)
         self.assertIn('rm -f "$ZIP"', script)
@@ -229,9 +226,12 @@ class ReleaseV0170Tests(unittest.TestCase):
         self.assertIn("cfg.proxySource === 'custom'", html)
         self.assertIn('系统模板固定带表头', html)
         self.assertNotIn('https://proxy.example.test', html)
-        self.assertIn('Xynigo Sourcing v0.18.9', html)
-        self.assertIn('累计修复测试 v0.18.9', html)
-        self.assertIn("headers.set('X-Xynigo-Client-Version', '0.18.9-cloud-web')", html)
+        self.assertIn(f'Xynigo Sourcing v{__version__}', html)
+        self.assertIn(f'累计修复测试 v{__version__}', html)
+        self.assertIn(
+            f"headers.set('X-Xynigo-Client-Version', '{__version__}-cloud-web')",
+            html,
+        )
         self.assertIn('测试环境 · 数据隔离', html)
         self.assertNotIn('本机数据不出站', html)
         self.assertIn('Xyni, GO!', html)

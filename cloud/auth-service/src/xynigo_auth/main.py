@@ -41,6 +41,7 @@ from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.orm import Session
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from . import __version__
 from .business_log import BusinessLogService
 from .buyer_account_contract import (
     BuyerAccountPreflightBody,
@@ -607,7 +608,7 @@ def create_app(
 
     app = FastAPI(
         title="Xynigo Auth Service",
-        version="0.18.9",
+        version=__version__,
         docs_url=None,
         redoc_url=None,
         lifespan=lifespan,
