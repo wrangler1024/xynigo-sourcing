@@ -22,11 +22,11 @@ FORBIDDEN_KEYS = frozenset({
 def default_operation_outbox_path():
     if os.name == 'nt':
         base = os.environ.get('LOCALAPPDATA') or tempfile.gettempdir()
-        return Path(base) / 'Xynigo' / 'operation-result-outbox.json'
+        return Path(base) / 'XynigoProduction' / 'operation-result-outbox.json'
     if os.sys.platform == 'darwin':
         return (Path.home() / 'Library' / 'Application Support' /
-                'Xynigo' / 'operation-result-outbox.json')
-    return (Path.home() / '.local' / 'state' / 'xynigo' /
+                'XynigoProduction' / 'operation-result-outbox.json')
+    return (Path.home() / '.local' / 'state' / 'xynigo-production' /
             'operation-result-outbox.json')
 
 

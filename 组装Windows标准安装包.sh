@@ -169,7 +169,7 @@ metadata = {
     'installMode': 'standard_per_user',
     'requiresElevation': False,
     'autoStart': False,
-    'protocol': 'xynigo',
+    'protocol': 'xynigo-prod',
     'statusCenter': True,
     'trayMenu': True,
     'desktopUI': 'webview2',

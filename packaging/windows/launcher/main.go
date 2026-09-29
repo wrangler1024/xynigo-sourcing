@@ -31,8 +31,8 @@ import (
 )
 
 const (
-	cloudWorkspaceURL = "https://xynigo.samforo.icu"
-	launcherMutexName = "Local\\XynigoSourcing.Launcher"
+	cloudWorkspaceURL = "https://app.xynigo.com"
+	launcherMutexName = "Local\\XynigoSourcingProduction.Launcher"
 	createNoWindow    = 0x08000000
 	updateCheckPath   = "/executor-control/update/check"
 	updateInstallPath = "/executor-control/update/install"
@@ -42,7 +42,7 @@ const (
 
 var (
 	pairCodePattern = regexp.MustCompile(`(?i)^[A-HJ-NP-Z2-9]{4}-?[A-HJ-NP-Z2-9]{4}$`)
-	protocolPattern = regexp.MustCompile(`(?i)^xynigo://(?:start/?|wake/?|pair\?code=([A-HJ-NP-Z2-9]{4}-?[A-HJ-NP-Z2-9]{4}))$`)
+	protocolPattern = regexp.MustCompile(`(?i)^xynigo-prod://(?:start/?|wake/?|settings/?|pair\?code=([A-HJ-NP-Z2-9]{4}-?[A-HJ-NP-Z2-9]{4}))$`)
 	kernel32        = syscall.NewLazyDLL("kernel32.dll")
 	createMutexW    = kernel32.NewProc("CreateMutexW")
 	iphlpapi        = syscall.NewLazyDLL("iphlpapi.dll")
@@ -68,6 +68,7 @@ type mibTCPRowOwnerPID struct {
 type localStatus struct {
 	SchemaVersion int    `json:"schemaVersion"`
 	Version       string `json:"version"`
+	CloudOrigin   string `json:"cloudOrigin"`
 	LocalPort     int    `json:"localPort"`
 	Executor      struct {
 		Running      bool   `json:"running"`
@@ -1297,7 +1298,7 @@ func (app *launcherApp) fetchStatus() (*localStatus, error) {
 			continue
 		}
 		var status localStatus
-		if json.Unmarshal(data, &status) != nil || status.SchemaVersion != 1 || status.Version == "" {
+		if json.Unmarshal(data, &status) != nil || status.SchemaVersion != 1 || status.Version == "" || status.CloudOrigin != "https://app.xynigo.com" {
 			continue
 		}
 		app.mu.Lock()
@@ -2105,6 +2106,13 @@ func (app *launcherApp) handleCommand(command string) {
 		return
 	}
 	app.showStatusCenter()
+	if strings.EqualFold(strings.TrimSuffix(command, "/"), "xynigo-prod://settings") {
+		go func() {
+			app.ensureExecutor()
+			app.mw.Synchronize(func() { app.openLocalSettings() })
+		}()
+		return
+	}
 	if len(matches) > 1 && matches[1] != "" {
 		app.performPair(matches[1])
 		return

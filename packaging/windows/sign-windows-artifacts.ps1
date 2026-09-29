@@ -53,7 +53,7 @@ try {
         $resolved = (Resolve-Path $item).Path
         $resolvedPaths += $resolved
         & $signTool sign @signArguments /fd SHA256 /tr $timestampUrl /td SHA256 `
-            /d "Xynigo Sourcing" /du "https://xynigo.samforo.icu" $resolved
+            /d "Xynigo Sourcing" /du "https://app.xynigo.com" $resolved
         if ($LASTEXITCODE -ne 0) {
             throw "Authenticode signing failed for $resolved"
         }

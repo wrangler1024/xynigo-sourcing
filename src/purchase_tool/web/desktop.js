@@ -797,7 +797,7 @@
       diagnosticRow('database','飞书只读访问',sourceCount + ' 个数据源已登记 · 由云端授权代理执行',!!(s.cloudChannel && s.cloudChannel.status === 'online')) +
       diagnosticRow('route','环境映射完整性',bindingCount + ' 个已映射 · 0 个冲突',true) + coreRepairPanel(coreRepair, activeCount, roleInfo().admin) + '</section>' +
       '<div class="side-stack"><section class="card section-card">' + sectionTitle('download','软件更新','下载安装、校验、安装与重启状态实时同步','') + '<div class="section-body update-section">' + updatePanel(update,s.tasks && s.tasks.activeCount) + '</div></section>' +
-      '<section class="card section-card">' + sectionTitle('terminal','日志与维护','敏感字段在写入日志前完成脱敏','') + '<div class="section-body maintenance-buttons">' + button('打开日志目录','open-logs','folder') + button('导出脱敏诊断包','export-diagnostics','download') + button('备份当前配置','backup-config','refresh') + '<p class="path-note">' + (platform === 'mac' ? '~/Library/Application Support/XynigoSourcing/' : '%LOCALAPPDATA%\\Programs\\Xynigo\\') + '</p></div></section></div>' + hubCachePanel() + '</div>';
+      '<section class="card section-card">' + sectionTitle('terminal','日志与维护','敏感字段在写入日志前完成脱敏','') + '<div class="section-body maintenance-buttons">' + button('打开日志目录','open-logs','folder') + button('导出脱敏诊断包','export-diagnostics','download') + button('备份当前配置','backup-config','refresh') + '<p class="path-note">' + (platform === 'mac' ? '~/Library/Application Support/XynigoSourcingProduction/' : '%LOCALAPPDATA%\\Programs\\Xynigo Sourcing Production\\') + '</p></div></section></div>' + hubCachePanel() + '</div>';
   }
   function renderWorkspace() {
     var previousWorkspace = app.querySelector('.workspace');
@@ -1232,7 +1232,7 @@
       if (previewRole) done(); else post('/api/auth/logout',{}).catch(showError).finally(done);
     }
     else if (action === 'refresh-status') loadStatus().then(function () { showToast('状态已刷新'); });
-    else if (action === 'open-cloud') nativeAction('open-external',{url:'https://xynigo.samforo.icu'});
+    else if (action === 'open-cloud') nativeAction('open-external',{url:'https://app.xynigo.com'});
     else if (action === 'go-settings') { state.view='settings'; renderWorkspace(); }
     else if (action === 'go-diagnostics') { state.view='diagnostics'; renderWorkspace(); }
     else if (action === 'task-details') openTaskDetails();

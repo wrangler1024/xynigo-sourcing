@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Xynigo Sourcing v0.18.11</title>
+<title>Xynigo Sourcing v0.18.12</title>
 <link rel="icon" type="image/png" sizes="260x260" href="/xynigo-x.png?v=6">
 <link rel="icon" type="image/x-icon" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256" href="/favicon.ico?v=6">
 <link rel="shortcut icon" href="/favicon.ico?v=6">
@@ -2083,7 +2083,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
           <div class="hero-kicker">XYNIGO SOURCING WORKSPACE</div>
           <h1>让小犀帮你把每一单稳稳带回来，<span class="hero-call">Xyni, GO!</span></h1>
           <p id="moduleSummary">集中查看采购待办、履约风险与本地执行状态。</p>
-          <div class="hero-meta"><span class="hero-chip">累计修复测试 v0.18.11</span><span class="hero-chip">测试环境 · 数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
+          <div class="hero-meta"><span class="hero-chip">生产环境 v0.18.12</span><span class="hero-chip">生产与测试数据隔离</span><span class="hero-chip">在线更新已开启</span></div>
         </div>
         <div class="hero-lockup" role="img" aria-label="小犀与 Xynigo 完整品牌一体图形">
           <img src="xynigo-logo.png" alt="">
@@ -2149,7 +2149,7 @@ body:has(#procurementImportPanel:not(.hidden)) main>.hero{display:none}
         </div>
         <div class="local-executor-config-actions">
           <button class="btn primary" id="btnLocalExecutorRefreshSummary" type="button" disabled>刷新只读摘要</button>
-          <a class="btn" id="btnLocalExecutorOpenSettings" href="xynigo://settings">打开桌面设置</a>
+          <a class="btn" id="btnLocalExecutorOpenSettings" href="xynigo-prod://settings">打开桌面设置</a>
           <div class="local-executor-config-state" id="localExecutorConfigState" role="status" aria-live="polite">请选择设备后读取；旧版本会显示“摘要不可用”，不会误报为未配置。</div>
         </div>
       </article>
@@ -4733,7 +4733,7 @@ async function cloudFetchJson(path, opts={}) {
   const headers = new Headers(opts.headers || {});
   headers.set('Accept', 'application/json');
   headers.set('X-Xynigo-Source', 'cloud_web_workspace');
-  headers.set('X-Xynigo-Client-Version', '0.18.11-cloud-web');
+  headers.set('X-Xynigo-Client-Version', '0.18.12-cloud-web');
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     headers.set('X-Xynigo-Web-CSRF', 'same-origin');
   }
@@ -14017,7 +14017,7 @@ function launchLocalExecutorByProtocol() {
   $('btnLocalExecutorLaunch').disabled = true;
   $('btnLocalExecutorLaunch').textContent = '等待启动…';
   setLocalExecutorConfigState('', '已请求 Windows 打开 Xynigo；正在等待云端收到设备心跳。网页不会通过协议直接执行采购任务。');
-  window.location.href = 'xynigo://start';
+  window.location.href = 'xynigo-prod://start';
   localExecutorLaunchTimer = setTimeout(waitForLaunchedExecutor, 2000);
 }
 
@@ -14091,7 +14091,7 @@ function localExecutorPairCommand(code) {
   const info = localExecutorDownloadAsset;
   const standard = info && String(info.installMode || '').startsWith('standard');
   if (standard && localExecutorSelectedPlatform === 'macos-arm64') {
-    return 'open -a Terminal "/Applications/Xynigo Sourcing.app/Contents/Resources/配对本地执行器.command"';
+    return 'open -a Terminal "/Applications/Xynigo Sourcing Production.app/Contents/Resources/配对本地执行器.command"';
   }
   if (localExecutorSelectedPlatform === 'windows-x86_64') {
     return info && info.launcherFile === 'Xynigo.exe'
@@ -14206,7 +14206,7 @@ function openLocalExecutorPairingByProtocol() {
   updateLocalExecutorPairingAction();
   setLocalExecutorPairingStatus(
     '', '已请求 macOS 打开 Xynigo；正在等待本次配对请求和真实设备心跳。');
-  window.location.href = `xynigo://pair?code=${encodeURIComponent(code)}`;
+  window.location.href = `xynigo-prod://pair?code=${encodeURIComponent(code)}`;
   localExecutorProtocolPairingTimer = setTimeout(
     waitForLocalExecutorProtocolPairing, 2000);
 }
@@ -14566,7 +14566,7 @@ function sheinAuthRender() {
 
 function sheinAuthBuildLink(mode) {
   const app = SHEIN_AUTH_APPS[mode] || SHEIN_AUTH_APPS.self;
-  const redirectBase = 'https://xynigo.samforo.icu/shein-auth/callback';
+  const redirectBase = 'https://app.xynigo.com/shein-auth/callback';
   const redirectB64 = btoa(redirectBase);
   const state = `XYNIGO-${mode.toUpperCase()}-${Date.now()}`;
   return {

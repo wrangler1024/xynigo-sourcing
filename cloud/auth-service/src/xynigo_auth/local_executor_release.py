@@ -14,9 +14,10 @@ from urllib.parse import quote
 
 from . import __version__
 
-RELEASE_VERSION = "0.18.11"
+RELEASE_VERSION = "0.18.12"
 RELEASE_CHANNEL = "test"
-RELEASE_PUBLISHED_AT = "2026-09-21T01:55:38Z"
+# Fill this only when signed assets are actually distributed.
+RELEASE_PUBLISHED_AT = ""
 
 
 if RELEASE_VERSION != __version__:
@@ -31,10 +32,10 @@ _PLATFORMS = {
         "operatingSystem": "windows",
         "architecture": "x86_64",
         "minimumSystem": "Windows 10/11 64 位",
-        "runtimeId": "0.18.11-9b6836f2f73e",
-        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.18.11.exe",
-        "sha256": "9094690e2f8cddfdd679e0774fdbb0ae43e2e771c27c67c18dc6ae574f0587e3",
-        "size": 15417548,
+        "runtimeId": "0.18.12-4ca55e14ee6b",
+        "assetName": "Xynigo_Sourcing_Windows_Setup_v0.18.12.exe",
+        "sha256": "abf110c78b6de778198905b23564d9a892183bba543e04cedf3ab7366d4e0ce3",
+        "size": 15411914,
         "installMode": "standard_per_user",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_silent_installer",
@@ -50,10 +51,10 @@ _PLATFORMS = {
         "operatingSystem": "macos",
         "architecture": "arm64",
         "minimumSystem": "macOS 13 及以上",
-        "runtimeId": "0.18.11-9b6836f2f73e",
-        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.18.11.pkg",
-        "sha256": "5c26cb1d887aca38e33e972f2945ddaa174152cb81bc0227fb2946352cc1c4c1",
-        "size": 11793695,
+        "runtimeId": "0.18.12-4ca55e14ee6b",
+        "assetName": "Xynigo_Sourcing_macOS_Standard_v0.18.12.pkg",
+        "sha256": "35d678b87da1755348262703ee92f6a793616380f67be933a618afdb81142b18",
+        "size": 11795942,
         "installMode": "standard_system_application",
         "onlineUpdate": True,
         "onlineUpdateFlow": "authenticated_download_sha256_system_installer",
@@ -320,8 +321,8 @@ def latest_local_executor_release() -> dict[str, object]:
         "manifestUrl": "",
         "platforms": platforms,
         "notesZh": [
-            "修复 Windows 上售后环境扫描约 45 秒后空结果却显示成功：环境匹配超时明确保留每个环境的失败原因。",
-            "慢速 Hub 环境查询允许有限延长和只读重试，显示已找到的环境数；部分扫描失败与真正无订单分开提示。",
-            "Windows/macOS 执行器与测试工作台统一为 v0.18.11；请安装新版执行器后进行同批只读扫描核验。"
+            "生产环境独立入口 app.xynigo.com；测试环境仍保留在原地址。",
+            "生产客户端连接独立云端，从新任务开始；切换后需重新登录和配对本机执行器。",
+            "沿用 v0.18.11 已验收业务能力，并修正云端版本元数据。"
         ],
     }

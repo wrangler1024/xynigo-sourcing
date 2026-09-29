@@ -13,7 +13,7 @@ from .cloud_auth import (
 )
 
 
-KEYCHAIN_SERVICE = 'io.xynigo.sourcing.hubstudio-local-api'
+KEYCHAIN_SERVICE = 'io.xynigo.sourcing.hubstudio-local-api.production'
 KEYCHAIN_ACCOUNT = 'xynigo-hubstudio-local-api-key'
 
 
@@ -124,7 +124,7 @@ def default_windows_hub_api_key_path():
     base = os.environ.get('LOCALAPPDATA')
     if not base:
         raise HubApiKeyStoreError('Windows 缺少 LOCALAPPDATA')
-    return Path(base) / 'Xynigo' / 'credentials' / 'hubstudio-local-api.bin'
+    return Path(base) / 'Xynigo' / 'credentials' / 'hubstudio-local-api-production.bin'
 
 
 def system_hub_api_key_store():

@@ -55,7 +55,8 @@ from . import __version__
 from .buyer_library import BuyerLibraryJob, DatabaseBuyerLibraryService
 from .buyer_ledger_sync import validate_unified_schema
 from .buyer_register import BuyerRegistrationTask, RegistrationOrchestrator
-from .cloud_auth import DEFAULT_AUTH_BASE_URL, LocalAuthError, LocalAuthService
+from .cloud_auth import (
+    CloudAuthClient, DEFAULT_AUTH_BASE_URL, LocalAuthError, LocalAuthService)
 from .cloud_feishu_transport import CloudFeishuTransport
 from .data_source_registry import (
     DataSourceMappingRequired, DataSourceRegistry, DataSourceRegistryError,
@@ -188,7 +189,7 @@ def public_purchase_assistant_source_context(identity, source_status,
     resolution = str(payload.get('resolution') or '')
     payload.update({
         'management': 'desktop',
-        'settingsUrl': 'xynigo://settings',
+        'settingsUrl': 'xynigo-prod://settings',
         'member': {
             'name': str(((identity or {}).get('user') or {}).get(
                 'name') or '')[:255],
@@ -1154,7 +1155,8 @@ class AppState(object):
                 'data_source_registry_migration_failed'
         self.auth = auth_service or LocalAuthService()
         self.executor_credential_store = (
-            executor_credential_store or system_executor_credential_store())
+            executor_credential_store or system_executor_credential_store(
+                self.auth.client.base_url))
         self.operation_sync_error = ''
         self.operation_sync = OperationResultSyncQueue(
             self._send_operation_result)
@@ -1184,7 +1186,8 @@ class AppState(object):
         self.hub_core_repair = HubCoreRepairCoordinator(
             lambda: self.hub, self.tasks, HUB_CORE_AUDIT_PATH,
             device_info_getter=lambda: {
-                **ExecutorChannelStateStore().load(),
+                **ExecutorChannelStateStore(
+                    base_url=self.auth.client.base_url).load(),
                 'clientVersion': __version__,
             })
         self._hub_status = HubStatusCache(lambda: self.hub)
@@ -1240,9 +1243,11 @@ class AppState(object):
             current_runtime_id=os.environ.get('XYNIGO_RUNTIME_ID'),
         )
         self.executor_channel = ExecutorChannelWorker(
-            client=CloudExecutorClient(),
+            client=CloudExecutorClient(client=CloudAuthClient(
+                self.auth.client.base_url, timeout=35.0)),
             credential_store=self.executor_credential_store,
-            state_store=ExecutorChannelStateStore(),
+            state_store=ExecutorChannelStateStore(
+                base_url=self.auth.client.base_url),
             config_getter=lambda: dict(self.cfg),
             public_config_getter=public_executor_config,
             config_writer=self.apply_cloud_config,
@@ -1580,7 +1585,10 @@ class AppState(object):
         never returns device credentials, cloud sessions, config values, task
         identifiers, HubStudio response bodies or user data.
         """
-        channel = ExecutorChannelStateStore().load()
+        auth = getattr(self, 'auth', None)
+        client = getattr(auth, 'client', None)
+        channel = ExecutorChannelStateStore(
+            base_url=getattr(client, 'base_url', None)).load()
         tasks = self.tasks.snapshot()
         if hasattr(self, '_hub_status'):
             hub_capability = self._hub_status.cached_snapshot()
@@ -1655,6 +1663,7 @@ class AppState(object):
             'schemaVersion': 1,
             'product': 'Xynigo Sourcing 本地执行器',
             'version': __version__,
+            'cloudOrigin': getattr(client, 'base_url', DEFAULT_AUTH_BASE_URL),
             'executor': {
                 'running': True,
                 'paired': paired,
@@ -3420,7 +3429,7 @@ class Handler(BaseHTTPRequestHandler):
                 },
                 'version': __version__,
                 'configured': configured,
-                'settingsUrl': 'xynigo://settings',
+                'settingsUrl': 'xynigo-prod://settings',
             })
         if path == PURCHASE_ASSISTANT_API_PREFIX + '/session':
             if not self._purchase_assistant_pair_allowed():
@@ -3612,7 +3621,7 @@ class Handler(BaseHTTPRequestHandler):
                     'ok': False,
                     'code': 'local_config_desktop_only',
                     'error': '收件信息数据源只能在 Xynigo 桌面客户端配置',
-                    'settingsUrl': 'xynigo://settings',
+                    'settingsUrl': 'xynigo-prod://settings',
                 }, 410)
             capability = STATE.hub_capabilities(force=True)
             if not capability.get('available'):

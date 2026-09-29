@@ -1218,10 +1218,10 @@ def build_batch_plan(accounts, assignment_spec, existing_envs=None,
 def default_resume_dir():
     if os.name == 'nt':
         base = os.environ.get('LOCALAPPDATA') or tempfile.gettempdir()
-        return Path(base) / 'PurchaseTool' / 'resume'
+        return Path(base) / 'PurchaseToolProduction' / 'resume'
     if sys.platform == 'darwin':
-        return Path.home() / 'Library' / 'Application Support' / '采购工具' / 'resume'
-    return Path.home() / '.local' / 'state' / 'purchase-tool' / 'resume'
+        return Path.home() / 'Library' / 'Application Support' / '采购工具生产' / 'resume'
+    return Path.home() / '.local' / 'state' / 'purchase-tool-production' / 'resume'
 
 
 def _write_private_json(path, payload):

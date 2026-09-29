@@ -3,8 +3,8 @@ import Darwin
 import Foundation
 import WebKit
 
-private let desktopCloudURL = URL(string: "https://xynigo.samforo.icu")!
-private let desktopDataFolder = "XynigoSourcing"
+private let desktopCloudURL = URL(string: "https://app.xynigo.com")!
+private let desktopDataFolder = "XynigoSourcingProduction"
 private let desktopSettingsQuery = "view=localsettings"
 private let desktopPairPattern = try! NSRegularExpression(
     pattern: "^[A-HJ-NP-Z2-9]{4}-?[A-HJ-NP-Z2-9]{4}$",
@@ -38,6 +38,7 @@ private func makeDesktopEditMenu() -> NSMenu {
 private struct DesktopStatus: Decodable {
     let schemaVersion: Int
     let version: String
+    let cloudOrigin: String
     let executor: DesktopExecutorSummary
     let cloudChannel: DesktopCloudSummary
     let hubStudio: DesktopHubSummary
@@ -745,16 +746,11 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
             if !FileManager.default.fileExists(atPath: marker.path),
                !FileManager.default.fileExists(atPath: config.path) {
                 let alert = NSAlert()
-                alert.messageText = "首次启动 Xynigo 标准版"
-                alert.informativeText = "以前使用过绿色包时，可先迁移配置、日志和运行数据；新用户可直接启动。"
+                alert.messageText = "首次启动 Xynigo 生产版"
+                alert.informativeText = "生产版使用独立本机目录。请重新登录并配对本地执行器。"
                 alert.addButton(withTitle: "直接启动")
-                alert.addButton(withTitle: "迁移绿色包数据…")
                 alert.addButton(withTitle: "暂不启动")
                 let response = alert.runModal()
-                if response == .alertSecondButtonReturn {
-                    try openTerminalScript("迁移绿色包数据.command")
-                    return false
-                }
                 if response != .alertFirstButtonReturn { return false }
             }
             try Data().write(to: marker, options: .atomic)
@@ -1033,7 +1029,8 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
                let data,
                let status = try? JSONDecoder().decode(DesktopStatus.self, from: data),
                status.schemaVersion == 1,
-               !status.version.isEmpty {
+               !status.version.isEmpty,
+               status.cloudOrigin == desktopCloudURL.absoluteString {
                 completion(status, baseURL)
                 return
             }
@@ -1380,7 +1377,7 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         }
         showDesktopClient()
         if raw.range(
-            of: #"^xynigo://settings/?$"#,
+            of: #"^xynigo-prod://settings/?$"#,
             options: [.regularExpression, .caseInsensitive]
         ) != nil {
             pendingOpenSettings = true
@@ -1404,7 +1401,7 @@ final class XynigoDesktopDelegate: NSObject, NSApplicationDelegate, NSWindowDele
               !raw.contains("\0") else {
             return false
         }
-        let pattern = #"^xynigo://(?:start/?|wake/?|settings/?|pair\?code=[A-HJ-NP-Z2-9]{4}-?[A-HJ-NP-Z2-9]{4})$"#
+        let pattern = #"^xynigo-prod://(?:start/?|wake/?|settings/?|pair\?code=[A-HJ-NP-Z2-9]{4}-?[A-HJ-NP-Z2-9]{4})$"#
         return raw.range(
             of: pattern,
             options: [.regularExpression, .caseInsensitive]

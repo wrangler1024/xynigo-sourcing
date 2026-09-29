@@ -55,14 +55,13 @@ SetCompressor /SOLID lzma
 !include "LogicLib.nsh"
 !include "x64.nsh"
 !include "FileFunc.nsh"
-!include "nsDialogs.nsh"
 
-!define APP_NAME "Xynigo Sourcing"
+!define APP_NAME "Xynigo Sourcing Production"
 !define APP_PUBLISHER "Xynigo"
-!define APP_ID "XynigoSourcing.Executor"
-!define APP_REG_KEY "Software\Xynigo\Sourcing"
+!define APP_ID "XynigoSourcing.Production.Executor"
+!define APP_REG_KEY "Software\Xynigo\SourcingProduction"
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_ID}"
-!define PROTOCOL_KEY "Software\Classes\xynigo"
+!define PROTOCOL_KEY "Software\Classes\xynigo-prod"
 
 Name "${APP_NAME}"
 OutFile "${OUTPUT_FILE}"
@@ -104,7 +103,6 @@ VIAddVersionKey /LANG=0 "LegalCopyright" "Copyright Xynigo contributors"
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "${LICENSE_FILE}"
 !insertmacro MUI_PAGE_DIRECTORY
-Page custom MigrationPageCreate MigrationPageLeave
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
@@ -124,116 +122,10 @@ LangString UnsupportedArchitecture ${LANG_SIMPCHINESE} "当前安装包仅支持
 LangString UnsupportedArchitecture ${LANG_ENGLISH} "This package requires 64-bit Windows."
 LangString WebView2Missing ${LANG_SIMPCHINESE} "Xynigo 桌面客户端需要 Microsoft Edge WebView2 Runtime。点击“是”打开微软官方下载页；安装运行时后请重新运行本安装包。"
 LangString WebView2Missing ${LANG_ENGLISH} "Xynigo Desktop requires Microsoft Edge WebView2 Runtime. Click Yes to open Microsoft's official download page, install the runtime, and then run this setup again."
-LangString InvalidMigrationDir ${LANG_SIMPCHINESE} "指定的绿色包迁移目录无效；必须包含 VERSION.json。"
-LangString InvalidMigrationDir ${LANG_ENGLISH} "The selected green-package migration directory is invalid; VERSION.json is required."
-LangString MigrationFailed ${LANG_SIMPCHINESE} "旧绿色包数据迁移失败。安装已停止，原目录不会被修改。"
-LangString MigrationFailed ${LANG_ENGLISH} "Green-package data migration failed. Setup has stopped and the source directory was not modified."
-LangString MigrationPageTitle ${LANG_SIMPCHINESE} "迁移旧版数据"
-LangString MigrationPageTitle ${LANG_ENGLISH} "Migrate existing data"
-LangString MigrationPageSubtitle ${LANG_SIMPCHINESE} "可选迁移绿色包中的配置、日志和运行数据"
-LangString MigrationPageSubtitle ${LANG_ENGLISH} "Optionally migrate configuration, logs, and runtime data"
-LangString MigrationCheckboxText ${LANG_SIMPCHINESE} "从旧绿色包迁移现有数据（推荐已有用户使用）"
-LangString MigrationCheckboxText ${LANG_ENGLISH} "Migrate data from an existing green package"
-LangString MigrationExplain ${LANG_SIMPCHINESE} "只复制 config.json、日志、运行数据和导入文件；不会复制旧程序、Python 运行时或删除源目录。"
-LangString MigrationExplain ${LANG_ENGLISH} "Only config, logs, runtime data and imports are copied. The source is never changed."
-LangString MigrationBrowseText ${LANG_SIMPCHINESE} "浏览…"
-LangString MigrationBrowseText ${LANG_ENGLISH} "Browse..."
-LangString MigrationBrowseTitle ${LANG_SIMPCHINESE} "选择包含 VERSION.json 的旧绿色包目录"
-LangString MigrationBrowseTitle ${LANG_ENGLISH} "Select the existing package folder containing VERSION.json"
-
-Var MigrateDir
-Var MigrationCheckbox
-Var MigrationDirectory
-Var MigrationBrowse
 Var OnlineUpdate
-
-Function MigrationPageCreate
-  !insertmacro MUI_HEADER_TEXT "$(MigrationPageTitle)" "$(MigrationPageSubtitle)"
-  nsDialogs::Create 1018
-  Pop $0
-  ${If} $0 == error
-    Abort
-  ${EndIf}
-
-  ${NSD_CreateCheckbox} 0 4u 100% 14u "$(MigrationCheckboxText)"
-  Pop $MigrationCheckbox
-  ${NSD_OnClick} $MigrationCheckbox MigrationToggle
-
-  ${NSD_CreateLabel} 0 24u 100% 26u "$(MigrationExplain)"
-  Pop $0
-
-  ${NSD_CreateDirRequest} 0 58u 76% 13u "$MigrateDir"
-  Pop $MigrationDirectory
-  ${NSD_CreateBrowseButton} 79% 57u 21% 15u "$(MigrationBrowseText)"
-  Pop $MigrationBrowse
-  ${NSD_OnClick} $MigrationBrowse MigrationBrowseClick
-
-  ${If} $MigrateDir != ""
-    ${NSD_Check} $MigrationCheckbox
-    EnableWindow $MigrationDirectory 1
-    EnableWindow $MigrationBrowse 1
-  ${Else}
-    EnableWindow $MigrationDirectory 0
-    EnableWindow $MigrationBrowse 0
-  ${EndIf}
-  nsDialogs::Show
-FunctionEnd
-
-Function MigrationToggle
-  ${NSD_GetState} $MigrationCheckbox $0
-  ${If} $0 == ${BST_CHECKED}
-    EnableWindow $MigrationDirectory 1
-    EnableWindow $MigrationBrowse 1
-  ${Else}
-    EnableWindow $MigrationDirectory 0
-    EnableWindow $MigrationBrowse 0
-  ${EndIf}
-FunctionEnd
-
-Function MigrationBrowseClick
-  nsDialogs::SelectFolderDialog "$(MigrationBrowseTitle)" "$MigrateDir"
-  Pop $0
-  ${If} $0 != error
-    StrCpy $MigrateDir $0
-    ${NSD_SetText} $MigrationDirectory "$MigrateDir"
-  ${EndIf}
-FunctionEnd
-
-Function MigrationPageLeave
-  ${NSD_GetState} $MigrationCheckbox $0
-  ${If} $0 != ${BST_CHECKED}
-    StrCpy $MigrateDir ""
-    Return
-  ${EndIf}
-  ${NSD_GetText} $MigrationDirectory $MigrateDir
-  GetFullPathName $MigrateDir "$MigrateDir"
-  IfFileExists "$MigrateDir\VERSION.json" valid
-    MessageBox MB_ICONSTOP "$(InvalidMigrationDir)"
-    Abort
-  valid:
-FunctionEnd
-
-!macro MigrateDirectory ID NAME
-  IfFileExists "$MigrateDir\${NAME}\*.*" migrate_${ID} migrate_done_${ID}
-  migrate_${ID}:
-  CreateDirectory "$INSTDIR\${NAME}"
-  ExecWait '$\"$SYSDIR\robocopy.exe$\" $\"$MigrateDir\${NAME}$\" $\"$INSTDIR\${NAME}$\" /E /COPY:DAT /DCOPY:DAT /R:1 /W:1 /XJ /XO /XN /XC' $1
-  ${If} $1 >= 8
-    SetErrors
-    Return
-  ${EndIf}
-  migrate_done_${ID}:
-!macroend
-
 Function .onInit
   SetShellVarContext current
   ${GetParameters} $0
-  ClearErrors
-  ${GetOptions} $0 "/MIGRATEDIR=" $MigrateDir
-  ${If} ${Errors}
-    StrCpy $MigrateDir ""
-    ClearErrors
-  ${EndIf}
   ClearErrors
   ${GetOptions} $0 "/ONLINEUPDATE=" $OnlineUpdate
   ${If} ${Errors}
@@ -257,50 +149,21 @@ Function .onInit
   ${EndIf}
 FunctionEnd
 
-Function MigrateGreenPackageData
-  ClearErrors
-  StrCmp $MigrateDir "" done
-  GetFullPathName $MigrateDir "$MigrateDir"
-  StrCmp $MigrateDir "$INSTDIR" done
-  IfFileExists "$MigrateDir\VERSION.json" valid
-    MessageBox MB_ICONSTOP "$(InvalidMigrationDir)"
-    SetErrors
-    Return
-  valid:
-  IfFileExists "$INSTDIR\config.json" config_done
-    IfFileExists "$MigrateDir\config.json" 0 config_done
-      CopyFiles /SILENT "$MigrateDir\config.json" "$INSTDIR"
-      IfErrors 0 config_done
-        Return
-  config_done:
-  !insertmacro MigrateDirectory qlog "查询日志"
-  !insertmacro MigrateDirectory zhlog "日志"
-  !insertmacro MigrateDirectory logs "logs"
-  !insertmacro MigrateDirectory runtime "运行数据"
-  !insertmacro MigrateDirectory data "data"
-  !insertmacro MigrateDirectory zhdata "数据"
-  !insertmacro MigrateDirectory imports "imports"
-  !insertmacro MigrateDirectory zhimports "导入文件"
-  done:
-FunctionEnd
-
 Section "$(CoreSectionName)" SEC_CORE
   SectionIn RO
   SetShellVarContext current
 
-  ; A user-initiated upgrade may run while the tray owns the executor.
-  ; Stop only this user's Xynigo launcher/process tree before replacement.
-  ${If} $OnlineUpdate == "1"
-    ; The verified installer is launched by the Python child. Killing the
-    ; whole launcher tree would also kill this installer, so online mode only
-    ; stops the status-center process after the child has requested exit.
-    nsExec::ExecToStack '"$SYSDIR\taskkill.exe" /IM Xynigo.exe /F'
-    Sleep 800
-  ${Else}
-    nsExec::ExecToStack '"$SYSDIR\taskkill.exe" /IM Xynigo.exe /T /F'
-  ${EndIf}
-  Pop $0
-  Pop $1
+  ; An existing production install is stopped by its own path-scoped helper.
+  ; A fresh install never touches a test launcher with the same executable name.
+  IfFileExists "$INSTDIR\stop-managed-executors.ps1" 0 production_stopped
+    nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\stop-managed-executors.ps1" -InstallDir "$INSTDIR"'
+    Pop $0
+    Pop $1
+    ${If} $0 != 0
+      DetailPrint "$1"
+      Abort
+    ${EndIf}
+  production_stopped:
 
   ; Each immutable package revision has its own directory. This matters when a
   ; hotfix keeps the public APP_VERSION: reinstalling must still replace the
@@ -323,11 +186,7 @@ Section "$(CoreSectionName)" SEC_CORE
   FileClose $0
   WriteUninstaller "$INSTDIR\卸载 Xynigo Sourcing.exe"
 
-  Call MigrateGreenPackageData
-  ${If} ${Errors}
-    MessageBox MB_ICONSTOP "$(MigrationFailed)"
-    Abort
-  ${EndIf}
+  ; Production starts with empty local data. Do not import test runtime state.
 
   CreateDirectory "$SMPROGRAMS\${APP_NAME}"
   CreateShortcut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" \

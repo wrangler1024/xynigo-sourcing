@@ -125,9 +125,9 @@ class MacOSStandardInstallerContractTests(unittest.TestCase):
         ).read_text(encoding='utf-8')
 
     def test_app_and_pkg_have_stable_identity_and_no_autostart(self):
-        self.assertIn('/Applications/Xynigo Sourcing.app', self.builder)
-        self.assertIn('icu.samforo.xynigo.sourcing', self.builder)
-        self.assertIn("'CFBundleURLSchemes': ['xynigo']", self.builder)
+        self.assertIn('/Applications/Xynigo Sourcing Production.app', self.builder)
+        self.assertIn('com.xynigo.sourcing.production', self.builder)
+        self.assertIn("'CFBundleURLSchemes': ['xynigo-prod']", self.builder)
         self.assertIn("'LSMinimumSystemVersion': '13.0'", self.builder)
         self.assertIn("'NSAllowsLocalNetworking': True", self.builder)
         for forbidden in ('LaunchAgents', 'LaunchDaemons', 'LoginItems'):
@@ -157,8 +157,8 @@ class MacOSStandardInstallerContractTests(unittest.TestCase):
         )
 
     def test_launcher_only_accepts_low_risk_protocol_and_fixed_scripts(self):
-        self.assertIn('^xynigo://', self.launcher)
-        self.assertNotIn('xynigo://purchase', self.launcher.lower())
+        self.assertIn('^xynigo-prod://', self.launcher)
+        self.assertNotIn('xynigo-prod://purchase', self.launcher.lower())
         self.assertIn('URLComponents(url: url', self.launcher)
         self.assertIn('desktopPairPattern', self.launcher)
         self.assertIn('pairField.stringValue = code', self.launcher)
@@ -182,7 +182,7 @@ class MacOSStandardInstallerContractTests(unittest.TestCase):
                 '配对这台电脑',
                 '检查更新',
                 'view=localsettings',
-                'xynigo://(?:start/?|wake/?|settings/?|pair',
+                'xynigo-prod://(?:start/?|wake/?|settings/?|pair',
                 'configuredServerPort()',
                 '127.0.0.1',
         ):
@@ -256,16 +256,19 @@ class MacOSStandardInstallerContractTests(unittest.TestCase):
         for script in (self.start_script, self.protocol_script,
                        self.migration_script):
             self.assertIn(
-                '$HOME/Library/Application Support/XynigoSourcing', script)
+                '$HOME/Library/Application Support/XynigoSourcingProduction',
+                script)
             self.assertIn('XYNIGO_INSTALL_MODE=standard', script)
         self.assertIn('protocol "$XYNIGO_PROTOCOL_URI"', self.protocol_script)
         self.assertNotIn('echo "$XYNIGO_PROTOCOL_URI"', self.protocol_script)
 
-    def test_first_launch_offers_safe_green_data_migration(self):
-        self.assertIn('首次启动 Xynigo 标准版', self.launcher)
-        self.assertIn('迁移绿色包数据.command', self.launcher)
-        self.assertIn('choose folder', self.migration_script)
-        self.assertIn(' migrate "$SOURCE_DIR"', self.migration_script)
+    def test_first_launch_keeps_test_data_out_of_production(self):
+        self.assertIn('首次启动 Xynigo 生产版', self.launcher)
+        self.assertIn('XynigoSourcingProduction', self.launcher)
+        self.assertNotIn('openTerminalScript("迁移绿色包数据.command")',
+                         self.launcher)
+        self.assertNotIn('cp packaging/macos/迁移绿色包数据.command',
+                         self.builder)
 
     def test_builder_marks_artifact_as_not_release_eligible(self):
         self.assertIn("'appSignature': 'adhoc'", self.builder)
@@ -310,7 +313,7 @@ class MacOSStandardInstallerArtifactTests(unittest.TestCase):
         self.assertFalse(payload['autoStart'])
         self.assertFalse(payload['releaseEligible'])
         self.assertFalse(payload['notarized'])
-        self.assertEqual(payload['protocol'], 'xynigo')
+        self.assertEqual(payload['protocol'], 'xynigo-prod')
         self.assertEqual(len(payload['sha256']), 64)
         self.assertGreater(payload['size'], 1_000_000)
 

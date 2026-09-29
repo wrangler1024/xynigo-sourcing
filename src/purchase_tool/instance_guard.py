@@ -10,7 +10,7 @@ import sys
 
 
 ERROR_ALREADY_EXISTS = 183
-WINDOWS_MUTEX_NAME = 'Local\\XynigoSourcing.Executor'
+WINDOWS_MUTEX_NAME = 'Local\\XynigoSourcingProduction.Executor'
 MACOS_LOCK_FILENAME = 'executor.lock'
 
 
@@ -33,7 +33,7 @@ def default_macos_lock_path(environ=None):
     if data_dir:
         return Path(data_dir).expanduser() / MACOS_LOCK_FILENAME
     return (Path.home() / 'Library' / 'Application Support' /
-            'XynigoSourcing' / MACOS_LOCK_FILENAME)
+            'XynigoSourcingProduction' / MACOS_LOCK_FILENAME)
 
 
 def _acquire_posix_file_guard(lock_path):

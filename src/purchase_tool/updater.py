@@ -169,13 +169,13 @@ def default_state_dir(environ=None, platform_key=None):
     if platform_key.startswith('windows-'):
         base = environ.get('LOCALAPPDATA')
         if base:
-            return Path(base) / 'XynigoSourcing'
-        return Path.home() / 'AppData' / 'Local' / 'XynigoSourcing'
+            return Path(base) / 'XynigoSourcingProduction'
+        return Path.home() / 'AppData' / 'Local' / 'XynigoSourcingProduction'
     if platform_key.startswith('macos-'):
-        return Path.home() / 'Library' / 'Application Support' / 'XynigoSourcing'
+        return Path.home() / 'Library' / 'Application Support' / 'XynigoSourcingProduction'
     base = environ.get('XDG_STATE_HOME')
-    return Path(base) / 'xynigo-sourcing' if base else (
-        Path.home() / '.local' / 'state' / 'xynigo-sourcing')
+    return Path(base) / 'xynigo-sourcing-production' if base else (
+        Path.home() / '.local' / 'state' / 'xynigo-sourcing-production')
 
 
 def consume_skip_once(environ=None, marker_path=None):

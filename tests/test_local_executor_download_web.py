@@ -178,9 +178,9 @@ class LocalExecutorDownloadWebTests(unittest.TestCase):
             self.assertIn(endpoint, self.html)
         self.assertNotIn("expectedRevision:localExecutorConfigRevision", self.html)
         self.assertNotIn('id="btnLocalExecutorSaveConfig"', self.html)
-        self.assertIn("window.location.href = 'xynigo://start'", self.html)
+        self.assertIn("window.location.href = 'xynigo-prod://start'", self.html)
         self.assertIn(
-            'window.location.href = `xynigo://pair?code=${encodeURIComponent(code)}`',
+            'window.location.href = `xynigo-prod://pair?code=${encodeURIComponent(code)}`',
             self.html,
         )
         self.assertIn('payload.pairingRequestId', self.html)

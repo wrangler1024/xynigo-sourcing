@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Validate and handle the low-risk ``xynigo://`` launcher protocol.
+"""Validate and handle the low-risk ``xynigo-prod://`` launcher protocol.
 
 The protocol is deliberately not a business command channel.  It may only
 start/wake the executor or consume the same short-lived pairing code that a
@@ -24,7 +24,7 @@ def parse_executor_protocol_uri(value):
     if len(raw) > 1024:
         raise ExecutorProtocolError('协议地址过长')
     parsed = urlparse(raw)
-    if parsed.scheme.casefold() != 'xynigo':
+    if parsed.scheme.casefold() != 'xynigo-prod':
         raise ExecutorProtocolError('协议类型无效')
     try:
         port = parsed.port
@@ -56,7 +56,7 @@ def parse_executor_protocol_uri(value):
 def protocol_cli(argv=None):
     args = list(argv or [])
     if len(args) != 1:
-        print('协议启动失败：缺少唯一的 xynigo:// 地址', file=sys.stderr)
+        print('协议启动失败：缺少唯一的 xynigo-prod:// 地址', file=sys.stderr)
         return 2
     try:
         command = parse_executor_protocol_uri(args[0])

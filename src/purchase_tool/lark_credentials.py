@@ -18,7 +18,7 @@ import tempfile
 import threading
 
 
-KEYCHAIN_SERVICE = 'io.xynigo.sourcing.feishu'
+KEYCHAIN_SERVICE = 'io.xynigo.sourcing.feishu.production'
 KEYCHAIN_ACCOUNT = 'xynigo-lark-openapi'
 
 
@@ -219,7 +219,7 @@ def default_windows_credential_path():
     base = os.environ.get('LOCALAPPDATA')
     if not base:
         raise LarkCredentialError('Windows 缺少 LOCALAPPDATA，无法保存飞书凭证')
-    return Path(base) / 'Xynigo' / 'credentials' / 'feishu-openapi.bin'
+    return Path(base) / 'Xynigo' / 'credentials' / 'feishu-openapi-production.bin'
 
 
 class WindowsDpapiCredentialStore(object):

@@ -37,7 +37,7 @@ WORK_ROOT="$(mktemp -d)"
 trap 'rm -rf "$WORK_ROOT"' EXIT
 EXTRACT_ROOT="$WORK_ROOT/extracted"
 PACKAGE_ROOT="$WORK_ROOT/package-root"
-APP="$PACKAGE_ROOT/Applications/Xynigo Sourcing.app"
+APP="$PACKAGE_ROOT/Applications/Xynigo Sourcing Production.app"
 CONTENTS="$APP/Contents"
 RESOURCES="$CONTENTS/Resources"
 mkdir -p "$EXTRACT_ROOT" "$CONTENTS/MacOS" "$RESOURCES/runtime"
@@ -85,10 +85,9 @@ echo "[3/7] Build native launcher, app metadata and icon ..."
 cp packaging/macos/启动本地执行器.command "$RESOURCES/启动本地执行器.command"
 cp packaging/macos/协议启动.command "$RESOURCES/协议启动.command"
 cp packaging/macos/配对本地执行器.command "$RESOURCES/配对本地执行器.command"
-cp packaging/macos/迁移绿色包数据.command "$RESOURCES/迁移绿色包数据.command"
 chmod 755 "$CONTENTS/MacOS/xynigo-launcher" \
   "$RESOURCES/启动本地执行器.command" "$RESOURCES/协议启动.command" \
-  "$RESOURCES/配对本地执行器.command" "$RESOURCES/迁移绿色包数据.command" \
+  "$RESOURCES/配对本地执行器.command" \
   "$RESOURCES/runtime/xynigo-sourcing"
 
 INFO_PLIST="$CONTENTS/Info.plist"
@@ -102,7 +101,7 @@ payload = {
     'CFBundleDisplayName': 'Xynigo Sourcing',
     'CFBundleExecutable': 'xynigo-launcher',
     'CFBundleIconFile': 'xynigo.icns',
-    'CFBundleIdentifier': 'icu.samforo.xynigo.sourcing',
+    'CFBundleIdentifier': 'com.xynigo.sourcing.production',
     'CFBundleInfoDictionaryVersion': '6.0',
     'CFBundleName': 'Xynigo Sourcing',
     'CFBundlePackageType': 'APPL',
@@ -111,7 +110,7 @@ payload = {
     'CFBundleURLTypes': [{
         'CFBundleTypeRole': 'Viewer',
         'CFBundleURLName': 'Xynigo local executor launcher',
-        'CFBundleURLSchemes': ['xynigo'],
+        'CFBundleURLSchemes': ['xynigo-prod'],
     }],
     'LSApplicationCategoryType': 'public.app-category.business',
     'LSMinimumSystemVersion': '13.0',
@@ -163,12 +162,12 @@ metadata = {
     'dockIcon': True,
     'desktopUI': 'wkwebview',
     'executorLaunchMode': 'managed_child',
-    'dataDirectory': '~/Library/Application Support/XynigoSourcing',
+    'dataDirectory': '~/Library/Application Support/XynigoSourcingProduction',
     'autoStart': False,
-    'protocol': 'xynigo',
+    'protocol': 'xynigo-prod',
     'managedPaths': [
         'runtime', '启动本地执行器.command', '协议启动.command',
-        '配对本地执行器.command', '迁移绿色包数据.command', 'xynigo.icns',
+        '配对本地执行器.command', 'xynigo.icns',
     ],
     'preservedPaths': [
         'config.json', '查询日志', '日志', 'logs', '运行数据',
@@ -197,7 +196,7 @@ echo "[4/7] Ad-hoc sign and verify local test app ..."
 /usr/bin/codesign --verify --deep --strict "$APP"
 
 echo "[5/7] Build unsigned macOS installer package ..."
-COMPONENT_PKG="$WORK_ROOT/XynigoSourcing-component.pkg"
+COMPONENT_PKG="$WORK_ROOT/XynigoSourcingProduction-component.pkg"
 COMPONENT_PLIST="$WORK_ROOT/components.plist"
 OUTPUT_FILE="$ROOT/dist/Xynigo_Sourcing_macOS_Standard_v${VERSION}.pkg"
 METADATA_FILE="$ROOT/dist/Xynigo_Sourcing_macOS_Standard_v${VERSION}.json"
@@ -222,15 +221,15 @@ with path.open('wb') as handle:
 PY
 /usr/bin/pkgbuild --root "$PACKAGE_ROOT" \
   --component-plist "$COMPONENT_PLIST" \
-  --identifier icu.samforo.xynigo.sourcing \
+  --identifier com.xynigo.sourcing.production \
   --version "$VERSION" --install-location / "$COMPONENT_PKG"
 /usr/bin/productbuild --package "$COMPONENT_PKG" "$OUTPUT_FILE"
 
 echo "[6/7] Verify payload, protocol and no-autostart contract ..."
 PAYLOAD_LIST="$WORK_ROOT/payload-files.txt"
 /usr/sbin/pkgutil --payload-files "$OUTPUT_FILE" > "$PAYLOAD_LIST"
-grep -Fq 'Applications/Xynigo Sourcing.app/Contents/MacOS/xynigo-launcher' "$PAYLOAD_LIST"
-grep -Fq 'Applications/Xynigo Sourcing.app/Contents/Resources/runtime/xynigo-sourcing' "$PAYLOAD_LIST"
+grep -Fq 'Applications/Xynigo Sourcing Production.app/Contents/MacOS/xynigo-launcher' "$PAYLOAD_LIST"
+grep -Fq 'Applications/Xynigo Sourcing Production.app/Contents/Resources/runtime/xynigo-sourcing' "$PAYLOAD_LIST"
 if grep -Eiq 'LaunchAgents|LaunchDaemons|LoginItems' "$PAYLOAD_LIST"; then
   echo "installer unexpectedly contains an autostart component" >&2
   exit 1
@@ -242,14 +241,14 @@ fi
 EXPANDED_PACKAGE="$WORK_ROOT/expanded-package"
 VERIFIED_ROOT="$WORK_ROOT/verified-root"
 /usr/sbin/pkgutil --expand "$OUTPUT_FILE" "$EXPANDED_PACKAGE"
-PAYLOAD_ARCHIVE="$EXPANDED_PACKAGE/XynigoSourcing-component.pkg/Payload"
+PAYLOAD_ARCHIVE="$EXPANDED_PACKAGE/XynigoSourcingProduction-component.pkg/Payload"
 if [ ! -f "$PAYLOAD_ARCHIVE" ]; then
   echo "installer component payload is missing" >&2
   exit 1
 fi
 mkdir -p "$VERIFIED_ROOT"
 /usr/bin/ditto -x "$PAYLOAD_ARCHIVE" "$VERIFIED_ROOT"
-VERIFIED_APP="$VERIFIED_ROOT/Applications/Xynigo Sourcing.app"
+VERIFIED_APP="$VERIFIED_ROOT/Applications/Xynigo Sourcing Production.app"
 /usr/bin/codesign --verify --deep --strict "$VERIFIED_APP"
 if find "$VERIFIED_APP" -name '._*' -print -quit | grep -q .; then
   echo "decoded installer payload contains AppleDouble sidecar files" >&2
@@ -287,11 +286,11 @@ metadata = {
     'onlineUpdate': True,
     'onlineUpdateFlow': 'authenticated_download_sha256_system_installer',
     'updateAutoRelaunch': True,
-    'installLocation': '/Applications/Xynigo Sourcing.app',
-    'dataDirectory': '~/Library/Application Support/XynigoSourcing',
+    'installLocation': '/Applications/Xynigo Sourcing Production.app',
+    'dataDirectory': '~/Library/Application Support/XynigoSourcingProduction',
     'requiresElevation': True,
     'autoStart': False,
-    'protocol': 'xynigo',
+    'protocol': 'xynigo-prod',
     'assetName': installer.name,
     'size': installer.stat().st_size,
     'sha256': digest,

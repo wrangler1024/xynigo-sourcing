@@ -30,9 +30,10 @@ import certifi
 from . import __version__
 
 
-DEFAULT_AUTH_BASE_URL = 'https://xynigo.samforo.icu'
+DEFAULT_AUTH_BASE_URL = 'https://app.xynigo.com'
 KEYCHAIN_SERVICE = 'io.xynigo.sourcing.auth'
 KEYCHAIN_ACCOUNT = 'xynigo-cloud-session'
+LEGACY_TEST_ORIGIN = 'https://xynigo.samforo.icu'
 TOKEN_PATTERN = re.compile(r'^[A-Za-z0-9_-]{32,256}$')
 MAX_RESPONSE_BYTES = 1024 * 1024
 MAX_FEISHU_PROXY_RESPONSE_BYTES = 5 * 1024 * 1024
@@ -737,11 +738,23 @@ def _dpapi_unprotect(data):
         del source_buffer
 
 
-def default_windows_session_path():
+def origin_storage_suffix(base_url=None):
+    """Keep the legacy test slot intact while isolating every other origin."""
+    origin = str(base_url or os.environ.get('XYNIGO_AUTH_BASE_URL')
+                 or DEFAULT_AUTH_BASE_URL).strip().rstrip('/').lower()
+    if origin == LEGACY_TEST_ORIGIN:
+        return ''
+    if origin == DEFAULT_AUTH_BASE_URL:
+        return '-production'
+    return '-' + hashlib.sha256(origin.encode('utf-8')).hexdigest()[:12]
+
+
+def default_windows_session_path(base_url=None):
     base = os.environ.get('LOCALAPPDATA')
     if not base:
         raise LocalAuthError('credential_store_failed')
-    return Path(base) / 'Xynigo' / 'credentials' / 'cloud-session.bin'
+    return (Path(base) / 'Xynigo' / 'credentials' /
+            ('cloud-session' + origin_storage_suffix(base_url) + '.bin'))
 
 
 class WindowsDpapiAuthSessionStore(object):
@@ -795,11 +808,13 @@ class WindowsDpapiAuthSessionStore(object):
             pass
 
 
-def system_auth_session_store():
+def system_auth_session_store(base_url=None):
     if sys.platform == 'darwin':
-        return MacKeychainAuthSessionStore()
+        return MacKeychainAuthSessionStore(
+            service=KEYCHAIN_SERVICE + origin_storage_suffix(base_url))
     if os.name == 'nt':
-        return WindowsDpapiAuthSessionStore()
+        return WindowsDpapiAuthSessionStore(
+            path=default_windows_session_path(base_url))
     return MemoryAuthSessionStore()
 
 
@@ -839,7 +854,7 @@ class LocalAuthService(object):
                  clock=time.monotonic):
         self.client = client or CloudAuthClient(
             os.environ.get('XYNIGO_AUTH_BASE_URL') or DEFAULT_AUTH_BASE_URL)
-        self.store = store or system_auth_session_store()
+        self.store = store or system_auth_session_store(self.client.base_url)
         self.refresh_interval = float(refresh_interval)
         self.clock = clock
         self.lock = threading.RLock()

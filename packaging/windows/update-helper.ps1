@@ -17,7 +17,7 @@ $ManagedPaths = @(
     "配对本地执行器.bat",
     "update-helper.ps1", "VERSION.json", "使用说明.txt"
 )
-$LogRoot = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "XynigoSourcing\logs"
+$LogRoot = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "XynigoSourcingProduction\logs"
 New-Item -ItemType Directory -Force -Path $LogRoot | Out-Null
 $LogPath = Join-Path $LogRoot ("update-{0}.log" -f (Get-Date -Format "yyyyMMdd-HHmmss"))
 
@@ -46,7 +46,7 @@ function Invoke-WithRetry([scriptblock]$Action, [string]$Description) {
 function Start-Xynigo([string]$Root) {
     if ($NoRestart) { return }
     if ([string]::IsNullOrWhiteSpace($StateDir)) {
-        $StateDir = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "XynigoSourcing"
+        $StateDir = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "XynigoSourcingProduction"
     }
     New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
     Set-Content -LiteralPath (Join-Path $StateDir "skip-update-once") -Value "1" -Encoding ASCII

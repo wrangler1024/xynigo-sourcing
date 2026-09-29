@@ -130,7 +130,7 @@ python -m purchase_tool
 ```
 
 The desktop launcher starts the local executor in the background and opens the
-cloud workspace at `https://xynigo.samforo.icu` by default. The local service
+cloud workspace at `https://app.xynigo.com` by default. The local service
 continues to listen on `http://127.0.0.1:8765` (or the next available port) for
 HubStudio/CDP/SHEIN capabilities. Run `python -m purchase_tool --local-ui`, or
 use the package's dedicated local-executor launcher, to open the legacy local UI.

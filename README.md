@@ -67,7 +67,7 @@ python -m pip install -e .
 python -m purchase_tool
 ```
 
-桌面程序默认在后台启动本地执行器，并打开云端工作台 `https://xynigo.samforo.icu`。员工业务操作统一从云端 Web 发起，由 `workspace.rpc.v1` 任务经出站长轮询下发到所选电脑；本机 HTTP 服务仅作为执行器进程内部适配层，不再是员工操作入口。`--local-ui` 只保留用于开发诊断和版本回滚。
+桌面程序默认在后台启动本地执行器，并打开云端工作台 `https://app.xynigo.com`。员工业务操作统一从云端 Web 发起，由 `workspace.rpc.v1` 任务经出站长轮询下发到所选电脑；本机 HTTP 服务仅作为执行器进程内部适配层，不再是员工操作入口。`--local-ui` 只保留用于开发诊断和版本回滚。
 
 在 macOS 上，也可以通过 `启动-Mac.command` 启动本地开发版本。
 
@@ -86,7 +86,7 @@ python -m purchase_tool
 | `XYNIGO_LARK_TABLE_ID` | 可选：首次运行时迁移统一买家号台账 Table ID |
 | `XYNIGO_LARK_TABLE_ID_MX` / `XYNIGO_LARK_TABLE_ID_US` | 仅供旧版管理员补账命令兼容使用；Web OpenAPI 主链路不按站点拆表 |
 | `XYNIGO_LARK_OPERATOR_OPEN_ID` | 仅供旧版管理员补账命令使用的可选操作人 ID |
-| `XYNIGO_AUTH_BASE_URL` | 可选：云端认证服务地址；默认使用 `https://xynigo.samforo.icu`，远程地址必须为 HTTPS |
+| `XYNIGO_AUTH_BASE_URL` | 可选：云端认证服务地址；默认使用 `https://app.xynigo.com`，远程地址必须为 HTTPS |
 
 旧版模块三 Mac 管理员补账命令仍需 `lark-cli`，并且必须显式核对站点；美国站使用
 `python -m purchase_tool backfill --site US ...`，并要求独立配置
