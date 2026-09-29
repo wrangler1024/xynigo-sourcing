@@ -380,13 +380,17 @@ jobs:
               assert info['platform'] == os.environ['EXPECTED_PLATFORM']
               binary = root / 'runtime' / 'xynigo-sourcing'
               binary.chmod(0o755)
-              import subprocess
-              output = subprocess.check_output(
+          import subprocess
+          from purchase_tool.cloud_auth import DEFAULT_AUTH_BASE_URL
+          assert DEFAULT_AUTH_BASE_URL == 'https://app.xynigo.com'
+          output = subprocess.check_output(
                   [str(binary), '--package-self-test'], text=True)
               assert os.environ['EXPECTED_PLATFORM'] in output
+              tls_env = dict(os.environ)
+              tls_env['XYNIGO_TLS_SELF_TEST_ORIGIN'] = 'https://xynigo.samforo.icu'
               cloud_output = subprocess.check_output(
                   [str(binary), '--cloud-tls-self-test'], text=True,
-                  timeout=30)
+                  timeout=30, env=tls_env)
               assert 'cloud TLS self-test OK' in cloud_output
           PY
       - name: Verify macOS standard app and installer payload

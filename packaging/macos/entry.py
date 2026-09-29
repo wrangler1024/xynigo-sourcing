@@ -19,7 +19,10 @@ if '--package-self-test' in sys.argv:
 if '--cloud-tls-self-test' in sys.argv:
     from purchase_tool.cloud_auth import CloudAuthClient
 
-    result = CloudAuthClient(timeout=15.0)._request('/healthz')
+    # CI can verify the frozen CA/TLS stack before the production origin is live.
+    # Normal client startup never reads this self-test-only override.
+    origin = os.environ.get('XYNIGO_TLS_SELF_TEST_ORIGIN') or None
+    result = CloudAuthClient(base_url=origin, timeout=15.0)._request('/healthz')
     if result.get('status') != 'ok':
         raise SystemExit('cloud TLS self-test returned an invalid response')
     print('Xynigo cloud TLS self-test OK')
