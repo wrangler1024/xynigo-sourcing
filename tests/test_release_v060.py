@@ -227,12 +227,12 @@ class ReleaseV0170Tests(unittest.TestCase):
         self.assertIn('系统模板固定带表头', html)
         self.assertNotIn('https://proxy.example.test', html)
         self.assertIn(f'Xynigo Sourcing v{__version__}', html)
-        self.assertIn(f'累计修复测试 v{__version__}', html)
+        self.assertIn(f'生产环境 v{__version__}', html)
         self.assertIn(
             f"headers.set('X-Xynigo-Client-Version', '{__version__}-cloud-web')",
             html,
         )
-        self.assertIn('测试环境 · 数据隔离', html)
+        self.assertIn('生产与测试数据隔离', html)
         self.assertNotIn('本机数据不出站', html)
         self.assertIn('Xyni, GO!', html)
         self.assertIn('Xynigo 品牌字标', html)

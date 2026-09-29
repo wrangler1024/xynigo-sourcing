@@ -1232,7 +1232,7 @@
       if (previewRole) done(); else post('/api/auth/logout',{}).catch(showError).finally(done);
     }
     else if (action === 'refresh-status') loadStatus().then(function () { showToast('状态已刷新'); });
-    else if (action === 'open-cloud') nativeAction('open-external',{url:'https://xynigo.samforo.icu'});
+    else if (action === 'open-cloud') nativeAction('open-external',{url:'https://app.xynigo.com'});
     else if (action === 'go-settings') { state.view='settings'; renderWorkspace(); }
     else if (action === 'go-diagnostics') { state.view='diagnostics'; renderWorkspace(); }
     else if (action === 'task-details') openTaskDetails();

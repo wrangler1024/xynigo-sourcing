@@ -30,7 +30,7 @@ import certifi
 from . import __version__
 
 
-DEFAULT_AUTH_BASE_URL = 'https://xynigo.samforo.icu'
+DEFAULT_AUTH_BASE_URL = 'https://app.xynigo.com'
 KEYCHAIN_SERVICE = 'io.xynigo.sourcing.auth'
 KEYCHAIN_ACCOUNT = 'xynigo-cloud-session'
 TOKEN_PATTERN = re.compile(r'^[A-Za-z0-9_-]{32,256}$')

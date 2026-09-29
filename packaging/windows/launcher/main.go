@@ -31,7 +31,7 @@ import (
 )
 
 const (
-	cloudWorkspaceURL = "https://xynigo.samforo.icu"
+	cloudWorkspaceURL = "https://app.xynigo.com"
 	launcherMutexName = "Local\\XynigoSourcing.Launcher"
 	createNoWindow    = 0x08000000
 	updateCheckPath   = "/executor-control/update/check"

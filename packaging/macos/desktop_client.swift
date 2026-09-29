@@ -3,7 +3,7 @@ import Darwin
 import Foundation
 import WebKit
 
-private let desktopCloudURL = URL(string: "https://xynigo.samforo.icu")!
+private let desktopCloudURL = URL(string: "https://app.xynigo.com")!
 private let desktopDataFolder = "XynigoSourcing"
 private let desktopSettingsQuery = "view=localsettings"
 private let desktopPairPattern = try! NSRegularExpression(
